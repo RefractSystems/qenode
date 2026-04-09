@@ -5,6 +5,10 @@
     "context": "..",
     "target": "devenv"
   },
+  "runArgs": [
+    "--env-file",
+    ".devcontainer/.env"
+  ],
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
