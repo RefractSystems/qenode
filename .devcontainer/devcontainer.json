@@ -5,11 +5,11 @@
     "context": "..",
     "target": "devenv"
   },
-  "runArgs": [
-    "--env-file",
-    ".devcontainer/.env"
-  ],
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
+    "source=${localEnv:HOME}/.gemini,target=/home/vscode/.gemini,type=bind"
+  ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
   "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc",
