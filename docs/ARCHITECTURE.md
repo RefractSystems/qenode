@@ -392,6 +392,79 @@ intervals SHORTER than one physics quantum (dt)?
 For FirmwareStudio's current workloads (PID at 1–10 kHz, simple sensor polling),
 `slaved-suspend` is always sufficient.
 
+### Implementation Constraints for hw/zenoh/
+
+#### BQL (Big QEMU Lock) — zenoh-clock.c
+
+QEMU uses a global lock (BQL, historically `qemu_global_mutex`) to serialize access to
+its internal state. The TCG vCPU thread holds the BQL while executing translated guest
+code. If the zenoh-clock plugin blocks on a Zenoh network reply *while holding the BQL*,
+the main event loop thread (which handles QMP, GDB stub, chardev I/O) cannot acquire the
+BQL, causing a total process deadlock. QEMU becomes completely unresponsive — QMP socket
+freezes, GDB stub freezes, test harness hangs indefinitely.
+
+**Correct blocking pattern** (must be followed without exception):
+
+```c
+/* At the quantum boundary, after cpu_exit() has fired and TCG has exited the
+   current TB cleanly: */
+bql_unlock();                          /* release before any blocking call */
+zenoh_reply = zenoh_get(queryable);    /* block here waiting for TimeAuthority */
+bql_lock();                            /* re-acquire before touching QEMU state */
+/* Now safe to update timers_state, call cpu_icount_advance(), etc. */
+```
+
+`cpu_exit(cpu)` must be called *before* this sequence to request a TB boundary exit; the
+actual blocking happens in the outer vCPU dispatch loop, not inside a TB. This is
+identical to the pattern used by `qemu_mutex_unlock_iothread()` /
+`qemu_mutex_lock_iothread()` in QEMU device models.
+
+#### QEMUTimer — zenoh-netdev.c
+
+QEMU has no mechanism to passively watch a virtual-time threshold and fire a callback
+spontaneously. Incoming frames cannot be injected by polling; they must be delivered via
+the QEMU timer subsystem.
+
+**Correct virtual-time frame delivery**:
+
+```c
+/* At plugin init: */
+rx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, netdev_state);
+qemu_mutex_init(&rx_queue_lock);
+
+/* In Zenoh subscription callback (runs in Zenoh thread, NOT QEMU main loop): */
+qemu_mutex_lock(&rx_queue_lock);
+pqueue_insert(rx_queue, frame, delivery_vtime);
+timer_mod(rx_timer, pqueue_min_key(rx_queue));  /* arm for earliest delivery */
+qemu_mutex_unlock(&rx_queue_lock);
+
+/* In rx_timer_cb (runs in QEMU main loop, BQL held): */
+uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+qemu_mutex_lock(&rx_queue_lock);
+while (pqueue_min_key(rx_queue) <= now) {
+    Frame *f = pqueue_pop(rx_queue);
+    qemu_send_packet(nc, f->data, f->len);  /* inject to guest NIC */
+    frame_free(f);
+}
+if (!pqueue_empty(rx_queue))
+    timer_mod(rx_timer, pqueue_min_key(rx_queue));  /* re-arm for next frame */
+qemu_mutex_unlock(&rx_queue_lock);
+```
+
+`QEMU_CLOCK_VIRTUAL` advances with icount in `slaved-icount` mode and with wall-clock
+time (gated by QEMU's run state) in `slaved-suspend` mode. In both cases the timer fires
+at the correct virtual time.
+
+#### Test isolation — Phase 4 vs Phase 7
+
+Phase 4 pytest tests run without MuJoCo. If QEMU is started with `-device zenoh-clock`
+loaded, it will block at the first TCG TB boundary waiting for a TimeAuthority reply that
+never arrives. The test process hangs with no timeout or error.
+
+The `qemu_process` pytest fixture must explicitly omit `-device zenoh-clock` from the
+QEMU command line. Phase 7 integration tests (which require a running TimeAuthority) are
+a separate pytest mark (`@pytest.mark.firmware_studio`) and must not run in standard CI.
+
 ### Implications for qenode Peripheral Design
 
 Peripherals that model timers or counters (PWM, SysTick, DWT) must be aware of the
@@ -744,6 +817,80 @@ This device is implementable within qenode's existing module framework (it's jus
 
 Path B (Remote Port) is preferred for Phase 5 because the MMIO serialization problem is
 already solved by the Remote Port protocol, which was designed exactly for this use case.
+
+---
+
+### ADR-007: BQL must be released before any blocking call in the vCPU thread
+
+**Decision**: `zenoh-clock.c` calls `bql_unlock()` immediately before blocking on a
+Zenoh reply and `bql_lock()` immediately after, without exception.
+
+**Context**: QEMU's Big QEMU Lock (BQL) serializes all access to QEMU's internal device
+and CPU state. The TCG vCPU thread holds the BQL continuously while executing translated
+guest code. All of QEMU's I/O servicing, QMP socket handling, and GDB stub processing
+happen in the main event loop thread, which must also acquire the BQL to do anything.
+
+**Why naive blocking deadlocks**:
+
+If `zenoh_get()` is called while the vCPU thread holds the BQL, the call blocks. The
+main event loop thread then spins trying to acquire the BQL and cannot proceed. QMP
+becomes unresponsive. The GDB stub freezes. The pytest fixture's `qmp_bridge.execute()`
+call hangs with no timeout or error. The only observable symptom is that the test process
+hangs indefinitely — there is no crash, no assert, no log message.
+
+**Why this is easy to get wrong**: The BQL is implicit. No function signature tells you
+"this function must be called with the BQL held." You must know QEMU's execution model to
+understand when you hold it and when you don't. Any blocking network, socket, or
+semaphore call inside the TCG execution path is potentially a deadlock.
+
+**The correct pattern** (see §7 implementation constraints for full code):
+
+```c
+cpu_exit(cpu);       /* request clean TB boundary exit — do NOT block mid-TB */
+/* ... outer vCPU loop fires our hook between TB dispatches ... */
+bql_unlock();
+zenoh_get(...);      /* safe to block here */
+bql_lock();
+/* proceed to update QEMU state */
+```
+
+**Precedent in QEMU**: `qemu_mutex_unlock_iothread()` / `qemu_mutex_lock_iothread()`
+(aliases for bql_unlock/bql_lock) appear hundreds of times in QEMU's codebase wherever
+the vCPU thread must block or yield for any reason.
+
+---
+
+### ADR-008: Virtual-time frame delivery requires QEMUTimer, not passive polling
+
+**Decision**: `zenoh-netdev.c` uses `timer_new_ns(QEMU_CLOCK_VIRTUAL, ...)` with a
+priority queue to deliver Ethernet frames at their designated virtual arrival time.
+
+**Context**: The Zenoh coordinator attaches a `delivery_vtime` to each incoming Ethernet
+frame. The netdev must not inject the frame into the guest NIC until QEMU's virtual clock
+reaches `delivery_vtime`. This is how deterministic wireless medium simulation works —
+packet "travel time" is expressed as a virtual-time delta, not a wall-clock delay.
+
+**Why passive polling does not work**:
+
+QEMU does not run a background thread that monitors arbitrary conditions. There is no
+"watch this value and fire a callback when it crosses a threshold" API. The virtual clock
+does not self-advance (in slaved modes it advances only when the physics engine grants
+time). A loop like `while (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) < delivery_vtime) {}`
+inside any QEMU thread would either spin-waste CPU or deadlock (if called from the vCPU
+thread while holding the BQL).
+
+**Why QEMUTimer is the correct mechanism**:
+
+QEMU's timer subsystem (`QEMUTimer`) is specifically designed for this: register a
+callback at a virtual time; QEMU calls it when the virtual clock reaches that time. In
+`slaved-icount` mode the virtual clock is the icount clock; in `slaved-suspend` mode it
+advances as QEMU resumes between physics steps. In both cases timers fire at the correct
+virtual time. `qemu_send_packet()` is only callable from the main QEMU thread (or with
+the BQL held), which is exactly where timer callbacks run.
+
+**Thread safety**: The Zenoh subscription callback runs in Zenoh's internal thread pool,
+not in the QEMU main loop. The priority queue is therefore shared between two threads and
+must be protected by a `QemuMutex`. `timer_mod()` is safe to call from any thread.
 
 ---
 

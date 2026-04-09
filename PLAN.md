@@ -175,6 +175,20 @@ to Phase 7 when slaved modes are active.
   - Test functions mirror the Robot keyword set (same coverage, better debuggability)
   - This is the **primary** test implementation; Robot keywords are the compatibility layer
 
+  **Critical isolation constraint — standalone mode only for Phase 4 tests:**
+  Phase 4 tests run without MuJoCo. If QEMU is launched with `-device zenoh-clock`
+  (the Phase 7 plugin), it will block at the first TCG TB boundary waiting for a
+  TimeAuthority clock advance that never arrives, hanging the test indefinitely.
+
+  The `qemu_process` fixture **must** start QEMU without the zenoh-clock device. Enforce
+  this explicitly — do not rely on the device being absent from the build. Either:
+  - Use a QEMU command that never includes `-device zenoh-clock`, or
+  - Confirm the fixture arguments list and assert the string is absent before launching.
+
+  Phase 7 integration tests (task 7.4) are a separate pytest suite that starts a mock
+  TimeAuthority alongside QEMU. They must not run in regular CI without the full
+  FirmwareStudio stack.
+
 - [ ] **4.2** Write `tools/testing/qemu_keywords.robot`:
   - `Start Emulation` → `{"execute": "cont"}`
   - `Reset Emulation` → `{"execute": "system_reset"}`
@@ -298,16 +312,57 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - Links `zenoh-c` (added to QEMU Meson as a `dependency()`)
   - Declares a Zenoh queryable on `sim/clock/advance/{node_id}` at `realize` time
   - Installs a QEMU `icount_decr` / `cpu_exit` hook that fires at TB boundaries
-  - In `slaved-suspend`: blocks TCG thread on Zenoh reply, then resumes
-  - In `slaved-icount`: additionally sets `timers_state.qemu_icount_bias`
   - Compiles as `hw-qenode-zenoh.so` via the existing Meson module system
+
+  **Critical implementation constraint — BQL (Big QEMU Lock):**
+  The TCG vCPU thread holds the BQL while executing translated code. Blocking on a Zenoh
+  reply without releasing it will deadlock the entire process: the main event loop thread
+  (QMP socket, GDB stub, I/O) cannot acquire the BQL to service requests.
+
+  Correct sequence for `slaved-suspend`:
+  1. Call `cpu_exit(cpu)` to set the TB-exit flag; the TCG loop exits cleanly at the
+     current TB boundary without blocking mid-translation.
+  2. In the outer vCPU loop (between TB dispatch iterations), before re-entering the
+     next TB, our hook fires.
+  3. Call `bql_unlock()` to release the lock.
+  4. Block on the Zenoh queryable reply from TimeAuthority.
+  5. Call `bql_lock()` to re-acquire before returning to the TCG loop.
+
+  This is the standard QEMU pattern for vCPU-thread blocking operations (same as
+  `qemu_mutex_unlock_iothread()` / `qemu_mutex_lock_iothread()` used in device models).
+  Never skip step 3 or omit step 5 — partial locking causes silent data corruption.
+
+  For `slaved-icount`: same BQL sandwich applies; additionally call
+  `cpu_icount_advance(cpu, delta_ns)` (or directly set `timers_state.qemu_icount_bias`)
+  while holding the BQL after step 5.
 
 - [ ] **7.2** Write `hw/zenoh/zenoh-netdev.c` — custom `-netdev` backend:
   - Implements `NetClientInfo` with `receive` (host→guest) and `can_receive`
-  - TX path: serializes frame + virtual timestamp → Zenoh publish
-  - RX path: subscribes to incoming frames, buffers by virtual timestamp,
-    injects to guest NIC when vtime is reached
+  - TX path: serializes frame + current virtual timestamp → Zenoh publish to
+    `sim/eth/frame/{node_id}/tx`
   - Registered as `-netdev zenoh,id=...,node=...,router=...`
+
+  **Critical implementation constraint — virtual-time frame injection:**
+  QEMU does not poll internal state for timestamp thresholds. A netdev backend cannot
+  "wait" for virtual time to reach an arbitrary value and then inject a frame
+  spontaneously. Frame injection must be driven by QEMU's timer subsystem.
+
+  Correct RX implementation:
+  1. Zenoh subscription callback (fires in Zenoh's thread): parse incoming frame,
+     extract `delivery_vtime`, insert into a **min-heap priority queue** keyed by
+     `delivery_vtime`.
+  2. After inserting, call `timer_mod(rx_timer, delivery_vtime_of_earliest_frame)` to
+     arm (or re-arm) the `QEMUTimer`.
+  3. Allocate the timer with `timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, netdev)` at
+     init time. `QEMU_CLOCK_VIRTUAL` ensures the timer fires relative to QEMU's virtual
+     clock — in slaved-icount mode this is the icount clock; in slaved-suspend mode it
+     fires when QEMU resumes and virtual time catches up.
+  4. In `rx_timer_cb`: drain all frames from the priority queue whose
+     `delivery_vtime <= qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)`, calling
+     `qemu_send_packet(nc, frame_data, frame_len)` for each. Re-arm the timer for the
+     next earliest frame if the queue is non-empty.
+  5. The Zenoh callback runs in a foreign thread; the timer callback runs in the QEMU
+     main loop thread. The priority queue must be protected by a `QemuMutex`.
 
 - [ ] **7.3** Delete `tools/node_agent/` — superseded by hw/zenoh/
 
