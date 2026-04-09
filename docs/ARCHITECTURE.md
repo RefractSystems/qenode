@@ -269,18 +269,25 @@ tightens; use `slaved-suspend` instead.
 
 ### ARM-on-ARM Hosts (Apple Silicon, AWS Graviton)
 
-A reasonable assumption when deploying on ARM hosts is that QEMU could use hardware
+When running on an ARM host (Apple Silicon, AWS Graviton), QEMU can use hardware
 virtualization (KVM on Linux, `hvf` on macOS) to run ARM guest code at near-native
-speed, eliminating the TCG overhead entirely. **qenode does not use hardware
-virtualization, and cannot.** TCG is mandatory. See ADR-009 for full rationale.
+speed — **but only in `standalone` mode with Cortex-A targets**. See ADR-009 for full
+rationale. In short:
 
-The consequence is a fixed ~10–20% of native throughput from TCG translation overhead,
-even on an ARM host. This sounds severe but is irrelevant in practice:
+- **Cortex-M on any host**: KVM/hvf prohibited. M-profile (`-cpu cortex-m*`) is not
+  supported by host hypervisors; QEMU falls back to TCG anyway and may misbehave.
+- **FirmwareStudio slaved modes**: KVM/hvf prohibited. The `slaved-suspend` cooperative
+  TCG hook and `slaved-icount` bias manipulation both require TCG internals that are
+  bypassed when KVM/hvf owns execution.
+- **Standalone Cortex-A on ARM host**: KVM/hvf fully supported and recommended. Enable
+  via `--native-accel` in `repl2qemu` or pass `-accel kvm` / `-accel hvf` directly.
 
-| | Embedded target (STM32F4) | QEMU TCG on M2 Pro | QEMU TCG + icount on M2 Pro |
-|---|---|---|---|
-| Effective MIPS | ~80–160 MIPS | ~300–600 MIPS | ~20–40 MIPS |
-| Headroom vs target | — | **3–7× faster** | **1.5–4× faster** |
+The performance picture across modes:
+
+| | Embedded target (STM32F4) | QEMU KVM/hvf standalone | QEMU TCG standalone | QEMU TCG + icount (slaved) |
+|---|---|---|---|---|
+| Effective MIPS | ~80–160 MIPS | ~1000–2000 MIPS | ~300–600 MIPS | ~20–40 MIPS |
+| Headroom vs target | — | **10–25× faster** | **3–7× faster** | **1.5–4× faster** |
 
 Even in the worst case (`slaved-icount` mode on modest hardware), TCG throughput exceeds
 the target's real silicon by a comfortable margin. The physics simulation clock — not
