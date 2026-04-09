@@ -28,10 +28,13 @@ works alongside an unmodified (or minimally patched) QEMU binary.
 | Core engine | TCG (C JIT), optionally KVM | tlib (C, derived from early QEMU) |
 | Peripheral access | Direct C function call on MMIO hit | C → C# boundary crossing |
 | Determinism | `icount` mode (approximate) | Nanosecond virtual clock, fully deterministic |
-| KVM support | Yes (x86, ARM) | Yes (x86 only, recent) |
+| KVM support | Yes (x86, ARM A-profile only) — **not used by qenode** | Yes (x86 only, recent) |
 
 QEMU's pure-C peripheral path is significantly lower latency than Renode's C→C# boundary.
 The trade-off: Renode's C# layer enables dynamic peripheral loading without recompilation.
+
+**qenode always uses TCG**, even on ARM hosts. KVM is incompatible with Cortex-M targets
+and with icount-based time determinism. See §10 ADR-009.
 
 ### 2.2 Device Model
 
@@ -264,6 +267,25 @@ A typical PID control loop at 1 kHz executes ~10 000 instructions per iteration,
 requiring ~10 MIPS effective throughput. Even with icount's 5–8× penalty, a Cortex-A15
 emulated in QEMU delivers ~20–40 MIPS — a 2–4× headroom. For 10 kHz loops the margin
 tightens; use `slaved-suspend` instead.
+
+### ARM-on-ARM Hosts (Apple Silicon, AWS Graviton)
+
+A reasonable assumption when deploying on ARM hosts is that QEMU could use hardware
+virtualization (KVM on Linux, `hvf` on macOS) to run ARM guest code at near-native
+speed, eliminating the TCG overhead entirely. **qenode does not use hardware
+virtualization, and cannot.** TCG is mandatory. See ADR-009 for full rationale.
+
+The consequence is a fixed ~10–20% of native throughput from TCG translation overhead,
+even on an ARM host. This sounds severe but is irrelevant in practice:
+
+| | Embedded target (STM32F4) | QEMU TCG on M2 Pro | QEMU TCG + icount on M2 Pro |
+|---|---|---|---|
+| Effective MIPS | ~80–160 MIPS | ~300–600 MIPS | ~20–40 MIPS |
+| Headroom vs target | — | **3–7× faster** | **1.5–4× faster** |
+
+Even in the worst case (`slaved-icount` mode on modest hardware), TCG throughput exceeds
+the target's real silicon by a comfortable margin. The physics simulation clock — not
+QEMU's instruction rate — is the binding constraint for simulation speed.
 
 ---
 
@@ -891,6 +913,68 @@ the BQL held), which is exactly where timer callbacks run.
 **Thread safety**: The Zenoh subscription callback runs in Zenoh's internal thread pool,
 not in the QEMU main loop. The priority queue is therefore shared between two threads and
 must be protected by a `QemuMutex`. `timer_mod()` is safe to call from any thread.
+
+---
+
+### ADR-009: TCG is mandatory — KVM/hvf hardware acceleration is not used
+
+**Decision**: qenode always uses QEMU's TCG (software JIT) execution engine, even when
+running on an ARM host that could in principle use KVM or Apple Hypervisor.framework for
+near-native ARM execution.
+
+**Context**: When FirmwareStudio is deployed on an ARM host (Apple M-series, AWS
+Graviton), a reasonable optimization would be to enable KVM (`-accel kvm`) or `hvf`
+(`-accel hvf`) so that guest ARM instructions execute directly on the host CPU without
+TCG translation overhead. This would give roughly 100% of native speed instead of the
+~10–20% delivered by TCG. The question was examined and rejected on two independent
+grounds.
+
+**Reason 1 — CPU profile incompatibility for Cortex-M targets**
+
+KVM and hvf execute guest instructions on the bare host CPU. The host CPU must support
+the same CPU *profile* as the guest. ARM host CPUs (Apple M-series, Graviton) are
+**A-profile** (Application: ARMv8-A / ARMv9-A). The vast majority of embedded firmware
+targets in FirmwareStudio are **M-profile** (Microcontroller: ARMv7-M / ARMv8-M,
+Cortex-M3/M4/M7/M33).
+
+A-profile and M-profile are not just instruction set variants — they have fundamentally
+different exception models, memory protection architectures, and execution states
+(EL0/EL1/EL2 vs Thread/Handler mode with Thumb-only execution). A host A-profile CPU
+cannot natively execute M-profile firmware. There is no KVM path for Cortex-M simulation;
+TCG is the only option.
+
+Even for Cortex-A targets (e.g., a Raspberry Pi firmware): the specific version and
+extensions must match. Simulating a Cortex-A15 (ARMv7-A) on an M2 (ARMv9-A) with KVM
+would require the host to support ARMv7 guest state, which macOS hvf does not expose.
+
+**Reason 2 — KVM is incompatible with deterministic time control**
+
+Even for targets where KVM is technically possible, it destroys the time determinism that
+FirmwareStudio requires:
+
+- KVM executes instructions at full hardware speed with no instruction counting. There
+  is no virtual instruction counter, no `icount_decr`, no TB boundary event. `-icount`
+  mode is explicitly TCG-only; it cannot be combined with `-accel kvm`.
+- The `zenoh-clock.c` plugin's cooperative halt mechanism (ADR-001) relies on TCG's TB
+  boundary hooks (`cpu_exit()`, `icount_decr`). Under KVM, these hooks do not exist.
+  The only way to halt a KVM vCPU thread is via a host OS signal or `ioctl(KVM_RUN)`
+  return, both of which are subject to host OS scheduling jitter of 50–1000 µs — far
+  beyond the sub-quantum precision required for causal consistency with MuJoCo.
+- Without exact quantum boundaries, firmware can execute past a physics tick, read stale
+  sensor values, and produce non-deterministic actuator outputs. The digital twin is
+  broken.
+
+**Performance consequence**
+
+TCG on a modern ARM host (Apple M2 Pro, AWS Graviton 3) delivers ~300–600 MIPS for
+typical Cortex-M firmware. The target silicon (STM32F4: ~80–160 MIPS) is 3–7× slower
+than TCG throughput. Even in `slaved-icount` mode (5–10× TCG penalty), effective
+throughput remains ~20–40 MIPS — still 1.5–4× faster than the real chip. The TCG
+penalty is absorbed entirely by host hardware headroom.
+
+**Verdict**: Do not add KVM/hvf support. It is categorically incompatible with Cortex-M
+targets and with FirmwareStudio's time synchronization model. This decision is not a
+cost/benefit trade-off — it is a hard technical constraint.
 
 ---
 
