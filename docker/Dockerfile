@@ -43,8 +43,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
         ca-certificates \
         b4 \
-        nodejs \
-        npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 (required for Gemini CLI v flag)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code and Gemini CLI (requires node/npm, installed above)
