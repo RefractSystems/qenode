@@ -5,7 +5,7 @@
 # Idempotent: safe to run multiple times.
 #
 # Environment variables:
-#   QEMU_SRC   Path to QEMU source tree (default: ~/src/qemu)
+#   QEMU_SRC   Path to QEMU source tree (default: third_party/qemu)
 #   QEMU_BUILD Path for out-of-tree build dir (default: $QEMU_SRC/build-qenode)
 #   JOBS       Parallel build jobs (default: nproc / sysctl)
 
