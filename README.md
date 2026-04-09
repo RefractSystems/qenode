@@ -107,6 +107,18 @@ source .venv/bin/activate
 python -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
 ```
 
+**Probing the Object Model (Debugging)**:
+You can interactively dump and inspect the running QEMU Object Model (QOM) tree to verify your Device Trees and Plugins.
+First, launch QEMU with the QMP socket enabled:
+```bash
+./scripts/run.sh -M arm-generic-fdt ... -qmp unix:qmp.sock,server,nowait
+```
+Then, use the probe tool:
+```bash
+python3 tools/qmp_probe.py tree
+python3 tools/qmp_probe.py get /machine/peripheral-anon/device[0] realized
+```
+
 **Running with FirmwareStudio** (external clock, Phase 7+):
 
 The clock synchronization is handled by the native Zenoh QOM plugin (`hw/zenoh/`) which
