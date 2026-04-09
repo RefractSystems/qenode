@@ -1,7 +1,8 @@
 # qenode QEMU container image.
 #
 # Multi-stage build:
-#   builder  — heavy: installs build toolchain, clones QEMU, applies patches, builds
+#   devenv   — toolchain only: all build deps, no code baked in (used by devcontainer)
+#   builder  — heavy: clones QEMU, applies patches, builds (used by CI / docker-compose)
 #   runtime  — lean: only runtime libs + Python + the installed QEMU binaries
 #
 # Build args:
@@ -13,21 +14,24 @@ ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v10.2.92
 ARG ARCH=arm
 
-# ── Stage 1: builder ──────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS builder
-
-ARG QEMU_REPO
-ARG QEMU_REF
-ARG ARCH
+# ── Stage 0: devenv ───────────────────────────────────────────────────────────
+# Toolchain-only image for devcontainer use. The workspace is mounted at runtime
+# by the devcontainer spec — nothing from the repo is baked in here.
+#
+# Based on the official devcontainer base (ubuntu:24.04 + vscode user + sudo).
+# https://github.com/devcontainers/images/tree/main/src/base-ubuntu
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04 AS devenv
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         git \
+        meson \
         ninja-build \
         python3 \
         python3-pip \
+        python3-venv \
         pkg-config \
         libglib2.0-dev \
         libpixman-1-dev \
@@ -35,7 +39,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bison \
         device-tree-compiler \
         libslirp-dev \
+        curl \
+        wget \
+        ca-certificates \
+        b4 \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI (requires node/npm, installed above)
+RUN npm install -g @anthropic-ai/claude-code
+
+WORKDIR /workspace
+
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
+FROM devenv AS builder
+
+ARG QEMU_REPO
+ARG QEMU_REF
+ARG ARCH
 
 WORKDIR /build
 

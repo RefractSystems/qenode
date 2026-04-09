@@ -1,0 +1,22 @@
+{
+  "name": "qenode",
+  "build": {
+    "dockerfile": "../docker/Dockerfile",
+    "context": "..",
+    "target": "devenv"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "vscode",
+  "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-python.python",
+        "ms-vscode-remote.remote-containers",
+        "ms-azuretools.vscode-containers"
+      ]
+    }
+  }
+}
