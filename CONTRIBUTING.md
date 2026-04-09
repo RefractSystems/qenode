@@ -52,7 +52,7 @@ source .venv/bin/activate
 make run
 ```
 
-After `make setup`, QEMU lives in `ext/qemu/build-qenode/install/`.
+After `make setup`, QEMU lives in `third_party/qemu/build-qenode/install/`.
 `scripts/run.sh` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 
@@ -79,17 +79,17 @@ Our patches live in `patches/`.  The applied patch branch in the QEMU tree
 is `qenode-patches`.
 
 ```bash
-# Make changes in ext/qemu, then:
-cd ext/qemu
+# Make changes in third_party/qemu, then:
+cd third_party/qemu
 git add -p          # stage your changes
 git commit -m "your patch description"
 
 # Export the new patch:
 cd <qenode-repo>
-git -C ext/qemu format-patch HEAD~1 -o patches/
+git -C third_party/qemu format-patch HEAD~1 -o patches/
 
 # Or regenerate the full series:
-git -C ext/qemu format-patch <base-commit>..HEAD -o patches/
+git -C third_party/qemu format-patch <base-commit>..HEAD -o patches/
 ```
 
 ### Python Tools (`tools/`)

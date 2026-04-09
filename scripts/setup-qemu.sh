@@ -14,9 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/ext/qemu}"
+QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/third_party/qemu}"
 QEMU_BUILD="${QEMU_BUILD:-$QEMU_SRC/build-qenode}"
-RENODE_SRC="${RENODE_SRC:-$REPO_ROOT/ext/renode}"
+RENODE_SRC="${RENODE_SRC:-$REPO_ROOT/third_party/renode}"
 PATCHES_DIR="$REPO_ROOT/patches"
 
 OS="$(uname -s)"
@@ -37,6 +37,7 @@ if [ ! -d "$QEMU_SRC/.git" ]; then
   echo "==> Cloning QEMU..."
   git clone https://gitlab.com/qemu-project/qemu.git "$QEMU_SRC"
   cd "$QEMU_SRC"
+  git checkout v10.2.92
   git submodule update --init --recursive
 fi
 

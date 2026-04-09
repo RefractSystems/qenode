@@ -27,7 +27,7 @@ Specifically, it provides:
 
 ## QEMU Version and Patch Strategy
 
-- **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `ext/qemu`, git HEAD from upstream
+- **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `third_party/qemu`, git HEAD from upstream
   `https://gitlab.com/qemu-project/qemu.git`)
 - **Required patches**: The 33-patch `arm-generic-fdt` series, patchew ID
   `20260402215629.745866-1-ruslichenko.r@gmail.com`
@@ -53,9 +53,9 @@ binary level, but source-managed in the qenode repo).
 
 `scripts/setup-qemu.sh` creates a symlink:
 ```
-ext/qemu/hw/qenode  →  <qenode-repo>/hw
+third_party/qemu/hw/qenode  →  <qenode-repo>/hw
 ```
-and appends `subdir('qenode')` to `ext/qemu/hw/meson.build`.
+and appends `subdir('qenode')` to `third_party/qemu/hw/meson.build`.
 
 Our `hw/meson.build` adds entries to QEMU's `modules` dict:
 ```meson
@@ -151,9 +151,9 @@ Core dependencies:
 
 ## Local Resources
 
-- QEMU source: `ext/qemu` (v10.2.92 / 11.0.0-rc2 pre-release, main branch)
-- Renode source: `ext/renode` (reference for .repl format and existing peripherals)
-- QEMU headers needed for hw/: `ext/qemu/include/`
+- QEMU source: `third_party/qemu` (v10.2.92 / 11.0.0-rc2 pre-release, main branch)
+- Renode source: `third_party/renode` (reference for .repl format and existing peripherals)
+- QEMU headers needed for hw/: `third_party/qemu/include/`
 
 ---
 

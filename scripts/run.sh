@@ -9,7 +9,7 @@
 #   ./scripts/run.sh --arch aarch64 -M arm-generic-fdt ...   (default: arm)
 #
 # Environment variables:
-#   QEMU_SRC    QEMU source / build root (default: ext/qemu)
+#   QEMU_SRC    QEMU source / build root (default: third_party/qemu)
 #   QEMU_BUILD  Build directory (default: $QEMU_SRC/build-qenode)
 #   ARCH        arm or aarch64 (default: arm)
 
@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/ext/qemu}"
+QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/third_party/qemu}"
 QEMU_BUILD="${QEMU_BUILD:-$QEMU_SRC/build-qenode}"
 ARCH="${ARCH:-arm}"
 
