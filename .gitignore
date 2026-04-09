@@ -1,0 +1,37 @@
+# Compiled plugins
+modules/
+*.so
+*.dll
+*.dylib
+
+# Docker build cache (not artifacts — those live in the image)
+docker/.env
+
+# Device tree binaries (generated)
+*.dtb
+*.o
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# QEMU build artifacts (keep source, ignore build output)
+qemu-build/
+qemu-install/
+
+# Test artifacts
+*.xml
+output/
+log.html
+report.html
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*~

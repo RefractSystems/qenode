@@ -1,0 +1,5128 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 1/33] system/device_tree: update qemu_fdt_getprop_cell
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:46 +0200
+Message-Id: <20260402215629.745866-2-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Update 'qemu_fdt_getprop_cell' to allow accessing
+specific cells within multi-cell property array.
+
+This will be used by hardware device tree parsing logic.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/arm/boot.c                |  8 ++++----
+ hw/arm/raspi4b.c             |  8 ++++----
+ hw/arm/vexpress.c            |  4 ++--
+ include/system/device_tree.h |  5 ++---
+ system/device_tree.c         | 18 ++++++++----------
+ 5 files changed, 20 insertions(+), 23 deletions(-)
+
+diff --git a/hw/arm/boot.c b/hw/arm/boot.c
+index c97d4c4e11..36fefd06d5 100644
+--- a/hw/arm/boot.c
++++ b/hw/arm/boot.c
+@@ -509,10 +509,10 @@ int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
+         return 0;
+     }
+ 
+-    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells",
+-                                   NULL, &error_fatal);
+-    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells",
+-                                   NULL, &error_fatal);
++    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells", 0,
++                                   &error_fatal);
++    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells", 0,
++                                   &error_fatal);
+     if (acells == 0 || scells == 0) {
+         fprintf(stderr, "dtb file invalid (#address-cells or #size-cells 0)\n");
+         goto fail;
+diff --git a/hw/arm/raspi4b.c b/hw/arm/raspi4b.c
+index 3eeb8f447e..58ddd103b7 100644
+--- a/hw/arm/raspi4b.c
++++ b/hw/arm/raspi4b.c
+@@ -42,10 +42,10 @@ static void raspi_add_memory_node(void *fdt, hwaddr mem_base, hwaddr mem_len)
+     uint32_t acells, scells;
+     char *nodename = g_strdup_printf("/memory@%" PRIx64, mem_base);
+ 
+-    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells",
+-                                   NULL, &error_fatal);
+-    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells",
+-                                   NULL, &error_fatal);
++    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells", 0,
++                                   &error_fatal);
++    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells", 0,
++                                   &error_fatal);
+     /* validated by arm_load_dtb */
+     g_assert(acells && scells);
+ 
+diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
+index cc6ae7d4c4..23d2d7deff 100644
+--- a/hw/arm/vexpress.c
++++ b/hw/arm/vexpress.c
+@@ -486,9 +486,9 @@ static void vexpress_modify_dtb(const struct arm_boot_info *info, void *fdt)
+     const VEDBoardInfo *daughterboard = (const VEDBoardInfo *)info;
+ 
+     acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells",
+-                                   NULL, &error_fatal);
++                                   0, &error_fatal);
+     scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells",
+-                                   NULL, &error_fatal);
++                                   0, &error_fatal);
+     intc = find_int_controller(fdt);
+     if (!intc) {
+         /* Not fatal, we just won't provide virtio. This will
+diff --git a/include/system/device_tree.h b/include/system/device_tree.h
+index 49d8482ed4..5667ff9538 100644
+--- a/include/system/device_tree.h
++++ b/include/system/device_tree.h
+@@ -108,14 +108,13 @@ const void *qemu_fdt_getprop(void *fdt, const char *node_path,
+  * @fdt: pointer to the device tree blob
+  * @node_path: node path
+  * @property: name of the property to find
+- * @lenp: fdt error if any or -EINVAL if the property size is different from
+- *        4 bytes, or 4 (expected length of the property) upon success.
++ * @cell_id: the index of 32bit cell to retrive
+  * @errp: handle to an error object
+  *
+  * returns the property value on success
+  */
+ uint32_t qemu_fdt_getprop_cell(void *fdt, const char *node_path,
+-                               const char *property, int *lenp,
++                               const char *property, int cell_id,
+                                Error **errp);
+ uint32_t qemu_fdt_get_phandle(void *fdt, const char *path);
+ uint32_t qemu_fdt_alloc_phandle(void *fdt);
+diff --git a/system/device_tree.c b/system/device_tree.c
+index 1ea1962984..d2db7bd355 100644
+--- a/system/device_tree.c
++++ b/system/device_tree.c
+@@ -446,24 +446,22 @@ const void *qemu_fdt_getprop(void *fdt, const char *node_path,
+ }
+ 
+ uint32_t qemu_fdt_getprop_cell(void *fdt, const char *node_path,
+-                               const char *property, int *lenp, Error **errp)
++                               const char *property, int cell_id, Error **errp)
+ {
+     int len;
+     const uint32_t *p;
+ 
+-    if (!lenp) {
+-        lenp = &len;
+-    }
+-    p = qemu_fdt_getprop(fdt, node_path, property, lenp, errp);
++    p = qemu_fdt_getprop(fdt, node_path, property, &len, errp);
+     if (!p) {
+         return 0;
+-    } else if (*lenp != 4) {
+-        error_setg(errp, "%s: %s/%s not 4 bytes long (not a cell?)",
+-                   __func__, node_path, property);
+-        *lenp = -EINVAL;
++    }
++    if (len < (cell_id + 1) * 4) {
++        error_setg(errp,
++                   "%s: %s/%s is too short, need %d bytes for cell ind %d",
++                __func__, node_path, property, (cell_id + 1) * 4, cell_id);
+         return 0;
+     }
+-    return be32_to_cpu(*p);
++    return be32_to_cpu(p[cell_id]);
+ }
+ 
+ uint32_t qemu_fdt_get_phandle(void *fdt, const char *path)
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 2/33] system/device_tree: add few parsing and traversal
+ helpers
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:47 +0200
+Message-Id: <20260402215629.745866-3-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch adds few utility functions for parsing FDT nodes.
+The helpers are required for upcoming Hardware device tree
+feature.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ include/system/device_tree.h |  22 ++++
+ system/device_tree.c         | 194 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 216 insertions(+)
+
+diff --git a/include/system/device_tree.h b/include/system/device_tree.h
+index 5667ff9538..bc378d38d0 100644
+--- a/include/system/device_tree.h
++++ b/include/system/device_tree.h
+@@ -116,6 +116,11 @@ const void *qemu_fdt_getprop(void *fdt, const char *node_path,
+ uint32_t qemu_fdt_getprop_cell(void *fdt, const char *node_path,
+                                const char *property, int cell_id,
+                                Error **errp);
++
++const void *qemu_fdt_getprop_inherited(void *fdt, const char *node_path,
++                             const char *property, int *lenp, Error **errp);
++uint32_t qemu_fdt_getprop_cell_inherited(void *fdt, const char *node_path,
++                               const char *property, int cell_id, Error **errp);
+ uint32_t qemu_fdt_get_phandle(void *fdt, const char *path);
+ uint32_t qemu_fdt_alloc_phandle(void *fdt);
+ int qemu_fdt_nop_node(void *fdt, const char *node_path);
+@@ -191,6 +196,23 @@ int qemu_fdt_setprop_sized_cells_from_array(void *fdt,
+                                                 qdt_tmp);                 \
+     })
+ 
++/* node queries */
++
++int qemu_devtree_get_num_children(void *fdt, const char *node_path);
++int qemu_devtree_get_children(void *fdt, const char *node_path,
++                                     int max_paths, char **returned_paths);
++int qemu_devtree_num_props(void *fdt, const char *node_path);
++
++/* node getters */
++
++int qemu_devtree_get_node_by_phandle(void *fdt, char *node_path, int phandle);
++char *qemu_devtree_getparent(void *fdt, const char *current);
++
++/* misc */
++
++int devtree_get_num_nodes(void *fdt);
++
++#define DT_PATH_LENGTH 1024
+ 
+ /**
+  * qemu_fdt_randomize_seeds:
+diff --git a/system/device_tree.c b/system/device_tree.c
+index d2db7bd355..1a70223712 100644
+--- a/system/device_tree.c
++++ b/system/device_tree.c
+@@ -464,6 +464,96 @@ uint32_t qemu_fdt_getprop_cell(void *fdt, const char *node_path,
+     return be32_to_cpu(p[cell_id]);
+ }
+ 
++const void *qemu_fdt_getprop_inherited(void *fdt, const char *node_path,
++                             const char *property, int *lenp, Error **errp)
++{
++    const void *found_val = NULL;
++    int found_len = 0;
++    int curr_offset = 0;
++    int temp_len;
++    char **tokens;
++    char **iter;
++
++    found_val = fdt_getprop(fdt, 0, property, &found_len);
++
++    tokens = g_strsplit(node_path + 1, "/", -1);
++
++    for (iter = tokens; *iter != NULL; iter++) {
++        if (**iter == '\0') {
++            continue;
++        }
++
++        curr_offset = fdt_subnode_offset(fdt, curr_offset, *iter);
++        if (curr_offset < 0) {
++            error_setg(errp, "%s: Path '%s' not found",
++                       __func__, *iter);
++            g_strfreev(tokens);
++            return NULL;
++        }
++
++        const void *val = fdt_getprop(fdt, curr_offset, property, &temp_len);
++        if (val) {
++            found_val = val;
++            found_len = temp_len;
++        }
++    }
++    g_strfreev(tokens);
++
++    if (!found_val) {
++        error_setg(errp, "%s: Property '%s' not found",
++                   __func__, property);
++        return NULL;
++    }
++
++    if (lenp) {
++        *lenp = found_len;
++    }
++
++    return found_val;
++}
++
++uint32_t qemu_fdt_getprop_cell_inherited(void *fdt, const char *node_path,
++                               const char *property, int cell_id, Error **errp)
++{
++    int len;
++    const uint32_t *p;
++
++    p = qemu_fdt_getprop_inherited(fdt, node_path, property, &len, errp);
++    if (!p) {
++        return 0;
++    }
++    if (len < (cell_id + 1) * 4) {
++        error_setg(errp,
++                   "%s: %s/%s is too short, need %d bytes for cell ind %d",
++                   __func__, node_path, property, (cell_id + 1) * 4, cell_id);
++        return 0;
++    }
++    return be32_to_cpu(p[cell_id]);
++}
++
++char *qemu_devtree_getparent(void *fdt, const char *current)
++{
++    const char *sep;
++    int len;
++
++    if (!current || !strcmp(current, "/")) {
++        return NULL;
++    }
++
++    sep = strrchr(current, '/');
++    if (!sep) {
++        return NULL;
++    }
++
++    if (sep == current) {
++        len = 1;
++    } else {
++        len = sep - current;
++    }
++
++    return g_strndup(current, len);
++}
++
+ uint32_t qemu_fdt_get_phandle(void *fdt, const char *path)
+ {
+     uint32_t r;
+@@ -631,6 +721,110 @@ out:
+     return ret;
+ }
+ 
++int qemu_devtree_num_props(void *fdt, const char *node_path)
++{
++    int offset = fdt_path_offset(fdt, node_path);
++    int ret = 0;
++
++    for (offset = fdt_first_property_offset(fdt, offset);
++            offset != -FDT_ERR_NOTFOUND;
++            offset = fdt_next_property_offset(fdt, offset)) {
++        ret++;
++    }
++    return ret;
++}
++
++int qemu_devtree_get_children(void *fdt, const char *node_path,
++                                     int max_paths, char **returned_paths)
++{
++    int count = 0;
++    int subnode;
++    const char *name;
++    int offset = fdt_path_offset(fdt, node_path);
++
++    if (offset < 0) {
++        return offset;
++    }
++
++    bool is_root = (strcmp(node_path, "/") == 0);
++
++    fdt_for_each_subnode(subnode, fdt, offset) {
++        if (count >= max_paths) {
++            break;
++        }
++        name = fdt_get_name(fdt, subnode, NULL);
++        if (returned_paths) {
++            returned_paths[count] = g_strdup_printf("%s/%s",
++                                                is_root ? "" : node_path, name);
++        }
++
++        ++count;
++    }
++
++    return count;
++}
++
++int qemu_devtree_get_num_children(void *fdt, const char *node_path)
++{
++    int count = 0;
++    int subnode;
++    int offset = fdt_path_offset(fdt, node_path);
++
++    if (offset < 0) {
++        return offset;
++    }
++
++    fdt_for_each_subnode(subnode, fdt, offset) {
++        ++count;
++    }
++
++    return count;
++}
++
++int qemu_devtree_get_node_by_phandle(void *fdt, char *node_path, int phandle)
++{
++    int offset = 0, cur_depth = 0;
++    int path_lens[64] = { 0 };
++
++    for (offset = 0; offset >= 0; offset = fdt_next_node(fdt, offset,
++                                                         &cur_depth)) {
++        if (cur_depth >= 64) {
++            break;
++        }
++        const char *name = fdt_get_name(fdt, offset, NULL);
++
++        int parent_len = (cur_depth > 0) ? path_lens[cur_depth - 1] : 0;
++        int len = snprintf(node_path + parent_len,
++                             DT_PATH_LENGTH - parent_len,
++                             "%s%s",
++                             (parent_len > 1) ? "/" : "",
++                             (cur_depth == 0) ? "/" : name);
++
++        path_lens[cur_depth] = parent_len + len;
++
++        if (fdt_get_phandle(fdt, offset) == phandle) {
++            return 0;
++        }
++    }
++
++    return -FDT_ERR_NOTFOUND;
++}
++
++int devtree_get_num_nodes(void *fdt)
++{
++    int num_nodes = 0;
++    int depth = 0, offset = 0;
++
++    for (;;) {
++        offset = fdt_next_node(fdt, offset, &depth);
++        num_nodes++;
++        if (offset <= 0 || depth <= 0) {
++            break;
++        }
++    }
++    return num_nodes;
++}
++
+ void qmp_dumpdtb(const char *filename, Error **errp)
+ {
+     ERRP_GUARD();
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 3/33] util/log: add log entry for fdt generic utils
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:48 +0200
+Message-Id: <20260402215629.745866-4-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Introduce dedicated log mask for hardware device
+tree processing, to selectively enable diagnostic
+for FDT-based machine creation.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ include/qemu/log.h | 1 +
+ util/log.c         | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/include/qemu/log.h b/include/qemu/log.h
+index 92956e5d0f..8d48ee332a 100644
+--- a/include/qemu/log.h
++++ b/include/qemu/log.h
+@@ -38,6 +38,7 @@ bool qemu_log_separate(void);
+ #define CPU_LOG_TB_VPU     (1u << 21)
+ #define LOG_TB_OP_PLUGIN   (1u << 22)
+ #define LOG_INVALID_MEM    (1u << 23)
++#define LOG_FDT            (1u << 24)
+ 
+ /* Lock/unlock output. */
+ 
+diff --git a/util/log.c b/util/log.c
+index 7cffbc1bf8..d88a47394b 100644
+--- a/util/log.c
++++ b/util/log.c
+@@ -531,6 +531,7 @@ const QEMULogItem qemu_log_items[] = {
+       "include VPU registers in the 'cpu' logging" },
+     { LOG_INVALID_MEM, "invalid_mem",
+       "log invalid memory accesses" },
++    { LOG_FDT, "fdt", "log Device Tree info." },
+     { 0, NULL, NULL },
+ };
+ 
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 4/33] hw/core: introduce generic FDT device model
+ registry
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:49 +0200
+Message-Id: <20260402215629.745866-5-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Introduce infrastructure to instantiate device models
+directly from the device tree.
+
+This includes the registry of known device models with
+associated init functions and key API methods to
+operate it.
+
+The MIT license of fdt_generic.c preserved as in original
+file from https://github.com/Xilinx/qemu.git repo.
+
+The license for fdt_generic.h derived from matching
+fdt_generic.c file.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic.c         | 110 ++++++++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic.h |  61 +++++++++++++++++++
+ 2 files changed, 171 insertions(+)
+ create mode 100644 hw/core/fdt_generic.c
+ create mode 100644 include/hw/core/fdt_generic.h
+
+diff --git a/hw/core/fdt_generic.c b/hw/core/fdt_generic.c
+new file mode 100644
+index 0000000000..65e3c1efa3
+--- /dev/null
++++ b/hw/core/fdt_generic.c
+@@ -0,0 +1,110 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Tables of FDT device models and their init functions. Keyed by compatibility
++ * strings, device instance names.
++ *
++ * Copyright (c) 2010 PetaLogix Qld Pty Ltd.
++ * Copyright (c) 2010 Peter A. G. Crosthwaite <peter.crosthwaite@petalogix.com>.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/core/fdt_generic.h"
++#include "hw/core/qdev-properties.h"
++#include "qemu/log.h"
++
++
++#define FDT_GENERIC_MAX_PATTERN_LEN 1024
++
++typedef struct TableListNode {
++    struct TableListNode *next;
++    char key[FDT_GENERIC_MAX_PATTERN_LEN];
++    FDTInitFn fdt_init;
++    void *opaque;
++} TableListNode;
++
++/* add a node to the table specified by *head_p */
++
++static void add_to_table(
++        FDTInitFn fdt_init,
++        const char *key,
++        void *opaque,
++        TableListNode **head_p)
++{
++    TableListNode *nn = malloc(sizeof(*nn));
++    nn->next = *head_p;
++    strcpy(nn->key, key);
++    nn->fdt_init = fdt_init;
++    nn->opaque = opaque;
++    *head_p = nn;
++}
++
++/* FIXME: add return codes that differentiate between not found and error */
++
++/*
++ * search a table for a key string and call the fdt init function if found.
++ * Returns 0 if a match is found, 1 otherwise
++ */
++
++static int fdt_init_search_table(
++        char *node_path,
++        FDTMachineInfo *fdti,
++        const char *key, /* string to match */
++        TableListNode **head) /* head of the list to search */
++{
++    TableListNode *iter;
++
++    for (iter = *head; iter != NULL; iter = iter->next) {
++        if (!strcmp(key, iter->key)) {
++            if (iter->fdt_init) {
++                return iter->fdt_init(node_path, fdti, iter->opaque);
++            }
++            return 0;
++        }
++    }
++
++    return 1;
++}
++
++TableListNode *compat_list_head;
++
++void add_to_compat_table(FDTInitFn fdt_init, const char *compat, void *opaque)
++{
++    add_to_table(fdt_init, compat, opaque, &compat_list_head);
++}
++
++int fdt_init_compat(char *node_path, FDTMachineInfo *fdti, const char *compat)
++{
++    return fdt_init_search_table(node_path, fdti, compat, &compat_list_head);
++}
++
++TableListNode *inst_bind_list_head;
++
++void add_to_inst_bind_table(FDTInitFn fdt_init, const char *name, void *opaque)
++{
++    add_to_table(fdt_init, name, opaque, &inst_bind_list_head);
++}
++
++int fdt_init_inst_bind(char *node_path, FDTMachineInfo *fdti,
++        const char *name)
++{
++    return fdt_init_search_table(node_path, fdti, name, &inst_bind_list_head);
++}
+diff --git a/include/hw/core/fdt_generic.h b/include/hw/core/fdt_generic.h
+new file mode 100644
+index 0000000000..3d8ec2f7ff
+--- /dev/null
++++ b/include/hw/core/fdt_generic.h
+@@ -0,0 +1,61 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Tables of FDT device models and their init functions. Keyed by compatibility
++ * strings, device instance names.
++ */
++
++#ifndef FDT_GENERIC_H
++#define FDT_GENERIC_H
++
++#include "qemu/help-texts.h"
++#include "system/device_tree.h"
++
++typedef struct FDTMachineInfo FDTMachineInfo;
++
++typedef int (*FDTInitFn)(char *, FDTMachineInfo *, void *);
++
++/* associate a FDTInitFn with a FDT compatibility */
++
++void add_to_compat_table(FDTInitFn, const char *, void *);
++
++/*
++ * try and find a device model for a particular compatibility. If found,
++ * the FDTInitFn associated with the compat will be called and 0 will
++ * be returned. Returns non-zero on not found or error
++ */
++
++int fdt_init_compat(char *, FDTMachineInfo *, const char *);
++
++/* same as above, but associates with a FDT node name (rather than compat) */
++
++void add_to_inst_bind_table(FDTInitFn, const char *, void *);
++int fdt_init_inst_bind(char *, FDTMachineInfo *, const char *);
++
++/* statically register a FDTInitFn as being associate with a compatibility */
++
++#define fdt_register_compatibility_opaque(function, compat, n, opaque) \
++static void __attribute__((constructor)) \
++function ## n ## _register_imp(void) { \
++    add_to_compat_table(function, compat, opaque); \
++}
++
++#define fdt_register_compatibility_n(function, compat, n) \
++fdt_register_compatibility_opaque(function, compat, n, NULL)
++
++#define fdt_register_compatibility(function, compat) \
++fdt_register_compatibility_n(function, compat, 0)
++
++#define fdt_register_instance_opaque(function, inst, n, opaque) \
++static void __attribute__((constructor)) \
++function ## n ## _register_imp(void) { \
++    add_to_inst_bind_table(function, inst, opaque); \
++}
++
++#define fdt_register_instance_n(function, inst, n) \
++fdt_register_instance_opaque(function, inst, n, NULL)
++
++#define fdt_register_instance(function, inst) \
++fdt_register_instance_n(function, inst, 0)
++
++#endif /* FDT_GENERIC_H */
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 5/33] hw/core/fdt_generic: implement FDT machine
+ creation helpers
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:50 +0200
+Message-Id: <20260402215629.745866-6-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch adds infrastructure to parse device tree
+and associate fdt nodes and created objects.
+
+This will be used during instantiating machine from the
+devices tree.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic.c         | 71 +++++++++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic.h | 42 ++++++++++++++++++++-
+ 2 files changed, 112 insertions(+), 1 deletion(-)
+
+diff --git a/hw/core/fdt_generic.c b/hw/core/fdt_generic.c
+index 65e3c1efa3..da60de7a26 100644
+--- a/hw/core/fdt_generic.c
++++ b/hw/core/fdt_generic.c
+@@ -29,7 +29,10 @@
+ #include "qemu/osdep.h"
+ #include "hw/core/fdt_generic.h"
+ #include "hw/core/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "qemu/coroutine.h"
+ #include "qemu/log.h"
++#include "system/reset.h"
+ 
+ 
+ #define FDT_GENERIC_MAX_PATTERN_LEN 1024
+@@ -108,3 +111,71 @@ int fdt_init_inst_bind(char *node_path, FDTMachineInfo *fdti,
+ {
+     return fdt_init_search_table(node_path, fdti, name, &inst_bind_list_head);
+ }
++
++void fdt_init_yield(FDTMachineInfo *fdti)
++{
++    static int yield_index;
++    int this_yield = yield_index++;
++
++    qemu_log_mask(LOG_FDT, "Yield #%d\n", this_yield);
++    qemu_co_queue_wait(fdti->cq, NULL);
++    qemu_log_mask(LOG_FDT, "Unyield #%d\n", this_yield);
++}
++
++void fdt_init_set_opaque(FDTMachineInfo *fdti, const char *node_path,
++                         void *opaque)
++{
++    FDTDevOpaque *dp;
++    for (dp = fdti->dev_opaques;
++        dp->node_path && strcmp(dp->node_path, node_path);
++        dp++)
++        ;
++    if (!dp->node_path) {
++        dp->node_path = strdup(node_path);
++    }
++    dp->opaque = opaque;
++}
++
++int fdt_init_has_opaque(FDTMachineInfo *fdti, const char *node_path)
++{
++    FDTDevOpaque *dp;
++    for (dp = fdti->dev_opaques; dp->node_path; dp++) {
++        if (!strcmp(dp->node_path, node_path)) {
++            return 1;
++         }
++    }
++    return 0;
++}
++
++void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path)
++{
++    FDTDevOpaque *dp;
++    for (dp = fdti->dev_opaques; dp->node_path; dp++) {
++        if (!strcmp(dp->node_path, node_path)) {
++            return dp->opaque;
++        }
++    }
++    return NULL;
++}
++
++FDTMachineInfo *fdt_init_new_fdti(void *fdt)
++{
++    FDTMachineInfo *fdti = g_malloc0(sizeof(*fdti));
++    fdti->fdt = fdt;
++    fdti->cq = g_malloc0(sizeof(*(fdti->cq)));
++    qemu_co_queue_init(fdti->cq);
++    fdti->dev_opaques = g_malloc0(sizeof(*(fdti->dev_opaques)) *
++        (devtree_get_num_nodes(fdt) + 1));
++    return fdti;
++}
++
++void fdt_init_destroy_fdti(FDTMachineInfo *fdti)
++{
++    FDTDevOpaque *dp;
++
++    for (dp = fdti->dev_opaques; dp->node_path; dp++) {
++        g_free(dp->node_path);
++    }
++    g_free(fdti->dev_opaques);
++    g_free(fdti);
++}
+diff --git a/include/hw/core/fdt_generic.h b/include/hw/core/fdt_generic.h
+index 3d8ec2f7ff..d204ceda43 100644
+--- a/include/hw/core/fdt_generic.h
++++ b/include/hw/core/fdt_generic.h
+@@ -9,9 +9,33 @@
+ #define FDT_GENERIC_H
+ 
+ #include "qemu/help-texts.h"
++#include "hw/core/irq.h"
+ #include "system/device_tree.h"
++#include "qemu/coroutine.h"
++
++typedef struct FDTDevOpaque {
++    char *node_path;
++    void *opaque;
++} FDTDevOpaque;
++
++typedef struct FDTMachineInfo {
++    /* the fdt blob */
++    void *fdt;
++    /* irq descriptors for top level int controller */
++    qemu_irq *irq_base;
++    /* per-device specific opaques */
++    FDTDevOpaque *dev_opaques;
++    /* recheck coroutine queue */
++    CoQueue *cq;
++} FDTMachineInfo;
+ 
+-typedef struct FDTMachineInfo FDTMachineInfo;
++/*
++ * create a new FDTMachineInfo. The client is responsible for setting irq_base.
++ * Client must call fdt_init_destroy_fdti to cleanup
++ */
++
++FDTMachineInfo *fdt_init_new_fdti(void *fdt);
++void fdt_init_destroy_fdti(FDTMachineInfo *fdti);
+ 
+ typedef int (*FDTInitFn)(char *, FDTMachineInfo *, void *);
+ 
+@@ -32,6 +56,22 @@ int fdt_init_compat(char *, FDTMachineInfo *, const char *);
+ void add_to_inst_bind_table(FDTInitFn, const char *, void *);
+ int fdt_init_inst_bind(char *, FDTMachineInfo *, const char *);
+ 
++/*
++ * Called from FDTInitFn's to inform the framework that a dependency is
++ * unresolved and the calling context needs to wait for another device to
++ * instantiate first. The calling thread will suspend until a change in state
++ * in the argument fdt machine is detected.
++ */
++
++void fdt_init_yield(FDTMachineInfo *);
++
++/* set, check and get per device opaques. Keyed by fdt node_paths */
++
++void fdt_init_set_opaque(FDTMachineInfo *fdti, const char *node_path,
++                         void *opaque);
++int fdt_init_has_opaque(FDTMachineInfo *fdti, const char *node_path);
++void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path);
++
+ /* statically register a FDTInitFn as being associate with a compatibility */
+ 
+ #define fdt_register_compatibility_opaque(function, compat, n, opaque) \
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 6/33] hw/core/fdt_generic: add cpu clusters management
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:51 +0200
+Message-Id: <20260402215629.745866-7-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add support for grouping CPUs into clusters during
+FDT machine instantiation.
+
+The clusters are automatically created if CPU parent
+is not already an existing cluster.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic.c         | 78 +++++++++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic.h | 13 ++++++
+ 2 files changed, 91 insertions(+)
+
+diff --git a/hw/core/fdt_generic.c b/hw/core/fdt_generic.c
+index da60de7a26..ded11cd6c0 100644
+--- a/hw/core/fdt_generic.c
++++ b/hw/core/fdt_generic.c
+@@ -32,6 +32,7 @@
+ #include "migration/vmstate.h"
+ #include "qemu/coroutine.h"
+ #include "qemu/log.h"
++#include "hw/cpu/cluster.h"
+ #include "system/reset.h"
+ 
+ 
+@@ -158,6 +159,76 @@ void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path)
+     return NULL;
+ }
+ 
++static int get_next_cpu_cluster_id(void)
++{
++    static int i;
++
++    return i++;
++}
++
++void fdt_init_register_user_cpu_cluster(FDTMachineInfo *fdti, Object *cluster)
++{
++    int i = get_next_cpu_cluster_id();
++    DeviceState *dev = DEVICE(cluster);
++    FDTCPUCluster *cl;
++
++    qdev_prop_set_uint32(dev, "cluster-id", i);
++
++    cl = g_new0(FDTCPUCluster, 1);
++    cl->cpu_cluster = cluster;
++    cl->next = fdti->clusters;
++    cl->user = true;
++
++    fdti->clusters = cl;
++
++    qemu_log_mask(LOG_FDT,
++             "%s: Registered user-defined cpu cluster with id %d\n",
++             object_get_canonical_path(cluster), i);
++}
++
++static void *fdt_init_add_cpu_cluster(FDTMachineInfo *fdti, char *compat)
++{
++    FDTCPUCluster *cl = g_malloc0(sizeof(*cl));
++    int i = get_next_cpu_cluster_id();
++    char *name = g_strdup_printf("cluster%d", i);
++    Object *obj;
++
++    obj = object_new(TYPE_CPU_CLUSTER);
++    object_property_add_child(object_get_root(), name, OBJECT(obj));
++    qdev_prop_set_uint32(DEVICE(obj), "cluster-id", i);
++
++    cl->cpu_type = g_strdup(compat);
++    cl->cpu_cluster = obj;
++    cl->next = fdti->clusters;
++
++    fdti->clusters = cl;
++
++    g_free(name);
++
++    return obj;
++}
++
++void *fdt_init_get_cpu_cluster(FDTMachineInfo *fdti, Object *parent,
++                               char *compat)
++{
++    FDTCPUCluster *cl = fdti->clusters;
++
++    if (object_dynamic_cast(parent, TYPE_CPU_CLUSTER)) {
++        /* The direct parent of this CPU is a CPU cluster. Use it. */
++        return parent;
++    }
++
++    while (cl) {
++        if (!cl->user && !strcmp(compat, cl->cpu_type)) {
++            return cl->cpu_cluster;
++        }
++        cl = cl->next;
++    }
++
++    /* No cluster found so create and return a new one */
++    return fdt_init_add_cpu_cluster(fdti, compat);
++}
++
+ FDTMachineInfo *fdt_init_new_fdti(void *fdt)
+ {
+     FDTMachineInfo *fdti = g_malloc0(sizeof(*fdti));
+@@ -171,8 +242,15 @@ FDTMachineInfo *fdt_init_new_fdti(void *fdt)
+ 
+ void fdt_init_destroy_fdti(FDTMachineInfo *fdti)
+ {
++    FDTCPUCluster *cl = fdti->clusters;
+     FDTDevOpaque *dp;
+ 
++    while (cl) {
++        FDTCPUCluster *tmp = cl;
++        cl = cl->next;
++        g_free(tmp->cpu_type);
++        g_free(tmp);
++    }
+     for (dp = fdti->dev_opaques; dp->node_path; dp++) {
+         g_free(dp->node_path);
+     }
+diff --git a/include/hw/core/fdt_generic.h b/include/hw/core/fdt_generic.h
+index d204ceda43..05ab07e08c 100644
+--- a/include/hw/core/fdt_generic.h
++++ b/include/hw/core/fdt_generic.h
+@@ -18,6 +18,13 @@ typedef struct FDTDevOpaque {
+     void *opaque;
+ } FDTDevOpaque;
+ 
++typedef struct FDTCPUCluster {
++    char *cpu_type;
++    void *cpu_cluster;
++    void *next;
++    bool user;
++} FDTCPUCluster;
++
+ typedef struct FDTMachineInfo {
+     /* the fdt blob */
+     void *fdt;
+@@ -27,6 +34,8 @@ typedef struct FDTMachineInfo {
+     FDTDevOpaque *dev_opaques;
+     /* recheck coroutine queue */
+     CoQueue *cq;
++    /* list of all CPU clusters */
++    FDTCPUCluster *clusters;
+ } FDTMachineInfo;
+ 
+ /*
+@@ -72,6 +81,10 @@ void fdt_init_set_opaque(FDTMachineInfo *fdti, const char *node_path,
+ int fdt_init_has_opaque(FDTMachineInfo *fdti, const char *node_path);
+ void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path);
+ 
++void *fdt_init_get_cpu_cluster(FDTMachineInfo *fdti, Object *parent,
++                               char *compat);
++void fdt_init_register_user_cpu_cluster(FDTMachineInfo *fdti, Object *cluster);
++
+ /* statically register a FDTInitFn as being associate with a compatibility */
+ 
+ #define fdt_register_compatibility_opaque(function, compat, n, opaque) \
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 7/33] hw/core/fdt_generic_util: implement main fdt parse
+ routine
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:52 +0200
+Message-Id: <20260402215629.745866-8-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Implement main fdt_generic_create_machine() routine.
+
+As of now do the following:
+
+- parse each node and subnode in device tree
+- check node has correct compatible or device types
+- call fdt_init_qdev() which will eventually create
+  device object.
+
+The MIT license of fdt_generic_util.c preserved as in original
+file from https://github.com/Xilinx/qemu.git repo.
+
+The license for fdt_generic_util.h derived from matching
+fdt_generic_util.c file.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c         | 233 +++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic_util.h |  19 +++
+ 2 files changed, 252 insertions(+)
+ create mode 100644 hw/core/fdt_generic_util.c
+ create mode 100644 include/hw/core/fdt_generic_util.h
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+new file mode 100644
+index 0000000000..2f7a3fc3dd
+--- /dev/null
++++ b/hw/core/fdt_generic_util.c
+@@ -0,0 +1,233 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Utility functions for fdt generic framework
++ *
++ * Copyright (c) 2009 Edgar E. Iglesias.
++ * Copyright (c) 2009 Michal Simek.
++ * Copyright (c) 2011 PetaLogix Qld Pty Ltd.
++ * Copyright (c) 2011 Peter A. G. Crosthwaite <peter.crosthwaite@petalogix.com>.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/core/fdt_generic_util.h"
++#include "system/memory.h"
++#include "system/address-spaces.h"
++#include "hw/core/sysbus.h"
++#include "qapi/error.h"
++#include "qemu/error-report.h"
++#include "system/system.h"
++#include "system/reset.h"
++#include "qemu/cutils.h"
++#include "qemu/log.h"
++#include "qemu/config-file.h"
++#include "hw/core/boards.h"
++#include "qemu/option.h"
++
++#define fdt_debug(...) do { \
++    qemu_log_mask(LOG_FDT, ": %s: ", __func__); \
++    qemu_log_mask(LOG_FDT, ## __VA_ARGS__); \
++} while (0)
++
++#define fdt_debug_np(...) do { \
++    qemu_log_mask(LOG_FDT, "%s", node_path); \
++    fdt_debug(__VA_ARGS__); \
++} while (0)
++
++/* FIXME: wrap direct calls into libfdt */
++
++#include <libfdt.h>
++#include <stdlib.h>
++
++static int fdt_generic_num_cpus;
++
++static int simple_bus_fdt_init(const char *bus_node_path, FDTMachineInfo *fdti);
++
++FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
++{
++    FDTMachineInfo *fdti = fdt_init_new_fdti(fdt);
++
++    fdti->irq_base = cpu_irq;
++
++    /* parse the device tree */
++    memory_region_transaction_begin();
++    fdt_init_set_opaque(fdti, "/", NULL);
++    simple_bus_fdt_init("/", fdti);
++    while (qemu_co_enter_next(fdti->cq, NULL)) {
++        ;
++    }
++    memory_region_transaction_commit();
++
++    /* FIXME: Populate these from DTS and create CPU clusters.  */
++    current_machine->smp.cores = fdt_generic_num_cpus;
++    current_machine->smp.cpus = fdt_generic_num_cpus;
++    current_machine->smp.max_cpus = fdt_generic_num_cpus;
++
++    fdt_debug("FDT: Device tree scan complete\n");
++    return fdti;
++}
++
++struct FDTInitNodeArgs {
++    char *node_path;
++    char *parent_path;
++    FDTMachineInfo *fdti;
++};
++
++static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat);
++
++static int check_compat(const char *prefix, const char *compat,
++                        char *node_path, FDTMachineInfo *fdti)
++{
++    char *compat_prefixed = g_strconcat(prefix, compat, NULL);
++    const int done = !fdt_init_compat(node_path, fdti, compat_prefixed);
++    g_free(compat_prefixed);
++    return done;
++}
++
++static void fdt_init_node(void *args)
++{
++    struct FDTInitNodeArgs *a = args;
++    char *node_path = a->node_path;
++    FDTMachineInfo *fdti = a->fdti;
++    g_free(a);
++
++    simple_bus_fdt_init(node_path, fdti);
++
++    const char *prop;
++    char *all_compats = NULL, *node_name;
++    char *device_type = NULL;
++    int prop_len;
++
++    fdt_debug_np("enter\n");
++
++    /* try instance binding first */
++    node_name = strrchr(node_path, '/') + 1;
++    fdt_debug_np("node with name: %s\n", node_name ? node_name : "(none)");
++    if (!node_name) {
++        fdt_debug("FDT: ERROR: nameless node: %s\n", node_path);
++    }
++    if (!fdt_init_inst_bind(node_path, fdti, node_name)) {
++        fdt_debug_np("instance bind successful\n");
++        goto exit;
++    }
++
++    /* fallback to compatibility binding */
++    prop = qemu_fdt_getprop(fdti->fdt, node_path, "compatible",
++                                       &prop_len, NULL);
++    all_compats = g_memdup2(prop, prop_len);
++    if (all_compats) {
++        char *compat = all_compats;
++        char * const end = &all_compats[prop_len - 1]; /* points to nul */
++
++        while (compat < end) {
++            if (check_compat("compatible:", compat, node_path, fdti)) {
++                goto exit;
++            }
++
++            if (!fdt_init_qdev(node_path, fdti, compat)) {
++                check_compat("postinit:", compat, node_path, fdti);
++                goto exit;
++            }
++
++            /* Scan forward to the end of the current compat. */
++            while (compat < end && *compat) {
++                ++compat;
++            }
++
++            /* Replace nul with space for the debug printf below. */
++            if (compat < end) {
++                *compat++ = ' ';
++            }
++        };
++    } else {
++        fdt_debug_np("no compatibility found\n");
++    }
++
++    /*
++     * Try to create the device using device_type property
++     * Not every device tree node has compatible  property, so
++     * try with device_type.
++     */
++    prop = qemu_fdt_getprop(fdti->fdt, node_path,
++                            "device_type", &prop_len, NULL);
++    device_type = g_memdup2(prop, prop_len);
++    if (device_type) {
++        if (check_compat("device_type:", device_type, node_path, fdti)) {
++            goto exit;
++        }
++
++        if (!fdt_init_qdev(node_path, fdti, device_type)) {
++            goto exit;
++        }
++    }
++
++    if (all_compats) {
++        fdt_debug_np("FDT: Unsupported peripheral invalidated - "
++                    "compatibilities %s\n", all_compats);
++        qemu_fdt_setprop_string(fdti->fdt, node_path, "compatible",
++                                "invalidated");
++    }
++exit:
++
++    fdt_debug_np("exit\n");
++
++    if (!fdt_init_has_opaque(fdti, node_path)) {
++        fdt_init_set_opaque(fdti, node_path, NULL);
++    }
++    g_free(node_path);
++    g_free(all_compats);
++    g_free(device_type);
++    return;
++}
++
++static int simple_bus_fdt_init(const char *node_path, FDTMachineInfo *fdti)
++{
++    int i;
++    char **children;
++    int num_children = qemu_devtree_get_num_children(fdti->fdt, node_path);
++
++    if (num_children <= 0) {
++        return 0;
++    }
++
++    children = g_malloc0(sizeof(*children) * num_children);
++
++    num_children = qemu_devtree_get_children(fdti->fdt, node_path, num_children,
++                                             children);
++
++    fdt_debug_np("num child devices: %d\n", num_children);
++
++    for (i = 0; i < num_children; i++) {
++        struct FDTInitNodeArgs *init_args = g_malloc0(sizeof(*init_args));
++        init_args->node_path = children[i];
++        init_args->fdti = fdti;
++        qemu_coroutine_enter(qemu_coroutine_create(fdt_init_node, init_args));
++    }
++
++    g_free(children);
++    return 0;
++}
++
++static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
++{
++    return 0;
++}
++
+diff --git a/include/hw/core/fdt_generic_util.h b/include/hw/core/fdt_generic_util.h
+new file mode 100644
+index 0000000000..71bedb6631
+--- /dev/null
++++ b/include/hw/core/fdt_generic_util.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: MIT */
++
++#ifndef FDT_GENERIC_UTIL_H
++#define FDT_GENERIC_UTIL_H
++
++#include "qemu/help-texts.h"
++#include "fdt_generic.h"
++#include "system/memory.h"
++#include "qom/object.h"
++
++/*
++ * create a fdt_generic machine. the top level cpu irqs are required for
++ * systems instantiating interrupt devices. The client is responsible for
++ * destroying the returned FDTMachineInfo (using fdt_init_destroy_fdti)
++ */
++
++FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq);
++
++#endif /* FDT_GENERIC_UTIL_H */
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 8/33] hw/core/fdt_generic_util: implement fdt_init_qdev
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:53 +0200
+Message-Id: <20260402215629.745866-9-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Implement main routine to create device object from
+compat.
+
+The following steps implemented:
+
+- parse node compatible and device types
+- try to create object from compat
+- set correct parent based on device tree.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 120 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 120 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 2f7a3fc3dd..565f577238 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -41,6 +41,7 @@
+ #include "qemu/config-file.h"
+ #include "hw/core/boards.h"
+ #include "qemu/option.h"
++#include "hw/cpu/cluster.h"
+ 
+ #define fdt_debug(...) do { \
+     qemu_log_mask(LOG_FDT, ": %s: ", __func__); \
+@@ -226,8 +227,127 @@ static int simple_bus_fdt_init(const char *node_path, FDTMachineInfo *fdti)
+     return 0;
+ }
+ 
++static inline const char *trim_vendor(const char *s)
++{
++    /* FIXME: be more intelligent */
++    const char *ret = memchr(s, ',', strlen(s));
++    return ret ? ret + 1 : s;
++}
++
++static Object *fdt_create_from_compat(const char *compat)
++{
++    Object *ret = NULL;
++
++    /* Try to create the object */
++    ret = object_new(compat);
++    if (!ret) {
++        const char *no_vendor = trim_vendor(compat);
++
++        if (no_vendor != compat) {
++            return fdt_create_from_compat(no_vendor);
++        }
++    }
++    return ret;
++}
++
++static void fdt_init_parent_node(Object *dev, Object *parent, char *node_path)
++{
++    if (dev->parent) {
++        fdt_debug_np("Node already parented - skipping node\n");
++    } else if (parent) {
++        fdt_debug_np("parenting node\n");
++        object_property_add_child(OBJECT(parent),
++                              strdup(strrchr(node_path, '/') + 1),
++                              OBJECT(dev));
++        if (object_dynamic_cast(dev, TYPE_DEVICE)) {
++            Object *parent_bus = parent;
++            unsigned int depth = 0;
++
++            fdt_debug_np("bus parenting node\n");
++            /* Look for an FDT ancestor that is a Bus.  */
++            while (parent_bus && !object_dynamic_cast(parent_bus, TYPE_BUS)) {
++                /*
++                 * Assert against insanely deep hierarchies which are an
++                 * indication of loops.
++                 */
++                assert(depth < 4096);
++
++                parent_bus = parent_bus->parent;
++                depth++;
++            }
++
++            if (!parent_bus
++                && object_dynamic_cast(OBJECT(dev), TYPE_SYS_BUS_DEVICE)) {
++                /*
++                 * Didn't find any bus. Use the default sysbus one.
++                 * This allows ad-hoc busses belonging to sysbus devices to be
++                 * visible to -device bus=x.
++                 */
++                parent_bus = OBJECT(sysbus_get_default());
++            }
++
++            if (parent_bus) {
++                qdev_set_parent_bus(DEVICE(dev), BUS(parent_bus),
++                                    &error_abort);
++            }
++        }
++    } else {
++        fdt_debug_np("orphaning node\n");
++        if (object_dynamic_cast(OBJECT(dev), TYPE_SYS_BUS_DEVICE)) {
++            qdev_set_parent_bus(DEVICE(dev), BUS(sysbus_get_default()),
++                                &error_abort);
++        }
++
++        /* FIXME: Make this go away (centrally) */
++        object_property_add_child(
++                              object_get_root(),
++                              strrchr(node_path, '/') + 1,
++                              OBJECT(dev));
++    }
++}
++
+ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ {
++    Object *dev, *parent;
++    char *parent_node_path;
++
++    if (!compat) {
++        return 1;
++    }
++    dev = fdt_create_from_compat(compat);
++    if (!dev) {
++        fdt_debug_np("no match found for %s\n", compat);
++        return 1;
++    }
++    fdt_debug_np("matched compat %s\n", compat);
++
++    /* Do this super early so fdt_generic_num_cpus is correct ASAP */
++    if (object_dynamic_cast(dev, TYPE_CPU)) {
++        fdt_generic_num_cpus++;
++        fdt_debug_np("is a CPU - total so far %d\n", fdt_generic_num_cpus);
++    }
++
++    parent_node_path = qemu_devtree_getparent(fdti->fdt, node_path);
++    if (!parent_node_path) {
++        abort();
++    }
++    while (!fdt_init_has_opaque(fdti, parent_node_path) &&
++           !object_dynamic_cast(dev, TYPE_CPU)) {
++        fdt_init_yield(fdti);
++    }
++
++    parent = fdt_init_get_opaque(fdti, parent_node_path);
++
++    if (object_dynamic_cast(dev, TYPE_CPU)) {
++        parent = fdt_init_get_cpu_cluster(fdti, parent, compat);
++    }
++
++    fdt_init_parent_node(dev, parent, node_path);
++
++    fdt_init_set_opaque(fdti, node_path, dev);
++
++    g_free(parent_node_path);
++
+     return 0;
+ }
+ 
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 9/33] qdev: Add qdev_prop_get_array_elem_type() helper
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:54 +0200
+Message-Id: <20260402215629.745866-10-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add a helper function to retrieve the element type of a qdev
+array property.
+
+This is required to initialize objects from a HW device tree,
+as neither device tree properties nor object's property array
+reveal underlying property type.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/qdev-properties.c         | 12 ++++++++++++
+ include/hw/core/qdev-properties.h |  1 +
+ 2 files changed, 13 insertions(+)
+
+diff --git a/hw/core/qdev-properties.c b/hw/core/qdev-properties.c
+index ba8461e9a4..f92ccc35d8 100644
+--- a/hw/core/qdev-properties.c
++++ b/hw/core/qdev-properties.c
+@@ -950,6 +950,18 @@ void qdev_prop_set_array(DeviceState *dev, const char *name, QList *values)
+     qobject_unref(values);
+ }
+ 
++const char *qdev_prop_get_array_elem_type(DeviceState *dev, const char *name)
++{
++    const Property *prop;
++
++    prop = qdev_prop_find(dev, name);
++    if (!prop || prop->info != &qdev_prop_array) {
++        return NULL;
++    }
++
++    return prop->arrayinfo->type;
++}
++
+ static GPtrArray *global_props(void)
+ {
+     static GPtrArray *gp;
+diff --git a/include/hw/core/qdev-properties.h b/include/hw/core/qdev-properties.h
+index d8745d4c65..19fed85248 100644
+--- a/include/hw/core/qdev-properties.h
++++ b/include/hw/core/qdev-properties.h
+@@ -218,6 +218,7 @@ void qdev_prop_set_enum(DeviceState *dev, const char *name, int value);
+ 
+ /* Takes ownership of @values */
+ void qdev_prop_set_array(DeviceState *dev, const char *name, QList *values);
++const char *qdev_prop_get_array_elem_type(DeviceState *dev, const char *name);
+ 
+ void *object_field_prop_ptr(Object *obj, const Property *prop);
+ 
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 10/33] qom/object: export object_resolve_link()
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:55 +0200
+Message-Id: <20260402215629.745866-11-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Export `object_resovle_link()` for use by other
+subsystems.
+
+This allow callers to resolve object path and verify
+type contrains of a link property.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ include/qom/object.h | 12 ++++++++++++
+ qom/object.c         |  2 +-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/include/qom/object.h b/include/qom/object.h
+index 26df6137b9..1573d41d4f 100644
+--- a/include/qom/object.h
++++ b/include/qom/object.h
+@@ -2034,6 +2034,18 @@ int object_child_foreach_recursive(Object *obj,
+  */
+ Object *object_property_add_new_container(Object *obj, const char *name);
+ 
++/*
++ * object_resolve_link:
++ *
++ * Lookup an object and ensure its type matches the link property type.  This
++ * is similar to object_resolve_path() except type verification against the
++ * link property is performed.
++ *
++ * Returns: The matched object or NULL on path lookup failures.
++ */
++Object *object_resolve_link(Object *obj, const char *name,
++    const char *path, Error **errp);
++
+ /**
+  * object_property_help:
+  * @name: the name of the property
+diff --git a/qom/object.c b/qom/object.c
+index ff8ede8a32..7e16765cb4 100644
+--- a/qom/object.c
++++ b/qom/object.c
+@@ -1904,7 +1904,7 @@ static void object_get_link_property(Object *obj, Visitor *v,
+  *
+  * Returns: The matched object or NULL on path lookup failures.
+  */
+-static Object *object_resolve_link(Object *obj, const char *name,
++Object *object_resolve_link(Object *obj, const char *name,
+                                    const char *path, Error **errp)
+ {
+     const char *type;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 11/33] hw/core/fdt_generic_util: initilize qdev
+ properties from fdt
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:56 +0200
+Message-Id: <20260402215629.745866-12-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch adds possibility to read and parse device tree
+node properties and set them to newly created object.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 236 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 236 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 565f577238..6f0a1e1e4b 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -41,7 +41,9 @@
+ #include "qemu/config-file.h"
+ #include "hw/core/boards.h"
+ #include "qemu/option.h"
++#include "hw/core/qdev-properties.h"
+ #include "hw/cpu/cluster.h"
++#include "qobject/qlist.h"
+ 
+ #define fdt_debug(...) do { \
+     qemu_log_mask(LOG_FDT, ": %s: ", __func__); \
+@@ -250,6 +252,238 @@ static Object *fdt_create_from_compat(const char *compat)
+     return ret;
+ }
+ 
++/*FIXME: roll into device tree functionality */
++
++static inline uint64_t get_int_be(const void *p, int len)
++{
++    switch (len) {
++    case 1:
++        return *((uint8_t *)p);
++    case 2:
++        return be16_to_cpu(*((uint16_t *)p));
++    case 4:
++        return be32_to_cpu(*((uint32_t *)p));
++    case 8:
++        return be32_to_cpu(*((uint64_t *)p));
++    default:
++        fprintf(stderr, "unsupported integer length\n");
++        abort();
++    }
++}
++
++static void fdt_init_qdev_link_prop(Object *obj, ObjectProperty *p,
++                                    FDTMachineInfo *fdti,
++                                    const char *node_path,
++                                    const char *propname, const void* val,
++                                    int len)
++{
++    Object *linked_dev;
++    char target_node_path[DT_PATH_LENGTH];
++    Error *errp = NULL;
++
++    if (qemu_devtree_get_node_by_phandle(fdti->fdt, target_node_path,
++                                         get_int_be(val, len))) {
++        error_report("FDT: Invalid phandle in property '%s' of node '%s'",
++                     propname, node_path);
++        return;
++    }
++
++    while (!fdt_init_has_opaque(fdti, target_node_path)) {
++        fdt_init_yield(fdti);
++    }
++
++    linked_dev = fdt_init_get_opaque(fdti, target_node_path);
++
++    object_property_set_link(obj, propname, linked_dev, &errp);
++    if (!errp) {
++        fdt_debug_np("set link %s\n", propname);
++        return;
++    }
++
++    error_free(errp);
++    errp = NULL;
++
++    if (object_dynamic_cast(linked_dev, TYPE_DEVICE)) {
++        BusState *child_bus;
++
++        /* Check if target has a child bus that satisfies the link type */
++        QLIST_FOREACH(child_bus, &DEVICE(linked_dev)->child_bus, sibling) {
++            object_property_set_link(obj, propname, OBJECT(child_bus), &errp);
++            if (!errp) {
++                fdt_debug_np("found matching bus link %s\n",
++                                child_bus->name);
++                return;
++            }
++
++            error_free(errp);
++            errp = NULL;
++        }
++    }
++
++    fdt_debug_np("failed to set link %s\n", propname);
++}
++
++static void fdt_init_qdev_scalar_prop(Object *obj, ObjectProperty *p,
++                                      FDTMachineInfo *fdti,
++                                      const char *node_path,
++                                      const char *propname, const void* val,
++                                      int len)
++{
++
++    /* FIXME: handle generically using accessors and stuff */
++    if (!strncmp(p->type, "link", 4)) {
++        fdt_init_qdev_link_prop(obj, p, fdti, node_path, propname, val, len);
++        return;
++    }
++
++    if (!strcmp(p->type, "uint8") || !strcmp(p->type, "uint16") ||
++        !strcmp(p->type, "uint32") || !strcmp(p->type, "uint64") ||
++        !strcmp(p->type, "int8") || !strcmp(p->type, "int16") ||
++        !strcmp(p->type, "int32") || !strcmp(p->type, "int64")) {
++        object_property_set_int(obj, propname,
++                                get_int_be(val, len), &error_abort);
++        fdt_debug_np("set property %s to 0x%llx\n", propname,
++                    (unsigned long long)get_int_be(val, len));
++        return;
++    }
++
++    if (!strcmp(p->type, "boolean") || !strcmp(p->type, "bool")) {
++        object_property_set_bool(obj, propname,
++                                 !!get_int_be(val, len), &error_abort);
++        fdt_debug_np("set property %s to %s\n", propname,
++                    get_int_be(val, len) ? "true" : "false");
++        return;
++    }
++
++    if (!strcmp(p->type, "string") || !strcmp(p->type, "str")) {
++        object_property_set_str(obj, propname,
++                                (const char *)val, &error_abort);
++        fdt_debug_np("set property %s to %s\n", propname, (const char *)val);
++        return;
++    }
++
++    fdt_debug_np("WARNING: property is of unknown type\n");
++}
++
++static size_t fdt_array_elem_len(FDTMachineInfo *fdti,
++                                 const char *node_path,
++                                 const char *propname)
++{
++    g_autofree char *elem_cells_propname = NULL;
++    Error *err = NULL;
++    uint32_t elem_cells;
++
++    /*
++     * Default element size to 1 uint32_t cell, unless it is explicitly
++     * given in the same FDT node (not inherited).
++     */
++    elem_cells_propname = g_strconcat("#", propname, "-cells", NULL);
++    elem_cells = qemu_fdt_getprop_cell(fdti->fdt, node_path,
++                                       elem_cells_propname, 0, &err);
++
++    return (err ? 1 : elem_cells) * 4;
++}
++
++static void fdt_init_qdev_array_prop(Object *obj,
++                                     FDTMachineInfo *fdti,
++                                     const char *node_path,
++                                     const char *propname,
++                                     const void *value,
++                                     int len)
++{
++    int nr = len;
++    uint32_t elem_len;
++    QList *qlist = qlist_new();
++    const char *prop_type;
++    const void *prop_value = value;
++
++    if (!value || !nr) {
++        return;
++    }
++
++    elem_len = fdt_array_elem_len(fdti, node_path, propname);
++    if (nr % elem_len) {
++        return;
++    }
++
++    nr /= elem_len;
++
++    prop_type = qdev_prop_get_array_elem_type(DEVICE(obj), propname);
++    if (!prop_type) {
++        fdt_debug_np("fail to get property array elem type\n");
++        return;
++    }
++
++    while (nr--) {
++        if (!strcmp(prop_type, "uint8") || !strcmp(prop_type, "uint16") ||
++            !strcmp(prop_type, "uint32") || !strcmp(prop_type, "uint64") ||
++            !strcmp(prop_type, "int8") || !strcmp(prop_type, "int16") ||
++            !strcmp(prop_type, "int32") || !strcmp(prop_type, "int64")) {
++                qlist_append_int(qlist, get_int_be(prop_value, elem_len));
++        } else if (!strcmp(prop_type, "boolean") ||
++                                            !strcmp(prop_type, "bool")) {
++            qlist_append_bool(qlist, !!get_int_be(prop_value, elem_len));
++        } else if (!strcmp(prop_type, "string") || !strcmp(prop_type, "str")) {
++            qlist_append_str(qlist, (const char *)prop_value);
++        }
++
++        prop_value += elem_len;
++
++        /* TBD: add link type support */
++    }
++
++    qdev_prop_set_array(DEVICE(obj), propname, qlist);
++    fdt_debug_np("set property %s propname to <list>\n", propname);
++}
++
++static void fdt_init_qdev_properties(char *node_path, FDTMachineInfo *fdti,
++                                     Object *dev)
++{
++    int node_offset, prop_offset;
++
++    node_offset = fdt_path_offset(fdti->fdt, node_path);
++    if (node_offset < 0) {
++        return;
++    }
++
++    fdt_for_each_property_offset(prop_offset, fdti->fdt, node_offset) {
++        const char *fdt_propname;
++        const void *value;
++        const char *propname;
++        int len;
++        ObjectProperty *p = NULL;
++
++        value = fdt_getprop_by_offset(fdti->fdt, prop_offset,
++                               &fdt_propname, &len);
++        if (!value) {
++            continue;
++        }
++
++        propname = trim_vendor(fdt_propname);
++
++        p = object_property_find(dev, propname);
++        if (p) {
++            fdt_debug_np("matched property: %s of type %s, len %d\n",
++                                            propname, p->type, len);
++        }
++        if (!p) {
++            continue;
++        }
++
++        if (!strcmp(p->type, "list")) {
++            fdt_init_qdev_array_prop(dev, fdti, node_path,
++                                     propname, value, len);
++        }
++
++        if (!strcmp(propname, "type")) {
++            continue;
++        }
++
++        fdt_init_qdev_scalar_prop(dev, p, fdti, node_path,
++                                  propname, value, len);
++    }
++}
++
+ static void fdt_init_parent_node(Object *dev, Object *parent, char *node_path)
+ {
+     if (dev->parent) {
+@@ -346,6 +580,8 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ 
+     fdt_init_set_opaque(fdti, node_path, dev);
+ 
++    fdt_init_qdev_properties(node_path, fdti, dev);
++
+     g_free(parent_node_path);
+ 
+     return 0;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 12/33] hw/core/fdt_generic_util: actually realize device
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:57 +0200
+Message-Id: <20260402215629.745866-13-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Actually realize objects with TYPE_DEVICE after main
+allocations done and properties set for qdev.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 6f0a1e1e4b..8ae9e23073 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -540,6 +540,34 @@ static void fdt_init_parent_node(Object *dev, Object *parent, char *node_path)
+     }
+ }
+ 
++static void fdt_init_device_realize(FDTMachineInfo *fdti,  char *node_path,
++                                   Object *dev)
++{
++    if (object_dynamic_cast(dev, TYPE_DEVICE)) {
++        DeviceClass *dc = DEVICE_GET_CLASS(dev);
++        const char *short_name = strrchr(node_path, '/') + 1;
++
++        /* Regular TYPE_DEVICE houskeeping */
++        fdt_debug_np("Short naming node: %s\n", short_name);
++        (DEVICE(dev))->id = g_strdup(short_name);
++
++        if (object_dynamic_cast(dev, TYPE_CPU_CLUSTER)) {
++            /*
++             * CPU clusters must be realized at the end to make sure all child
++             * CPUs are parented.
++             */
++            fdt_init_register_user_cpu_cluster(fdti, OBJECT(dev));
++        } else {
++            object_property_set_bool(OBJECT(dev), "realized", true,
++                                     &error_fatal);
++            if (dc->legacy_reset) {
++                qemu_register_reset((void (*)(void *))dc->legacy_reset,
++                                    dev);
++            }
++        }
++    }
++}
++
+ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ {
+     Object *dev, *parent;
+@@ -582,6 +610,8 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ 
+     fdt_init_qdev_properties(node_path, fdti, dev);
+ 
++    fdt_init_device_realize(fdti, node_path, dev);
++
+     g_free(parent_node_path);
+ 
+     return 0;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 13/33] hw/core/fdt_generic_util: add
+ TYPE_FDT_GENERIC_MMAP
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:58 +0200
+Message-Id: <20260402215629.745866-14-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add new FDT_GENERIC_MMAP class and interface to allow
+devices to register own handlers for mapping memory
+regions in device tree's 'reg' property.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c         | 11 ++++++++
+ include/hw/core/fdt_generic_util.h | 44 ++++++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 8ae9e23073..8f91bcb66c 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -617,3 +617,14 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+     return 0;
+ }
+ 
++static const TypeInfo fdt_generic_mmap_info = {
++    .name          = TYPE_FDT_GENERIC_MMAP,
++    .parent        = TYPE_INTERFACE,
++    .class_size = sizeof(FDTGenericMMapClass),
++};
++
++static void fdt_generic_register_types(void)
++{
++    type_register_static(&fdt_generic_mmap_info);
++}
++type_init(fdt_generic_register_types)
+diff --git a/include/hw/core/fdt_generic_util.h b/include/hw/core/fdt_generic_util.h
+index 71bedb6631..e3671990ad 100644
+--- a/include/hw/core/fdt_generic_util.h
++++ b/include/hw/core/fdt_generic_util.h
+@@ -16,4 +16,48 @@
+ 
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq);
+ 
++#define TYPE_FDT_GENERIC_MMAP "fdt-generic-mmap"
++
++#define FDT_GENERIC_MMAP_CLASS(klass) \
++     OBJECT_CLASS_CHECK(FDTGenericMMapClass, (klass), TYPE_FDT_GENERIC_MMAP)
++#define FDT_GENERIC_MMAP_GET_CLASS(obj) \
++    OBJECT_GET_CLASS(FDTGenericMMapClass, (obj), TYPE_FDT_GENERIC_MMAP)
++#define FDT_GENERIC_MMAP(obj) \
++     INTERFACE_CHECK(FDTGenericMMap, (obj), TYPE_FDT_GENERIC_MMAP)
++
++typedef struct FDTGenericMMap {
++    /*< private >*/
++    Object parent_obj;
++} FDTGenericMMap;
++
++/*
++ * The number of "things" in the tuple. Not to be confused with the cell length
++ * of the tuple (which is variable based on content
++ */
++
++#define FDT_GENERIC_REG_TUPLE_LENGTH 4
++
++typedef struct FDTGenericRegPropInfo {
++    int n;
++    union {
++        struct {
++            uint64_t *a;
++            uint64_t *s;
++            uint64_t *b;
++            uint64_t *p;
++        };
++        uint64_t *x[FDT_GENERIC_REG_TUPLE_LENGTH];
++    };
++    Object **parents;
++} FDTGenericRegPropInfo;
++
++typedef struct FDTGenericMMapClass {
++    /*< private >*/
++    InterfaceClass parent_class;
++
++    /*< public >*/
++    bool (*parse_reg)(FDTGenericMMap *obj, FDTGenericRegPropInfo info,
++                      Error **errp);
++} FDTGenericMMapClass;
++
+ #endif /* FDT_GENERIC_UTIL_H */
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 14/33] hw/core/fdt_generic_util: add
+ TYPE_FDT_GENERIC_INTC
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:55:59 +0200
+Message-Id: <20260402215629.745866-15-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add TYPE_FDT_GENERIC_INTC class and interface to allow
+interrupt controllers to register callback which can
+be used to get IRQ's from this controller.
+
+Optionally, interrupt controllers may also provide
+auto_parent() callabck which can be used to attach
+it to corresponding CPU's or other interrupt parent.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c         |  7 ++++
+ include/hw/core/fdt_generic_util.h | 59 ++++++++++++++++++++++++++++++
+ 2 files changed, 66 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 8f91bcb66c..d816e395fd 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -617,6 +617,12 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+     return 0;
+ }
+ 
++static const TypeInfo fdt_generic_intc_info = {
++    .name          = TYPE_FDT_GENERIC_INTC,
++    .parent        = TYPE_INTERFACE,
++    .class_size = sizeof(FDTGenericIntcClass),
++};
++
+ static const TypeInfo fdt_generic_mmap_info = {
+     .name          = TYPE_FDT_GENERIC_MMAP,
+     .parent        = TYPE_INTERFACE,
+@@ -625,6 +631,7 @@ static const TypeInfo fdt_generic_mmap_info = {
+ 
+ static void fdt_generic_register_types(void)
+ {
++    type_register_static(&fdt_generic_intc_info);
+     type_register_static(&fdt_generic_mmap_info);
+ }
+ type_init(fdt_generic_register_types)
+diff --git a/include/hw/core/fdt_generic_util.h b/include/hw/core/fdt_generic_util.h
+index e3671990ad..c92c79dd12 100644
+--- a/include/hw/core/fdt_generic_util.h
++++ b/include/hw/core/fdt_generic_util.h
+@@ -16,6 +16,65 @@
+ 
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq);
+ 
++#define TYPE_FDT_GENERIC_INTC "fdt-generic-intc"
++
++#define FDT_GENERIC_INTC_CLASS(klass) \
++     OBJECT_CLASS_CHECK(FDTGenericIntcClass, (klass), TYPE_FDT_GENERIC_INTC)
++#define FDT_GENERIC_INTC_GET_CLASS(obj) \
++    OBJECT_GET_CLASS(FDTGenericIntcClass, (obj), TYPE_FDT_GENERIC_INTC)
++#define FDT_GENERIC_INTC(obj) \
++     INTERFACE_CHECK(FDTGenericIntc, (obj), TYPE_FDT_GENERIC_INTC)
++
++typedef struct FDTGenericIntc {
++    /*< private >*/
++    Object parent_obj;
++} FDTGenericIntc;
++
++typedef struct FDTGenericIntcClass {
++    /*< private >*/
++    InterfaceClass parent_class;
++
++    /*< public >*/
++    /**
++     * get irq - Based on the FDT generic interrupt binding for this device
++     * grab the irq(s) for the given interrupt cells description. In some device
++     * tree bindings (E.G. ARM GIC with its PPI) a single interrupt cell-tuple
++     * can describe more than one connection. So populates an array with all
++     * relevant IRQs.
++     *
++     * @obj - interrupt controller to get irqs input for ("interrupt-parent")
++     * @irqs - array to populate with irqs (must be >= @max length
++     * @cells - interrupt cells values. Must be >= ncells length
++     * @ncells - number of cells in @cells
++     * @max - maximum number of irqs to return
++     * @errp - Error condition
++     *
++     * @returns the number of interrupts populated in irqs. Undefined on error
++     * (use errp for error checking). If it is valid for the interrupt
++     * controller binding to specify no (or a disabled) connections it may
++     * return 0 as a non-error.
++     */
++
++    int (*get_irq)(FDTGenericIntc *obj, qemu_irq *irqs, uint32_t *cells,
++                   int ncells, int max, Error **errp);
++
++    /**
++     * auto_parent. An interrupt controller often infers its own interrupt
++     * parent (usually a CPU or CPU cluster. This function allows an interrupt
++     * controller to implement its own auto-connections. Is called if an
++     * interrupt controller itself (detected via "interrupt-controller") has no
++     * "interrupt-parent" node.
++     *
++     * @obj - Interrupt controller top attempt autoconnection
++     * @errp - Error condition
++     *
++     * FIXME: More arguments need to be added for partial descriptions
++     */
++
++    void (*auto_parent)(FDTGenericIntc *obj, Error **errp);
++
++} FDTGenericIntcClass;
++
+ #define TYPE_FDT_GENERIC_MMAP "fdt-generic-mmap"
+ 
+ #define FDT_GENERIC_MMAP_CLASS(klass) \
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 15/33] hw/core/fdt_generic_util: implement
+ fdt_get_irq/_info API
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:00 +0200
+Message-Id: <20260402215629.745866-16-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Both interfaces may be used by devices to get IRQ information
+based device tree entry.
+Both methods will identify interrupt parent for a device and
+retrieve irq entry.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c         | 132 +++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic_util.h |  17 ++++
+ 2 files changed, 149 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index d816e395fd..51b808d9d0 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -64,6 +64,11 @@ static int fdt_generic_num_cpus;
+ 
+ static int simple_bus_fdt_init(const char *bus_node_path, FDTMachineInfo *fdti);
+ 
++static void fdt_get_irq_info_from_intc(FDTMachineInfo *fdti, qemu_irq *ret,
++                                       char *intc_node_path,
++                                       uint32_t *cells, uint32_t num_cells,
++                                       uint32_t max, Error **errp);
++
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+ {
+     FDTMachineInfo *fdti = fdt_init_new_fdti(fdt);
+@@ -229,6 +234,133 @@ static int simple_bus_fdt_init(const char *node_path, FDTMachineInfo *fdti)
+     return 0;
+ }
+ 
++static void fdt_get_irq_info_from_intc(FDTMachineInfo *fdti, qemu_irq *ret,
++                                       char *intc_node_path,
++                                       uint32_t *cells, uint32_t num_cells,
++                                       uint32_t max, Error **errp)
++{
++    FDTGenericIntcClass *intc_fdt_class;
++    DeviceState *intc;
++
++    while (!fdt_init_has_opaque(fdti, intc_node_path) &&
++           qemu_in_coroutine()) {
++        fdt_init_yield(fdti);
++    }
++    intc = DEVICE(fdt_init_get_opaque(fdti, intc_node_path));
++
++    if (!intc) {
++        goto fail;
++    }
++
++    while (!intc->realized && qemu_in_coroutine()) {
++        fdt_init_yield(fdti);
++    }
++
++    if (!intc->realized) {
++        goto fail;
++    }
++
++    intc_fdt_class = FDT_GENERIC_INTC_GET_CLASS(intc);
++    if (!intc_fdt_class) {
++        goto fail;
++    }
++
++    intc_fdt_class->get_irq(FDT_GENERIC_INTC(intc), ret, cells, num_cells,
++                            max, errp);
++
++    return;
++fail:
++    error_setg(errp, "%s", __func__);
++}
++
++qemu_irq *fdt_get_irq_info(FDTMachineInfo *fdti, char *node_path, int irq_idx,
++                          char *info) {
++    void *fdt = fdti->fdt;
++    uint32_t intc_phandle, intc_cells, cells[32];
++    char intc_node_path[DT_PATH_LENGTH];
++    qemu_irq *ret = NULL;
++    int i;
++    Error *errp = NULL;
++
++    intc_phandle = qemu_fdt_getprop_cell_inherited(fdt, node_path,
++                                                   "interrupt-parent",
++                                                   0, &errp);
++    if (errp) {
++        goto fail;
++    } else {
++        if (qemu_devtree_get_node_by_phandle(fdt, intc_node_path,
++                                             intc_phandle)) {
++            goto fail;
++        }
++
++        /* Check if the device is using interrupt-maps */
++        qemu_fdt_getprop_cell(fdt, node_path, "interrupt-map-mask", 0,
++                              &errp);
++        if (!errp) {
++            error_report(
++                 "'interrupt-map' routing is not yet supported for node %s",
++                     node_path);
++            goto fail;
++        } else {
++            error_free(errp);
++            errp = NULL;
++            intc_cells = qemu_fdt_getprop_cell_inherited(fdt, intc_node_path,
++                                               "#interrupt-cells", 0,
++                                               &errp);
++        }
++    }
++
++    if (errp) {
++        goto fail;
++    }
++
++    fdt_debug_np("%s intc_phandle: %d\n", node_path, intc_phandle);
++
++    for (i = 0; i < intc_cells; ++i) {
++        cells[i] = qemu_fdt_getprop_cell(fdt, node_path, "interrupts",
++                                        intc_cells * irq_idx + i, &errp);
++        if (errp) {
++            goto fail;
++        }
++    }
++
++    fdt_debug_np("Getting IRQ information: %s -> %s\n",
++                node_path, intc_node_path);
++
++    ret = g_new0(qemu_irq, fdt_generic_num_cpus + 2);
++    fdt_get_irq_info_from_intc(fdti, ret, intc_node_path, cells, intc_cells,
++                               fdt_generic_num_cpus, &errp);
++
++    if (errp) {
++        goto fail;
++    }
++
++    /* FIXME: Phase out this info bussiness */
++    if (info) {
++        snprintf(info, DT_PATH_LENGTH, "%s", intc_node_path);
++    }
++
++    return ret;
++
++fail:
++    if (info) {
++        snprintf(info, DT_PATH_LENGTH, "%s",
++                 errp ? error_get_pretty(errp) : "(none)");
++
++    }
++
++    if (errp) {
++        error_free(errp);
++    }
++
++    return NULL;
++}
++
++qemu_irq *fdt_get_irq(FDTMachineInfo *fdti, char *node_path, int irq_idx)
++{
++    return fdt_get_irq_info(fdti, node_path, irq_idx, NULL);
++}
++
+ static inline const char *trim_vendor(const char *s)
+ {
+     /* FIXME: be more intelligent */
+diff --git a/include/hw/core/fdt_generic_util.h b/include/hw/core/fdt_generic_util.h
+index c92c79dd12..6fb0708d7a 100644
+--- a/include/hw/core/fdt_generic_util.h
++++ b/include/hw/core/fdt_generic_util.h
+@@ -16,6 +16,23 @@
+ 
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq);
+ 
++/*
++ * get an irq for a device. The interrupt parent of a device is idenitified
++ * and the specified irq (by the interrupts device-tree property) is retrieved
++ */
++
++qemu_irq *fdt_get_irq(FDTMachineInfo *fdti, char *node_path, int irq_idx);
++
++/*
++ * same as above, but poulates err with non-zero if something goes wrong, and
++ * populates info with a human readable string giving some basic information
++ * about the interrupt connection found (or not found). Both arguments are
++ * optional (i.e. can be NULL)
++ */
++
++qemu_irq *fdt_get_irq_info(FDTMachineInfo *fdti, char *node_path, int irq_idx,
++                           char *info);
++
+ #define TYPE_FDT_GENERIC_INTC "fdt-generic-intc"
+ 
+ #define FDT_GENERIC_INTC_CLASS(klass) \
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 16/33] hw/core/fdt_generic_util: map device memory
+ regions
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:01 +0200
+Message-Id: <20260402215629.745866-17-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Parse device mmio regions provided within standard 'reg' and
+custom 'reg-extended' device tree properties.
+
+For 'reg-extended' properties, the parent phandle is extracted
+along with the standard io memory region specification, which allows
+adding these regions to specified parent memory regions.
+
+The mapping itself is delegated to the device via the
+'TYPE_FDT_GENERIC_MMAP' interface.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c         | 158 +++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic_util.h |   6 ++
+ 2 files changed, 164 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 51b808d9d0..0b374b550d 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -403,6 +403,22 @@ static inline uint64_t get_int_be(const void *p, int len)
+     }
+ }
+ 
++/* FIXME: use structs instead of parallel arrays */
++
++static const char *fdt_generic_reg_size_prop_names[] = {
++    "#address-cells",
++    "#size-cells",
++    "#bus-cells",
++    "#priority-cells",
++};
++
++static const int fdt_generic_reg_cells_defaults[] = {
++    1,
++    1,
++    0,
++    0,
++};
++
+ static void fdt_init_qdev_link_prop(Object *obj, ObjectProperty *p,
+                                     FDTMachineInfo *fdti,
+                                     const char *node_path,
+@@ -616,6 +632,146 @@ static void fdt_init_qdev_properties(char *node_path, FDTMachineInfo *fdti,
+     }
+ }
+ 
++FDTGenericRegPropInfo*
++fdt_get_reg_info(FDTMachineInfo *fdti, char *node_path, Object *dev)
++{
++    FDTGenericRegPropInfo *reg;
++    Object *parent = NULL;
++    char *parent_path = NULL;
++    int cell_idx = 0;
++    bool extended = true;
++    Error *errp = NULL;
++    int i;
++
++    if (!object_dynamic_cast(dev, TYPE_SYS_BUS_DEVICE) &&
++        !object_dynamic_cast(dev, TYPE_FDT_GENERIC_MMAP)) {
++        return NULL;
++    }
++
++    reg = g_new0(FDTGenericRegPropInfo, 1);
++
++    qemu_fdt_getprop_cell(fdti->fdt, node_path, "reg-extended", 0,
++                            &errp);
++    if (errp) {
++        error_free(errp);
++        errp = NULL;
++        extended = false;
++        parent_path = qemu_devtree_getparent(fdti->fdt, node_path);
++    }
++
++    if (parent_path) {
++        parent = fdt_init_get_opaque(fdti, parent_path);
++    }
++
++    for (reg->n = 0;; reg->n++) {
++        char ph_parent[DT_PATH_LENGTH];
++        const char *pnp = parent_path;
++
++        reg->parents = g_renew(Object *, reg->parents, reg->n + 1);
++        reg->parents[reg->n] = parent;
++
++        if (extended) {
++            int p_ph = qemu_fdt_getprop_cell(fdti->fdt, node_path,
++                                                "reg-extended", cell_idx++,
++                                                &errp);
++            if (errp) {
++                error_free(errp);
++                errp = NULL;
++                goto exit_reg_parse;
++            }
++            if (qemu_devtree_get_node_by_phandle(fdti->fdt, ph_parent,
++                                                    p_ph)) {
++                goto exit_reg_parse;
++            }
++
++            while (!fdt_init_has_opaque(fdti, ph_parent) &&
++                   qemu_in_coroutine()) {
++                fdt_init_yield(fdti);
++            }
++
++            if (!fdt_init_has_opaque(fdti, ph_parent)) {
++                goto exit_reg_parse;
++            }
++
++            reg->parents[reg->n] = fdt_init_get_opaque(fdti, ph_parent);
++            pnp = ph_parent;
++        }
++
++        for (i = 0; i < FDT_GENERIC_REG_TUPLE_LENGTH; ++i) {
++            const char *size_prop_name = fdt_generic_reg_size_prop_names[i];
++            int nc = qemu_fdt_getprop_cell_inherited(fdti->fdt, node_path,
++                                            size_prop_name, 0, &errp);
++            uint64_t val = 0;
++
++            if (errp) {
++                int size_default = fdt_generic_reg_cells_defaults[i];
++
++                fdt_debug_np("WARNING: no %s for %s container, assuming "
++                            "default of %d\n", size_prop_name, pnp,
++                            size_default);
++                nc = size_default;
++                error_free(errp);
++                errp = NULL;
++            }
++
++            reg->x[i] = g_renew(uint64_t, reg->x[i], reg->n + 1);
++            for (int j = 0; j < nc; ++j) {
++                val <<= 32;
++                val |= qemu_fdt_getprop_cell(fdti->fdt, node_path,
++                                            extended ? "reg-extended"
++                                                        : "reg",
++                                            cell_idx + j, &errp);
++               if (errp) {
++                    val = 0;
++                    break;
++               }
++            }
++            reg->x[i][reg->n] = val;
++            cell_idx += nc;
++            if (errp) {
++                goto exit_reg_parse;
++            }
++        }
++    }
++exit_reg_parse:
++    if (errp) {
++        error_free(errp);
++    }
++
++    g_free(parent_path);
++
++    return reg;
++}
++
++static void fdt_parse_node_reg_prop(FDTMachineInfo *fdti, char *node_path,
++                            Object *dev)
++{
++    int i;
++
++    FDTGenericRegPropInfo *reg = fdt_get_reg_info(fdti, node_path, dev);
++    if (!reg) {
++        return;
++    }
++
++    if (object_dynamic_cast(dev, TYPE_FDT_GENERIC_MMAP)) {
++        FDTGenericMMapClass *fmc = FDT_GENERIC_MMAP_GET_CLASS(dev);
++        if (fmc->parse_reg) {
++            while (fmc->parse_reg(FDT_GENERIC_MMAP(dev), *reg,
++                                  &error_abort) && qemu_in_coroutine()) {
++                fdt_init_yield(fdti);
++            }
++        }
++    }
++
++    g_free(reg->parents);
++
++    for (i = 0; i < FDT_GENERIC_REG_TUPLE_LENGTH; ++i) {
++        g_free(reg->x[i]);
++    }
++
++    g_free(reg);
++}
++
+ static void fdt_init_parent_node(Object *dev, Object *parent, char *node_path)
+ {
+     if (dev->parent) {
+@@ -744,6 +900,8 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ 
+     fdt_init_device_realize(fdti, node_path, dev);
+ 
++    fdt_parse_node_reg_prop(fdti, node_path, dev);
++
+     g_free(parent_node_path);
+ 
+     return 0;
+diff --git a/include/hw/core/fdt_generic_util.h b/include/hw/core/fdt_generic_util.h
+index 6fb0708d7a..a04ded41ae 100644
+--- a/include/hw/core/fdt_generic_util.h
++++ b/include/hw/core/fdt_generic_util.h
+@@ -127,6 +127,12 @@ typedef struct FDTGenericRegPropInfo {
+     Object **parents;
+ } FDTGenericRegPropInfo;
+ 
++/*
++ * Get parsed 'reg' or 'reg-extended' properties from dts node
++ */
++FDTGenericRegPropInfo*
++fdt_get_reg_info(FDTMachineInfo *fdti, char *node_path, Object *dev);
++
+ typedef struct FDTGenericMMapClass {
+     /*< private >*/
+     InterfaceClass parent_class;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 17/33] hw/core/fdt_generic_util: Connect device irqs
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:02 +0200
+Message-Id: <20260402215629.745866-18-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch implements IRQ wiring logic for fdt created
+devices.
+
+The wiring performed in two stages. As devices are
+created, their IRQs saved in the list.
+After all devices processed, fdt_init_all_irqs() goes
+through all IRQs and does actual wiring. For IRQs
+which have multiple source, shared IRQ handler
+allocated.
+
+For interrupt controllers with auto_parent callback
+implemented and their fdt node has 'interrupt' and
+'interrupts-extended' properties empty,
+the auto_parent() will be called to connect them
+to their interrupt-parent, for example to CPUs.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c    | 143 ++++++++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic.h |  12 +++
+ 2 files changed, 155 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index 0b374b550d..b0e26e11bc 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -69,6 +69,88 @@ static void fdt_get_irq_info_from_intc(FDTMachineInfo *fdti, qemu_irq *ret,
+                                        uint32_t *cells, uint32_t num_cells,
+                                        uint32_t max, Error **errp);
+ 
++typedef struct QEMUIRQSharedState {
++    qemu_irq sink;
++    int num;
++    bool (*merge_fn)(bool *, int);
++/* FIXME: remove artificial limit */
++#define MAX_IRQ_SHARED_INPUTS 256
++    bool inputs[MAX_IRQ_SHARED_INPUTS];
++} QEMUIRQSharedState;
++
++static bool qemu_irq_shared_or_handler(bool *inputs, int n)
++{
++    int i;
++
++    assert(n < MAX_IRQ_SHARED_INPUTS);
++
++    for (i = 0; i < n; ++i) {
++        if (inputs[i]) {
++            return true;
++        }
++    }
++    return false;
++}
++
++static void qemu_irq_shared_handler(void *opaque, int n, int level)
++{
++    QEMUIRQSharedState *s = opaque;
++
++    assert(n < MAX_IRQ_SHARED_INPUTS);
++    s->inputs[n] = level;
++    qemu_set_irq(s->sink, s->merge_fn(s->inputs, s->num));
++}
++
++static void fdt_init_all_irqs(FDTMachineInfo *fdti)
++{
++    while (fdti->irqs) {
++        FDTIRQConnection *first = fdti->irqs;
++        qemu_irq sink = first->irq;
++        bool (*merge_fn)(bool *, int) = first->merge_fn;
++        int num_sources = 0;
++        FDTIRQConnection *irq;
++
++        for (irq = first; irq; irq = irq->next) {
++            if (irq->irq == sink) { /* Same sink */
++                num_sources++;
++            }
++        }
++        if (num_sources > 1) {
++            QEMUIRQSharedState *s = g_malloc0(sizeof *s);
++            s->sink = sink;
++            s->merge_fn = merge_fn;
++            qemu_irq *sources = qemu_allocate_irqs(qemu_irq_shared_handler, s,
++                                                   num_sources);
++            for (irq = first; irq; irq = irq->next) {
++                if (irq->irq == sink) {
++                    char *shared_irq_name = g_strdup_printf("shared-irq-%p",
++                                                            *sources);
++
++                    if (irq->merge_fn != merge_fn) {
++                        fprintf(stderr, "ERROR: inconsistent IRQ merge fns\n");
++                        exit(1);
++                    }
++
++                    object_property_add_child(OBJECT(irq->dev), shared_irq_name,
++                                              OBJECT(*sources));
++                    g_free(shared_irq_name);
++                    irq->irq = *(sources++);
++                    s->num++;
++                }
++            }
++        }
++        fdt_debug("%s: connected to %s irq line %d (%s)\n",
++                 first->sink_info ? first->sink_info : "",
++                 object_get_canonical_path(OBJECT(first->dev)),
++                 first->i, first->name ? first->name : "");
++
++        qdev_connect_gpio_out_named(DEVICE(first->dev), first->name, first->i,
++                                    first->irq);
++        fdti->irqs = first->next;
++        g_free(first);
++    }
++}
++
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+ {
+     FDTMachineInfo *fdti = fdt_init_new_fdti(fdt);
+@@ -82,6 +164,7 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+     while (qemu_co_enter_next(fdti->cq, NULL)) {
+         ;
+     }
++    fdt_init_all_irqs(fdti);
+     memory_region_transaction_commit();
+ 
+     /* FIXME: Populate these from DTS and create CPU clusters.  */
+@@ -772,6 +855,64 @@ static void fdt_parse_node_reg_prop(FDTMachineInfo *fdti, char *node_path,
+     g_free(reg);
+ }
+ 
++static void fdt_parse_node_irq_prop(FDTMachineInfo *fdti, char *node_path,
++                            Object *dev)
++{
++    int is_intc, len;
++    int i, j;
++
++    if (!object_dynamic_cast(dev, TYPE_SYS_BUS_DEVICE)) {
++        return;
++    }
++
++    fdt_get_property(fdti->fdt, fdt_path_offset(fdti->fdt, node_path),
++                            "interrupt-controller", &len);
++    is_intc = len >= 0;
++    fdt_debug_np("is interrupt controller: %c\n",
++                is_intc ? 'y' : 'n');
++
++    /* connect irq */
++    j = 0;
++    for (i = 0;; i++) {
++        char irq_info[6 * 1024];
++        char *irq_info_p = irq_info;
++        len = -1;
++        qemu_irq *irqs = fdt_get_irq_info(fdti, node_path, i, irq_info);
++        /* INTCs inferr their top level, if no IRQ connection specified */
++        fdt_get_property(fdti->fdt, fdt_path_offset(fdti->fdt, node_path),
++                            "interrupts-extended", &len);
++        if (!irqs && is_intc && i == 0 && len <= 0) {
++            FDTGenericIntc *id = (FDTGenericIntc *)object_dynamic_cast(
++                                    dev, TYPE_FDT_GENERIC_INTC);
++            FDTGenericIntcClass *idc = FDT_GENERIC_INTC_GET_CLASS(id);
++            if (id && idc->auto_parent) {
++                Error *err = NULL;
++                idc->auto_parent(id, &err);
++            } else {
++                irqs = fdti->irq_base;
++            }
++        }
++        if (!irqs) {
++            break;
++        }
++        while (*irqs) {
++            FDTIRQConnection *irq = g_new0(FDTIRQConnection, 1);
++            *irq = (FDTIRQConnection) {
++                .dev = DEVICE(dev),
++                .name = SYSBUS_DEVICE_GPIO_IRQ,
++                .merge_fn = qemu_irq_shared_or_handler,
++                .i = j,
++                .irq = *irqs,
++                .sink_info = g_strdup(irq_info_p),
++                .next = fdti->irqs
++            };
++            j++;
++            fdti->irqs = irq;
++            irqs++;
++        }
++    }
++}
++
+ static void fdt_init_parent_node(Object *dev, Object *parent, char *node_path)
+ {
+     if (dev->parent) {
+@@ -902,6 +1043,8 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ 
+     fdt_parse_node_reg_prop(fdti, node_path, dev);
+ 
++    fdt_parse_node_irq_prop(fdti, node_path, dev);
++
+     g_free(parent_node_path);
+ 
+     return 0;
+diff --git a/include/hw/core/fdt_generic.h b/include/hw/core/fdt_generic.h
+index 05ab07e08c..3961615a9c 100644
+--- a/include/hw/core/fdt_generic.h
++++ b/include/hw/core/fdt_generic.h
+@@ -25,6 +25,16 @@ typedef struct FDTCPUCluster {
+     bool user;
+ } FDTCPUCluster;
+ 
++typedef struct FDTIRQConnection {
++    DeviceState *dev;
++    const char *name;
++    int i;
++    bool (*merge_fn)(bool *, int);
++    qemu_irq irq;
++    char *sink_info; /* Debug only */
++    void *next;
++} FDTIRQConnection;
++
+ typedef struct FDTMachineInfo {
+     /* the fdt blob */
+     void *fdt;
+@@ -34,6 +44,8 @@ typedef struct FDTMachineInfo {
+     FDTDevOpaque *dev_opaques;
+     /* recheck coroutine queue */
+     CoQueue *cq;
++    /* list of all IRQ connections */
++    FDTIRQConnection *irqs;
+     /* list of all CPU clusters */
+     FDTCPUCluster *clusters;
+ } FDTMachineInfo;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 18/33] hw/core/fdt_generic_util: realize cpu clusters
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:03 +0200
+Message-Id: <20260402215629.745866-19-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Realize cpu clusters at the end of fdt machine creation
+process, as they need to be created after cpu's nodes
+are realized.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index b0e26e11bc..f3a47cbafe 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -151,6 +151,16 @@ static void fdt_init_all_irqs(FDTMachineInfo *fdti)
+     }
+ }
+ 
++static void fdt_init_cpu_clusters(FDTMachineInfo *fdti)
++{
++    FDTCPUCluster *cl = fdti->clusters;
++
++    while (cl) {
++        qdev_realize(DEVICE(cl->cpu_cluster), NULL, &error_fatal);
++        cl = cl->next;
++    }
++}
++
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+ {
+     FDTMachineInfo *fdti = fdt_init_new_fdti(fdt);
+@@ -164,6 +174,7 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+     while (qemu_co_enter_next(fdti->cq, NULL)) {
+         ;
+     }
++    fdt_init_cpu_clusters(fdti);
+     fdt_init_all_irqs(fdti);
+     memory_region_transaction_commit();
+ 
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 19/33] hw/core: add fdt_generic to the build
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:04 +0200
+Message-Id: <20260402215629.745866-20-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add `fdt_generic.c` and `fdt_generic_util.c` to build
+by default.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/meson.build | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/core/meson.build b/hw/core/meson.build
+index 8a96567de8..b5ba8160e6 100644
+--- a/hw/core/meson.build
++++ b/hw/core/meson.build
+@@ -29,6 +29,8 @@ system_ss.add(when: 'CONFIG_EIF', if_true: [files('eif.c'), zlib, libcbor, gnutl
+ 
+ system_ss.add(files(
+   'cpu-system.c',
++  'fdt_generic.c',
++  'fdt_generic_util.c',
+   'fw-path-provider.c',
+   'hotplug.c',
+   'loader.c',
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 20/33] hw/arm: add generic ARM machine initialized by
+ FDT
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:05 +0200
+Message-Id: <20260402215629.745866-21-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This patch introduces new ARM machine model, which is
+fully instantiated from a Device Tree description.
+
+This model uses fdt_generic framework to dynamically
+construct system topology based on provided DTB, instead
+of standard machines which rely on hardcoded models in
+C files.
+
+This allows to contruct machines with custom memory maps,
+device structures without the need to modify and re-build
+QEMU sources each time.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/arm/arm_generic_fdt.c | 172 +++++++++++++++++++++++++++++++++++++++
+ hw/arm/meson.build       |   2 +
+ 2 files changed, 174 insertions(+)
+ create mode 100644 hw/arm/arm_generic_fdt.c
+
+diff --git a/hw/arm/arm_generic_fdt.c b/hw/arm/arm_generic_fdt.c
+new file mode 100644
+index 0000000000..7b50957a82
+--- /dev/null
++++ b/hw/arm/arm_generic_fdt.c
+@@ -0,0 +1,172 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * Copyright (c) 2012 Xilinx. Inc
++ * Copyright (c) 2012 Peter A.G. Crosthwaite (peter.crosthwaite@xilinx.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "qemu/osdep.h"
++#include "cpu.h"
++#include "hw/core/boards.h"
++#include "hw/core/hw-error.h"
++#include "qapi/error.h"
++#include "qemu/error-report.h"
++#include "qemu/option.h"
++#include "qom/object.h"
++#include "system/system.h"
++#include "system/qtest.h"
++#include "hw/arm/boot.h"
++#include "hw/arm/machines-qom.h"
++
++#include <libfdt.h>
++#include "hw/core/fdt_generic_util.h"
++
++#define QTEST_RUNNING (qtest_enabled() && qtest_driver())
++
++struct ARMGenericFDTState {
++    MachineState parent;
++
++    struct arm_boot_info bootinfo;
++
++    char *hw_dtb;
++};
++
++#define TYPE_ARM_GENERIC_FDT_MACHINE MACHINE_TYPE_NAME("arm-generic-fdt")
++
++OBJECT_DECLARE_SIMPLE_TYPE(ARMGenericFDTState, ARM_GENERIC_FDT_MACHINE)
++
++static void init_machine(void *fdt, ARMGenericFDTState *s)
++{
++    FDTMachineInfo *fdti;
++    MemoryRegion *mem_area;
++    Error *errp = NULL;
++    char **node_path;
++
++    node_path = qemu_fdt_node_unit_path(fdt, "memory", &errp);
++    if (errp) {
++        error_report_err(errp);
++        exit(1);
++    }
++    if (!node_path || !g_str_has_prefix(node_path[0], "/memory")) {
++        error_report("Failed to find /memory node");
++        exit(1);
++    }
++
++    /* Instantiate peripherals from the FDT.  */
++    fdti = fdt_generic_create_machine(fdt, NULL);
++
++    mem_area = MEMORY_REGION(object_resolve_path(node_path[0], NULL));
++
++    s->bootinfo.loader_start = object_property_get_int(OBJECT(mem_area),
++                                                            "addr", NULL);
++
++    s->bootinfo.ram_size = object_property_get_int(OBJECT(mem_area),
++                                                          "size", NULL);
++
++    fdt_init_destroy_fdti(fdti);
++    g_strfreev(node_path);
++}
++
++static void arm_generic_fdt_init(MachineState *machine)
++{
++    int fdt_size;
++    void *hw_fdt = NULL;
++    ARMGenericFDTState *s = ARM_GENERIC_FDT_MACHINE(machine);
++
++    if (!s->hw_dtb) {
++        if (!QTEST_RUNNING) {
++            /*
++             * Just return without error if running qtest, as we never have a
++             * device tree
++             */
++            hw_error("DTB must be specified for %s machine model\n",
++                     MACHINE_GET_CLASS(machine)->name);
++        }
++        return;
++    }
++
++    hw_fdt = load_device_tree(s->hw_dtb, &fdt_size);
++    if (!hw_fdt) {
++        error_report("Error: Unable to load Device Tree %s", s->hw_dtb);
++        exit(1);
++    }
++
++    init_machine(hw_fdt, s);
++
++    s->bootinfo.kernel_filename = machine->kernel_filename;
++    s->bootinfo.kernel_cmdline = machine->kernel_cmdline;
++    s->bootinfo.initrd_filename = machine->initrd_filename;
++    s->bootinfo.board_id = -1;
++    s->bootinfo.psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
++
++    /*
++     * Expect a direct kernel boot if the '-kernel' option is specified.
++     * In this case, QEMU provides the PSCI implementation.
++     */
++    if (machine->kernel_filename) {
++        s->bootinfo.psci_conduit = QEMU_PSCI_CONDUIT_SMC;
++    }
++
++    arm_load_kernel(ARM_CPU(first_cpu), machine, &s->bootinfo);
++
++    return;
++}
++
++static char *arm_generic_fdt_get_hw_dtb(Object *obj, Error **errp)
++{
++    ARMGenericFDTState *s = ARM_GENERIC_FDT_MACHINE(obj);
++
++    return g_strdup(s->hw_dtb);
++}
++
++static void arm_generic_fdt_set_hw_dtb(Object *obj, const char *value,
++                                       Error **errp)
++{
++    ARMGenericFDTState *s = ARM_GENERIC_FDT_MACHINE(obj);
++
++    s->hw_dtb = g_strdup(value);
++}
++
++static void arm_generic_fdt_class_init(ObjectClass *oc, const void *data)
++{
++    MachineClass *mc = MACHINE_CLASS(oc);
++
++    mc->desc = "ARM device tree driven machine model";
++    mc->init = arm_generic_fdt_init;
++    mc->max_cpus = 64;
++    mc->default_cpus = 4;
++
++    mc->pci_allow_0_address = true;
++    mc->minimum_page_bits = 12;
++    mc->smp_props.clusters_supported = true;
++
++    object_class_property_add_str(oc, "hw-dtb",
++                              arm_generic_fdt_get_hw_dtb,
++                                  arm_generic_fdt_set_hw_dtb);
++    object_class_property_set_description(oc, "hw-dtb",
++                    "Hardware device-tree file with description "
++                                "used to create the emulated machine");
++}
++
++static const TypeInfo arm_generic_fdt_machine_info = {
++    .name           = TYPE_ARM_GENERIC_FDT_MACHINE,
++    .parent         = TYPE_MACHINE,
++    .instance_size  = sizeof(ARMGenericFDTState),
++    .class_init     = arm_generic_fdt_class_init,
++    .interfaces     = arm_machine_interfaces,
++};
++
++static void arm_generic_fdt_register_type(void)
++{
++    type_register_static(&arm_generic_fdt_machine_info);
++}
++
++type_init(arm_generic_fdt_register_type)
+diff --git a/hw/arm/meson.build b/hw/arm/meson.build
+index b187b946f0..e62fabbb6c 100644
+--- a/hw/arm/meson.build
++++ b/hw/arm/meson.build
+@@ -1,4 +1,6 @@
+ arm_ss = ss.source_set()
++arm_ss.add(files('arm_generic_fdt.c'))
++
+ arm_common_ss = ss.source_set()
+ arm_common_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('virt.c'))
+ arm_common_ss.add(when: 'CONFIG_ACPI', if_true: files('virt-acpi-build.c'))
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 21/33] hw/arm/arm_generic_fdt: Add support for
+ host-backed RAM regions
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:06 +0200
+Message-Id: <20260402215629.745866-22-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add the ability to dynamically map QEMU host memory backends to
+guest memory using configuration from the Device Tree.
+
+To map a host memory backend, memory region nodes with the
+'qemu-memory-region' compatible string and the 'qemu,ram' property
+must specify a 'qemu,host-id' property containing the memdev name.
+
+The corresponding memory backends can be specified via the command line:
+
+...
+-object memory-backend-file,id=mem0,mem-path=memory.img,size=256M
+...
+
+If no host backend is found, the initialization will fall back to
+standard anonymous memory mapping.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/arm/arm_generic_fdt.c | 96 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 95 insertions(+), 1 deletion(-)
+
+diff --git a/hw/arm/arm_generic_fdt.c b/hw/arm/arm_generic_fdt.c
+index 7b50957a82..de121820e0 100644
+--- a/hw/arm/arm_generic_fdt.c
++++ b/hw/arm/arm_generic_fdt.c
+@@ -43,6 +43,98 @@ struct ARMGenericFDTState {
+ 
+ OBJECT_DECLARE_SIMPLE_TYPE(ARMGenericFDTState, ARM_GENERIC_FDT_MACHINE)
+ 
++static void map_host_memdev_node(FDTMachineInfo *fdti, const char *node_path)
++{
++    int len;
++    uint64_t mr_size, backed_size;
++    Object *mem_obj;
++    Object *backend_obj;
++    MemoryRegion *mr;
++    MemoryRegion *backend_mr;
++    MemoryRegion *container;
++    HostMemoryBackend *backend_mem;
++
++    const char *compat = qemu_fdt_getprop(fdti->fdt, node_path,
++                                          "compatible", &len, NULL);
++    const char *host_id = qemu_fdt_getprop(fdti->fdt, node_path, "qemu,host-id",
++                                           &len, NULL);
++    bool is_qemu_ram = (qemu_fdt_getprop(fdti->fdt, node_path, "qemu,ram",
++                                         &len, NULL) != NULL);
++
++    if (!compat || strcmp(compat, "qemu-memory-region")) {
++        return;
++    }
++
++    if (!is_qemu_ram || !host_id) {
++        return;
++    }
++
++    mem_obj = fdt_init_get_opaque(fdti, node_path);
++    if (!mem_obj) {
++        return;
++    }
++
++    backend_obj = object_resolve_path_type(host_id, TYPE_MEMORY_BACKEND,
++                                            NULL);
++    if (!backend_obj) {
++        warn_report("No mem backend found for FDT requested host-id %s",
++                    host_id);
++        return;
++    }
++
++    backend_mem = MEMORY_BACKEND(backend_obj);
++    backend_mr = host_memory_backend_get_memory(backend_mem);
++
++    mr = MEMORY_REGION(mem_obj);
++    container = mr->container;
++    if (!container) {
++        warn_report("No parent found for requested host-id %s",
++                    host_id);
++        return;
++    }
++
++    mr_size = memory_region_size(mr);
++    backed_size = memory_region_size(backend_mr);
++
++    if (backed_size != mr_size) {
++        error_report("Unable to map host backed memory: %s, "
++                        "dts size: 0x%" PRIx64 ", but memdev size: 0x%" PRIx64,
++                        host_id, mr_size, backed_size);
++        exit(1);
++    }
++
++    hwaddr base_addr = mr->addr;
++
++    memory_region_del_subregion(container, mr);
++    memory_region_add_subregion(container, base_addr, backend_mr);
++
++    fdt_init_set_opaque(fdti, node_path, OBJECT(backend_mr));
++    object_unparent(mem_obj);
++}
++
++/* Parse device-tree starting from 'node' and attach file-backed RAM's */
++static void map_host_memdevs(FDTMachineInfo *fdti, const char *node_path)
++{
++    int i;
++    char **children;
++    int num_children = qemu_devtree_get_num_children(fdti->fdt, node_path);
++
++    if (num_children > 0) {
++        children = g_malloc0(sizeof(*children) * num_children);
++
++        num_children = qemu_devtree_get_children(fdti->fdt, node_path,
++                                      num_children, children);
++        for (i = 0; i < num_children; ++i) {
++            map_host_memdevs(fdti, children[i]);
++            g_free(children[i]);
++        }
++
++        g_free(children);
++    }
++
++    map_host_memdev_node(fdti, node_path);
++}
++
+ static void init_machine(void *fdt, ARMGenericFDTState *s)
+ {
+     FDTMachineInfo *fdti;
+@@ -63,7 +155,9 @@ static void init_machine(void *fdt, ARMGenericFDTState *s)
+     /* Instantiate peripherals from the FDT.  */
+     fdti = fdt_generic_create_machine(fdt, NULL);
+ 
+-    mem_area = MEMORY_REGION(object_resolve_path(node_path[0], NULL));
++    map_host_memdevs(fdti, "/");
++
++    mem_area = MEMORY_REGION(fdt_init_get_opaque(fdti, node_path[0]));
+ 
+     s->bootinfo.loader_start = object_property_get_int(OBJECT(mem_area),
+                                                             "addr", NULL);
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 22/33] hw/core/sysbus: implement FDT_GENERIC_MMAP_CLASS
+ interface
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:07 +0200
+Message-Id: <20260402215629.745866-23-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch implements FDTGenericMMap interface for sysbus
+device class. The implementation maps device's MMIO regions
+based on 'reg' property in the Device tree.
+
+This enables automatic memory mapping for the most QEMU
+peripherals without the need of device-specific FDT
+handling code.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/sysbus.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/hw/core/sysbus.c b/hw/core/sysbus.c
+index 3adf2f2faf..78b7827708 100644
+--- a/hw/core/sysbus.c
++++ b/hw/core/sysbus.c
+@@ -23,6 +23,8 @@
+ #include "monitor/monitor.h"
+ #include "system/address-spaces.h"
+ 
++#include "hw/core/fdt_generic_util.h"
++
+ static void sysbus_dev_print(Monitor *mon, DeviceState *dev, int indent);
+ static char *sysbus_get_fw_dev_path(DeviceState *dev);
+ 
+@@ -291,11 +293,32 @@ static char *sysbus_get_fw_dev_path(DeviceState *dev)
+     return g_strdup(qdev_fw_name(dev));
+ }
+ 
++static bool sysbus_parse_reg(FDTGenericMMap *obj, FDTGenericRegPropInfo reg,
++                             Error **errp)
++{
++    int i;
++
++    for (i = 0; i < reg.n; ++i) {
++        MemoryRegion *mr_parent = (MemoryRegion *)
++            object_dynamic_cast(reg.parents[i], TYPE_MEMORY_REGION);
++        if (!mr_parent) {
++            /* evil */
++            mr_parent = get_system_memory();
++        }
++        memory_region_add_subregion_overlap(mr_parent, reg.a[i],
++                                 sysbus_mmio_get_region(SYS_BUS_DEVICE(obj), i),
++                                 reg.p[i]);
++    }
++    return false;
++}
++
+ static void sysbus_device_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *k = DEVICE_CLASS(klass);
++    FDTGenericMMapClass *fmc = FDT_GENERIC_MMAP_CLASS(klass);
+     k->realize = sysbus_device_realize;
+     k->bus_type = TYPE_SYSTEM_BUS;
++    fmc->parse_reg = sysbus_parse_reg;
+     /*
+      * device_add plugs devices into a suitable bus.  For "real" buses,
+      * that actually connects the device.  For sysbus, the connections
+@@ -354,6 +377,11 @@ static const TypeInfo sysbus_types[] = {
+         .abstract       = true,
+         .class_size     = sizeof(SysBusDeviceClass),
+         .class_init     = sysbus_device_class_init,
++        .interfaces = (InterfaceInfo[]) {
++        { TYPE_FDT_GENERIC_MMAP },
++        { },
++    },
++
+     },
+     {
+         .name           = TYPE_DYNAMIC_SYS_BUS_DEVICE,
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 23/33] hw/intc/arm_gic: implement FDT_GENERIC_INTC and
+ fdt support
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:08 +0200
+Message-Id: <20260402215629.745866-24-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch implements TYPE_FDT_GENERIC_INTC interface, which
+enables GIC to be instantiated and wired via the device tree
+description.
+
+The implemented interface method are following:
+1. 'get_irq': Parses device tree interrupt specifiers
+and return correct qemu_irq for devices which has IRQ's wired
+to GIC.
+2. 'auto_parent': Automatically connect the GIC's output signals
+to the CPU's found in current machine configuration.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/intc/arm_gic.c        | 32 +++++++++++++++++++++++++
+ hw/intc/arm_gic_common.c | 50 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+)
+
+diff --git a/hw/intc/arm_gic.c b/hw/intc/arm_gic.c
+index 4d4b79e6f3..bbe9409ef3 100644
+--- a/hw/intc/arm_gic.c
++++ b/hw/intc/arm_gic.c
+@@ -24,12 +24,15 @@
+ #include "gic_internal.h"
+ #include "qapi/error.h"
+ #include "hw/core/cpu.h"
++#include "hw/core/boards.h"
+ #include "qemu/log.h"
+ #include "qemu/module.h"
+ #include "trace.h"
+ #include "system/kvm.h"
+ #include "system/qtest.h"
+ 
++#include "hw/core/fdt_generic_util.h"
++
+ /* #define DEBUG_GIC */
+ 
+ #ifdef DEBUG_GIC
+@@ -2162,12 +2165,41 @@ static void arm_gic_realize(DeviceState *dev, Error **errp)
+ 
+ }
+ 
++static void arm_gic_fdt_auto_parent(FDTGenericIntc *obj, Error **errp)
++{
++    GICState *s = ARM_GIC(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    int num_cpus = s->num_cpu;
++    CPUState *cs;
++    int i = 0;
++
++    for (cs = first_cpu; cs; cs = CPU_NEXT(cs)) {
++        if (i >= s->num_cpu) {
++            break;
++        }
++
++        sysbus_connect_irq(sbd, i,
++                           qdev_get_gpio_in(DEVICE(cs), 0));
++        sysbus_connect_irq(sbd, i + num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 1));
++        sysbus_connect_irq(sbd, i + 2 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 2));
++        sysbus_connect_irq(sbd, i + 3 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 3));
++        i++;
++    }
++
++    /* FIXME: Add some error checking */
++}
++
+ static void arm_gic_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+     ARMGICClass *agc = ARM_GIC_CLASS(klass);
++    FDTGenericIntcClass *fgic = FDT_GENERIC_INTC_CLASS(klass);
+ 
+     device_class_set_parent_realize(dc, arm_gic_realize, &agc->parent_realize);
++    fgic->auto_parent = arm_gic_fdt_auto_parent;
+ }
+ 
+ static const TypeInfo arm_gic_info = {
+diff --git a/hw/intc/arm_gic_common.c b/hw/intc/arm_gic_common.c
+index 304d89cf56..04787cff79 100644
+--- a/hw/intc/arm_gic_common.c
++++ b/hw/intc/arm_gic_common.c
+@@ -28,6 +28,8 @@
+ #include "migration/vmstate.h"
+ #include "system/kvm.h"
+ 
++#include "hw/core/fdt_generic_util.h"
++
+ static int gic_pre_save(void *opaque)
+ {
+     GICState *s = (GICState *)opaque;
+@@ -348,6 +350,51 @@ static void arm_gic_common_linux_init(ARMLinuxBootIf *obj,
+     }
+ }
+ 
++static int arm_gic_common_fdt_get_irq(FDTGenericIntc *obj, qemu_irq *irqs,
++                                      uint32_t *cells, int ncells, int max,
++                                      Error **errp)
++{
++    GICState *gs = ARM_GIC_COMMON(obj);
++    int cpu = 0;
++    uint32_t idx;
++
++    if (ncells != 3) {
++        error_setg(errp, "ARM GIC requires 3 interrupt cells, %d cells given",
++                   ncells);
++        return 0;
++    }
++    idx = cells[1];
++
++    switch (cells[0]) {
++    case 0:
++        if (idx >= gs->num_irq) {
++            error_setg(errp, "ARM GIC SPI has maximum index of %" PRId32 ", "
++                       "index %" PRId32 " given", gs->num_irq - 1, idx);
++            return 0;
++        }
++        (*irqs) = qdev_get_gpio_in(DEVICE(obj), cells[1]);
++        return 1;
++    case 1: /* PPI */
++        if (idx >= 16) {
++            error_setg(errp, "ARM GIC PPI has maximum index of 15, "
++                       "index %" PRId32 " given", idx);
++            return 0;
++        }
++        for (cpu = 0; cpu < max && cpu < gs->num_cpu; cpu++) {
++            if (cells[2] & 1 << (cpu + 8)) {
++                *irqs = qdev_get_gpio_in(DEVICE(obj),
++                                         gs->num_irq - 16 + idx + cpu * 32);
++            }
++            irqs++;
++        }
++        return cpu;
++    default:
++        error_setg(errp, "Invalid cell 0 value in interrupt binding: %d",
++                   cells[0]);
++        return 0;
++    }
++}
++
+ static const Property arm_gic_common_properties[] = {
+     DEFINE_PROP_UINT32("num-cpu", GICState, num_cpu, 1),
+     DEFINE_PROP_UINT32("first-cpu-index", GICState, first_cpu_index, 0),
+@@ -368,12 +415,14 @@ static void arm_gic_common_class_init(ObjectClass *klass, const void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+     ResettableClass *rc = RESETTABLE_CLASS(klass);
+     ARMLinuxBootIfClass *albifc = ARM_LINUX_BOOT_IF_CLASS(klass);
++    FDTGenericIntcClass *fgic = FDT_GENERIC_INTC_CLASS(klass);
+ 
+     rc->phases.hold = arm_gic_common_reset_hold;
+     dc->realize = arm_gic_common_realize;
+     device_class_set_props(dc, arm_gic_common_properties);
+     dc->vmsd = &vmstate_gic;
+     albifc->arm_linux_init = arm_gic_common_linux_init;
++    fgic->get_irq = arm_gic_common_fdt_get_irq;
+ }
+ 
+ static const TypeInfo arm_gic_common_type = {
+@@ -385,6 +434,7 @@ static const TypeInfo arm_gic_common_type = {
+     .abstract = true,
+     .interfaces = (const InterfaceInfo[]) {
+         { TYPE_ARM_LINUX_BOOT_IF },
++        { TYPE_FDT_GENERIC_INTC },
+         { },
+     },
+ };
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 24/33] target/arm/cpu: add fdt support for armv8-timer
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:09 +0200
+Message-Id: <20260402215629.745866-25-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Implement FDT compatibility, so that timer can initilize
+and wire irqs based on device tree information.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ target/arm/cpu.c | 112 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 112 insertions(+)
+
+diff --git a/target/arm/cpu.c b/target/arm/cpu.c
+index ccc47c8a9a..35e38f9970 100644
+--- a/target/arm/cpu.c
++++ b/target/arm/cpu.c
+@@ -54,6 +54,8 @@
+ #include "target/arm/gtimer.h"
+ 
+ #include "trace.h"
++#include "hw/core/fdt_generic_util.h"
++
+ 
+ static void arm_cpu_set_pc(CPUState *cs, vaddr value)
+ {
+@@ -2447,3 +2449,113 @@ static void arm_cpu_register_types(void)
+ }
+ 
+ type_init(arm_cpu_register_types)
++
++#ifndef CONFIG_USER_ONLY
++
++static Object *fdt_armv8_timer_get_intc(FDTMachineInfo *fdti, char *node_path)
++{
++    char intc_node_path[DT_PATH_LENGTH];
++    uint32_t intc_phandle;
++    Error *errp = NULL;
++    DeviceState *intc;
++
++    intc_phandle = qemu_fdt_getprop_cell_inherited(fdti->fdt, node_path,
++                                         "interrupt-parent",
++                                         0, &errp);
++
++    /* There must be an interrupt-parent */
++    if (errp ||
++        qemu_devtree_get_node_by_phandle(fdti->fdt,
++                                         intc_node_path, intc_phandle)) {
++        g_assert_not_reached();
++    }
++
++    while (!fdt_init_has_opaque(fdti, intc_node_path)) {
++        fdt_init_yield(fdti);
++    }
++
++    intc = DEVICE(fdt_init_get_opaque(fdti, intc_node_path));
++
++    while (!intc->realized) {
++        fdt_init_yield(fdti);
++    }
++
++    return OBJECT(intc);
++}
++
++static int armv8_timer_fdt_init(char *node_path, FDTMachineInfo *fdti,
++                                void *priv)
++{
++    Object *intc = fdt_armv8_timer_get_intc(fdti, node_path);
++    CPUState *cpu;
++    qemu_irq *sec_irqs = NULL;
++    qemu_irq *ns_irqs;
++    qemu_irq *v_irqs;
++    qemu_irq *h_irqs;
++    uint32_t first_cpu_idx;
++    uint32_t num_cpu;
++    bool has_sec_ext;
++    Error *err = NULL;
++
++    first_cpu_idx = object_property_get_uint(intc, "first-cpu-idx", &err);
++    if (!err) {
++        num_cpu = object_property_get_uint(intc, "num-cpu", &err);
++        assert(!err);
++        has_sec_ext = object_property_get_bool(intc, "has-security-extensions",
++                                               &err);
++        assert(!err);
++    } else {
++        /*
++         * Connect all CPUs with the ARM_FEATURE_GENERIC_TIMER set for
++         * backwards compatibility when the 'first-cpu-idx' property does not
++         * exist.
++         */
++        num_cpu = 0;
++        has_sec_ext = true;
++    }
++
++    if (has_sec_ext) {
++        sec_irqs = fdt_get_irq(fdti, node_path, 0);
++        ns_irqs = fdt_get_irq(fdti, node_path, 1);
++        v_irqs = fdt_get_irq(fdti, node_path, 2);
++        h_irqs = fdt_get_irq(fdti, node_path, 3);
++    } else {
++        ns_irqs = fdt_get_irq(fdti, node_path, 0);
++        v_irqs = fdt_get_irq(fdti, node_path, 1);
++        h_irqs = fdt_get_irq(fdti, node_path, 2);
++    }
++
++    for (cpu = first_cpu; cpu; cpu = CPU_NEXT(cpu)) {
++        ARMCPU *acpu = ARM_CPU(cpu);
++        bool is_gic_cpu;
++
++        if (!arm_feature(&acpu->env, ARM_FEATURE_GENERIC_TIMER)) {
++            continue;
++        }
++
++        is_gic_cpu = cpu->cpu_index >= first_cpu_idx &&
++                     cpu->cpu_index < (first_cpu_idx + num_cpu);
++
++        if (!num_cpu || is_gic_cpu) {
++
++            assert(*ns_irqs);
++            assert(*v_irqs);
++            assert(*h_irqs);
++            qdev_connect_gpio_out(DEVICE(acpu), 0, *ns_irqs++);
++            qdev_connect_gpio_out(DEVICE(acpu), 1, *v_irqs++);
++            qdev_connect_gpio_out(DEVICE(acpu), 2, *h_irqs++);
++
++            if (has_sec_ext) {
++                assert(*sec_irqs);
++                qdev_connect_gpio_out(DEVICE(acpu), 3, *sec_irqs++);
++            }
++        }
++    }
++
++    return 0;
++}
++
++fdt_register_compatibility(armv8_timer_fdt_init,
++                           "compatible:arm,armv8-timer");
++
++#endif
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 25/33] system/memory: add setters for MemoryRegion
+ properties
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:10 +0200
+Message-Id: <20260402215629.745866-26-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Currently, MemoryRegion properties such as addr, size,
+priority and container are read-only and don't have setters.
+
+This patch implements the missing setters function, so that
+properties can be modified dynamically.
+
+The changes allow MemoryRegions objects to be fully configured
+via properties, which enables them be created from a device
+tree description.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ system/memory.c | 221 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 216 insertions(+), 5 deletions(-)
+
+diff --git a/system/memory.c b/system/memory.c
+index 56f3225b21..cd463a3dde 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -55,6 +55,9 @@ static GHashTable *flat_views;
+ 
+ typedef struct AddrRange AddrRange;
+ 
++static void memory_region_update_container_subregions(MemoryRegion *subregion);
++static void memory_region_readd_subregion(MemoryRegion *mr);
++
+ /*
+  * Note that signed integers are needed for negative offsetting in aliases
+  * (large MemoryRegion::alias_offset).
+@@ -1251,6 +1254,73 @@ void memory_region_init(MemoryRegion *mr,
+     memory_region_do_init(mr, owner, name, size);
+ }
+ 
++static void memory_region_get_addr(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    uint64_t value = mr->addr;
++
++    visit_type_uint64(v, name, &value, errp);
++}
++
++static void memory_region_set_addr(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    uint64_t value;
++
++    visit_type_uint64(v, name, &value, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    memory_region_set_address(mr, value);
++}
++
++static void memory_region_set_container(Object *obj, Visitor *v,
++                                        const char *name, void *opaque,
++                                        Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    MemoryRegion *old_container = mr->container;
++    MemoryRegion *new_container = NULL;
++    char *path = NULL;
++
++    visit_type_str(v, name, &path, &local_err);
++
++    if (!local_err && strcmp(path, "") != 0) {
++        new_container = MEMORY_REGION(object_resolve_link(obj, name, path,
++                                      &local_err));
++        while (new_container->alias) {
++            new_container = new_container->alias;
++        }
++    }
++
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    object_ref(OBJECT(new_container));
++
++    memory_region_transaction_begin();
++    memory_region_ref(mr);
++    if (old_container) {
++        memory_region_del_subregion(old_container, mr);
++    }
++    mr->container = new_container;
++    if (new_container) {
++        memory_region_update_container_subregions(mr);
++    }
++    memory_region_unref(mr);
++    memory_region_transaction_commit();
++
++    object_unref(OBJECT(old_container));
++}
++
+ static void memory_region_get_container(Object *obj, Visitor *v,
+                                         const char *name, void *opaque,
+                                         Error **errp)
+@@ -1275,6 +1345,53 @@ static Object *memory_region_resolve_container(Object *obj, void *opaque,
+     return OBJECT(mr->container);
+ }
+ 
++static void memory_region_set_alias(const Object *obj, const char *name,
++                                    Object *val, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    MemoryRegion *subregion, *next;
++
++    /*
++     * Be conservative and only allow one shotting for the mo
++     * FIXME: Use a softer error than assert
++     */
++    assert(!mr->alias);
++
++    /*
++     * FIXME: check we don't already have subregions and
++     * anything else that might be mutex with aliasing
++     */
++
++    memory_region_transaction_begin();
++    QTAILQ_FOREACH_SAFE(subregion, &mr->subregions, subregions_link, next) {
++        object_property_set_link(OBJECT(subregion), "container",
++                                 OBJECT(val), errp);
++    }
++    memory_region_ref(mr);
++    mr->alias = MEMORY_REGION(val);
++    mr->alias->mapped_via_alias++;
++    memory_region_unref(mr);
++    memory_region_transaction_commit();
++    /* FIXME: add cleanup destructors etc etc */
++}
++
++static void memory_region_set_alias_offset_prop(Object *obj, Visitor *v,
++                                                const char *name,
++                                                void *opaque, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    uint64_t value;
++
++    visit_type_uint64(v, name, &value, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    memory_region_set_alias_offset(mr, value);
++}
++
+ static void memory_region_get_priority(Object *obj, Visitor *v,
+                                        const char *name, void *opaque,
+                                        Error **errp)
+@@ -1285,6 +1402,70 @@ static void memory_region_get_priority(Object *obj, Visitor *v,
+     visit_type_int32(v, name, &value, errp);
+ }
+ 
++static void memory_region_set_priority(Object *obj, Visitor *v,
++                                       const char *name, void *opaque,
++                                       Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    int32_t value;
++
++    visit_type_uint32(v, name, (uint32_t *)&value, &error_abort);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    if (mr->priority != value) {
++        mr->priority = value;
++        memory_region_readd_subregion(mr);
++    }
++}
++
++static void memory_region_do_set_ram(MemoryRegion *mr)
++{
++    if (mr->addr) {
++        qemu_ram_free(mr->ram_block);
++    }
++    if (int128_eq(mr->size, int128_make64(0))) {
++        return;
++    }
++    if (mr->ram) {
++        mr->ram_block = qemu_ram_alloc(int128_get64(mr->size),
++                                       RAM_SHARED, mr, &error_abort);
++    }
++}
++
++static void memory_region_set_ram(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    uint8_t value;
++
++    visit_type_uint8(v, name, &value, &error_abort);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    mr->dirty_log_mask |= tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
++    /* FIXME: Sanitize error handling */
++    /* FIXME: Probably need all that transactions stuff */
++    if (mr->ram == value) {
++        return;
++    }
++
++    mr->ram = value;
++    mr->terminates = !!value; /*FIXME: Wrong */
++
++    if (int128_eq(int128_2_64(), mr->size)) {
++        return;
++    }
++
++    memory_region_do_set_ram(mr);
++}
++
+ static void memory_region_get_size(Object *obj, Visitor *v, const char *name,
+                                    void *opaque, Error **errp)
+ {
+@@ -1294,6 +1475,19 @@ static void memory_region_get_size(Object *obj, Visitor *v, const char *name,
+     visit_type_uint64(v, name, &value, errp);
+ }
+ 
++static void memory_region_set_object_size(Object *obj, Visitor *v,
++                                          const char *name, void *opaque,
++                                          Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    Error *local_err = NULL;
++    uint64_t size;
++
++    visit_type_uint64(v, name, &size, &local_err);
++
++    memory_region_set_size(mr, size);
++}
++
+ static void memory_region_initfn(Object *obj)
+ {
+     MemoryRegion *mr = MEMORY_REGION(obj);
+@@ -1309,19 +1503,33 @@ static void memory_region_initfn(Object *obj)
+     op = object_property_add(OBJECT(mr), "container",
+                              "link<" TYPE_MEMORY_REGION ">",
+                              memory_region_get_container,
+-                             NULL, /* memory_region_set_container */
++                             memory_region_set_container,
+                              NULL, NULL);
+     op->resolve = memory_region_resolve_container;
+ 
+-    object_property_add_uint64_ptr(OBJECT(mr), "addr",
+-                                   &mr->addr, OBJ_PROP_FLAG_READ);
++    object_property_add_link(OBJECT(mr), "alias", TYPE_MEMORY_REGION,
++                             (Object **)&mr->alias,
++                             memory_region_set_alias,
++                             0);
++    object_property_add(OBJECT(mr), "alias-offset", "uint64",
++                        NULL,  /* FIXME: Add getter */
++                        memory_region_set_alias_offset_prop,
++                        NULL, NULL);
++    object_property_add(OBJECT(mr), "addr", "uint64",
++                        memory_region_get_addr,
++                        memory_region_set_addr,
++                        NULL, NULL);
+     object_property_add(OBJECT(mr), "priority", "uint32",
+                         memory_region_get_priority,
+-                        NULL, /* memory_region_set_priority */
++                        memory_region_set_priority,
++                        NULL, NULL);
++    object_property_add(OBJECT(mr), "ram", "uint8",
++                        NULL, /* FIXME: Add getter */
++                        memory_region_set_ram,
+                         NULL, NULL);
+     object_property_add(OBJECT(mr), "size", "uint64",
+                         memory_region_get_size,
+-                        NULL, /* memory_region_set_size, */
++                        memory_region_set_object_size,
+                         NULL, NULL);
+ }
+ 
+@@ -2666,6 +2874,9 @@ void memory_region_set_size(MemoryRegion *mr, uint64_t size)
+     }
+     memory_region_transaction_begin();
+     mr->size = s;
++    if (mr->ram) {
++        memory_region_do_set_ram(mr);
++    }
+     memory_region_update_pending = true;
+     memory_region_transaction_commit();
+ }
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 26/33] system/memory: implement FDT_GENERIC_MMAP
+ interface
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:11 +0200
+Message-Id: <20260402215629.745866-27-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch implements TYPE_FDT_GENERIC_MMAP interface
+for the MemoryRegion class.
+
+This enables memory region objects to be automatically
+constructed by FDT parser based on the 'reg' property
+in the Device tree. The implementation parses register
+tuples and set base address, size and priority properties.
+
+Optionally parent container can be set of newly created
+memory region.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ system/memory.c | 58 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/system/memory.c b/system/memory.c
+index cd463a3dde..b3d981dc0c 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -38,6 +38,8 @@
+ 
+ #include "memory-internal.h"
+ 
++#include "hw/core/fdt_generic_util.h"
++
+ //#define DEBUG_UNASSIGNED
+ 
+ static unsigned memory_region_transaction_depth;
+@@ -3721,6 +3723,57 @@ static gboolean mtree_info_flatview_free(gpointer key, gpointer value,
+     return true;
+ }
+ 
++static bool memory_region_parse_reg(FDTGenericMMap *obj,
++    FDTGenericRegPropInfo reg, Error **errp)
++{
++    MemoryRegion *mr = MEMORY_REGION(obj);
++    uint64_t base_addr = ~0ull;
++    uint64_t total_size = 0;
++    uint64_t max_addr = 0;
++    int i;
++
++    if (!reg.n) {
++        return false;
++    }
++
++    for (i = 0; i < reg.n; ++i) {
++        base_addr = MIN(base_addr, reg.a[i]);
++        max_addr = MAX(max_addr, reg.a[i] + reg.s[i]);
++        total_size += reg.s[i];
++        if (reg.p[i] != reg.p[0]) {
++            error_setg(errp, "FDT generic memory parser does not support"
++                       "mixed priorities");
++            return false;
++        }
++    }
++
++    if (total_size != max_addr - base_addr) {
++        error_setg(errp, "FDT generic memory parse does not "
++        "spport discontiguous or overlapping memory regions");
++        return false;
++    }
++
++    /*
++     * FIXME: parent should not be optional but we need to implement
++     * reg-extended in kernel before we can do things properly
++     */
++    if (reg.parents[0]) {
++        object_property_set_link(OBJECT(mr), "container", reg.parents[0],
++                                 &error_abort);
++    }
++    object_property_set_int(OBJECT(mr), "size", total_size, &error_abort);
++    object_property_set_int(OBJECT(mr), "addr", base_addr, &error_abort);
++    object_property_set_int(OBJECT(mr), "priority", reg.p[0], &error_abort);
++    return false;
++}
++
++static void memory_region_class_init(ObjectClass *oc, const void *data)
++{
++    FDTGenericMMapClass *fmc = FDT_GENERIC_MMAP_CLASS(oc);
++
++    fmc->parse_reg = memory_region_parse_reg;
++}
++
+ static void mtree_info_flatview(bool dispatch_tree, bool owner)
+ {
+     struct FlatViewInfo fvi = {
+@@ -3941,6 +3994,11 @@ static const TypeInfo memory_region_info = {
+     .instance_size      = sizeof(MemoryRegion),
+     .instance_init      = memory_region_initfn,
+     .instance_finalize  = memory_region_finalize,
++    .class_init         = memory_region_class_init,
++    .interfaces         = (InterfaceInfo[]) {
++        { TYPE_FDT_GENERIC_MMAP },
++        { },
++    },
+ };
+ 
+ static const TypeInfo iommu_memory_region_info = {
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 27/33] hw/core/fdt_generic_util: initialize serial
+ devices
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:12 +0200
+Message-Id: <20260402215629.745866-28-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch adds proper handling and registration
+for serial devices instantiated via FDT.
+
+The devices with 'chardev' properties are
+connected to serial backends, if corresponding dts
+property serial id number is set.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index f3a47cbafe..c92b5c287b 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -37,6 +37,7 @@
+ #include "system/system.h"
+ #include "system/reset.h"
+ #include "qemu/cutils.h"
++#include "chardev/char.h"
+ #include "qemu/log.h"
+ #include "qemu/config-file.h"
+ #include "hw/core/boards.h"
+@@ -721,6 +722,13 @@ static void fdt_init_qdev_properties(char *node_path, FDTMachineInfo *fdti,
+             continue;
+         }
+ 
++        /* Special case for chardevs.  */
++        if (!strcmp(propname, "chardev") && !strcmp(p->type, "str")) {
++            qdev_prop_set_chr(DEVICE(dev), "chardev",
++                              serial_hd(get_int_be(value, len)));
++            continue;
++        }
++
+         fdt_init_qdev_scalar_prop(dev, p, fdti, node_path,
+                                   propname, value, len);
+     }
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 28/33] system/memory: add QOM aliases for fdt support
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:13 +0200
+Message-Id: <20260402215629.745866-29-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The patch registers FDT compatibility handlers and
+QOM aliases of memory subsystem, so that memory
+regions can be created from a device tree model.
+
+The alias 'qemu:system-memory' could be used to attach
+subregion to root address space.
+The system memory can also be attached to another
+container with other priority, which may be used
+for implementing secure memory structures.
+
+Also 'qemu-memory-region' types can be used to create
+new memory regions.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ system/memory.c | 78 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 78 insertions(+)
+
+diff --git a/system/memory.c b/system/memory.c
+index b3d981dc0c..bd8b6e06ad 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -4024,3 +4024,81 @@ static void memory_register_types(void)
+ }
+ 
+ type_init(memory_register_types)
++
++static int sysmem_fdt_init(char *node_path, FDTMachineInfo *fdti,
++                           void *priv)
++{
++    int i, ret = 0, priority = 0;
++    uint32_t container_phandle;
++    MemoryRegion *container;
++    char container_node_path[DT_PATH_LENGTH];
++    FDTGenericRegPropInfo *reg;
++    Error *errp = NULL;
++
++    fdt_init_set_opaque(fdti, node_path, OBJECT(get_system_memory()));
++
++    /* allow to set system_memory region as subregion */
++    container_phandle = qemu_fdt_getprop_cell(fdti->fdt, node_path,
++                                            "container",
++                                            0, &errp);
++    if (errp) {
++        /* container is an optional property */
++        error_free(errp);
++        return 0;
++    }
++
++    if (qemu_devtree_get_node_by_phandle(fdti->fdt, container_node_path,
++                                            container_phandle)) {
++        error_report("failed to get container node");
++        return -1;
++    }
++
++    while (!fdt_init_has_opaque(fdti, container_node_path)) {
++        fdt_init_yield(fdti);
++    }
++
++    container = MEMORY_REGION(fdt_init_get_opaque(fdti,
++                                                    container_node_path));
++    reg = fdt_get_reg_info(fdti, node_path, OBJECT(get_system_memory()));
++    if (reg && reg->n > 0) {
++        if (reg->x[0][0] || reg->x[1][0]) {
++            error_report("can't change sysmem address or size");
++            ret = -1;
++            goto out;
++        }
++        priority = reg->x[3][0];
++    }
++
++    memory_region_add_subregion_overlap(container, 0,
++                                        get_system_memory(), priority);
++
++out:
++    if (reg) {
++        g_free(reg->parents);
++
++        for (i = 0; i < FDT_GENERIC_REG_TUPLE_LENGTH; ++i) {
++            g_free(reg->x[i]);
++        }
++
++        g_free(reg);
++    }
++    return ret;
++}
++
++fdt_register_compatibility(sysmem_fdt_init, "compatible:qemu:system-memory");
++
++static const TypeInfo fdt_qom_aliases[] = {
++    {   .name = "qemu-memory-region",       .parent = "memory-region"  },
++    {   .name = "simple-bus",               .parent = "memory-region"  },
++};
++
++static void fdt_memory_types(void)
++{
++    int i;
++
++    for (i = 0; i < ARRAY_SIZE(fdt_qom_aliases); ++i) {
++        type_register_static(&fdt_qom_aliases[i]);
++    }
++}
++
++type_init(fdt_memory_types)
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 29/33] hw/intc/arm_gicv3: Implement FDTGenericIntc
+ interface
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:14 +0200
+Message-Id: <20260402215629.745866-30-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This patch implements the FDTGenericIntc interface for the
+ARM GICv3 interrupt controller.
+
+This enables the generic FDT machine infrastructure to
+automatically wire up the GIC and resolve interrupts
+defined in the Device Tree.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/intc/arm_gicv3.c        | 45 +++++++++++++++++++++++++
+ hw/intc/arm_gicv3_common.c | 68 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 113 insertions(+)
+
+diff --git a/hw/intc/arm_gicv3.c b/hw/intc/arm_gicv3.c
+index 542f81ea49..e7e98ef9a5 100644
+--- a/hw/intc/arm_gicv3.c
++++ b/hw/intc/arm_gicv3.c
+@@ -18,9 +18,13 @@
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
+ #include "qemu/module.h"
++#include "hw/core/cpu.h"
++#include "hw/core/boards.h"
+ #include "hw/intc/arm_gicv3.h"
+ #include "gicv3_internal.h"
+ 
++#include "hw/core/fdt_generic_util.h"
++
+ static bool irqbetter(GICv3CPUState *cs, int irq, uint8_t prio, bool nmi)
+ {
+     /* Return true if this IRQ at this priority should take
+@@ -452,14 +456,55 @@ static void arm_gic_realize(DeviceState *dev, Error **errp)
+     gicv3_init_cpuif(s);
+ }
+ 
++static void arm_gic_fdt_auto_parent(FDTGenericIntc *obj, Error **errp)
++{
++    GICv3State *s = ARM_GICV3(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    int num_cpus = s->num_cpu;
++    CPUState *cs;
++    int i = 0;
++
++    for (cs = first_cpu; cs; cs = CPU_NEXT(cs)) {
++        if (i >= s->num_cpu) {
++            break;
++        }
++
++        sysbus_connect_irq(sbd, i,
++                           qdev_get_gpio_in(DEVICE(cs), 0));
++        sysbus_connect_irq(sbd, i + num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 1));
++        sysbus_connect_irq(sbd, i + 2 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 2));
++        sysbus_connect_irq(sbd, i + 3 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 3));
++        sysbus_connect_irq(sbd, i + 4 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 4));
++        sysbus_connect_irq(sbd, i + 5 * num_cpus,
++                           qdev_get_gpio_in(DEVICE(cs), 5));
++
++        if (s->maint_irq) {
++            int intbase = s->num_irq - GIC_INTERNAL + i * GIC_INTERNAL;
++            qemu_irq irq = qdev_get_gpio_in(DEVICE(sbd),
++                                intbase + s->maint_irq);
++            qdev_connect_gpio_out_named(DEVICE(cs),
++                                               "gicv3-maintenance-interrupt",
++                                                0, irq);
++        }
++
++        i++;
++    }
++}
++
+ static void arm_gicv3_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+     ARMGICv3CommonClass *agcc = ARM_GICV3_COMMON_CLASS(klass);
+     ARMGICv3Class *agc = ARM_GICV3_CLASS(klass);
++    FDTGenericIntcClass *fgic = FDT_GENERIC_INTC_CLASS(klass);
+ 
+     agcc->post_load = arm_gicv3_post_load;
+     device_class_set_parent_realize(dc, arm_gic_realize, &agc->parent_realize);
++    fgic->auto_parent = arm_gic_fdt_auto_parent;
+ }
+ 
+ static const TypeInfo arm_gicv3_info = {
+diff --git a/hw/intc/arm_gicv3_common.c b/hw/intc/arm_gicv3_common.c
+index 9200671c7a..a393540825 100644
+--- a/hw/intc/arm_gicv3_common.c
++++ b/hw/intc/arm_gicv3_common.c
+@@ -34,6 +34,7 @@
+ #include "system/kvm.h"
+ #include "system/whpx.h"
+ 
++#include "hw/core/fdt_generic_util.h"
+ 
+ static void gicv3_gicd_no_migration_shift_bug_post_load(GICv3State *cs)
+ {
+@@ -367,6 +368,69 @@ void gicv3_init_irqs_and_mmio(GICv3State *s, qemu_irq_handler handler,
+     }
+ }
+ 
++#define FDT_GENERIC_GICV3_TYPE_AFFINITY_ALL 0x01000000U
++#define FDT_GENERIC_GICV3_TYPE_AFFINITY_IDX 0x02000000U
++
++static int arm_gicv3_common_fdt_get_irq(FDTGenericIntc *obj, qemu_irq *irqs,
++                                      uint32_t *cells, int ncells, int max,
++                                      Error **errp)
++{
++    GICv3State *gs = ARM_GICV3_COMMON(obj);
++    int cpu = 0;
++    uint32_t qemu_type;
++    uint32_t cpu_mask;
++    uint32_t idx;
++
++    if (ncells != 3) {
++        error_setg(errp, "ARM GIC requires 3 interrupt cells, %d cells given",
++                   ncells);
++        return 0;
++    }
++    idx = cells[1];
++    qemu_type = cells[0] & 0xff000000;
++
++    switch (cells[0] & 0x00ffffff) {
++    case 0:
++        if (idx >= gs->num_irq) {
++            error_setg(errp, "ARM GIC SPI has maximum index of %" PRId32 ", "
++                       "index %" PRId32 " given", gs->num_irq - 1, idx);
++            return 0;
++        }
++        (*irqs) = qdev_get_gpio_in(DEVICE(obj), cells[1]);
++        return 1;
++    case 1: /* PPI */
++        if (idx >= 16) {
++            error_setg(errp, "ARM GIC PPI has maximum index of 15, "
++                       "index %" PRId32 " given", idx);
++            return 0;
++        }
++        if (qemu_type == FDT_GENERIC_GICV3_TYPE_AFFINITY_IDX) {
++            cpu = cells[2] >> 8;
++            *irqs = qdev_get_gpio_in(DEVICE(obj),
++                                         gs->num_irq - 16 + idx + cpu * 32);
++            return cpu;
++        }
++
++        cpu_mask = cells[2] >> 8;
++        while ((cpu_mask || qemu_type == FDT_GENERIC_GICV3_TYPE_AFFINITY_ALL)
++               && cpu < max && cpu < gs->num_cpu) {
++            if ((cpu_mask & 1) ||
++                 qemu_type == FDT_GENERIC_GICV3_TYPE_AFFINITY_ALL) {
++                *irqs = qdev_get_gpio_in(DEVICE(obj),
++                                         gs->num_irq - 16 + idx + cpu * 32);
++                irqs++;
++            }
++            cpu_mask >>= 1;
++            cpu++;
++        }
++        return cpu;
++    default:
++        error_setg(errp, "Invalid cell 0 value in interrupt binding: %d",
++                   cells[0]);
++        return 0;
++    }
++}
++
+ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
+ {
+     GICv3State *s = ARM_GICV3_COMMON(dev);
+@@ -624,12 +688,15 @@ static void arm_gicv3_common_class_init(ObjectClass *klass, const void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+     ResettableClass *rc = RESETTABLE_CLASS(klass);
+     ARMLinuxBootIfClass *albifc = ARM_LINUX_BOOT_IF_CLASS(klass);
++    FDTGenericIntcClass *fgic = FDT_GENERIC_INTC_CLASS(klass);
++
+ 
+     rc->phases.hold = arm_gicv3_common_reset_hold;
+     dc->realize = arm_gicv3_common_realize;
+     device_class_set_props(dc, arm_gicv3_common_properties);
+     dc->vmsd = &vmstate_gicv3;
+     albifc->arm_linux_init = arm_gic_common_linux_init;
++    fgic->get_irq = arm_gicv3_common_fdt_get_irq;
+ }
+ 
+ static const TypeInfo arm_gicv3_common_type = {
+@@ -641,6 +708,7 @@ static const TypeInfo arm_gicv3_common_type = {
+     .abstract = true,
+     .interfaces = (const InterfaceInfo[]) {
+         { TYPE_ARM_LINUX_BOOT_IF },
++        { TYPE_FDT_GENERIC_INTC },
+         { },
+     },
+ };
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 30/33] hw/core/fdt_generic_util: Add deferred device
+ initialization support
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:15 +0200
+Message-Id: <20260402215629.745866-31-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add a mechanism to defer device initialization
+until after the main FDT traversal.
+
+This introduces a deferred queue in FDTMachineInfo.
+Devices in this queue are processed in fdt_init_deferred(),
+which handles their realization, reset registration,
+and resource parsing (interrupts and memory regions).
+
+This allows resolving initialization where devices need to
+be realized on latest stages or outside of co-routine context.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c    | 28 ++++++++++++++++++++++++++++
+ include/hw/core/fdt_generic.h |  8 ++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index c92b5c287b..ae54ada11d 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -93,6 +93,13 @@ static bool qemu_irq_shared_or_handler(bool *inputs, int n)
+     return false;
+ }
+ 
++static void fdt_parse_node_reg_prop(FDTMachineInfo *fdti, char *node_path,
++                             Object *dev);
++static void fdt_parse_node_irq_prop(FDTMachineInfo *fdti, char *node_path,
++                             Object *dev);
++static void fdt_init_device_realize(FDTMachineInfo *fdti,  char *node_path,
++                                   Object *dev);
++
+ static void qemu_irq_shared_handler(void *opaque, int n, int level)
+ {
+     QEMUIRQSharedState *s = opaque;
+@@ -162,6 +169,26 @@ static void fdt_init_cpu_clusters(FDTMachineInfo *fdti)
+     }
+ }
+ 
++static void fdt_init_deferred(FDTMachineInfo *fdti)
++{
++    while (fdti->deferred) {
++        FDTDeferredNode *dnode = fdti->deferred;
++
++        fdt_debug("FDT: Deferred realize node: %s\n",
++                 dnode->node_path);
++
++        fdt_init_device_realize(fdti, dnode->node_path, OBJECT(dnode->dev));
++
++        fdt_parse_node_reg_prop(fdti, dnode->node_path, OBJECT(dnode->dev));
++
++        fdt_parse_node_irq_prop(fdti, dnode->node_path, OBJECT(dnode->dev));
++
++        fdti->deferred = dnode->next;
++        g_free(dnode->node_path);
++        g_free(dnode);
++    }
++}
++
+ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+ {
+     FDTMachineInfo *fdti = fdt_init_new_fdti(fdt);
+@@ -175,6 +202,7 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+     while (qemu_co_enter_next(fdti->cq, NULL)) {
+         ;
+     }
++    fdt_init_deferred(fdti);
+     fdt_init_cpu_clusters(fdti);
+     fdt_init_all_irqs(fdti);
+     memory_region_transaction_commit();
+diff --git a/include/hw/core/fdt_generic.h b/include/hw/core/fdt_generic.h
+index 3961615a9c..2d507392fa 100644
+--- a/include/hw/core/fdt_generic.h
++++ b/include/hw/core/fdt_generic.h
+@@ -35,6 +35,12 @@ typedef struct FDTIRQConnection {
+     void *next;
+ } FDTIRQConnection;
+ 
++typedef struct FDTDeferredNode {
++    DeviceState *dev;
++    char *node_path;
++    void *next;
++} FDTDeferredNode;
++
+ typedef struct FDTMachineInfo {
+     /* the fdt blob */
+     void *fdt;
+@@ -48,6 +54,8 @@ typedef struct FDTMachineInfo {
+     FDTIRQConnection *irqs;
+     /* list of all CPU clusters */
+     FDTCPUCluster *clusters;
++    /* list of devices for deferred init */
++    FDTDeferredNode *deferred;
+ } FDTMachineInfo;
+ 
+ /*
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 31/33] hw/core/fdt_generic_util: Add blockdev binding
+ support
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:16 +0200
+Message-Id: <20260402215629.745866-32-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The path add possibility to bind to QEMU block backends
+via the blockdev-node-name property.
+
+This enables support for the modern -blockdev command line option.
+
+Since the generic FDT initialization traverses the device tree
+inside  QEMU coroutines, realizing block devices immediately
+causes conflict: QEMU's block subsystem and AIO (Asynchronous I/O)
+are not compatible with being invoked from within these setup
+coroutines. To resolve this block device initialization are
+moved to the latest stage outside of co-routing context.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/core/fdt_generic_util.c | 77 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 77 insertions(+)
+
+diff --git a/hw/core/fdt_generic_util.c b/hw/core/fdt_generic_util.c
+index ae54ada11d..7d074745b5 100644
+--- a/hw/core/fdt_generic_util.c
++++ b/hw/core/fdt_generic_util.c
+@@ -69,6 +69,8 @@ static void fdt_get_irq_info_from_intc(FDTMachineInfo *fdti, qemu_irq *ret,
+                                        char *intc_node_path,
+                                        uint32_t *cells, uint32_t num_cells,
+                                        uint32_t max, Error **errp);
++static bool fdt_attach_blockdev(FDTMachineInfo *fdti,
++                                const char *node_path, Object *dev);
+ 
+ typedef struct QEMUIRQSharedState {
+     qemu_irq sink;
+@@ -173,6 +175,19 @@ static void fdt_init_deferred(FDTMachineInfo *fdti)
+ {
+     while (fdti->deferred) {
+         FDTDeferredNode *dnode = fdti->deferred;
++        int length = 0;
++
++        int offset = fdt_path_offset(fdti->fdt, dnode->node_path);
++        if (offset < 0) {
++            error_report("%s Couldn't find node %s: %s", __func__,
++                         dnode->node_path, fdt_strerror(offset));
++        }
++        const char *blockdev = fdt_stringlist_get(fdti->fdt, offset,
++                                              "blockdev-node-name", 0, &length);
++
++        if (blockdev && object_property_find(OBJECT(dnode->dev), "drive")) {
++            fdt_attach_blockdev(fdti, dnode->node_path, OBJECT(dnode->dev));
++        }
+ 
+         fdt_debug("FDT: Deferred realize node: %s\n",
+                  dnode->node_path);
+@@ -212,6 +227,8 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
+     current_machine->smp.cpus = fdt_generic_num_cpus;
+     current_machine->smp.max_cpus = fdt_generic_num_cpus;
+ 
++    bdrv_drain_all();
++
+     fdt_debug("FDT: Device tree scan complete\n");
+     return fdti;
+ }
+@@ -707,6 +724,47 @@ static void fdt_init_qdev_array_prop(Object *obj,
+     fdt_debug_np("set property %s propname to <list>\n", propname);
+ }
+ 
++/*
++ * Try to attach by matching drive created by '-blockdev node-name=LABEL'
++ * iff the FDT node contains property 'blockdev-node-name=LABEL'.
++ *
++ * Return false unless the given node_path has the property.
++ *
++ */
++static bool fdt_attach_blockdev(FDTMachineInfo *fdti,
++                                const char *node_path, Object *dev)
++{
++    static const char propname[] = "blockdev-node-name";
++    const char *label;
++
++    /* Inspect FDT node for blockdev-only binding */
++    label = qemu_fdt_getprop(fdti->fdt, node_path, propname,
++                             NULL, NULL);
++
++    /* Skip legacy node */
++    if (!label) {
++        return false;
++    }
++
++    /*
++     * Missing matching bdev is not an error: attachment is optional.
++     *
++     * error_setg() aborts, never returns: 'return false' is just sanity.
++     */
++    if (!label[0]) {
++        error_setg(&error_abort, "FDT-node '%s': property '%s' = <empty>",
++                   node_path, propname);
++        return false;
++    }
++
++    if (!bdrv_find_node(label)) {
++        return false;
++    }
++
++    object_property_set_str(OBJECT(dev), "drive", label, NULL);
++    return true;
++}
++
+ static void fdt_init_qdev_properties(char *node_path, FDTMachineInfo *fdti,
+                                      Object *dev)
+ {
+@@ -1048,6 +1106,7 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ {
+     Object *dev, *parent;
+     char *parent_node_path;
++    ObjectProperty *p;
+ 
+     if (!compat) {
+         return 1;
+@@ -1086,12 +1145,30 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
+ 
+     fdt_init_qdev_properties(node_path, fdti, dev);
+ 
++    /*
++     * In case device need to be attached to block backend,
++     * defer realize to latest stage, outside of co-routines,
++     * which are not compatible with AIO used by block subsystem
++     */
++    p = object_property_find(dev, "drive");
++    if (p && !strcmp(p->type, "str")) {
++        FDTDeferredNode *dnode = g_new0(FDTDeferredNode, 1);
++        *dnode = (FDTDeferredNode) {
++                .dev = DEVICE(dev),
++                .node_path = g_strdup(node_path),
++                .next = fdti->deferred
++        };
++        fdti->deferred = dnode;
++        goto exit;
++    }
++
+     fdt_init_device_realize(fdti, node_path, dev);
+ 
+     fdt_parse_node_reg_prop(fdti, node_path, dev);
+ 
+     fdt_parse_node_irq_prop(fdti, node_path, dev);
+ 
++exit:
+     g_free(parent_node_path);
+ 
+     return 0;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 32/33] hw/pci-host: add gsi-irqs property array
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:17 +0200
+Message-Id: <20260402215629.745866-33-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add a new gsi-irqs array property to the GPEX PCI host controller.
+This enables them to be configured on realize callback.
+
+This is required to init GPEX PCI host from a static configuration,
+such as Hardware device tree.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ hw/pci-host/gpex.c         | 6 ++++++
+ include/hw/pci-host/gpex.h | 3 +++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/hw/pci-host/gpex.c b/hw/pci-host/gpex.c
+index e66784ce51..6125b2c319 100644
+--- a/hw/pci-host/gpex.c
++++ b/hw/pci-host/gpex.c
+@@ -148,6 +148,10 @@ static void gpex_host_realize(DeviceState *dev, Error **errp)
+         s->irq[i].irq_num = -1;
+     }
+ 
++    for (i = 0; i < s->gsi_irq_num; i++) {
++        gpex_set_irq_num(s, i, s->gsi_irqs[i]);
++    }
++
+     pci->bus = pci_register_root_bus(dev, "pcie.0", gpex_set_irq,
+                                      gpex_swizzle_map_irq_fn,
+                                      s, &s->io_mmio, &s->io_ioport, 0,
+@@ -190,6 +194,8 @@ static const Property gpex_host_properties[] = {
+     DEFINE_PROP_SIZE(PCI_HOST_ABOVE_4G_MMIO_SIZE, GPEXHost,
+                      gpex_cfg.mmio64.size, 0),
+     DEFINE_PROP_UINT8("num-irqs", GPEXHost, num_irqs, PCI_NUM_PINS),
++    DEFINE_PROP_ARRAY("gsi-irqs", GPEXHost, gsi_irq_num,
++                      gsi_irqs, qdev_prop_uint32, uint32_t),
+ };
+ 
+ static void gpex_host_class_init(ObjectClass *klass, const void *data)
+diff --git a/include/hw/pci-host/gpex.h b/include/hw/pci-host/gpex.h
+index 1da9c85bce..f8e9874756 100644
+--- a/include/hw/pci-host/gpex.h
++++ b/include/hw/pci-host/gpex.h
+@@ -64,6 +64,9 @@ struct GPEXHost {
+     GPEXIrq *irq;
+     uint8_t num_irqs;
+ 
++    uint32_t *gsi_irqs;
++    uint32_t gsi_irq_num;
++
+     bool allow_unmapped_accesses;
+ 
+     struct GPEXConfig gpex_cfg;
+-- 
+2.43.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 33/33] tests/functional: Add functional tests for
+ arm-generic-fdt machine
+From: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+Date: Thu, 02 Apr 2026 23:56:18 +0200
+Message-Id: <20260402215629.745866-34-ruslichenko.r@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This patch adds functional tests for the new `arm-generic-fdt` machine type.
+It introduces two new test suites:
+
+1. test_arm_generic_fdt.py: Validates the firmware boot chain (TF-A and
+   EDK2). It checks the console output for specific patterns indicating
+   successful execution of BL1, BL2, BL31, and UEFI stages.
+
+2. test_arm_generic_fdt_alpine.py: Validates a full OS boot by launching
+   an Alpine Linux ISO and waiting for the welcome message.
+
+To support these tests, two pre-compiled Device Tree Blob (DTB) files are
+added to `tests/data`.
+
+The tests reuse the existing firmware assets and Alpine ISO infrastructure
+from the sbsa-ref tests.
+
+Signed-off-by: Ruslan Ruslichenko <Ruslan_Ruslichenko@epam.com>
+---
+ .../arm-generic-fdt/arm64-sbsa-guest.dtb      | Bin 0 -> 673 bytes
+ .../aarch64/arm-generic-fdt/arm64-sbsa-hw.dtb | Bin 0 -> 5290 bytes
+ tests/functional/aarch64/meson.build          |   2 +
+ .../aarch64/test_arm_generic_fdt.py           | 114 ++++++++++++++++++
+ .../aarch64/test_arm_generic_fdt_alpine.py    |  61 ++++++++++
+ 5 files changed, 177 insertions(+)
+ create mode 100644 tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-guest.dtb
+ create mode 100644 tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-hw.dtb
+ create mode 100755 tests/functional/aarch64/test_arm_generic_fdt.py
+ create mode 100755 tests/functional/aarch64/test_arm_generic_fdt_alpine.py
+
+diff --git a/tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-guest.dtb b/tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-guest.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..5f2a1e9b2826eec45ed97e6dd704649a05d0af4c
+GIT binary patch
+literal 673
+zcmZuuJx|0i40R8LjsXD+Gtw;#SBZ~>u>%r210zx{4c9=LRB?)cf5SiGkFYT#>@=y4
+za+VVN*)R69@_F#{1u**nfNSzg@@I68=^W8v>j8@IA^dX}3GI;IO)>k7PbPKlJ=>_$
+zyb&K#d~3ArUzfN-QF`@A85%4bhsws7-xk^i8PPE3l;S(a)gIquNmVr;U=mj7fSh1$
+zyjOg4GfyjW=Rr%HA-g`3DVKL)?Q9um?L}~%Gj9Dhl*jr#VOEm)4-;HZaGP+RU!7Be
+zjNkJnQ7<RRM$W~6ryQO;axS-XxIS{OwsW{|=CR*zg>1A{<%{yDoh@5!orix}@kH4L
+u>UUL2WembX)U{WL2};*?BIuP-;ME#J<CUlpq$3VU(_^6ifKEOu`m|p^QBCmx
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-hw.dtb b/tests/data/dtb/aarch64/arm-generic-fdt/arm64-sbsa-hw.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..c483e24ea72b6df80098030b0469beefbf1f3db4
+GIT binary patch
+literal 5290
+zcmd5=JB%Df5bZgBHehUn#V2CL21ek4`<UhU1ZxBlI_WS1iD*4H+q*mR&c`#e=Q|QE
+zgbY$dNCFW70TC$@k|kn?L<k9q01*%X@6~k8_TI->X9tutJ5}A)Rqs{zbkFQhr~dxU
+zm~&qnW7ds%^kdwg#dQ|f8C;O1XVAXc=nKDrv+lwDUZ=B-_H($-zVp_`d!6&|zVYs*
+z&Sg8YrOje{zH{mFM(6#ctY^`*vk}FUB(u$6jq?P|C0uHEogKu*tZH1_KKfF8Ut*wd
+ze_6WPzSYJQ`yBLMX7g=ZRyNF5!>CL{jG>Fhy0p*U@Wzwx2mPi&{fDo8{v%t|z6#yv
+zQMx|u--Au8^bx!(P$1e*yjsuW;N6dp_%$B!-!WcSP#>@Iy<2!S-d(}F2GS58FLhpb
+z3$MnzQ@pY!>Lj&XG!Vs1UFVR?`!i>sGUhaMvhNX3f5_7xbUI`4+3sP@U%<7!9=4ez
+zZ)M|IX~Wc}dASQmh>menZp=SUT;F53_paG==0=639VdClp)K|=oGv-&JE(RmB=LO?
+zd!GINFJUNu@?9ki+=;Kn@G9cgHuVW;{l0a+Y7-Ojc)SN?l=fGb8$s71_YPYi9r<m!
+zeGgM{wK#533&kOMn?m<jTu$61xL0$AZlvGb6#sGZwtR~?v4b>?N8>@9XLW>~*e$n3
+z&Mvhc2+Vyu99dh=k#Lk;HjdIkG)<z4A(g`q&d=j(%<uGoaG^qOHz(`b@*5X+2mF$J
+zk={Zc20!LnzR%?fTpf|;P;T^7t~d5zKo&6UNs}=}b3Yc>Ifh9xp3H%`T%3oa&Q-<6
+zc~Gn;px?ly3(v=^ZG7%1$HH6X@u1mf+8EfYOs`7PVrs)JchdWL#c|(Uk(WM8%Ht@W
+zK`~ukS?Twdm)H2DwRs<g#(k7R-i*1B_X;f$S&f?KCYtn_zaM%};x~@Xn%8_6kIZ)x
+z?g#U+MdUy}#%2CP^Vzun5;H+KdV#|xTSVHJ<l3vYswlKEdj#`n8dVb+zBpcn;zvd|
+zv5E3$*RD1B#k~ot{il01baudcDPP=!2Vg5F+UFMI1y95N1ecEQLVwb;&qJqZ|MQJ0
+zHev@a?&AZ_!Fn-o<T#w2rWcQr7hJo04V&*HSgQ={a+of35A(uvbth|B>Yrq_Ez4O^
+zhuo6Od^)vdAL|FJ)-74VfwNrB?{J*N+iOJE;OpQnXLO${gyNpoK4%-k;zJyl;BDys
+zd<<Nl_D}Zp7YNuvoA&QO*Jpt9_bKeBy#BACd$kI_S@bu1&X@5Z!FTv^u?^1;#+JGW
+z&p}dG{fifu*LhT;r}4%6j#rBiKGG#|&OnuVym^8ugwfg@f$njVqun1^>v?>CfAH6D
+z8~cic<d5V~{M;WXv=4n=k#9}*BRTn7Uq2sl>HN&|xjFUnY5X;}c!kgPVa*L;9=*Zh
+z$7f89-+?Z*+FXopHUr^>Zl7Op)BE0$^~k+sFh*8*LIlIONb>$Gx5U6bKrzfYa<oXB
+zQ#tm0j?pAeoFnV(b0emMag|EL(alxxD|{JWWAyL}i8CnF@WN#Wxo~`}cm-8|JwN#T
+zAIy0ct(3)_f1st0OJitGra`mT&+hbJ9*surk`#aD=sF*cr|qA6%di!b_M=Js=u6>Q
+zuR6I?r|;_k`j^)SwcYnQM#MXZWu`vTw}GQMqVh|eYsJG@T65Wh`Mwt7MP`y$ZV9!%
+z+zaR{^H8PfY<rCdxg2+B7C)ae*MV|lY}HR6q7x5Sg{=K6%1~HITwq>0lUaOH4B^${
+zUwRz6;%EG;xHwArl}@KE=K}v@Xt1Njagn2_S<nkO2#DhD8uR~ozRvM`=c_al_kW$Q
+ztl7!=xmQH^qo_7%KD1NQt&$II7~AQzGTmr6ENxXe6JMAn&eI~QldY*WL%W^Cc2MsY
+z)}%!kjYdh9)Vl^FEDqDHs5Eg_kIHMteb+92<#y))nry9InPL)UL!{^yWs;W&>JZF7
+zn)o$)0pE?L`2djLFdvPO+QgHn1UR!b&Eu;ES?jzEr#2hc6O+x-P}(bVJsF~*VG%aQ
+zRx%E4HcX<-B*SG~E4Ws1tr@(oT*#u-Hc>Gu%uugTno2uNs@i>l<27Q2YL=)@#Se03
+z<o{Z{Cn&}wszRv*Y1y6HW^}7eimyQ!5&p6Z+fszd(711Qj++*VnfJ}#S4=a7?%gCN
+v?{HMwYcu=-xGR~9yu>M8O>_KW9-G8NJYVA~AuROO(byUkJdMg-`5gEc@aUGT
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/functional/aarch64/meson.build b/tests/functional/aarch64/meson.build
+index 7ea8c22b04..637400496d 100644
+--- a/tests/functional/aarch64/meson.build
++++ b/tests/functional/aarch64/meson.build
+@@ -41,6 +41,8 @@ tests_aarch64_system_thorough = [
+   'sbsaref',
+   'sbsaref_alpine',
+   'sbsaref_freebsd',
++  'arm_generic_fdt',
++  'arm_generic_fdt_alpine',
+   'smmu',
+   'tcg_plugins',
+   'tuxrun',
+diff --git a/tests/functional/aarch64/test_arm_generic_fdt.py b/tests/functional/aarch64/test_arm_generic_fdt.py
+new file mode 100755
+index 0000000000..061140fa89
+--- /dev/null
++++ b/tests/functional/aarch64/test_arm_generic_fdt.py
+@@ -0,0 +1,114 @@
++#!/usr/bin/env python3
++#
++# Functional test that boots a kernel and checks the console
++#
++# Based on test_arm_generic_fdt.py
++#
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++from qemu_test import QemuSystemTest, Asset
++from qemu_test import wait_for_console_pattern
++from qemu_test import interrupt_interactive_console_until_pattern
++
++from pathlib import Path
++
++def fetch_firmware(test):
++    """
++    Flash volumes generated using:
++
++    Toolchain from Debian:
++    aarch64-linux-gnu-gcc (Debian 12.2.0-14) 12.2.0
++
++    Used components:
++
++    - Trusted Firmware         v2.12.0
++    - Tianocore EDK2           edk2-stable202411
++    - Tianocore EDK2-platforms 4b3530d
++
++    """
++
++    # Secure BootRom (TF-A code)
++    fs0_path = test.uncompress(Aarch64ArmGenericFdtMachine.ASSET_FLASH0,
++                                format="xz")
++
++    # Non-secure rom (UEFI and EFI variables)
++    fs1_path = test.uncompress(Aarch64ArmGenericFdtMachine.ASSET_FLASH1,
++                                format="xz")
++
++    for path in [fs0_path, fs1_path]:
++        with open(path, "ab+") as fd:
++            fd.truncate(256 << 20)  # Expand volumes to 256MiB
++
++    test.vm.add_args(
++        "-blockdev", f"driver=file,filename={fs0_path},node-name=pflash0",
++        "-blockdev", f"driver=file,filename={fs1_path},node-name=pflash1",
++    )
++
++
++class Aarch64ArmGenericFdtMachine(QemuSystemTest):
++    """
++    As firmware runs at a higher privilege level than the hypervisor we
++    can only run these tests under TCG emulation.
++    """
++
++    timeout = 180
++
++    # SBSA_FLASH0.fd.xz
++    ASSET_FLASH0 = Asset(
++            'https://share.linaro.org/downloadFile?id=kyoMLGC9zXa4oA7',
++            '76eb89d42eebe324e4395329f47447cda9ac920aabcf99aca85424609c3384a5')
++
++    # SBSA_FLASH1.fd.xz
++    ASSET_FLASH1 = Asset(
++        'https://share.linaro.org/downloadFile?id=Dj1HRXnDnKtU6Nj',
++        'f850f243bd8dbd49c51e061e0f79f1697546938f454aeb59ab7d93e5f0d412fc')
++
++    current_dir = Path(__file__).resolve().parent
++
++    hw_dtb_path = current_dir.parent.parent/ "data" / "dtb" / "aarch64" / \
++                    "arm-generic-fdt" / "arm64-sbsa-hw.dtb"
++
++    dtb_path = current_dir.parent.parent/ "data" / "dtb" / "aarch64" / \
++                    "arm-generic-fdt" / "arm64-sbsa-guest.dtb"
++
++    def test_edk2_firmware(self):
++
++        self.set_machine(f'arm-generic-fdt')
++
++        fetch_firmware(self)
++
++        self.vm.add_args('-machine', f'hw-dtb={self.hw_dtb_path}')
++        self.vm.add_args('-dtb', str(self.dtb_path))
++
++        self.vm.add_args('-device', "bochs-display")
++        self.vm.add_args('-device', "bochs-display")
++
++        self.vm.add_args('-d', 'guest_errors,unimp')
++        self.vm.set_console()
++        self.vm.launch()
++
++        # TF-A boot sequence:
++        #
++        # https://github.com/ARM-software/arm-trusted-firmware/blob/v2.8.0/\
++        #     docs/design/trusted-board-boot.rst#trusted-board-boot-sequence
++        # https://trustedfirmware-a.readthedocs.io/en/v2.8/\
++        #     design/firmware-design.html#cold-boot
++
++        # AP Trusted ROM
++        wait_for_console_pattern(self, "Booting Trusted Firmware")
++        wait_for_console_pattern(self, "BL1: v2.12.0(release):")
++        wait_for_console_pattern(self, "BL1: Booting BL2")
++
++        # Trusted Boot Firmware
++        wait_for_console_pattern(self, "BL2: v2.12.0(release)")
++        wait_for_console_pattern(self, "Booting BL31")
++
++        # EL3 Runtime Software
++        wait_for_console_pattern(self, "BL31: v2.12.0(release)")
++
++        # Non-trusted Firmware
++        wait_for_console_pattern(self, "UEFI firmware (version 1.0")
++        interrupt_interactive_console_until_pattern(self, "QEMU SBSA-REF Machine")
++
++if __name__ == '__main__':
++    QemuSystemTest.main()
+diff --git a/tests/functional/aarch64/test_arm_generic_fdt_alpine.py b/tests/functional/aarch64/test_arm_generic_fdt_alpine.py
+new file mode 100755
+index 0000000000..0589f260a4
+--- /dev/null
++++ b/tests/functional/aarch64/test_arm_generic_fdt_alpine.py
+@@ -0,0 +1,61 @@
++#!/usr/bin/env python3
++#
++# Functional test that boots a kernel and checks the console
++#
++# Based on test_arm_generic_fdt_alpine.py
++#
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++from qemu_test import QemuSystemTest, Asset, skipSlowTest
++from qemu_test import wait_for_console_pattern
++from test_arm_generic_fdt import fetch_firmware
++
++from pathlib import Path
++
++class Aarch64ArmGenericFdtAlpine(QemuSystemTest):
++
++    ASSET_ALPINE_ISO = Asset(
++        ('https://dl-cdn.alpinelinux.org/'
++         'alpine/v3.17/releases/aarch64/alpine-standard-3.17.2-aarch64.iso'),
++        '5a36304ecf039292082d92b48152a9ec21009d3a62f459de623e19c4bd9dc027')
++
++    current_dir = Path(__file__).resolve().parent
++
++    hw_dtb_path = current_dir.parent.parent/ "data" / "dtb" / "aarch64" / \
++        "arm-generic-fdt" / "arm64-sbsa-hw.dtb"
++
++    dtb_path = current_dir.parent.parent/ "data" / "dtb" / "aarch64" / \
++        "arm-generic-fdt" / "arm64-sbsa-guest.dtb"
++
++
++    # This tests the whole boot chain from EFI to Userspace
++    # We only boot a whole OS for the current top level CPU and GIC
++    # Other test profiles should use more minimal boots
++    def boot_alpine_linux(self):
++        self.set_machine('arm-generic-fdt')
++
++        fetch_firmware(self)
++        iso_path = self.ASSET_ALPINE_ISO.fetch()
++
++        self.vm.set_console()
++        self.vm.add_args('-machine', f'hw-dtb={self.hw_dtb_path}')
++        self.vm.add_args('-dtb', str(self.dtb_path))
++        self.vm.add_args(
++            "-device", f"ide-cd,bus=ahci.0,unit=0,drive=cdrom0",
++        )
++        self.vm.add_args(
++            "-drive", f"file={iso_path},if=none,id=cdrom0",
++        )
++        self.vm.add_args('-device', "bochs-display")
++        self.vm.add_args('-netdev', "user,id=net0")
++        self.vm.add_args('-device', "e1000e,netdev=net0")
++
++        self.vm.launch()
++        wait_for_console_pattern(self, "Welcome to Alpine Linux 3.17")
++
++    def test_alpine_linux(self):
++        self.boot_alpine_linux()
++
++
++if __name__ == '__main__':
++    QemuSystemTest.main()
+-- 
+2.43.0
+
