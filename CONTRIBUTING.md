@@ -52,7 +52,7 @@ source .venv/bin/activate
 make run
 ```
 
-After `make setup`, QEMU lives in `~/src/qemu/build-qenode/install/`.
+After `make setup`, QEMU lives in `ext/qemu/build-qenode/install/`.
 `scripts/run.sh` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 
@@ -79,17 +79,17 @@ Our patches live in `patches/`.  The applied patch branch in the QEMU tree
 is `qenode-patches`.
 
 ```bash
-# Make changes in ~/src/qemu, then:
-cd ~/src/qemu
+# Make changes in ext/qemu, then:
+cd ext/qemu
 git add -p          # stage your changes
 git commit -m "your patch description"
 
 # Export the new patch:
-cd ~/src/qenode
-git -C ~/src/qemu format-patch HEAD~1 -o patches/
+cd <qenode-repo>
+git -C ext/qemu format-patch HEAD~1 -o patches/
 
 # Or regenerate the full series:
-git -C ~/src/qemu format-patch <base-commit>..HEAD -o patches/
+git -C ext/qemu format-patch <base-commit>..HEAD -o patches/
 ```
 
 ### Python Tools (`tools/`)
@@ -130,7 +130,7 @@ ruff check tools/ tests/
 
 ## Project Context
 
-qenode is developed alongside **FirmwareStudio** (`~/src/FirmwareStudio` / separate repo),
+qenode is developed alongside **FirmwareStudio** (separate upstream repo),
 a digital twin environment where MuJoCo drives physical simulation and acts as the
 **external time master** for QEMU. See `CLAUDE.md` for the full architectural picture,
 and `PLAN.md` for the phased task checklist.

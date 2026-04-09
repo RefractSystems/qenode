@@ -27,7 +27,7 @@ Specifically, it provides:
 
 ## QEMU Version and Patch Strategy
 
-- **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `~/src/qemu`, git HEAD from upstream
+- **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `ext/qemu`, git HEAD from upstream
   `https://gitlab.com/qemu-project/qemu.git`)
 - **Required patches**: The 33-patch `arm-generic-fdt` series, patchew ID
   `20260402215629.745866-1-ruslichenko.r@gmail.com`
@@ -53,9 +53,9 @@ binary level, but source-managed in the qenode repo).
 
 `scripts/setup-qemu.sh` creates a symlink:
 ```
-~/src/qemu/hw/qenode  →  <qenode-repo>/hw
+ext/qemu/hw/qenode  →  <qenode-repo>/hw
 ```
-and appends `subdir('qenode')` to `~/src/qemu/hw/meson.build`.
+and appends `subdir('qenode')` to `ext/qemu/hw/meson.build`.
 
 Our `hw/meson.build` adds entries to QEMU's `modules` dict:
 ```meson
@@ -151,9 +151,9 @@ Core dependencies:
 
 ## Local Resources
 
-- QEMU source: `~/src/qemu` (v10.2.92 / 11.0.0-rc2 pre-release, main branch)
-- Renode source: `~/src/renode` (reference for .repl format and existing peripherals)
-- QEMU headers needed for hw/: `~/src/qemu/include/`
+- QEMU source: `ext/qemu` (v10.2.92 / 11.0.0-rc2 pre-release, main branch)
+- Renode source: `ext/renode` (reference for .repl format and existing peripherals)
+- QEMU headers needed for hw/: `ext/qemu/include/`
 
 ---
 
@@ -161,7 +161,7 @@ Core dependencies:
 
 **This is the strategic north star for the project.**
 
-qenode is the QEMU-layer component of **FirmwareStudio** (`~/src/FirmwareStudio`), a
+qenode is the QEMU-layer component of **FirmwareStudio** (an upstream digital twin repo), a
 digital twin platform for embedded firmware development. Understanding the full picture
 is essential for making correct architectural decisions.
 

@@ -14,8 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-QEMU_SRC="${QEMU_SRC:-$HOME/src/qemu}"
+QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/ext/qemu}"
 QEMU_BUILD="${QEMU_BUILD:-$QEMU_SRC/build-qenode}"
+RENODE_SRC="${RENODE_SRC:-$REPO_ROOT/ext/renode}"
 PATCHES_DIR="$REPO_ROOT/patches"
 
 OS="$(uname -s)"
@@ -37,6 +38,11 @@ if [ ! -d "$QEMU_SRC/.git" ]; then
   git clone https://gitlab.com/qemu-project/qemu.git "$QEMU_SRC"
   cd "$QEMU_SRC"
   git submodule update --init --recursive
+fi
+
+if [ ! -d "$RENODE_SRC/.git" ]; then
+  echo "==> Cloning Renode (for test assets)..."
+  git clone https://github.com/renode/renode.git "$RENODE_SRC"
 fi
 
 cd "$QEMU_SRC"

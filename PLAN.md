@@ -36,7 +36,7 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
 
 ### Tasks
 - [ ] **1.1** Write `scripts/setup-qemu.sh`:
-  - Confirm QEMU is at `~/src/qemu` and at v10.2.92 / 11.0.0-rc2
+  - Confirm QEMU is loaded in `ext/qemu` and at v10.2.92 / 11.0.0-rc2
   - Apply the 33-patch arm-generic-fdt series from local mailbox `patches/arm-generic-fdt-v3.mbx` via `git am --3way`
   - Apply the libqemu external time master patch via `python3 patches/apply_libqemu.py`
   - Apply the TCG quantum hook patch via `python3 patches/apply_zenoh_hook.py` (exposes a function pointer in `cpu-exec.c` since QOM devices cannot hook the TCG loop natively)
@@ -106,9 +106,9 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 
 ### Tasks
 - [ ] **3.1** Obtain reference `.repl` files from Renode's public repo:
-  - `~/src/renode/platforms/cpus/stm32f4.repl` (Cortex-M4, STM32)
+  - `ext/renode/platforms/cpus/stm32f4.repl` (Cortex-M4, STM32)
   - A Zynq or Cortex-A based board for arm-generic-fdt validation
-  - Check: `ls ~/src/renode/platforms/`
+  - Check: `ls ext/renode/platforms/`
 
 - [ ] **3.2** Write `tools/repl2qemu/parser.py`:
   - Grammar (Lark EBNF) covering:
@@ -255,7 +255,7 @@ Implement after Path B is validated.
 simulation; its `TimeAuthority` class advances QEMU's virtual clock one quantum at a time
 over Zenoh, guaranteeing causal consistency between physics and firmware.
 
-**Background**: FirmwareStudio (`~/src/FirmwareStudio`) already has a working prototype:
+**Background**: FirmwareStudio (upstream repository) already has a working prototype:
 - `physics/time_authority/` — Python `TimeAuthority` class running in MuJoCo container
 - `cyber/patches/0001-add-libqemu-clocksock.patch` — QEMU patch that exposes a Unix socket
 - `cyber/src/node_agent.py` — bridges Zenoh ↔ QEMU Unix socket
@@ -410,7 +410,7 @@ delivers a UDP datagram to QEMU's receive path.
 | R2 | Native module approach fails on some macOS builds | Omit `--enable-plugins` on Darwin natively to bypass GLib symbol conflict |
 | R3 | macOS `.so` loading is broken with `--enable-plugins` | Enforce Linux-only dev environment in CI |
 | R4 | Native Zenoh plugin (`hw/zenoh/`) adds `zenoh-c` as a QEMU Meson dependency | Pin zenoh-c version; vendor as Meson `subproject()` to avoid system-library conflicts |
-| R5 | Renode .repl parser has undocumented edge cases | Use Renode source (`~/src/renode`) as ground truth; diff parser output against Renode's own AST |
+| R5 | Renode .repl parser has undocumented edge cases | Use Renode source (`ext/renode`) as ground truth; diff parser output against Renode's own AST |
 | R6 | `arm-generic-fdt` v3 patch series may have changed between patchew submission and merger | Track patchew thread; re-fetch if a v4 series is posted |
 | R7 | icount mode reduces firmware execution speed ~5–10× | Acceptable for control loops ≤10 kHz; profile with `perf` if needed |
 | R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc2 |
