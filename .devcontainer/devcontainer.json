@@ -8,11 +8,12 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
-    "source=${localEnv:HOME}/.gemini,target=/home/vscode/.gemini,type=bind"
+    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",
+    "source=gemini-cli-config,target=/home/vscode/.gemini,type=volume"
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini /home/vscode/.claude && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc",
   "customizations": {
     "vscode": {
       "extensions": [
