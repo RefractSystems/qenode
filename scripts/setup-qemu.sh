@@ -69,6 +69,11 @@ if ! git rev-parse --verify "$PATCH_BRANCH" > /dev/null 2>&1; then
   echo "==> Applying libqemu clock-socket extension..."
   python3 "$PATCHES_DIR/apply_libqemu.py" "$QEMU_SRC"
 
+  if [ -f "$PATCHES_DIR/apply_zenoh_hook.py" ]; then
+    echo "==> Applying TCG quantum hook extension..."
+    python3 "$PATCHES_DIR/apply_zenoh_hook.py" "$QEMU_SRC"
+  fi
+
   echo "==> Patch branch created at $(git rev-parse --short HEAD)"
 else
   echo "==> Patch branch '$PATCH_BRANCH' already exists — skipping patch application."
