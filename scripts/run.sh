@@ -24,9 +24,14 @@ WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 QEMU_BIN="$QEMU_DIR/build-qenode/install/bin/qemu-system-arm"
 
-# Set the QEMU module directory to point to our local build's lib/qemu
+# Set the QEMU module directory to point to our local build's lib/qemu (or multiarch equivalent)
 # This is crucial for dynamic loading of our custom .so peripherals
-QEMU_MODULE_DIR="$QEMU_DIR/build-qenode/install/lib/qemu"
+FOUND_SO=$(find "$QEMU_DIR/build-qenode/install" -name "hw-qenode-dummy.*" -type f 2>/dev/null | head -n1)
+if [ -n "$FOUND_SO" ]; then
+    QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
+else
+    QEMU_MODULE_DIR="$QEMU_DIR/build-qenode/install/lib/qemu"
+fi
 
 # Ensure QEMU has been built
 if [ ! -f "$QEMU_BIN" ]; then

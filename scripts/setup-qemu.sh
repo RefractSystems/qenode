@@ -48,6 +48,13 @@ cd "$WORKSPACE_DIR"
 python3 patches/apply_libqemu.py third_party/qemu
 python3 patches/apply_zenoh_hook.py third_party/qemu
 
+# Phase 2: Allow dynamic loading of SysBus devices via `-device`
+# The arm-generic-fdt patch does not set this by default, which breaks out-of-tree plugins.
+if ! grep -q "machine_class_allow_dynamic_sysbus_dev" "$QEMU_DIR/hw/arm/arm_generic_fdt.c"; then
+    echo "Enabling dynamic sysbus devices for arm-generic-fdt..."
+    sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' "$QEMU_DIR/hw/arm/arm_generic_fdt.c"
+fi
+
 # Symlink our custom hw/ directory into QEMU's hw/qenode directory
 # This allows QEMU's Meson build system to compile our custom peripherals
 ln -sfn "$WORKSPACE_DIR/hw" "$QEMU_DIR/hw/qenode"

@@ -14,6 +14,7 @@
  */
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "qemu/module.h"
 #include "hw/core/sysbus.h"
 #include "qom/object.h"
 
@@ -69,6 +70,16 @@ static const MemoryRegionOps dummy_mmio_ops = {
 
 /* ── Initialization ───────────────────────────────────────────────────────── */
 
+static void dummy_class_init(ObjectClass *oc, const void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(oc);
+    /* 
+     * Allow this device to be instantiated via the `-device dummy-device` 
+     * command line argument. SysBusDevices default to false.
+     */
+    dc->user_creatable = true;
+}
+
 /*
  * instance_init: called by object_new() / object_initialize().
  * Allocate and initialise sub-objects here (MemoryRegions, QEMUTimers, …).
@@ -98,7 +109,14 @@ static const TypeInfo dummy_types[] = {
         .parent        = TYPE_SYS_BUS_DEVICE,
         .instance_size = sizeof(DummyDeviceState),
         .instance_init = dummy_init,
+        .class_init    = dummy_class_init,
     },
 };
 
 DEFINE_TYPES(dummy_types)
+
+/* 
+ * Tell QEMU's module system that this .so provides TYPE_DUMMY_DEVICE.
+ * Without this, `-device dummy-device` will not auto-load the module.
+ */
+module_obj(TYPE_DUMMY_DEVICE);

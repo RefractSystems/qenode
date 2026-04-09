@@ -73,7 +73,7 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
 
 ---
 
-## Phase 2 — Dynamic QOM Plugin Infrastructure ⬜
+## Phase 2 — Dynamic QOM Plugin Infrastructure ✅
 
 **Goal**: Compile a minimal out-of-tree QOM peripheral as a `.so`, load it into QEMU
 via native module discovery + `scripts/run.sh`, and confirm the type appears in QOM.
@@ -84,19 +84,19 @@ via native module discovery + `scripts/run.sh`, and confirm the type appears in 
 - `info qom-tree` in QEMU monitor shows `dummy-device` attached.
 
 ### Tasks
-- [ ] **2.1** Write `hw/dummy/dummy.c` — minimal correct QOM SysBusDevice:
+- [x] **2.1** Write `hw/dummy/dummy.c` — minimal correct QOM SysBusDevice:
   - Include `qemu/osdep.h` first (always), then `hw/sysbus.h`
   - Use `OBJECT_DECLARE_SIMPLE_TYPE(DummyDevice, DUMMY_DEVICE)`
   - Use `DEFINE_TYPES(dummy_types)` (QEMU 7+ pattern, not `type_register_static`)
   - Implement MMIO read/write stubs (return 0, log access via `qemu_log_mask`)
   - No `#define BUILD_DSO` — this is not a QEMU macro
 
-- [ ] **2.2** Update QEMU module build configuration:
+- [x] **2.2** Update QEMU module build configuration:
   - Add symlink to link `hw/` into QEMU's source tree
   - Add `hw/meson.build` to define `hw_qenode_modules`
   - Output: `hw-qenode-dummy.so` within QEMU's installed `lib/qemu/`
 
-- [ ] **2.3** Verify the native module loading:
+- [x] **2.3** Verify the native module loading:
   - `./scripts/run.sh -machine none -device dummy-device`
   - Should auto-load `dummy-device` and print type registration trace, not "unknown device"
 
@@ -104,7 +104,7 @@ via native module discovery + `scripts/run.sh`, and confirm the type appears in 
   - Crate in `hw/rust-dummy/` using `qemu-plugin` crate or raw FFI
   - Demonstrates the C/Rust peripheral interop story
 
-- [ ] **2.5** Write tutorial lesson 2: Creating and Loading Dynamic QOM Plugins in C (and optionally Rust).
+- [x] **2.5** Write tutorial lesson 2: Creating and Loading Dynamic QOM Plugins in C (and optionally Rust).
 
 ---
 
