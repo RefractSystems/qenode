@@ -133,9 +133,10 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
     - `sysbus LoadELF $bin` → `-kernel $bin`
     - `machine StartGdbServer 3333` → `-gdb tcp::3333 -S`
     - `machine EnableProfiler` → `-d exec`
-  - Map `--native-accel` arguments (see ADR-007):
+  - Map `--native-accel` arguments (see ADR-009):
     - If AST indicates Cortex-A and running on ARM host → append `-accel kvm` (Linux) or `-accel hvf` (Mac)
-    - If AST indicates Cortex-M → append `-accel tcg`
+    - If AST indicates Cortex-M → always append `-accel tcg` (M-profile incompatible with KVM)
+    - KVM/hvf is only emitted for standalone mode; FirmwareStudio slaved modes always use TCG
 
 - [ ] **3.5** Write `tools/repl2qemu/__main__.py` (CLI entry point):
   - `python -m tools.repl2qemu input.repl [--out-dtb out.dtb] [--print-cmd]`
@@ -219,8 +220,10 @@ to Phase 7 when slaved modes are active.
 **Goal**: Enable SystemC peripheral models to connect to QEMU. Three paths are available
 (see `docs/ARCHITECTURE.md` §9 for the full decision guide):
 
-- **Path A** (chardev socket, available now): thin C++ adapter translates TLM transactions
-  to qenode's Unix socket protocol. Works for individual peripherals at <1 MHz access rate.
+- **Path A** (chardev socket bridge): thin C++ adapter translates TLM transactions to
+  qenode's Unix socket protocol. **Requires writing `hw/misc/mmio-socket-bridge.c` first**
+  — QEMU does not natively serialize MMIO to sockets. Works for individual peripherals at
+  <1 MHz access rate (see ADR-005).
 - **Path B** (Remote Port, this phase): full TLM-2.0 co-simulation via AMD/Xilinx Remote
   Port. Required for Verilated FPGA fabric / complex SoC subsystems.
 - **Path C** (qbox, future): adopt Qualcomm qbox's `libqemu-cxx` for tight TLM embedding.
@@ -414,7 +417,7 @@ delivers a UDP datagram to QEMU's receive path.
 | R6 | `arm-generic-fdt` v3 patch series may have changed between patchew submission and merger | Track patchew thread; re-fetch if a v4 series is posted |
 | R7 | icount mode reduces firmware execution speed ~5–10× | Acceptable for control loops ≤10 kHz; profile with `perf` if needed |
 | R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc2 |
-| R9 | `zenoh-c` adds a native dependency to QEMU's Meson build | Pin zenoh-c version in Dockerfile; vendor or wrap as a Meson `subproject()` to avoid system-library conflicts |
+| R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
 
 ---

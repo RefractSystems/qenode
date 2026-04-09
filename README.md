@@ -173,9 +173,11 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
   devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
 - **No Python in the simulation loop**: All peripherals, clock sync, and networking are
   native C/Rust QOM modules. Python is offline-only (repl2qemu, pytest). See ADR-003.
-- **Three clock modes**: `standalone` (full speed), `slaved-suspend` (native TCG hook,
-  ~95% speed, recommended), `slaved-icount` (exact ns, ~15% speed, sub-quantum only).
-  Implemented as `hw/zenoh/zenoh-clock.c`, not via external Python QMP. See ADR-001.
+- **Three clock modes**: `standalone` (full speed; KVM/hvf available for Cortex-A on ARM
+  hosts), `slaved-suspend` (native TCG hook, ~95% speed, recommended for FirmwareStudio),
+  `slaved-icount` (exact ns, ~15% speed, sub-quantum timers only). Implemented as
+  `hw/zenoh/zenoh-clock.c`. KVM/hvf prohibited in slaved modes and for Cortex-M. See
+  ADR-001 and ADR-009.
 - **Deterministic multi-node**: `hw/zenoh/zenoh-netdev.c` with virtual-timestamped frames,
   not UDP multicast. See ADR-002.
 - **`query-cpus-fast`**: The old `query-cpus` QMP command is deprecated.

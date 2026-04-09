@@ -29,13 +29,14 @@ Specifically, it provides:
 
 - **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `third_party/qemu`, git HEAD from upstream
   `https://gitlab.com/qemu-project/qemu.git`)
-- **Required patches**: The 33-patch `arm-generic-fdt` series, patchew ID
-  `20260402215629.745866-1-ruslichenko.r@gmail.com`
-- **Fetch command** (when ready to apply):
-  ```bash
-  git fetch origin refs/for/master  # or fetch from patchew directly
-  git am $(fetch-patchew-series 20260402215629.745866-1-ruslichenko.r@gmail.com)
-  ```
+- **Required patches** (applied in order by `scripts/setup-qemu.sh`):
+  1. The 33-patch `arm-generic-fdt` series (patchew ID
+     `20260402215629.745866-1-ruslichenko.r@gmail.com`) — applied via `git am`
+  2. `patches/apply_libqemu.py` — AST-injects icount bias Unix socket into `cpus.c`
+     and `icount.c` (stepping stone for slaved-icount; superseded by hw/zenoh/ in Phase 7)
+  3. `patches/apply_zenoh_hook.py` — AST-injects a `qenode_tcg_quantum_hook` function
+     pointer into `cpu-exec.c`, called at every TB boundary. Required because QEMU
+     exports no extensibility API for QOM modules to hook the internal TCG loop.
 - **Build flags** (must include):
   ```
   --enable-modules --enable-fdt --enable-plugins
@@ -101,6 +102,11 @@ qenode/
 │   │   └── qmp_bridge.py        # Async QMP helper (wraps qemu.qmp library)
 │   └── node_agent/            # DEPRECATED — superseded by hw/zenoh/ in Phase 7
 │                              # Kept as reference for wire protocol only
+├── patches/
+│   ├── arm-generic-fdt-v3.mbx  # 33-patch series (apply with git am)
+│   ├── apply_libqemu.py        # Injects icount bias socket (Phase 1-6 stepping stone)
+│   └── apply_zenoh_hook.py     # Injects qenode_tcg_quantum_hook function pointer
+│                               # into cpu-exec.c; required for hw/zenoh/zenoh-clock.c
 ├── scripts/
 │   ├── setup-qemu.sh          # Clone QEMU, apply patches, symlink hw/, build
 │   └── run.sh                 # Launch wrapper: sets QEMU_MODULE_DIR
