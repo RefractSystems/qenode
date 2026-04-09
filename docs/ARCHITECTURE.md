@@ -28,13 +28,12 @@ works alongside an unmodified (or minimally patched) QEMU binary.
 | Core engine | TCG (C JIT), optionally KVM | tlib (C, derived from early QEMU) |
 | Peripheral access | Direct C function call on MMIO hit | C → C# boundary crossing |
 | Determinism | `icount` mode (approximate) | Nanosecond virtual clock, fully deterministic |
-| KVM support | Yes (x86, ARM A-profile only) — **not used by qenode** | Yes (x86 only, recent) |
+| KVM support | Yes (x86, ARM A-profile only) — **used in standalone mode only** | Yes (x86 only, recent) |
 
 QEMU's pure-C peripheral path is significantly lower latency than Renode's C→C# boundary.
 The trade-off: Renode's C# layer enables dynamic peripheral loading without recompilation.
 
-**qenode always uses TCG**, even on ARM hosts. KVM is incompatible with Cortex-M targets
-and with icount-based time determinism. See §10 ADR-009.
+**qenode uses TCG** for Cortex-M and FirmwareStudio slaved-time modes. Native hardware acceleration (KVM/hvf) is supported only for Cortex-A profiles in standalone mode. See §10 ADR-009.
 
 ### 2.2 Device Model
 
@@ -916,65 +915,20 @@ must be protected by a `QemuMutex`. `timer_mod()` is safe to call from any threa
 
 ---
 
-### ADR-009: TCG is mandatory — KVM/hvf hardware acceleration is not used
+### ADR-009: Hardware Acceleration (KVM/hvf) is supported only for Cortex-A in standalone mode
 
-**Decision**: qenode always uses QEMU's TCG (software JIT) execution engine, even when
-running on an ARM host that could in principle use KVM or Apple Hypervisor.framework for
-near-native ARM execution.
+**Decision**: qenode supports using native hardware acceleration (`-accel kvm` on Linux, `-accel hvf` on macOS) in `standalone` clock mode, but **only** when simulating Cortex-A firmware on an ARM host. All microcontroller (Cortex-M) targets must fall back to `-accel tcg`.
 
-**Context**: When FirmwareStudio is deployed on an ARM host (Apple M-series, AWS
-Graviton), a reasonable optimization would be to enable KVM (`-accel kvm`) or `hvf`
-(`-accel hvf`) so that guest ARM instructions execute directly on the host CPU without
-TCG translation overhead. This would give roughly 100% of native speed instead of the
-~10–20% delivered by TCG. The question was examined and rejected on two independent
-grounds.
+**Context**: When simulating ARM platforms on ARM hosts (like an Apple Silicon Mac or AWS Graviton), using KVM/hvf bypasses the TCG JIT compiler completely, delivering near 100% native host speed. 
 
-**Reason 1 — CPU profile incompatibility for Cortex-M targets**
+**Why it doesn't apply to Microcontrollers**:
+Modern ARM host CPUs enforce the A-profile (Application) execution state in silicon. They fundamentally lack M-profile (Microcontroller) states and exception models. An M-series Mac running KVM cannot natively execute STM32/Cortex-M firmware. Thus, Cortex-M simulation will always use TCG dynamic translation, regardless of the host horsepower.
 
-KVM and hvf execute guest instructions on the bare host CPU. The host CPU must support
-the same CPU *profile* as the guest. ARM host CPUs (Apple M-series, Graviton) are
-**A-profile** (Application: ARMv8-A / ARMv9-A). The vast majority of embedded firmware
-targets in FirmwareStudio are **M-profile** (Microcontroller: ARMv7-M / ARMv8-M,
-Cortex-M3/M4/M7/M33).
+**Why it doesn't apply to slaved modes (FirmwareStudio)**:
+Hardware acceleration runs the guest blindly at full speed and is completely incompatible with `-icount` virtual time. Furthermore, KVM lacks the exact translation-block boundaries required for `slaved-suspend`'s cooperative TCG hooks. Halting a KVM vCPU requires unpredictable host-OS timer interrupts, destroying the causal determinism required by the digital twin.
 
-A-profile and M-profile are not just instruction set variants — they have fundamentally
-different exception models, memory protection architectures, and execution states
-(EL0/EL1/EL2 vs Thread/Handler mode with Thumb-only execution). A host A-profile CPU
-cannot natively execute M-profile firmware. There is no KVM path for Cortex-M simulation;
-TCG is the only option.
-
-Even for Cortex-A targets (e.g., a Raspberry Pi firmware): the specific version and
-extensions must match. Simulating a Cortex-A15 (ARMv7-A) on an M2 (ARMv9-A) with KVM
-would require the host to support ARMv7 guest state, which macOS hvf does not expose.
-
-**Reason 2 — KVM is incompatible with deterministic time control**
-
-Even for targets where KVM is technically possible, it destroys the time determinism that
-FirmwareStudio requires:
-
-- KVM executes instructions at full hardware speed with no instruction counting. There
-  is no virtual instruction counter, no `icount_decr`, no TB boundary event. `-icount`
-  mode is explicitly TCG-only; it cannot be combined with `-accel kvm`.
-- The `zenoh-clock.c` plugin's cooperative halt mechanism (ADR-001) relies on TCG's TB
-  boundary hooks (`cpu_exit()`, `icount_decr`). Under KVM, these hooks do not exist.
-  The only way to halt a KVM vCPU thread is via a host OS signal or `ioctl(KVM_RUN)`
-  return, both of which are subject to host OS scheduling jitter of 50–1000 µs — far
-  beyond the sub-quantum precision required for causal consistency with MuJoCo.
-- Without exact quantum boundaries, firmware can execute past a physics tick, read stale
-  sensor values, and produce non-deterministic actuator outputs. The digital twin is
-  broken.
-
-**Performance consequence**
-
-TCG on a modern ARM host (Apple M2 Pro, AWS Graviton 3) delivers ~300–600 MIPS for
-typical Cortex-M firmware. The target silicon (STM32F4: ~80–160 MIPS) is 3–7× slower
-than TCG throughput. Even in `slaved-icount` mode (5–10× TCG penalty), effective
-throughput remains ~20–40 MIPS — still 1.5–4× faster than the real chip. The TCG
-penalty is absorbed entirely by host hardware headroom.
-
-**Verdict**: Do not add KVM/hvf support. It is categorically incompatible with Cortex-M
-targets and with FirmwareStudio's time synchronization model. This decision is not a
-cost/benefit trade-off — it is a hard technical constraint.
+**Implementation**:
+In Phase 3.4, `repl2qemu` handles this dynamically: by exposing a `--native-accel` flag, the generator inspects the `.repl` CPU type. It automatically schedules `-accel kvm`/`-accel hvf` for Cortex-A boards on ARM hosts, and defaults safely back to `-accel tcg` for Cortex-M. Custom QOM peripherals (`hw/zenoh`, etc.) continue to work seamlessly on both paths, as KVM transparently routes MMIO memory traps back to the exact same QEMU `MemoryRegionOps` C functions.
 
 ---
 
@@ -1001,19 +955,3 @@ clock advancement during early development (before Phase 7 hw/zenoh/ is written)
 task 7.1 writes the native plugin; task 7.3 removes `tools/node_agent/` and the clocksock
 patch injection from `scripts/setup-qemu.sh`.
 
----
-
-### ADR-007: Hardware Acceleration (KVM/hvf) is supported only for Cortex-A in standalone mode
-
-**Decision**: qenode supports using native hardware acceleration (`-accel kvm` on Linux, `-accel hvf` on macOS) in `standalone` clock mode, but **only** when simulating Cortex-A firmware on an ARM host. All microcontroller (Cortex-M) targets must fall back to `-accel tcg`.
-
-**Context**: When simulating ARM platforms on ARM hosts (like an Apple Silicon Mac or AWS Graviton), using KVM/hvf bypasses the TCG JIT compiler completely, delivering near 100% native host speed. 
-
-**Why it doesn't apply to Microcontrollers**:
-Modern ARM host CPUs enforce the A-profile (Application) execution state in silicon. They fundamentally lack M-profile (Microcontroller) states and exception models. An M-series Mac running KVM cannot natively execute STM32/Cortex-M firmware. Thus, Cortex-M simulation will always use TCG dynamic translation, regardless of the host horsepower.
-
-**Why it doesn't apply to slaved modes (FirmwareStudio)**:
-Hardware acceleration runs the guest blindly at full speed and is completely incompatible with `-icount` virtual time. Furthermore, KVM lacks the exact translation-block boundaries required for `slaved-suspend`'s cooperative TCG hooks. Halting a KVM vCPU requires unpredictable host-OS timer interrupts, destroying the causal determinism required by the digital twin.
-
-**Implementation**:
-In Phase 3.4, `repl2qemu` handles this dynamically: by exposing a `--native-accel` flag, the generator inspects the `.repl` CPU type. It automatically schedules `-accel kvm`/`-accel hvf` for Cortex-A boards on ARM hosts, and defaults safely back to `-accel tcg` for Cortex-M. Custom QOM peripherals (`hw/zenoh`, etc.) continue to work seamlessly on both paths, as KVM transparently routes MMIO memory traps back to the exact same QEMU `MemoryRegionOps` C functions.
