@@ -133,6 +133,9 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
     - `sysbus LoadELF $bin` → `-kernel $bin`
     - `machine StartGdbServer 3333` → `-gdb tcp::3333 -S`
     - `machine EnableProfiler` → `-d exec`
+  - Map `--native-accel` arguments (see ADR-007):
+    - If AST indicates Cortex-A and running on ARM host → append `-accel kvm` (Linux) or `-accel hvf` (Mac)
+    - If AST indicates Cortex-M → append `-accel tcg`
 
 - [ ] **3.5** Write `tools/repl2qemu/__main__.py` (CLI entry point):
   - `python -m tools.repl2qemu input.repl [--out-dtb out.dtb] [--print-cmd]`

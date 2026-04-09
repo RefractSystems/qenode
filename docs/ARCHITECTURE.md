@@ -1000,3 +1000,20 @@ Once the native module exists, the patch and its socket are pure overhead.
 clock advancement during early development (before Phase 7 hw/zenoh/ is written). Phase 7
 task 7.1 writes the native plugin; task 7.3 removes `tools/node_agent/` and the clocksock
 patch injection from `scripts/setup-qemu.sh`.
+
+---
+
+### ADR-007: Hardware Acceleration (KVM/hvf) is supported only for Cortex-A in standalone mode
+
+**Decision**: qenode supports using native hardware acceleration (`-accel kvm` on Linux, `-accel hvf` on macOS) in `standalone` clock mode, but **only** when simulating Cortex-A firmware on an ARM host. All microcontroller (Cortex-M) targets must fall back to `-accel tcg`.
+
+**Context**: When simulating ARM platforms on ARM hosts (like an Apple Silicon Mac or AWS Graviton), using KVM/hvf bypasses the TCG JIT compiler completely, delivering near 100% native host speed. 
+
+**Why it doesn't apply to Microcontrollers**:
+Modern ARM host CPUs enforce the A-profile (Application) execution state in silicon. They fundamentally lack M-profile (Microcontroller) states and exception models. An M-series Mac running KVM cannot natively execute STM32/Cortex-M firmware. Thus, Cortex-M simulation will always use TCG dynamic translation, regardless of the host horsepower.
+
+**Why it doesn't apply to slaved modes (FirmwareStudio)**:
+Hardware acceleration runs the guest blindly at full speed and is completely incompatible with `-icount` virtual time. Furthermore, KVM lacks the exact translation-block boundaries required for `slaved-suspend`'s cooperative TCG hooks. Halting a KVM vCPU requires unpredictable host-OS timer interrupts, destroying the causal determinism required by the digital twin.
+
+**Implementation**:
+In Phase 3.4, `repl2qemu` handles this dynamically: by exposing a `--native-accel` flag, the generator inspects the `.repl` CPU type. It automatically schedules `-accel kvm`/`-accel hvf` for Cortex-A boards on ARM hosts, and defaults safely back to `-accel tcg` for Cortex-M. Custom QOM peripherals (`hw/zenoh`, etc.) continue to work seamlessly on both paths, as KVM transparently routes MMIO memory traps back to the exact same QEMU `MemoryRegionOps` C functions.
