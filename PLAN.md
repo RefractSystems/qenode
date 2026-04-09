@@ -24,6 +24,18 @@ instantiation, .repl parsing, and Robot Framework test parity.
 
 ---
 
+## Regression Testing Mandate
+
+**For every completed phase, an automated integration test MUST be added to prevent future regressions.**
+
+**Testing Guidelines:**
+- **Location:** Place tests in `test/phaseX/smoke_test.sh`. The test must be executable via bash.
+- **Documentation:** Every script and supplementary file (like Python helpers) must be well-documented with header comments explaining *what* it tests and *how*.
+- **Automation:** The root `Makefile` provides a `make test-integration` target. It automatically finds and runs all `test/*/smoke_test.sh` scripts sequentially. If any fail, the command aborts. 
+- **Validation Requirement:** Never mark a Phase complete in this file until its features are covered by an automated test that passes `make test-integration`.
+
+---
+
 ## Phase 0 — Repository Setup ✅
 
 **Status**: Done
@@ -161,6 +173,7 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
   - Test DTS output for a 3-device platform
 
 - [ ] **3.7** Write tutorial lesson 3: Parsing .repl files and translating to Device Tree structures.
+- [ ] **3.8** Write integration test `test/phase3/smoke_test.sh`: parses a test `.repl`, asserts identical DTB output.
 
 **Needs from Marcin**:
 - Confirm whether you have proprietary `.repl` files to test against edge cases.

@@ -102,6 +102,35 @@ python -m pytest tests/ -v
 
 ---
 
+## Testing and Regression
+
+qenode relies on automated testing to ensure new features (like parsing or new peripherals) don't break earlier architectural work. All tests must be properly documented.
+
+We split testing into two categories:
+
+### 1. Emulator-Level Smoke Tests (Phases 1-3)
+These are raw `bash` scripts combined with small Python scripts (using QMP) to verify the emulator works at a low level.
+They are located in `test/phaseX/smoke_test.sh`.
+
+**To run all integration smoke tests:**
+```bash
+make test-integration
+```
+*Note: This will execute every script sequentially. If a single script fails, the make command exits immediately.*
+
+### 2. Python Unit & Automation Tests (Phase 4+)
+For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge, we use `pytest`.
+
+**To run unit/automation tests:**
+```bash
+# Make sure your virtual environment is active!
+make test
+```
+
+When implementing a feature for a new Phase, you **MUST** provide a corresponding `smoke_test.sh` (or `pytest` suite for later phases) before submitting your PR. This prevents regressions.
+
+---
+
 ## Branching and Commits
 
 - Branch off `main`: `git checkout -b feature/<phase>-<short-desc>`

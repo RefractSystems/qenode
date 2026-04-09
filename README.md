@@ -81,7 +81,7 @@ qenode/
 │   ├── lesson1-dynamic-machines/ # Educational content for Phase 1
 │   └── lesson2-dynamic-plugins/  # Educational content for Phase 2
 │
-├── Makefile                    # make setup / build / run / venv / test
+├── Makefile                    # make setup / build / run / test-integration / venv / test
 └── requirements.txt            # qemu.qmp, robotframework, lark, eclipse-zenoh
 ```
 
