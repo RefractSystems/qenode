@@ -24,7 +24,7 @@ instantiation, .repl parsing, and Robot Framework test parity.
 
 ---
 
-## Phase 1 — QEMU Build with arm-generic-fdt ⬜
+## Phase 1 — QEMU Build with arm-generic-fdt ✅
 
 **Goal**: A working QEMU binary on Linux with `--enable-modules` and the arm-generic-fdt
 machine type. Validates that the patch series applies cleanly and FDT-based boot works.
@@ -35,7 +35,7 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
 - `qemu-system-arm -device help` lists `arm-generic-fdt` as a valid machine.
 
 ### Tasks
-- [ ] **1.1** Write `scripts/setup-qemu.sh`:
+- [x] **1.1** Write `scripts/setup-qemu.sh`:
   - Confirm QEMU is loaded in `third_party/qemu` and at v10.2.92 / 11.0.0-rc2
   - Apply the 33-patch arm-generic-fdt series from local mailbox `patches/arm-generic-fdt-v3.mbx` via `git am --3way`
   - Apply the libqemu external time master patch via `python3 patches/apply_libqemu.py`
@@ -44,16 +44,16 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
       --target-list=arm-softmmu,arm-linux-user --prefix=$(pwd)/install`
   - Build: `make -j$(nproc)`
 
-- [ ] **1.2** Write a minimal `test/phase1/minimal.dts` for the arm-generic-fdt machine:
+- [x] **1.2** Write a minimal `test/phase1/minimal.dts` for the arm-generic-fdt machine:
   - Single Cortex-A15 CPU, 128 MB RAM, PL011 UART at 0x09000000
   - Compile: `dtc -I dts -O dtb -o minimal.dtb minimal.dts`
 
-- [ ] **1.3** Write `scripts/run.sh` skeleton:
+- [x] **1.3** Write `scripts/run.sh` skeleton:
   - Accepts `--dtb`, `--kernel`, `--machine` args
   - Sets `QEMU_MODULE_DIR` to the library output directory
   - Execs `qemu-system-arm` with those environment variables
 
-- [ ] **1.4** Smoke-test: boot the minimal DTB, verify UART output reaches host terminal.
+- [x] **1.4** Smoke-test: boot the minimal DTB, verify UART output reaches host terminal.
 
 ---
 
