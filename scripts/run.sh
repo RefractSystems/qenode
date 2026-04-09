@@ -1,57 +1,55 @@
 #!/usr/bin/env bash
-# run.sh — Launch wrapper for qenode-patched QEMU.
-#
-# Sets the module path to the installed QEMU module dir so that
-# `hw-qenode-*.so` plugins are discoverable via -device <name>.
-#
-# Usage:
-#   ./scripts/run.sh -M arm-generic-fdt -hw-dtb board.dtb -kernel fw.elf [...]
-#   ./scripts/run.sh --arch aarch64 -M arm-generic-fdt ...   (default: arm)
-#
-# Environment variables:
-#   QEMU_SRC    QEMU source / build root (default: third_party/qemu)
-#   QEMU_BUILD  Build directory (default: $QEMU_SRC/build-qenode)
-#   ARCH        arm or aarch64 (default: arm)
-
-set -euo pipefail
+set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
+QEMU_BIN="$QEMU_DIR/build-qenode/qemu-system-arm"
+QEMU_MODULE_DIR="$QEMU_DIR/build-qenode"
 
-QEMU_SRC="${QEMU_SRC:-$REPO_ROOT/third_party/qemu}"
-QEMU_BUILD="${QEMU_BUILD:-$QEMU_SRC/build-qenode}"
-ARCH="${ARCH:-arm}"
-
-QEMU_BIN="$QEMU_BUILD/install/bin/qemu-system-$ARCH"
-MODULE_DIR="$QEMU_BUILD/install/lib/qemu"
-
-if [ ! -x "$QEMU_BIN" ]; then
-  echo "ERROR: QEMU binary not found at $QEMU_BIN"
-  echo "       Run ./scripts/setup-qemu.sh first."
-  exit 1
+if [ ! -f "$QEMU_BIN" ]; then
+    echo "QEMU binary not found at $QEMU_BIN. Please run setup-qemu.sh first."
+    exit 1
 fi
 
-# Override arch from --arch flag if present (consumed here, not passed to QEMU)
-ARGS=()
+DTB=""
+KERNEL=""
+MACHINE="arm-generic-fdt"
+EXTRA_ARGS=()
+
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --arch)
-      ARCH="$2"
-      QEMU_BIN="$QEMU_BUILD/install/bin/qemu-system-$ARCH"
+  case $1 in
+    --dtb)
+      DTB="$2"
+      shift 2
+      ;;
+    --kernel)
+      KERNEL="$2"
+      shift 2
+      ;;
+    --machine)
+      MACHINE="$2"
       shift 2
       ;;
     *)
-      ARGS+=("$1")
+      EXTRA_ARGS+=("$1")
       shift
       ;;
   esac
 done
 
-export QEMU_MODULE_DIR="$MODULE_DIR"
+if [ -n "$DTB" ]; then
+    MACHINE="${MACHINE},hw-dtb=${DTB}"
+fi
 
-echo "==> qenode run"
-echo "    binary    : $QEMU_BIN"
-echo "    module dir: $MODULE_DIR"
-echo ""
+CMD=("$QEMU_BIN" "-M" "$MACHINE")
 
-exec "$QEMU_BIN" "${ARGS[@]}"
+if [ -n "$KERNEL" ]; then
+    CMD+=("-kernel" "$KERNEL")
+fi
+
+CMD+=("${EXTRA_ARGS[@]}")
+
+export QEMU_MODULE_DIR
+echo "Running: ${CMD[@]}"
+exec "${CMD[@]}"

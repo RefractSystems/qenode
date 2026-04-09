@@ -1,0 +1,32 @@
+/dts-v1/;
+
+/ {
+    model = "minimal-arm-generic-fdt";
+    compatible = "arm,generic-fdt";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    chosen {
+        stdout-path = "/pl011@9000000";
+    };
+
+    memory@40000000 {
+        reg = <0x0 0x40000000 0x0 0x08000000>; /* 128 MB at 0x40000000 */
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "cortex-a15-arm-cpu";
+            reg = <0>;
+        };
+    };
+
+    pl011@9000000 {
+        compatible = "pl011";
+        reg = <0x0 0x09000000 0x0 0x1000>;
+        interrupts = <0 1 4>;
+    };
+};

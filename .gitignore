@@ -29,10 +29,12 @@ qemu-install/
 output/
 log.html
 report.html
+*.log
 
-# IDEs
+# IDEs and Tools
 .vscode/
 .idea/
+.claude/
 *.swp
 *~
 third_party/
