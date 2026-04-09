@@ -1,6 +1,8 @@
-/*
- * linker.ld - Tells the compiler where to put our code in memory.
- */
+/* ==============================================================================
+ * linker.ld
+ * 
+ * Tells the compiler where to put our code in memory.
+ * ============================================================================== */
 
 /* The entry point of our program is the _start label in hello.S */
 ENTRY(_start)

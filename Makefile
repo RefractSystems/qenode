@@ -1,51 +1,69 @@
-# qenode top-level Makefile
+# ==============================================================================
+# Top-level Makefile for qenode
 #
-# Delegates heavy lifting to scripts/. Most developers only need:
-#   make setup    — clone QEMU, apply patches, build (run once)
-#   make          — rebuild QEMU after changing hw/ sources
-#   make run      — launch QEMU with a minimal test DTB
+# This Makefile provides convenient shorthand commands for common development 
+# tasks. It delegates the actual heavy lifting to the shell scripts located 
+# in the `scripts/` directory or to the QEMU build system.
+#
+# Most developers will only need:
+#   make setup    — Clone QEMU, apply patches, and build from scratch (run once).
+#   make          — Perform an incremental rebuild of QEMU after modifying `hw/`.
+#   make run      — Launch QEMU using the minimal Phase 1 test DTB.
+# ==============================================================================
 
+# Environment configuration defaults
 QEMU_SRC  ?= $(HOME)/src/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-qenode
+# Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
 .PHONY: all setup build run clean venv test
 
-# Default: rebuild QEMU (fast — only changed files recompile)
+# By default, perform an incremental build
 all: build
 
-## setup: clone QEMU, apply patch series, configure, full build (run once)
+# ------------------------------------------------------------------------------
+# Build Targets
+# ------------------------------------------------------------------------------
+
+# Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 setup:
 	@bash scripts/setup-qemu.sh
 
-## build: incremental rebuild after changing hw/ sources
+# Incremental rebuild: useful when you only modify files in the `hw/` directory.
 build:
 	@echo "==> Rebuilding QEMU (jobs=$(JOBS))..."
 	@$(MAKE) -C $(QEMU_SRC) -j$(JOBS)
 	@$(MAKE) -C $(QEMU_SRC) install
 	@echo "✓ Done."
 
-## run: launch QEMU with the minimal Phase 1 test DTB (if it exists)
+# Launch the emulator using the test DTB and default arguments.
 run:
 	@bash scripts/run.sh \
 	  -M arm-generic-fdt \
 	  -nographic \
 	  -m 128M \
-	  $(if $(wildcard tests/phase1/minimal.dtb),-hw-dtb tests/phase1/minimal.dtb,) \
+	  $(if $(wildcard test/phase1/minimal.dtb),-hw-dtb test/phase1/minimal.dtb,) \
+	  $(if $(wildcard test/phase1/hello.elf),-kernel test/phase1/hello.elf,) \
 	  $(EXTRA_ARGS)
 
-## venv: create Python virtual environment and install dependencies
+# ------------------------------------------------------------------------------
+# Python & Testing Targets
+# ------------------------------------------------------------------------------
+
+# Create a Python virtual environment and install dependencies.
 venv:
 	python3 -m venv .venv
 	.venv/bin/pip install --upgrade pip
 	.venv/bin/pip install -r requirements.txt
 	@echo "✓ Activate with: source .venv/bin/activate"
 
-## test: run Python unit tests
+# Run Python unit tests inside the virtual environment.
 test: venv
 	.venv/bin/python -m pytest tests/ -v
 
-## clean: remove generated files (does not touch QEMU source tree)
+# Clean up Python artifacts and the virtual environment.
+# Note: This does NOT clean the QEMU build tree.
 clean:
 	rm -rf .venv
 	find . -name "*.pyc" -delete

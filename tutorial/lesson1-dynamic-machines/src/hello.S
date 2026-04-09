@@ -1,10 +1,12 @@
-/* 
- * hello.S - A bare-metal assembly program to say "HI" over UART.
+/* ==============================================================================
+ * hello.S
  *
+ * A bare-metal assembly program to say "HI" over UART.
+ * 
  * When the CPU resets, it starts executing instructions from the entry point.
  * Without an Operating System to provide printf(), we must talk to the hardware directly.
  * We do this using Memory Mapped I/O (MMIO).
- */
+ * ============================================================================== */
 
 .global _start
 _start:
@@ -17,8 +19,10 @@ _start:
     /* Move the ASCII character 'H' into register r1 */
     mov r1, #'H'
     
-    /* Store the byte in r1 into the memory address pointed to by r0 */
-    /* For the PL011 UART, writing to the base address transmits a character. */
+    /* Store the word in r1 into the memory address pointed to by r0.
+     * For the PL011 UART in QEMU, writing a 32-bit word to the base address
+     * transmits a character.
+     */
     str r1, [r0]
     
     /* Repeat for 'I' */

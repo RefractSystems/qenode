@@ -3,30 +3,82 @@
 / {
     model = "minimal-arm-generic-fdt";
     compatible = "arm,generic-fdt";
+
+    /*
+     * #address-cells: How many 32-bit integers it takes to represent a memory address.
+     * #size-cells: How many 32-bit integers it takes to represent the length of a memory block.
+     * We use 2 for both to support 64-bit addresses, even though our board is simple.
+     */
     #address-cells = <2>;
     #size-cells = <2>;
 
+    /*
+     * INTERNALS NOTE: arm-generic-fdt requires an explicit system address space
+     * anchor.  The qemu_sysmem node (compatible = "qemu:system-memory") registers
+     * QEMU's get_system_memory() region and gives it a phandle so that other nodes
+     * can reference it via their container or memory properties.
+     *
+     * Without this node, memory and peripheral nodes are created but never placed
+     * in an address space the CPU can reach — every instruction fetch faults.
+     */
+    qemu_sysmem: qemu_sysmem {
+        compatible = "qemu:system-memory";
+        phandle = <0x01>;
+    };
+
+    /* The chosen node is a standard place to pass parameters to the firmware/OS */
     chosen {
         stdout-path = "/pl011@9000000";
     };
 
+    /*
+     * Define 128 MB of RAM starting at physical address 0x40000000.
+     *
+     * compatible = "qemu-memory-region": creates a QEMU MemoryRegion object.
+     * qemu,ram = <0x01>: the fdt_generic framework strips the "qemu," vendor
+     *   prefix and sets the "ram" QOM property to 1, which calls
+     *   memory_region_set_ram() and allocates the backing RAM block.
+     * container = <0x01>: maps this region as a subregion of qemu_sysmem
+     *   (the system address space) at the base address from the reg property.
+     */
     memory@40000000 {
-        reg = <0x0 0x40000000 0x0 0x08000000>; /* 128 MB at 0x40000000 */
+        compatible = "qemu-memory-region";
+        qemu,ram = <0x01>;
+        container = <0x01>;
+        reg = <0x0 0x40000000 0x0 0x08000000>;
     };
 
     cpus {
         #address-cells = <1>;
         #size-cells = <0>;
+
         cpu@0 {
             device_type = "cpu";
+            /*
+             * INTERNALS NOTE: Standard Linux Device Trees use strings like "arm,cortex-a15".
+             * However, qenode maps these strings DIRECTLY to internal QEMU Object Model (QOM)
+             * type names.  The QOM name for this CPU is "cortex-a15-arm-cpu".
+             *
+             * memory = <0x01>: connects this CPU's address space to qemu_sysmem so it
+             * can fetch instructions and access RAM/peripherals.
+             */
             compatible = "cortex-a15-arm-cpu";
             reg = <0>;
+            memory = <0x01>;
         };
     };
 
+    /*
+     * PL011 is a standard ARM UART (Serial Port).
+     * We map its registers to physical address 0x09000000.
+     *
+     * chardev = <0x00>: connects this UART to QEMU's first serial chardev
+     * (serial_hd(0)).  With -serial file:..., that chardev writes to the file.
+     */
     pl011@9000000 {
         compatible = "pl011";
-        reg = <0x0 0x09000000 0x0 0x1000>;
+        reg = <0x0 0x09000000 0x0 0x1000>; /* Starts at 0x09000000, takes up 4KB (0x1000) */
         interrupts = <0 1 4>;
+        chardev = <0x00>;
     };
 };

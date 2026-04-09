@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""
-apply_libqemu.py — Inject the libqemu clock-socket extension into a QEMU source tree.
-
-This adds a -clocksock <path> option to qemu-system-* that opens a Unix socket,
-accepts a connection from a NodeAgent, and advances virtual time on demand.
-
-Usage:
-    python3 apply_libqemu.py <qemu-source-dir>
-
-Idempotent: safe to run multiple times.
-
-Tested against: QEMU 11.0.0-rc2 (commit ~April 2026).
-
-Internal APIs used (verify if rebasing to a new QEMU version):
-  - timers_state.qemu_icount_bias  (accel/tcg/icount-common.c)
-  - icount_get()                   (include/exec/icount.h)
-  - bql_lock() / bql_unlock()      (include/system/cpus.h)
-  - qemu_clock_run_all_timers()    (include/qemu/timer.h)
-  - info_report()                  (include/qemu/error-report.h)
-"""
+# ==============================================================================
+# apply_libqemu.py
+#
+# Inject the libqemu clock-socket extension into a QEMU source tree.
+#
+# This script injects an out-of-tree patch that adds a `-clocksock <path>` option 
+# to the QEMU emulator. This option opens a Unix socket server inside QEMU that 
+# listens for commands from an external NodeAgent. The agent can then instruct 
+# QEMU to cooperatively advance virtual time quantum by quantum.
+#
+# This is a critical stepping stone for enabling deterministic physics/firmware 
+# co-simulation in FirmwareStudio.
+#
+# Usage:
+#   python3 apply_libqemu.py <qemu-source-dir>
+#
+# The script is idempotent; it is safe to run multiple times without corrupting
+# the source code. It relies on finding exact source code markers.
+#
+# Internal APIs hooked:
+#   - timers_state.qemu_icount_bias  (accel/tcg/icount-common.c)
+#   - icount_get()                   (include/exec/icount.h)
+#   - bql_lock() / bql_unlock()      (include/system/cpus.h)
+#   - qemu_clock_run_all_timers()    (include/qemu/timer.h)
+# ==============================================================================
 
 import os
 import sys

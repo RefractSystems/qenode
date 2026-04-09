@@ -77,6 +77,9 @@ qenode/
 ├── docs/
 │   └── ARCHITECTURE.md         # Deep-dive: comparisons, pillars, timing, prior art, SystemC
 │
+├── tutorial/
+│   └── lesson1-dynamic-machines/ # Educational content for Phase 1
+│
 ├── Makefile                    # make setup / build / run / venv / test
 └── requirements.txt            # qemu.qmp, robotframework, lark, eclipse-zenoh
 ```
@@ -88,6 +91,8 @@ qenode/
 **Understanding the project**: Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Sections 2–3 cover QEMU vs Renode and the four implementation pillars.
 Section 7 covers the MuJoCo time master design. Section 8 covers prior art.
+
+**Tutorials**: If you want to understand how QEMU builds the machine dynamically from a Device Tree, start with `tutorial/lesson1-dynamic-machines/README.md`.
 
 **Writing a new peripheral**: Copy `hw/dummy/dummy.c`, rename, implement MMIO ops.
 Add an entry in `hw/meson.build`. Run `make build` then:
@@ -157,7 +162,7 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Repository setup, documentation | **Done** |
-| 1 | QEMU build with arm-generic-fdt patches | In progress |
+| 1 | QEMU build with arm-generic-fdt patches | **Done** |
 | 2 | Dynamic QOM plugin infrastructure | Not started |
 | 3 | repl2qemu parser (.repl → .dtb + QEMU CLI) | Not started |
 | 4 | Robot Framework QMP library | Not started |
