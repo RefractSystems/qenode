@@ -47,8 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI (requires node/npm, installed above)
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code and Gemini CLI (requires node/npm, installed above)
+RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
 WORKDIR /workspace
 
