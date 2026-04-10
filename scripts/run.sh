@@ -48,7 +48,7 @@ EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --repl)
+    --repl|--yaml)
       INPUT_FILE="$2"
       shift 2
       ;;
@@ -78,6 +78,11 @@ if [[ "$INPUT_FILE" == *.repl ]]; then
     DTB="${INPUT_FILE%.repl}.dtb"
     # Call our Phase 3 translator
     python3 "$WORKSPACE_DIR/tools/repl2qemu/__main__.py" "$INPUT_FILE" --out-dtb "$DTB"
+elif [[ "$INPUT_FILE" == *.yaml ]]; then
+    echo "Processing qenode YAML platform: $INPUT_FILE"
+    DTB="${INPUT_FILE%.yaml}.dtb"
+    # Call our Phase 3.5 translator
+    python3 "$WORKSPACE_DIR/tools/yaml2qemu.py" "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
     DTB="${INPUT_FILE%.dts}.dtb"

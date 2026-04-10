@@ -1,0 +1,43 @@
+/dts-v1/;
+
+/ {
+    model = "qenode-dynamic-machine";
+    compatible = "arm,generic-fdt";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    qemu_sysmem: qemu_sysmem {
+        compatible = "qemu:system-memory";
+        phandle = <0x01>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "cortex-a15-arm-cpu";
+            reg = <0>;
+            memory = <0x01>;
+        };
+    };
+
+    memory@40000000 {
+        compatible = "qemu-memory-region";
+        qemu,ram = <0x01>;
+        container = <0x01>;
+        reg = <0x0 0x40000000 0x0 0x8000000>;
+    };
+    uart0@9000000 {
+        compatible = "pl011";
+        reg = <0x0 0x9000000 0x0 0x1000>;
+        chardev = <0x00>;
+        interrupts = <0 1 4>;
+        container = <0x01>;
+    };
+    gic@8000000 {
+        compatible = "arm_gic";
+        reg = <0x0 0x8000000 0x0 0x1000>;
+        container = <0x01>;
+    };
+};

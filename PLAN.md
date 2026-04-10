@@ -170,9 +170,27 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 - [x] **3.7** Write tutorial lesson 3: Parsing .repl files and translating to Device Tree structures.
 - [x] **3.8** Write integration test `test/phase3/smoke_test.sh`: parses a test `.repl`, asserts identical DTB output and runs "HI" bare-metal kernel.
 
+---
+
+## Phase 3.5 — YAML Platform Description & OpenUSD Alignment ✅
+
+**Goal**: Transition to a modern, standardized hardware description format aligned with **OpenUSD**. This phase introduced a custom YAML schema designed to map 1:1 with future OpenUSD Prims, allowing cyber-nodes and physics to coexist in a single file.
+
+**Acceptance criteria**:
+- `python -m tools.repl2yaml test.repl --out test.yaml` successfully translates a legacy Renode file into the new format.
+- `scripts/run.sh --yaml test.yaml -nographic` parses the YAML, emits a DTB, and boots the machine successfully.
+
+### Tasks
+- [x] **3.5.1** Document ADR-010: Formulate the vision for OpenUSD integration and decide on a custom YAML schema that mirrors USD's hierarchical, typed properties.
+- [x] **3.5.2** Define the YAML Schema: Created a strongly-typed structure including `machine`, `cpus`, and `peripherals`.
+- [x] **3.5.3** Write `tools/yaml2qemu.py`: Added a parser module that loads the `.yaml` file and drives the `FdtEmitter`.
+- [x] **3.5.4** Write `tools/repl2yaml.py`: A migration utility to convert legacy Renode files to the new standard.
+- [x] **3.5.5** Update `scripts/run.sh`: Added polymorphic support for `--yaml` files.
+- [x] **3.5.6** Added `test/phase3.5/smoke_test.sh`: Verified the YAML pipeline end-to-end.
+- [x] **3.5.7** Updated Tutorial Lesson 3: Added content explaining the YAML format and the OpenUSD Digital Twin vision.
+
 **Needs from Marcin**:
-- Confirm whether you have proprietary `.repl` files to test against edge cases.
-  If so, share sanitized examples during this phase.
+- None for this phase.
 
 ---
 

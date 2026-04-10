@@ -191,6 +191,7 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 1 | QEMU build with arm-generic-fdt patches | **Done** |
 | 2 | Dynamic QOM plugin infrastructure | **Done** |
 | 3 | repl2qemu parser (.repl → .dtb + QEMU CLI) | **Done** |
+| 3.5 | YAML Platform & OpenUSD Alignment | **Done** |
 | 4 | Robot Framework QMP library | Not started |
 | 5 | Co-simulation bridge (Verilated from Renode / SystemC) | Deferred |
 | 6 | Multi-node wireless medium coordinator | Future |

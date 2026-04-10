@@ -56,5 +56,23 @@ Finally, if you have a pre-compiled blob, it can be loaded directly with no over
 
 In all three cases, you should see `HI` printed to the console!
 
+## Part 3: The Future (YAML & OpenUSD)
+
+While `.repl` provides legacy parity with Renode, it is a bespoke format. For the long-term vision of FirmwareStudio, we are adopting a **modern YAML format** designed to map 1:1 with **OpenUSD (Universal Scene Description)**.
+
+OpenUSD is the industry standard for Digital Twins, allowing physics and cyber-nodes to live in the same hierarchical file.
+
+### 1. Migrate a legacy REPL to YAML
+You can instantly modernize any Renode file using our migration tool:
+```bash
+python3 tools/repl2yaml.py test/phase3/test_board.repl --out test_board.yaml
+```
+
+### 2. Booting via YAML
+Just like other formats, `run.sh` supports YAML natively:
+```bash
+./scripts/run.sh --yaml test_board.yaml --kernel test/phase1/hello.elf -nographic
+```
+
 ## Summary
-You have successfully learned how qenode provides a flexible frontend. Whether you prefer Renode's clean `.repl` syntax or the industry-standard `.dts` format, the underlying QEMU engine remains the same, providing high-performance dynamic machine emulation.
+You have successfully learned how qenode provides a flexible, future-proof frontend. Whether you are migrating from Renode's legacy `.repl`, using industry-standard `.dts`, or adopting our modern OpenUSD-aligned YAML, the underlying QEMU engine provides high-performance dynamic emulation for your digital twin.
