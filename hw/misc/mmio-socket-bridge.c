@@ -11,8 +11,10 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/main-loop.h"
+#include "qemu/sockets.h"
 #include "hw/core/sysbus.h"
 #include "hw/core/qdev-properties.h"
+#include "hw/core/irq.h"
 #include "qapi/error.h"
 #include "qom/object.h"
 #include <sys/socket.h>
@@ -20,11 +22,6 @@
 #include <unistd.h>
 #include <errno.h>
 
-/*
- * Wire protocol — shared with tools/systemc_adapter/main.cpp via the header
- * hw/misc/virtmcu_proto.h.  Include it directly since both files live in the
- * same hw/misc/ directory in the virtmcu repo.
- */
 #include "virtmcu_proto.h"
 
 #define TYPE_MMIO_SOCKET_BRIDGE "mmio-socket-bridge"
@@ -43,35 +40,24 @@ struct MmioSocketBridgeState {
     /* Socket state */
     int sock_fd;
 
-    /*
-     * Serialises socket I/O independently of the BQL.
-     *
-     * Why: the correct BQL discipline for blocking I/O is:
-     *   bql_unlock() → write() → read() → bql_lock()
-     * This means a second vCPU can acquire the BQL while the first is blocked
-     * in the socket write/read.  If both vCPUs then enter send_req_and_wait()
-     * they would call write() on the same sock_fd concurrently — Unix domain
-     * socket writes are not atomic above the pipe buffer size, so the 24-byte
-     * request messages would interleave and corrupt the framing protocol.
-     *
-     * sock_mutex is held only across the write+read pair (inside the BQL-free
-     * window) so it does not reintroduce the BQL deadlock risk.
-     */
     QemuMutex sock_mutex;
+    QemuCond resp_cond;
+    bool has_resp;
+    struct sysc_msg current_resp;
+    
+    uint8_t rx_buf[16];
+    int rx_idx;
+    
+    qemu_irq irqs[32];
 };
 
-/*
- * Write exactly @len bytes to @fd, retrying on short writes.
- * Returns true on success, false on error/EOF.
- * Must be called outside the BQL window.
- */
 static bool writen(int fd, const void *buf, size_t len)
 {
     const char *p = buf;
     while (len > 0) {
         ssize_t n = write(fd, p, len);
         if (n <= 0) {
-            if (n < 0 && errno == EINTR) {
+            if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
                 continue;
             }
             return false;
@@ -82,58 +68,68 @@ static bool writen(int fd, const void *buf, size_t len)
     return true;
 }
 
-/*
- * Read exactly @len bytes from @fd, retrying on short reads.
- * Returns true on success, false on error/EOF.
- * Must be called outside the BQL window.
- */
-static bool readn(int fd, void *buf, size_t len)
+static void bridge_sock_handler(void *opaque)
 {
-    char *p = buf;
-    while (len > 0) {
-        ssize_t n = read(fd, p, len);
+    MmioSocketBridgeState *s = opaque;
+    
+    while (1) {
+        int n = read(s->sock_fd, s->rx_buf + s->rx_idx, sizeof(struct sysc_msg) - s->rx_idx);
         if (n <= 0) {
-            if (n < 0 && errno == EINTR) {
-                continue;
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                return;
             }
-            return false;
+            // Error or EOF
+            qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
+            close(s->sock_fd);
+            s->sock_fd = -1;
+            qemu_mutex_lock(&s->sock_mutex);
+            s->has_resp = true;
+            qemu_cond_broadcast(&s->resp_cond);
+            qemu_mutex_unlock(&s->sock_mutex);
+            return;
         }
-        p   += n;
-        len -= n;
+        s->rx_idx += n;
+        
+        if (s->rx_idx == sizeof(struct sysc_msg)) {
+            struct sysc_msg *msg = (struct sysc_msg *)s->rx_buf;
+            if (msg->type == SYSC_MSG_IRQ_SET) {
+                if (msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 1);
+            } else if (msg->type == SYSC_MSG_IRQ_CLEAR) {
+                if (msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 0);
+            } else if (msg->type == SYSC_MSG_RESP) {
+                qemu_mutex_lock(&s->sock_mutex);
+                s->current_resp = *msg;
+                s->has_resp = true;
+                qemu_cond_broadcast(&s->resp_cond);
+                qemu_mutex_unlock(&s->sock_mutex);
+            }
+            s->rx_idx = 0;
+        }
     }
-    return true;
 }
 
-static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, struct mmio_resp *resp)
+static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, struct sysc_msg *resp)
 {
     if (s->sock_fd < 0) {
         return;
     }
 
-    /*
-     * Release the BQL before *both* the write and the read, then take
-     * sock_mutex to serialise concurrent vCPU accesses on the socket.
-     *
-     * BQL discipline: any blocking syscall while holding BQL deadlocks the
-     * main loop (QMP, GDB, I/O).  write() can block under backpressure.
-     *
-     * SMP safety: after bql_unlock() a second vCPU can enter this function.
-     * sock_mutex ensures only one write+read pair is in flight at a time;
-     * otherwise the 24-byte request frames would interleave on the socket and
-     * corrupt the protocol framing.
-     */
     bql_unlock();
     qemu_mutex_lock(&s->sock_mutex);
+    s->has_resp = false;
 
     bool ok = writen(s->sock_fd, req, sizeof(*req));
     if (ok) {
-        ok = readn(s->sock_fd, resp, sizeof(*resp));
+        while (!s->has_resp) {
+            qemu_cond_wait(&s->resp_cond, &s->sock_mutex);
+        }
+        *resp = s->current_resp;
     }
 
     qemu_mutex_unlock(&s->sock_mutex);
     bql_lock();
 
-    if (!ok) {
+    if (!ok || (s->sock_fd < 0 && s->has_resp && s->current_resp.type != SYSC_MSG_RESP)) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "mmio-socket-bridge: I/O error on socket '%s'\n",
                       s->socket_path);
@@ -149,7 +145,7 @@ static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
         .addr = addr,
         .data = 0,
     };
-    struct mmio_resp resp = {0};
+    struct sysc_msg resp = {0};
 
     send_req_and_wait(s, &req, &resp);
     return resp.data;
@@ -164,7 +160,7 @@ static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         .addr = addr,
         .data = val,
     };
-    struct mmio_resp resp = {0};
+    struct sysc_msg resp = {0};
 
     send_req_and_wait(s, &req, &resp);
 }
@@ -184,12 +180,14 @@ static void bridge_instance_init(Object *obj)
     MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
     s->sock_fd = -1;
     qemu_mutex_init(&s->sock_mutex);
+    qemu_cond_init(&s->resp_cond);
 }
 
 static void bridge_instance_finalize(Object *obj)
 {
     MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
     qemu_mutex_destroy(&s->sock_mutex);
+    qemu_cond_destroy(&s->resp_cond);
 }
 
 static void bridge_realize(DeviceState *dev, Error **errp)
@@ -204,6 +202,10 @@ static void bridge_realize(DeviceState *dev, Error **errp)
     if (s->region_size == 0) {
         error_setg(errp, "region-size property must be > 0");
         return;
+    }
+    
+    for (int i = 0; i < 32; i++) {
+        sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irqs[i]);
     }
 
     s->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -222,20 +224,20 @@ static void bridge_realize(DeviceState *dev, Error **errp)
         s->sock_fd = -1;
         return;
     }
+    
+    g_unix_set_fd_nonblocking(s->sock_fd, true, NULL);
+    qemu_set_fd_handler(s->sock_fd, bridge_sock_handler, NULL, s);
 
     memory_region_init_io(&s->mmio, OBJECT(s), &bridge_mmio_ops, s,
-                          TYPE_MMIO_SOCKET_BRIDGE, s->region_size);
+                          "mmio-socket-bridge", s->region_size);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
-
-    if (s->base_addr != UINT64_MAX) {
-        sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, s->base_addr);
-    }
 }
 
 static void bridge_unrealize(DeviceState *dev)
 {
     MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(dev);
     if (s->sock_fd >= 0) {
+        qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
         close(s->sock_fd);
         s->sock_fd = -1;
     }
@@ -243,14 +245,14 @@ static void bridge_unrealize(DeviceState *dev)
 
 static const Property bridge_properties[] = {
     DEFINE_PROP_STRING("socket-path", MmioSocketBridgeState, socket_path),
-    DEFINE_PROP_UINT32("region-size", MmioSocketBridgeState, region_size, 0x1000),
-    DEFINE_PROP_UINT64("base-addr", MmioSocketBridgeState, base_addr, UINT64_MAX),
+    DEFINE_PROP_UINT32("region-size", MmioSocketBridgeState, region_size, 0),
+    DEFINE_PROP_UINT64("base-addr", MmioSocketBridgeState, base_addr, 0),
 };
 
-static void bridge_class_init(ObjectClass *oc, const void *data)
+static void bridge_class_init(ObjectClass *klass, const void *data)
 {
-    DeviceClass *dc = DEVICE_CLASS(oc);
-    
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
     dc->realize = bridge_realize;
     dc->unrealize = bridge_unrealize;
     device_class_set_props(dc, bridge_properties);
