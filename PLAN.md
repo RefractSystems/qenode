@@ -255,7 +255,7 @@ to Phase 7 when slaved modes are active.
   - Assert pass
 
 - [x] **4.5** Write tutorial lesson 4: Emulation Test Automation with QMP and Pytest.
-- [ ] **4.6** Add UART TX support to `tools/testing/qmp_bridge.py` and `qemu_keywords.robot` (e.g., `Write To UART` keyword) to enable automated testing of the interactive echo firmware (Phase 8).
+- [x] **4.6** Add UART TX support to `tools/testing/qmp_bridge.py` and `qemu_keywords.robot` (e.g., `Write To UART` keyword) to enable automated testing of the interactive echo firmware (Phase 8).
 
 ---
 
