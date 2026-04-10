@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean venv test
+.PHONY: all setup build run clean venv test test-unit test-robot test-all
 
 # By default, perform an incremental build
 all: build
@@ -66,9 +66,25 @@ test-integration:
 	done
 	@echo "✓ All integration tests passed."
 
-# Run Python unit tests inside the virtual environment.
+# Run all Python unit tests (no QEMU required).
 test: venv
 	.venv/bin/python -m pytest tests/ -v
+
+# Alias: same as test — explicit name for CI scripts.
+test-unit: test
+
+# Run Robot Framework integration tests (requires QEMU built via make setup).
+test-robot: venv
+	export PYTHONPATH=$(CURDIR) && \
+	.venv/bin/robot \
+	  --outputdir test-results/robot \
+	  --loglevel INFO \
+	  tests/test_qmp_keywords.robot \
+	  tests/test_interactive_echo.robot
+
+# Run the complete test suite: unit tests, integration smoke tests, Robot tests.
+# Requires a built QEMU (run make setup first).
+test-all: test test-integration test-robot
 
 # Clean up Python artifacts and the virtual environment.
 # Note: This does NOT clean the QEMU build tree.

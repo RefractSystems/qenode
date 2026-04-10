@@ -1,0 +1,95 @@
+name: Docker Publish
+
+# Builds and pushes all image stages to GitHub Container Registry (GHCR)
+# on every push to main and on version tags (e.g. v1.2.3).
+#
+# Images published:
+#   ghcr.io/<owner>/<repo>/devenv  — toolchain-only devcontainer base
+#   ghcr.io/<owner>/<repo>/runtime — lean runtime with QEMU + Python tools
+#
+# The builder stage is an intermediate build artifact and is NOT published;
+# it is only used as a cache source for the runtime stage.
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── devenv image ────────────────────────────────────────────────────────
+      # Toolchain-only image used by the devcontainer. Changes rarely (only
+      # when apt deps or Claude/Gemini CLI versions change).
+
+      - name: Docker metadata — devenv
+        id: meta-devenv
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/devenv
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push — devenv
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: devenv
+          push: true
+          tags: ${{ steps.meta-devenv.outputs.tags }}
+          labels: ${{ steps.meta-devenv.outputs.labels }}
+          cache-from: type=gha,scope=devenv
+          cache-to: type=gha,scope=devenv,mode=max
+
+      # ── runtime image ───────────────────────────────────────────────────────
+      # Lean image with patched QEMU + Python tools. Used in docker-compose for
+      # standalone testing and as the base for FirmwareStudio integration.
+
+      - name: Docker metadata — runtime
+        id: meta-runtime
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/runtime
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push — runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: runtime
+          push: true
+          tags: ${{ steps.meta-runtime.outputs.tags }}
+          labels: ${{ steps.meta-runtime.outputs.labels }}
+          # Reuse the builder cache populated by ci.yml
+          cache-from: |
+            type=gha,scope=builder
+            type=gha,scope=runtime
+          cache-to: type=gha,scope=runtime,mode=max
