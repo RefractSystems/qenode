@@ -57,7 +57,7 @@ instantiation, .repl parsing, and Robot Framework test parity.
 machine type. Validates that the patch series applies cleanly and FDT-based boot works.
 
 **Acceptance criteria**:
-- `qemu-system-arm -M arm-generic-fdt -hw-dtb minimal.dtb -nographic` starts and
+- `scripts/run.sh --dtb minimal.dtb -nographic` starts and
   reaches the kernel entry point (verified via `-d exec,cpu_reset`).
 - `qemu-system-arm -device help` lists `arm-generic-fdt` as a valid machine.
 
@@ -126,10 +126,9 @@ via native module discovery + `scripts/run.sh`, and confirm the type appears in 
 a valid `.dtb` file that arm-generic-fdt can boot with.
 
 **Acceptance criteria**:
-- `python -m tools.repl2qemu stm32f4_discovery.repl` produces `out.dtb` and prints
+- `python -m tools.repl2qemu test/phase3/test_board.repl --out-dtb out.dtb` produces `out.dtb` and prints
   the equivalent QEMU CLI command.
-- `qemu-system-arm -M arm-generic-fdt -hw-dtb out.dtb` successfully reaches the reset
-  handler for a simple Zephyr blinky firmware.
+- `scripts/run.sh --dtb out.dtb` successfully boots the machine.
 
 ### Tasks
 - [x] **3.1** Obtain reference `.repl` files from Renode's public repo:

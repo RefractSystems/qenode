@@ -11,10 +11,8 @@ import sys
 import yaml
 import argparse
 
-# Add the repl2qemu tool directory to the path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'repl2qemu')))
-from parser import ReplPlatform, ReplDevice, ReplInterrupt
-from fdt_emitter import FdtEmitter, compile_dtb
+from .repl2qemu.parser import ReplPlatform, ReplDevice, ReplInterrupt
+from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 
 def parse_yaml_platform(yaml_path: str) -> ReplPlatform:
     """

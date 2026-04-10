@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional
 import os
 
-from parser import ReplPlatform
+from .parser import ReplPlatform
 
 def generate_cli(platform: ReplPlatform, dtb_path: str) -> List[str]:
     """Generates the QEMU CLI arguments based on the parsed platform."""

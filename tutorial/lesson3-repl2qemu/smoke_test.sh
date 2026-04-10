@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 
-REPL_FILE="$SCRIPT_DIR/test_board.repl"
+REPL_FILE="$SCRIPT_DIR/src/test_board.repl"
 OUT_DTB="$SCRIPT_DIR/test_board_out.dtb"
 KERNEL="$WORKSPACE_DIR/test/phase1/hello.elf"
 
@@ -27,12 +27,12 @@ if [ ! -f "$KERNEL" ]; then
     make -C "$WORKSPACE_DIR/test/phase1"
 fi
 
-echo "Running Phase 3 smoke test (repl2qemu parser)..."
+echo "Running Lesson 3 smoke test (repl2qemu parser)..."
 
 # Ensure clean state
-rm -f "$OUT_DTB" qemu_phase3.log
+rm -f "$OUT_DTB" qemu_lesson3.log
 
-# 1. Run the repl2qemu parser as a module
+# 1. Run the repl2qemu parser using the Python module invocation
 echo "1. Parsing $REPL_FILE -> $OUT_DTB"
 python3 -m tools.repl2qemu "$REPL_FILE" --out-dtb "$OUT_DTB"
 
@@ -50,17 +50,17 @@ timeout 2s "$RUN_SH" --dtb "$OUT_DTB" \
     -nographic \
     -monitor none \
     -m 128M \
-    -serial file:qemu_phase3.log || true
+    -serial file:qemu_lesson3.log || true
 
 # 3. Verification
 # If the repl was translated correctly to a DTB, the kernel will successfully boot and print "HI"
-if grep -q "HI" qemu_phase3.log; then
-    echo "Phase 3 smoke test: PASSED (Kernel successfully printed 'HI' via translated DTB)"
-    rm -f "$OUT_DTB" qemu_phase3.log "${OUT_DTB}.dts"
+if grep -q "HI" qemu_lesson3.log; then
+    echo "Lesson 3 smoke test: PASSED"
+    rm -f "$OUT_DTB" qemu_lesson3.log "${OUT_DTB}.dts"
     exit 0
 else
-    echo "Phase 3 smoke test: FAILED (No 'HI' detected)"
+    echo "Lesson 3 smoke test: FAILED (No 'HI' detected)"
     echo "--- QEMU LOG ---"
-    cat qemu_phase3.log
+    cat qemu_lesson3.log
     exit 1
 fi

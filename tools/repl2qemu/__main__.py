@@ -2,9 +2,9 @@ import argparse
 import sys
 import os
 
-from parser import parse_repl
-from fdt_emitter import FdtEmitter, compile_dtb
-from cli_generator import generate_cli
+from .parser import parse_repl
+from .fdt_emitter import FdtEmitter, compile_dtb
+from .cli_generator import generate_cli
 
 def main():
     parser = argparse.ArgumentParser(description="repl2qemu: Translate Renode .repl files to QEMU Device Trees")

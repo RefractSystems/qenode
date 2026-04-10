@@ -2,8 +2,9 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 import os
+import sys
 
-from parser import ReplPlatform, ReplDevice
+from .parser import ReplPlatform, ReplDevice
 
 # Mapping from Renode peripheral types to QEMU device tree compatible strings (QOM type names)
 COMPAT_MAP = {
@@ -12,7 +13,7 @@ COMPAT_MAP = {
     "UART.Cadence_UART": "cadence_uart",
     "IRQControllers.NVIC": "armv7m_nvic",
     "IRQControllers.ARM_GenericInterruptController": "arm_gic",
-    "Timers.ARM_GenericTimer": "armv8-timer", # Needs verifying if this is the QOM name
+    "Timers.ARM_GenericTimer": "armv8-timer",
     "Timers.ARM_PrivateTimer": "arm_mptimer",
     "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv", # Or similar depending on exact board
     "CPU.CortexM": "arm,cortex-m-cpu",  # Actually handled specially
@@ -66,16 +67,18 @@ class FdtEmitter:
         lines.append("        #address-cells = <1>;")
         lines.append("        #size-cells = <0>;")
         
+        cpu_index = 0
         for dev in self.platform.devices:
             if dev.type_name in ["CPU.CortexM", "CPU.ARMv8A", "CPU.ARMv7A"]:
-                # E.g., cpuType: "cortex-m4" or "cortex-a53"
-                cpu_type = dev.properties.get("cpuType", "cortex-m3").strip('"')
-                lines.append(f"        {dev.name}@0 {{")
+                # E.g., cpuType: "cortex-a15"
+                cpu_type = dev.properties.get("cpuType", "cortex-m3")
+                lines.append(f"        {dev.name}@{cpu_index} {{")
                 lines.append('            device_type = "cpu";')
                 lines.append(f'            compatible = "{cpu_type}-arm-cpu";')
-                lines.append('            reg = <0>;')
+                lines.append(f'            reg = <{cpu_index}>;')
                 lines.append("            memory = <0x01>;")
                 lines.append("        };")
+                cpu_index += 1
         lines.append("    };")
         lines.append("")
 
@@ -105,7 +108,7 @@ class FdtEmitter:
                 lines.append(f'        compatible = "{COMPAT_MAP[dev.type_name]}";')
                 
                 # armv8-timer doesn't have MMIO registers in QEMU DTS
-                if COMPAT_MAP[dev.type_name] != "arm,armv8-timer":
+                if COMPAT_MAP[dev.type_name] != "armv8-timer":
                     # Some devices might just be at 0x0 genuinely (like flash), but for others, 
                     # if base == 0 and we couldn't parse it, we shouldn't emit a zeroed reg.
                     lines.append(f"        reg = <0x0 0x{base:x} 0x0 0x{size:x}>;")
@@ -122,26 +125,31 @@ class FdtEmitter:
                 
                 lines.append("        container = <0x01>;")
                 lines.append("    };")
+            else:
+                print(f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)", file=sys.stderr)
 
         lines.append("};")
         return "\n".join(lines)
 
 def compile_dtb(dts_content: str, out_path: str) -> bool:
     """Compiles the DTS string into a DTB file using dtc."""
+    dts_path = out_path + ".dts"
     try:
-        # Write temporary dts
-        dts_path = out_path + ".dts"
         with open(dts_path, "w") as f:
             f.write(dts_content)
             
-        subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True)
+        subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True, capture_output=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error compiling DTB: {e}")
+        print(f"Error compiling DTB: {e.stderr.decode()}", file=sys.stderr)
         return False
+    finally:
+        if os.path.exists(dts_path):
+            os.unlink(dts_path)
+
         
 if __name__ == "__main__":
-    from parser import parse_repl
+    from .parser import parse_repl
     import sys
     filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
     with open(filename, "r") as f:

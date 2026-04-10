@@ -56,6 +56,8 @@ def parse_repl(content: str) -> ReplPlatform:
                     addr = addr.strip().split('{')[0].strip()
                     if addr.endswith('@'):
                         addr = addr[:-1].strip()
+                    if addr.lower() == 'sysbus':
+                        addr = None
                 
                 current_device = ReplDevice(name, type_name, addr)
                 platform.devices.append(current_device)
@@ -106,6 +108,11 @@ def parse_repl(content: str) -> ReplPlatform:
             match = re_prop.match(line)
             if match:
                 key, val = match.groups()
+                val = val.strip()
+                # Strip quotes from string values
+                if (val.startswith('"') and val.endswith('"')) or \
+                   (val.startswith("'") and val.endswith("'")):
+                    val = val[1:-1]
                 current_device.properties[key] = val
                 continue
                 

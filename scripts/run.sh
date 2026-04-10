@@ -76,13 +76,13 @@ DTB=""
 if [[ "$INPUT_FILE" == *.repl ]]; then
     echo "Processing Renode platform: $INPUT_FILE"
     DTB="${INPUT_FILE%.repl}.dtb"
-    # Call our Phase 3 translator
-    python3 "$WORKSPACE_DIR/tools/repl2qemu/__main__.py" "$INPUT_FILE" --out-dtb "$DTB"
+    # Call our Phase 3 translator as a module
+    python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
     echo "Processing qenode YAML platform: $INPUT_FILE"
     DTB="${INPUT_FILE%.yaml}.dtb"
-    # Call our Phase 3.5 translator
-    python3 "$WORKSPACE_DIR/tools/yaml2qemu.py" "$INPUT_FILE" --out-dtb "$DTB"
+    # Call our Phase 3.5 translator as a module
+    python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
     DTB="${INPUT_FILE%.dts}.dtb"

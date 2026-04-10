@@ -24,13 +24,15 @@ It performs a three-step pipeline:
 
 ## Part 1: Try the Translator
 
-In the `test/phase3/` directory, there is a `test_board.repl` file that describes our standard Cortex-A15 board with 128MB of RAM and a PL011 UART.
+In the `src/` directory, there is a `test_board.repl` file that describes our standard Cortex-A15 board with 128MB of RAM and a PL011 UART.
 
-You can use the translator tool directly to see the conversion:
+Run the translation tool using the Python module invocation from the repository root:
 ```bash
 source .venv/bin/activate
-python3 tools/repl2qemu/__main__.py test/phase3/test_board.repl --out-dtb test_board.dtb --print-cmd
+python3 -m tools.repl2qemu tutorial/lesson3-repl2qemu/src/test_board.repl --out-dtb test_board.dtb --print-cmd
 ```
+
+You will see output indicating that the devices were parsed, the DTS was generated, and compiled. It also prints the equivalent QEMU command line!
 
 ## Part 2: Polymorphic Launching
 
@@ -39,7 +41,7 @@ The `run.sh` script is "polymorphic"—it automatically detects the file type yo
 ### 1. Booting via REPL
 Pass the `.repl` file directly, and `run.sh` will call the translator for you:
 ```bash
-./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --repl tutorial/lesson3-repl2qemu/src/test_board.repl --kernel test/phase1/hello.elf -nographic
 ```
 
 ### 2. Booting via Native Device Tree (DTS)
@@ -65,7 +67,7 @@ OpenUSD is the industry standard for Digital Twins, allowing physics and cyber-n
 ### 1. Migrate a legacy REPL to YAML
 You can instantly modernize any Renode file using our migration tool:
 ```bash
-python3 tools/repl2yaml.py test/phase3/test_board.repl --out test_board.yaml
+python3 -m tools.repl2yaml tutorial/lesson3-repl2qemu/src/test_board.repl --out test_board.yaml
 ```
 
 ### 2. Booting via YAML

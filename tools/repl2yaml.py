@@ -12,9 +12,7 @@ import sys
 import yaml
 import argparse
 
-# Add the repl2qemu tool directory to the path so we can reuse the parser
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'repl2qemu')))
-from parser import parse_repl
+from .repl2qemu.parser import parse_repl
 
 def migrate(repl_path: str, yaml_path: str):
     print(f"Reading Renode platform: {repl_path}")
