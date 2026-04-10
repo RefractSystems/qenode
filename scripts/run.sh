@@ -38,7 +38,9 @@ else
 fi
 
 # Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
-if [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
+if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
+    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
     export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
