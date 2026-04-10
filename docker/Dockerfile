@@ -56,8 +56,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code and Gemini CLI (requires node/npm, installed above)
-RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
+# Install Claude Code via native installer (as vscode user so auto-update works)
+# npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
+USER vscode
+RUN curl -fsSL https://claude.ai/install.sh | sh
+USER root
+
+# Install Gemini CLI (requires node/npm, installed above)
+RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspace
 
