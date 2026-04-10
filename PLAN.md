@@ -193,7 +193,7 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 
 ---
 
-## Phase 4 — Robot Framework QMP Library ⬜
+## Phase 4 — Robot Framework QMP Library ✅
 
 **Goal**: A test automation layer that provides Renode-compatible coverage backed by QEMU's
 QMP protocol. Primary implementation is pytest + `qemu.qmp`; a `.robot` resource file is
@@ -210,14 +210,14 @@ incorrect. Virtual-time-aware timeouts (polling `query-cpus-fast` for vtime) are
 to Phase 7 when slaved modes are active.
 
 ### Tasks
-- [ ] **4.1** Write `tools/testing/qmp_bridge.py`:
+- [x] **4.1** Write `tools/testing/qmp_bridge.py`:
   - Async wrapper around `qemu.qmp` library
   - `connect(socket_path)`, `execute(cmd, args)`, `wait_for_event(event_name)`
   - UART monitoring: connect to QEMU chardev socket, non-blocking readline
   - Use `query-cpus-fast` (NOT deprecated `query-cpus`)
   - Expose `get_virtual_time_ns()` using accumulated clock advance state (for Phase 7)
 
-- [ ] **4.1b** Write `tools/testing/test_qmp.py` (pytest):
+- [x] **4.1b** Write `tools/testing/test_qmp.py` (pytest):
   - pytest fixtures: `qemu_process`, `qmp_bridge`, `uart_socket`
   - Test functions mirror the Robot keyword set (same coverage, better debuggability)
   - This is the **primary** test implementation; Robot keywords are the compatibility layer
@@ -236,7 +236,7 @@ to Phase 7 when slaved modes are active.
   TimeAuthority alongside QEMU. They must not run in regular CI without the full
   FirmwareStudio stack.
 
-- [ ] **4.2** Write `tools/testing/qemu_keywords.robot`:
+- [x] **4.2** Write `tools/testing/qemu_keywords.robot`:
   - `Start Emulation` → `{"execute": "cont"}`
   - `Reset Emulation` → `{"execute": "system_reset"}`
   - `Pause Emulation` → `{"execute": "stop"}`
@@ -246,14 +246,14 @@ to Phase 7 when slaved modes are active.
     `{"execute": "human-monitor-command", "arguments": {"command-line": "${cmd}"}}`
   - `Load ELF  ${path}` → pre-boot only; handled by CLI generator (not QMP)
 
-- [ ] **4.3** Write `tools/testing/conftest.py` (pytest fixtures for QMP tests)
+- [x] **4.3** Write `tools/testing/conftest.py` (pytest fixtures for QMP tests)
 
-- [ ] **4.4** Integration test `tests/test_qmp_keywords.robot`:
+- [x] **4.4** Integration test `tests/test_qmp_keywords.robot`:
   - Start QEMU with minimal DTB + simple bare-metal ELF (prints "HELLO" to UART)
   - `Wait For Line On UART  HELLO  timeout=10`
   - Assert pass
 
-- [ ] **4.5** Write tutorial lesson 4: Emulation Test Automation with QMP and Pytest.
+- [x] **4.5** Write tutorial lesson 4: Emulation Test Automation with QMP and Pytest.
 
 ---
 
