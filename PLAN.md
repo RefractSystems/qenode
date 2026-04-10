@@ -257,7 +257,7 @@ to Phase 7 when slaved modes are active.
 
 ---
 
-## Phase 5 — Co-Simulation Bridge ⬜ (Deferred)
+## Phase 5 — Co-Simulation Bridge 🚧 (In Progress)
 
 **Prerequisite**: Phases 1-4 complete and validated.
 
@@ -293,7 +293,7 @@ Implement after Path B is validated.
       validate end-to-end with one Renode-derived Verilated model.
 - [ ] **5.3** *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network.
 - [ ] **5.4** Document Path A vs B vs C decision guide (already in `docs/ARCHITECTURE.md` §9).
-- [ ] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
+- [x] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
 
 ---
 

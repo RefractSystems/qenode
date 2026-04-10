@@ -22,10 +22,13 @@ dummy_ss = ss.source_set()
 dummy_ss.add(files('dummy/dummy.c'))
 hw_virtmcu_modules += {'dummy': dummy_ss}
 
-# ── misc ──────────────────────────────────────────────────────────────────────
-misc_ss = ss.source_set()
-misc_ss.add(files('misc/mmio-socket-bridge.c'))
-hw_virtmcu_modules += {'misc': misc_ss}
+# ── mmio-socket-bridge ────────────────────────────────────────────────────────
+# Path A co-simulation bridge: forwards MMIO reads/writes over a Unix socket to
+# an external process (e.g. the SystemC adapter in tools/systemc_adapter/).
+# Compiles to hw-virtmcu-mmio-socket-bridge.so.
+mmio_bridge_ss = ss.source_set()
+mmio_bridge_ss.add(files('misc/mmio-socket-bridge.c'))
+hw_virtmcu_modules += {'mmio-socket-bridge': mmio_bridge_ss}
 
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}

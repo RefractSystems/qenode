@@ -1,0 +1,54 @@
+/dts-v1/;
+
+/ {
+    model = "minimal-arm-generic-fdt";
+    compatible = "arm,generic-fdt";
+
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    qemu_sysmem: qemu_sysmem {
+        compatible = "qemu:system-memory";
+        phandle = <0x01>;
+    };
+
+    chosen {
+    };
+
+    memory@40000000 {
+        compatible = "qemu-memory-region";
+        qemu,ram = <0x01>;
+        container = <0x01>;
+        reg = <0x0 0x40000000 0x0 0x08000000>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "cortex-m3-arm-cpu";
+            reg = <0>;
+            memory = <0x01>;
+        };
+    };
+
+    soc {
+        compatible = "simple-bus";
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        bridge@50000000 {
+            compatible = "mmio-socket-bridge";
+            reg = <0x0 0x50000000 0x0 0x1000>;
+            socket-path = "/tmp/virtmcu-systemc.sock";
+            region-size = <0x1000>;
+            /* The adapter base_addr property will do the mapping manually via sysbus_mmio_map 
+               if we pass it via CLI. BUT let's also pass container = <0x01> just in case FDT can map it? 
+               Wait, sysbus devices aren't mapped via container in FDT generic. They are mapped via FDT generic framework automatically if they use fdt_init_sysbus.
+               Since mmio-socket-bridge doesn't have an fdt_init registered, we'll map it via base-addr property on CLI. */
+        };
+    };
+};

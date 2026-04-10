@@ -19,6 +19,13 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+/*
+ * Wire protocol — shared with tools/systemc_adapter/main.cpp via the header
+ * hw/misc/virtmcu_proto.h.  Include it directly since both files live in the
+ * same hw/misc/ directory in the virtmcu repo.
+ */
+#include "virtmcu_proto.h"
+
 #define TYPE_MMIO_SOCKET_BRIDGE "mmio-socket-bridge"
 OBJECT_DECLARE_SIMPLE_TYPE(MmioSocketBridgeState, MMIO_SOCKET_BRIDGE)
 
@@ -26,7 +33,7 @@ struct MmioSocketBridgeState {
     SysBusDevice parent_obj;
 
     MemoryRegion mmio;
-    
+
     /* Properties */
     char *socket_path;
     uint32_t region_size;
@@ -36,53 +43,33 @@ struct MmioSocketBridgeState {
     int sock_fd;
 };
 
-
-/* 
- * Protocol:
- * Request (from QEMU to external process):
- *  uint8_t type;  // 0=read, 1=write
- *  uint8_t size;  // access size in bytes (1, 2, 4, 8)
- *  uint16_t reserved1;
- *  uint32_t reserved2;
- *  uint64_t addr; // offset within region
- *  uint64_t data; // data to write (0 for read)
- * 
- * Response (from external process to QEMU):
- *  uint64_t data; // data read (for read), or 0/status for write
- */
-struct mmio_req {
-    uint8_t type;
-    uint8_t size;
-    uint16_t reserved1;
-    uint32_t reserved2;
-    uint64_t addr;
-    uint64_t data;
-} __attribute__((packed));
-
-struct mmio_resp {
-    uint64_t data;
-} __attribute__((packed));
-
 static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, struct mmio_resp *resp)
 {
     if (s->sock_fd < 0) {
         return;
     }
 
-    if (write(s->sock_fd, req, sizeof(*req)) != sizeof(*req)) {
+    /*
+     * Release the BQL (Big QEMU Lock) before *both* the write and the read.
+     * Any blocking syscall while holding BQL deadlocks the main loop thread,
+     * preventing QMP, GDB, and device I/O from being serviced.
+     *
+     * write() on a Unix domain socket can block if the kernel send buffer is
+     * full (backpressure from a slow adapter), so it must also be outside the
+     * locked window.  Re-acquire immediately after read() completes.
+     */
+    bql_unlock();
+    ssize_t wr = write(s->sock_fd, req, sizeof(*req));
+    ssize_t rd = (wr == (ssize_t)sizeof(*req))
+                 ? read(s->sock_fd, resp, sizeof(*resp))
+                 : -1;
+    bql_lock();
+
+    if (wr != (ssize_t)sizeof(*req)) {
         qemu_log_mask(LOG_GUEST_ERROR, "mmio-socket-bridge: socket write failed\n");
         return;
     }
-
-    /* 
-     * ADR-007: Must release BQL before any blocking system call in the vCPU thread
-     * so we don't deadlock the main loop. 
-     */
-    bql_unlock();
-    ssize_t ret = read(s->sock_fd, resp, sizeof(*resp));
-    bql_lock();
-
-    if (ret != sizeof(*resp)) {
+    if (rd != (ssize_t)sizeof(*resp)) {
         qemu_log_mask(LOG_GUEST_ERROR, "mmio-socket-bridge: socket read failed\n");
     }
 }
@@ -91,7 +78,7 @@ static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
 {
     MmioSocketBridgeState *s = opaque;
     struct mmio_req req = {
-        .type = 0,
+        .type = MMIO_REQ_READ,
         .size = size,
         .addr = addr,
         .data = 0,
@@ -106,7 +93,7 @@ static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     MmioSocketBridgeState *s = opaque;
     struct mmio_req req = {
-        .type = 1,
+        .type = MMIO_REQ_WRITE,
         .size = size,
         .addr = addr,
         .data = val,
