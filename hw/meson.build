@@ -77,5 +77,7 @@ rust_dummy_ss.add(declare_dependency(
 ))
 hw_virtmcu_modules += {'rust-dummy': rust_dummy_ss}
 
+subdir('zenoh')
+
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}
