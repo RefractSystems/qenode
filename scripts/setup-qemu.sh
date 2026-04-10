@@ -38,7 +38,7 @@ cd "$QEMU_DIR"
 
 # Ensure we are on the expected QEMU version (11.0.0-rc3)
 VERSION=$(cat VERSION || echo "")
-if [[ "$VERSION" != *"10.2.92"* ]] && [[ "$VERSION" != *"11.0.0-rc"* ]]; then
+if [[ "$VERSION" != *"10.2.9"* ]] && [[ "$VERSION" != *"11.0.0-rc"* ]]; then
     echo "Unexpected QEMU version: $VERSION"
     exit 1
 fi
