@@ -199,4 +199,12 @@ python3 "$TMPDIR_LOCAL/test_clock.py"
 kill -9 "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
 
-echo "=== Phase 7 smoke test PASSED ==="
+echo "=== Phase 7 smoke test (Zenoh Clock Suspend/icount) PASSED ==="
+
+echo "=== Running Phase 7 determinism test ==="
+"$SCRIPT_DIR/determinism_test.sh"
+
+echo "=== Running Phase 7 netdev test ==="
+"$SCRIPT_DIR/netdev_test.sh"
+
+echo "=== All Phase 7 tests PASSED ==="

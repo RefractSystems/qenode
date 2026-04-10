@@ -60,8 +60,10 @@ def main():
 #define VIRTMCU_HOOKS_H
 
 #include "hw/core/cpu.h"
+#include "net/net.h"
 
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
+extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
 
 #endif
 """

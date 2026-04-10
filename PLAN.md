@@ -414,7 +414,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   `cpu_icount_advance(cpu, delta_ns)` (or directly set `timers_state.qemu_icount_bias`)
   while holding the BQL after step 5.
 
-- [ ] **7.2** Write `hw/zenoh/zenoh-netdev.c` — custom `-netdev` backend:
+- [x] **7.2** Write `hw/zenoh/zenoh-netdev.c` — custom `-netdev` backend:
   - Implements `NetClientInfo` with `receive` (host→guest) and `can_receive`
   - TX path: serializes frame + current virtual timestamp → Zenoh publish to
     `sim/eth/frame/{node_id}/tx`
@@ -442,9 +442,9 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   5. The Zenoh callback runs in a foreign thread; the timer callback runs in the QEMU
      main loop thread. The priority queue must be protected by a `QemuMutex`.
 
-- [ ] **7.3** Delete `tools/node_agent/` — superseded by hw/zenoh/
+- [x] **7.3** Delete `tools/node_agent/` — superseded by hw/zenoh/
 
-- [ ] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
+- [x] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
   firmware timestamps are deterministic across two identical runs.
 
 - [ ] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:

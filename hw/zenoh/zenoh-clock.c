@@ -12,9 +12,9 @@
  *   TimeAuthority to supply the next delta_ns.
  *
  *   Lock ordering — must be followed strictly to prevent ABBA deadlock:
- *     vCPU thread:    BQL  →  s->mutex  (acquires BQL first, then mutex)
- *     on_query:              s->mutex   (acquires mutex only; NEVER calls
- *                                        bql_lock() in the suspend path)
+ *     vCPU hook:  BQL  →  s->mutex  (always acquires BQL first, then mutex)
+ *     timer_cb:   BQL  →  s->mutex  (same order — no circular dependency)
+ *     on_query:          s->mutex   (NEVER calls bql_lock() in suspend path)
  *
  *   State machine (suspend mode):
  *
@@ -134,19 +134,23 @@ static void zclock_timer_cb(void *opaque)
 
 /* ── TCG quantum hook ────────────────────────────────────────────────────────
  * Installed as virtmcu_tcg_quantum_hook; called at every TB boundary from
- * the TCG thread.  BQL is held on entry and must be held on return.
+ * the TCG thread.  In MTTCG, BQL is NOT held on entry or expected on return.
+ * The hook acquires and releases BQL itself as needed.
  *
- * Fast path (needs_quantum == false): returns immediately.
+ * Lock ordering (identical to timer_cb — no ABBA possible):
+ *   BQL → s->mutex
+ *
+ * Fast path (needs_quantum == false): returns after a single atomic check.
  *
  * Slow path (needs_quantum == true):
- *  1. Clear needs_quantum so a concurrent timer_cb doesn't re-enter.
- *  2. Snapshot vtime_ns under BQL (while we still hold it).
- *  3. Set quantum_done and signal query_cond so on_query can wake.
- *  4. Release BQL — mandatory before any blocking wait.
- *  5. Wait on vcpu_cond until on_query sets quantum_ready.
- *  6. Clear quantum_ready, re-acquire BQL.
- *  7. Arm the timer for the next quantum.
- *  8. Return with BQL held (as required by the hook contract).
+ *  1. Acquire BQL → s->mutex in that order (same as timer_cb).
+ *  2. Re-check needs_quantum under the lock.
+ *  3. Claim the quantum: clear needs_quantum, snapshot vtime_ns.
+ *  4. Set quantum_done, signal query_cond so on_query can wake.
+ *  5. Release BQL before blocking (condition_wait must not hold BQL).
+ *  6. Wait on vcpu_cond (holding only s->mutex).
+ *  7. Consume quantum_ready, release s->mutex.
+ *  8. Acquire BQL, arm timer, release BQL, return.
  */
 static void zclock_quantum_hook(CPUState *cpu)
 {
@@ -155,44 +159,52 @@ static void zclock_quantum_hook(CPUState *cpu)
         return;
     }
 
-    qemu_mutex_lock(&s->mutex);
-
+    /* Fast path: racy read is benign — bool reads are atomic on all QEMU targets. */
     if (!s->needs_quantum) {
-        /* Fast path: no quantum boundary pending. */
-        qemu_mutex_unlock(&s->mutex);
         return;
     }
 
-    /* Step 1: claim this quantum boundary. */
-    s->needs_quantum = false;
-
-    /* Step 2: acquire BQL to snapshot virtual time. */
+    /* Step 1: acquire BQL then mutex — same order as timer_cb. */
     bql_lock();
+    qemu_mutex_lock(&s->mutex);
+
+    /* Step 2: re-check under the lock (lost race with timer_cb or another vCPU). */
+    if (!s->needs_quantum) {
+        qemu_mutex_unlock(&s->mutex);
+        bql_unlock();
+        return;
+    }
+
+    /* Step 3: claim quantum, snapshot vtime under BQL. */
+    s->needs_quantum = false;
     s->vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
-    /* Step 3: notify on_query that vtime_ns is ready. */
+    /* Step 4: notify on_query. */
     s->quantum_done = true;
     qemu_cond_signal(&s->query_cond);
 
-    /* Step 4: release BQL before blocking. */
+    /* Step 5: release BQL before blocking — timer_cb needs it to run. */
     bql_unlock();
 
-    /* Step 5: wait for on_query to deposit delta_ns. */
+    /* Step 6: wait for on_query to deposit the next delta_ns. */
     while (!s->quantum_ready) {
         qemu_cond_wait(&s->vcpu_cond, &s->mutex);
     }
 
-    /* Step 6: consume the ready flag, then re-acquire BQL. */
+    /* Step 7: consume quantum_ready, release mutex. */
     s->quantum_ready = false;
-    bql_lock();
+    qemu_mutex_unlock(&s->mutex);
 
-    /* Step 7: arm the timer for the next quantum. */
+    /* Step 8: arm the timer for the next quantum (requires BQL). */
+    bql_lock();
+    if (s->is_icount) {
+        int64_t current = qatomic_read(&timers_state.qemu_icount_bias);
+        qatomic_set(&timers_state.qemu_icount_bias, current + s->delta_ns);
+        qemu_clock_run_all_timers();
+    }
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     timer_mod(s->quantum_timer, now + s->delta_ns);
-
-    /* Step 8: release BQL and return. */
     bql_unlock();
-    qemu_mutex_unlock(&s->mutex);
 }
 
 /* ── Zenoh queryable handler ─────────────────────────────────────────────────
@@ -216,42 +228,29 @@ static void on_query(z_loaned_query_t *query, void *context)
 
     int64_t vtime = 0;
 
-    if (s->is_icount) {
-        /*
-         * icount mode: advance the icount bias directly.
-         * No cooperative hook involvement — BQL acquisition is safe here.
-         */
-        bql_lock();
-        int64_t current = qatomic_read(&timers_state.qemu_icount_bias);
-        qatomic_set(&timers_state.qemu_icount_bias,
-                    current + (int64_t)req.delta_ns);
-        vtime = icount_get();
-        bql_unlock();
-    } else {
-        /*
-         * Suspend mode: coordinate with the vCPU hook.
-         * NEVER call bql_lock() in this path.
-         */
-        qemu_mutex_lock(&s->mutex);
+    /*
+     * Coordinate with the vCPU hook.
+     * NEVER call bql_lock() in this path.
+     */
+    qemu_mutex_lock(&s->mutex);
 
-        /*
-         * Deposit the next delta and wake the hook.
-         * Reset quantum_done first so the subsequent wait is not
-         * spuriously satisfied by a stale true from an earlier quantum.
-         */
-        s->delta_ns      = (int64_t)req.delta_ns;
-        s->quantum_done  = false;
-        s->quantum_ready = true;
-        qemu_cond_signal(&s->vcpu_cond);
+    /*
+     * Deposit the next delta and wake the hook.
+     * Reset quantum_done first so the subsequent wait is not
+     * spuriously satisfied by a stale true from an earlier quantum.
+     */
+    s->delta_ns      = (int64_t)req.delta_ns;
+    s->quantum_done  = false;
+    s->quantum_ready = true;
+    qemu_cond_signal(&s->vcpu_cond);
 
-        /* Wait for the hook to capture vtime_ns after the quantum. */
-        while (!s->quantum_done) {
-            qemu_cond_wait(&s->query_cond, &s->mutex);
-        }
-
-        vtime = s->vtime_ns;
-        qemu_mutex_unlock(&s->mutex);
+    /* Wait for the hook to capture vtime_ns after the quantum. */
+    while (!s->quantum_done) {
+        qemu_cond_wait(&s->query_cond, &s->mutex);
     }
+
+    vtime = s->vtime_ns;
+    qemu_mutex_unlock(&s->mutex);
 
     ClockReadyPayload rep = {
         .current_vtime_ns = (uint64_t)vtime,
@@ -282,13 +281,14 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     if (s->mode && strcmp(s->mode, "icount") == 0) {
         s->is_icount = true;
     } else {
-        s->is_icount     = false;
-        s->needs_quantum = true;  /* Block vCPU immediately on first hook call. */
-        s->quantum_ready = false;
-        s->quantum_done  = false;
-        s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zclock_timer_cb, s);
-        virtmcu_tcg_quantum_hook = zclock_quantum_hook;
+        s->is_icount = false;
     }
+    
+    s->needs_quantum = true;  /* Block vCPU immediately on first hook call. */
+    s->quantum_ready = false;
+    s->quantum_done  = false;
+    s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zclock_timer_cb, s);
+    virtmcu_tcg_quantum_hook = zclock_quantum_hook;
 
     z_owned_config_t config;
     z_config_default(&config);
@@ -327,12 +327,10 @@ static void zenoh_clock_instance_finalize(Object *obj)
         global_zenoh_clock = NULL;
     }
 
-    if (!s->is_icount) {
-        virtmcu_tcg_quantum_hook = NULL;
-        if (s->quantum_timer) {
-            timer_free(s->quantum_timer);
-            s->quantum_timer = NULL;
-        }
+    virtmcu_tcg_quantum_hook = NULL;
+    if (s->quantum_timer) {
+        timer_free(s->quantum_timer);
+        s->quantum_timer = NULL;
     }
 
     z_queryable_drop(z_move(s->queryable));
