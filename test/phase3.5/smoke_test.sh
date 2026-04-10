@@ -2,7 +2,7 @@
 # ==============================================================================
 # smoke_test.sh (Phase 3.5)
 #
-# This script tests the qenode YAML hardware description pipeline. It parses 
+# This script tests the virtmcu YAML hardware description pipeline. It parses 
 # a .yaml file, generates a DTB, and verifies that QEMU can boot and print "HI".
 # ==============================================================================
 

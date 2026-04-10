@@ -1,5 +1,5 @@
 {
-  "name": "qenode",
+  "name": "virtmcu",
   "build": {
     "dockerfile": "../docker/Dockerfile",
     "context": "..",

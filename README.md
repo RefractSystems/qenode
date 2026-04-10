@@ -1,4 +1,4 @@
-# qenode
+# virtmcu
 
 **Make QEMU behave like Renode** — dynamic device loading, FDT-based ARM machine
 instantiation, platform description parsing, and Robot Framework test parity.
@@ -40,7 +40,7 @@ including the timing design, prior art (qbox, MINRES), and SystemC integration p
 ## Repository Layout
 
 ```
-qenode/
+virtmcu/
 ├── CLAUDE.md                   # AI agent context: all constraints and decisions
 ├── PLAN.md                     # Phased task checklist — check here for status
 ├── CONTRIBUTING.md             # Setup, dev workflow, code style

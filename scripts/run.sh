@@ -11,7 +11,7 @@
 #
 # Arguments:
 #   --repl    Path to a Renode .repl file (auto-translated to DTB).
-#   --yaml    Path to a qenode .yaml file (auto-translated to DTB).
+#   --yaml    Path to a virtmcu .yaml file (auto-translated to DTB).
 #   --dts     Path to a Device Tree Source file (auto-compiled to DTB).
 #   --dtb     Path to a pre-compiled Device Tree Blob.
 #   --kernel  Path to the ELF kernel/firmware to boot.
@@ -25,16 +25,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
-QEMU_BIN="$QEMU_DIR/build-qenode/install/bin/qemu-system-arm"
+QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-arm"
 
 # Set the QEMU module directory to point to our local build's lib/qemu (or multiarch equivalent)
 # This is crucial for dynamic loading of our custom .so peripherals
 # We explicitly search for .so files to avoid picking up stale .dylib files on macOS cross-builds
-FOUND_SO=$(find "$QEMU_DIR/build-qenode/install" -name "hw-qenode-*.so" -type f 2>/dev/null | head -n1)
+FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
 if [ -n "$FOUND_SO" ]; then
     QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
 else
-    QEMU_MODULE_DIR="$QEMU_DIR/build-qenode/install/lib/qemu"
+    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
 fi
 
 # Ensure QEMU has been built
@@ -80,19 +80,19 @@ IS_TEMP_DTB=false
 
 if [[ "$INPUT_FILE" == *.repl ]]; then
     echo "Processing Renode platform: $INPUT_FILE"
-    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     IS_TEMP_DTB=true
     # Call our Phase 3 translator as a module
     python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
-    echo "Processing qenode YAML platform: $INPUT_FILE"
-    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    echo "Processing virtmcu YAML platform: $INPUT_FILE"
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     IS_TEMP_DTB=true
     # Call our Phase 3.5 translator as a module
     python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
-    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     IS_TEMP_DTB=true
     dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
 elif [[ "$INPUT_FILE" == *.dtb ]]; then

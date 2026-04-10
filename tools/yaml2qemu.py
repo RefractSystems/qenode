@@ -2,7 +2,7 @@
 # ==============================================================================
 # yaml2qemu.py
 #
-# Parses the qenode YAML hardware description and translates it into a 
+# Parses the virtmcu YAML hardware description and translates it into a 
 # QEMU Device Tree (.dtb). This drives the FdtEmitter using the modern schema.
 # ==============================================================================
 
@@ -56,7 +56,7 @@ def parse_yaml_platform(yaml_path: str) -> ReplPlatform:
     return platform
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert qenode YAML to Device Tree")
+    parser = argparse.ArgumentParser(description="Convert virtmcu YAML to Device Tree")
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
     

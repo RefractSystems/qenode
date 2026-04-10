@@ -6,7 +6,7 @@ Welcome to Lesson 1! By the end of this tutorial, you will have constructed a vi
 
 *   **QEMU**: A fast, cross-platform hardware emulator.
 *   **Renode**: A framework known for dynamic hardware composition (building boards at runtime).
-*   **qenode**: Our hybrid framework that patches QEMU to get Renode's dynamic features while keeping QEMU's speed.
+*   **virtmcu**: Our hybrid framework that patches QEMU to get Renode's dynamic features while keeping QEMU's speed.
 *   **MMIO (Memory-Mapped I/O)**: Hardware peripherals (like sensors or serial ports) are mapped into the CPU's memory address space. To send a character to a serial port, the CPU literally writes bytes to a specific memory address.
 *   **Device Tree (DTS/DTB)**: A standardized data structure used to describe hardware to an operating system (or, in our case, to QEMU). A `.dts` file is human-readable text; a `.dtb` is the compiled binary version.
 *   **Bare-metal**: Running code directly on the hardware (or emulator) without an Operating System. You have no `printf`, no threads, and no file system!
@@ -14,7 +14,7 @@ Welcome to Lesson 1! By the end of this tutorial, you will have constructed a vi
 ## Part 1: Defining the Hardware (The Device Tree)
 
 Usually, QEMU defines its hardware boards (like the Raspberry Pi) inside compiled C code. 
-In qenode, we use the `arm-generic-fdt` machine type. This special QEMU machine boots up completely empty and reads a Device Tree Blob (DTB) to figure out what CPUs, memory, and peripherals it should instantiate.
+In virtmcu, we use the `arm-generic-fdt` machine type. This special QEMU machine boots up completely empty and reads a Device Tree Blob (DTB) to figure out what CPUs, memory, and peripherals it should instantiate.
 
 Open the file `src/minimal.dts`.
 
@@ -57,7 +57,7 @@ Let's compile the hardware description (DTS) and the software (Assembly).
 2. Run `make`.
 
 This produces `minimal.dtb` and `hello.elf`.
-Now, let's run it using the `qenode` runner script!
+Now, let's run it using the `virtmcu` runner script!
 
 ```bash
 ../../scripts/run.sh --machine arm-generic-fdt --dtb minimal.dtb --kernel hello.elf -nographic

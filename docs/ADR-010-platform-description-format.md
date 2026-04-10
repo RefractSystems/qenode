@@ -12,12 +12,12 @@ For a modern Digital Twin platform (FirmwareStudio) where physics and cyber-node
 3. Designed to map 1:1 with **OpenUSD (Universal Scene Description)** primitives.
 
 ## Decision
-We will adopt a custom, hierarchical **YAML format** (`.yaml`) as the primary "modern" hardware description for `qenode`.
+We will adopt a custom, hierarchical **YAML format** (`.yaml`) as the primary "modern" hardware description for `virtmcu`.
 
 ### Schema Design: The "Cyber Prim" Vision
 Our YAML schema is explicitly designed to mirror a future OpenUSD schema. In USD, everything is a "Prim" (primitive) with typed "Attributes". 
 
-A `qenode` YAML platform consists of a `machine` definition and a list of `peripherals`.
+A `virtmcu` YAML platform consists of a `machine` definition and a list of `peripherals`.
 
 ```yaml
 machine:

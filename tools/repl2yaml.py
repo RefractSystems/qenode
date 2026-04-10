@@ -2,7 +2,7 @@
 # ==============================================================================
 # repl2yaml.py
 #
-# Migrates legacy Renode .repl hardware descriptions to the modern qenode YAML 
+# Migrates legacy Renode .repl hardware descriptions to the modern virtmcu YAML 
 # format. This ensures that we can transition to an OpenUSD-aligned schema 
 # without losing existing board definitions.
 # ==============================================================================
@@ -59,17 +59,17 @@ def migrate(repl_path: str, yaml_path: str):
             # For simplicity in this migration, we store the raw target string
             p["interrupts"] = [f"{irq.target_device}@{irq.target_range}" for irq in dev.interrupts]
 
-        # Standard qenode requirement: everything connects to sysmem
+        # Standard virtmcu requirement: everything connects to sysmem
         p["container"] = "sysmem"
         
         output["peripherals"].append(p)
 
-    print(f"Writing qenode YAML: {yaml_path}")
+    print(f"Writing virtmcu YAML: {yaml_path}")
     with open(yaml_path, "w") as f:
         yaml.dump(output, f, sort_keys=False, default_flow_style=False)
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert Renode .repl to qenode YAML")
+    parser = argparse.ArgumentParser(description="Convert Renode .repl to virtmcu YAML")
     parser.add_argument("input", help="Path to .repl file")
     parser.add_argument("--out", help="Path to output .yaml file (default: same name)")
     

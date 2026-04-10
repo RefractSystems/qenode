@@ -1,6 +1,6 @@
 # Lesson 3: Parsing Renode `.repl` Platforms to QEMU Device Trees
 
-Welcome to Lesson 3! In this tutorial, you will learn how qenode bridges the gap between Renode's human-readable platform descriptions (`.repl` files) and QEMU's internal Object Model.
+Welcome to Lesson 3! In this tutorial, you will learn how virtmcu bridges the gap between Renode's human-readable platform descriptions (`.repl` files) and QEMU's internal Object Model.
 
 ## The Problem
 In Lesson 1, we manually wrote a Device Tree Source (`.dts`) file to instantiate our machine. While Device Trees are powerful and standard in the Linux kernel world, they are incredibly verbose and focus heavily on physical bus addressing rather than high-level system architecture.
@@ -77,4 +77,4 @@ Just like other formats, `run.sh` supports YAML natively:
 ```
 
 ## Summary
-You have successfully learned how qenode provides a flexible, future-proof frontend. Whether you are migrating from Renode's legacy `.repl`, using industry-standard `.dts`, or adopting our modern OpenUSD-aligned YAML, the underlying QEMU engine provides high-performance dynamic emulation for your digital twin.
+You have successfully learned how virtmcu provides a flexible, future-proof frontend. Whether you are migrating from Renode's legacy `.repl`, using industry-standard `.dts`, or adopting our modern OpenUSD-aligned YAML, the underlying QEMU engine provides high-performance dynamic emulation for your digital twin.

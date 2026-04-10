@@ -1,4 +1,4 @@
-# qenode QEMU container image.
+# virtmcu QEMU container image.
 #
 # Multi-stage build:
 #   devenv   — toolchain only: all build deps, no code baked in (used by devcontainer)
@@ -77,24 +77,24 @@ RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
 
 # Apply arm-generic-fdt v3 patch series
 RUN cd qemu \
-    && git config user.email "qenode-build@example.com" \
-    && git config user.name "qenode" \
+    && git config user.email "virtmcu-build@example.com" \
+    && git config user.name "virtmcu" \
     && git am --3way /build/patches/arm-generic-fdt-v3.mbx
 
 # Apply libqemu clock-socket extension
 RUN cd qemu && python3 /build/patches/apply_libqemu.py .
 
-# Copy qenode hw/ sources and integrate into QEMU's build
-COPY hw/ /build/qenode-hw/
-RUN ln -s /build/qenode-hw /build/qemu/hw/qenode \
-    && grep -q "subdir('qenode')" /build/qemu/hw/meson.build \
-       || printf "\n# qenode out-of-tree peripherals\nsubdir('qenode')\n" \
+# Copy virtmcu hw/ sources and integrate into QEMU's build
+COPY hw/ /build/virtmcu-hw/
+RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
+    && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build \
+       || printf "\n# virtmcu out-of-tree peripherals\nsubdir('virtmcu')\n" \
           >> /build/qemu/hw/meson.build
 
 # Configure and build
 RUN cd qemu \
     && ./configure \
-        --prefix=/opt/qenode \
+        --prefix=/opt/virtmcu \
         --target-list="${ARCH}-softmmu" \
         --enable-modules \
         --enable-fdt \
@@ -119,7 +119,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /opt/qenode /opt/qenode
+COPY --from=builder /opt/virtmcu /opt/virtmcu
 
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
@@ -130,8 +130,8 @@ COPY tools/ /app/tools/
 WORKDIR /app
 
 # Make qemu-system-* available on PATH
-ENV PATH="/opt/qenode/bin:${PATH}"
-ENV QEMU_MODULE_DIR="/opt/qenode/lib/qemu"
+ENV PATH="/opt/virtmcu/bin:${PATH}"
+ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # Default: print version and wait (worlds override CMD)
-CMD ["sh", "-c", "qemu-system-${ARCH} --version && echo 'qenode ready — set CMD in your world compose file'"]
+CMD ["sh", "-c", "qemu-system-${ARCH} --version && echo 'virtmcu ready — set CMD in your world compose file'"]

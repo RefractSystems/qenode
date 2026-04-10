@@ -1,5 +1,5 @@
 # ==============================================================================
-# Top-level Makefile for qenode
+# Top-level Makefile for virtmcu
 #
 # This Makefile provides convenient shorthand commands for common development 
 # tasks. It delegates the actual heavy lifting to the shell scripts located 
@@ -13,7 +13,7 @@
 
 # Environment configuration defaults
 QEMU_SRC  ?= $(CURDIR)/third_party/qemu
-QEMU_BUILD?= $(QEMU_SRC)/build-qenode
+QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 

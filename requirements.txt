@@ -1,4 +1,4 @@
-# Python dependencies for qenode tooling and testing.
+# Python dependencies for virtmcu tooling and testing.
 # Install via: pip install -r requirements.txt
 
 # QMP client — async JSON-over-socket protocol for controlling QEMU

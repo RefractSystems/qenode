@@ -1,4 +1,4 @@
-# qenode Implementation Plan
+# virtmcu Implementation Plan
 
 **Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine
 instantiation, .repl parsing, and Robot Framework test parity.
@@ -20,7 +20,7 @@ instantiation, .repl parsing, and Robot Framework test parity.
   - Always explain terminology clearly upfront.
   - Provide step-by-step, hands-on lessons with reproducible code (e.g., Makefiles, source code).
   - Teach *practical skills* including how to use tools (like GDB, pytest, or dtc) and how to debug crashes or faults.
-  - Explain the *internals* (how and why it works inside QEMU/qenode) so it's not just a black box.
+  - Explain the *internals* (how and why it works inside QEMU/virtmcu) so it's not just a black box.
 
 ---
 
@@ -105,8 +105,8 @@ via native module discovery + `scripts/run.sh`, and confirm the type appears in 
 
 - [x] **2.2** Update QEMU module build configuration:
   - Add symlink to link `hw/` into QEMU's source tree
-  - Add `hw/meson.build` to define `hw_qenode_modules`
-  - Output: `hw-qenode-dummy.so` within QEMU's installed `lib/qemu/`
+  - Add `hw/meson.build` to define `hw_virtmcu_modules`
+  - Output: `hw-virtmcu-dummy.so` within QEMU's installed `lib/qemu/`
 
 - [x] **2.3** Verify the native module loading:
   - `./scripts/run.sh --dtb test/phase1/minimal.dtb -device dummy-device -nographic`
@@ -265,7 +265,7 @@ to Phase 7 when slaved modes are active.
 (see `docs/ARCHITECTURE.md` §9 for the full decision guide):
 
 - **Path A** (chardev socket bridge): thin C++ adapter translates TLM transactions to
-  qenode's Unix socket protocol. **Requires writing `hw/misc/mmio-socket-bridge.c` first**
+  virtmcu's Unix socket protocol. **Requires writing `hw/misc/mmio-socket-bridge.c` first**
   — QEMU does not natively serialize MMIO to sockets. Works for individual peripherals at
   <1 MHz access rate (see ADR-005).
 - **Path B** (Remote Port, this phase): full TLM-2.0 co-simulation via AMD/Xilinx Remote
@@ -274,7 +274,7 @@ to Phase 7 when slaved modes are active.
 
 **Source of Verilated models**: Any Verilated C++ models will come from Renode's
 existing co-simulation setup (Renode's `CoSimulationPlugin` / `IntegrationLibrary`).
-Migration means replacing those Renode headers with qenode's Remote Port interface.
+Migration means replacing those Renode headers with virtmcu's Remote Port interface.
 
 **EtherBone (FPGA over UDP)**: Nice-to-have for Renode feature parity, not P0.
 Implement after Path B is validated.
@@ -299,7 +299,7 @@ Implement after Path B is validated.
 
 ## Phase 7 — FirmwareStudio / MuJoCo External Time Master ⬜ (Future)
 
-**Goal**: qenode becomes the QEMU layer of FirmwareStudio. MuJoCo drives physical
+**Goal**: virtmcu becomes the QEMU layer of FirmwareStudio. MuJoCo drives physical
 simulation; its `TimeAuthority` class advances QEMU's virtual clock one quantum at a time
 over Zenoh, guaranteeing causal consistency between physics and firmware.
 
@@ -309,7 +309,7 @@ over Zenoh, guaranteeing causal consistency between physics and firmware.
 - `cyber/src/node_agent.py` — bridges Zenoh ↔ QEMU Unix socket
 - `cyber/src/shm_bridge.py` — bridges IVSHMEM MMIO ↔ Zenoh for sensor/actuator I/O
 
-qenode's job in Phase 7: replace the prototype with production-quality implementations.
+virtmcu's job in Phase 7: replace the prototype with production-quality implementations.
 
 ### Three Clock Modes
 
@@ -363,8 +363,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [ ] **7.1** Write `hw/zenoh/zenoh-clock.c` — native QOM device (SysBusDevice):
   - Links `zenoh-c` (added to QEMU Meson as a `dependency()`)
   - Declares a Zenoh queryable on `sim/clock/advance/{node_id}` at `realize` time
-  - Assigns its blocking routine to the exposed `qenode_tcg_quantum_hook` function pointer (installed by `apply_zenoh_hook.py`). This is required because QEMU exports no dynamic APIs for QOM modules to hook the internal `cpu_exec` loop.
-  - Compiles as `hw-qenode-zenoh.so` via the existing Meson module system
+  - Assigns its blocking routine to the exposed `virtmcu_tcg_quantum_hook` function pointer (installed by `apply_zenoh_hook.py`). This is required because QEMU exports no dynamic APIs for QOM modules to hook the internal `cpu_exec` loop.
+  - Compiles as `hw-virtmcu-zenoh.so` via the existing Meson module system
 
   **Critical implementation constraint — BQL (Big QEMU Lock):**
   The TCG vCPU thread holds the BQL while executing translated code. Blocking on a Zenoh
@@ -421,8 +421,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [ ] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
   firmware timestamps are deterministic across two identical runs.
 
-- [ ] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on qenode:
-  - `worlds/*.yml` Docker Compose files reference qenode's patched QEMU image
+- [ ] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:
+  - `worlds/*.yml` Docker Compose files reference virtmcu's patched QEMU image
   - Remove `cyber/src/node_agent.py` — replaced by `hw/zenoh/` native plugin
 
 - [ ] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.

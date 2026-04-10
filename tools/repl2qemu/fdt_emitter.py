@@ -51,7 +51,7 @@ class FdtEmitter:
         lines.append("/dts-v1/;")
         lines.append("")
         lines.append("/ {")
-        lines.append('    model = "qenode-dynamic-machine";')
+        lines.append('    model = "virtmcu-dynamic-machine";')
         lines.append('    compatible = "arm,generic-fdt";')
         lines.append("    #address-cells = <2>;")
         lines.append("    #size-cells = <2>;")

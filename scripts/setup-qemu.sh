@@ -3,13 +3,13 @@
 # setup-qemu.sh
 #
 # This script initializes, patches, configures, and builds the QEMU emulator
-# used by the qenode project. It performs the following steps:
+# used by the virtmcu project. It performs the following steps:
 #   1. Verifies the QEMU submodule is initialized and at the correct version.
 #   2. Applies the 'arm-generic-fdt' patch series via `git am`.
 #   3. Applies custom AST-injection patches (libqemu and zenoh hooks) to QEMU C code.
 #   4. Symlinks the project's custom `hw/` directory into QEMU's build tree.
 #   5. Configures QEMU (handling macOS specific flags if necessary).
-#   6. Compiles and installs the QEMU binaries to `third_party/qemu/build-qenode/install`.
+#   6. Compiles and installs the QEMU binaries to `third_party/qemu/build-virtmcu/install`.
 # ==============================================================================
 
 set -e
@@ -52,21 +52,21 @@ python3 patches/apply_zenoh_hook.py third_party/qemu
 # The arm-generic-fdt patch does not set this by default, which breaks out-of-tree plugins.
 if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" "$QEMU_DIR/hw/arm/arm_generic_fdt.c"; then
     echo "Enabling dynamic sysbus devices for arm-generic-fdt..."
-    sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* qenode: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' "$QEMU_DIR/hw/arm/arm_generic_fdt.c"
+    sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' "$QEMU_DIR/hw/arm/arm_generic_fdt.c"
 fi
 
-# Symlink our custom hw/ directory into QEMU's hw/qenode directory
+# Symlink our custom hw/ directory into QEMU's hw/virtmcu directory
 # This allows QEMU's Meson build system to compile our custom peripherals
-ln -sfn "$WORKSPACE_DIR/hw" "$QEMU_DIR/hw/qenode"
-# Inject 'subdir('qenode')' into QEMU's hw/meson.build if not already there
-if ! grep -q "subdir('qenode')" "$QEMU_DIR/hw/meson.build"; then
-    echo "subdir('qenode')" >> "$QEMU_DIR/hw/meson.build"
+ln -sfn "$WORKSPACE_DIR/hw" "$QEMU_DIR/hw/virtmcu"
+# Inject 'subdir('virtmcu')' into QEMU's hw/meson.build if not already there
+if ! grep -q "subdir('virtmcu')" "$QEMU_DIR/hw/meson.build"; then
+    echo "subdir('virtmcu')" >> "$QEMU_DIR/hw/meson.build"
 fi
 
 # Configure and build QEMU in a dedicated build directory
 cd "$QEMU_DIR"
-mkdir -p build-qenode
-cd build-qenode
+mkdir -p build-virtmcu
+cd build-virtmcu
 
 # Configure the build, handling macOS specific plugin bugs (GitLab #516)
 if [ "$(uname)" = "Darwin" ]; then
@@ -78,6 +78,6 @@ fi
 
 # Compile QEMU using all available CPU cores
 make -j$(nproc)
-# Install QEMU binaries to the prefix directory (build-qenode/install)
+# Install QEMU binaries to the prefix directory (build-virtmcu/install)
 make install
 echo "QEMU build and install completed successfully."

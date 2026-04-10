@@ -56,7 +56,7 @@
             device_type = "cpu";
             /*
              * INTERNALS NOTE: Standard Linux Device Trees use strings like "arm,cortex-a15".
-             * However, qenode maps these strings DIRECTLY to internal QEMU Object Model (QOM)
+             * However, virtmcu maps these strings DIRECTLY to internal QEMU Object Model (QOM)
              * type names.  The QOM name for this CPU is "cortex-a15-arm-cpu".
              *
              * memory = <0x01>: connects this CPU's address space to qemu_sysmem so it

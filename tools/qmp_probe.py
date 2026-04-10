@@ -119,7 +119,7 @@ def dump_tree(client, path="/", depth=0, visited=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="qenode QMP Probing Utility",
+        description="virtmcu QMP Probing Utility",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   %(prog)s tree

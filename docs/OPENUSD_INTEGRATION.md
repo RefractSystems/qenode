@@ -1,6 +1,6 @@
-# OpenUSD & qenode: The "Cyber Prim" Vision
+# OpenUSD & virtmcu: The "Cyber Prim" Vision
 
-This document outlines the architectural vision for integrating **qenode** hardware emulators natively into the **OpenUSD (Universal Scene Description)** ecosystem.
+This document outlines the architectural vision for integrating **virtmcu** hardware emulators natively into the **OpenUSD (Universal Scene Description)** ecosystem.
 
 ---
 
@@ -11,7 +11,7 @@ In traditional robotics and industrial simulation, there is a hard wall between 
 - **Physics** lives in `.usd`, `.urdf`, or `.mjcf`.
 - **Cyber** lives in `.repl`, `.dts`, or hardcoded C structs.
 
-**qenode** breaks this wall. Our goal is to treat an ARM microcontroller not as an external process, but as a first-class **"Cyber Prim"** inside the USD scene graph. 
+**virtmcu** breaks this wall. Our goal is to treat an ARM microcontroller not as an external process, but as a first-class **"Cyber Prim"** inside the USD scene graph. 
 
 Imagine a single `.usd` file where:
 - A drone's chassis is a `Xform` prim.
@@ -22,7 +22,7 @@ Imagine a single `.usd` file where:
 
 ## 2. Our Intermediate Standard: USD-Aligned YAML
 
-To bridge today's ecosystem with tomorrow's USD-native future, qenode uses a **strongly-typed YAML schema** designed to map 1:1 with USD Primitives and Attributes.
+To bridge today's ecosystem with tomorrow's USD-native future, virtmcu uses a **strongly-typed YAML schema** designed to map 1:1 with USD Primitives and Attributes.
 
 ### Why YAML first?
 - **Lightweight**: No need for the 500MB `pxr` USD library for headless CI or simple firmware testing.
@@ -30,7 +30,7 @@ To bridge today's ecosystem with tomorrow's USD-native future, qenode uses a **s
 - **Extensible**: Perfectly mirrors the hierarchical nature of USD.
 
 ### The Schema Concept
-A qenode YAML platform is structured as a tree of "Objects":
+A virtmcu YAML platform is structured as a tree of "Objects":
 
 ```yaml
 # A CyberNode represents the entire "machine"
@@ -64,9 +64,9 @@ peripherals:
 
 ## 3. Mapping to OpenUSD Primitives
 
-When qenode transitions to native USD support, the mapping will be direct:
+When virtmcu transitions to native USD support, the mapping will be direct:
 
-| qenode YAML Concept | OpenUSD Concept | Attributes |
+| virtmcu YAML Concept | OpenUSD Concept | Attributes |
 | :--- | :--- | :--- |
 | `machine` | `CyberNode` (Custom Prim) | `machineType`, `cpuCount` |
 | `cpu` | `Processor` (Custom Prim) | `cpuModel`, `frequency` |

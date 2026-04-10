@@ -1,4 +1,4 @@
-# Contributing to qenode
+# Contributing to virtmcu
 
 ## Prerequisites
 
@@ -38,8 +38,8 @@ sudo apt install build-essential libglib2.0-dev ninja-build python3-venv \
 
 ```bash
 # 1. Clone this repo
-git clone https://github.com/<org>/qenode.git
-cd qenode
+git clone https://github.com/<org>/virtmcu.git
+cd virtmcu
 
 # 2. Build QEMU with all patches applied (takes ~5 min)
 make setup
@@ -52,7 +52,7 @@ source .venv/bin/activate
 make run
 ```
 
-After `make setup`, QEMU lives in `third_party/qemu/build-qenode/install/`.
+After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/`.
 `scripts/run.sh` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 
@@ -76,7 +76,7 @@ the right QEMU binary.
 ### Changing QEMU Patches
 
 Our patches live in `patches/`.  The applied patch branch in the QEMU tree
-is `qenode-patches`.
+is `virtmcu-patches`.
 
 ```bash
 # Make changes in third_party/qemu, then:
@@ -85,7 +85,7 @@ git add -p          # stage your changes
 git commit -m "your patch description"
 
 # Export the new patch:
-cd <qenode-repo>
+cd <virtmcu-repo>
 git -C third_party/qemu format-patch HEAD~1 -o patches/
 
 # Or regenerate the full series:
@@ -104,7 +104,7 @@ python -m pytest tests/ -v
 
 ## Testing and Regression
 
-qenode relies on automated testing to ensure new features (like parsing or new peripherals) don't break earlier architectural work. All tests must be properly documented.
+virtmcu relies on automated testing to ensure new features (like parsing or new peripherals) don't break earlier architectural work. All tests must be properly documented.
 
 We split testing into two categories:
 
@@ -159,7 +159,7 @@ ruff check tools/ tests/
 
 ## Project Context
 
-qenode is developed alongside **FirmwareStudio** (separate upstream repo),
+virtmcu is developed alongside **FirmwareStudio** (separate upstream repo),
 a digital twin environment where MuJoCo drives physical simulation and acts as the
 **external time master** for QEMU. See `CLAUDE.md` for the full architectural picture,
 and `PLAN.md` for the phased task checklist.

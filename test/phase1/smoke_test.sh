@@ -2,7 +2,7 @@
 # ==============================================================================
 # smoke_test.sh
 #
-# This script performs a basic "smoke test" for Phase 1 of the qenode project.
+# This script performs a basic "smoke test" for Phase 1 of the virtmcu project.
 # It uses the `run.sh` script to boot the `hello.elf` kernel on the 
 # `arm-generic-fdt` machine described by `minimal.dtb`. 
 #

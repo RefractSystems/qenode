@@ -33,7 +33,7 @@ works alongside an unmodified (or minimally patched) QEMU binary.
 QEMU's pure-C peripheral path is significantly lower latency than Renode's C→C# boundary.
 The trade-off: Renode's C# layer enables dynamic peripheral loading without recompilation.
 
-**qenode uses TCG** for Cortex-M and FirmwareStudio slaved-time modes. Native hardware acceleration (KVM/hvf) is supported only for Cortex-A profiles in standalone mode. See §10 ADR-009.
+**virtmcu uses TCG** for Cortex-M and FirmwareStudio slaved-time modes. Native hardware acceleration (KVM/hvf) is supported only for Cortex-A profiles in standalone mode. See §10 ADR-009.
 
 ### 2.2 Device Model
 
@@ -106,10 +106,10 @@ QEMU↔Verilator co-simulation.
 Peripheral models are authored in C (or Rust via FFI) and compiled as position-independent
 shared objects (`.so` on Linux, `.dylib` on macOS).
 
-**Build integration**: `scripts/setup-qemu.sh` symlinks `qenode/hw/` into QEMU's source
-tree as `hw/qenode/` and appends `subdir('qenode')` to `hw/meson.build`. Our
+**Build integration**: `scripts/setup-qemu.sh` symlinks `virtmcu/hw/` into QEMU's source
+tree as `hw/virtmcu/` and appends `subdir('virtmcu')` to `hw/meson.build`. Our
 `hw/meson.build` registers devices in QEMU's `modules` dict. With `--enable-modules`,
-this produces `hw-qenode-<name>.so` files installed in `QEMU_MODDIR` with correct
+this produces `hw-virtmcu-<name>.so` files installed in `QEMU_MODDIR` with correct
 `module_info` entries. `-device dummy-device` auto-discovers and loads the `.so` — no
 `LD_PRELOAD` hack required, works identically on Linux and macOS.
 
@@ -177,7 +177,7 @@ no UDP multicast or Python coordinator needed.
 
 ### Pillar 5 — External Time Master (FirmwareStudio Integration)
 
-qenode is the QEMU layer of **FirmwareStudio**, a digital twin platform where MuJoCo
+virtmcu is the QEMU layer of **FirmwareStudio**, a digital twin platform where MuJoCo
 physics drives the simulation clock. This pillar formalizes the time synchronization
 protocol between the physics engine and QEMU.
 
@@ -304,7 +304,7 @@ QEMU's instruction rate — is the binding constraint for simulation speed.
 access without modifying QEMU source. Bundled plugins include instruction tracers
 (`execlog`), coverage recorders (`drcov`, `bbv`), and hardware profilers (`hwprofile`).
 
-For qenode, plugins are useful for:
+For virtmcu, plugins are useful for:
 - Firmware code coverage during Robot Framework test runs
 - PC-breakpoint hooks ("stop when firmware reaches address X") without GDB
 - Profiling which peripheral MMIO addresses are hottest
@@ -348,7 +348,7 @@ docker compose -f docker/docker-compose.yml run cyber-node qemu-system-arm ...
 
 ### System Context
 
-qenode is the QEMU layer of FirmwareStudio, a digital twin platform where a physics
+virtmcu is the QEMU layer of FirmwareStudio, a digital twin platform where a physics
 engine (MuJoCo) simulates the physical world and acts as the **master clock** for all
 cyber nodes. Multiple QEMU instances run firmware for different microcontrollers in the
 same simulated world. All must advance in lockstep with the physics timestep.
@@ -371,7 +371,7 @@ same simulated world. All must advance in lockstep with the physics timestep.
 │                         │  + hw/zenoh/     │ ← native C plugin │
 │                         │    zenoh-clock.c │   blocks TCG loop  │
 │                         │    zenoh-netdev.c│   on Zenoh reply   │
-│                         │  + qenode hw/    │                   │
+│                         │  + virtmcu hw/    │                   │
 │                         └──────────────────┘                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -493,7 +493,7 @@ The `qemu_process` pytest fixture must explicitly omit `-device zenoh-clock` fro
 QEMU command line. Phase 7 integration tests (which require a running TimeAuthority) are
 a separate pytest mark (`@pytest.mark.firmware_studio`) and must not run in standard CI.
 
-### Implications for qenode Peripheral Design
+### Implications for virtmcu Peripheral Design
 
 Peripherals that model timers or counters (PWM, SysTick, DWT) must be aware of the
 active clock mode and documented accordingly. In `slaved-suspend` mode, a peripheral's
@@ -505,7 +505,7 @@ matches real hardware (the timer only ticks when the MCU is powered).
 ## 8. Prior Art: qbox and MINRES
 
 Two projects address the same problem of coupling QEMU to an external scheduler. Both
-were studied when designing qenode's timing architecture.
+were studied when designing virtmcu's timing architecture.
 
 ### Qualcomm qbox (github.com/quic/qbox)
 
@@ -516,12 +516,12 @@ qbox integrates QEMU as a SystemC TLM-2.0 module using two libraries:
 - **libgssync**: Synchronization policy library implementing cooperative suspend/resume
   between QEMU's TCG execution loop and SystemC's event-driven scheduler.
 
-**Key insight adopted by qenode**: `libgssync` does **not** use icount mode. QEMU runs
+**Key insight adopted by virtmcu**: `libgssync` does **not** use icount mode. QEMU runs
 at full TCG speed between synchronization points. The scheduler suspends QEMU at quantum
 boundaries via `vm_stop()` / `vm_start()`, does its work, then resumes. This is the
-basis for qenode's `slaved-suspend` mode.
+basis for virtmcu's `slaved-suspend` mode.
 
-**What qenode does not adopt**: The full SystemC/TLM-2.0 embedding. Our Zenoh message
+**What virtmcu does not adopt**: The full SystemC/TLM-2.0 embedding. Our Zenoh message
 bus provides the equivalent inter-component communication without requiring SystemC as a
 simulation kernel. Zenoh is simpler, language-agnostic, works across containers and
 machines, and is already part of FirmwareStudio's infrastructure.
@@ -532,8 +532,8 @@ MINRES describes integrating QEMU as a library within a SystemC virtual platform
 treating QEMU as one component among many rather than as the sole simulator. The
 architecture requires significant custom patching per QEMU release.
 
-**Key insight**: The maintainability concern is real and applies to qenode too. Every
-QEMU release can break the `libqemu` patch and the `arm-generic-fdt` series. qenode
+**Key insight**: The maintainability concern is real and applies to virtmcu too. Every
+QEMU release can break the `libqemu` patch and the `arm-generic-fdt` series. virtmcu
 manages this by:
 
 1. Keeping patches minimal and focused (libqemu: ~150 LOC; arm-generic-fdt: upstream
@@ -542,12 +542,12 @@ manages this by:
 3. Using Python-based patch application (`apply_libqemu.py`) rather than fragile git
    format-patches, making rebasing explicit and auditable.
 
-**What qenode does not adopt**: SystemC as the simulation kernel. Same reasoning as
+**What virtmcu does not adopt**: SystemC as the simulation kernel. Same reasoning as
 qbox: Zenoh is sufficient and simpler.
 
 ### Summary
 
-| Concern | qbox approach | MINRES approach | qenode approach |
+| Concern | qbox approach | MINRES approach | virtmcu approach |
 |---|---|---|---|
 | Time sync | libgssync suspend/resume | SystemC scheduler | Native Zenoh plugin TB-boundary halt (suspend mode) or icount (precise mode) |
 | IPC | SystemC TLM-2.0 | SystemC TLM-2.0 | Zenoh + Unix sockets |
@@ -609,7 +609,7 @@ Remote Port handles time domain synchronization explicitly — the SystemC model
 in sync with QEMU's virtual clock. This is the right path for **co-simulating entire
 hardware subsystems** (FPGA fabric, custom processor, multi-component SoC).
 
-This is qenode Phase 5. Depends on `libsystemctlm-soc` (AMD/Xilinx).
+This is virtmcu Phase 5. Depends on `libsystemctlm-soc` (AMD/Xilinx).
 
 ### Path C — qbox-style TLM embedding (future consideration)
 
@@ -618,7 +618,7 @@ for each MMIO region. Any SystemC TLM-2.0 peripheral can be connected directly. 
 gives the tightest integration and best performance (no extra socket hop) but requires
 adopting qbox's `libqemu-cxx` infrastructure.
 
-qenode does not currently use this path. If FirmwareStudio's co-simulation requirements
+virtmcu does not currently use this path. If FirmwareStudio's co-simulation requirements
 grow to include many concurrent SystemC peripherals, revisit qbox as the integration
 layer for Phase 5+.
 
@@ -691,13 +691,13 @@ without a socket or Python process.
 **Option C — Native Zenoh QOM plugin with TCG cooperative hooks** *(chosen)*
 
 `hw/zenoh/zenoh-clock.c` is a `SysBusDevice` that links `zenoh-c` and:
-1. Leverages a minimal upstream patch (`patches/apply_zenoh_hook.py`) that exports a `qenode_tcg_quantum_hook` function pointer in QEMU's outer `cpu_exec` loop. *Why:* Upstream QEMU exports no dynamic APIs for QOM modules or TCG modules to hook the execution loop natively without patching.
+1. Leverages a minimal upstream patch (`patches/apply_zenoh_hook.py`) that exports a `virtmcu_tcg_quantum_hook` function pointer in QEMU's outer `cpu_exec` loop. *Why:* Upstream QEMU exports no dynamic APIs for QOM modules or TCG modules to hook the execution loop natively without patching.
 2. At each quantum boundary, the hook drops the Big QEMU Lock (BQL), blocks the QEMU thread on a Zenoh queryable reply from TimeAuthority, and re-acquires the BQL once awoken.
 3. Resumes the TCG loop when the reply arrives
 4. Optionally sets `qemu_icount_bias` if slaved-icount mode is active
 
 This is identical in principle to qbox's libgssync: the halt happens from inside QEMU at
-a well-defined TCG yielding point. The module compiles as `hw-qenode-zenoh.so` via the
+a well-defined TCG yielding point. The module compiles as `hw-virtmcu-zenoh.so` via the
 existing Meson module system — no special patching beyond the hook registration.
 
 **Performance consequences**:
@@ -811,7 +811,7 @@ an original goal.
 
 **Why Robot Framework is kept at all**: Existing Renode test suites are written in `.robot`.
 Throwing away keyword compatibility breaks the migration path for projects moving from
-Renode to qenode. `qemu_keywords.robot` maps Renode keywords to QMP calls so those suites
+Renode to virtmcu. `qemu_keywords.robot` maps Renode keywords to QMP calls so those suites
 run without keyword-level rewrites. The timeout issue is documented and acceptable for
 `standalone` mode (QEMU at ~real-time) which covers most CI scenarios.
 
@@ -840,7 +840,7 @@ that:
 4. On the other end: a C++ SystemC adapter that deserializes these messages into
    `b_transport` calls
 
-This device is implementable within qenode's existing module framework (it's just another
+This device is implementable within virtmcu's existing module framework (it's just another
 `.so`), but it must be written before any Path A SystemC integration is possible.
 
 Path B (Remote Port) is preferred for Phase 5 because the MMIO serialization problem is
@@ -924,7 +924,7 @@ must be protected by a `QemuMutex`. `timer_mod()` is safe to call from any threa
 
 ### ADR-009: Hardware Acceleration (KVM/hvf) is supported only for Cortex-A in standalone mode
 
-**Decision**: qenode supports using native hardware acceleration (`-accel kvm` on Linux, `-accel hvf` on macOS) in `standalone` clock mode, but **only** when simulating Cortex-A firmware on an ARM host. All microcontroller (Cortex-M) targets must fall back to `-accel tcg`.
+**Decision**: virtmcu supports using native hardware acceleration (`-accel kvm` on Linux, `-accel hvf` on macOS) in `standalone` clock mode, but **only** when simulating Cortex-A firmware on an ARM host. All microcontroller (Cortex-M) targets must fall back to `-accel tcg`.
 
 **Context**: When simulating ARM platforms on ARM hosts (like an Apple Silicon Mac or AWS Graviton), using KVM/hvf bypasses the TCG JIT compiler completely, delivering near 100% native host speed. 
 

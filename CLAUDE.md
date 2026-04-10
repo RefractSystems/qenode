@@ -1,4 +1,4 @@
-# CLAUDE.md — qenode Project Context
+# CLAUDE.md — virtmcu Project Context
 
 This file is read automatically by Claude Code at session start.
 Update it when architectural decisions change or new constraints are discovered.
@@ -7,7 +7,7 @@ Update it when architectural decisions change or new constraints are discovered.
 
 ## What This Project Is
 
-**qenode** is an out-of-tree framework that makes QEMU behave like Renode.
+**virtmcu** is an out-of-tree framework that makes QEMU behave like Renode.
 Specifically, it provides:
 
 1. **Dynamic QOM device plugins** — C/Rust peripheral models compiled as `.so` shared
@@ -34,7 +34,7 @@ Specifically, it provides:
      `20260402215629.745866-1-ruslichenko.r@gmail.com`) — applied via `git am`
   2. `patches/apply_libqemu.py` — AST-injects icount bias Unix socket into `cpus.c`
      and `icount.c` (stepping stone for slaved-icount; superseded by hw/zenoh/ in Phase 7)
-  3. `patches/apply_zenoh_hook.py` — AST-injects a `qenode_tcg_quantum_hook` function
+  3. `patches/apply_zenoh_hook.py` — AST-injects a `virtmcu_tcg_quantum_hook` function
      pointer into `cpu-exec.c`, called at every TB boundary. Required because QEMU
      exports no extensibility API for QOM modules to hook the internal TCG loop.
 - **Build flags** (must include):
@@ -50,22 +50,22 @@ Specifically, it provides:
 ## Dynamic Module Loading — Architecture Detail
 
 Our devices are compiled as part of QEMU's Meson build (not truly out-of-tree at the
-binary level, but source-managed in the qenode repo).
+binary level, but source-managed in the virtmcu repo).
 
 `scripts/setup-qemu.sh` creates a symlink:
 ```
-third_party/qemu/hw/qenode  →  <qenode-repo>/hw
+third_party/qemu/hw/virtmcu  →  <virtmcu-repo>/hw
 ```
-and appends `subdir('qenode')` to `third_party/qemu/hw/meson.build`.
+and appends `subdir('virtmcu')` to `third_party/qemu/hw/meson.build`.
 
 Our `hw/meson.build` adds entries to QEMU's `modules` dict:
 ```meson
-hw_qenode_modules += {'dummy': dummy_ss}
-modules += {'hw-qenode': hw_qenode_modules}
+hw_virtmcu_modules += {'dummy': dummy_ss}
+modules += {'hw-virtmcu': hw_virtmcu_modules}
 ```
 
-With `--enable-modules`, this compiles to `hw-qenode-dummy.so` (Linux) or
-`hw-qenode-dummy.dylib` (macOS), installed in `QEMU_MODDIR`.
+With `--enable-modules`, this compiles to `hw-virtmcu-dummy.so` (Linux) or
+`hw-virtmcu-dummy.dylib` (macOS), installed in `QEMU_MODDIR`.
 QEMU's `module_info` table is auto-generated from compiled objects and includes our
 device, so `-device dummy-device` auto-loads the `.so` without any `LD_PRELOAD` hack.
 
@@ -77,7 +77,7 @@ patched QEMU binary. No `LD_PRELOAD` needed.
 ## Directory Structure
 
 ```
-qenode/
+virtmcu/
 ├── CLAUDE.md                  # This file — AI agent context
 ├── PLAN.md                    # Phased implementation plan with task checklist
 ├── README.md                  # Human-readable project overview
@@ -105,7 +105,7 @@ qenode/
 ├── patches/
 │   ├── arm-generic-fdt-v3.mbx  # 33-patch series (apply with git am)
 │   ├── apply_libqemu.py        # Injects icount bias socket (Phase 1-6 stepping stone)
-│   └── apply_zenoh_hook.py     # Injects qenode_tcg_quantum_hook function pointer
+│   └── apply_zenoh_hook.py     # Injects virtmcu_tcg_quantum_hook function pointer
 │                               # into cpu-exec.c; required for hw/zenoh/zenoh-clock.c
 ├── scripts/
 │   ├── setup-qemu.sh          # Clone QEMU, apply patches, symlink hw/, build
@@ -167,7 +167,7 @@ Core dependencies:
 
 **This is the strategic north star for the project.**
 
-qenode is the QEMU-layer component of **FirmwareStudio** (an upstream digital twin repo), a
+virtmcu is the QEMU-layer component of **FirmwareStudio** (an upstream digital twin repo), a
 digital twin platform for embedded firmware development. Understanding the full picture
 is essential for making correct architectural decisions.
 
@@ -207,24 +207,24 @@ that measures intervals shorter than one physics quantum.
 
 ### FirmwareStudio is a POC — Design is Flexible
 
-FirmwareStudio's current design is a proof of concept. qenode can and should drive
+FirmwareStudio's current design is a proof of concept. virtmcu can and should drive
 design changes there. Flag anything that should change when writing Phase 7 code.
 
 ### Recommended FirmwareStudio Design Changes (when Phase 7 arrives)
 
 | Current POC design | Recommended change | Reason |
 |---|---|---|
-| `apply_patch.py` code-injection approach | `patches/apply_libqemu.py` in qenode (done) | Reproducible, version-controlled, reviewable |
+| `apply_patch.py` code-injection approach | `patches/apply_libqemu.py` in virtmcu (done) | Reproducible, version-controlled, reviewable |
 | `-icount` + `qemu_icount_bias` as the only clock mode | Native Zenoh QOM plugin with TB-boundary cooperative halt (`slaved-suspend`) as default | ~95% free-run speed; no external Python process |
 | IVSHMEM PCI device for all sensor/actuator I/O | QOM peripheral models via arm-generic-fdt | Sensors defined in `.repl`, no hardcoded PCI setup |
 | Hardcoded Cortex-A15 machine | `arm-generic-fdt` + `repl2qemu` | Any board from a `.repl` file |
 | `node_agent.py` embedded in `cyber/src/` | **Deleted** — replaced by `hw/zenoh/` native plugin | Eliminates Python from the simulation loop entirely |
-| `studio_server.py` coupling MCP to QEMU | Keep MCP as the AI/IDE layer; qenode exposes QMP | Separation of concerns |
-| QEMU 10.2.1 pinned download | qenode-patched 11.0.0-rc2 image from `docker/Dockerfile` | Arm-generic-fdt patches, better APIs |
+| `studio_server.py` coupling MCP to QEMU | Keep MCP as the AI/IDE layer; virtmcu exposes QMP | Separation of concerns |
+| QEMU 10.2.1 pinned download | virtmcu-patched 11.0.0-rc2 image from `docker/Dockerfile` | Arm-generic-fdt patches, better APIs |
 
-### What FirmwareStudio Currently Uses (to be replaced/improved by qenode)
+### What FirmwareStudio Currently Uses (to be replaced/improved by virtmcu)
 
-| Current (FirmwareStudio) | Target (qenode) |
+| Current (FirmwareStudio) | Target (virtmcu) |
 |---|---|
 | Hardcoded Cortex-A15 `-M none` machine | `arm-generic-fdt` machine from .repl |
 | IVSHMEM PCI device for sensor/actuator I/O | Proper QOM peripheral models |

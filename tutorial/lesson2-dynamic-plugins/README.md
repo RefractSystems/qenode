@@ -7,11 +7,11 @@ In traditional QEMU development, adding a new peripheral (like a custom sensor o
 
 For research and firmware testing, this tightly coupled approach is tedious.
 
-## The qenode Solution: Dynamic Plugins
+## The virtmcu Solution: Dynamic Plugins
 QEMU has an obscure feature: **modules**. However, it is primarily used for UI components (like GTK or SDL) and audio backends. 
-In qenode, we exploit this feature to compile our custom peripherals as standalone shared libraries (`.so` on Linux).
+In virtmcu, we exploit this feature to compile our custom peripherals as standalone shared libraries (`.so` on Linux).
 
-We place our C code in the `hw/` directory of the `qenode` repository. A symlink bridges this folder into QEMU's build system. When we run `make build`, QEMU automatically compiles our devices into `.so` files.
+We place our C code in the `hw/` directory of the `virtmcu` repository. A symlink bridges this folder into QEMU's build system. When we run `make build`, QEMU automatically compiles our devices into `.so` files.
 
 ### 🧠 Under the Hood: The QEMU Object Model (QOM)
 To ensure QEMU can dynamically load and instantiate our device, we use the **QEMU Object Model (QOM)**.
@@ -27,13 +27,13 @@ When we run QEMU and pass `-device dummy-device`, QEMU's object system notices t
 
 ## Part 1: Building the Plugin
 
-If you haven't recently, run `make build` from the root of the qenode repository.
+If you haven't recently, run `make build` from the root of the virtmcu repository.
 
 ```bash
 make build
 ```
 
-Behind the scenes, QEMU's `meson` build system sees `hw/dummy/dummy.c` (via the symlink in `third_party/qemu/hw/qenode`), recognizes it as a module, and produces `hw-qenode-dummy.so`.
+Behind the scenes, QEMU's `meson` build system sees `hw/dummy/dummy.c` (via the symlink in `third_party/qemu/hw/virtmcu`), recognizes it as a module, and produces `hw-virtmcu-dummy.so`.
 
 ## Part 2: Loading the Plugin dynamically
 

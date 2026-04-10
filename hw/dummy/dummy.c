@@ -1,5 +1,5 @@
 /*
- * qenode dummy QOM device — minimal SysBusDevice proving dynamic .so loading.
+ * virtmcu dummy QOM device — minimal SysBusDevice proving dynamic .so loading.
  *
  * Use this as the canonical template when adding new peripheral models.
  * Anything not needed here (vmstate, reset, properties) should be added when

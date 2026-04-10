@@ -1,4 +1,4 @@
-# qenode standalone docker-compose.
+# virtmcu standalone docker-compose.
 #
 # Runs a minimal simulation environment for development and CI testing
 # without a physics engine.  World overlays (pendulum.yml, drone.yml, …)
@@ -18,7 +18,7 @@ services:
       - "7447:7447"   # Zenoh protocol
       - "8000:8000"   # Zenoh REST
     networks:
-      - qenode-net
+      - virtmcu-net
     healthcheck:
       test: ["CMD", "sh", "-c", "echo > /dev/tcp/localhost/7447"]
       interval: 2s
@@ -33,7 +33,7 @@ services:
       args:
         ARCH: arm
     networks:
-      - qenode-net
+      - virtmcu-net
     environment:
       ZENOH_ROUTER: tcp/zenoh-router:7447
       NODE_ID: "0"
@@ -58,5 +58,5 @@ services:
     tty: true
 
 networks:
-  qenode-net:
+  virtmcu-net:
     driver: bridge
