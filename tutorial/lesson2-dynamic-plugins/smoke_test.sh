@@ -41,10 +41,8 @@ rm -f qmp.sock
 
 QEMU_PID=$!
 
-# Wait briefly for socket
-sleep 1
-
 # Run the python verification script
+# (check_dummy_qmp.py retries the socket connection for up to 5 seconds internally)
 if python3 "$CHECK_SCRIPT"; then
     echo "Lesson 2 smoke test: PASSED"
     RET=0
