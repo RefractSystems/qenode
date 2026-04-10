@@ -90,8 +90,8 @@ RUN cd qemu \
     && git config user.name "virtmcu" \
     && git am --3way /build/patches/arm-generic-fdt-v3.mbx
 
-# Apply libqemu clock-socket extension
-RUN cd qemu && python3 /build/patches/apply_libqemu.py .
+# Inject virtmcu_tcg_quantum_hook into cpu-exec.c (required by hw/zenoh/)
+RUN cd qemu && python3 /build/patches/apply_zenoh_hook.py .
 
 # Copy virtmcu hw/ sources and integrate into QEMU's build
 COPY hw/ /build/virtmcu-hw/
