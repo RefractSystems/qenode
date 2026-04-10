@@ -37,6 +37,11 @@ else
     QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
 fi
 
+# Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
+if [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
+    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 # Ensure QEMU has been built
 if [ ! -f "$QEMU_BIN" ]; then
     echo "QEMU binary not found at $QEMU_BIN. Please run setup-qemu.sh first."

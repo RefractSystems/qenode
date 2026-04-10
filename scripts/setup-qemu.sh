@@ -96,6 +96,26 @@ cd "$WORKSPACE_DIR"
 python3 patches/apply_libqemu.py third_party/qemu
 python3 patches/apply_zenoh_hook.py third_party/qemu
 
+# Phase 7: Fetch Zenoh-C prebuilt library for native QOM plugins
+ZENOHC_VER="1.0.0"
+ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
+if [ ! -d "$ZENOHC_DIR/include" ]; then
+    echo "==> Fetching Zenoh-C $ZENOHC_VER for native QEMU plugins..."
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "x86_64" ]; then
+        ZENOHC_URL="https://github.com/eclipse-zenoh/zenoh-c/releases/download/${ZENOHC_VER}/zenoh-c-${ZENOHC_VER}-x86_64-unknown-linux-gnu-standalone.zip"
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        ZENOHC_URL="https://github.com/eclipse-zenoh/zenoh-c/releases/download/${ZENOHC_VER}/zenoh-c-${ZENOHC_VER}-aarch64-unknown-linux-gnu-standalone.zip"
+    else
+        echo "Unsupported architecture for prebuilt Zenoh-C: $ARCH"
+        exit 1
+    fi
+    mkdir -p "$ZENOHC_DIR"
+    curl -L "$ZENOHC_URL" -o /tmp/zenoh-c.zip
+    unzip -q /tmp/zenoh-c.zip -d "$ZENOHC_DIR"
+    rm /tmp/zenoh-c.zip
+fi
+
 # Phase 2: Allow dynamic loading of SysBus devices via `-device`
 # The arm-generic-fdt patch does not set this by default, which breaks out-of-tree plugins.
 if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" "$QEMU_DIR/hw/arm/arm_generic_fdt.c"; then
