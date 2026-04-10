@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <iostream>
 
+/* Wire protocol shared with hw/misc/mmio-socket-bridge.c */
+#include "../../hw/misc/virtmcu_proto.h"
+
 using namespace sc_core;
 using namespace sc_dt;
 using namespace std;
@@ -44,20 +47,20 @@ SC_MODULE(RegisterFile) {
     }
 };
 
-// 2. QEMU to TLM Adapter
-struct mmio_req {
-    uint8_t type;
-    uint8_t size;
-    uint16_t reserved1;
-    uint32_t reserved2;
-    uint64_t addr;
-    uint64_t data;
-} __attribute__((packed));
-
-struct mmio_resp {
-    uint64_t data;
-} __attribute__((packed));
-
+/*
+ * 2. QEMU to TLM Adapter
+ *
+ * IMPORTANT — threading limitation:
+ * QemuAdapter::run() is an SC_THREAD (SystemC coroutine), but it makes raw
+ * blocking POSIX calls (accept, read).  These bypass SystemC's scheduler,
+ * freezing ALL other SC_PROCESSes while waiting for QEMU.
+ *
+ * This is acceptable for this single-module proof-of-concept because the only
+ * other module (RegisterFile) is purely reactive — it only runs when called via
+ * b_transport, which happens inside run().  With multiple concurrent SystemC
+ * models this design MUST be replaced: move the socket server to a std::thread
+ * and signal the SC scheduler via sc_event.
+ */
 SC_MODULE(QemuAdapter) {
     tlm_utils::simple_initiator_socket<QemuAdapter> socket;
     std::string socket_path;
@@ -119,7 +122,7 @@ SC_MODULE(QemuAdapter) {
             uint64_t data_buf = req.data;
             trans.set_data_ptr((unsigned char*)&data_buf);
 
-            if (req.type == 0) {
+            if (req.type == MMIO_REQ_READ) {
                 trans.set_command(tlm::TLM_READ_COMMAND);
             } else {
                 trans.set_command(tlm::TLM_WRITE_COMMAND);
@@ -132,7 +135,7 @@ SC_MODULE(QemuAdapter) {
             wait(delay);
 
             mmio_resp resp;
-            if (req.type == 0 && trans.is_response_ok()) {
+            if (req.type == MMIO_REQ_READ && trans.is_response_ok()) {
                 resp.data = data_buf;
             } else {
                 resp.data = 0; // Or some status
