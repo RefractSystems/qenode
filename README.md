@@ -1,52 +1,101 @@
 # virtmcu
 
-**Make QEMU behave like Renode** — dynamic device loading, FDT-based ARM machine
-instantiation, platform description parsing, and Robot Framework test parity.
+**A deterministic multi-node firmware simulation framework** built on QEMU, designed for
+cyber-physical digital twin development. virtmcu makes multiple QEMU instances behave as
+a coordinated network of microcontrollers — time-slaved to a physics engine, communicating
+over a deterministic message bus, with sensor and actuator I/O abstracted through a
+well-defined hardware boundary.
 
-Part of the **FirmwareStudio** digital twin platform, where MuJoCo physics drives
-the simulation clock and QEMU runs firmware in lockstep with the physical world.
+Part of the **FirmwareStudio** digital twin platform, where MuJoCo physics drives the
+simulation clock and QEMU runs firmware in lockstep with the physical world.
 
 ---
 
-## The Problem
+## What Problem This Solves
 
-[Renode](https://renode.io/) is excellent for embedded systems testing: hardware
-descriptions live in text files, peripherals hot-plug without recompilation, and the
-Robot Framework integration is first-class. QEMU is faster and more widely adopted,
-but traditionally requires recompiling the emulator to add devices and uses hardcoded C
-structs for machine definitions.
+Embedded firmware for cyber-physical systems (drones, robots, motor controllers) does not
+run in isolation. It interacts with sensors, actuators, and other microcontrollers — all
+governed by physics that unfolds in continuous time. Testing this firmware in simulation
+requires three things that stock QEMU does not provide:
 
-This project closes that gap.
+1. **Deterministic virtual time across nodes.** When firmware on MCU-A reads a sensor and
+   sends a CAN frame to MCU-B, the delivery time must be a function of virtual time, not
+   wall-clock scheduling jitter. Otherwise test results are not reproducible.
+
+2. **A clean sensor/actuator boundary.** Peripherals must translate between the binary
+   register world of firmware and the continuous physical properties (force, acceleration,
+   angle) of a physics simulation. There is no standard QEMU mechanism for this.
+
+3. **External clock authority.** QEMU's virtual clock must not free-run. It must advance
+   only when the physics engine grants a time quantum, so that firmware never runs ahead
+   of or behind the simulated physical world.
+
+virtmcu addresses all three at the QEMU layer, using native C/Rust QOM modules and Zenoh
+as the inter-node message bus. No Python daemons in the simulation loop; no approximations
+in inter-node timing.
 
 ---
 
 ## Architecture in One Paragraph
 
-We run **QEMU 11.0.0-rc3** augmented with the **arm-generic-fdt** patch series, which
-adds a new ARM machine type that instantiates CPUs, memory, and peripherals entirely
-from a Device Tree blob at runtime. Our **`repl2qemu`** Python tool compiles Renode
-`.repl` platform files into that Device Tree. Custom peripheral models are compiled as
-**shared libraries** from C (or Rust), integrated into QEMU's Meson build via a source
-symlink so `-device mydevice` discovers them automatically. A **QMP-backed Robot
-Framework library** replaces Renode's test keywords. When running inside FirmwareStudio,
-virtmcu utilizes a **Cyber-Physical Bridge (SAL/AAL)** to align internal execution with continuous physics. QEMU advances virtual time only when MuJoCo grants it a clock quantum, or replays high-throughput **Renode Sensor Data (RESD)** for CI/CD environments — keeping firmware and physics causally consistent.
+**QEMU 11.0.0-rc3**, augmented with the **arm-generic-fdt** patch series, instantiates
+ARM hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
+as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
+no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/zenoh/`) links
+`zenoh-c` directly into QEMU: it hooks the TCG execution loop at translation-block
+boundaries to implement cooperative suspend/resume, acts as a deterministic Ethernet and
+UART backend for multi-node communication, and synchronizes virtual time with the external
+physics engine. A **Sensor/Actuator Abstraction Layer (SAL/AAL)** translates raw MMIO
+registers into physical quantities, with two modes: standalone CI/CD (replay from Renode
+Sensor Data files) and integrated (lock-step with MuJoCo via shared memory). A
+**QMP-backed Robot Framework library** provides test automation parity with Renode's
+keyword suite.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-dive,
-including the timing design, prior art (qbox, MINRES), and SystemC integration paths.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-dive.
 
 ---
 
 ## Core Capabilities
 
-- **Dynamic Machines**: Instantiate ARM (and eventually RISC-V) hardware entirely via Device Tree (`.dtb`).
-- **YAML / REPL Platform Descriptions**: Parse legacy Renode `.repl` files or modern OpenUSD-aligned `.yaml` files into runnable QEMU commands.
-- **Dynamic QOM Plugins**: Write peripherals in C or Rust and load them at runtime as `.so` plugins (`--enable-modules`) without recompiling QEMU.
-- **Deterministic Multi-Node**: Achieve cycle-exact networking across multiple QEMU instances using custom Zenoh-based Ethernet and UART (Chardev) backends.
-- **The Cyber-Physical Bridge**: A robust architecture (SAL/AAL) connecting QEMU to the physical world:
-  - **Standalone Mode**: Ingest *Renode Sensor Data (RESD)* files for lightning-fast, highly deterministic CI/CD regression testing.
-  - **Integrated Mode**: Lock-step execution with *MuJoCo* (via zero-copy shared memory) or *NVIDIA Omniverse* (via OpenUSD schemas and FSS) for physics-in-the-loop simulation.
-- **SystemC Co-Simulation**: Connect complex Verilated models, FPGAs, or shared physical media (like CAN buses) via TLM-2.0 and Remote Port sockets with asynchronous IRQ support.
-- **Unified Testing**: Pytest + `qemu.qmp` integration, alongside a Robot Framework compatibility layer for legacy test suites.
+- **Dynamic ARM Machines**: Instantiate any ARM board from a Device Tree (`.dtb`) at
+  runtime using the `arm-generic-fdt` machine type. No hardcoded C machine structs.
+
+- **Dynamic QOM Plugins**: Write peripherals in C or Rust, compile to `.so`, load with
+  `-device` — no QEMU recompilation required. Discovered automatically via QEMU's module
+  system (`--enable-modules`).
+
+- **Deterministic Multi-Node Networking**: `hw/zenoh/zenoh-netdev.c` delivers Ethernet
+  frames between QEMU instances with embedded virtual timestamps. Frames are buffered and
+  injected into the guest NIC only when virtual time reaches the stamped arrival time.
+  No UDP multicast jitter.
+
+- **Deterministic Multi-Node UART**: `hw/zenoh/zenoh-chardev.c` extends the same
+  virtual-timestamp model to serial ports, enabling multi-node UART communication and
+  human-in-the-loop interactivity with correct virtual ordering.
+
+- **Cooperative Time Slaving**: `hw/zenoh/zenoh-clock.c` blocks QEMU's TCG loop at each
+  quantum boundary, waiting for a Zenoh `GET` reply from the external TimeAuthority.
+  Two modes: `slaved-suspend` (full TCG speed, ~95% throughput — default) and
+  `slaved-icount` (exact nanosecond virtual time — for firmware measuring sub-quantum
+  intervals such as PWM or µs-precision DMA).
+
+- **Sensor/Actuator Abstraction (SAL/AAL)**: Peripheral models translate raw firmware
+  register writes/reads into continuous physical properties (floating-point force,
+  acceleration, angle) with configurable noise and transfer functions.
+  - *Standalone mode*: Ingest Renode Sensor Data (RESD) binary files for fast, fully
+    deterministic CI/CD replay without a physics engine.
+  - *Integrated mode*: Lock-step with MuJoCo (zero-copy `mjData` shared memory) or
+    NVIDIA Omniverse (Accellera Federated Simulation Standard / OpenUSD schemas).
+
+- **Co-Simulation Bridge**: Connect Verilated C++ models or FPGAs via SystemC TLM-2.0
+  and Remote Port sockets. Phase 9 extends this to shared physical media (CAN, SPI) with
+  asynchronous IRQ support.
+
+- **Platform Description Tools**: `repl2qemu` compiles legacy Renode `.repl` files or
+  OpenUSD-aligned `.yaml` board descriptions into Device Tree blobs and QEMU CLI strings.
+
+- **Unified Test Automation**: pytest + `qemu.qmp` for primary test suites; a Robot
+  Framework compatibility layer for Renode `.robot` suite migration.
 
 ---
 
@@ -58,139 +107,89 @@ virtmcu/
 ├── PLAN.md                     # Phased task checklist — check here for status
 ├── CONTRIBUTING.md             # Setup, dev workflow, code style
 │
-├── hw/                         # C/Rust peripheral models (native QOM only — no Python)
+├── hw/                         # C/Rust QOM peripheral models (no Python in sim loop)
 │   ├── dummy/dummy.c           # Minimal QOM SysBusDevice — start here (C)
 │   ├── rust-dummy/             # Minimal QOM SysBusDevice — start here (Rust FFI)
 │   ├── misc/
 │   │   └── mmio-socket-bridge.c # [Phase 5] SystemC co-simulation bridge
-│   ├── zenoh/                  # [Phase 7] Native Zenoh QOM plugin
+│   ├── zenoh/                  # Native Zenoh QOM plugin (Phase 7+)
 │   │   ├── zenoh-clock.c       # TCG cooperative halt + Zenoh clock sync
-│   │   └── zenoh-netdev.c      # Custom -netdev backend for deterministic multi-node networking
+│   │   ├── zenoh-netdev.c      # Deterministic multi-node Ethernet backend
+│   │   └── zenoh-chardev.c     # Deterministic multi-node UART backend
 │   └── meson.build             # Integrates hw/ into QEMU's module build
 │
 ├── tools/
-│   ├── node_agent/             # DEPRECATED — superseded by hw/zenoh/ in Phase 7
-│   │   └── ...                 # Kept as wire-protocol reference only
-│   ├── repl2qemu/              # Renode .repl → Device Tree + QEMU CLI (offline Python tool)
+│   ├── repl2qemu/              # .repl / .yaml → Device Tree + QEMU CLI (offline)
 │   └── testing/
-│       ├── qemu_keywords.robot # Robot Framework compatibility layer (Renode keyword parity)
-│       ├── test_qmp.py         # pytest primary test suite (recommended for new tests)
+│       ├── qemu_keywords.robot # Robot Framework compatibility layer
+│       ├── test_qmp.py         # pytest primary test suite
 │       └── qmp_bridge.py       # Async QMP helper
 │
 ├── patches/
-│   ├── arm-generic-fdt-v3.mbx  # 33-patch series fetched via b4 (apply with git am)
-│   └── apply_libqemu.py        # Phase 1-6 stepping stone: injects icount bias socket
-│                               # Superseded by hw/zenoh/zenoh-clock.c in Phase 7
+│   ├── arm-generic-fdt-v3.mbx  # 33-patch series (apply with git am)
+│   ├── apply_zenoh_hook.py     # Injects virtmcu_tcg_quantum_hook into cpu-exec.c
+│   └── apply_zenoh_netdev.py   # Injects Zenoh netdev backend registration
 │
 ├── scripts/
 │   ├── setup-qemu.sh           # Clone QEMU, apply patches, symlink hw/, build
 │   └── run.sh                  # Launch wrapper: sets QEMU_MODULE_DIR
 │
 ├── docker/
-│   ├── Dockerfile              # Multi-stage build: patched QEMU + Python tools
-│   └── docker-compose.yml      # Standalone test environment (Zenoh + cyber-node)
+│   ├── Dockerfile              # Multi-stage: toolchain / devenv / builder / runtime
+│   └── docker-compose.yml      # Standalone test environment
 │
-├── docs/
-│   └── ARCHITECTURE.md         # Deep-dive: comparisons, pillars, timing, prior art, SystemC
-│
-├── tutorial/
-│   ├── lesson1-dynamic-machines/ # Educational content for Phase 1
-│   ├── lesson2-dynamic-plugins/  # Educational content for Phase 2
-│   └── lesson3-repl2qemu/        # Educational content for Phase 3
-│
-├── Makefile                    # make setup / build / run / test-integration / venv / test
-└── requirements.txt            # qemu.qmp, robotframework, lark, eclipse-zenoh
+└── docs/
+    └── ARCHITECTURE.md         # Deep-dive: design pillars, timing, prior art, ADRs
 ```
 
 ---
 
 ## Where to Start
 
-**Understanding the project**: Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-Sections 2–3 cover QEMU vs Renode and the four implementation pillars.
-Section 7 covers the MuJoCo time master design. Section 8 covers prior art.
+**Read the architecture first**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Sections 1–3 cover the design rationale and the five implementation pillars. Section 5
+covers the timing design and BQL constraints. Section 6 covers prior art (qbox, MINRES).
 
-**Tutorials**: If you want to understand how QEMU builds the machine dynamically from a Device Tree, start with `tutorial/lesson1-dynamic-machines/README.md`.
-
-**Writing a new peripheral**: For C models, copy `hw/dummy/dummy.c`. For Rust, copy `hw/rust-dummy/`. Rename, implement MMIO ops, and add an entry in `hw/meson.build`. Run `make build` then:
+**Write a new peripheral**: Copy `hw/dummy/dummy.c`. Rename, implement MMIO ops, add an
+entry in `hw/meson.build`. Run `make build` then:
 ```bash
 ./scripts/run.sh --dtb test/phase1/minimal.dtb -device your-device-name -nographic
 ```
 
-**Running the repl2qemu tool**:
-You can use the translator directly, or simply pass your `.repl` or `.yaml` file to the run script.
+**Run the repl2qemu tool**:
 ```bash
 source .venv/bin/activate
-
-# Native: boots by auto-translating the REPL to a Device Tree
 ./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
-
-# Modern: boots via the OpenUSD-aligned YAML format
-./scripts/run.sh --yaml test/phase3/test_board.yaml --kernel test/phase1/hello.elf -nographic
-```
-See [`docs/OPENUSD_INTEGRATION.md`](docs/OPENUSD_INTEGRATION.md) for details on our YAML schema and the future of "Cyber Prims" in digital twins.
-
-**Using Standard Device Trees**:
-If you aren't using Renode, you can pass standard Device Tree Source (`.dts`) or Blobs (`.dtb`) directly.
-```bash
-# Auto-compiles the .dts to .dtb and boots
-./scripts/run.sh --dts test/phase1/minimal.dts --kernel test/phase1/hello.elf -nographic
-
-# Loads a pre-compiled blob directly
-./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
 ```
 
-**Probing the Object Model (Debugging)**:
-You can interactively dump and inspect the running QEMU Object Model (QOM) tree to verify your Device Trees and Plugins.
-First, launch QEMU with the QMP socket enabled:
-```bash
-./scripts/run.sh --dtb board.dtb ... -qmp unix:qmp.sock,server,nowait
-```
-Then, use the probe tool:
-```bash
-python3 tools/qmp_probe.py tree
-python3 tools/qmp_probe.py get /machine/peripheral-anon/device[0] realized
-```
-
-**Running with FirmwareStudio** (external clock, Phase 7+):
-
-The clock synchronization is handled by the native Zenoh QOM plugin (`hw/zenoh/`) which
-compiles into QEMU. No separate Python agent process is needed. The TimeAuthority (running
-in the MuJoCo container) connects directly to QEMU over Zenoh:
+**Run with FirmwareStudio** (external time master, Phase 7+):
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
 ./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
     -device zenoh-clock,node=0,router=tcp/localhost:7447
 
-# slaved-icount (exact ns precision — only for sub-quantum hardware timer firmware)
+# slaved-icount (exact ns — only for sub-quantum hardware timer firmware)
 ./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
     -device zenoh-clock,node=0,router=tcp/localhost:7447,mode=icount \
     -icount shift=0,align=off,sleep=off
 ```
 
-**Docker (CI or Phase 4+ with TCG plugins)**:
+**Docker** (CI or Phase 4+ with TCG plugins):
 ```bash
 docker compose -f docker/docker-compose.yml up
 ```
 
 ---
 
-## Prerequisites
+## Setup
 
-**macOS and Linux** are both supported for development. Windows is not.
+**macOS and Linux** are supported. Windows is not.
 
-On macOS, native builds work for Phases 1–3. For Phase 4+ (TCG plugins for coverage and
-tracing), use Docker — macOS has a conflict between `--enable-modules` and
-`--enable-plugins` that breaks module loading (GitLab #516). See
-`docs/ARCHITECTURE.md §6` for the full decision table.
+### Dev Container (recommended)
 
-### Recommended: Dev Container
+Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically.
 
-Open the repo in VS Code and accept **"Reopen in Container"**. Everything
-(submodule init, QEMU build, Python venv) runs automatically. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for details.
-
-### Manual setup
+### Manual
 
 ```bash
 # macOS (Homebrew)
@@ -208,6 +207,10 @@ source .venv/bin/activate
 make run          # smoke-test
 ```
 
+> **macOS note**: Native builds work for Phases 1–3. Phase 4+ requires Docker — a
+> GLib conflict (`--enable-modules` + `--enable-plugins`, GitLab #516) breaks module
+> loading on macOS. See `docs/ARCHITECTURE.md §6`.
+
 ---
 
 ## Current Status
@@ -223,36 +226,33 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 3.5 | YAML Platform & OpenUSD Alignment | **Done** |
 | 4 | Robot Framework QMP library | **Done** |
 | 5 | Co-Simulation Bridge | **Done** |
-| 6 | Multi-node wireless medium coordinator | **Done** |
-| 7 | FirmwareStudio / MuJoCo external time master | In Progress |
-| 8 | Interactive and Multi-Node Serial (UART) | To Do |
-| 9 | Advanced Co-Simulation (Shared Media) | To Do |
-| 10 | Telemetry Injection & Physics Alignment (SAL/AAL) | To Do |
+| 6 | Multi-node Zenoh network coordinator | **Done** |
+| 7 | Native Zenoh clock plugin + FirmwareStudio integration | In Progress |
+| 8 | Deterministic multi-node UART (zenoh-chardev) | To Do |
+| 9 | Advanced co-simulation (shared physical media) | To Do |
+| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | To Do |
 
 ---
 
-## Key Technical Decisions
+## Key Design Decisions
 
-- **Meson integration, not LD_PRELOAD**: `hw/` is symlinked into QEMU's source tree so
-  devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
-- **No Python in the simulation loop**: All peripherals, clock sync, and networking are
+- **No Python in the simulation loop.** All peripherals, clock sync, and networking are
   native C/Rust QOM modules. Python is offline-only (repl2qemu, pytest). See ADR-003.
-- **Three clock modes**: `standalone` (full speed; KVM/hvf available for Cortex-A on ARM
-  hosts), `slaved-suspend` (native TCG hook, ~95% speed, recommended for FirmwareStudio),
-  `slaved-icount` (exact ns, ~15% speed, sub-quantum timers only). Implemented as
-  `hw/zenoh/zenoh-clock.c`. KVM/hvf prohibited in slaved modes and for Cortex-M. See
-  ADR-001 and ADR-009.
-- **Deterministic multi-node**: `hw/zenoh/zenoh-netdev.c` with virtual-timestamped frames,
-  not UDP multicast. See ADR-002.
-- **`query-cpus-fast`**: The old `query-cpus` QMP command is deprecated.
-- **arm-generic-fdt is not upstream**: 33-patch patchew series on QEMU 11.0.0-rc3.
-- **SystemC peripherals**: Path B (Remote Port, Phase 5) is primary. Path A requires
-  writing `hw/misc/mmio-socket-bridge.c` first — QEMU does not natively serialize MMIO
-  to sockets. See ADR-005 and `docs/ARCHITECTURE.md §9`.
+- **Zenoh as the federation bus.** A single message bus handles clock quanta, Ethernet
+  frames, UART bytes, and sensor data. Language-agnostic, works across containers.
+- **Three clock modes.** `standalone` (free-run, full speed), `slaved-suspend` (~95%
+  throughput — recommended default for FirmwareStudio), `slaved-icount` (exact nanosecond
+  virtual time — for sub-quantum hardware timers). Implemented in `hw/zenoh/zenoh-clock.c`.
+- **Meson integration, not LD_PRELOAD.** `hw/` is symlinked into QEMU's source tree so
+  devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
+- **arm-generic-fdt is not upstream.** 33-patch patchew series on QEMU 11.0.0-rc3.
+- **Virtual-timestamped delivery.** Multi-node packets and UART bytes carry virtual
+  timestamps and are delivered to the guest NIC or chardev only when virtual time catches
+  up. Deterministic by construction, not by coordination.
 
 ---
 
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<phase>-<short-desc>`.
-Commit style: `scope: imperative description` (e.g., `hw/uart: add pl011 read stub`).
+Commit style: `scope: imperative description` (e.g., `hw/zenoh: add chardev backend`).
