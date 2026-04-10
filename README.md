@@ -103,12 +103,17 @@ Add an entry in `hw/meson.build`. Run `make build` then:
 ```
 
 **Running the repl2qemu tool**:
-You can use the translator directly, or simply pass your `.repl` file to the run script.
+You can use the translator directly, or simply pass your `.repl` or `.yaml` file to the run script.
 ```bash
 source .venv/bin/activate
+
 # Native: boots by auto-translating the REPL to a Device Tree
 ./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
+
+# Modern: boots via the OpenUSD-aligned YAML format
+./scripts/run.sh --yaml test/phase3/test_board.yaml --kernel test/phase1/hello.elf -nographic
 ```
+See [`docs/OPENUSD_INTEGRATION.md`](docs/OPENUSD_INTEGRATION.md) for details on our YAML schema and the future of "Cyber Prims" in digital twins.
 
 **Using Standard Device Trees**:
 If you aren't using Renode, you can pass standard Device Tree Source (`.dts`) or Blobs (`.dtb`) directly.
