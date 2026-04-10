@@ -297,7 +297,7 @@ Implement after Path B is validated.
 
 ---
 
-## Phase 6 — Multi-Node Coordination ⬜ (Future)
+## Phase 6 — Multi-Node Coordination ✅
 
 **Goal**: Deterministic multi-node network simulation replacing Renode's `WirelessMedium`,
 implemented as a native Zenoh netdev backend inside QEMU.
@@ -319,7 +319,8 @@ delivers a UDP datagram to QEMU's receive path.
 - Determinism comes from virtual-timestamp ordering, not from UDP delivery timing
 
 ### Tasks
-- [ ] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
+- [x] **6.0** Write `tools/zenoh_coordinator` in Rust using Tokio + Zenoh async API to coordinate virtual time frames.
+- [x] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
 
 ---
 

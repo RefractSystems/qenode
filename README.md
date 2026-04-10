@@ -210,7 +210,7 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 3.5 | YAML Platform & OpenUSD Alignment | **Done** |
 | 4 | Robot Framework QMP library | **Done** |
 | 5 | Co-Simulation Bridge | **Done** |
-| 6 | Multi-node wireless medium coordinator | Future |
+| 6 | Multi-node wireless medium coordinator | **Done** |
 | 7 | FirmwareStudio / MuJoCo external time master | In Progress |
 
 ---

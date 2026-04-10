@@ -25,4 +25,7 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 *   **[Lesson 5: Hardware Co-Simulation — Connecting SystemC Models to QEMU](./lesson5-cosimulation/README.md)**
     Extend QEMU's MMIO subsystem to communicate with an external hardware model — specifically a SystemC TLM-2.0 register file — over a Unix domain socket.
 
+*   **[Lesson 6: Deterministic Multi-Node Networking](./lesson6-multi-node/README.md)**
+    Explore how virtmcu handles multi-node coordination with absolute determinism, replacing the traditional `WirelessMedium` typically found in Renode, and allowing multiple independent QEMU instances to communicate reliably without losing deterministic execution.
+
 *(More lessons will be added as we continue to build out the framework!)*

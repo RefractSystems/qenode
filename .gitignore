@@ -40,5 +40,7 @@ report.html
 *~
 third_party/
 
+target/
+tools/zenoh_coordinator/target/
 hw/rust-dummy/target/
 hw/rust-dummy/Cargo.lock
