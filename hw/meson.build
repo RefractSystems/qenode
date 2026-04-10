@@ -22,5 +22,10 @@ dummy_ss = ss.source_set()
 dummy_ss.add(files('dummy/dummy.c'))
 hw_virtmcu_modules += {'dummy': dummy_ss}
 
+# ── misc ──────────────────────────────────────────────────────────────────────
+misc_ss = ss.source_set()
+misc_ss.add(files('misc/mmio-socket-bridge.c'))
+hw_virtmcu_modules += {'misc': misc_ss}
+
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}

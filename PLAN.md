@@ -280,7 +280,7 @@ Migration means replacing those Renode headers with virtmcu's Remote Port interf
 Implement after Path B is validated.
 
 ### Tasks
-- [ ] **5.1** Implement Path A prerequisite: write `hw/misc/mmio-socket-bridge.c` — a
+- [x] **5.1** Implement Path A prerequisite: write `hw/misc/mmio-socket-bridge.c` — a
       custom QOM `SysBusDevice` that registers a `MemoryRegion`, intercepts
       `MemoryRegionOps` read/write via a Unix socket request-response protocol, and
       forwards them to an external C++ SystemC adapter. QEMU does NOT natively serialize
