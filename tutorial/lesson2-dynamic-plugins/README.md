@@ -58,24 +58,60 @@ Look closely at the output. Under `/machine/peripheral-anon`, you should see a `
 
 ## Part 3: The Rust Interop Story (Hybrid C/Rust Plugins)
 
-While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust. Full native Rust support in QEMU is still evolving and can conflict with dynamic module loading. To solve this, `virtmcu` provides a hybrid C/Rust template in `hw/rust-dummy/`.
+While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust.  `virtmcu` provides a hybrid C/Rust template in `hw/rust-dummy/`.
 
-This approach splits the responsibility:
-1. **The QOM Boilerplate (C)**: `hw/rust-dummy/rust-dummy.c` handles the object-oriented integration with QEMU (TypeInfo, MemoryRegion setup) just like the standard C dummy.
-2. **The Device Logic (Rust)**: `hw/rust-dummy/src/lib.rs` contains a `#[no_std]` Rust library that exports simple `extern "C"` functions (`rust_dummy_read` and `rust_dummy_write`).
+### Why not QEMU's native Rust support?
 
-### How it builds
-During `make build`, the Meson build system uses a `custom_target` to invoke `rustc`, compiling the Rust code into a static archive (`librust_dummy.a`). Meson then links this archive directly into the `hw-virtmcu-rust-dummy.so` shared module alongside the C boilerplate.
+QEMU 10+ ships an official Meson+cargo pipeline for writing device models in Rust (`hw/rust/`).  That pipeline compiles Rust into the **monolithic `qemu-system-*` binary** — it cannot produce standalone `.so` modules.  Our template uses a different approach: `rustc` compiles `src/lib.rs` into a `staticlib`, which Meson links into `hw-virtmcu-rust-dummy.so` alongside the C boilerplate.  This works with `--enable-modules` and keeps your code outside the QEMU source tree.
 
-### Testing the Rust Plugin
-You can load the Rust-backed peripheral just like the C one. Because we added a `base-addr` property to the Rust dummy, we can map it directly from the command line:
+### How the split works
 
-```bash
-../../scripts/run.sh --dtb ../../test/phase1/minimal.dtb -device rust-dummy,base-addr=0x60000000 -nographic
+1. **The QOM Boilerplate (C)** — `hw/rust-dummy/rust-dummy.c`
+   - Registers the `TypeInfo`, initialises the `MemoryRegion`, and handles QEMU's object lifecycle.
+   - Every MMIO access calls `rust_dummy_read()` / `rust_dummy_write()`, forwarding the device's private state pointer (`priv_state`) so Rust can access per-instance data.
+
+2. **The Device Logic (Rust)** — `hw/rust-dummy/src/lib.rs`
+   - A `#[no_std]` crate exporting two `extern "C"` functions.
+   - Receives `priv_state: *mut c_void` as its first argument.  In this demo it is `NULL` (stateless), but the template doc-comments show how to allocate Rust-owned state and pass it through.
+
+### Build flow
+
+```
+rustc --crate-type=staticlib src/lib.rs  →  librust_dummy.a
+                                               ↓ linked into
+                             hw-virtmcu-rust-dummy.so
 ```
 
-Any reads from the guest firmware to `0x60000000` will now be safely routed through QEMU's C memory system directly into your Rust functions!
+Meson drives the build via a `custom_target`.  `Cargo.toml` is present for IDE tooling (`rust-analyzer`, `cargo clippy`) but **Meson is authoritative** — running `cargo build` directly does not produce a QEMU-loadable module.
+
+### Internals: the FFI contract
+
+The C side declares:
+```c
+extern uint64_t rust_dummy_read(void *priv_state, uint64_t addr, uint32_t size);
+extern void     rust_dummy_write(void *priv_state, uint64_t addr, uint64_t val, uint32_t size);
+```
+
+The Rust side exports matching symbols:
+```rust
+#[no_mangle]
+pub extern "C" fn rust_dummy_read(_priv_state: *mut c_void, addr: u64, _size: u32) -> u64 {
+    match addr { 0 => 0xdead_beef, _ => 0 }
+}
+```
+
+The `priv_state` parameter is the key to stateful devices.  See the doc-comments in `src/lib.rs` for the full extension pattern using `rust_dummy_init()` and `Box::into_raw`.
+
+### Testing the Rust Plugin
+
+```bash
+../../scripts/run.sh --dtb ../../test/phase1/minimal.dtb \
+    -device rust-dummy,base-addr=0x60000000 \
+    -nographic
+```
+
+Add `-d unimp` to see every MMIO access logged.  Guest reads from `0x60000000` return `0xdeadbeef`.
 
 ## Summary
-You have successfully loaded custom hardware peripherals into QEMU dynamically, using both pure C and a hybrid C/Rust approach.
-This decoupled architecture allows you to iterate rapidly on hardware models (e.g., sensors, accelerators) by modifying a single file and doing a fast incremental rebuild, keeping the core emulator pristine.
+
+You have successfully loaded custom hardware peripherals into QEMU dynamically, using both pure C and a hybrid C/Rust approach.  This decoupled architecture lets you iterate rapidly on hardware models (sensors, accelerators, custom registers) by editing a single file and doing a fast incremental rebuild, keeping the QEMU emulator core untouched.
