@@ -456,6 +456,46 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
+## Phase 8 — Interactive and Multi-Node Serial (UART)
+
+**Goal**: Extend deterministic I/O to serial ports and provide a "Human-in-the-Loop" interactive experience.
+
+**Tasks**:
+- [ ] **8.1** **Interactive Echo Firmware**: Write a bare-metal ARM firmware that polls the PL011 UART and echoes characters back to the user.
+- [ ] **8.2** **Tutorial Lesson 8**: Document how to connect to virtual UARTs via host sockets (`nc` / `minicom`) and explain the polling vs. interrupt trade-offs.
+- [ ] **8.3** **Deterministic Zenoh Chardev**: Implement `hw/zenoh/zenoh-chardev.c`.
+    - Implements the QEMU `Chardev` class.
+    - TX: Publishes bytes to Zenoh with `QEMU_CLOCK_VIRTUAL` timestamps.
+    - RX: Buffers bytes in a priority queue and injects them via `QEMUTimer` to guarantee multi-node UART determinism.
+- [ ] **8.4** **Multi-Node UART Test**: Integration test where Node 1 sends a string over UART to Node 2 via the `zenoh_coordinator`, asserting byte-perfect virtual-time delivery.
+
+---
+
+## Phase 9 — Advanced Co-Simulation: Shared Media (SystemC)
+
+**Goal**: Move beyond simple MMIO registers to modeling complex shared physical mediums (like CAN or SPI) in SystemC with asynchronous interrupt support.
+
+**Tasks**:
+- [ ] **9.1** **Asynchronous IRQ Protocol**: Upgrade `virtmcu_proto.h` and `hw/misc/mmio-socket-bridge.c` to support `IRQ_SET/CLEAR` messages sent from the SystemC adapter back to QEMU.
+- [ ] **9.2** **Multi-threaded SystemC Adapter**: Rewrite `tools/systemc_adapter` to use `std::thread` for socket I/O, preventing the host blocking-calls from freezing the SystemC scheduler.
+- [ ] **9.3** **Educational CAN Model**: Implement a "CAN-lite" controller in SystemC and a `SharedMedium` bus module that handles arbitration and delivery between two QEMU nodes.
+- [ ] **9.4** **Tutorial Lesson 9**: Co-simulating shared buses. Explain how QEMU handles the CPU while SystemC handles the complex timing of the CAN physical layer.
+
+---
+
+## Phase 10 — Telemetry Injection & Physics Alignment (SAL/AAL)
+
+**Goal**: Align with the Research Team's "Cyber-Physical Bridge" architecture. Implement standardized sensor/actuator abstraction layers and support industry-standard telemetry formats.
+
+**Tasks**:
+- [ ] **10.1** **SAL/AAL Abstraction Interfaces**: Define C++ base classes for Sensor and Actuator Abstraction Layers (SAL/AAL) to provide a stable target for MuJoCo and RESD backends.
+- [ ] **10.2** **RESD Ingestion Engine**: Implement a native parser for **Renode Sensor Data (RESD)** format to support high-throughput, deterministic telemetry replay in standalone mode.
+- [ ] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
+- [ ] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
+- [ ] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+
+---
+
 ## Risks and Open Questions
 
 | # | Risk | Mitigation |

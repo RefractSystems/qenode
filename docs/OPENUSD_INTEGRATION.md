@@ -76,7 +76,14 @@ When virtmcu transitions to native USD support, the mapping will be direct:
 
 ---
 
-## 4. Technical Benefits for the USD Community
+## 4. Federated Simulation and The Cyber-Physical Bridge
+
+Integrating a digital twin into a broader simulation ecosystem (like NVIDIA Omniverse) requires rigorous standardization of sensor and actuator data. virtmcu aligns with the **Accellera Federated Simulation Standard (FSS)** and the concept of the **Cyber-Physical Bridge**.
+
+1. **SAL/AAL (Sensor/Actuator Abstraction Layer)**: Peripherals in virtmcu do not ingest raw USD attributes directly. The Abstraction Layer translates continuous physics data (e.g., a floating-point joint velocity from Omniverse) into discrete binary register values, applying noise profiles and ADC quantization.
+2. **Federated Orchestration**: virtmcu acts as a compliant FSS node. It pauses execution, waits for the overarching simulation orchestrator to calculate the next frame of physics, ingests the updated USD stage properties, and resumes execution.
+
+## 5. Technical Benefits for the USD Community
 
 1.  **Non-Destructive Composition**: Using USD "Layers" and "Overrides", a developer can take a base "STM32F4" Cyber Prim and non-destructively add a custom "FPGA Accelerator" peripheral for a specific project.
 2.  **Semantic Search**: Tools like NVIDIA Omniverse can query the entire simulation stage to find all "UART" devices, regardless of whether they are part of a car, a robot, or a factory sensor.
@@ -84,16 +91,17 @@ When virtmcu transitions to native USD support, the mapping will be direct:
 
 ---
 
-## 5. Current Implementation Status
+## 6. Current Implementation Status
 
 - [x] **Parser**: `tools/yaml2qemu.py` converts our USD-aligned YAML into QEMU Device Trees.
 - [x] **Migration**: `tools/repl2yaml.py` converts legacy Renode `.repl` files into this modern standard.
 - [x] **Runner**: `scripts/run.sh` supports `.yaml` natively.
-- [ ] **Native USD Plugin**: (Phase 8+) Native `pxr::Usd` ingestion inside QEMU.
+- [ ] **SAL/AAL Framework**: (Phase 10) Base classes for translating physical properties into binary data.
+- [ ] **Native USD / FSS Plugin**: (Phase 10+) Native `pxr::Usd` and Accellera FSS ingestion.
 
 ---
 
-## 6. How to Use
+## 7. How to Use
 
 To boot a machine defined in this future-proof format:
 

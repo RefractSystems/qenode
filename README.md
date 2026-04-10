@@ -29,11 +29,24 @@ from a Device Tree blob at runtime. Our **`repl2qemu`** Python tool compiles Ren
 **shared libraries** from C (or Rust), integrated into QEMU's Meson build via a source
 symlink so `-device mydevice` discovers them automatically. A **QMP-backed Robot
 Framework library** replaces Renode's test keywords. When running inside FirmwareStudio,
-QEMU advances virtual time only when MuJoCo grants it a clock quantum — keeping firmware
-and physics causally consistent.
+virtmcu utilizes a **Cyber-Physical Bridge (SAL/AAL)** to align internal execution with continuous physics. QEMU advances virtual time only when MuJoCo grants it a clock quantum, or replays high-throughput **Renode Sensor Data (RESD)** for CI/CD environments — keeping firmware and physics causally consistent.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-dive,
 including the timing design, prior art (qbox, MINRES), and SystemC integration paths.
+
+---
+
+## Core Capabilities
+
+- **Dynamic Machines**: Instantiate ARM (and eventually RISC-V) hardware entirely via Device Tree (`.dtb`).
+- **YAML / REPL Platform Descriptions**: Parse legacy Renode `.repl` files or modern OpenUSD-aligned `.yaml` files into runnable QEMU commands.
+- **Dynamic QOM Plugins**: Write peripherals in C or Rust and load them at runtime as `.so` plugins (`--enable-modules`) without recompiling QEMU.
+- **Deterministic Multi-Node**: Achieve cycle-exact networking across multiple QEMU instances using custom Zenoh-based Ethernet and UART (Chardev) backends.
+- **The Cyber-Physical Bridge**: A robust architecture (SAL/AAL) connecting QEMU to the physical world:
+  - **Standalone Mode**: Ingest *Renode Sensor Data (RESD)* files for lightning-fast, highly deterministic CI/CD regression testing.
+  - **Integrated Mode**: Lock-step execution with *MuJoCo* (via zero-copy shared memory) or *NVIDIA Omniverse* (via OpenUSD schemas and FSS) for physics-in-the-loop simulation.
+- **SystemC Co-Simulation**: Connect complex Verilated models, FPGAs, or shared physical media (like CAN buses) via TLM-2.0 and Remote Port sockets with asynchronous IRQ support.
+- **Unified Testing**: Pytest + `qemu.qmp` integration, alongside a Robot Framework compatibility layer for legacy test suites.
 
 ---
 
@@ -212,6 +225,9 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 5 | Co-Simulation Bridge | **Done** |
 | 6 | Multi-node wireless medium coordinator | **Done** |
 | 7 | FirmwareStudio / MuJoCo external time master | In Progress |
+| 8 | Interactive and Multi-Node Serial (UART) | To Do |
+| 9 | Advanced Co-Simulation (Shared Media) | To Do |
+| 10 | Telemetry Injection & Physics Alignment (SAL/AAL) | To Do |
 
 ---
 

@@ -135,8 +135,11 @@ virtmcu/
   runtime. No Python daemons, no vhost-user Python backends, no node_agent.py bridging
   sockets at quantum boundaries. All peripherals, time-sync, and networking must be native
   C/Rust QOM modules. Python is only permitted for offline tooling (repl2qemu, pytest).
-- **co-simulation (Verilator/EtherBone/Remote Port)**: Deferred to Phase 5. Do not implement
-  or reference in Phases 1-4 code.
+- **co-simulation (Verilator/EtherBone/Remote Port)**: Deferred to Phase 5. Phase 9 expands this to cover Shared Physical Media (e.g. CAN) via async IRQs and multi-threaded adapters.
+- **Cyber-Physical Bridge (SAL/AAL)**: Telemetry and physics data must flow through Sensor/Actuator Abstraction Layers.
+- **Standalone Telemetry (RESD)**: Use Renode Sensor Data format for deterministic data ingestion in standalone CI/CD modes.
+- **Integrated Mode Physics**: Use zero-copy shared memory (`mjData`) for MuJoCo or the Accellera Federated Simulation Standard (FSS) for OpenUSD/NVIDIA Omniverse.
+- **Deterministic UART**: Serial communication across nodes must use the native `zenoh-chardev.c` plugin with virtual timestamps (Phase 8).
 
 ---
 

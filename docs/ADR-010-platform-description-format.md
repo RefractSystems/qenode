@@ -46,8 +46,10 @@ peripherals:
 
 ### Rationale
 1.  **OpenUSD Readiness**: By using a hierarchical `name`/`type`/`properties` structure, we can eventually replace the YAML parser with a USD parser (`pxr.Usd`) without changing our internal Emitter logic.
-2.  **Tooling Ecosystem**: YAML has first-class support in every major language. It allows for easy validation using JSON Schema or Pydantic.
-3.  **Migration Path**: We provide a `repl2yaml` tool to ensure legacy users can instantly modernize their hardware descriptions without data loss.
+2.  **Federated Simulation Standard (FSS)**: The declarative structure of YAML enables seamless manifest generation for FSS orchestrators, detailing the exact hardware capabilities, abstraction levels, and timing requirements of the virtual MCU.
+3.  **SAL/AAL Integration**: By defining peripherals strongly in YAML, we can programmatically map virtual peripheral endpoints to Sensor/Actuator Abstraction Layer transfer functions in future phases (Phase 10).
+4.  **Tooling Ecosystem**: YAML has first-class support in every major language. It allows for easy validation using JSON Schema or Pydantic.
+5.  **Migration Path**: We provide a `repl2yaml` tool to ensure legacy users can instantly modernize their hardware descriptions without data loss.
 
 ## Action Plan
 1.  Create `tools/repl2yaml.py`: Converts Renode `.repl` files to this new schema.

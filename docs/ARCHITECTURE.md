@@ -132,13 +132,19 @@ dynamic machine creation loop.
 
 This is conceptually the reverse of Antmicro's `dts2repl` tool.
 
-### Pillar 3 — Co-Simulation Bridge (Phase 5, In Progress)
+### Pillar 3 — Co-Simulation Bridge (Phase 5 & 9)
 
 For projects with Verilated C++ hardware models:
 - Replace Renode's `IntegrationLibrary` headers with AMD/Xilinx `libsystemctlm-soc`
 - Wrap the Verilated model as a SystemC TLM-2.0 module
 - Connect to QEMU via Remote Port Unix sockets
 - Remote Port handles time domain synchronization
+
+For Shared Physical Media (e.g., CAN Bus, Phase 9):
+- A custom SystemC adapter translates QEMU MMIO to SystemC TLM-2.0 calls.
+- Upgraded `virtmcu_proto.h` supports asynchronous `IRQ_SET`/`IRQ_CLEAR` messages.
+- A multi-threaded C++ adapter prevents the SystemC scheduler from blocking on socket I/O.
+- Simulates the physical timing and arbitration of shared buses externally to QEMU.
 
 For EtherBone (FPGA over UDP):
 - A custom QOM device (`hw/etherbone/`) intercepts MMIO writes, constructs EtherBone
@@ -159,7 +165,7 @@ For EtherBone (FPGA over UDP):
 
 UART output capture: QEMU redirects serial to a Unix socket
 (`-chardev socket,id=serial0,path=/tmp/qemu_serial,server=on,wait=off`).
-The keyword connects to that socket and polls for pattern matches.
+The keyword connects to that socket and polls for pattern matches. Phase 8 expands this to support deterministic, multi-node UART over Zenoh.
 
 **Testing framework**: pytest + `qemu.qmp` is the primary recommendation. It gives
 programmatic timeout control (can poll `query-cpus-fast` virtual time rather than
@@ -169,17 +175,21 @@ suites, but note that keyword timeouts operate in wall-clock time — this is ac
 in standalone mode where QEMU runs at ~real-time, but becomes incorrect in `slaved-icount`
 mode. Virtual-time-aware timeouts are deferred to Phase 7.
 
-Multi-node (Phase 6): the native Zenoh QOM plugin (`hw/zenoh/zenoh-netdev.c`) acts as
-a custom `-netdev` backend, publishing/subscribing Ethernet frames over Zenoh topics with
-embedded virtual timestamps. Incoming frames are buffered and delivered to the guest NIC
-only when virtual time reaches the stamped arrival time — deterministic by construction,
-no UDP multicast or Python coordinator needed.
+Multi-node (Phase 6 & 8): The native Zenoh QOM plugins (`hw/zenoh/zenoh-netdev.c` and `zenoh-chardev.c`) act as
+custom backend providers, publishing/subscribing Ethernet frames and UART bytes over Zenoh topics with
+embedded virtual timestamps. Incoming data is buffered and delivered to the guest
+only when virtual time reaches the stamped arrival time — deterministic by construction.
 
-### Pillar 5 — External Time Master (FirmwareStudio Integration)
+### Pillar 5 — External Time Master & The Cyber-Physical Bridge (Phase 7 & 10)
 
-virtmcu is the QEMU layer of **FirmwareStudio**, a digital twin platform where MuJoCo
-physics drives the simulation clock. This pillar formalizes the time synchronization
-protocol between the physics engine and QEMU.
+virtmcu is the QEMU layer of **FirmwareStudio**, a digital twin platform where physics engines drive the simulation clock and environment. 
+
+To resolve the impedance mismatch between discrete CPU clock cycles and continuous physics time, virtmcu utilizes a **Cyber-Physical Bridge** architecture:
+- **VPL (Virtual Peripheral Layer):** Emulates registers and buses (SystemC TLM-2.0 or QOM).
+- **SAL/AAL (Sensor/Actuator Abstraction Layers):** Translates raw binary registers into continuous physical properties (e.g., floating-point force or acceleration), applying noise and transfer functions.
+- **Interop Bridge:** Pluggable backends providing environmental data.
+    - **Standalone Mode (RESD):** Ingests Renode Sensor Data (RESD) binary files for fast, deterministic CI/CD replay without a physics engine.
+    - **Integrated Mode (MuJoCo/OpenUSD):** Uses shared memory (`mjData`) or the Accellera Federated Simulation Standard (FSS) to achieve lock-step physics synchronization.
 
 See Section 7 for the full design and timing analysis.
 
@@ -215,6 +225,15 @@ Replace UDP multicast with Zenoh-based virtual-timestamped Ethernet frame delive
 
 ### Phase 7: FirmwareStudio External Time Master
 Implement native Zenoh QOM plugins (`hw/zenoh/`) to cooperatively halt TCG execution at physics quantum boundaries, providing causal consistency with MuJoCo.
+
+### Phase 8: Interactive and Multi-Node Serial (UART)
+Extend deterministic I/O to serial ports (UART) via a new `zenoh-chardev` plugin, enabling multi-node determinism and human-in-the-loop interactivity.
+
+### Phase 9: Advanced Co-Simulation (Shared Media)
+Move beyond simple MMIO registers to modeling complex shared physical mediums (like CAN or SPI) in SystemC, requiring multi-threaded adapters and asynchronous IRQ support.
+
+### Phase 10: Telemetry Injection & Physics Alignment (SAL/AAL)
+Align with the "Cyber-Physical Bridge" architecture by implementing Sensor/Actuator Abstraction Layers. Supports offline CI/CD via Renode Sensor Data (RESD) parsers and online integrated co-simulation via zero-copy MuJoCo bridges and FSS.
 
 ---
 
