@@ -1,10 +1,48 @@
 #!/usr/bin/env bash
-set -e
+# test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock suspend & icount modes.
+#
+# Verifies:
+#   1. QEMU starts and registers the sim/clock/advance/0 Zenoh queryable.
+#   2. Two successive clock-advance queries return monotonically increasing vtimes.
+#   3. Each returned vtime is >= the cumulative delta supplied (basic sanity).
+#   4. Both suspend mode and icount mode pass the above checks.
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TMPDIR_LOCAL="$(mktemp -d /tmp/phase7_XXXXXX)"
 
-# Generate a dummy DTB to satisfy arm-generic-fdt requirement
-cat <<'DTS_EOF' > /tmp/phase7_dummy.dts
+cleanup() {
+    kill "$QEMU_PID" 2>/dev/null || true
+    rm -rf "$TMPDIR_LOCAL"
+}
+trap cleanup EXIT
+
+# ── Firmware ────────────────────────────────────────────────────────────────
+
+# Minimal linker script — no cross-phase dependency.
+cat > "$TMPDIR_LOCAL/linker.ld" <<'LD_EOF'
+SECTIONS {
+    . = 0x40000000;
+    .text : { *(.text) }
+}
+LD_EOF
+
+cat > "$TMPDIR_LOCAL/firmware.S" <<'ASM_EOF'
+.global _start
+_start:
+loop:
+    b loop
+ASM_EOF
+
+arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
+    -T "$TMPDIR_LOCAL/linker.ld" \
+    "$TMPDIR_LOCAL/firmware.S" \
+    -o "$TMPDIR_LOCAL/firmware.elf"
+
+# ── Device tree ─────────────────────────────────────────────────────────────
+
+cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 /dts-v1/;
 / {
     model = "virtmcu-test";
@@ -34,81 +72,130 @@ cat <<'DTS_EOF' > /tmp/phase7_dummy.dts
     };
 };
 DTS_EOF
-dtc -I dts -O dtb -o /tmp/phase7_dummy.dtb /tmp/phase7_dummy.dts
 
-cat <<'ASM_EOF' > /tmp/phase7_firmware.S
-.global _start
-_start:
-loop:
-    b loop
-ASM_EOF
-arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -g -T "$WORKSPACE_DIR/test/phase1/linker.ld" /tmp/phase7_firmware.S -o /tmp/phase7_firmware.elf
+dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
-cat << 'PY_EOF' > /tmp/test_phase7.py
+# ── Python test script ───────────────────────────────────────────────────────
+
+cat > "$TMPDIR_LOCAL/test_clock.py" <<'PY_EOF'
+"""
+Send two successive clock-advance queries and verify:
+  - Both queries succeed (no error reply).
+  - vtime after Q1 >= delta1.
+  - vtime after Q2 >= delta1 + delta2 (monotone).
+"""
 import zenoh
-import time
 import struct
 import sys
 
+DELTA1_NS = 1_000_000   # 1 ms
+DELTA2_NS = 2_000_000   # 2 ms
+TOPIC     = "sim/clock/advance/0"
+TIMEOUT_S = 5.0         # generous timeout for CI
+
+def pack_req(delta_ns):
+    return struct.pack("<QQ", delta_ns, 0)
+
+def unpack_rep(data):
+    vtime_ns, n_frames = struct.unpack("<QI", data)
+    return vtime_ns
+
+def send_query(session, delta_ns, label):
+    replies = list(session.get(TOPIC, payload=pack_req(delta_ns), timeout=TIMEOUT_S))
+    if not replies:
+        print(f"{label}: TIMEOUT — no reply received", file=sys.stderr)
+        sys.exit(1)
+    reply = replies[0]
+    if not hasattr(reply, "ok"):
+        print(f"{label}: ERROR reply: {reply}", file=sys.stderr)
+        sys.exit(1)
+    return unpack_rep(reply.ok.payload.to_bytes())
+
 def main():
     session = zenoh.open(zenoh.Config())
-    print("Session opened")
-    
-    delta_ns = 1000000 # 1ms
-    mujoco_time = 0
-    payload = struct.pack("<QQ", delta_ns, mujoco_time)
-    
-    print("Sending query 1...")
-    replies = session.get("sim/clock/advance/0", payload=payload, timeout=2.0)
-    for reply in replies:
-        if hasattr(reply, "ok"):
-            data = reply.ok.payload.to_bytes()
-            vtime, _ = struct.unpack("<QI", data)
-            print(f"Q1 OK: vtime = {vtime}")
-        else:
-            print("Q1 ERR")
-            sys.exit(1)
-            
-    print("Sending query 2...")
-    replies = session.get("sim/clock/advance/0", payload=payload, timeout=2.0)
-    for reply in replies:
-        if hasattr(reply, "ok"):
-            data = reply.ok.payload.to_bytes()
-            vtime, _ = struct.unpack("<QI", data)
-            print(f"Q2 OK: vtime = {vtime}")
-        else:
-            print("Q2 ERR")
-            sys.exit(1)
+
+    vtime1 = send_query(session, DELTA1_NS, "Q1")
+    print(f"Q1 vtime = {vtime1} ns  (expected >= {DELTA1_NS})")
+    if vtime1 < DELTA1_NS:
+        print(f"FAIL: Q1 vtime {vtime1} < expected {DELTA1_NS}", file=sys.stderr)
+        sys.exit(1)
+
+    vtime2 = send_query(session, DELTA2_NS, "Q2")
+    print(f"Q2 vtime = {vtime2} ns  (expected >= {DELTA1_NS + DELTA2_NS})")
+    if vtime2 <= vtime1:
+        print(f"FAIL: Q2 vtime {vtime2} not > Q1 vtime {vtime1}", file=sys.stderr)
+        sys.exit(1)
+    if vtime2 < DELTA1_NS + DELTA2_NS:
+        print(f"FAIL: Q2 vtime {vtime2} < cumulative {DELTA1_NS + DELTA2_NS}", file=sys.stderr)
+        sys.exit(1)
 
     session.close()
+    print("PASS")
 
 if __name__ == "__main__":
     main()
 PY_EOF
 
-echo "Starting QEMU with Zenoh Clock (suspend mode)..."
-"$WORKSPACE_DIR/scripts/run.sh" --dtb /tmp/phase7_dummy.dtb \
-    -kernel /tmp/phase7_firmware.elf \
+# ── Helper: wait until the Zenoh queryable is reachable ──────────────────────
+
+wait_for_queryable() {
+    local topic="$1"
+    local deadline=$(( $(date +%s) + 15 ))
+    while (( $(date +%s) < deadline )); do
+        if python3 - <<EOF 2>/dev/null
+import zenoh, sys, struct
+s = zenoh.open(zenoh.Config())
+p = struct.pack("<QQ", 0, 0)
+r = list(s.get("$topic", payload=p, timeout=1.0))
+s.close()
+sys.exit(0 if r else 1)
+EOF
+        then
+            return 0
+        fi
+        sleep 0.25
+    done
+    echo "ERROR: queryable '$topic' not available after 15 s" >&2
+    cat "$TMPDIR_LOCAL/qemu_suspend.log" 2>/dev/null || true
+    cat "$TMPDIR_LOCAL/qemu_icount.log" 2>/dev/null || true
+    return 1
+}
+
+# ── Run: suspend mode ────────────────────────────────────────────────────────
+
+echo "=== suspend mode ==="
+"$WORKSPACE_DIR/scripts/run.sh" \
+    --dtb "$TMPDIR_LOCAL/dummy.dtb" \
+    -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -device zenoh-clock,mode=suspend,node=0 \
     -nographic \
-    -monitor none > /tmp/qemu_phase7_suspend.log 2>&1 &
+    -monitor none \
+    > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
 QEMU_PID=$!
 
-sleep 2
-python3 /tmp/test_phase7.py
-kill $QEMU_PID || true
+wait_for_queryable "sim/clock/advance/0"
+python3 "$TMPDIR_LOCAL/test_clock.py"
 
-echo "Starting QEMU with Zenoh Clock (icount mode)..."
-"$WORKSPACE_DIR/scripts/run.sh" --dtb /tmp/phase7_dummy.dtb \
-    -kernel /tmp/phase7_firmware.elf \
+kill -9 "$QEMU_PID" 2>/dev/null || true
+wait "$QEMU_PID" 2>/dev/null || true
+
+# ── Run: icount mode ─────────────────────────────────────────────────────────
+
+echo "=== icount mode ==="
+"$WORKSPACE_DIR/scripts/run.sh" \
+    --dtb "$TMPDIR_LOCAL/dummy.dtb" \
+    -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
     -device zenoh-clock,mode=icount,node=0 \
     -nographic \
-    -monitor none > /tmp/qemu_phase7_icount.log 2>&1 &
+    -monitor none \
+    > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
 QEMU_PID=$!
 
-sleep 2
-python3 /tmp/test_phase7.py
-kill $QEMU_PID || true
+wait_for_queryable "sim/clock/advance/0"
+python3 "$TMPDIR_LOCAL/test_clock.py"
 
-rm -f /tmp/phase7_* /tmp/test_phase7.py
+kill -9 "$QEMU_PID" 2>/dev/null || true
+wait "$QEMU_PID" 2>/dev/null || true
+
+echo "=== Phase 7 smoke test PASSED ==="
