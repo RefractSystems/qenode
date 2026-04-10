@@ -3,7 +3,7 @@
 **Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine
 instantiation, .repl parsing, and Robot Framework test parity.
 
-**Base**: QEMU 11.0.0-rc2 + 33-patch arm-generic-fdt series (patchew 20260402215629)
+**Base**: QEMU 11.0.0-rc3 + 33-patch arm-generic-fdt series (patchew 20260402215629)
 **Target arch**: ARM (Cortex-A / Cortex-M) first; RISC-V deferred to Phase 2+
 **Dev platform**: Linux required (Docker/WSL2 on macOS/Windows)
 
@@ -63,7 +63,7 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
 
 ### Tasks
 - [x] **1.1** Write `scripts/setup-qemu.sh`:
-  - Confirm QEMU is loaded in `third_party/qemu` and at v10.2.92 / 11.0.0-rc2
+  - Confirm QEMU is loaded in `third_party/qemu` and at v11.0.0-rc3
   - Apply the 33-patch arm-generic-fdt series from local mailbox `patches/arm-generic-fdt-v3.mbx` via `git am --3way`
   - Apply the libqemu external time master patch via `python3 patches/apply_libqemu.py`
   - Apply the TCG quantum hook patch via `python3 patches/apply_zenoh_hook.py` (exposes a function pointer in `cpu-exec.c` since QOM devices cannot hook the TCG loop natively)
@@ -459,14 +459,14 @@ delivers a UDP datagram to QEMU's receive path.
 
 | # | Risk | Mitigation |
 |---|------|-----------|
-| R1 | arm-generic-fdt patchew series may not apply cleanly to v10.2.92 HEAD | Pin to the exact commit the patchew was submitted against; cherry-pick conflicts manually |
+| R1 | arm-generic-fdt patchew series may not apply cleanly to v11.0.0-rc3 HEAD | Pin to the exact commit the patchew was submitted against; cherry-pick conflicts manually |
 | R2 | Native module approach fails on some macOS builds | Omit `--enable-plugins` on Darwin natively to bypass GLib symbol conflict |
 | R3 | macOS `.so` loading is broken with `--enable-plugins` | Enforce Linux-only dev environment in CI |
 | R4 | Native Zenoh plugin (`hw/zenoh/`) adds `zenoh-c` as a QEMU Meson dependency | Pin zenoh-c version; vendor as Meson `subproject()` to avoid system-library conflicts |
 | R5 | Renode .repl parser has undocumented edge cases | Use Renode source (`third_party/renode`) as ground truth; diff parser output against Renode's own AST |
 | R6 | `arm-generic-fdt` v3 patch series may have changed between patchew submission and merger | Track patchew thread; re-fetch if a v4 series is posted |
 | R7 | icount mode reduces firmware execution speed ~5–10× | Acceptable for control loops ≤10 kHz; profile with `perf` if needed |
-| R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc2 |
+| R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc3 |
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
 

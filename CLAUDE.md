@@ -14,7 +14,7 @@ Specifically, it provides:
    libraries, loadable into QEMU at runtime without recompiling the emulator.
 2. **arm-generic-fdt machine** — ARM machines defined entirely by a Device Tree at runtime,
    eliminating hardcoded C machine structs. This requires the 33-patch patchew series from
-   Ruslan Ruslichenko (submitted 2026-04-02) applied on top of QEMU 11.0.0-rc2.
+   Ruslan Ruslichenko (submitted 2026-04-02) applied on top of QEMU 11.0.0-rc3.
 3. **repl2qemu** — Python tool that parses Renode `.repl` platform description files and
    emits a `.dtb` (Device Tree Blob) + QEMU CLI command string.
 4. **Robot Framework QMP library** — `qemu-keywords.robot` that maps Renode test keywords
@@ -27,7 +27,7 @@ Specifically, it provides:
 
 ## QEMU Version and Patch Strategy
 
-- **Base**: QEMU 11.0.0-rc2 (tag `v10.2.92` in `third_party/qemu`, git HEAD from upstream
+- **Base**: QEMU 11.0.0-rc3 (tag `v11.0.0-rc3` in `third_party/qemu`, git HEAD from upstream
   `https://gitlab.com/qemu-project/qemu.git`)
 - **Required patches** (applied in order by `scripts/setup-qemu.sh`):
   1. The 33-patch `arm-generic-fdt` series (patchew ID
@@ -157,7 +157,7 @@ Core dependencies:
 
 ## Local Resources
 
-- QEMU source: `third_party/qemu` (v10.2.92 / 11.0.0-rc2 pre-release, main branch)
+- QEMU source: `third_party/qemu` (v11.0.0-rc3, tag `v11.0.0-rc3`)
 - Renode source: `third_party/renode` (reference for .repl format and existing peripherals)
 - QEMU headers needed for hw/: `third_party/qemu/include/`
 
@@ -220,7 +220,7 @@ design changes there. Flag anything that should change when writing Phase 7 code
 | Hardcoded Cortex-A15 machine | `arm-generic-fdt` + `repl2qemu` | Any board from a `.repl` file |
 | `node_agent.py` embedded in `cyber/src/` | **Deleted** — replaced by `hw/zenoh/` native plugin | Eliminates Python from the simulation loop entirely |
 | `studio_server.py` coupling MCP to QEMU | Keep MCP as the AI/IDE layer; virtmcu exposes QMP | Separation of concerns |
-| QEMU 10.2.1 pinned download | virtmcu-patched 11.0.0-rc2 image from `docker/Dockerfile` | Arm-generic-fdt patches, better APIs |
+| QEMU 10.2.1 pinned download | virtmcu-patched 11.0.0-rc3 image from `docker/Dockerfile` | Arm-generic-fdt patches, better APIs |
 
 ### What FirmwareStudio Currently Uses (to be replaced/improved by virtmcu)
 

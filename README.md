@@ -22,7 +22,7 @@ This project closes that gap.
 
 ## Architecture in One Paragraph
 
-We run **QEMU 11.0.0-rc2** augmented with the **arm-generic-fdt** patch series, which
+We run **QEMU 11.0.0-rc3** augmented with the **arm-generic-fdt** patch series, which
 adds a new ARM machine type that instantiates CPUs, memory, and peripherals entirely
 from a Device Tree blob at runtime. Our **`repl2qemu`** Python tool compiles Renode
 `.repl` platform files into that Device Tree. Custom peripheral models are compiled as
@@ -227,7 +227,7 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 - **Deterministic multi-node**: `hw/zenoh/zenoh-netdev.c` with virtual-timestamped frames,
   not UDP multicast. See ADR-002.
 - **`query-cpus-fast`**: The old `query-cpus` QMP command is deprecated.
-- **arm-generic-fdt is not upstream**: 33-patch patchew series on QEMU 11.0.0-rc2.
+- **arm-generic-fdt is not upstream**: 33-patch patchew series on QEMU 11.0.0-rc3.
 - **SystemC peripherals**: Path B (Remote Port, Phase 5) is primary. Path A requires
   writing `hw/misc/mmio-socket-bridge.c` first — QEMU does not natively serialize MMIO
   to sockets. See ADR-005 and `docs/ARCHITECTURE.md §9`.
