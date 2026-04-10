@@ -79,9 +79,17 @@ the right QEMU binary.
 
 ### Adding a New Peripheral
 
+**For C Models:**
 1. Copy `hw/dummy/dummy.c` to `hw/<name>/<name>.c`.
 2. Rename all `DUMMY`/`dummy` occurrences to your device name.
 3. Add an entry to `hw/meson.build` following the existing pattern.
+
+**For Rust Models (Hybrid FFI):**
+1. Copy the `hw/rust-dummy/` template.
+2. Edit `src/lib.rs` for your `#[no_std]` Rust implementation.
+3. Update `hw/meson.build` to compile and link your `.a` staticlib.
+
+**For all models:**
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash

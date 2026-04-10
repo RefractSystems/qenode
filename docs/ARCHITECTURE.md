@@ -132,7 +132,7 @@ dynamic machine creation loop.
 
 This is conceptually the reverse of Antmicro's `dts2repl` tool.
 
-### Pillar 3 — Co-Simulation Bridge (Phase 5, deferred)
+### Pillar 3 — Co-Simulation Bridge (Phase 5, In Progress)
 
 For projects with Verilated C++ hardware models:
 - Replace Renode's `IntegrationLibrary` headers with AMD/Xilinx `libsystemctlm-soc`
@@ -196,23 +196,25 @@ execution reaches `Reset_Handler`.
 ### Phase 2: Dynamic Plugin Infrastructure
 Build with `--enable-modules`. Compile `hw/dummy.c` → `modules/hw-dummy.so`. Confirm
 LD_PRELOAD injection via `scripts/run.sh`. Validate via `info qom-tree` in QEMU monitor.
+Also covers Rust FFI dynamic plugins (`hw/rust-dummy`).
 
-### Phase 3: Peripheral Translation (C# → QOM)
-All peripherals — whether performance-critical or low-speed — are implemented as native
-C/Rust QOM modules compiled via the Meson module system. Python daemons and chardev socket
-proxies are not used. See §10 (ADR-003) for the rationale.
+### Phase 3: repl2qemu Parser
+Parse Renode `.repl` files (indent-mode syntax, `using` includes) into a DTS file, compile to `.dtb`, and launch `arm-generic-fdt`.
 
-### Phase 4: repl2qemu Automation
-Build the parser. Run against public Renode boards (STM32F4, Zynq). Produce a `.dtb` and
-verify `arm-generic-fdt` boots the same firmware that ran on Renode.
+### Phase 3.5: YAML Platform & OpenUSD Alignment
+Adopt a modernized YAML format describing the board, enabling cyber-physical integration with OpenUSD pipelines.
 
-### Phase 5: Co-Simulation (deferred)
-Migrate Verilated models to SystemC TLM-2.0. Connect via Remote Port. Restore EtherBone
-via the custom QOM UDP bridge device.
+### Phase 4: Robot Framework QMP Library
+Build a Python-based QMP bridge and Robot Framework keyword library to provide test automation parity with Renode's `.robot` suites. Use `pytest` for primary test driver.
 
-### Phase 6: Test Automation Parity
-Finalize `qemu_keywords.robot`. Run the full legacy Robot Framework suite against QEMU.
-Assert identical pass/fail metrics.
+### Phase 5: Co-Simulation Bridge (In Progress)
+Implement Path A (SystemC via `mmio-socket-bridge`). Migrate Verilated models to SystemC TLM-2.0. Connect via Remote Port (Path B). Restore EtherBone via a custom QOM UDP bridge device.
+
+### Phase 6: Multi-Node Wireless Medium Coordinator
+Replace UDP multicast with Zenoh-based virtual-timestamped Ethernet frame delivery for deterministic multi-node simulation.
+
+### Phase 7: FirmwareStudio External Time Master
+Implement native Zenoh QOM plugins (`hw/zenoh/`) to cooperatively halt TCG execution at physics quantum boundaries, providing causal consistency with MuJoCo.
 
 ---
 

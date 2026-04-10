@@ -13,4 +13,16 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 *   **[Lesson 1: Dynamic Machines, Device Trees, and Bare-Metal Debugging](./lesson1-dynamic-machines/README.md)**
     Learn how to construct a virtual ARM machine from a text file, write bare-metal assembly to interact with Memory-Mapped I/O (MMIO), and use GDB to inspect the CPU state at the instruction level.
 
+*   **[Lesson 2: Dynamic QOM Plugins](./lesson2-dynamic-plugins/README.md)**
+    Learn how to add entirely new peripheral devices to QEMU *without* modifying the core emulator source code by leveraging the QEMU Object Model (QOM) and dynamic shared libraries in C and Rust.
+
+*   **[Lesson 3: Parsing Platform Descriptions (.repl) to Device Trees](./lesson3-repl2qemu/README.md)**
+    Discover how to translate high-level hardware description files (like Renode's `.repl` and OpenUSD-aligned YAML) into standardized Device Tree Blobs that QEMU can boot from directly.
+
+*   **[Lesson 4: Emulation Test Automation with QMP and Pytest](./lesson4-emulation-automation/README.md)**
+    Learn how to automate the testing of your firmware and virtual hardware using the QEMU Machine Protocol (QMP), Python `asyncio`, and Robot Framework keywords.
+
+*   **[Lesson 5: Hardware Co-Simulation — Connecting SystemC Models to QEMU](./lesson5-cosimulation/README.md)**
+    Extend QEMU's MMIO subsystem to communicate with an external hardware model — specifically a SystemC TLM-2.0 register file — over a Unix domain socket.
+
 *(More lessons will be added as we continue to build out the framework!)*

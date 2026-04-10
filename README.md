@@ -45,8 +45,11 @@ virtmcu/
 ├── PLAN.md                     # Phased task checklist — check here for status
 ├── CONTRIBUTING.md             # Setup, dev workflow, code style
 │
-├── hw/                         # C peripheral models (native QOM only — no Python)
-│   ├── dummy/dummy.c           # Minimal QOM SysBusDevice — start here
+├── hw/                         # C/Rust peripheral models (native QOM only — no Python)
+│   ├── dummy/dummy.c           # Minimal QOM SysBusDevice — start here (C)
+│   ├── rust-dummy/             # Minimal QOM SysBusDevice — start here (Rust FFI)
+│   ├── misc/
+│   │   └── mmio-socket-bridge.c # [Phase 5] SystemC co-simulation bridge
 │   ├── zenoh/                  # [Phase 7] Native Zenoh QOM plugin
 │   │   ├── zenoh-clock.c       # TCG cooperative halt + Zenoh clock sync
 │   │   └── zenoh-netdev.c      # Custom -netdev backend for deterministic multi-node networking
@@ -96,8 +99,7 @@ Section 7 covers the MuJoCo time master design. Section 8 covers prior art.
 
 **Tutorials**: If you want to understand how QEMU builds the machine dynamically from a Device Tree, start with `tutorial/lesson1-dynamic-machines/README.md`.
 
-**Writing a new peripheral**: Copy `hw/dummy/dummy.c`, rename, implement MMIO ops.
-Add an entry in `hw/meson.build`. Run `make build` then:
+**Writing a new peripheral**: For C models, copy `hw/dummy/dummy.c`. For Rust, copy `hw/rust-dummy/`. Rename, implement MMIO ops, and add an entry in `hw/meson.build`. Run `make build` then:
 ```bash
 ./scripts/run.sh --dtb test/phase1/minimal.dtb -device your-device-name -nographic
 ```
@@ -206,8 +208,8 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 2 | Dynamic QOM plugin infrastructure | **Done** |
 | 3 | repl2qemu parser (.repl → .dtb + QEMU CLI) | **Done** |
 | 3.5 | YAML Platform & OpenUSD Alignment | **Done** |
-| 4 | Robot Framework QMP library | Not started |
-| 5 | Co-simulation bridge (Verilated from Renode / SystemC) | Deferred |
+| 4 | Robot Framework QMP library | **Done** |
+| 5 | Co-simulation bridge (Verilated from Renode / SystemC) | In Progress |
 | 6 | Multi-node wireless medium coordinator | Future |
 | 7 | FirmwareStudio / MuJoCo external time master | Future |
 

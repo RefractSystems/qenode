@@ -297,6 +297,32 @@ Implement after Path B is validated.
 
 ---
 
+## Phase 6 — Multi-Node Coordination ⬜ (Future)
+
+**Goal**: Deterministic multi-node network simulation replacing Renode's `WirelessMedium`,
+implemented as a native Zenoh netdev backend inside QEMU.
+
+**Important**: `-netdev socket,mcast=...` + icount does NOT give determinism. UDP multicast
+delivery is scheduled by the host kernel regardless of QEMU's virtual clock. icount makes
+QEMU's internal instruction counting deterministic but cannot control when the kernel
+delivers a UDP datagram to QEMU's receive path.
+
+**Design**:
+- `hw/zenoh/zenoh-netdev.c` — custom QEMU `-netdev` backend (no Python coordinator):
+  - TX: guest NIC raises DMA → netdev publishes frame to `sim/eth/frame/{node_id}/tx`
+    with embedded virtual timestamp
+  - RX: netdev subscribes `sim/eth/frame/{node_id}/rx`; incoming frames are buffered
+    and injected into the guest NIC only when virtual time reaches the stamped arrival time
+- A lightweight C/Rust coordinator process (not Python) subscribes all TX topics,
+  applies the attenuation/distance model, and republishes to RX topics with adjusted
+  virtual timestamps
+- Determinism comes from virtual-timestamp ordering, not from UDP delivery timing
+
+### Tasks
+- [ ] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
+
+---
+
 ## Phase 7 — FirmwareStudio / MuJoCo External Time Master ⬜ (Future)
 
 **Goal**: virtmcu becomes the QEMU layer of FirmwareStudio. MuJoCo drives physical
@@ -426,32 +452,6 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - Remove `cyber/src/node_agent.py` — replaced by `hw/zenoh/` native plugin
 
 - [ ] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
-
----
-
-## Phase 6 — Multi-Node Coordination ⬜ (Future)
-
-**Goal**: Deterministic multi-node network simulation replacing Renode's `WirelessMedium`,
-implemented as a native Zenoh netdev backend inside QEMU.
-
-**Important**: `-netdev socket,mcast=...` + icount does NOT give determinism. UDP multicast
-delivery is scheduled by the host kernel regardless of QEMU's virtual clock. icount makes
-QEMU's internal instruction counting deterministic but cannot control when the kernel
-delivers a UDP datagram to QEMU's receive path.
-
-**Design**:
-- `hw/zenoh/zenoh-netdev.c` — custom QEMU `-netdev` backend (no Python coordinator):
-  - TX: guest NIC raises DMA → netdev publishes frame to `sim/eth/frame/{node_id}/tx`
-    with embedded virtual timestamp
-  - RX: netdev subscribes `sim/eth/frame/{node_id}/rx`; incoming frames are buffered
-    and injected into the guest NIC only when virtual time reaches the stamped arrival time
-- A lightweight C/Rust coordinator process (not Python) subscribes all TX topics,
-  applies the attenuation/distance model, and republishes to RX topics with adjusted
-  virtual timestamps
-- Determinism comes from virtual-timestamp ordering, not from UDP delivery timing
-
-### Tasks
-- [ ] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
 
 ---
 
