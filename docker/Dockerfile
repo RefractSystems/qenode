@@ -11,7 +11,7 @@
 #   ARCH          target architecture (arm | aarch64)
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
-ARG QEMU_REF=v10.2.92
+ARG QEMU_REF=v11.0.0-rc3
 ARG ARCH=arm
 
 # ── Stage 0: devenv ───────────────────────────────────────────────────────────
