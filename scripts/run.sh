@@ -41,15 +41,19 @@ if [ ! -f "$QEMU_BIN" ]; then
 fi
 
 # Parse arguments
-DTB=""
+INPUT_FILE=""
 KERNEL=""
 MACHINE="arm-generic-fdt"
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --dtb)
-      DTB="$2"
+    --repl)
+      INPUT_FILE="$2"
+      shift 2
+      ;;
+    --dtb|--dts)
+      INPUT_FILE="$2"
       shift 2
       ;;
     --kernel)
@@ -67,8 +71,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# If a DTB is provided, append it to the machine parameter
-# The arm-generic-fdt machine requires hw-dtb to instantiate devices
+# Process the input hardware description
+DTB=""
+if [[ "$INPUT_FILE" == *.repl ]]; then
+    echo "Processing Renode platform: $INPUT_FILE"
+    DTB="${INPUT_FILE%.repl}.dtb"
+    # Call our Phase 3 translator
+    python3 "$WORKSPACE_DIR/tools/repl2qemu/__main__.py" "$INPUT_FILE" --out-dtb "$DTB"
+elif [[ "$INPUT_FILE" == *.dts ]]; then
+    echo "Compiling Device Tree Source: $INPUT_FILE"
+    DTB="${INPUT_FILE%.dts}.dtb"
+    dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
+elif [[ "$INPUT_FILE" == *.dtb ]]; then
+    DTB="$INPUT_FILE"
+fi
+
+# If a DTB is provided (either directly or generated), append it to the machine parameter
 if [ -n "$DTB" ]; then
     MACHINE="${MACHINE},hw-dtb=${DTB}"
 fi
