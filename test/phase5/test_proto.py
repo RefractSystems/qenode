@@ -25,28 +25,37 @@ import tempfile
 
 # ── Wire format ───────────────────────────────────────────────────────────────
 REQ_FMT  = "<BBHIqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
-RESP_FMT = "<Q"        # data  (8 bytes)
+RESP_FMT = "<IIQ"      # type, irq_num, data  (16 bytes)
 REQ_SIZE  = struct.calcsize(REQ_FMT)
 RESP_SIZE = struct.calcsize(RESP_FMT)
 assert REQ_SIZE == 24, f"REQ_SIZE={REQ_SIZE}, expected 24"
-assert RESP_SIZE == 8,  f"RESP_SIZE={RESP_SIZE}, expected 8"
+assert RESP_SIZE == 16,  f"RESP_SIZE={RESP_SIZE}, expected 16"
 
 MMIO_READ  = 0
 MMIO_WRITE = 1
 
+SYSC_MSG_RESP = 0
+SYSC_MSG_IRQ_SET = 1
+SYSC_MSG_IRQ_CLEAR = 2
 
 def send_req(sock, req_type, size, addr, data=0):
     """Send one mmio_req and return the resp.data field."""
     pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, addr, data)
     sock.sendall(pkt)
-    resp = b""
-    while len(resp) < RESP_SIZE:
-        chunk = sock.recv(RESP_SIZE - len(resp))
-        if not chunk:
-            raise EOFError("adapter closed connection unexpectedly")
-        resp += chunk
-    (value,) = struct.unpack(RESP_FMT, resp)
-    return value
+    
+    while True:
+        resp = b""
+        while len(resp) < RESP_SIZE:
+            chunk = sock.recv(RESP_SIZE - len(resp))
+            if not chunk:
+                raise EOFError("adapter closed connection unexpectedly")
+            resp += chunk
+        msg_type, irq_num, value = struct.unpack(RESP_FMT, resp)
+        
+        if msg_type == SYSC_MSG_RESP:
+            return value
+        # Ignore async IRQ messages during sync tests
+
 
 
 def wait_for_socket(path, timeout=5.0):

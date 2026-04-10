@@ -15,8 +15,10 @@
  *     uint64_t addr;       byte offset within the mapped region
  *     uint64_t data;       write value (ignored for reads)
  *
- *   Response (adapter → QEMU, sizeof = 8 bytes):
- *     uint64_t data;       read value (ignored for writes)
+ *   Message (adapter → QEMU, sizeof = 16 bytes):
+ *     uint32_t type;       0 = RESP, 1 = IRQ_SET, 2 = IRQ_CLEAR
+ *     uint32_t irq_num;    IRQ index (ignored for RESP)
+ *     uint64_t data;       read value (ignored for writes and IRQs)
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -25,6 +27,9 @@
 #define VIRTMCU_PROTO_H
 
 #include <stdint.h>
+
+#define MMIO_REQ_READ  0
+#define MMIO_REQ_WRITE 1
 
 struct mmio_req {
     uint8_t  type;
@@ -35,11 +40,14 @@ struct mmio_req {
     uint64_t data;
 } __attribute__((packed));
 
-struct mmio_resp {
+#define SYSC_MSG_RESP      0
+#define SYSC_MSG_IRQ_SET   1
+#define SYSC_MSG_IRQ_CLEAR 2
+
+struct sysc_msg {
+    uint32_t type;
+    uint32_t irq_num;
     uint64_t data;
 } __attribute__((packed));
-
-#define MMIO_REQ_READ  0
-#define MMIO_REQ_WRITE 1
 
 #endif /* VIRTMCU_PROTO_H */
