@@ -39,3 +39,6 @@ report.html
 *.swp
 *~
 third_party/
+
+hw/rust-dummy/target/
+hw/rust-dummy/Cargo.lock
