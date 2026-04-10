@@ -3,14 +3,17 @@
 # run.sh
 #
 # This is a wrapper script to launch the locally built QEMU emulator.
-# It automatically sets up the environment (like QEMU_MODULE_DIR) so QEMU
-# can find our custom QOM plugins (.so files) without needing global installation.
+# It automatically handles multiple hardware description formats and sets up
+# the environment (like QEMU_MODULE_DIR) for dynamic loading.
 #
 # Usage:
-#   ./scripts/run.sh [--dtb <path/to/dtb>] [--kernel <path/to/elf>] [other qemu args]
+#   ./scripts/run.sh [--repl|--yaml|--dts|--dtb <path>] [--kernel <path>] [args]
 #
 # Arguments:
-#   --dtb     Path to the Device Tree Blob (DTB) file. Appends to the machine string.
+#   --repl    Path to a Renode .repl file (auto-translated to DTB).
+#   --yaml    Path to a qenode .yaml file (auto-translated to DTB).
+#   --dts     Path to a Device Tree Source file (auto-compiled to DTB).
+#   --dtb     Path to a pre-compiled Device Tree Blob.
 #   --kernel  Path to the ELF kernel/firmware to boot.
 #   --machine Name of the machine to emulate (defaults to arm-generic-fdt).
 #   Any other arguments are passed directly to qemu-system-arm.
@@ -73,19 +76,24 @@ done
 
 # Process the input hardware description
 DTB=""
+IS_TEMP_DTB=false
+
 if [[ "$INPUT_FILE" == *.repl ]]; then
     echo "Processing Renode platform: $INPUT_FILE"
-    DTB="${INPUT_FILE%.repl}.dtb"
+    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    IS_TEMP_DTB=true
     # Call our Phase 3 translator as a module
     python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
     echo "Processing qenode YAML platform: $INPUT_FILE"
-    DTB="${INPUT_FILE%.yaml}.dtb"
+    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    IS_TEMP_DTB=true
     # Call our Phase 3.5 translator as a module
     python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB"
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
-    DTB="${INPUT_FILE%.dts}.dtb"
+    DTB=$(mktemp /tmp/qenode-XXXXXX.dtb)
+    IS_TEMP_DTB=true
     dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
 elif [[ "$INPUT_FILE" == *.dtb ]]; then
     DTB="$INPUT_FILE"
@@ -109,5 +117,14 @@ CMD+=("${EXTRA_ARGS[@]}")
 export QEMU_MODULE_DIR
 
 echo "Running: ${CMD[@]}"
-# Replace the shell process with the QEMU process
-exec "${CMD[@]}"
+
+# Execute QEMU and ensure we clean up any temporary DTB files on exit
+# We don't use 'exec' here so we can perform cleanup after QEMU exits
+"${CMD[@]}"
+RET=$?
+
+if [ "$IS_TEMP_DTB" = true ]; then
+    rm -f "$DTB"
+fi
+
+exit $RET

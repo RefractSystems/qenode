@@ -23,10 +23,10 @@ A `qenode` YAML platform consists of a `machine` definition and a list of `perip
 machine:
   name: flight_controller
   type: arm-generic-fdt
-  cpu:
-    name: cpu0
-    type: cortex-a15-arm-cpu
-    memory: sysmem  # Link to the system memory container
+  cpus:
+    - name: cpu0
+      type: cortex-a15-arm-cpu
+      memory: sysmem  # Link to the system memory container
 
 peripherals:
   - name: sram

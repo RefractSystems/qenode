@@ -37,7 +37,7 @@ def migrate(repl_path: str, yaml_path: str):
         if "CPU" in dev.type_name:
             cpu_info = {
                 "name": dev.name,
-                "type": dev.properties.get("cpuType", "cortex-a15").strip('"'),
+                "type": dev.properties.get("cpuType", "cortex-a15"),
                 "memory": "sysmem"
             }
             output["machine"]["cpus"].append(cpu_info)

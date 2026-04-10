@@ -27,10 +27,3 @@ def generate_cli(platform: ReplPlatform, dtb_path: str) -> List[str]:
         args.extend(["-accel", "tcg"])
         
     return args
-
-if __name__ == "__main__":
-    from parser import parse_repl
-    with open("third_party/renode/platforms/cpus/stm32f4.repl", "r") as f:
-        plat = parse_repl(f.read())
-    cli = generate_cli(plat, "test.dtb")
-    print("qemu-system-arm " + " ".join(cli))
