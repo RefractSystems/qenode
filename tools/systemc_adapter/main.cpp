@@ -26,21 +26,26 @@ SC_MODULE(RegisterFile) {
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_time& delay) {
         tlm::tlm_command cmd = trans.get_command();
-        uint64_t         adr = trans.get_address() / 4;
+        uint64_t         adr = trans.get_address() / 4;  // byte offset → word index
         unsigned char*   ptr = trans.get_data_ptr();
         unsigned int     len = trans.get_data_length();
 
-        if (adr >= 256) {
+        // Bounds check: the access must not extend past the end of the array.
+        // e.g. a 64-bit (len=8) access at word index 255 would read regs[256].
+        uint64_t words_needed = (len + 3) / 4;
+        if (adr + words_needed > 256) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return;
         }
 
         if (cmd == tlm::TLM_READ_COMMAND) {
             memcpy(ptr, &regs[adr], len);
-            cout << "[SystemC] Read " << hex << *(uint32_t*)ptr << " from reg " << dec << adr << endl;
+            cout << "[SystemC] Read " << hex << *(uint32_t*)ptr
+                 << " from reg " << dec << adr << endl;
         } else if (cmd == tlm::TLM_WRITE_COMMAND) {
             memcpy(&regs[adr], ptr, len);
-            cout << "[SystemC] Wrote " << hex << *(uint32_t*)ptr << " to reg " << dec << adr << endl;
+            cout << "[SystemC] Wrote " << hex << *(uint32_t*)ptr
+                 << " to reg " << dec << adr << endl;
         }
 
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
@@ -104,10 +109,26 @@ SC_MODULE(QemuAdapter) {
 
         cout << "[SystemC] QEMU connected." << endl;
 
+        /*
+         * readn: read exactly @len bytes, retrying on short reads and EINTR.
+         * Returns true on success, false on EOF or error.
+         */
+        auto readn = [](int fd, void* buf, size_t len) -> bool {
+            char* p = static_cast<char*>(buf);
+            while (len > 0) {
+                ssize_t n = ::read(fd, p, len);
+                if (n <= 0) {
+                    if (n < 0 && errno == EINTR) continue;
+                    return false;
+                }
+                p += n; len -= n;
+            }
+            return true;
+        };
+
         while (true) {
             mmio_req req;
-            ssize_t n = read(client_fd, &req, sizeof(req));
-            if (n <= 0) break; // QEMU disconnected
+            if (!readn(client_fd, &req, sizeof(req))) break; // QEMU disconnected or error
 
             tlm::tlm_generic_payload trans;
             sc_time delay = sc_time(10, SC_NS);

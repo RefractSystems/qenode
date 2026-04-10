@@ -49,6 +49,12 @@ trap cleanup EXIT
 echo "[phase5] Building SystemC adapter..."
 make -C "$WORKSPACE_DIR/tools/systemc_adapter" > /dev/null
 
+# ── 1b. Standalone protocol test (no QEMU needed) ────────────────────────────
+echo "[phase5] Running standalone protocol test..."
+python3 "$SCRIPT_DIR/test_proto.py" \
+    "$WORKSPACE_DIR/tools/systemc_adapter/build/adapter"
+echo "[phase5] Protocol test: PASSED"
+
 # ── 2. Start adapter ──────────────────────────────────────────────────────────
 echo "[phase5] Starting SystemC adapter on $SOCK_PATH..."
 "$WORKSPACE_DIR/tools/systemc_adapter/build/adapter" "$SOCK_PATH" > "$ADAPTER_LOG" 2>&1 &
