@@ -97,7 +97,7 @@ python3 patches/apply_zenoh_hook.py third_party/qemu
 python3 patches/apply_zenoh_netdev.py third_party/qemu
 
 # Phase 7: Fetch Zenoh-C prebuilt library for native QOM plugins
-ZENOHC_VER="1.0.0"
+ZENOHC_VER="1.8.0"
 ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
 if [ ! -d "$ZENOHC_DIR/include" ]; then
     echo "==> Fetching Zenoh-C $ZENOHC_VER for native QEMU plugins..."

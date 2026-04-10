@@ -27,6 +27,11 @@ Wait For Line On UART
     [Arguments]    ${pattern}    ${timeout}=10.0
     QemuLibrary.Wait For Line On Uart    ${pattern}    ${timeout}
 
+Write To UART
+    [Arguments]    ${text}
+    [Documentation]    Writes the given text string to the primary UART.
+    QemuLibrary.Write To Uart    ${text}
+
 PC Should Be Equal
     [Arguments]    ${expected_addr}
     QemuLibrary.Pc Should Be Equal    ${expected_addr}

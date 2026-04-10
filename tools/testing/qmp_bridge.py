@@ -90,6 +90,16 @@ class QmpBridge:
         """
         self.uart_buffer = ""
 
+    async def write_to_uart(self, text: str):
+        """
+        Writes text to the UART socket, simulating user typing or external device input.
+        """
+        if not self.uart_writer:
+            raise RuntimeError("UART socket is not connected.")
+        
+        self.uart_writer.write(text.encode('utf-8'))
+        await self.uart_writer.drain()
+
     async def start_emulation(self):
         """
         Starts or resumes the emulation.

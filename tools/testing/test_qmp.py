@@ -82,3 +82,14 @@ async def test_hmp_command(qmp_bridge):
     res = await qmp_bridge.execute("human-monitor-command", {"command-line": "info version"})
     # QEMU version string can be '11.0.0' or 'v11.0.0' etc.
     assert "11.0.0" in res
+
+@pytest.mark.asyncio
+async def test_uart_write(qmp_bridge):
+    """
+    Test that we can write data to the UART.
+    Since 'hello.elf' doesn't echo, we just verify the socket write doesn't raise an error.
+    """
+    try:
+        await qmp_bridge.write_to_uart("Test string\n")
+    except Exception as e:
+        pytest.fail(f"Writing to UART raised an exception: {e}")
