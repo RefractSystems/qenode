@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <errno.h>
 
 /*
  * Wire protocol — shared with tools/systemc_adapter/main.cpp via the header
@@ -41,7 +42,67 @@ struct MmioSocketBridgeState {
 
     /* Socket state */
     int sock_fd;
+
+    /*
+     * Serialises socket I/O independently of the BQL.
+     *
+     * Why: the correct BQL discipline for blocking I/O is:
+     *   bql_unlock() → write() → read() → bql_lock()
+     * This means a second vCPU can acquire the BQL while the first is blocked
+     * in the socket write/read.  If both vCPUs then enter send_req_and_wait()
+     * they would call write() on the same sock_fd concurrently — Unix domain
+     * socket writes are not atomic above the pipe buffer size, so the 24-byte
+     * request messages would interleave and corrupt the framing protocol.
+     *
+     * sock_mutex is held only across the write+read pair (inside the BQL-free
+     * window) so it does not reintroduce the BQL deadlock risk.
+     */
+    QemuMutex sock_mutex;
 };
+
+/*
+ * Write exactly @len bytes to @fd, retrying on short writes.
+ * Returns true on success, false on error/EOF.
+ * Must be called outside the BQL window.
+ */
+static bool writen(int fd, const void *buf, size_t len)
+{
+    const char *p = buf;
+    while (len > 0) {
+        ssize_t n = write(fd, p, len);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        p   += n;
+        len -= n;
+    }
+    return true;
+}
+
+/*
+ * Read exactly @len bytes from @fd, retrying on short reads.
+ * Returns true on success, false on error/EOF.
+ * Must be called outside the BQL window.
+ */
+static bool readn(int fd, void *buf, size_t len)
+{
+    char *p = buf;
+    while (len > 0) {
+        ssize_t n = read(fd, p, len);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        p   += n;
+        len -= n;
+    }
+    return true;
+}
 
 static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, struct mmio_resp *resp)
 {
@@ -50,27 +111,32 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
     }
 
     /*
-     * Release the BQL (Big QEMU Lock) before *both* the write and the read.
-     * Any blocking syscall while holding BQL deadlocks the main loop thread,
-     * preventing QMP, GDB, and device I/O from being serviced.
+     * Release the BQL before *both* the write and the read, then take
+     * sock_mutex to serialise concurrent vCPU accesses on the socket.
      *
-     * write() on a Unix domain socket can block if the kernel send buffer is
-     * full (backpressure from a slow adapter), so it must also be outside the
-     * locked window.  Re-acquire immediately after read() completes.
+     * BQL discipline: any blocking syscall while holding BQL deadlocks the
+     * main loop (QMP, GDB, I/O).  write() can block under backpressure.
+     *
+     * SMP safety: after bql_unlock() a second vCPU can enter this function.
+     * sock_mutex ensures only one write+read pair is in flight at a time;
+     * otherwise the 24-byte request frames would interleave on the socket and
+     * corrupt the protocol framing.
      */
     bql_unlock();
-    ssize_t wr = write(s->sock_fd, req, sizeof(*req));
-    ssize_t rd = (wr == (ssize_t)sizeof(*req))
-                 ? read(s->sock_fd, resp, sizeof(*resp))
-                 : -1;
+    qemu_mutex_lock(&s->sock_mutex);
+
+    bool ok = writen(s->sock_fd, req, sizeof(*req));
+    if (ok) {
+        ok = readn(s->sock_fd, resp, sizeof(*resp));
+    }
+
+    qemu_mutex_unlock(&s->sock_mutex);
     bql_lock();
 
-    if (wr != (ssize_t)sizeof(*req)) {
-        qemu_log_mask(LOG_GUEST_ERROR, "mmio-socket-bridge: socket write failed\n");
-        return;
-    }
-    if (rd != (ssize_t)sizeof(*resp)) {
-        qemu_log_mask(LOG_GUEST_ERROR, "mmio-socket-bridge: socket read failed\n");
+    if (!ok) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "mmio-socket-bridge: I/O error on socket '%s'\n",
+                      s->socket_path);
     }
 }
 
@@ -112,6 +178,19 @@ static const MemoryRegionOps bridge_mmio_ops = {
     },
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
+
+static void bridge_instance_init(Object *obj)
+{
+    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
+    s->sock_fd = -1;
+    qemu_mutex_init(&s->sock_mutex);
+}
+
+static void bridge_instance_finalize(Object *obj)
+{
+    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
+    qemu_mutex_destroy(&s->sock_mutex);
+}
 
 static void bridge_realize(DeviceState *dev, Error **errp)
 {
@@ -180,10 +259,12 @@ static void bridge_class_init(ObjectClass *oc, const void *data)
 
 static const TypeInfo bridge_types[] = {
     {
-        .name          = TYPE_MMIO_SOCKET_BRIDGE,
-        .parent        = TYPE_SYS_BUS_DEVICE,
-        .instance_size = sizeof(MmioSocketBridgeState),
-        .class_init    = bridge_class_init,
+        .name            = TYPE_MMIO_SOCKET_BRIDGE,
+        .parent          = TYPE_SYS_BUS_DEVICE,
+        .instance_size   = sizeof(MmioSocketBridgeState),
+        .instance_init   = bridge_instance_init,
+        .instance_finalize = bridge_instance_finalize,
+        .class_init      = bridge_class_init,
     },
 };
 
