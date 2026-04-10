@@ -68,3 +68,30 @@ This is critical. If we do not suspend the CPU on boot, the firmware will execut
 While interactive local debugging is useful, true system validation often requires multiple microcontrollers communicating with each other over serial connections (e.g., an MCU commanding a GPS module or a motor driver over UART).
 
 In the next phase, we will implement `zenoh-chardev.c`. This native QEMU plugin will allow us to map the UART byte stream to Zenoh topics (e.g., `virtmcu/uart/node1/tx`), enabling cycle-accurate, deterministic serial communication between multiple emulated nodes across the network, just as we did with Ethernet in Phase 6.
+
+## 4. Running the Multi-Node Deterministic UART
+
+Now that Phase 8 is complete, you can map the emulated UART directly to the Zenoh network. This allows Node 1's UART to appear as incoming UART data on Node 2, completely deterministically.
+
+1. **Start the Zenoh Coordinator:**
+   ```bash
+   export PATH="$HOME/.cargo/bin:$PATH"
+   cd tools/zenoh_coordinator
+   cargo run -- --delay-ns 500000
+   ```
+
+2. **Start Node 1 (in a new terminal):**
+   ```bash
+   ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase8/echo.elf -nographic \
+       -chardev zenoh,id=chr0,node=node1 \
+       -serial chardev:chr0
+   ```
+
+3. **Start Node 2 (in a new terminal):**
+   ```bash
+   ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase8/echo.elf -nographic \
+       -chardev zenoh,id=chr0,node=node2 \
+       -serial chardev:chr0
+   ```
+
+Any characters typed into the terminal for Node 1 will be timestamped, published to Zenoh, routed by the coordinator, and deterministically injected into Node 2's UART receiver exactly `500,000` virtual nanoseconds later.
