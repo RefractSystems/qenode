@@ -386,7 +386,7 @@ PID loops (~10 000 instructions/iteration) with 2–4× headroom. At 10 kHz the 
 tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer precision.
 
 ### Tasks
-- [ ] **7.1** Write `hw/zenoh/zenoh-clock.c` — native QOM device (SysBusDevice):
+- [x] **7.1** Write `hw/zenoh/zenoh-clock.c` — native QOM device (SysBusDevice):
   - Links `zenoh-c` (added to QEMU Meson as a `dependency()`)
   - Declares a Zenoh queryable on `sim/clock/advance/{node_id}` at `realize` time
   - Assigns its blocking routine to the exposed `virtmcu_tcg_quantum_hook` function pointer (installed by `apply_zenoh_hook.py`). This is required because QEMU exports no dynamic APIs for QOM modules to hook the internal `cpu_exec` loop.
