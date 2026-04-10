@@ -11,9 +11,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR_LOCAL="$(mktemp -d /tmp/phase7_XXXXXX)"
+QEMU_PID=""
 
 cleanup() {
-    kill "$QEMU_PID" 2>/dev/null || true
+    [[ -n "$QEMU_PID" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT

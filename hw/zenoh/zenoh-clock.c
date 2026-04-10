@@ -166,7 +166,8 @@ static void zclock_quantum_hook(CPUState *cpu)
     /* Step 1: claim this quantum boundary. */
     s->needs_quantum = false;
 
-    /* Step 2: snapshot virtual time while BQL is still held. */
+    /* Step 2: acquire BQL to snapshot virtual time. */
+    bql_lock();
     s->vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
     /* Step 3: notify on_query that vtime_ns is ready. */
@@ -189,8 +190,9 @@ static void zclock_quantum_hook(CPUState *cpu)
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     timer_mod(s->quantum_timer, now + s->delta_ns);
 
+    /* Step 8: release BQL and return. */
+    bql_unlock();
     qemu_mutex_unlock(&s->mutex);
-    /* Step 8: return with BQL held. */
 }
 
 /* ── Zenoh queryable handler ─────────────────────────────────────────────────
