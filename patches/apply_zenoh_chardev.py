@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import sys, os
+import os
+import sys
+
 
 def patch_file(filepath, marker, insertion, after=False):
     with open(filepath, "r") as f:
@@ -18,10 +20,10 @@ def patch_file(filepath, marker, insertion, after=False):
 
 def main():
     qemu = sys.argv[1]
-    
+
     char_json = os.path.join(qemu, "qapi", "char.json")
     char_c = os.path.join(qemu, "chardev", "char.c")
-    
+
     # 1. Add 'zenoh' to ChardevBackendKind
     marker0 = "# @memory: synonym for @ringbuf (since 1.5)"
     insertion0 = "\n#\n# @zenoh: zenoh virtual clock backend (since 10.0)"
@@ -30,7 +32,7 @@ def main():
     marker1 = "'ringbuf',"
     insertion1 = "\n            'zenoh',"
     patch_file(char_json, marker1, insertion1, after=True)
-    
+
     # 2. Add ChardevZenohOptions
     marker2 = "            { 'name': 'memory', 'features': [ 'deprecated' ] } ] }"
     insertion2 = """
@@ -62,7 +64,7 @@ def main():
   'data': { 'data': 'ChardevZenohOptions' } }
 """
     patch_file(char_json, marker2, insertion2, after=True)
-    
+
     # 3. Add 'zenoh' to ChardevBackend discriminator
     marker3 = "'ringbuf': 'ChardevRingbufWrapper',"
     insertion3 = "\n            'zenoh': 'ChardevZenohWrapper',"

@@ -1,6 +1,6 @@
-import pytest
-import asyncio
 import logging
+
+import pytest
 
 logger = logging.getLogger(__name__)
 
@@ -41,31 +41,31 @@ async def test_emulation_control(qemu_launcher):
     """
     # Launch QEMU paused (-S)
     bridge = await qemu_launcher(
-        "test/phase1/minimal.dtb", 
+        "test/phase1/minimal.dtb",
         "test/phase1/hello.elf",
         extra_args=["-S"]
     )
-    
+
     # Check that it's actually paused
     status = await bridge.execute("query-status")
     assert status["running"] is False
-    
+
     # Clear buffer and start
     bridge.clear_uart_buffer()
     await bridge.start_emulation()
-    
+
     # Verify it's running
     status = await bridge.execute("query-status")
     assert status["running"] is True
-    
+
     # Wait for output
     assert await bridge.wait_for_line_on_uart("HI", timeout=5.0)
-    
+
     # Pause it
     await bridge.pause_emulation()
     status = await bridge.execute("query-status")
     assert status["running"] is False
-    
+
     # Reset it
     bridge.clear_uart_buffer()
     await bridge.execute("system_reset")

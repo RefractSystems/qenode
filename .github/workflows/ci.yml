@@ -43,10 +43,7 @@ jobs:
         run: pip install ruff
 
       - name: Ruff — Python linting
-        run: |
-          ruff check tools/ tests/ patches/ \
-            --select E,F,W,I \
-            --exclude tools/repl2qemu/__pycache__,tools/__pycache__
+        run: ruff check tools/ tests/ patches/
 
       - name: ShellCheck — shell scripts
         uses: ludeeus/action-shellcheck@2.0.0

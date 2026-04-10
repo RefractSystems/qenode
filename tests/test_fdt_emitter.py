@@ -16,7 +16,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from tools.repl2qemu.fdt_emitter import COMPAT_MAP, FdtEmitter, compile_dtb
 from tools.repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
 
-
 # ── DTS structure ─────────────────────────────────────────────────────────────
 
 

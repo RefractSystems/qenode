@@ -24,11 +24,11 @@
 #   python3 tools/qmp_probe.py get /memory size  # Fetch the value of a specific property
 # ==============================================================================
 
-import socket
-import json
 import argparse
+import json
+import socket
 import sys
-import os
+
 
 class QMPClient:
     """
@@ -83,17 +83,17 @@ class QMPClient:
         req = {"execute": cmd}
         if args:
             req["arguments"] = args
-        
+
         # QMP commands are JSON objects followed by a newline
         self.sock.send(json.dumps(req).encode('utf-8') + b'\n')
-        
+
         # Wait for the response (which is also a single JSON object on one line)
         return self._recv_msg()
 
 def dump_tree(client, path="/", depth=0, visited=None):
     """
     Recursively traverses the QOM tree and prints it in a human-readable format.
-    
+
     Similar to the 'info qom-tree' command in the QEMU monitor.
     """
     if visited is None:
@@ -110,7 +110,7 @@ def dump_tree(client, path="/", depth=0, visited=None):
     for item in resp['return']:
         # Print with indentation to show hierarchy
         print("  " * depth + f"{item['name']} ({item['type']})")
-        
+
         # If it's a child object, recurse into it
         if item['type'].startswith('child<'):
             # Construct the absolute path to the child
@@ -128,11 +128,11 @@ def main():
 """
     )
     parser.add_argument(
-        "--socket", 
-        default="qmp.sock", 
+        "--socket",
+        default="qmp.sock",
         help="Path to the QMP Unix socket (default: qmp.sock)"
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", required=True, help="Sub-commands")
 
     # 'tree' command: Recursive visualization
@@ -156,7 +156,7 @@ def main():
     if args.command == "tree":
         print(f"--- QOM Tree (Source: {args.socket}) ---")
         dump_tree(client)
-    
+
     elif args.command == "list":
         resp = client.execute("qom-list", {"path": args.path})
         if 'return' in resp:

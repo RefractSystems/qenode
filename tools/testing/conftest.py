@@ -1,11 +1,12 @@
-import pytest
-import pytest_asyncio
 import asyncio
-import os
-import tempfile
-import shutil
 import logging
+import os
+import shutil
 import subprocess
+import tempfile
+
+import pytest_asyncio
+
 from tools.testing.qmp_bridge import QmpBridge
 
 logging.basicConfig(level=logging.INFO)
@@ -24,16 +25,16 @@ async def qemu_launcher():
         tmpdir = tempfile.mkdtemp(prefix="virtmcu-test-")
         qmp_sock = os.path.join(tmpdir, "qmp.sock")
         uart_sock = os.path.join(tmpdir, "uart.sock")
-        
+
         # Build the command using run.sh
         # We use absolute paths to ensure it works from any directory
         workspace_root = os.getcwd()
         run_script = os.path.join(workspace_root, "scripts/run.sh")
-        
+
         cmd = [run_script, "--dtb", os.path.abspath(dtb_path)]
         if kernel_path:
             cmd.extend(["--kernel", os.path.abspath(kernel_path)])
-        
+
         # Add QMP and UART sockets
         # Note: we use 'server,nowait' because QEMU should start and wait for us
         cmd.extend([
@@ -42,10 +43,10 @@ async def qemu_launcher():
             "-display", "none",
             "-nographic"
         ])
-        
+
         if extra_args:
             cmd.extend(extra_args)
-            
+
         # Task 4.1b: Critical isolation constraint - standalone mode only
         for arg in cmd:
             if "zenoh-clock" in arg:
@@ -53,7 +54,7 @@ async def qemu_launcher():
                                  "Phase 4 tests must run without external clock plugins.")
 
         logger.info(f"Launching QEMU: {' '.join(cmd)}")
-        
+
         # Start the process
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -61,7 +62,7 @@ async def qemu_launcher():
             stderr=asyncio.subprocess.PIPE,
             env=os.environ.copy()
         )
-        
+
         # Wait for sockets to be created by QEMU.
         # Poll every 100 ms (up to 10 s). Also check for premature exit.
         retries = 100
@@ -86,7 +87,7 @@ async def qemu_launcher():
 
         bridge = QmpBridge()
         await bridge.connect(qmp_sock, uart_sock)
-        
+
         instance = {
             "proc": proc,
             "bridge": bridge,
@@ -103,7 +104,7 @@ async def qemu_launcher():
             await inst["bridge"].close()
         except Exception as e:
             logger.warning(f"Error closing bridge: {e}")
-            
+
         proc = inst["proc"]
         if proc.returncode is None:
             proc.terminate()
@@ -112,26 +113,26 @@ async def qemu_launcher():
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-        
+
         shutil.rmtree(inst["tmpdir"], ignore_errors=True)
 
 @pytest_asyncio.fixture
 async def qmp_bridge(qemu_launcher):
     """
-    A convenience fixture that launches a default QEMU instance with 
+    A convenience fixture that launches a default QEMU instance with
     the phase1 minimal DTB and hello.elf firmware.
-    
-    Uses -S to start paused, connects, and then resumes to ensure 
+
+    Uses -S to start paused, connects, and then resumes to ensure
     that early firmware output is captured.
     """
     dtb = "test/phase1/minimal.dtb"
     kernel = "test/phase1/hello.elf"
-    
+
     # Ensure DTB exists
     if not os.path.exists(dtb):
         # Try to build it if missing
         subprocess.run(["make", "-C", "test/phase1", "minimal.dtb"], check=True)
-        
+
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
     return bridge

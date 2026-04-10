@@ -1,15 +1,16 @@
 import asyncio
-import re
 import logging
+import re
+from typing import Any, Dict, Optional
+
 from qemu.qmp import QMPClient
-from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 class QmpBridge:
     """
     An asynchronous bridge to QEMU via QMP and UART chardev sockets.
-    
+
     This class provides a high-level API for test automation, mirroring
     functionality found in Renode's Robot Framework keywords.
     """
@@ -27,7 +28,7 @@ class QmpBridge:
         """
         logger.info(f"Connecting to QMP socket: {qmp_socket_path}")
         await self.qmp.connect(qmp_socket_path)
-        
+
         if uart_socket_path:
             logger.info(f"Connecting to UART socket: {uart_socket_path}")
             self.uart_reader, self.uart_writer = await asyncio.open_unix_connection(uart_socket_path)
@@ -96,7 +97,7 @@ class QmpBridge:
         """
         if not self.uart_writer:
             raise RuntimeError("UART socket is not connected.")
-        
+
         self.uart_writer.write(text.encode('utf-8'))
         await self.uart_writer.drain()
 
@@ -132,7 +133,7 @@ class QmpBridge:
     def get_virtual_time_ns(self) -> int:
         """
         Returns the current virtual time in nanoseconds.
-        
+
         In standalone mode (Phase 4), this might return 0 or be un-synced.
         Full implementation is deferred to Phase 7.
         """
@@ -148,9 +149,9 @@ class QmpBridge:
                 await self._read_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self.uart_writer:
             self.uart_writer.close()
             await self.uart_writer.wait_closed()
-            
+
         await self.qmp.disconnect()

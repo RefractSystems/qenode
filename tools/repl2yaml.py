@@ -2,17 +2,18 @@
 # ==============================================================================
 # repl2yaml.py
 #
-# Migrates legacy Renode .repl hardware descriptions to the modern virtmcu YAML 
-# format. This ensures that we can transition to an OpenUSD-aligned schema 
+# Migrates legacy Renode .repl hardware descriptions to the modern virtmcu YAML
+# format. This ensures that we can transition to an OpenUSD-aligned schema
 # without losing existing board definitions.
 # ==============================================================================
 
-import os
-import sys
-import yaml
 import argparse
+import os
+
+import yaml
 
 from .repl2qemu.parser import parse_repl
+
 
 def migrate(repl_path: str, yaml_path: str):
     print(f"Reading Renode platform: {repl_path}")
@@ -22,7 +23,7 @@ def migrate(repl_path: str, yaml_path: str):
     # Build the YAML structure
     # We try to infer a sensible machine name from the filename
     machine_name = os.path.splitext(os.path.basename(repl_path))[0]
-    
+
     output = {
         "machine": {
             "name": machine_name,
@@ -49,11 +50,11 @@ def migrate(repl_path: str, yaml_path: str):
             "renode_type": dev.type_name,
             "address": dev.address_str,
         }
-        
+
         # Add properties if they exist
         if dev.properties:
             p["properties"] = dev.properties
-            
+
         # Add interrupts
         if dev.interrupts:
             # For simplicity in this migration, we store the raw target string
@@ -61,7 +62,7 @@ def migrate(repl_path: str, yaml_path: str):
 
         # Standard virtmcu requirement: everything connects to sysmem
         p["container"] = "sysmem"
-        
+
         output["peripherals"].append(p)
 
     print(f"Writing virtmcu YAML: {yaml_path}")
@@ -72,9 +73,9 @@ def main():
     parser = argparse.ArgumentParser(description="Convert Renode .repl to virtmcu YAML")
     parser.add_argument("input", help="Path to .repl file")
     parser.add_argument("--out", help="Path to output .yaml file (default: same name)")
-    
+
     args = parser.parse_args()
-    
+
     out_path = args.out if args.out else os.path.splitext(args.input)[0] + ".yaml"
     migrate(args.input, out_path)
 

@@ -1,9 +1,9 @@
-import pytest
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tools/repl2qemu')))
 from parser import parse_repl
+
 
 def test_parse_simple_memory():
     repl = """

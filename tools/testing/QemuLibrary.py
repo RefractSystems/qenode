@@ -1,7 +1,8 @@
 import asyncio
 import os
-import threading
+
 from tools.testing.qmp_bridge import QmpBridge
+
 
 class QemuLibrary:
     """
@@ -25,28 +26,28 @@ class QemuLibrary:
         """
         Launches QEMU using the run.sh script and returns the QMP and UART socket paths.
         """
-        import tempfile
         import subprocess
+        import tempfile
         import time
 
         tmpdir = tempfile.mkdtemp(prefix="virtmcu-robot-")
         qmp_sock = os.path.join(tmpdir, "qmp.sock")
         uart_sock = os.path.join(tmpdir, "uart.sock")
-        
+
         workspace_root = os.getcwd()
         run_script = os.path.join(workspace_root, "scripts/run.sh")
-        
+
         cmd = [run_script, "--dtb", os.path.abspath(dtb_path)]
         if kernel_path:
             cmd.extend(["--kernel", os.path.abspath(kernel_path)])
-        
+
         cmd.extend([
             "-qmp", f"unix:{qmp_sock},server,nowait",
             "-serial", f"unix:{uart_sock},server,nowait",
             "-display", "none",
             "-nographic"
         ])
-        
+
         if extra_args:
             if isinstance(extra_args, str):
                 cmd.extend(extra_args.split())
@@ -144,10 +145,10 @@ class QemuLibrary:
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
                 self.proc.wait(timeout=5)
-            except:
+            except Exception:
                 if hasattr(self, 'proc'):
                     self.proc.kill()
-        
+
         if hasattr(self, 'tmpdir'):
             import shutil
             shutil.rmtree(self.tmpdir, ignore_errors=True)

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import sys, os
+import os
+import sys
+
 
 def patch_file(filepath, marker, insertion, after=False):
     with open(filepath, "r") as f:
@@ -18,14 +20,14 @@ def patch_file(filepath, marker, insertion, after=False):
 
 def main():
     qemu = sys.argv[1]
-    
+
     # 1. Update QAPI to add 'zenoh' to NetClientDriver
     net_json = os.path.join(qemu, "qapi", "net.json")
-    
+
     marker1 = "'vhost-vdpa',"
     insertion1 = "\n            'zenoh',"
     patch_file(net_json, marker1, insertion1, after=True)
-    
+
     marker2 = "    '*x-svq':        {'type': 'bool', 'features' : [ 'unstable'] } } }"
     insertion2 = """
 
@@ -44,12 +46,12 @@ def main():
     'node': 'str',
     '*router': 'str' } }"""
     patch_file(net_json, marker2, insertion2, after=True)
-    
+
     # 3. Add 'zenoh' branch to Netdev discriminator
     marker3 = "'vhost-vdpa': 'NetdevVhostVDPAOptions',"
     insertion3 = "\n    'zenoh':    'NetdevZenohOptions',"
     patch_file(net_json, marker3, insertion3, after=True)
-    
+
     # 4. Hook into net_client_init
     net_c = os.path.join(qemu, "net", "net.c")
     marker4 = "#ifdef CONFIG_AF_XDP\n        [NET_CLIENT_DRIVER_AF_XDP]    = net_init_af_xdp,\n#endif"
@@ -58,7 +60,7 @@ def main():
 
     marker5 = "int net_init_socket(const Netdev *netdev, const char *name,"
     insertion5 = "int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);\n"
-    
+
     clients_h = os.path.join(qemu, "net", "clients.h")
     patch_file(clients_h, marker5, insertion5, after=False)
 
@@ -86,11 +88,11 @@ int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer,
     if (!virtmcu_zenoh_netdev_hook) {
         module_load_qom("zenoh-netdev", NULL);
     }
-    
+
     if (virtmcu_zenoh_netdev_hook) {
         return virtmcu_zenoh_netdev_hook(netdev, name, peer, errp);
     }
-    
+
     error_setg(errp, "zenoh-netdev module not loaded or hook not registered");
     return -1;
 }

@@ -8,13 +8,10 @@ Verifies that the correct flags are produced for different platform types.
 import os
 import sys
 
-import pytest
-
 # Import via the package so relative imports inside cli_generator resolve.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from tools.repl2qemu.cli_generator import generate_cli
 from tools.repl2qemu.parser import ReplDevice, ReplPlatform
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
