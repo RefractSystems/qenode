@@ -1,24 +1,60 @@
 # virtmcu QEMU container image.
 #
 # Multi-stage build:
-#   devenv   — toolchain only: all build deps, no code baked in (used by devcontainer)
-#   builder  — heavy: clones QEMU, applies patches, builds (used by CI / docker-compose)
-#   runtime  — lean: only runtime libs + Python + the installed QEMU binaries
+#   toolchain — ubuntu:24.04 + all build deps; base for builder (no MCR dependency)
+#   devenv    — MCR devcontainer base + build tools + AI CLIs (devcontainer only)
+#   builder   — FROM toolchain: clones QEMU, builds zenoh-c, compiles everything
+#   runtime   — lean: only runtime libs + Python + the installed QEMU binaries
 #
 # Build args:
 #   QEMU_REPO     upstream QEMU git URL
 #   QEMU_REF      git ref to check out (tag, branch, or SHA)
+#   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.8.0)
 #   ARCH          target architecture (arm | aarch64)
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
+ARG ZENOH_C_REF=1.8.0
 ARG ARCH=arm
 
-# ── Stage 0: devenv ───────────────────────────────────────────────────────────
-# Toolchain-only image for devcontainer use. The workspace is mounted at runtime
-# by the devcontainer spec — nothing from the repo is baked in here.
+# ── Stage 0: toolchain ────────────────────────────────────────────────────────
+# Plain ubuntu with all build dependencies. Used directly by the builder stage
+# so that CI never has to pull from MCR (which is rate-limited on GHA runners).
+FROM ubuntu:24.04 AS toolchain
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        cmake \
+        meson \
+        ninja-build \
+        python3 \
+        python3-pip \
+        python3-venv \
+        pkg-config \
+        libglib2.0-dev \
+        libpixman-1-dev \
+        flex \
+        bison \
+        device-tree-compiler \
+        libslirp-dev \
+        curl \
+        wget \
+        ca-certificates \
+        b4 \
+        gdb \
+        gdb-multiarch \
+        gcc-arm-none-eabi \
+        cargo \
+        rustc \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Stage 1: devenv ───────────────────────────────────────────────────────────
+# Devcontainer image only. MCR base provides the vscode user + sudo setup.
+# The workspace is mounted at runtime — nothing from the repo is baked in here.
 #
-# Based on the official devcontainer base (ubuntu:24.04 + vscode user + sudo).
 # https://github.com/devcontainers/images/tree/main/src/base-ubuntu
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04 AS devenv
 
@@ -51,7 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rustc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 22 (required for Gemini CLI v flag)
+# Install Node.js 22 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -67,18 +103,36 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspace
 
-# ── Stage 1: builder ──────────────────────────────────────────────────────────
-FROM devenv AS builder
+# ── Stage 2: builder ──────────────────────────────────────────────────────────
+# FROM toolchain (not devenv) so CI never pulls from MCR.
+FROM toolchain AS builder
 
 ARG QEMU_REPO
 ARG QEMU_REF
+ARG ZENOH_C_REF
 ARG ARCH
 
 WORKDIR /build
 
-# Copy our patch assets before the long QEMU clone so Docker cache is efficient
+# Install stable Rust via rustup; apt rustc (1.75) may be too old for zenoh-c.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --no-modify-path
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Copy our patch assets before the long network ops so Docker cache is efficient
 COPY patches/ /build/patches/
-COPY third_party/zenoh-c/ /build/zenoh-c/
+
+# Build zenoh-c from source and install to /build/zenoh-c.
+# meson.build resolves meson.project_source_root()/../zenoh-c → /build/zenoh-c ✓
+RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
+        https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src \
+    && cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
+        -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
+    && cmake --build /build/zenoh-c-build -j"$(nproc)" \
+    && cmake --install /build/zenoh-c-build \
+    && rm -rf /build/zenoh-c-src /build/zenoh-c-build
 
 # Clone QEMU at the specified ref
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
@@ -118,7 +172,7 @@ RUN cd qemu \
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
-# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
 
 ARG ARCH
