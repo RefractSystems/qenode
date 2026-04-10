@@ -22,7 +22,8 @@
         "ms-vscode-remote.remote-containers",
         "ms-azuretools.vscode-containers",
         "robocorp.robotframework-lsp",
-        "ms-vscode.cpptools-extension-pack"
+        "ms-vscode.cpptools-extension-pack",
+        "rust-lang.rust-analyzer"
       ]
     }
   }

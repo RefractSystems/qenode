@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
         gdb-multiarch \
         gcc-arm-none-eabi \
+        cargo \
+        rustc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 (required for Gemini CLI v flag)
