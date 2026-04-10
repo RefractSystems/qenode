@@ -112,6 +112,11 @@ RUN cd qemu \
     && make -j"$(nproc)" \
     && make install
 
+# Make the installed QEMU binary and modules available inside this stage
+# (used by CI integration jobs that run smoke tests within the builder container).
+ENV PATH="/opt/virtmcu/bin:${PATH}"
+ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
+
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
 

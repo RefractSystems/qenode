@@ -1,0 +1,406 @@
+name: CI
+
+# Runs on every push to main and on every PR targeting main.
+# Jobs are structured in three tiers:
+#   1. lint + unit-tests  — fast, no QEMU, always run in parallel
+#   2. build-qemu         — build the Docker builder image (QEMU compiled inside)
+#   3. integration        — smoke tests, pytest QMP suite, Robot Framework
+#
+# The expensive QEMU build is cached via GitHub Actions Docker layer cache
+# (type=gha). First run is slow (~40 min); subsequent runs with unchanged
+# patches/ and hw/ are fast (~3 min, fully from cache).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILDER_IMAGE: virtmcu-builder
+  PYTHON_VERSION: "3.12"
+
+# ── Tier 1: Lint ──────────────────────────────────────────────────────────────
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install lint tools
+        run: pip install ruff
+
+      - name: Ruff — Python linting
+        run: |
+          ruff check tools/ tests/ patches/ \
+            --select E,F,W,I \
+            --exclude tools/repl2qemu/__pycache__,tools/__pycache__
+
+      - name: ShellCheck — shell scripts
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+          severity: warning
+          ignore_paths: third_party .venv
+
+      - name: Hadolint — Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile
+          # DL3008: pin apt versions — acceptable for a dev toolchain image
+          # DL3009: apt-get clean — handled by rm -rf /var/lib/apt/lists/*
+          # DL4006: set -o pipefail — handled by set -euo pipefail in scripts
+          ignore: DL3008,DL3009,DL4006
+
+# ── Tier 1: Unit Tests (no QEMU) ──────────────────────────────────────────────
+
+  unit-tests:
+    name: Unit Tests (no QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # device-tree-compiler needed by test_fdt_emitter (calls dtc)
+      - name: Install dtc
+        run: sudo apt-get install -y --no-install-recommends device-tree-compiler
+
+      - name: pytest — repl2qemu parser
+        run: |
+          pytest tests/repl2qemu/ \
+            -v --tb=short \
+            --junitxml=test-results/unit-parser.xml
+
+      - name: pytest — yaml2qemu
+        run: |
+          pytest tests/test_yaml2qemu.py \
+            -v --tb=short \
+            --junitxml=test-results/unit-yaml.xml
+
+      - name: pytest — cli_generator
+        run: |
+          pytest tests/test_cli_generator.py \
+            -v --tb=short \
+            --junitxml=test-results/unit-cli.xml
+
+      - name: pytest — fdt_emitter
+        run: |
+          pytest tests/test_fdt_emitter.py \
+            -v --tb=short \
+            --junitxml=test-results/unit-fdt.xml
+
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: test-results/
+
+# ── Tier 2: Build QEMU (Docker, cached) ──────────────────────────────────────
+
+  build-qemu:
+    name: Build QEMU (Docker cache)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Populate the GHA Docker layer cache for the builder stage.
+      # The QEMU clone + patch + compile is the expensive part; it is cached
+      # as long as patches/, hw/, and scripts/setup-qemu.sh are unchanged.
+      - name: Build and cache builder stage
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          cache-to: type=gha,scope=builder,mode=max
+          load: true
+
+      - name: Verify QEMU binary
+        run: |
+          docker run --rm ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            qemu-system-arm --version
+
+# ── Tier 3: Smoke Tests (matrix) ─────────────────────────────────────────────
+#
+# Each phase runs its test/phaseX/smoke_test.sh inside the builder container
+# with the workspace mounted at /workspace. Phases that need Python packages
+# or a .venv get a per-phase pre-setup command.
+
+  smoke-tests:
+    name: Smoke — Phase ${{ matrix.phase }}
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Phases 1–3.5: no Python runtime needed
+          - phase: "1"
+            pre: ":"
+          - phase: "2"
+            pre: ":"
+          - phase: "3"
+            pre: ":"
+          - phase: "3.5"
+            pre: ":"
+          # Phase 4: pytest + robot run directly (no venv); needs packages on PATH
+          - phase: "4"
+            pre: "pip install -r requirements.txt -q"
+          # Phase 8: smoke_test.sh sources .venv, so we pre-create it
+          - phase: "8"
+            pre: "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -q"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Re-build from GHA cache — fast if no patches/hw changes.
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run phase ${{ matrix.phase }} smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "${{ matrix.pre }} && bash test/phase${{ matrix.phase }}/smoke_test.sh"
+
+# ── Tier 3: Phase 5 — SystemC Co-simulation Bridge ───────────────────────────
+
+  smoke-phase5:
+    name: Smoke — Phase 5 (SystemC bridge)
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run phase 5 smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
+              pip install -r requirements.txt -q
+              bash test/phase5/smoke_test.sh
+            "
+
+# ── Tier 3: Phase 6 — Multi-Node Zenoh Coordinator ───────────────────────────
+
+  smoke-phase6:
+    name: Smoke — Phase 6 (Zenoh coordinator)
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run phase 6 smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              touch ~/.cargo/env
+              pip install -r requirements.txt -q
+              bash test/phase6/smoke_test.sh
+            "
+
+# ── Tier 3: Phase 7 — Zenoh Clock (suspend + icount modes) ───────────────────
+#
+# Phase 7 is self-contained: the smoke test launches QEMU with the zenoh-clock
+# device and acts as its own mock TimeAuthority via the Python Zenoh client.
+# No MuJoCo or FirmwareStudio stack is required.
+
+  smoke-phase7:
+    name: Smoke — Phase 7 (zenoh-clock)
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run phase 7 smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              pip install -r requirements.txt -q
+              bash test/phase7/smoke_test.sh
+            "
+
+# ── Tier 3: pytest QMP Integration Suite ─────────────────────────────────────
+#
+# Runs tools/testing/test_qmp.py which launches real QEMU instances and
+# communicates via QMP. Enforces the Phase 4 isolation constraint: no
+# -device zenoh-clock in standalone tests (validated by conftest.py).
+
+  pytest-qmp:
+    name: pytest — QMP Integration
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run pytest QMP suite
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              pip install -r requirements.txt -q
+              pytest tools/testing/test_qmp.py \
+                -v --tb=short \
+                --junitxml=test-results/pytest-qmp.xml
+            "
+
+      - name: Upload pytest results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-qmp-results
+          path: test-results/
+
+# ── Tier 3: Robot Framework Test Suite ───────────────────────────────────────
+#
+# Runs the Renode-compatible keyword suite. Covers the same scenarios as
+# pytest-qmp but via the Robot Framework compatibility layer.
+
+  robot-tests:
+    name: Robot Framework Tests
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=builder
+          load: true
+
+      - name: Run Robot Framework tests
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              pip install -r requirements.txt -q
+              robot \
+                --outputdir test-results/robot \
+                --xunit test-results/robot.xml \
+                --loglevel INFO \
+                tests/test_qmp_keywords.robot \
+                tests/test_interactive_echo.robot
+            "
+
+      - name: Upload Robot results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: robot-test-results
+          path: test-results/
