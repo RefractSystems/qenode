@@ -171,7 +171,7 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 
 ---
 
-## Phase 3.5 — YAML Platform Description & OpenUSD Alignment ✅
+## Phase 3.5 — YAML Platform Description & OpenUSD Alignment 🚧 (In Progress)
 
 **Goal**: Transition to a modern, standardized hardware description format aligned with **OpenUSD**. This phase introduced a custom YAML schema designed to map 1:1 with future OpenUSD Prims, allowing cyber-nodes and physics to coexist in a single file.
 
@@ -187,13 +187,14 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 - [x] **3.5.5** Update `scripts/run.sh`: Added polymorphic support for `--yaml` files.
 - [x] **3.5.6** Added `test/phase3.5/smoke_test.sh`: Verified the YAML pipeline end-to-end.
 - [x] **3.5.7** Updated Tutorial Lesson 3: Added content explaining the YAML format and the OpenUSD Digital Twin vision.
+- [ ] **3.5.8** Update YAML schema and `yaml2qemu.py` to support hardware definitions for the new `zenoh-chardev` (Phase 8 UART) and `mmio-socket-bridge` (Phase 9 SystemC) peripherals.
 
 **Needs from Marcin**:
 - None for this phase.
 
 ---
 
-## Phase 4 — Robot Framework QMP Library ✅
+## Phase 4 — Robot Framework QMP Library 🚧 (In Progress)
 
 **Goal**: A test automation layer that provides Renode-compatible coverage backed by QEMU's
 QMP protocol. Primary implementation is pytest + `qemu.qmp`; a `.robot` resource file is
@@ -254,6 +255,7 @@ to Phase 7 when slaved modes are active.
   - Assert pass
 
 - [x] **4.5** Write tutorial lesson 4: Emulation Test Automation with QMP and Pytest.
+- [ ] **4.6** Add UART TX support to `tools/testing/qmp_bridge.py` and `qemu_keywords.robot` (e.g., `Write To UART` keyword) to enable automated testing of the interactive echo firmware (Phase 8).
 
 ---
 
@@ -297,7 +299,7 @@ Implement after Path B is validated.
 
 ---
 
-## Phase 6 — Multi-Node Coordination ✅
+## Phase 6 — Multi-Node Coordination 🚧 (In Progress)
 
 **Goal**: Deterministic multi-node network simulation replacing Renode's `WirelessMedium`,
 implemented as a native Zenoh netdev backend inside QEMU.
@@ -321,6 +323,8 @@ delivers a UDP datagram to QEMU's receive path.
 ### Tasks
 - [x] **6.0** Write `tools/zenoh_coordinator` in Rust using Tokio + Zenoh async API to coordinate virtual time frames.
 - [x] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
+- [ ] **6.2** Update `tools/zenoh_coordinator` to subscribe and route `virtmcu/uart/*` topics, applying virtual time propagation delay for deterministic multi-node serial (Phase 8).
+- [ ] **6.3** Update `tools/zenoh_coordinator` to route SystemC shared medium messages (e.g., CAN bus frames) between nodes (Phase 9).
 
 ---
 
@@ -453,6 +457,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - Remove `cyber/src/node_agent.py` — replaced by `hw/zenoh/` native plugin
 
 - [ ] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
+- [ ] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
 
 ---
 
