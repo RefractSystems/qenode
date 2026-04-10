@@ -4,7 +4,7 @@
 #
 # This script initializes, patches, configures, and builds the QEMU emulator
 # used by the virtmcu project. It performs the following steps:
-#   1. Verifies the QEMU submodule is initialized and at the correct version.
+#   1. Clones QEMU (--depth=1) into third_party/qemu if not already present.
 #   2. Applies the 'arm-generic-fdt' patch series via `git am`.
 #   3. Applies custom AST-injection patches (libqemu and zenoh hooks) to QEMU C code.
 #   4. Symlinks the project's custom `hw/` directory into QEMU's build tree.
@@ -19,10 +19,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
-# Check if QEMU submodule has been cloned
+# Clone QEMU if not already present
+QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
+QEMU_REF="${QEMU_REF:-v10.2.92}"
+
 if [ ! -d "$QEMU_DIR/.git" ]; then
-    echo "QEMU submodule not initialized. Please run git submodule update --init --recursive"
-    exit 1
+    echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
+    mkdir -p "$WORKSPACE_DIR/third_party"
+    git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" "$QEMU_DIR"
+    cd "$QEMU_DIR"
+    git submodule update --init --recursive --depth=1
+    cd "$QEMU_DIR"
+    git config user.email "virtmcu-build@example.com"
+    git config user.name "virtmcu"
 fi
 
 cd "$QEMU_DIR"
