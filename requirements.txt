@@ -12,7 +12,7 @@ lark>=1.2
 
 # Zenoh — federation bus used by the FirmwareStudio time authority
 # (required for Phase 7: external time master / MuJoCo integration)
-eclipse-zenoh>=1.0
+eclipse-zenoh==1.8.0
 
 # Development / testing
 pytest>=8.0

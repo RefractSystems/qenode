@@ -113,6 +113,12 @@ class QemuLibrary:
             raise AssertionError(f"Pattern '{pattern}' not found on UART within {timeout}s. "
                                  f"Current buffer: {repr(self.bridge.uart_buffer)}")
 
+    def write_to_uart(self, text):
+        """
+        Writes text to the UART socket.
+        """
+        self._run(self.bridge.write_to_uart(text))
+
     def pc_should_be_equal(self, expected_pc):
         """
         Asserts that the current Program Counter is equal to the expected value.
