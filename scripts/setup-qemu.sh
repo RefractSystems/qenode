@@ -43,11 +43,50 @@ if [[ "$VERSION" != *"10.2.9"* ]] && [[ "$VERSION" != *"11.0.0-rc"* ]]; then
     exit 1
 fi
 
-# Apply the arm-generic-fdt patch series if it hasn't been applied yet
-# This enables the dynamic FDT-based machine initialization
+# Apply the arm-generic-fdt patch series if it hasn't been applied yet.
+# This enables the dynamic FDT-based machine initialization.
+#
+# We avoid plain `git am --3way` because shallow clones (--depth=1) trigger a
+# 3-way merge fallback for new-file patches, which then falsely reports "local
+# changes would be overwritten" and aborts mid-series.  Instead we use a helper
+# function that catches each per-patch failure and retries via `git apply`.
+apply_patch_series() {
+    local mbx="$1"
+
+    # Start the series.  On success for all patches this is the only invocation.
+    if git am --3way "$mbx" 2>&1; then
+        return 0
+    fi
+
+    # One or more patches failed.  Recover patch-by-patch.
+    local attempt
+    for attempt in $(seq 1 50); do
+        if ! git status 2>/dev/null | grep -q "am session"; then
+            # No longer in an am session — series finished.
+            return 0
+        fi
+
+        echo "  [am retry $attempt] applying current patch with git apply..."
+        if git am --show-current-patch=diff | git apply; then
+            git add -A
+            # --continue expects conflicts resolved and changes staged.
+            # Suppress the "no changes" hint; it just means git apply already
+            # applied everything cleanly — we still need --continue to advance.
+            git am --continue 2>&1 || true
+        else
+            echo "ERROR: git apply also failed — manual intervention needed."
+            git am --show-current-patch=diff >&2
+            return 1
+        fi
+    done
+
+    echo "ERROR: patch series did not finish after $attempt retries."
+    return 1
+}
+
 if ! git log | grep -q "arm-generic-fdt"; then
     echo "Applying arm-generic-fdt-v3 patch series..."
-    git am --3way "$WORKSPACE_DIR/patches/arm-generic-fdt-v3.mbx"
+    apply_patch_series "$WORKSPACE_DIR/patches/arm-generic-fdt-v3.mbx"
 else
     echo "arm-generic-fdt patch already applied."
 fi
