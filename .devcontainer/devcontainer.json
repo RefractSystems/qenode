@@ -13,7 +13,7 @@
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini /home/vscode/.claude && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini /home/vscode/.claude && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && echo 'source /workspace/.venv/bin/activate' >> ~/.bashrc && git submodule update --init --recursive && make setup",
   "customizations": {
     "vscode": {
       "extensions": [

@@ -36,19 +36,36 @@ sudo apt install build-essential libglib2.0-dev ninja-build python3-venv \
 
 ## First-Time Setup
 
+### Recommended: Dev Container (VS Code)
+
+Open the repo in VS Code and accept **"Reopen in Container"** when prompted.
+The devcontainer automatically:
+1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
+2. Initializes the QEMU submodule
+3. Runs `make setup` — patches and builds QEMU (~10 min, runs once)
+4. Creates the Python venv and installs dependencies
+5. Activates the venv in every new terminal
+
+Nothing else is needed. Skip to [Development Workflow](#development-workflow).
+
+### Manual Setup (macOS / Linux)
+
 ```bash
 # 1. Clone this repo
 git clone https://github.com/RefractSystems/virtmcu.git
 cd virtmcu
 
-# 2. Build QEMU with all patches applied (takes ~5 min)
+# 2. Initialize the QEMU submodule
+git submodule update --init --recursive
+
+# 3. Build QEMU with all patches applied (~10 min first run)
 make setup
 
-# 3. Set up Python environment
+# 4. Set up Python environment
 make venv
 source .venv/bin/activate
 
-# 4. Smoke-test
+# 5. Smoke-test
 make run
 ```
 
@@ -68,7 +85,7 @@ the right QEMU binary.
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash
-   ./scripts/run.sh -M arm-generic-fdt -hw-dtb tests/phase1/minimal.dtb \
+   ./scripts/run.sh --dtb test/phase1/minimal.dtb \
                     -device <your-device-name> -nographic
    ```
 6. Verify the type appears in `-device help` output.

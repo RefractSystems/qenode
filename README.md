@@ -99,7 +99,7 @@ Section 7 covers the MuJoCo time master design. Section 8 covers prior art.
 **Writing a new peripheral**: Copy `hw/dummy/dummy.c`, rename, implement MMIO ops.
 Add an entry in `hw/meson.build`. Run `make build` then:
 ```bash
-./scripts/run.sh -device your-device-name -M arm-generic-fdt -nographic
+./scripts/run.sh --dtb test/phase1/minimal.dtb -device your-device-name -nographic
 ```
 
 **Running the repl2qemu tool**:
@@ -129,7 +129,7 @@ If you aren't using Renode, you can pass standard Device Tree Source (`.dts`) or
 You can interactively dump and inspect the running QEMU Object Model (QOM) tree to verify your Device Trees and Plugins.
 First, launch QEMU with the QMP socket enabled:
 ```bash
-./scripts/run.sh -M arm-generic-fdt ... -qmp unix:qmp.sock,server,nowait
+./scripts/run.sh --dtb board.dtb ... -qmp unix:qmp.sock,server,nowait
 ```
 Then, use the probe tool:
 ```bash
@@ -144,11 +144,11 @@ compiles into QEMU. No separate Python agent process is needed. The TimeAuthorit
 in the MuJoCo container) connects directly to QEMU over Zenoh:
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
-./scripts/run.sh -M arm-generic-fdt -hw-dtb board.dtb -kernel firmware.elf \
+./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
     -device zenoh-clock,node=0,router=tcp/localhost:7447
 
 # slaved-icount (exact ns precision — only for sub-quantum hardware timer firmware)
-./scripts/run.sh -M arm-generic-fdt -hw-dtb board.dtb -kernel firmware.elf \
+./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
     -device zenoh-clock,node=0,router=tcp/localhost:7447,mode=icount \
     -icount shift=0,align=off,sleep=off
 ```
@@ -169,6 +169,14 @@ tracing), use Docker — macOS has a conflict between `--enable-modules` and
 `--enable-plugins` that breaks module loading (GitLab #516). See
 `docs/ARCHITECTURE.md §6` for the full decision table.
 
+### Recommended: Dev Container
+
+Open the repo in VS Code and accept **"Reopen in Container"**. Everything
+(submodule init, QEMU build, Python venv) runs automatically. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for details.
+
+### Manual setup
+
 ```bash
 # macOS (Homebrew)
 brew install ninja meson dtc pkg-config glib pixman b4
@@ -178,7 +186,8 @@ sudo apt install build-essential libglib2.0-dev ninja-build python3-venv \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config b4
 
 # All platforms
-make setup        # clone QEMU, apply patches, build (~5 min first run)
+git submodule update --init --recursive   # fetch QEMU source
+make setup        # apply patches, build QEMU (~10 min first run)
 make venv         # create .venv and install Python deps
 source .venv/bin/activate
 make run          # smoke-test
