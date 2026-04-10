@@ -26,23 +26,35 @@ It performs a three-step pipeline:
 
 In the `test/phase3/` directory, there is a `test_board.repl` file that describes our standard Cortex-A15 board with 128MB of RAM and a PL011 UART.
 
-Run the translation tool from the repository root:
+You can use the translator tool directly to see the conversion:
 ```bash
 source .venv/bin/activate
 python3 tools/repl2qemu/__main__.py test/phase3/test_board.repl --out-dtb test_board.dtb --print-cmd
 ```
 
-You will see output indicating that the devices were parsed, the DTS was generated, and compiled. It also prints the equivalent QEMU command line!
+## Part 2: Polymorphic Launching
 
-## Part 2: Boot the Generated Machine
+The `run.sh` script is "polymorphic"—it automatically detects the file type you pass and performs the necessary steps to get it into QEMU.
 
-Now, boot the translated machine using the `hello.elf` kernel we compiled in Lesson 1:
-
+### 1. Booting via REPL
+Pass the `.repl` file directly, and `run.sh` will call the translator for you:
 ```bash
-./scripts/run.sh --dtb test_board.dtb --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
 ```
 
-You should see `HI` printed to the console!
+### 2. Booting via Native Device Tree (DTS)
+If you aren't a Renode user, you can pass a standard Linux Device Tree source. `run.sh` will call the `dtc` compiler automatically:
+```bash
+./scripts/run.sh --dts test/phase1/minimal.dts --kernel test/phase1/hello.elf -nographic
+```
+
+### 3. Booting via Binary Blob (DTB)
+Finally, if you have a pre-compiled blob, it can be loaded directly with no overhead:
+```bash
+./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
+```
+
+In all three cases, you should see `HI` printed to the console!
 
 ## Summary
-You have successfully taken a Renode `.repl` file, translated it into a native QEMU Device Tree, and booted a bare-metal kernel on the resulting dynamic machine. This process forms the foundation of qenode's hardware definition pipeline.
+You have successfully learned how qenode provides a flexible frontend. Whether you prefer Renode's clean `.repl` syntax or the industry-standard `.dts` format, the underlying QEMU engine remains the same, providing high-performance dynamic machine emulation.

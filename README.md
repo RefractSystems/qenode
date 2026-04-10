@@ -103,9 +103,21 @@ Add an entry in `hw/meson.build`. Run `make build` then:
 ```
 
 **Running the repl2qemu tool**:
+You can use the translator directly, or simply pass your `.repl` file to the run script.
 ```bash
 source .venv/bin/activate
-python -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+# Native: boots by auto-translating the REPL to a Device Tree
+./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
+```
+
+**Using Standard Device Trees**:
+If you aren't using Renode, you can pass standard Device Tree Source (`.dts`) or Blobs (`.dtb`) directly.
+```bash
+# Auto-compiles the .dts to .dtb and boots
+./scripts/run.sh --dts test/phase1/minimal.dts --kernel test/phase1/hello.elf -nographic
+
+# Loads a pre-compiled blob directly
+./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
 ```
 
 **Probing the Object Model (Debugging)**:
