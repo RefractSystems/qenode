@@ -99,10 +99,27 @@ struct ZenohClockState {
 
     int64_t delta_ns;   /* on_query → hook: nanoseconds to advance         */
     int64_t vtime_ns;   /* hook → on_query: virtual clock after the quantum */
+    
+    int64_t mujoco_time_ns;         /* on_query → hook: current MuJoCo time */
+    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start */
 };
 
 /* One global instance — enforced in realize(); cleared in finalize(). */
 static ZenohClockState *global_zenoh_clock;
+
+static void zclock_get_quantum_timing(VirtmcuQuantumTiming *timing)
+{
+    ZenohClockState *s = global_zenoh_clock;
+    if (!s || !timing) return;
+
+    /*
+     * Read concurrently. SAL/AAL models (running in vCPU thread) can safely
+     * read this since the hook writes these variables before resuming vCPUs.
+     */
+    timing->quantum_start_vtime_ns = qatomic_read(&s->quantum_start_vtime_ns);
+    timing->quantum_delta_ns       = qatomic_read(&s->delta_ns);
+    timing->mujoco_time_ns         = qatomic_read(&s->mujoco_time_ns);
+}
 
 typedef struct __attribute__((packed)) {
     uint64_t delta_ns;
@@ -193,17 +210,21 @@ static void zclock_quantum_hook(CPUState *cpu)
 
     /* Step 7: consume quantum_ready, release mutex. */
     s->quantum_ready = false;
+    
+    int64_t next_delta = qatomic_read(&s->delta_ns);
+    qatomic_set(&s->quantum_start_vtime_ns, s->vtime_ns);
+    
     qemu_mutex_unlock(&s->mutex);
 
     /* Step 8: arm the timer for the next quantum (requires BQL). */
     bql_lock();
     if (s->is_icount) {
         int64_t current = qatomic_read(&timers_state.qemu_icount_bias);
-        qatomic_set(&timers_state.qemu_icount_bias, current + s->delta_ns);
+        qatomic_set(&timers_state.qemu_icount_bias, current + next_delta);
         qemu_clock_run_all_timers();
     }
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    timer_mod(s->quantum_timer, now + s->delta_ns);
+    timer_mod(s->quantum_timer, now + next_delta);
     bql_unlock();
 }
 
@@ -239,7 +260,9 @@ static void on_query(z_loaned_query_t *query, void *context)
      * Reset quantum_done first so the subsequent wait is not
      * spuriously satisfied by a stale true from an earlier quantum.
      */
-    s->delta_ns      = (int64_t)req.delta_ns;
+    qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
+    qatomic_set(&s->mujoco_time_ns, (int64_t)req.mujoco_time_ns);
+    
     s->quantum_done  = false;
     s->quantum_ready = true;
     qemu_cond_signal(&s->vcpu_cond);
@@ -289,6 +312,7 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     s->quantum_done  = false;
     s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zclock_timer_cb, s);
     virtmcu_tcg_quantum_hook = zclock_quantum_hook;
+    virtmcu_get_quantum_timing = zclock_get_quantum_timing;
 
     z_owned_config_t config;
     z_config_default(&config);
@@ -328,6 +352,7 @@ static void zenoh_clock_instance_finalize(Object *obj)
     }
 
     virtmcu_tcg_quantum_hook = NULL;
+    virtmcu_get_quantum_timing = NULL;
     if (s->quantum_timer) {
         timer_free(s->quantum_timer);
         s->quantum_timer = NULL;

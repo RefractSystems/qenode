@@ -25,7 +25,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # ── 2. cyber-node (QEMU + NodeAgent) ───────────────────────────────────────
+  # ── 2. cyber-node (QEMU + hw/zenoh) ───────────────────────────────────────
   cyber-node:
     build:
       context: ..
@@ -37,24 +37,17 @@ services:
     environment:
       ZENOH_ROUTER: tcp/zenoh-router:7447
       NODE_ID: "0"
-      QEMU_CLOCK_SOCKET: /tmp/qemu-clock.sock
-      # Clock mode: standalone (free-running) | slaved (icount, MuJoCo-driven)
-      CLOCK_MODE: standalone
     volumes:
       # Mount firmware from outside if needed:
       # - ../firmware:/app/firmware:ro
       # Mount tools for live development:
       - ../tools:/app/tools:ro
+      - ../test:/app/test:ro
+      - ../scripts:/app/scripts:ro
     depends_on:
       zenoh-router:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "test", "-S", "/tmp/qemu-clock.sock"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-      start_period: 10s
-    command: ["python3", "-m", "tools.node_agent"]
+    command: ["/app/scripts/run.sh", "--dtb", "/app/test/phase1/minimal.dtb", "-device", "zenoh-clock,mode=suspend,node=0"]
     tty: true
 
 networks:

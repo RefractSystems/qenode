@@ -23,7 +23,8 @@
         "ms-azuretools.vscode-containers",
         "robocorp.robotframework-lsp",
         "ms-vscode.cpptools-extension-pack",
-        "rust-lang.rust-analyzer"
+        "rust-lang.rust-analyzer",
+        "github.vscode-github-actions"
       ]
     }
   }

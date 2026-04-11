@@ -452,12 +452,12 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
   firmware timestamps are deterministic across two identical runs.
 
-- [ ] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:
+- [x] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:
   - `worlds/*.yml` Docker Compose files reference virtmcu's patched QEMU image
   - Remove `cyber/src/node_agent.py` — replaced by `hw/zenoh/` native plugin
 
-- [ ] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
-- [ ] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
+- [x] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
+- [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
 
 ---
 

@@ -65,8 +65,21 @@ def main():
 #include "hw/core/cpu.h"
 #include "net/net.h"
 
+/*
+ * Timing constraints exported to Sensor/Actuator Abstraction Layers (SAL/AAL).
+ * Used to align physics interpolation with virtual execution time.
+ */
+typedef struct {
+    int64_t quantum_start_vtime_ns;
+    int64_t quantum_delta_ns;
+    int64_t mujoco_time_ns;
+} VirtmcuQuantumTiming;
+
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
 extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+
+/* Global function to retrieve current quantum timing for SAL/AAL */
+extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
 #endif
 """
@@ -82,7 +95,7 @@ extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, 
 
     # 3. Add the function pointer definition
     marker1 = "/* main execution loop */"
-    insertion1 = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\n"
+    insertion1 = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\n"
     patch_file(cpu_exec_c, marker1, insertion1, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
