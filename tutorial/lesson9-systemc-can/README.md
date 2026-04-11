@@ -46,3 +46,218 @@ When Node 2's `SharedMedium` receives the message, it queues it. The SystemC ker
 ## Key Takeaway
 
 SystemC handles the *bus*, while QEMU handles the *CPU*. Because all communication is stamped with virtual time (`delivery_vtime_ns`), the entire multi-node simulation remains perfectly deterministic and repeatable, regardless of the host OS scheduler or network latency.
+
+---
+
+## Hands-On Walkthrough
+
+### Prerequisites
+
+- QEMU built with the `arm-generic-fdt` patches and `mmio-socket-bridge` module.
+  Run `scripts/setup-qemu.sh` if not already done.
+- CMake ≥ 3.14, a C++17 compiler, `zenoh-c` built in `third_party/zenoh-c/`.
+- `arm-none-eabi-gcc`, `dtc`, and `python3` on `PATH`.
+- `eclipse-zenoh` Python package: `pip install -r requirements.txt`
+
+### Step 1 — Build the SystemC adapter
+
+```bash
+cd tools/systemc_adapter
+cmake -B build
+cmake --build build -j$(nproc)
+# Binary: tools/systemc_adapter/build/adapter
+```
+
+The build automatically fetches SystemC 3.0.0 via CMake `FetchContent`.
+
+### Step 2 — Write single-node RegisterFile firmware
+
+This minimal firmware writes `1` to register 255 of the bridge (which triggers IRQ 0
+in the SystemC adapter), then polls the GIC pending register and prints `REG-OK`.
+
+```asm
+/* firmware/reg_irq.S */
+.equ UART0_DR,      0x09000000
+.equ BRIDGE_BASE,   0x50000000
+.equ GICD_ISPENDR1, 0x08000204   /* SPI[0..31] pending; bit 0 = SPI 0 (IRQ 32) */
+
+.global _start
+_start:
+    /* Write 1 to bridge register 255 → SystemC raises IRQ 0 */
+    ldr r0, =BRIDGE_BASE
+    add r0, r0, #(255 * 4)
+    mov r1, #1
+    str r1, [r0]
+
+poll:
+    ldr r0, =GICD_ISPENDR1
+    ldr r1, [r0]
+    tst r1, #1
+    beq poll
+
+    /* Print REG-OK */
+    ldr r0, =UART0_DR
+    adr r1, msg
+    ldmia r1, {r2-r7}
+    str r2, [r0]
+    str r3, [r0]
+    str r4, [r0]
+    str r5, [r0]
+    str r6, [r0]
+    str r7, [r0]
+1:  wfi
+    b 1b
+
+msg:  .byte 'R','E','G','-','O','K',0,0
+```
+
+```bash
+arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
+    -T test/phase9/link.ld firmware/reg_irq.S -o /tmp/reg_irq.elf
+```
+
+### Step 3 — Create the Device Tree
+
+The `mmio-socket-bridge` at `0x50000000` connects to the adapter over a UNIX socket.
+One GIC SPI interrupt is wired from the bridge to the CPU:
+
+```dts
+bridge: bridge@50000000 {
+    compatible = "mmio-socket-bridge";
+    reg = <0x0 0x50000000 0x0 0x1000>;
+    socket-path = "/tmp/test.sock";
+    region-size = <0x1000>;
+    interrupt-parent = <&gic>;
+    interrupts = <0 0 4>;   /* SPI 0, level-high → IRQ 32 */
+};
+```
+
+See `test/phase9/smoke_test.sh` for the full DTS that also adds a CPU, RAM, GIC, and
+UART — or run the smoke test directly (Step 5 below).
+
+### Step 4 — Run the single-node scenario manually
+
+Open three terminals:
+
+**Terminal 1 — Start the SystemC adapter (standalone/RegisterFile mode):**
+```bash
+tools/systemc_adapter/build/adapter /tmp/test.sock
+# Prints: [SystemC] Listening on /tmp/test.sock...
+```
+
+**Terminal 2 — Start QEMU once the socket appears:**
+```bash
+# Wait for socket, then:
+scripts/run.sh --dtb /tmp/test.dtb --kernel /tmp/reg_irq.elf \
+    -nographic -monitor none \
+    -icount shift=0,align=off,sleep=off
+```
+
+**Expected UART output (Terminal 2):**
+```
+REG-OK
+```
+
+**Expected adapter output (Terminal 1):**
+```
+[SystemC] QEMU connected.
+[SystemC] Wrote 1 to reg 255 (addr 1020)
+```
+
+### Step 5 — Run the automated smoke tests
+
+The Phase 9 smoke test exercises both scenarios (RegisterFile IRQ and CAN Zenoh RX):
+
+```bash
+bash test/phase9/smoke_test.sh
+```
+
+Expected output:
+```
+[phase9] Building SystemC adapter...
+[phase9] --- TEST 1: RegisterFile MMIO + IRQ ---
+[phase9] Starting SystemC adapter (standalone)...
+[phase9] Waiting for TEST 1 results...
+[phase9] TEST 1 SUCCESS!
+[phase9] --- TEST 2: CAN Zenoh RX → IRQ ---
+[phase9] Starting SystemC adapter (node=p9-test)...
+[phase9] Injecting Zenoh CAN frame...
+[phase9] Waiting for TEST 2 results...
+[phase9] TEST 2 SUCCESS!
+```
+
+### Step 6 — Explore the two-node CAN scenario
+
+When the adapter is started with a `node_id` argument it instantiates a `CanController`
+and `SharedMedium` instead of the plain `RegisterFile`:
+
+```bash
+# Node 1 (transmitter)
+tools/systemc_adapter/build/adapter /tmp/node1.sock node1 &
+
+# Node 2 (receiver)
+tools/systemc_adapter/build/adapter /tmp/node2.sock node2 &
+```
+
+Node 1 firmware workflow (register map for `CanController` at `BRIDGE_BASE`):
+
+| Offset | Register | R/W | Description |
+|--------|----------|-----|-------------|
+| 0x00 | TX_ID | W | CAN frame ID to transmit |
+| 0x04 | TX_DATA | W | CAN frame payload |
+| 0x08 | CMD | W | Write `1` to transmit |
+| 0x0C | STATUS | R | Bit 0: RX pending, Bit 1: TX ready |
+| 0x10 | RX_ID | R | Received CAN frame ID |
+| 0x14 | RX_DATA | R | Received CAN frame payload |
+| 0x18 | IRQ_CLR | W | Write any value to clear the RX IRQ |
+
+**Minimal Node 1 firmware snippet (ARM assembly):**
+```asm
+ldr r0, =BRIDGE_BASE
+ldr r1, =0x42        /* TX_ID = 0x42 */
+str r1, [r0, #0x00]
+ldr r1, =0xDEADBEEF  /* TX_DATA */
+str r1, [r0, #0x04]
+mov r1, #1           /* CMD: transmit */
+str r1, [r0, #0x08]
+```
+
+The `SharedMedium` publishes the frame to `sim/systemc/frame/node1/tx`.
+The `zenoh_coordinator` (started separately) routes it to `sim/systemc/frame/node2/rx`
+with a 1 ms propagation delay added to `delivery_vtime_ns`.
+
+**Starting the coordinator:**
+```bash
+# From tools/zenoh_coordinator/
+cargo run --release
+```
+
+**Injecting a frame directly for testing (no Node 1 QEMU needed):**
+```python
+import zenoh, struct
+
+s = zenoh.open(zenoh.Config())
+pub = s.declare_publisher("sim/systemc/frame/node2/rx")
+
+# CanWireFrame: delivery_vtime_ns(8) + size(4) + can_id(4) + can_data(4) = 20 bytes
+frame = struct.pack("<QIII", 1_000_000, 8, 0x42, 0xDEADBEEF)
+pub.put(frame)
+s.close()
+```
+
+### Debugging Tips
+
+**IRQ not firing?**
+- Check `GICD_ISPENDR1` (offset 0x204 from `GICD_BASE`). Bit N = SPI N pending.
+- The DTS `interrupts = <0 0 4>` maps to `s->irqs[0]` in the bridge → IRQ 32 in the GIC.
+- Verify the adapter's `trigger_irq(0, true)` log line: `[SystemC] Wrote 1 to reg 255`.
+
+**MMIO read returns 0?**
+- Ensure the adapter is running *before* QEMU connects (socket must exist).
+- Add `-d guest_errors` to QEMU to surface MMIO address errors.
+
+**CAN frame not delivered?**
+- Check that `delivery_vtime_ns` is non-zero in the published frame.
+- The `process_rx` SC_THREAD only delivers after `sc_time_stamp()` reaches the delivery
+  time. If the adapter's SystemC clock is behind, the frame queues silently.
+- Inspect with: `zenoh_coordinator` logs show routed frames with their vtime stamps.
