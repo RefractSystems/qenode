@@ -20,4 +20,6 @@ set(ENABLE_PHASE_CALLBACKS ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(systemc)
 
 add_executable(adapter main.cpp)
-target_link_libraries(adapter PRIVATE SystemC::systemc)
+target_include_directories(adapter PRIVATE ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/include)
+target_link_directories(adapter PRIVATE ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/lib)
+target_link_libraries(adapter PRIVATE SystemC::systemc zenohc)
