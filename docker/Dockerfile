@@ -209,7 +209,7 @@ COPY --from=builder /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
 
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
 
 # Copy Python tooling
 COPY tools/ /app/tools/
