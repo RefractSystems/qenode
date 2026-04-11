@@ -493,11 +493,11 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Align with the Research Team's "Cyber-Physical Bridge" architecture. Implement standardized sensor/actuator abstraction layers and support industry-standard telemetry formats.
 
 **Tasks**:
-- [ ] **10.1** **SAL/AAL Abstraction Interfaces**: Define C++ base classes for Sensor and Actuator Abstraction Layers (SAL/AAL) to provide a stable target for MuJoCo and RESD backends.
-- [ ] **10.2** **RESD Ingestion Engine**: Implement a native parser for **Renode Sensor Data (RESD)** format to support high-throughput, deterministic telemetry replay in standalone mode.
-- [ ] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
-- [ ] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
-- [ ] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+- [x] **10.1** **SAL/AAL Abstraction Interfaces**: Define C++ base classes for Sensor and Actuator Abstraction Layers (SAL/AAL) to provide a stable target for MuJoCo and RESD backends.
+- [x] **10.2** **RESD Ingestion Engine**: Implement a native parser for **Renode Sensor Data (RESD)** format to support high-throughput, deterministic telemetry replay in standalone mode.
+- [x] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
+- [x] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
+- [x] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
 
 ---
 

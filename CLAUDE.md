@@ -43,7 +43,7 @@ lockstep with the physical world. Specifically, it provides:
 | 7 | Native Zenoh clock plugin + FirmwareStudio integration | **Done** |
 | 8 | Deterministic multi-node UART (zenoh-chardev) | **Done** |
 | 9 | Advanced co-simulation (shared physical media) | **Done** |
-| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | To Do |
+| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
 
 See `PLAN.md` for the per-task checklist.
 
