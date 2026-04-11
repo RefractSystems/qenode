@@ -47,6 +47,10 @@ services:
     depends_on:
       zenoh-router:
         condition: service_healthy
+    # NOTE: No -kernel is provided here. QEMU executes from the reset vector but
+    # has no meaningful firmware; the zenoh-clock hook fires at the first TB
+    # boundary and blocks the vCPU waiting for a clock advance. Overlays (like
+    # pendulum.yml) should override this command to supply a -kernel.
     command: ["/app/scripts/run.sh", "--dtb", "/app/test/phase1/minimal.dtb", "-device", "zenoh-clock,mode=suspend,node=0"]
     tty: true
 
