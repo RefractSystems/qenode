@@ -129,8 +129,9 @@ echo "[phase10] TEST 2 PASSED — RESD parser correctly reads samples"
 # Verify it prints the sensor count / last-timestamp line and fails gracefully.
 # ==============================================================================
 echo "[phase10] TEST 3: resd_replay startup + empty-file rejection..."
-"$BUILD_DIR/resd_replay" /nonexistent.resd 0 2>&1 | grep -q "Failed to parse" \
-    || { echo "FAIL: expected parse-failure message"; exit 1; }
+REPLAY_OUT=$("$BUILD_DIR/resd_replay" /nonexistent.resd 0 2>&1 || true)
+echo "$REPLAY_OUT" | grep -q "Failed to parse" \
+    || { echo "FAIL: expected parse-failure message; got: $REPLAY_OUT"; exit 1; }
 echo "[phase10] TEST 3 PASSED — resd_replay rejects missing file"
 
 # ==============================================================================
