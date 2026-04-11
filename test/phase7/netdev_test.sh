@@ -198,4 +198,13 @@ session.close()
 print("PASS: Zenoh netdev RX path functional — timer fired, no deadlock, vtimes monotone.")
 PY_EOF
 
+# ── Verification of the log message ──────────────────────────────────────────
+if grep -q "zenoh-netdev: sending RX packet to guest, size=14" "$TMPDIR_LOCAL/qemu.log"; then
+    echo "SUCCESS: Found packet delivery log message."
+else
+    echo "FAIL: Packet delivery log message not found in qemu.log" >&2
+    cat "$TMPDIR_LOCAL/qemu.log" >&2
+    exit 1
+fi
+
 echo "=== Phase 7 netdev test PASSED ==="

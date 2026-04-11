@@ -93,6 +93,7 @@ static void rx_timer_cb(void *opaque)
             s->rx_count--;
             
             qemu_mutex_unlock(&s->mutex);
+            fprintf(stderr, "zenoh-netdev: sending RX packet to guest, size=%zu\n", size);
             qemu_send_packet(&s->nc, data, size);
             g_free(data);
             qemu_mutex_lock(&s->mutex);

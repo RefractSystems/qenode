@@ -252,6 +252,13 @@ static void on_query(z_loaned_query_t *query, void *context)
     /*
      * Coordinate with the vCPU hook.
      * NEVER call bql_lock() in this path.
+     *
+     * DESIGN NOTE: PLAN.md originally proposed that icount mode should
+     * reply immediately in on_query. However, this breaks deterministic
+     * memory queries via QMP (as seen in determinism_test.sh) because
+     * the TimeAuthority proceeds before QEMU has actually finished its
+     * instructions. We therefore use the same synchronous hook handshake
+     * for both modes to guarantee strict causal consistency.
      */
     qemu_mutex_lock(&s->mutex);
 

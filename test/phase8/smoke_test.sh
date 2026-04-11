@@ -1,12 +1,15 @@
 #!/bin/bash
 set -e
 
-source .venv/bin/activate
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+source "$WORKSPACE_DIR/.venv/bin/activate"
 
 echo "==> Building Zenoh Coordinator"
 export PATH="$HOME/.cargo/bin:$PATH"
-cd tools/zenoh_coordinator && cargo build
-cd ../..
+(cd "$WORKSPACE_DIR/tools/zenoh_coordinator" && cargo build)
 
 echo "==> Running Interactive Echo Test"
-pytest tests/test_interactive_echo.robot -v
+export PYTHONPATH="$WORKSPACE_DIR"
+robot --outputdir "$WORKSPACE_DIR/test/phase8/results" "$WORKSPACE_DIR/tests/test_interactive_echo.robot"

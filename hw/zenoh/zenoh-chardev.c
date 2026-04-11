@@ -223,10 +223,7 @@ static const TypeInfo char_zenoh_type_info = {
     .class_init = char_zenoh_class_init,
 };
 
-static void register_types(void)
-{
-    type_register_static(&char_zenoh_type_info);
-}
+static const TypeInfo char_zenoh_types[] = { char_zenoh_type_info };
 
-type_init(register_types);
+DEFINE_TYPES(char_zenoh_types)
 module_obj(TYPE_CHARDEV_ZENOH);
