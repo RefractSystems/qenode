@@ -46,6 +46,14 @@ elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
     export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
+if [ -d "/build/zenoh-c/lib" ]; then
+    export LD_LIBRARY_PATH="/build/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if [ -d "/opt/virtmcu/lib" ]; then
+    export LD_LIBRARY_PATH="/opt/virtmcu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 # Ensure QEMU has been built
 if [ ! -f "$QEMU_BIN" ]; then
     echo "QEMU binary not found at $QEMU_BIN. Please run setup-qemu.sh first."

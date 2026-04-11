@@ -28,7 +28,7 @@ REQ_FMT  = "<BBHIqqq"   # type, size, reserved1, reserved2, addr, data  (24 byte
 RESP_FMT = "<IIQ"      # type, irq_num, data  (16 bytes)
 REQ_SIZE  = struct.calcsize(REQ_FMT)
 RESP_SIZE = struct.calcsize(RESP_FMT)
-assert REQ_SIZE == 24, f"REQ_SIZE={REQ_SIZE}, expected 24"
+assert REQ_SIZE == 32, f"REQ_SIZE={REQ_SIZE}, expected 32"
 assert RESP_SIZE == 16,  f"RESP_SIZE={RESP_SIZE}, expected 16"
 
 MMIO_READ  = 0

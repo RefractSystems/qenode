@@ -164,7 +164,7 @@ jobs:
           - phase: "3"
             pre: ":"
           - phase: "3.5"
-            pre: ":"
+            pre: "pip install --break-system-packages -r requirements.txt -q"
           # Phase 4: pytest + robot run directly (no venv); needs packages on PATH
           - phase: "4"
             pre: "pip install --break-system-packages -r requirements.txt -q"
