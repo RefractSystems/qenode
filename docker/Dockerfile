@@ -158,6 +158,10 @@ RUN cd qemu && python3 /build/patches/apply_zenoh_hook.py .
 # These generate NET_CLIENT_DRIVER_ZENOH, NetdevZenohOptions, etc. used by hw/zenoh/.
 RUN cd qemu && python3 /build/patches/apply_zenoh_qapi.py .
 
+# Register backends in net/net.c and chardev/char.c
+RUN cd qemu && python3 /build/patches/apply_zenoh_netdev.py .
+RUN cd qemu && python3 /build/patches/apply_zenoh_chardev.py .
+
 # Copy virtmcu hw/ sources and integrate into QEMU's build
 COPY hw/ /build/virtmcu-hw/
 RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
