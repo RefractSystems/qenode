@@ -53,6 +53,7 @@ def main():
 #include "qapi/error.h"
 #include "virtmcu/hooks.h"
 #include "qemu/module.h"
+#include "qom/object.h"
 
 int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp) = NULL;
 
@@ -61,6 +62,10 @@ int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer,
     /* QEMU modules are loaded by object types. Try to load the module providing zenoh-netdev */
     if (!virtmcu_zenoh_netdev_hook) {
         module_load_qom("zenoh-netdev", NULL);
+        /* Force class_init to run and register the hook */
+        if (object_class_by_name("zenoh-netdev")) {
+            /* success */
+        }
     }
 
     if (virtmcu_zenoh_netdev_hook) {
