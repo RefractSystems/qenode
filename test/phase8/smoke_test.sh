@@ -11,8 +11,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 (cd "$WORKSPACE_DIR/tools/zenoh_coordinator" && cargo build)
 
 # Ensure Phase 1 artifacts are built as they are used by the Robot test
-if [ ! -f "$WORKSPACE_DIR/test/phase1/minimal.dtb" ]; then
-    echo "minimal.dtb not found. Building Phase 1 first..."
+if [ ! -f "$WORKSPACE_DIR/test/phase1/minimal.dtb" ] || [ ! -f "$WORKSPACE_DIR/test/phase1/hello.elf" ]; then
+    echo "Phase 1 artifacts not found. Building Phase 1 first..."
     make -C "$WORKSPACE_DIR/test/phase1"
 fi
 

@@ -20,6 +20,11 @@ if [ ! -f "$YAML_FILE" ]; then
     exit 1
 fi
 
+if [ ! -f "$KERNEL" ]; then
+    echo "Kernel not found. Building Phase 1 first..."
+    make -C "$WORKSPACE_DIR/test/phase1"
+fi
+
 echo "Running Phase 3.5 smoke test (YAML platform parsing)..."
 
 # 1. Boot QEMU with the YAML platform directly
