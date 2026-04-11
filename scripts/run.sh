@@ -123,7 +123,7 @@ CMD+=("${EXTRA_ARGS[@]}")
 # Export QEMU_MODULE_DIR so the QEMU binary picks it up
 export QEMU_MODULE_DIR
 
-echo "Running: ${CMD[@]}"
+echo "Running: ${CMD[*]}"
 
 # If we have a temporary DTB, we must run QEMU as a child process and trap
 # signals to ensure the file is cleaned up.

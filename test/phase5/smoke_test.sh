@@ -61,7 +61,7 @@ echo "[phase5] Starting SystemC adapter on $SOCK_PATH..."
 ADAPTER_PID=$!
 
 # Poll for the socket file (adapter calls bind() before printing its message)
-for i in $(seq 1 50); do
+for _ in $(seq 1 50); do
     [ -S "$SOCK_PATH" ] && break
     sleep 0.1
 done
@@ -152,7 +152,7 @@ QEMU_PID=$!
 # ── 6. Wait for adapter to log the expected transactions ─────────────────────
 echo "[phase5] Waiting for firmware transactions..."
 PASSED=false
-for i in $(seq 1 50); do
+for _ in $(seq 1 50); do
     if grep -q "Wrote deadbeef to reg 0" "$ADAPTER_LOG" 2>/dev/null && \
        grep -q "Read deadbeef from reg 0"  "$ADAPTER_LOG" 2>/dev/null; then
         PASSED=true

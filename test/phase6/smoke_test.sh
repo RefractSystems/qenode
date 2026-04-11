@@ -18,6 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Building Zenoh Coordinator..."
+# shellcheck source=/dev/null
 source ~/.cargo/env
 cd "$WORKSPACE_DIR/tools/zenoh_coordinator"
 cargo build --release > /dev/null 2>&1

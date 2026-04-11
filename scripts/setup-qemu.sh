@@ -147,7 +147,7 @@ else
 fi
 
 # Compile QEMU using all available CPU cores
-make -j$(nproc)
+make -j"$(nproc)"
 # Install QEMU binaries to the prefix directory (build-virtmcu/install)
 make install
 echo "QEMU build and install completed successfully."
