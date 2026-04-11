@@ -36,6 +36,11 @@ public:
 
     void add_sample(uint64_t timestamp, const std::vector<int32_t>& data);
 
+    // Returns the timestamp of the last sample (ns), or 0 if empty.
+    uint64_t last_timestamp() const {
+        return samples_.empty() ? 0 : samples_.back().timestamp_ns;
+    }
+
 private:
     std::string name_;
     ResdSampleType type_;
@@ -55,6 +60,14 @@ public:
     void register_actuator(Actuator* actuator) override {}
 
     std::shared_ptr<ResdSensor> get_sensor(ResdSampleType type, uint16_t channel);
+
+    // Returns all sensors parsed from the file, keyed by (type, channel).
+    const std::map<std::pair<ResdSampleType, uint16_t>, std::shared_ptr<ResdSensor>>&
+    get_all_sensors() const { return sensors_; }
+
+    // Returns the maximum sample timestamp across all sensors (nanoseconds).
+    // Returns 0 if no samples were parsed. Used to detect end-of-replay.
+    uint64_t get_last_timestamp() const;
 
 private:
     bool parse();

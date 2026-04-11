@@ -51,6 +51,14 @@ std::shared_ptr<ResdSensor> ResdParser::get_sensor(ResdSampleType type, uint16_t
     return sensor;
 }
 
+uint64_t ResdParser::get_last_timestamp() const {
+    uint64_t max_ts = 0;
+    for (const auto& kv : sensors_) {
+        max_ts = std::max(max_ts, kv.second->last_timestamp());
+    }
+    return max_ts;
+}
+
 bool ResdParser::parse() {
     std::ifstream file(filename_, std::ios::binary);
     if (!file.is_open()) {
