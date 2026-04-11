@@ -92,16 +92,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Node.js 22 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code via native installer (as vscode user so auto-update works)
 # npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
 USER vscode
 RUN curl -fsSL https://claude.ai/install.sh | bash
+# hadolint ignore=DL3002
 USER root
 
 # Install Gemini CLI (requires node/npm, installed above)
+# hadolint ignore=DL3016
 RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspace
@@ -125,6 +127,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Clone QEMU before COPYing local files so that patch/hw changes do not bust
 # this expensive layer. Cache key: QEMU_REF arg.
+# hadolint ignore=DL3003
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
     && cd qemu \
     && git submodule update --init --recursive --depth=1
@@ -148,20 +151,25 @@ RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
 COPY patches/ /build/patches/
 
 # Apply arm-generic-fdt v3 patch series
+# hadolint ignore=DL3003
 RUN cd qemu \
     && git config user.email "virtmcu-build@example.com" \
     && git config user.name "virtmcu" \
     && git am --3way /build/patches/arm-generic-fdt-v3.mbx
 
 # Inject virtmcu_tcg_quantum_hook into cpu-exec.c (required by hw/zenoh/)
+# hadolint ignore=DL3003
 RUN cd qemu && python3 /build/patches/apply_zenoh_hook.py .
 
 # Inject Zenoh netdev/chardev types into QEMU's QAPI schemas (net.json, char.json).
 # These generate NET_CLIENT_DRIVER_ZENOH, NetdevZenohOptions, etc. used by hw/zenoh/.
+# hadolint ignore=DL3003
 RUN cd qemu && python3 /build/patches/apply_zenoh_qapi.py .
 
 # Register backends in net/net.c and chardev/char.c
+# hadolint ignore=DL3003
 RUN cd qemu && python3 /build/patches/apply_zenoh_netdev.py .
+# hadolint ignore=DL3003
 RUN cd qemu && python3 /build/patches/apply_zenoh_chardev.py .
 
 # Copy virtmcu hw/ sources and integrate into QEMU's build
@@ -172,6 +180,7 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
           >> /build/qemu/hw/meson.build
 
 # Configure and build
+# hadolint ignore=DL3003
 RUN cd qemu \
     && ./configure \
         --prefix=/opt/virtmcu \
