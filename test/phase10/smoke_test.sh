@@ -139,9 +139,8 @@ echo "[phase10] TEST 3 PASSED — resd_replay rejects missing file"
 # Start the bridge briefly and verify it creates the shm segment.
 # ==============================================================================
 echo "[phase10] TEST 4: mujoco_bridge shared memory creation..."
-SHM_NAME="/virtmcu_mujoco_99"
 # Clean up any leftover segment
-( ls /dev/shm/ 2>/dev/null | grep -q "virtmcu_mujoco_99" && rm -f /dev/shm/virtmcu_mujoco_99 ) || true
+if [ -e /dev/shm/virtmcu_mujoco_99 ]; then rm -f /dev/shm/virtmcu_mujoco_99; fi
 
 "$BUILD_DIR/mujoco_bridge" 99 2 6 > "$TMP/bridge.log" 2>&1 &
 BRIDGE_PID=$!
