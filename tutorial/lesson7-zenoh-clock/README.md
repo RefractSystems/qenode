@@ -45,15 +45,15 @@ TimeAuthority receives reply: current_vtime_ns
 -device zenoh-clock,mode=suspend,node=0
 ```
 
-TCG runs at **full host speed** between quanta.  At each TB boundary the hook
-checks whether the virtual timer has fired.  When it has:
+TCG runs at **full host speed** between quanta. At each TB boundary the hook
+checks whether the virtual timer has fired. The sequence of operations is:
 
-1. The hook snapshots the current virtual time under BQL.
-2. The hook releases BQL and blocks on a condition variable.
-3. `on_query` (Zenoh thread) wakes, reads `vtime_ns`, sends the reply to TimeAuthority.
-4. The next `on_query` arrives with a new `delta_ns`.
-5. The hook wakes, re-acquires BQL, arms the timer for `now + delta_ns`, and returns.
-6. The vCPU continues executing until the timer fires again.
+1. The `TimeAuthority` sends a `delta_ns` via Zenoh. `on_query` deposits this delta, wakes the hook, and blocks waiting for the quantum to complete.
+2. The hook wakes, re-acquires BQL, arms the timer for `now + delta_ns`, and returns.
+3. The vCPU continues executing at full speed until the timer fires.
+4. The timer callback forces the vCPU to exit and re-enter the hook.
+5. The hook snapshots the new virtual time, signals `on_query`, releases BQL, and blocks waiting for the next delta.
+6. `on_query` wakes, reads the new `vtime_ns`, and sends the Zenoh reply back to the `TimeAuthority`.
 
 Use suspend mode unless firmware measures intervals shorter than one physics quantum.
 It gives ~95% of unconstrained TCG speed.
@@ -65,9 +65,7 @@ It gives ~95% of unconstrained TCG speed.
 -device zenoh-clock,mode=icount,node=0
 ```
 
-QEMU's instruction counter drives virtual time.  `on_query` directly advances
-`timers_state.qemu_icount_bias` by `delta_ns` under BQL.  No cooperative hook needed.
-Use this when firmware timestamps need sub-quantum precision.
+QEMU's instruction counter drives virtual time. `on_query` performs the exact same handshake as suspend mode to guarantee strict causal consistency. The `qemu_icount_bias` is advanced in Step 8 of the hook (after the handshake), not directly in `on_query`. The TimeAuthority waits for the hook to complete the quantum before receiving a reply. Use this when firmware timestamps need sub-quantum precision.
 
 ---
 
@@ -178,11 +176,9 @@ QEMU realize()
     ▼
 vCPU starts ──► hook() [needs_quantum=true]
                    │ capture vtime_ns, set quantum_done
-                   │ release BQL, wait on vcpu_cond
+                   │ release BQL, wait on vcpu_cond (blocks until next query)
                    ▼
-            [blocked — waiting for TimeAuthority]
-                   │
-    on_query() ◄───┘  (Zenoh: TimeAuthority sends delta_ns)
+    on_query() ◄───┘ (Zenoh: TimeAuthority sends delta_ns)
         │ store delta_ns, set quantum_ready, signal vcpu_cond
         │ wait on query_cond
         ▼
@@ -192,7 +188,13 @@ vCPU starts ──► hook() [needs_quantum=true]
         ▼
     timer fires ──► timer_cb() sets needs_quantum, cpu_exit()
         │
-    hook() [needs_quantum=true]  ──► (repeat from top)
+    hook() [needs_quantum=true]
+        │ capture vtime_ns, set quantum_done, signal query_cond
+        │ release BQL, wait on vcpu_cond (blocks until next query)
+        ▼
+    on_query() wakes
+        │ read vtime_ns
+        │ send Zenoh reply (current_vtime_ns) ──► TimeAuthority
 ```
 
 ---

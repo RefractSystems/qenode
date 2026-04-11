@@ -93,10 +93,14 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     insertion0 = '\n#include "virtmcu/hooks.h"'
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Add the function pointer definition
-    marker1 = "/* main execution loop */"
-    insertion1 = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\n"
-    patch_file(cpu_exec_c, marker1, insertion1, after=True)
+    # 3. Add the function pointer definitions separately for idempotency
+    marker1_a = "/* main execution loop */"
+    insertion1_a = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\n"
+    patch_file(cpu_exec_c, marker1_a, insertion1_a, after=True)
+
+    marker1_b = "void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;"
+    insertion1_b = "\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\n"
+    patch_file(cpu_exec_c, marker1_b, insertion1_b, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
     # We use a more specific marker to ensure correct placement and indentation

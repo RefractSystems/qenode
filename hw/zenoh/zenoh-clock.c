@@ -27,10 +27,9 @@
  *
  * icount:
  *   QEMU is started with -icount shift=0,align=off,sleep=off.
- *   on_query directly advances qemu_icount_bias under BQL and replies
- *   immediately.  The cooperative hook is disabled in this mode.
- *   BQL acquisition from the Zenoh thread is safe in icount mode because
- *   the hook is a no-op, eliminating the BQL→mutex dependency.
+ *   on_query performs the exact same handshake as suspend mode to ensure
+ *   strict causal consistency. The qemu_icount_bias is advanced in Step 8
+ *   of the hook, not directly in on_query.
  */
 #include "qemu/osdep.h"
 #include "qemu/seqlock.h"
@@ -101,7 +100,7 @@ struct ZenohClockState {
     int64_t vtime_ns;   /* hook → on_query: virtual clock after the quantum */
     
     int64_t mujoco_time_ns;         /* on_query → hook: current MuJoCo time */
-    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start */
+    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start. Pair with delta_ns to interpolate: interpolated_ns = quantum_start_vtime_ns + fraction * delta_ns. */
 };
 
 /* One global instance — enforced in realize(); cleared in finalize(). */
