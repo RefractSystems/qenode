@@ -12,6 +12,7 @@ from tools.testing.qmp_bridge import QmpBridge
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 @pytest_asyncio.fixture
 async def qemu_launcher():
     """
@@ -37,12 +38,17 @@ async def qemu_launcher():
 
         # Add QMP and UART sockets
         # Note: we use 'server,nowait' because QEMU should start and wait for us
-        cmd.extend([
-            "-qmp", f"unix:{qmp_sock},server,nowait",
-            "-serial", f"unix:{uart_sock},server,nowait",
-            "-display", "none",
-            "-nographic"
-        ])
+        cmd.extend(
+            [
+                "-qmp",
+                f"unix:{qmp_sock},server,nowait",
+                "-serial",
+                f"unix:{uart_sock},server,nowait",
+                "-display",
+                "none",
+                "-nographic",
+            ]
+        )
 
         if extra_args:
             cmd.extend(extra_args)
@@ -50,17 +56,16 @@ async def qemu_launcher():
         # Task 4.1b: Critical isolation constraint - standalone mode only
         for arg in cmd:
             if "zenoh-clock" in arg:
-                raise ValueError("zenoh-clock device detected in standalone test suite. "
-                                 "Phase 4 tests must run without external clock plugins.")
+                raise ValueError(
+                    "zenoh-clock device detected in standalone test suite. "
+                    "Phase 4 tests must run without external clock plugins."
+                )
 
         logger.info(f"Launching QEMU: {' '.join(cmd)}")
 
         # Start the process
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy()
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=os.environ.copy()
         )
 
         # Wait for sockets to be created by QEMU.
@@ -88,11 +93,7 @@ async def qemu_launcher():
         bridge = QmpBridge()
         await bridge.connect(qmp_sock, uart_sock)
 
-        instance = {
-            "proc": proc,
-            "bridge": bridge,
-            "tmpdir": tmpdir
-        }
+        instance = {"proc": proc, "bridge": bridge, "tmpdir": tmpdir}
         instances.append(instance)
         return bridge
 
@@ -115,6 +116,7 @@ async def qemu_launcher():
                 await proc.wait()
 
         shutil.rmtree(inst["tmpdir"], ignore_errors=True)
+
 
 @pytest_asyncio.fixture
 async def qmp_bridge(qemu_launcher):

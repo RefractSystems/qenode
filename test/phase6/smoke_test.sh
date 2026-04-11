@@ -12,12 +12,13 @@ WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR_LOCAL="$(mktemp -d /tmp/phase6_XXXXXX)"
 
 cleanup() {
-    kill "$COORD_PID" 2>/dev/null || true
+    kill "${COORD_PID:-}" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 
 echo "Building Zenoh Coordinator..."
+# shellcheck source=/dev/null
 source ~/.cargo/env
 cd "$WORKSPACE_DIR/tools/zenoh_coordinator"
 cargo build --release > /dev/null 2>&1

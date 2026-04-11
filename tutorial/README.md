@@ -28,4 +28,14 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 *   **[Lesson 6: Deterministic Multi-Node Networking](./lesson6-multi-node/README.md)**
     Explore how virtmcu handles multi-node coordination with absolute determinism, replacing the traditional `WirelessMedium` typically found in Renode, and allowing multiple independent QEMU instances to communicate reliably without losing deterministic execution.
 
-*(More lessons will be added as we continue to build out the framework!)*
+*   **[Lesson 7: Zenoh Clock: Deterministic Co-simulation Time Synchronization](./lesson7-zenoh-clock/README.md)**
+    Understand how QEMU can run as a **time slave** to an external physics simulation (like MuJoCo) using the native Zenoh clock plugin (`zenoh-clock`) to enforce causal correctness.
+
+*   **[Lesson 8: Deterministic Multi-Node UART](./lesson8-interactive-uart/README.md)**
+    Explore how `zenoh-chardev` extends the virtual-timestamp model to serial ports, enabling deterministic multi-node UART communication and human-in-the-loop interactivity.
+
+*   **[Lesson 9: Advanced Co-Simulation (SystemC CAN)](./lesson9-systemc-can/README.md)**
+    Learn how to build a complex, multi-threaded SystemC adapter that translates Zenoh network messages into TLM-2.0 transactions for a simulated CAN controller and shared physical medium.
+
+*   **[Lesson 10: The Cyber-Physical Bridge (SAL/AAL)](./lesson10-sal-aal/README.md)**
+    Discover the Sensor/Actuator Abstraction Layer (SAL/AAL), which translates between the binary register world of firmware and the continuous physical properties of a physics simulation or prerecorded data stream (RESD).

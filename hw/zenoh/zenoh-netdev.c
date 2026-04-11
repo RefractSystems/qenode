@@ -1,3 +1,26 @@
+/*
+ * hw/zenoh/zenoh-netdev.c — Deterministic Multi-Node Ethernet Backend
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * This file implements a custom QEMU `-netdev` backend that uses Zenoh as the
+ * transport layer instead of traditional UDP/TCP sockets. This is critical for
+ * deterministic multi-node simulation.
+ *
+ * How it works:
+ * 1. On TX: When the guest NIC sends an Ethernet frame, this backend prefixes
+ *    it with a `ZenohFrameHeader` containing the exact `QEMU_CLOCK_VIRTUAL`
+ *    time. The frame is then published to `sim/eth/frame/{src_node}/tx`.
+ * 2. On RX: A Zenoh subscriber listens for incoming frames. Instead of
+ *    injecting them immediately (which would introduce wall-clock jitter), it
+ *    reads the `delivery_vtime_ns` timestamp from the header. It then arms a
+ *    QEMUTimer to fire at exactly that virtual time. Only when the virtual
+ *    clock reaches the delivery time is the frame injected into the guest NIC
+ *    via `qemu_send_packet`.
+ *
+ * This guarantees that network events are causally ordered by virtual time
+ * across all nodes, regardless of host scheduling or network latency.
+ */
 #include "qemu/osdep.h"
 #include "net/net.h"
 #include "net/clients.h"
@@ -38,8 +61,11 @@ static void push_rx_frame(ZenohNetdevState *s, uint64_t vtime, const uint8_t *da
 {
     qemu_mutex_lock(&s->mutex);
     if (s->rx_count < 64) {
-        /* Insertion sort into rx_queue (lowest delivery_vtime at the end of the array, so we can pop from the end) */
-        /* Wait, popping from the end is O(1). Let's keep highest vtime at index 0, lowest at index rx_count-1 */
+        /*
+         * Insertion sort into rx_queue.
+         * The queue is sorted in descending order (highest vtime at index 0,
+         * lowest vtime at index rx_count-1) to allow O(1) popping from the end.
+         */
         int i = s->rx_count - 1;
         while (i >= 0 && s->rx_queue[i].delivery_vtime < vtime) {
             s->rx_queue[i + 1] = s->rx_queue[i];
@@ -90,6 +116,7 @@ static void rx_timer_cb(void *opaque)
             s->rx_count--;
             
             qemu_mutex_unlock(&s->mutex);
+            fprintf(stderr, "zenoh-netdev: sending RX packet to guest, size=%zu\n", size);
             qemu_send_packet(&s->nc, data, size);
             g_free(data);
             qemu_mutex_lock(&s->mutex);
@@ -123,6 +150,11 @@ static ssize_t zenoh_netdev_receive(NetClientState *nc, const uint8_t *buf, size
     return size;
 }
 
+static bool zenoh_netdev_can_receive(NetClientState *nc)
+{
+    return true;
+}
+
 static void zenoh_netdev_cleanup(NetClientState *nc)
 {
     ZenohNetdevState *s = DO_UPCAST(ZenohNetdevState, nc, nc);
@@ -140,6 +172,7 @@ static void zenoh_netdev_cleanup(NetClientState *nc)
 static NetClientInfo net_zenoh_info = {
     .type = NET_CLIENT_DRIVER_ZENOH,
     .size = sizeof(ZenohNetdevState),
+    .can_receive = zenoh_netdev_can_receive,
     .receive = zenoh_netdev_receive,
     .cleanup = zenoh_netdev_cleanup,
 };
@@ -198,17 +231,14 @@ static void zenoh_netdev_class_init(ObjectClass *klass, const void *data)
     virtmcu_zenoh_netdev_hook = zenoh_netdev_hook;
 }
 
-static const TypeInfo zenoh_netdev_info = {
-    .name          = TYPE_ZENOH_NETDEV,
-    .parent        = TYPE_OBJECT,
-    .instance_size = sizeof(ZenohNetdevQOM),
-    .class_init    = zenoh_netdev_class_init,
+static const TypeInfo zenoh_netdev_types[] = {
+    {
+        .name          = TYPE_ZENOH_NETDEV,
+        .parent        = TYPE_OBJECT,
+        .instance_size = sizeof(ZenohNetdevQOM),
+        .class_init    = zenoh_netdev_class_init,
+    }
 };
 
-static void zenoh_netdev_register_types(void)
-{
-    type_register_static(&zenoh_netdev_info);
-}
-
-type_init(zenoh_netdev_register_types)
+DEFINE_TYPES(zenoh_netdev_types)
 module_obj(TYPE_ZENOH_NETDEV);

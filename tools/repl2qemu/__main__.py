@@ -39,5 +39,6 @@ def main():
         print("\nQEMU Command:")
         print("qemu-system-arm " + " ".join(cli))
 
+
 if __name__ == "__main__":
     main()

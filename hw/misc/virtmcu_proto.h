@@ -7,11 +7,12 @@
  *
  * Protocol (little-endian, native host byte order — both sides assumed x86_64):
  *
- *   Request  (QEMU → adapter, sizeof = 24 bytes):
+ *   Request  (QEMU → adapter, sizeof = 32 bytes):
  *     uint8_t  type;       0 = read, 1 = write
  *     uint8_t  size;       access width in bytes: 1, 2, 4, or 8
  *     uint16_t reserved1;  must be zero
  *     uint32_t reserved2;  must be zero
+ *     uint64_t vtime_ns;   QEMU virtual time in nanoseconds
  *     uint64_t addr;       byte offset within the mapped region
  *     uint64_t data;       write value (ignored for reads)
  *
@@ -36,6 +37,7 @@ struct mmio_req {
     uint8_t  size;
     uint16_t reserved1;
     uint32_t reserved2;
+    uint64_t vtime_ns;
     uint64_t addr;
     uint64_t data;
 } __attribute__((packed));

@@ -20,4 +20,8 @@ set(ENABLE_PHASE_CALLBACKS ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(systemc)
 
 add_executable(adapter main.cpp)
-target_link_libraries(adapter PRIVATE SystemC::systemc)
+find_path(ZENOH_INCLUDE_DIR zenoh.h PATHS /build/zenoh-c/include /opt/virtmcu/include ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/include)
+find_library(ZENOH_LIBRARY zenohc PATHS /build/zenoh-c/lib /opt/virtmcu/lib ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/lib)
+
+target_include_directories(adapter PRIVATE ${ZENOH_INCLUDE_DIR})
+target_link_libraries(adapter PRIVATE SystemC::systemc ${ZENOH_LIBRARY})

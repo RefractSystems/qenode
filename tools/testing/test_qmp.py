@@ -4,6 +4,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.mark.asyncio
 async def test_qmp_basic_communication(qmp_bridge):
     """
@@ -12,6 +13,7 @@ async def test_qmp_basic_communication(qmp_bridge):
     res = await qmp_bridge.execute("query-version")
     assert "qemu" in res
     logger.info(f"Connected to QEMU version: {res['qemu']['major']}.{res['qemu']['minor']}")
+
 
 @pytest.mark.asyncio
 async def test_uart_hi_output(qmp_bridge):
@@ -24,6 +26,7 @@ async def test_uart_hi_output(qmp_bridge):
     found = await qmp_bridge.wait_for_line_on_uart("HI", timeout=5.0)
     assert found, f"Did not find 'HI' in UART buffer. Current buffer: {repr(qmp_bridge.uart_buffer)}"
 
+
 @pytest.mark.asyncio
 async def test_pc_retrieval(qmp_bridge):
     """
@@ -34,17 +37,14 @@ async def test_pc_retrieval(qmp_bridge):
     # In arm-generic-fdt, RAM usually starts at 0x40000000
     assert pc >= 0x40000000, f"PC {hex(pc)} is below expected RAM start"
 
+
 @pytest.mark.asyncio
 async def test_emulation_control(qemu_launcher):
     """
     Test pausing, resuming, and resetting emulation.
     """
     # Launch QEMU paused (-S)
-    bridge = await qemu_launcher(
-        "test/phase1/minimal.dtb",
-        "test/phase1/hello.elf",
-        extra_args=["-S"]
-    )
+    bridge = await qemu_launcher("test/phase1/minimal.dtb", "test/phase1/hello.elf", extra_args=["-S"])
 
     # Check that it's actually paused
     status = await bridge.execute("query-status")
@@ -74,6 +74,7 @@ async def test_emulation_control(qemu_launcher):
     await bridge.start_emulation()
     assert await bridge.wait_for_line_on_uart("HI", timeout=5.0)
 
+
 @pytest.mark.asyncio
 async def test_hmp_command(qmp_bridge):
     """
@@ -82,6 +83,7 @@ async def test_hmp_command(qmp_bridge):
     res = await qmp_bridge.execute("human-monitor-command", {"command-line": "info version"})
     # QEMU version string can be '11.0.0' or 'v11.0.0' etc.
     assert "11.0.0" in res
+
 
 @pytest.mark.asyncio
 async def test_uart_write(qmp_bridge):

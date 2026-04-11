@@ -24,23 +24,12 @@ def migrate(repl_path: str, yaml_path: str):
     # We try to infer a sensible machine name from the filename
     machine_name = os.path.splitext(os.path.basename(repl_path))[0]
 
-    output = {
-        "machine": {
-            "name": machine_name,
-            "type": "arm-generic-fdt",
-            "cpus": []
-        },
-        "peripherals": []
-    }
+    output = {"machine": {"name": machine_name, "type": "arm-generic-fdt", "cpus": []}, "peripherals": []}
 
     for dev in plat.devices:
         # Separate CPUs from Peripherals for better hierarchical structure
         if "CPU" in dev.type_name:
-            cpu_info = {
-                "name": dev.name,
-                "type": dev.properties.get("cpuType", "cortex-a15"),
-                "memory": "sysmem"
-            }
+            cpu_info = {"name": dev.name, "type": dev.properties.get("cpuType", "cortex-a15"), "memory": "sysmem"}
             output["machine"]["cpus"].append(cpu_info)
             continue
 
@@ -69,6 +58,7 @@ def migrate(repl_path: str, yaml_path: str):
     with open(yaml_path, "w") as f:
         yaml.dump(output, f, sort_keys=False, default_flow_style=False)
 
+
 def main():
     parser = argparse.ArgumentParser(description="Convert Renode .repl to virtmcu YAML")
     parser.add_argument("input", help="Path to .repl file")
@@ -78,6 +68,7 @@ def main():
 
     out_path = args.out if args.out else os.path.splitext(args.input)[0] + ".yaml"
     migrate(args.input, out_path)
+
 
 if __name__ == "__main__":
     main()

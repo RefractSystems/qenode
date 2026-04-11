@@ -136,12 +136,15 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
     }
 }
 
+#include "qemu/timer.h"
+
 static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
 {
     MmioSocketBridgeState *s = opaque;
     struct mmio_req req = {
         .type = MMIO_REQ_READ,
         .size = size,
+        .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
         .addr = addr,
         .data = 0,
     };
@@ -157,6 +160,7 @@ static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     struct mmio_req req = {
         .type = MMIO_REQ_WRITE,
         .size = size,
+        .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
         .addr = addr,
         .data = val,
     };

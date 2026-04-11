@@ -1,7 +1,7 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tools/repl2qemu')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../tools/repl2qemu")))
 from parser import parse_repl
 
 
@@ -19,6 +19,7 @@ sram: Memory.MappedMemory @ sysbus 0x20000000
     assert dev.properties["size"] == "0x00040000"
     assert len(dev.interrupts) == 0
 
+
 def test_parse_device_with_irq():
     repl = """
 usart1: UART.STM32_UART @ sysbus <0x40011000, +0x100>
@@ -35,6 +36,7 @@ usart1: UART.STM32_UART @ sysbus <0x40011000, +0x100>
     assert irq.target_device == "nvic"
     assert irq.target_range == "37"
 
+
 def test_parse_ranged_irq():
     repl = """
 can1: CAN.STMCAN @ sysbus <0x40006400, +0x400>
@@ -48,6 +50,7 @@ can1: CAN.STMCAN @ sysbus <0x40006400, +0x400>
     assert irq.source_range == "0-3"
     assert irq.target_device == "nvic"
     assert irq.target_range == "19-22"
+
 
 def test_parse_inline_block():
     repl = """

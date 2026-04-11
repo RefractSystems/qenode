@@ -9,7 +9,8 @@ class QemuLibrary:
     Robot Framework library for controlling QEMU via QMP.
     Provides a synchronous interface to the asynchronous QmpBridge.
     """
-    ROBOT_LIBRARY_SCOPE = 'GLOBAL'
+
+    ROBOT_LIBRARY_SCOPE = "GLOBAL"
 
     def __init__(self):
         self.bridge = QmpBridge()
@@ -41,12 +42,17 @@ class QemuLibrary:
         if kernel_path:
             cmd.extend(["--kernel", os.path.abspath(kernel_path)])
 
-        cmd.extend([
-            "-qmp", f"unix:{qmp_sock},server,nowait",
-            "-serial", f"unix:{uart_sock},server,nowait",
-            "-display", "none",
-            "-nographic"
-        ])
+        cmd.extend(
+            [
+                "-qmp",
+                f"unix:{qmp_sock},server,nowait",
+                "-serial",
+                f"unix:{uart_sock},server,nowait",
+                "-display",
+                "none",
+                "-nographic",
+            ]
+        )
 
         if extra_args:
             if isinstance(extra_args, str):
@@ -59,7 +65,7 @@ class QemuLibrary:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=os.environ.copy(),
-            preexec_fn=os.setsid # To allow killing the whole process group
+            preexec_fn=os.setsid,  # To allow killing the whole process group
         )
         self.tmpdir = tmpdir
 
@@ -77,7 +83,9 @@ class QemuLibrary:
         else:
             self.proc.terminate()
             stdout, stderr = self.proc.communicate()
-            raise RuntimeError(f"QEMU sockets did not appear in time. STDOUT: {stdout.decode()} STDERR: {stderr.decode()}")
+            raise RuntimeError(
+                f"QEMU sockets did not appear in time. STDOUT: {stdout.decode()} STDERR: {stderr.decode()}"
+            )
 
         return qmp_sock, uart_sock
 
@@ -111,8 +119,10 @@ class QemuLibrary:
         """
         found = self._run(self.bridge.wait_for_line_on_uart(pattern, float(timeout)))
         if not found:
-            raise AssertionError(f"Pattern '{pattern}' not found on UART within {timeout}s. "
-                                 f"Current buffer: {repr(self.bridge.uart_buffer)}")
+            raise AssertionError(
+                f"Pattern '{pattern}' not found on UART within {timeout}s. "
+                f"Current buffer: {repr(self.bridge.uart_buffer)}"
+            )
 
     def write_to_uart(self, text):
         """
@@ -140,15 +150,17 @@ class QemuLibrary:
         Closes all QMP and UART connections and cleans up the QEMU process.
         """
         self._run(self.bridge.close())
-        if hasattr(self, 'proc'):
+        if hasattr(self, "proc"):
             import signal
+
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
                 self.proc.wait(timeout=5)
             except Exception:
-                if hasattr(self, 'proc'):
+                if hasattr(self, "proc"):
                     self.proc.kill()
 
-        if hasattr(self, 'tmpdir'):
+        if hasattr(self, "tmpdir"):
             import shutil
+
             shutil.rmtree(self.tmpdir, ignore_errors=True)

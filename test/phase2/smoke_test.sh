@@ -56,7 +56,7 @@ else
 fi
 
 # Clean up
-kill $QEMU_PID 2>/dev/null || true
+kill ${QEMU_PID:-} 2>/dev/null || true
 rm -f qmp.sock qemu_phase2.log
 
 exit $RET

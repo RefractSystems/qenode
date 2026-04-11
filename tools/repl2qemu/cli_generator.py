@@ -6,7 +6,8 @@ from .parser import ReplPlatform
 def generate_cli(platform: ReplPlatform, dtb_path: str) -> List[str]:
     """Generates the QEMU CLI arguments based on the parsed platform."""
     args = [
-        "-M", f"arm-generic-fdt,hw-dtb={dtb_path}",
+        "-M",
+        f"arm-generic-fdt,hw-dtb={dtb_path}",
         "-nographic",
     ]
 

@@ -13,10 +13,11 @@ COMPAT_MAP = {
     "IRQControllers.ARM_GenericInterruptController": "arm_gic",
     "Timers.ARM_GenericTimer": "armv8-timer",
     "Timers.ARM_PrivateTimer": "arm_mptimer",
-    "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv", # Or similar depending on exact board
+    "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv",  # Or similar depending on exact board
     "CPU.CortexM": "arm,cortex-m-cpu",  # Actually handled specially
     "Memory.MappedMemory": "qemu-memory-region",
 }
+
 
 class FdtEmitter:
     def __init__(self, platform: ReplPlatform):
@@ -24,16 +25,16 @@ class FdtEmitter:
 
     def _parse_addr(self, addr_str: str) -> tuple[int, int]:
         """Parses address string '0x60000000' or '<0x40011000, +0x100>'."""
-        if not addr_str or addr_str.lower() == 'none' or not any(c.isdigit() for c in addr_str):
+        if not addr_str or addr_str.lower() == "none" or not any(c.isdigit() for c in addr_str):
             return 0, 0
 
         addr_str = addr_str.strip()
-        if addr_str.startswith('<'):
+        if addr_str.startswith("<"):
             # <0x40011000, +0x100>
-            parts = addr_str.strip('<>').split(',')
+            parts = addr_str.strip("<>").split(",")
             base = int(parts[0].strip(), 16)
             size_part = parts[1].strip()
-            if size_part.startswith('+'):
+            if size_part.startswith("+"):
                 size_part = size_part[1:]
             size = int(size_part, 16)
             return base, size
@@ -73,7 +74,7 @@ class FdtEmitter:
                 lines.append(f"        {dev.name}@{cpu_index} {{")
                 lines.append('            device_type = "cpu";')
                 lines.append(f'            compatible = "{cpu_type}-arm-cpu";')
-                lines.append(f'            reg = <{cpu_index}>;')
+                lines.append(f"            reg = <{cpu_index}>;")
                 lines.append("            memory = <0x01>;")
                 lines.append("        };")
                 cpu_index += 1
@@ -82,7 +83,7 @@ class FdtEmitter:
 
         for dev in self.platform.devices:
             if dev.type_name in ["CPU.CortexM", "CPU.ARMv8A", "CPU.ARMv7A"]:
-                continue # Handled above
+                continue  # Handled above
 
             base, size = self._parse_addr(dev.address_str)
 
@@ -98,36 +99,60 @@ class FdtEmitter:
                 lines.append(f"        reg = <0x0 0x{base:x} 0x0 0x{size:x}>;")
                 lines.append("    };")
 
-            elif dev.type_name in COMPAT_MAP:
+            else:
+                is_native = dev.type_name not in COMPAT_MAP and "." not in dev.type_name
+                if dev.type_name not in COMPAT_MAP and not is_native:
+                    print(
+                        f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)",
+                        file=sys.stderr,
+                    )
+                    continue
+
+                compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
+
                 if size == 0:
-                    size = 0x1000 # Default size if not provided
+                    size = 0x1000  # Default size if not provided
 
                 lines.append(f"    {dev.name}@{base:x} {{")
-                lines.append(f'        compatible = "{COMPAT_MAP[dev.type_name]}";')
+                lines.append(f'        compatible = "{compat_str}";')
 
                 # armv8-timer doesn't have MMIO registers in QEMU DTS
-                if COMPAT_MAP[dev.type_name] != "armv8-timer":
-                    # Some devices might just be at 0x0 genuinely (like flash), but for others,
-                    # if base == 0 and we couldn't parse it, we shouldn't emit a zeroed reg.
+                if compat_str != "armv8-timer":
                     lines.append(f"        reg = <0x0 0x{base:x} 0x0 0x{size:x}>;")
 
-                if dev.type_name.startswith("UART"):
+                if dev.type_name.startswith("UART") or compat_str == "pl011":
                     lines.append("        chardev = <0x00>;")
 
                 # We could map interrupts here
                 if dev.interrupts:
-                    # simplistic mapping for now: assume target is nvic and ignore the index format specifics
-                    target_irq = dev.interrupts[0].target_range
-                    if '-' not in target_irq:
-                        lines.append(f"        interrupts = <0 {target_irq} 4>;")
+                    # simplistic mapping: SPI, ID, level/edge
+                    irqs = []
+                    for irq in dev.interrupts:
+                        target_irq = irq.target_range
+                        if "-" not in target_irq:
+                            irqs.append(f"<0 {target_irq} 4>")
+                    if irqs:
+                        lines.append(f"        interrupts = {', '.join(irqs)};")
+
+                # Add extra properties defined in the YAML/Repl
+                for k, v in dev.properties.items():
+                    if k in ["size", "cpuType"]:
+                        continue  # Handled elsewhere
+
+                    if isinstance(v, bool):
+                        if v:
+                            lines.append(f"        {k};")
+                    elif isinstance(v, int):
+                        lines.append(f"        {k} = <{v}>;")
+                    else:
+                        lines.append(f'        {k} = "{v}";')
 
                 lines.append("        container = <0x01>;")
                 lines.append("    };")
-            else:
-                print(f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)", file=sys.stderr)
 
         lines.append("};")
         return "\n".join(lines)
+
 
 def compile_dtb(dts_content: str, out_path: str) -> bool:
     """Compiles the DTS string into a DTB file using dtc."""
@@ -150,6 +175,7 @@ if __name__ == "__main__":
     import sys
 
     from .parser import parse_repl
+
     filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
     with open(filename, "r") as f:
         plat = parse_repl(f.read())

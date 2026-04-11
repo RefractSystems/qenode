@@ -18,9 +18,7 @@ from tools.repl2qemu.parser import ReplDevice, ReplPlatform
 
 def platform_with_cpu(cpu_type: str) -> ReplPlatform:
     platform = ReplPlatform()
-    platform.devices.append(
-        ReplDevice(name="cpu0", type_name=cpu_type, address_str="sysbus", properties={})
-    )
+    platform.devices.append(ReplDevice(name="cpu0", type_name=cpu_type, address_str="sysbus", properties={}))
     return platform
 
 

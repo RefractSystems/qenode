@@ -30,10 +30,12 @@ def write_yaml(data: dict) -> str:
 
 
 def test_parse_single_cpu():
-    path = write_yaml({
-        "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-        "peripherals": [],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
+            "peripherals": [],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         assert len(platform.devices) == 1
@@ -46,15 +48,17 @@ def test_parse_single_cpu():
 
 
 def test_parse_multi_cpu():
-    path = write_yaml({
-        "machine": {
-            "cpus": [
-                {"name": "cpu0", "type": "cortex-a15"},
-                {"name": "cpu1", "type": "cortex-a15"},
-            ]
-        },
-        "peripherals": [],
-    })
+    path = write_yaml(
+        {
+            "machine": {
+                "cpus": [
+                    {"name": "cpu0", "type": "cortex-a15"},
+                    {"name": "cpu1", "type": "cortex-a15"},
+                ]
+            },
+            "peripherals": [],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         assert len(platform.devices) == 2
@@ -68,16 +72,18 @@ def test_parse_multi_cpu():
 
 
 def test_parse_uart_peripheral():
-    path = write_yaml({
-        "machine": {"cpus": []},
-        "peripherals": [
-            {
-                "name": "uart0",
-                "type": "UART.PL011",
-                "address": "0x09000000",
-            }
-        ],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": []},
+            "peripherals": [
+                {
+                    "name": "uart0",
+                    "type": "UART.PL011",
+                    "address": "0x09000000",
+                }
+            ],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         devs = [d for d in platform.devices if d.name == "uart0"]
@@ -89,17 +95,19 @@ def test_parse_uart_peripheral():
 
 
 def test_parse_memory_with_properties():
-    path = write_yaml({
-        "machine": {"cpus": []},
-        "peripherals": [
-            {
-                "name": "sram",
-                "type": "Memory.MappedMemory",
-                "address": "0x20000000",
-                "properties": {"size": "0x00040000"},
-            }
-        ],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": []},
+            "peripherals": [
+                {
+                    "name": "sram",
+                    "type": "Memory.MappedMemory",
+                    "address": "0x20000000",
+                    "properties": {"size": "0x00040000"},
+                }
+            ],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         dev = next(d for d in platform.devices if d.name == "sram")
@@ -110,17 +118,19 @@ def test_parse_memory_with_properties():
 
 
 def test_parse_interrupt():
-    path = write_yaml({
-        "machine": {"cpus": []},
-        "peripherals": [
-            {
-                "name": "usart1",
-                "type": "UART.STM32_UART",
-                "address": "0x40011000",
-                "interrupts": ["nvic@37"],
-            }
-        ],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": []},
+            "peripherals": [
+                {
+                    "name": "usart1",
+                    "type": "UART.STM32_UART",
+                    "address": "0x40011000",
+                    "interrupts": ["nvic@37"],
+                }
+            ],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         dev = next(d for d in platform.devices if d.name == "usart1")
@@ -134,12 +144,12 @@ def test_parse_interrupt():
 
 def test_renode_type_alias():
     """Files migrated from .repl may use 'renode_type' instead of 'type'."""
-    path = write_yaml({
-        "machine": {"cpus": []},
-        "peripherals": [
-            {"name": "uart0", "renode_type": "UART.PL011", "address": "0x09000000"}
-        ],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": []},
+            "peripherals": [{"name": "uart0", "renode_type": "UART.PL011", "address": "0x09000000"}],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         dev = next(d for d in platform.devices if d.name == "uart0")
@@ -159,13 +169,15 @@ def test_empty_platform():
 
 
 def test_cpu_and_peripherals_combined():
-    path = write_yaml({
-        "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-        "peripherals": [
-            {"name": "sram", "type": "Memory.MappedMemory", "address": "0x20000000"},
-            {"name": "uart0", "type": "UART.PL011", "address": "0x09000000"},
-        ],
-    })
+    path = write_yaml(
+        {
+            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
+            "peripherals": [
+                {"name": "sram", "type": "Memory.MappedMemory", "address": "0x20000000"},
+                {"name": "uart0", "type": "UART.PL011", "address": "0x09000000"},
+            ],
+        }
+    )
     try:
         platform = parse_yaml_platform(path)
         # 1 CPU + 2 peripherals

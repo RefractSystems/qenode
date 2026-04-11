@@ -1,3 +1,26 @@
+/*
+ * hw/zenoh/zenoh-chardev.c — Deterministic Multi-Node UART/Serial Backend
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * This file implements a custom QEMU `-chardev` backend that forwards serial
+ * port bytes over Zenoh pub/sub with embedded virtual timestamps.
+ *
+ * In cyber-physical simulation, serial communication (UART) between nodes or
+ * from a human terminal must be reproducible. Standard QEMU chardevs (like
+ * `pty` or `stdio`) inject bytes into the guest OS the moment they arrive on
+ * the host's wall-clock, breaking determinism.
+ *
+ * This backend fixes that:
+ * 1. On TX: Outbound bytes are prefixed with the current `QEMU_CLOCK_VIRTUAL`
+ *    time and published to `sim/serial/{node_id}/tx`.
+ * 2. On RX: Incoming bytes carry a `delivery_vtime_ns` timestamp. They are
+ *    buffered and only passed to the guest UART controller when QEMU's
+ *    virtual clock catches up to that timestamp.
+ *
+ * This ensures that a human pressing a key on the terminal results in the
+ * exact same firmware execution path across runs.
+ */
 #include "qemu/osdep.h"
 #include "chardev/char.h"
 #include "qapi/error.h"
@@ -223,10 +246,7 @@ static const TypeInfo char_zenoh_type_info = {
     .class_init = char_zenoh_class_init,
 };
 
-static void register_types(void)
-{
-    type_register_static(&char_zenoh_type_info);
-}
+static const TypeInfo char_zenoh_types[] = { char_zenoh_type_info };
 
-type_init(register_types);
+DEFINE_TYPES(char_zenoh_types)
 module_obj(TYPE_CHARDEV_ZENOH);

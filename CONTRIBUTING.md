@@ -133,15 +133,40 @@ virtmcu relies on automated testing to ensure new features (like parsing or new 
 
 We split testing into two categories:
 
-### 1. Emulator-Level Smoke Tests (Phases 1-3)
+### 1. Emulator-Level Smoke Tests
 These are raw `bash` scripts combined with small Python scripts (using QMP) to verify the emulator works at a low level.
 They are located in `test/phaseX/smoke_test.sh`.
 
-**To run all integration smoke tests:**
+**To run all integration smoke tests locally:**
+The Makefile automatically handles building required test artifacts (like ELFs) and setting up the Python environment before running the tests.
 ```bash
-make test-integration
+make smoke-tests
 ```
-*Note: This will execute every script sequentially. If a single script fails, the make command exits immediately.*
+*(Note: `make test-integration` is an exact alias for this command.)*
+
+**Running in a Mirrored CI Environment (Docker):**
+If a test passes locally but fails on CI, you can run the test inside the exact `virtmcu-builder` container used by GitHub Actions.
+```bash
+# 1. Build the builder image from scratch
+docker build -t virtmcu-builder -f docker/Dockerfile --target builder .
+
+# 2. Run a specific phase smoke test (e.g., Phase 1)
+docker run --rm \
+  -v "$(pwd):/workspace" \
+  -w /workspace \
+  -e PYTHONPATH=/workspace \
+  virtmcu-builder \
+  bash -c "make -C test/phase1 && bash test/phase1/smoke_test.sh"
+```
+
+### Debugging Failed Smoke Tests
+*   **Inspect the Logs:** Many tests capture QEMU output to a log file (e.g., `smoke_test_output.log` in the test directory). Always read this file if the test fails.
+*   **Run Interactively:** If a smoke test times out or fails, run the QEMU command interactively without the `-monitor none` or `-serial file:...` flags so you can see what QEMU prints to the terminal.
+    ```bash
+    ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
+    ```
+    *(To exit an interactive QEMU session, press `Ctrl+A` followed by `X`)*
+*   **Add Debug Flags:** You can append `-d exec,cpu_reset` or `-trace "zenoh_*"` to the `run.sh` command to trace execution blocks and see exactly where the firmware or QEMU is hanging.
 
 ### 2. Python Unit & Automation Tests (Phase 4+)
 For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge, we use `pytest`.

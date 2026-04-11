@@ -227,10 +227,10 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 4 | Robot Framework QMP library | **Done** |
 | 5 | Co-Simulation Bridge | **Done** |
 | 6 | Multi-node Zenoh network coordinator | **Done** |
-| 7 | Native Zenoh clock plugin + FirmwareStudio integration | In Progress |
-| 8 | Deterministic multi-node UART (zenoh-chardev) | To Do |
-| 9 | Advanced co-simulation (shared physical media) | To Do |
-| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | To Do |
+| 7 | Native Zenoh clock plugin + FirmwareStudio integration | **Done** |
+| 8 | Deterministic multi-node UART (zenoh-chardev) | **Done** |
+| 9 | Advanced co-simulation (shared physical media) | **Done** |
+| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
 
 ---
 

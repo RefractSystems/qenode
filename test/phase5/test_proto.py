@@ -24,11 +24,11 @@ import signal
 import tempfile
 
 # ── Wire format ───────────────────────────────────────────────────────────────
-REQ_FMT  = "<BBHIqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
+REQ_FMT  = "<BBHIqqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
 RESP_FMT = "<IIQ"      # type, irq_num, data  (16 bytes)
 REQ_SIZE  = struct.calcsize(REQ_FMT)
 RESP_SIZE = struct.calcsize(RESP_FMT)
-assert REQ_SIZE == 24, f"REQ_SIZE={REQ_SIZE}, expected 24"
+assert REQ_SIZE == 32, f"REQ_SIZE={REQ_SIZE}, expected 32"
 assert RESP_SIZE == 16,  f"RESP_SIZE={RESP_SIZE}, expected 16"
 
 MMIO_READ  = 0
@@ -40,7 +40,7 @@ SYSC_MSG_IRQ_CLEAR = 2
 
 def send_req(sock, req_type, size, addr, data=0):
     """Send one mmio_req and return the resp.data field."""
-    pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, addr, data)
+    pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, 0, addr, data)
     sock.sendall(pkt)
     
     while True:
@@ -130,6 +130,53 @@ def run_tests(adapter_bin):
                 failures.append(f"T5 FAIL: last reg readback wrong: 0x{got:08x}")
             else:
                 print("T5 PASS: last register")
+
+            # ── T7: Asynchronous IRQ test ─────────────────────────────────────
+            print("T7: Testing asynchronous IRQ...")
+            # Writing non-zero to reg 255 should trigger IRQ SET
+            # We use sock.sendall directly because send_req expects a RESP
+            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 1)
+            s.sendall(pkt)
+            
+            irq_set_received = False
+            resp_received = False
+            deadline = time.time() + 2.0
+            while time.time() < deadline and (not irq_set_received or not resp_received):
+                chunk = s.recv(RESP_SIZE)
+                if not chunk: break
+                msg_type, irq_num, value = struct.unpack(RESP_FMT, chunk)
+                if msg_type == SYSC_MSG_IRQ_SET and irq_num == 0:
+                    irq_set_received = True
+                    print("T7: Received IRQ_SET(0)")
+                elif msg_type == SYSC_MSG_RESP:
+                    resp_received = True
+            
+            if not irq_set_received:
+                failures.append("T7 FAIL: did not receive IRQ_SET(0) after writing to reg 255")
+            elif not resp_received:
+                failures.append("T7 FAIL: did not receive RESP after IRQ write")
+            else:
+                print("T7 PASS: Asynchronous IRQ SET")
+
+            # Writing zero to reg 255 should trigger IRQ CLEAR
+            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 0)
+            s.sendall(pkt)
+            irq_clear_received = False
+            resp_received = False
+            while time.time() < deadline and (not irq_clear_received or not resp_received):
+                chunk = s.recv(RESP_SIZE)
+                if not chunk: break
+                msg_type, irq_num, value = struct.unpack(RESP_FMT, chunk)
+                if msg_type == SYSC_MSG_IRQ_CLEAR and irq_num == 0:
+                    irq_clear_received = True
+                    print("T7: Received IRQ_CLEAR(0)")
+                elif msg_type == SYSC_MSG_RESP:
+                    resp_received = True
+            
+            if not irq_clear_received:
+                failures.append("T7 FAIL: did not receive IRQ_CLEAR(0)")
+            else:
+                print("T7 PASS: Asynchronous IRQ CLEAR")
 
             # ── T6: throughput / latency benchmark ────────────────────────────
             N = 1000

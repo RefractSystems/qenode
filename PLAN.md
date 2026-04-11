@@ -4,7 +4,7 @@
 instantiation, .repl parsing, and Robot Framework test parity.
 
 **Base**: QEMU 11.0.0-rc3 + 33-patch arm-generic-fdt series (patchew 20260402215629)
-**Target arch**: ARM (Cortex-A / Cortex-M) first; RISC-V deferred to Phase 2+
+**Target arch**: ARM (Cortex-A / Cortex-M) complete; RISC-V expansion starting in Phase 11
 **Dev platform**: Linux required (Docker/WSL2 on macOS/Windows)
 
 ---
@@ -187,7 +187,7 @@ a valid `.dtb` file that arm-generic-fdt can boot with.
 - [x] **3.5.5** Update `scripts/run.sh`: Added polymorphic support for `--yaml` files.
 - [x] **3.5.6** Added `test/phase3.5/smoke_test.sh`: Verified the YAML pipeline end-to-end.
 - [x] **3.5.7** Updated Tutorial Lesson 3: Added content explaining the YAML format and the OpenUSD Digital Twin vision.
-- [ ] **3.5.8** Update YAML schema and `yaml2qemu.py` to support hardware definitions for the new `zenoh-chardev` (Phase 8 UART) and `mmio-socket-bridge` (Phase 9 SystemC) peripherals.
+- [x] **3.5.8** Update YAML schema and `yaml2qemu.py` to support hardware definitions for the new `zenoh-chardev` (Phase 8 UART) and `mmio-socket-bridge` (Phase 9 SystemC) peripherals.
 
 **Needs from Marcin**:
 - None for this phase.
@@ -324,7 +324,7 @@ delivers a UDP datagram to QEMU's receive path.
 - [x] **6.0** Write `tools/zenoh_coordinator` in Rust using Tokio + Zenoh async API to coordinate virtual time frames.
 - [x] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
 - [x] **6.2** Update `tools/zenoh_coordinator` to subscribe and route `virtmcu/uart/*` topics, applying virtual time propagation delay for deterministic multi-node serial (Phase 8).
-- [ ] **6.3** Update `tools/zenoh_coordinator` to route SystemC shared medium messages (e.g., CAN bus frames) between nodes (Phase 9).
+- [x] **6.3** Update `tools/zenoh_coordinator` to route SystemC shared medium messages (e.g., CAN bus frames) between nodes (Phase 9).
 
 ---
 
@@ -452,12 +452,12 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
   firmware timestamps are deterministic across two identical runs.
 
-- [ ] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:
+- [x] **7.5** Replace FirmwareStudio's `cyber/` with a dependency on virtmcu:
   - `worlds/*.yml` Docker Compose files reference virtmcu's patched QEMU image
   - Remove `cyber/src/node_agent.py` — replaced by `hw/zenoh/` native plugin
 
-- [ ] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
-- [ ] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
+- [x] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
+- [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
 
 ---
 
@@ -476,15 +476,15 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
-## Phase 9 — Advanced Co-Simulation: Shared Media (SystemC)
+## Phase 9 — Advanced Co-Simulation: Shared Media (SystemC) ✅
 
 **Goal**: Move beyond simple MMIO registers to modeling complex shared physical mediums (like CAN or SPI) in SystemC with asynchronous interrupt support.
 
 **Tasks**:
-- [ ] **9.1** **Asynchronous IRQ Protocol**: Upgrade `virtmcu_proto.h` and `hw/misc/mmio-socket-bridge.c` to support `IRQ_SET/CLEAR` messages sent from the SystemC adapter back to QEMU.
-- [ ] **9.2** **Multi-threaded SystemC Adapter**: Rewrite `tools/systemc_adapter` to use `std::thread` for socket I/O, preventing the host blocking-calls from freezing the SystemC scheduler.
-- [ ] **9.3** **Educational CAN Model**: Implement a "CAN-lite" controller in SystemC and a `SharedMedium` bus module that handles arbitration and delivery between two QEMU nodes.
-- [ ] **9.4** **Tutorial Lesson 9**: Co-simulating shared buses. Explain how QEMU handles the CPU while SystemC handles the complex timing of the CAN physical layer.
+- [x] **9.1** **Asynchronous IRQ Protocol**: Upgrade `virtmcu_proto.h` and `hw/misc/mmio-socket-bridge.c` to support `IRQ_SET/CLEAR` messages sent from the SystemC adapter back to QEMU.
+- [x] **9.2** **Multi-threaded SystemC Adapter**: Rewrite `tools/systemc_adapter` to use `std::thread` for socket I/O, preventing the host blocking-calls from freezing the SystemC scheduler.
+- [x] **9.3** **Educational CAN Model**: Implement a "CAN-lite" controller in SystemC and a `SharedMedium` bus module that handles arbitration and delivery between two QEMU nodes.
+- [x] **9.4** **Tutorial Lesson 9**: Co-simulating shared buses. Explain how QEMU handles the CPU while SystemC handles the complex timing of the CAN physical layer.
 
 ---
 
@@ -493,11 +493,23 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Align with the Research Team's "Cyber-Physical Bridge" architecture. Implement standardized sensor/actuator abstraction layers and support industry-standard telemetry formats.
 
 **Tasks**:
-- [ ] **10.1** **SAL/AAL Abstraction Interfaces**: Define C++ base classes for Sensor and Actuator Abstraction Layers (SAL/AAL) to provide a stable target for MuJoCo and RESD backends.
-- [ ] **10.2** **RESD Ingestion Engine**: Implement a native parser for **Renode Sensor Data (RESD)** format to support high-throughput, deterministic telemetry replay in standalone mode.
-- [ ] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
-- [ ] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
-- [ ] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+- [x] **10.1** **SAL/AAL Abstraction Interfaces**: Define C++ base classes for Sensor and Actuator Abstraction Layers (SAL/AAL) to provide a stable target for MuJoCo and RESD backends.
+- [x] **10.2** **RESD Ingestion Engine**: Implement a native parser for **Renode Sensor Data (RESD)** format to support high-throughput, deterministic telemetry replay in standalone mode.
+- [x] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
+- [x] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
+- [x] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+
+---
+
+## Phase 11 — RISC-V Expansion & Framework Maturation
+
+**Goal**: Expand architecture support to RISC-V, resolve technical debt around virtual-time testing, establish Path B co-simulation (Remote Port), and formally migrate the upstream FirmwareStudio repository to use `virtmcu`.
+
+**Tasks**:
+- [ ] **11.1** **RISC-V Machine Generation**: Extend the dynamic machine generation pipeline (`repl2qemu`) and QEMU patches to support RISC-V targets, removing the ARM-only restriction.
+- [ ] **11.2** **Virtual-Time-Aware Timeouts**: Update the Robot Framework QMP library (`qmp_bridge.py`) to poll `query-cpus-fast` for virtual time, replacing wall-clock timeouts for reliable testing in `slaved-icount` mode.
+- [ ] **11.3** **Remote Port Co-Simulation (Path B)**: Implement full TLM-2.0 co-simulation via AMD/Xilinx Remote Port to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
+- [ ] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc3 container image.
 
 ---
 
@@ -518,11 +530,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
-## Deferred / Won't Do (Phase 1-4 scope)
+## Deferred / Won't Do
 
 - Windows support (module loading fundamentally broken on Windows with current QEMU)
-- RISC-V until ARM is validated
-- RESD (Renode Sensor Data) format injection
+- RESD (Renode Sensor Data) format injection (COMPLETED in Phase 10)
 - Antigravity IDE / agent_memory.json / mcp_servers.json (not project artifacts)
 - `query-cpus` (deprecated — use `query-cpus-fast` only)
 

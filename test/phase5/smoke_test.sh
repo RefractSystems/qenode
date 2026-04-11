@@ -38,8 +38,8 @@ ASM_PATH="/tmp/virtmcu-phase5-$$.S"
 LD_PATH="/tmp/virtmcu-phase5-$$.ld"
 
 cleanup() {
-    kill "$QEMU_PID"    2>/dev/null || true
-    kill "$ADAPTER_PID" 2>/dev/null || true
+    kill "${QEMU_PID:-}"    2>/dev/null || true
+    kill "${ADAPTER_PID:-}" 2>/dev/null || true
     rm -f "$SOCK_PATH" "$QMP_SOCK" "$ADAPTER_LOG" "$QEMU_LOG" \
           "$DTB_PATH" "$DTS_PATH" "$ELF_PATH" "$ASM_PATH" "$LD_PATH"
 }
@@ -61,7 +61,7 @@ echo "[phase5] Starting SystemC adapter on $SOCK_PATH..."
 ADAPTER_PID=$!
 
 # Poll for the socket file (adapter calls bind() before printing its message)
-for i in $(seq 1 50); do
+for _ in $(seq 1 50); do
     [ -S "$SOCK_PATH" ] && break
     sleep 0.1
 done
@@ -102,7 +102,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T "$LD_PATH" "$ASM_PATH" -o "$ELF_
 
 # ── 4. Build minimal DTB ──────────────────────────────────────────────────────
 echo "[phase5] Compiling device tree..."
-cat > "$DTS_PATH" <<'EOF'
+cat > "$DTS_PATH" <<EOF
 /dts-v1/;
 / {
     model = "virtmcu-phase5-test";
@@ -134,6 +134,13 @@ cat > "$DTS_PATH" <<'EOF'
             memory = <0x01>;
         };
     };
+
+    bridge@50000000 {
+        compatible = "mmio-socket-bridge";
+        reg = <0x0 0x50000000 0x0 0x1000>;
+        socket-path = "$SOCK_PATH";
+        region-size = <0x1000>;
+    };
 };
 EOF
 dtc -I dts -O dtb -o "$DTB_PATH" "$DTS_PATH"
@@ -142,7 +149,6 @@ dtc -I dts -O dtb -o "$DTB_PATH" "$DTS_PATH"
 echo "[phase5] Starting QEMU..."
 "$RUN_SH" --dtb "$DTB_PATH" \
     --kernel "$ELF_PATH" \
-    -device "mmio-socket-bridge,socket-path=$SOCK_PATH,region-size=4096,base-addr=0x50000000" \
     -nographic \
     -monitor none \
     -qmp "unix:$QMP_SOCK,server,nowait" \
@@ -152,7 +158,7 @@ QEMU_PID=$!
 # ── 6. Wait for adapter to log the expected transactions ─────────────────────
 echo "[phase5] Waiting for firmware transactions..."
 PASSED=false
-for i in $(seq 1 50); do
+for _ in $(seq 1 50); do
     if grep -q "Wrote deadbeef to reg 0" "$ADAPTER_LOG" 2>/dev/null && \
        grep -q "Read deadbeef from reg 0"  "$ADAPTER_LOG" 2>/dev/null; then
         PASSED=true

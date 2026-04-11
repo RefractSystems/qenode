@@ -58,13 +58,19 @@ venv:
 	@echo "✓ Activate with: source .venv/bin/activate"
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
-test-integration:
+test-integration: venv
+	@echo "==> Building test artifacts..."
+	@$(MAKE) -C test/phase1
+	@$(MAKE) -C test/phase8
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
 		bash "$$test_script" || exit 1; \
 	done
 	@echo "✓ All integration tests passed."
+
+# Alias for running all phase smoke tests in one go
+smoke-tests: test-integration
 
 # Run all Python unit tests (no QEMU required).
 test: venv

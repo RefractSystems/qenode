@@ -29,6 +29,7 @@ def write_if_changed(path, content):
     print(f"  wrote {os.path.relpath(path)}")
     return True
 
+
 def patch_file(path, marker, insertion, after=True):
     with open(path) as f:
         content = f.read()
@@ -45,6 +46,7 @@ def patch_file(path, marker, insertion, after=True):
         f.write(content)
     print(f"  patched {os.path.relpath(path)}")
     return True
+
 
 def main():
     if len(sys.argv) != 2:
@@ -63,8 +65,21 @@ def main():
 #include "hw/core/cpu.h"
 #include "net/net.h"
 
+/*
+ * Timing constraints exported to Sensor/Actuator Abstraction Layers (SAL/AAL).
+ * Used to align physics interpolation with virtual execution time.
+ */
+typedef struct {
+    int64_t quantum_start_vtime_ns;
+    int64_t quantum_delta_ns;
+    int64_t mujoco_time_ns;
+} VirtmcuQuantumTiming;
+
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
 extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+
+/* Global function to retrieve current quantum timing for SAL/AAL */
+extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
 #endif
 """
@@ -78,17 +93,24 @@ extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, 
     insertion0 = '\n#include "virtmcu/hooks.h"'
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Add the function pointer definition
-    marker1 = "/* main execution loop */"
-    insertion1 = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\n"
-    patch_file(cpu_exec_c, marker1, insertion1, after=True)
+    # 3. Add the function pointer definitions separately for idempotency
+    marker1_a = "/* main execution loop */"
+    insertion1_a = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\n"
+    patch_file(cpu_exec_c, marker1_a, insertion1_a, after=True)
+
+    marker1_b = "void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;"
+    insertion1_b = "\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\n"
+    patch_file(cpu_exec_c, marker1_b, insertion1_b, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
     # We use a more specific marker to ensure correct placement and indentation
     marker2 = "while (!cpu_handle_interrupt(cpu, &last_tb)) {"
     # Indentation: 12 spaces for the 'if', 16 for the call (while is at 8)
-    insertion2 = "\n            if (virtmcu_tcg_quantum_hook) {\n                virtmcu_tcg_quantum_hook(cpu);\n            }\n"
+    insertion2 = (
+        "\n            if (virtmcu_tcg_quantum_hook) {\n                virtmcu_tcg_quantum_hook(cpu);\n            }\n"
+    )
     patch_file(cpu_exec_c, marker2, insertion2, after=True)
+
 
 if __name__ == "__main__":
     main()

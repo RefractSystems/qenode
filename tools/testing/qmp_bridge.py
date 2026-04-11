@@ -7,6 +7,7 @@ from qemu.qmp import QMPClient
 
 logger = logging.getLogger(__name__)
 
+
 class QmpBridge:
     """
     An asynchronous bridge to QEMU via QMP and UART chardev sockets.
@@ -16,7 +17,7 @@ class QmpBridge:
     """
 
     def __init__(self):
-        self.qmp = QMPClient('virtmcu-tester')
+        self.qmp = QMPClient("virtmcu-tester")
         self.uart_reader: Optional[asyncio.StreamReader] = None
         self.uart_writer: Optional[asyncio.StreamWriter] = None
         self.uart_buffer = ""
@@ -43,7 +44,7 @@ class QmpBridge:
                 data = await self.uart_reader.read(4096)
                 if not data:
                     break
-                self.uart_buffer += data.decode('utf-8', errors='replace')
+                self.uart_buffer += data.decode("utf-8", errors="replace")
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -68,7 +69,7 @@ class QmpBridge:
 
     async def _find_event(self, listener, event_name):
         async for event in listener:
-            if event['event'] == event_name:
+            if event["event"] == event_name:
                 return event
 
     async def wait_for_line_on_uart(self, pattern: str, timeout: float = 10.0) -> bool:
@@ -98,7 +99,7 @@ class QmpBridge:
         if not self.uart_writer:
             raise RuntimeError("UART socket is not connected.")
 
-        self.uart_writer.write(text.encode('utf-8'))
+        self.uart_writer.write(text.encode("utf-8"))
         await self.uart_writer.drain()
 
     async def start_emulation(self):
@@ -124,7 +125,7 @@ class QmpBridge:
         """
         hmp_res = await self.execute("human-monitor-command", {"command-line": "info registers"})
         # AArch32 shows "R15=40000020 ...", AArch64 shows "PC=0000000040000020"
-        match = re.search(r'\bR15\s*=\s*([0-9a-fA-F]+)|\bPC\s*=\s*([0-9a-fA-F]+)', hmp_res)
+        match = re.search(r"\bR15\s*=\s*([0-9a-fA-F]+)|\bPC\s*=\s*([0-9a-fA-F]+)", hmp_res)
         if match:
             return int(match.group(1) or match.group(2), 16)
 

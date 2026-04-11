@@ -6,7 +6,7 @@
 # used by the virtmcu project. It performs the following steps:
 #   1. Clones QEMU (--depth=1) into third_party/qemu if not already present.
 #   2. Applies the 'arm-generic-fdt' patch series via `git am`.
-#   3. Applies custom AST-injection patches (libqemu and zenoh hooks) to QEMU C code.
+#   3. Applies custom AST-injection patches (zenoh hooks) to QEMU C code.
 #   4. Symlinks the project's custom `hw/` directory into QEMU's build tree.
 #   5. Configures QEMU (handling macOS specific flags if necessary).
 #   6. Compiles and installs the QEMU binaries to `third_party/qemu/build-virtmcu/install`.
@@ -94,6 +94,7 @@ fi
 # Apply custom Python-based AST-injection patches
 cd "$WORKSPACE_DIR"
 python3 patches/apply_zenoh_hook.py third_party/qemu
+python3 patches/apply_zenoh_qapi.py third_party/qemu
 python3 patches/apply_zenoh_netdev.py third_party/qemu
 python3 patches/apply_zenoh_chardev.py third_party/qemu
 
@@ -146,7 +147,7 @@ else
 fi
 
 # Compile QEMU using all available CPU cores
-make -j$(nproc)
+make -j"$(nproc)"
 # Install QEMU binaries to the prefix directory (build-virtmcu/install)
 make install
 echo "QEMU build and install completed successfully."

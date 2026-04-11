@@ -34,6 +34,7 @@ class QMPClient:
     """
     A minimal synchronous QMP client for scriptable inspection.
     """
+
     def __init__(self, socket_path="qmp.sock"):
         self.socket_path = socket_path
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -68,13 +69,13 @@ class QMPClient:
         """
         Reads one complete JSON message from the socket.
         """
-        while b'\n' not in self.buffer:
+        while b"\n" not in self.buffer:
             data = self.sock.recv(4096)
             if not data:
                 return None
             self.buffer += data
-        line, self.buffer = self.buffer.split(b'\n', 1)
-        return json.loads(line.decode('utf-8'))
+        line, self.buffer = self.buffer.split(b"\n", 1)
+        return json.loads(line.decode("utf-8"))
 
     def execute(self, cmd, args=None):
         """
@@ -85,10 +86,11 @@ class QMPClient:
             req["arguments"] = args
 
         # QMP commands are JSON objects followed by a newline
-        self.sock.send(json.dumps(req).encode('utf-8') + b'\n')
+        self.sock.send(json.dumps(req).encode("utf-8") + b"\n")
 
         # Wait for the response (which is also a single JSON object on one line)
         return self._recv_msg()
+
 
 def dump_tree(client, path="/", depth=0, visited=None):
     """
@@ -104,18 +106,19 @@ def dump_tree(client, path="/", depth=0, visited=None):
 
     # qom-list returns children (child<...>) and links (link<...>)
     resp = client.execute("qom-list", {"path": path})
-    if 'return' not in resp:
+    if "return" not in resp:
         return
 
-    for item in resp['return']:
+    for item in resp["return"]:
         # Print with indentation to show hierarchy
         print("  " * depth + f"{item['name']} ({item['type']})")
 
         # If it's a child object, recurse into it
-        if item['type'].startswith('child<'):
+        if item["type"].startswith("child<"):
             # Construct the absolute path to the child
-            next_path = path + '/' + item['name'] if path != '/' else '/' + item['name']
+            next_path = path + "/" + item["name"] if path != "/" else "/" + item["name"]
             dump_tree(client, next_path, depth + 1, visited)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -125,13 +128,9 @@ def main():
   %(prog)s tree
   %(prog)s list /machine/unattached
   %(prog)s get /machine/peripheral-anon/device[0] realized
-"""
+""",
     )
-    parser.add_argument(
-        "--socket",
-        default="qmp.sock",
-        help="Path to the QMP Unix socket (default: qmp.sock)"
-    )
+    parser.add_argument("--socket", default="qmp.sock", help="Path to the QMP Unix socket (default: qmp.sock)")
 
     subparsers = parser.add_subparsers(dest="command", required=True, help="Sub-commands")
 
@@ -159,20 +158,21 @@ def main():
 
     elif args.command == "list":
         resp = client.execute("qom-list", {"path": args.path})
-        if 'return' in resp:
+        if "return" in resp:
             # Print a simple list of names and types
-            for item in resp['return']:
+            for item in resp["return"]:
                 print(f"{item['name']:<30} ({item['type']})")
         else:
             print(f"Error: {resp.get('error', resp)}")
 
     elif args.command == "get":
         resp = client.execute("qom-get", {"path": args.path, "property": args.property})
-        if 'return' in resp:
+        if "return" in resp:
             # Pretty-print the JSON value
-            print(json.dumps(resp['return'], indent=2))
+            print(json.dumps(resp["return"], indent=2))
         else:
             print(f"Error: {resp.get('error', resp)}")
+
 
 if __name__ == "__main__":
     main()

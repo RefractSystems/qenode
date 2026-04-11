@@ -25,6 +25,12 @@ RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 DTB="$SCRIPT_DIR/minimal.dtb"
 KERNEL="$SCRIPT_DIR/hello.elf"
 
+# Ensure artifacts are built
+if [ ! -f "$DTB" ] || [ ! -f "$KERNEL" ]; then
+    echo "Artifacts missing. Building Phase 1..."
+    make -C "$SCRIPT_DIR"
+fi
+
 # Verify required files exist before running the test
 if [ ! -f "$DTB" ]; then
     echo "DTB not found: $DTB"

@@ -151,9 +151,7 @@ def test_all_compat_map_types_produce_output():
             )
         )
         dts = FdtEmitter(platform).generate_dts()
-        assert COMPAT_MAP[renode_type] in dts, (
-            f"Expected '{COMPAT_MAP[renode_type]}' in DTS for type '{renode_type}'"
-        )
+        assert COMPAT_MAP[renode_type] in dts, f"Expected '{COMPAT_MAP[renode_type]}' in DTS for type '{renode_type}'"
 
 
 # ── DTB compilation ───────────────────────────────────────────────────────────

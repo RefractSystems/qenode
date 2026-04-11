@@ -25,7 +25,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
-QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-arm"
+QEMU_BIN=$(command -v qemu-system-arm || echo "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-arm")
 
 # Set the QEMU module directory to point to our local build's lib/qemu (or multiarch equivalent)
 # This is crucial for dynamic loading of our custom .so peripherals
@@ -33,6 +33,8 @@ QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-arm"
 FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
 if [ -n "$FOUND_SO" ]; then
     QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
+elif [ -d "/opt/virtmcu/lib/qemu" ]; then
+    QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 else
     QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
 fi
@@ -42,6 +44,14 @@ if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
     export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
     export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if [ -d "/build/zenoh-c/lib" ]; then
+    export LD_LIBRARY_PATH="/build/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if [ -d "/opt/virtmcu/lib" ]; then
+    export LD_LIBRARY_PATH="/opt/virtmcu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 # Ensure QEMU has been built
@@ -94,9 +104,19 @@ if [[ "$INPUT_FILE" == *.repl ]]; then
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
     echo "Processing virtmcu YAML platform: $INPUT_FILE"
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
+    CLI_FILE=$(mktemp /tmp/virtmcu-XXXXXX.cli)
     IS_TEMP_DTB=true
     # Call our Phase 3.5 translator as a module
-    python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB"
+    python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-cli "$CLI_FILE"
+    if [ -f "$CLI_FILE" ]; then
+        # Read the file line by line into the EXTRA_ARGS array
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                EXTRA_ARGS+=("$line")
+            fi
+        done < "$CLI_FILE"
+        rm "$CLI_FILE"
+    fi
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
@@ -123,7 +143,7 @@ CMD+=("${EXTRA_ARGS[@]}")
 # Export QEMU_MODULE_DIR so the QEMU binary picks it up
 export QEMU_MODULE_DIR
 
-echo "Running: ${CMD[@]}"
+echo "Running: ${CMD[*]}"
 
 # If we have a temporary DTB, we must run QEMU as a child process and trap
 # signals to ensure the file is cleaned up.

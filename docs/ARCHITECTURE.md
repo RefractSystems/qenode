@@ -408,3 +408,25 @@ all Cortex-M targets.
 (translation block exit hooks, `qemu_icount_bias`) that are bypassed when KVM/hvf owns
 execution. Cortex-M profiles are not supported by any current hypervisor; QEMU silently
 falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile targets.
+
+## 6. Guide for Junior Developers
+
+If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:
+
+### 1. Start with the Tutorials
+Do not read the C code first. Go to the `tutorial/` folder and work through the lessons in order.
+- **Lessons 1 & 2** teach you how QEMU works (Device Trees, QOM, and Memory-Mapped I/O). You will learn that QEMU is just a giant event loop that translates ARM assembly into x86 assembly (TCG) and routes memory reads/writes to C functions (peripherals).
+- **Lessons 5 & 9** teach you SystemC. You will learn that SystemC is just a C++ library with a cooperative threading model and a simulation clock, used by hardware engineers to model buses (like CAN or I2C) before they are manufactured.
+- **Lesson 7** teaches you Zenoh. You will learn that Zenoh is a Pub/Sub message bus (like MQTT or ROS2) but heavily optimized for Rust and C.
+
+### 2. Understand the Trade-offs (Pros/Cons)
+Whenever you see a design choice in `virtmcu`, look for an ADR (Architecture Decision Record) in the `docs/` folder.
+For example, **ADR-011** explains exactly why we use Zenoh instead of standard TCP/UDP sockets (standard sockets ruin determinism because the host OS network stack introduces random latency).
+**ADR-010** explains why we use YAML instead of Renode's `.repl` format (YAML maps cleanly to OpenUSD, the industry standard for 3D physics scenes).
+
+### 3. The "No Python in the Loop" Rule
+You will notice a lot of C and Rust code in `hw/zenoh/` and `tools/systemc_adapter/`. Why didn't we just write a simple Python script to connect QEMU to MuJoCo?
+Because Python's Global Interpreter Lock (GIL) and garbage collector introduce milliseconds of latency. If a simulated drone motor controller (running at 1000 Hz) has to wait for a Python script to forward a message to the physics engine every 1 millisecond, the simulation will run slower than real-time. By writing native C plugins (`.so` files) that load directly into QEMU's address space, we achieve near-native performance. Python is strictly reserved for *offline* tooling (like generating the Device Tree in `tools/yaml2qemu.py` or running the test suite).
+
+### 4. Where to Ask for Help
+If a QEMU macro like `OBJECT_DECLARE_SIMPLE_TYPE` confuses you, look at `hw/dummy/dummy.c`. We intentionally keep a heavily commented "dummy" peripheral in the tree as a learning template. Never copy-paste complex QEMU upstream code without understanding it; start from the dummy device and build up.

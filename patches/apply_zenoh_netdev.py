@@ -18,41 +18,15 @@ def patch_file(filepath, marker, insertion, after=False):
     with open(filepath, "w") as f:
         f.write(new_content)
 
+
 def main():
-    qemu = sys.argv[1]
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        sys.exit(1)
 
-    # 1. Update QAPI to add 'zenoh' to NetClientDriver
-    net_json = os.path.join(qemu, "qapi", "net.json")
+    qemu = os.path.abspath(sys.argv[1])
 
-    marker1 = "'vhost-vdpa',"
-    insertion1 = "\n            'zenoh',"
-    patch_file(net_json, marker1, insertion1, after=True)
-
-    marker2 = "    '*x-svq':        {'type': 'bool', 'features' : [ 'unstable'] } } }"
-    insertion2 = """
-
-##
-# @NetdevZenohOptions:
-#
-# virtmcu: Zenoh virtual clock network backend
-#
-# @node: The zenoh node ID
-# @router: The zenoh router address (optional)
-#
-# Since: 10.0
-##
-{ 'struct': 'NetdevZenohOptions',
-  'data': {
-    'node': 'str',
-    '*router': 'str' } }"""
-    patch_file(net_json, marker2, insertion2, after=True)
-
-    # 3. Add 'zenoh' branch to Netdev discriminator
-    marker3 = "'vhost-vdpa': 'NetdevVhostVDPAOptions',"
-    insertion3 = "\n    'zenoh':    'NetdevZenohOptions',"
-    patch_file(net_json, marker3, insertion3, after=True)
-
-    # 4. Hook into net_client_init
+    # 1. Hook into net_client_init
     net_c = os.path.join(qemu, "net", "net.c")
     marker4 = "#ifdef CONFIG_AF_XDP\n        [NET_CLIENT_DRIVER_AF_XDP]    = net_init_af_xdp,\n#endif"
     insertion4 = "\n        [NET_CLIENT_DRIVER_ZENOH]     = net_init_zenoh,"
@@ -64,7 +38,7 @@ def main():
     clients_h = os.path.join(qemu, "net", "clients.h")
     patch_file(clients_h, marker5, insertion5, after=False)
 
-    # 5. Add zenoh.c to net/meson.build
+    # 2. Add zenoh.c to net/meson.build
     meson_build = os.path.join(qemu, "net", "meson.build")
     marker6 = "  'checksum.c',"
     insertion6 = "\n  'zenoh.c',"
@@ -79,6 +53,7 @@ def main():
 #include "qapi/error.h"
 #include "virtmcu/hooks.h"
 #include "qemu/module.h"
+#include "qom/object.h"
 
 int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp) = NULL;
 
@@ -87,6 +62,10 @@ int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer,
     /* QEMU modules are loaded by object types. Try to load the module providing zenoh-netdev */
     if (!virtmcu_zenoh_netdev_hook) {
         module_load_qom("zenoh-netdev", NULL);
+        /* Force class_init to run and register the hook */
+        if (object_class_by_name("zenoh-netdev")) {
+            /* success */
+        }
     }
 
     if (virtmcu_zenoh_netdev_hook) {
@@ -100,6 +79,7 @@ int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer,
     if not os.path.exists(zenoh_c):
         with open(zenoh_c, "w") as f:
             f.write(zenoh_c_content)
+
 
 if __name__ == "__main__":
     main()
