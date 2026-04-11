@@ -167,7 +167,7 @@ jobs:
             pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
           # Phase 4: pytest + robot run directly (no venv); needs packages on PATH
           - phase: "4"
-            pre: "pip install --break-system-packages -r requirements.txt -q"
+            pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
           # Phase 8: smoke_test.sh sources .venv, so we pre-create it
           - phase: "8"
             pre: "make -C test/phase1 && make -C test/phase8 && python3 -m venv .venv && .venv/bin/pip install --break-system-packages -r requirements.txt -q"
