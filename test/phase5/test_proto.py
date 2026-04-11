@@ -24,7 +24,7 @@ import signal
 import tempfile
 
 # ── Wire format ───────────────────────────────────────────────────────────────
-REQ_FMT  = "<BBHIqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
+REQ_FMT  = "<BBHIqqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
 RESP_FMT = "<IIQ"      # type, irq_num, data  (16 bytes)
 REQ_SIZE  = struct.calcsize(REQ_FMT)
 RESP_SIZE = struct.calcsize(RESP_FMT)
@@ -40,7 +40,7 @@ SYSC_MSG_IRQ_CLEAR = 2
 
 def send_req(sock, req_type, size, addr, data=0):
     """Send one mmio_req and return the resp.data field."""
-    pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, addr, data)
+    pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, 0, addr, data)
     sock.sendall(pkt)
     
     while True:
@@ -135,7 +135,7 @@ def run_tests(adapter_bin):
             print("T7: Testing asynchronous IRQ...")
             # Writing non-zero to reg 255 should trigger IRQ SET
             # We use sock.sendall directly because send_req expects a RESP
-            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 255*4, 1)
+            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 1)
             s.sendall(pkt)
             
             irq_set_received = False
@@ -159,7 +159,7 @@ def run_tests(adapter_bin):
                 print("T7 PASS: Asynchronous IRQ SET")
 
             # Writing zero to reg 255 should trigger IRQ CLEAR
-            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 255*4, 0)
+            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 0)
             s.sendall(pkt)
             irq_clear_received = False
             resp_received = False
