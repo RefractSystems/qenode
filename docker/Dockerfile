@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-arm-none-eabi \
         cargo \
         rustc \
+        gh \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 1: devenv ───────────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cargo \
         rustc \
         strace \
+        gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 (required for Gemini CLI)
