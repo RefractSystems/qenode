@@ -94,6 +94,7 @@ fi
 # Apply custom Python-based AST-injection patches
 cd "$WORKSPACE_DIR"
 python3 patches/apply_zenoh_hook.py third_party/qemu
+python3 patches/apply_zenoh_qapi.py third_party/qemu
 python3 patches/apply_zenoh_netdev.py third_party/qemu
 python3 patches/apply_zenoh_chardev.py third_party/qemu
 

@@ -102,7 +102,13 @@ SC_MODULE(QemuAdapter) {
 
     QemuAdapter(sc_module_name name, std::string path) : sc_module(name), socket("socket"), socket_path(path), client_fd(-1), running(true), has_resp(false) {
         SC_THREAD(systemc_thread);
-        // Start the thread after the module is fully constructed
+        SC_THREAD(keep_alive_thread);
+    }
+
+    void keep_alive_thread() {
+        while (running) {
+            wait(1, SC_SEC);
+        }
     }
 
     void end_of_elaboration() override {
@@ -276,5 +282,6 @@ int sc_main(int argc, char* argv[]) {
     adapter.socket.bind(regfile.socket);
 
     sc_start();
+    cout << "[SystemC] sc_main returning." << endl;
     return 0;
 }

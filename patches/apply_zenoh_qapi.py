@@ -60,7 +60,16 @@ def main():
 
     # ── qapi/net.json ─────────────────────────────────────────────────────────
 
-    # 1. Add 'zenoh' to NetClientDriver enum (after 'vhost-vdpa')
+    # 1. Add 'zenoh' to NetClientDriver enum documentation
+    patch_file(
+        net_json,
+        marker="# @vhost-vdpa: since 5.1",
+        insertion="\n#\n# @zenoh: since 10.0",
+        guard="# @zenoh: since 10.0",
+        after=True,
+    )
+
+    # 2. Add 'zenoh' to NetClientDriver enum (after 'vhost-vdpa')
     patch_file(
         net_json,
         marker="'vhost-vdpa',",
@@ -69,7 +78,7 @@ def main():
         after=True,
     )
 
-    # 2. Add NetdevZenohOptions struct (before the vmnet-host docstring block)
+    # 3. Add NetdevZenohOptions struct (before the vmnet-host docstring block)
     netdev_struct = """
 ##
 # @NetdevZenohOptions:
@@ -95,7 +104,7 @@ def main():
         after=False,
     )
 
-    # 3. Add 'zenoh' discriminator to Netdev union (before 'vmnet-host')
+    # 4. Add 'zenoh' discriminator to Netdev union (before 'vmnet-host')
     patch_file(
         net_json,
         marker="    'vhost-vdpa': 'NetdevVhostVDPAOptions',",
@@ -106,7 +115,16 @@ def main():
 
     # ── qapi/char.json ────────────────────────────────────────────────────────
 
-    # 4. Add 'zenoh' to ChardevBackendKind enum (after 'ringbuf', before 'memory')
+    # 5. Add 'zenoh' to ChardevBackendKind enum documentation
+    patch_file(
+        char_json,
+        marker="# @ringbuf: memory ring buffer (since 1.6)",
+        insertion="\n#\n# @zenoh: zenoh virtual clock backend (since 10.0)",
+        guard="# @zenoh: zenoh virtual clock backend (since 10.0)",
+        after=True,
+    )
+
+    # 6. Add 'zenoh' to ChardevBackendKind enum (after 'ringbuf', before 'memory')
     patch_file(
         char_json,
         marker="            'ringbuf',",
@@ -115,7 +133,7 @@ def main():
         after=True,
     )
 
-    # 5. Add ChardevZenohOptions + ChardevZenohWrapper structs
+    # 7. Add ChardevZenohOptions + ChardevZenohWrapper structs
     #    (before the existing ChardevFileWrapper docstring block)
     chardev_structs = """
 ##
@@ -154,7 +172,7 @@ def main():
         after=False,
     )
 
-    # 6. Add 'zenoh' discriminator to ChardevBackend union (before 'memory')
+    # 8. Add 'zenoh' discriminator to ChardevBackend union (before 'memory')
     patch_file(
         char_json,
         marker="            'ringbuf': 'ChardevRingbufWrapper',\n            'memory': 'ChardevRingbufWrapper'",
