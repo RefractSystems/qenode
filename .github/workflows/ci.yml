@@ -171,6 +171,12 @@ jobs:
           # Phase 8: smoke_test.sh sources .venv, so we pre-create it
           - phase: "8"
             pre: "make -C test/phase1 && make -C test/phase8 && python3 -m venv .venv && .venv/bin/pip install --break-system-packages -r requirements.txt -q"
+          - phase: "9"
+            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
+          - phase: "10"
+            pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
+          - phase: "11"
+            pre: "make -C test/riscv"
 
     steps:
       - uses: actions/checkout@v5

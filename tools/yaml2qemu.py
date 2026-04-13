@@ -27,12 +27,23 @@ def parse_yaml_platform(yaml_path: str) -> ReplPlatform:
 
     # 1. Map CPUs
     for cpu in data.get("machine", {}).get("cpus", []):
+        cpu_type = cpu["type"]
+        internal_type = "CPU.ARMv7A"
+        if "riscv" in cpu_type.lower():
+            internal_type = "CPU.RISCV64"
+        
         dev = ReplDevice(
             name=cpu["name"],
-            type_name="CPU.ARMv7A",  # Use supported internal type
+            type_name=internal_type,
             address_str="sysbus",
-            properties={"cpuType": cpu["type"]},
+            properties={"cpuType": cpu_type},
         )
+        if internal_type == "CPU.RISCV64":
+            if "isa" in cpu:
+                dev.properties["isa"] = cpu["isa"]
+            if "mmu-type" in cpu:
+                dev.properties["mmu-type"] = cpu["mmu-type"]
+                
         platform.devices.append(dev)
 
     # 2. Map Peripherals
@@ -67,6 +78,7 @@ def main():
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
     parser.add_argument("--out-cli", help="Path to output .cli file for extra arguments")
+    parser.add_argument("--out-arch", help="Path to output .arch file containing target architecture")
 
     args = parser.parse_args()
 
@@ -76,6 +88,13 @@ def main():
 
     print(f"Parsing YAML: {args.input}...")
     platform = parse_yaml_platform(args.input)
+
+    # Extract architecture
+    emitter = FdtEmitter(platform)
+    arch = emitter.arch
+    if args.out_arch:
+        with open(args.out_arch, "w") as f:
+            f.write(arch)
 
     # Extract chardev backends which cannot go into the DTB
     cli_args = []
@@ -98,7 +117,6 @@ def main():
     platform.devices = filtered_devices
 
     print(f"Generating Device Tree for {len(platform.devices)} devices...")
-    emitter = FdtEmitter(platform)
     dts = emitter.generate_dts()
 
     if args.out_cli and cli_args:

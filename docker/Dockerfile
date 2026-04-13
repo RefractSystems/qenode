@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
         gdb-multiarch \
         gcc-arm-none-eabi \
+        gcc-riscv64-linux-gnu \
+        binutils-riscv64-linux-gnu \
         cargo \
         rustc \
         gh \
@@ -85,6 +87,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
         gdb-multiarch \
         gcc-arm-none-eabi \
+        gcc-riscv64-linux-gnu \
+        binutils-riscv64-linux-gnu \
         cargo \
         rustc \
         strace \
@@ -187,7 +191,7 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
 RUN cd qemu \
     && ./configure \
         --prefix=/opt/virtmcu \
-        --target-list="${ARCH}-softmmu" \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
         --enable-modules \
         --enable-fdt \
         --disable-werror \

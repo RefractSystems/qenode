@@ -157,9 +157,9 @@ The SAL/AAL lives at the QOM peripheral boundary:
 QEMU traditionally requires recompiling the emulator to add a new device or define a new
 machine. virtmcu eliminates both constraints.
 
-**Dynamic machines** (`arm-generic-fdt` patch series): A new ARM machine type that
-instantiates CPUs, memory, and peripherals entirely from a Device Tree blob at runtime.
-`-machine arm-generic-fdt -hw-dtb board.dtb` replaces the hardcoded C machine struct.
+**Dynamic machines** (`arm-generic-fdt` patch series & `virt` machine): Machine types that
+instantiate CPUs, memory, and peripherals entirely from a Device Tree blob at runtime.
+`-machine arm-generic-fdt -hw-dtb board.dtb` (for ARM) or `-machine virt -dtb board.dtb` (for RISC-V) replaces the hardcoded C machine structs.
 
 **Dynamic QOM plugins**: `hw/` is symlinked into QEMU's source tree and compiled as proper
 QEMU modules (`--enable-modules`). The resulting `.so` files are auto-discovered via

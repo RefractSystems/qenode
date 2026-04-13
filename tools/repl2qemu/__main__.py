@@ -1,5 +1,4 @@
 import argparse
-import os
 import sys
 
 from .cli_generator import generate_cli
@@ -8,36 +7,44 @@ from .parser import parse_repl
 
 
 def main():
-    parser = argparse.ArgumentParser(description="repl2qemu: Translate Renode .repl files to QEMU Device Trees")
-    parser.add_argument("input_file", help="Path to the input .repl file")
-    parser.add_argument("--out-dtb", help="Path to the output .dtb file", required=True)
-    parser.add_argument("--print-cmd", action="store_true", help="Print the equivalent QEMU CLI command")
+    parser = argparse.ArgumentParser(description="Convert Renode .repl to QEMU Device Tree")
+    parser.add_argument("input", help="Path to .repl file")
+    parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
+    parser.add_argument("--print-cmd", action="store_true", help="Print the recommended QEMU command")
+    parser.add_argument("--out-arch", help="Path to output .arch file containing target architecture")
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: Input file '{args.input_file}' not found.")
+    try:
+        with open(args.input, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{args.input}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    with open(args.input_file, "r") as f:
-        content = f.read()
-
-    print(f"Parsing '{args.input_file}'...")
+    print(f"Parsing REPL: {args.input}...")
     platform = parse_repl(content)
 
-    print(f"Generating DTS for {len(platform.devices)} parsed devices...")
+    print(f"Generating Device Tree for {len(platform.devices)} devices...")
     emitter = FdtEmitter(platform)
     dts = emitter.generate_dts()
 
-    print(f"Compiling DTS into '{args.out_dtb}'...")
-    if not compile_dtb(dts, args.out_dtb):
-        print("Compilation failed.")
+    if args.out_arch:
+        with open(args.out_arch, "w") as f:
+            f.write(emitter.arch)
+
+    print(f"Compiling into '{args.out_dtb}'...")
+    if compile_dtb(dts, args.out_dtb):
+        print("✓ Success.")
+    else:
+        print("FAILED.")
         sys.exit(1)
 
     if args.print_cmd:
-        cli = generate_cli(platform, args.out_dtb)
-        print("\nQEMU Command:")
-        print("qemu-system-arm " + " ".join(cli))
+        cli_args, arch = generate_cli(platform, args.out_dtb)
+        qemu_bin = "qemu-system-arm" if arch == "arm" else "qemu-system-riscv64"
+        print("\nRecommended QEMU command:")
+        print(f"{qemu_bin} {' '.join(cli_args)}")
 
 
 if __name__ == "__main__":

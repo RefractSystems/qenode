@@ -25,46 +25,31 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
-QEMU_BIN=$(command -v qemu-system-arm || echo "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-arm")
 
-# Set the QEMU module directory to point to our local build's lib/qemu (or multiarch equivalent)
-# This is crucial for dynamic loading of our custom .so peripherals
-# We explicitly search for .so files to avoid picking up stale .dylib files on macOS cross-builds
-FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
-if [ -n "$FOUND_SO" ]; then
-    QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
-elif [ -d "/opt/virtmcu/lib/qemu" ]; then
-    QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
-else
-    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
-fi
+# Default architecture
+ARCH="arm"
 
-# Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
-if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
-    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
-    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
+# Parse arguments to find if architecture is explicitly provided or if we can infer it
+TEMP_ARGS=("$@")
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --arch)
+      ARCH="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+set -- "${TEMP_ARGS[@]}"
 
-if [ -d "/build/zenoh-c/lib" ]; then
-    export LD_LIBRARY_PATH="/build/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
-
-if [ -d "/opt/virtmcu/lib" ]; then
-    export LD_LIBRARY_PATH="/opt/virtmcu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
-
-# Ensure QEMU has been built
-if [ ! -f "$QEMU_BIN" ]; then
-    echo "QEMU binary not found at $QEMU_BIN. Please run setup-qemu.sh first."
-    exit 1
-fi
-
-# Parse arguments
-INPUT_FILE=""
-KERNEL=""
-MACHINE="arm-generic-fdt"
+# Process the input hardware description
+DTB=""
+IS_TEMP_DTB=false
 EXTRA_ARGS=()
+KERNEL=""
+MACHINE_PROVIDED=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -82,34 +67,42 @@ while [[ $# -gt 0 ]]; do
       ;;
     --machine)
       MACHINE="$2"
+      MACHINE_PROVIDED=true
+      shift 2
+      ;;
+    --arch)
+      # Handled above but consume it here
       shift 2
       ;;
     *)
-      EXTRA_ARGS+=("$1") # Collect any remaining arguments to pass to QEMU
+      EXTRA_ARGS+=("$1")
       shift
       ;;
   esac
 done
 
-# Process the input hardware description
-DTB=""
-IS_TEMP_DTB=false
-
 if [[ "$INPUT_FILE" == *.repl ]]; then
     echo "Processing Renode platform: $INPUT_FILE"
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
+    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch)
     IS_TEMP_DTB=true
-    # Call our Phase 3 translator as a module
-    python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB"
+    python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-arch "$ARCH_FILE"
+    if [ -f "$ARCH_FILE" ]; then
+        ARCH=$(cat "$ARCH_FILE")
+        rm "$ARCH_FILE"
+    fi
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
     echo "Processing virtmcu YAML platform: $INPUT_FILE"
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     CLI_FILE=$(mktemp /tmp/virtmcu-XXXXXX.cli)
+    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch)
     IS_TEMP_DTB=true
-    # Call our Phase 3.5 translator as a module
-    python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-cli "$CLI_FILE"
+    python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-cli "$CLI_FILE" --out-arch "$ARCH_FILE"
+    if [ -f "$ARCH_FILE" ]; then
+        ARCH=$(cat "$ARCH_FILE")
+        rm "$ARCH_FILE"
+    fi
     if [ -f "$CLI_FILE" ]; then
-        # Read the file line by line into the EXTRA_ARGS array
         while IFS= read -r line; do
             if [ -n "$line" ]; then
                 EXTRA_ARGS+=("$line")
@@ -122,13 +115,70 @@ elif [[ "$INPUT_FILE" == *.dts ]]; then
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     IS_TEMP_DTB=true
     dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
+    # Detect architecture from DTS
+    if grep -iq "riscv" "$INPUT_FILE"; then
+        ARCH="riscv"
+    fi
 elif [[ "$INPUT_FILE" == *.dtb ]]; then
     DTB="$INPUT_FILE"
 fi
 
-# If a DTB is provided (either directly or generated), append it to the machine parameter
+# Determine QEMU binary based on architecture
+QEMU_ARCH_NAME="arm"
+if [ "$ARCH" = "riscv" ] || [ "$ARCH" = "riscv64" ]; then
+    QEMU_ARCH_NAME="riscv64"
+elif [ "$ARCH" = "riscv32" ]; then
+    QEMU_ARCH_NAME="riscv32"
+fi
+
+QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || echo "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME")
+
+# Fallback to build directory if not installed yet
+if [ ! -f "$QEMU_BIN" ] && [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
+    QEMU_BIN="$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME"
+    # Make it executable if needed
+    chmod +x "$QEMU_BIN"
+fi
+
+# Ensure QEMU has been built
+if [ ! -f "$QEMU_BIN" ]; then
+    echo "QEMU binary for $ARCH not found at $QEMU_BIN. Please run setup-qemu.sh first."
+    exit 1
+fi
+
+# Default machine names
+if [ "$MACHINE_PROVIDED" = false ]; then
+    if [ "$ARCH" = "arm" ]; then
+        MACHINE="arm-generic-fdt"
+    elif [[ "$ARCH" == riscv* ]]; then
+        MACHINE="virt"
+        # Check if -bios is already in EXTRA_ARGS
+        if [[ ! " ${EXTRA_ARGS[*]} " =~ " -bios " ]]; then
+            EXTRA_ARGS+=("-bios" "none")
+        fi
+    fi
+fi
+
+# Set the QEMU module directory
+FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
+if [ -n "$FOUND_SO" ]; then
+    QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
+else
+    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
+fi
+
+# Add zenoh-c to LD_LIBRARY_PATH
+if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
+    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# If a DTB is provided, handle it based on machine
 if [ -n "$DTB" ]; then
-    MACHINE="${MACHINE},hw-dtb=${DTB}"
+    if [ "$MACHINE" = "arm-generic-fdt" ]; then
+        MACHINE="${MACHINE},hw-dtb=${DTB}"
+    else
+        EXTRA_ARGS+=("-dtb" "$DTB")
+    fi
 fi
 
 # Build the command array

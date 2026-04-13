@@ -38,8 +38,8 @@ in inter-node timing.
 
 ## Architecture in One Paragraph
 
-**QEMU 11.0.0-rc3**, augmented with the **arm-generic-fdt** patch series, instantiates
-ARM hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
+**QEMU 11.0.0-rc3**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
+ARM and RISC-V hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
 as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
 no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/zenoh/`) links
 `zenoh-c` directly into QEMU: it hooks the TCG execution loop at translation-block
@@ -57,8 +57,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-d
 
 ## Core Capabilities
 
-- **Dynamic ARM Machines**: Instantiate any ARM board from a Device Tree (`.dtb`) at
-  runtime using the `arm-generic-fdt` machine type. No hardcoded C machine structs.
+- **Dynamic ARM and RISC-V Machines**: Instantiate boards from a Device Tree (`.dtb`) at
+  runtime using the `arm-generic-fdt` or `virt` machine types. No hardcoded C machine structs.
 
 - **Dynamic QOM Plugins**: Write peripherals in C or Rust, compile to `.so`, load with
   `-device` — no QEMU recompilation required. Discovered automatically via QEMU's module
@@ -231,6 +231,7 @@ See [`PLAN.md`](PLAN.md) for the full phased checklist.
 | 8 | Deterministic multi-node UART (zenoh-chardev) | **Done** |
 | 9 | Advanced co-simulation (shared physical media) | **Done** |
 | 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
+| 11 | RISC-V Expansion & Framework Maturation | **In Progress** |
 
 ---
 

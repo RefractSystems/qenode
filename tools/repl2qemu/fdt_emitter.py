@@ -15,6 +15,9 @@ COMPAT_MAP = {
     "Timers.ARM_PrivateTimer": "arm_mptimer",
     "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv",  # Or similar depending on exact board
     "CPU.CortexM": "arm,cortex-m-cpu",  # Actually handled specially
+    "CPU.CortexA": "arm,cortex-a-cpu",
+    "CPU.ARMv7A": "arm,cortex-a-cpu",
+    "CPU.RISCV64": "riscv",
     "Memory.MappedMemory": "qemu-memory-region",
 }
 
@@ -22,6 +25,13 @@ COMPAT_MAP = {
 class FdtEmitter:
     def __init__(self, platform: ReplPlatform):
         self.platform = platform
+        self.arch = self._detect_arch()
+
+    def _detect_arch(self) -> str:
+        for dev in self.platform.devices:
+            if "RISCV" in dev.type_name.upper():
+                return "riscv"
+        return "arm"
 
     def _parse_addr(self, addr_str: str) -> tuple[int, int]:
         """Parses address string '0x60000000' or '<0x40011000, +0x100>'."""
@@ -51,7 +61,10 @@ class FdtEmitter:
         lines.append("")
         lines.append("/ {")
         lines.append('    model = "virtmcu-dynamic-machine";')
-        lines.append('    compatible = "arm,generic-fdt";')
+        if self.arch == "riscv":
+            lines.append('    compatible = "riscv-virtio";')
+        else:
+            lines.append('    compatible = "arm,generic-fdt";')
         lines.append("    #address-cells = <2>;")
         lines.append("    #size-cells = <2>;")
         lines.append("")
@@ -65,24 +78,37 @@ class FdtEmitter:
         lines.append("    cpus {")
         lines.append("        #address-cells = <1>;")
         lines.append("        #size-cells = <0>;")
+        if self.arch == "riscv":
+            lines.append("        timebase-frequency = <10000000>;")
 
         cpu_index = 0
         for dev in self.platform.devices:
-            if dev.type_name in ["CPU.CortexM", "CPU.ARMv8A", "CPU.ARMv7A"]:
-                # E.g., cpuType: "cortex-a15"
-                cpu_type = dev.properties.get("cpuType", "cortex-m3")
+            if "CPU" in dev.type_name:
+                # E.g., cpuType: "cortex-a15" or "rv64"
+                cpu_type = dev.properties.get("cpuType", "cortex-m3" if self.arch == "arm" else "rv64")
                 lines.append(f"        {dev.name}@{cpu_index} {{")
                 lines.append('            device_type = "cpu";')
-                lines.append(f'            compatible = "{cpu_type}-arm-cpu";')
+                if self.arch == "riscv":
+                    lines.append(f'            compatible = "riscv,{cpu_type}";')
+                    lines.append(f'            riscv,isa = "{dev.properties.get("isa", "rv64imafdc")}";')
+                    lines.append(f'            mmu-type = "{dev.properties.get("mmu-type", "riscv,sv48")}";')
+                else:
+                    lines.append(f'            compatible = "{cpu_type}-arm-cpu";')
                 lines.append(f"            reg = <{cpu_index}>;")
                 lines.append("            memory = <0x01>;")
+                if self.arch == "riscv":
+                    lines.append(f"            {dev.name}_intc: interrupt-controller {{")
+                    lines.append("                #interrupt-cells = <1>;")
+                    lines.append("                interrupt-controller;")
+                    lines.append('                compatible = "riscv,cpu-intc";')
+                    lines.append("            };")
                 lines.append("        };")
                 cpu_index += 1
         lines.append("    };")
         lines.append("")
 
         for dev in self.platform.devices:
-            if dev.type_name in ["CPU.CortexM", "CPU.ARMv8A", "CPU.ARMv7A"]:
+            if "CPU" in dev.type_name:
                 continue  # Handled above
 
             base, size = self._parse_addr(dev.address_str)
@@ -96,7 +122,12 @@ class FdtEmitter:
                 lines.append('        compatible = "qemu-memory-region";')
                 lines.append("        qemu,ram = <0x01>;")
                 lines.append("        container = <0x01>;")
-                lines.append(f"        reg = <0x0 0x{base:x} 0x0 0x{size:x}>;")
+                # Handle 64-bit address/size for 2-cell reg
+                base_hi = (base >> 32) & 0xFFFFFFFF
+                base_lo = base & 0xFFFFFFFF
+                size_hi = (size >> 32) & 0xFFFFFFFF
+                size_lo = size & 0xFFFFFFFF
+                lines.append(f"        reg = <0x{base_hi:x} 0x{base_lo:x} 0x{size_hi:x} 0x{size_lo:x}>;")
                 lines.append("    };")
 
             else:
@@ -118,7 +149,11 @@ class FdtEmitter:
 
                 # armv8-timer doesn't have MMIO registers in QEMU DTS
                 if compat_str != "armv8-timer":
-                    lines.append(f"        reg = <0x0 0x{base:x} 0x0 0x{size:x}>;")
+                    base_hi = (base >> 32) & 0xFFFFFFFF
+                    base_lo = base & 0xFFFFFFFF
+                    size_hi = (size >> 32) & 0xFFFFFFFF
+                    size_lo = size & 0xFFFFFFFF
+                    lines.append(f"        reg = <0x{base_hi:x} 0x{base_lo:x} 0x{size_hi:x} 0x{size_lo:x}>;")
 
                 if dev.type_name.startswith("UART") or compat_str == "pl011":
                     lines.append("        chardev = <0x00>;")
@@ -136,7 +171,7 @@ class FdtEmitter:
 
                 # Add extra properties defined in the YAML/Repl
                 for k, v in dev.properties.items():
-                    if k in ["size", "cpuType"]:
+                    if k in ["size", "cpuType", "isa", "mmu-type"]:
                         continue  # Handled elsewhere
 
                     if isinstance(v, bool):

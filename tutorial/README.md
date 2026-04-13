@@ -39,3 +39,6 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 
 *   **[Lesson 10: The Cyber-Physical Bridge (SAL/AAL)](./lesson10-sal-aal/README.md)**
     Discover the Sensor/Actuator Abstraction Layer (SAL/AAL), which translates between the binary register world of firmware and the continuous physical properties of a physics simulation or prerecorded data stream (RESD).
+
+*   **[Lesson 11: RISC-V Expansion & Cross-Architecture Simulation](./lesson11-riscv-expansion/README.md)**
+    Learn how the virtmcu framework expands beyond ARM to support RISC-V, allowing for heterogeneous multi-node simulations and architecture-agnostic platform descriptions.
