@@ -27,12 +27,17 @@ cleanup() {
     echo "[phase11_3] Cleaning up..."
     kill "${QEMU_PID:-}" 2>/dev/null || true
     kill "${ADAPTER_PID:-}" 2>/dev/null || true
-    # rm -f "$SOCK_PATH" "$ASM_PATH" "$LD_PATH" "hello.o"
+    rm -f "$SOCK_PATH" "$ASM_PATH" "$LD_PATH" "$ELF_PATH" "$DTB_PATH" "$DTS_PATH" "$ADAPTER_LOG" "$QEMU_LOG"
 }
 trap cleanup EXIT
 
 echo "[phase11_3] Building SystemC Remote Port adapter..."
-make -C "$WORKSPACE_DIR/tools/systemc_adapter/build" rp_adapter > /dev/null 2>&1
+ADAPTER_BUILD_DIR="$WORKSPACE_DIR/tools/systemc_adapter/build"
+if [ ! -f "$ADAPTER_BUILD_DIR/CMakeCache.txt" ]; then
+    echo "[phase11_3] CMake not yet configured — running cmake..."
+    cmake -S "$WORKSPACE_DIR/tools/systemc_adapter" -B "$ADAPTER_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
+fi
+make -C "$ADAPTER_BUILD_DIR" rp_adapter > /dev/null 2>&1
 
 echo "[phase11_3] Starting SystemC adapter on $SOCK_PATH..."
 "$WORKSPACE_DIR/tools/systemc_adapter/build/rp_adapter" "unix:$SOCK_PATH" > "$ADAPTER_LOG" 2>&1 &
