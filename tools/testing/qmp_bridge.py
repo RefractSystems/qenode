@@ -61,16 +61,50 @@ class QmpBridge:
         """
         Waits for a specific QMP event to occur.
         """
-        try:
-            async with self.qmp.listen() as listener:
-                return await asyncio.wait_for(self._find_event(listener, event_name), timeout)
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Timed out waiting for event: {event_name}")
+        start_vtime = await self.get_virtual_time_ns()
+        start_wall = asyncio.get_running_loop().time()
 
-    async def _find_event(self, listener, event_name):
-        async for event in listener:
-            if event["event"] == event_name:
-                return event
+        async def poll_timeout():
+            while True:
+                current_vtime = await self.get_virtual_time_ns()
+                if current_vtime > start_vtime:
+                    # Virtual time is advancing, use it
+                    if (current_vtime - start_vtime) / 1e9 > timeout:
+                        raise asyncio.TimeoutError()
+                else:
+                    # Virtual time is not advancing (standalone mode, or paused at start)
+                    # Fall back to wall clock time
+                    if asyncio.get_running_loop().time() - start_wall > timeout:
+                        raise asyncio.TimeoutError()
+                await asyncio.sleep(0.1)
+
+        async def get_event():
+            async with self.qmp.listen() as listener:
+                async for event in listener:
+                    if event["event"] == event_name:
+                        return event
+
+        event_task = asyncio.create_task(get_event())
+        timeout_task = asyncio.create_task(poll_timeout())
+
+        done, pending = await asyncio.wait(
+            [event_task, timeout_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        for task in done:
+            if task.exception():
+                if isinstance(task.exception(), asyncio.TimeoutError):
+                    raise TimeoutError(f"Timed out waiting for event: {event_name}")
+                raise task.exception()
+            return task.result()
 
     async def wait_for_line_on_uart(self, pattern: str, timeout: float = 10.0) -> bool:
         """
@@ -78,13 +112,25 @@ class QmpBridge:
         Returns True on match, False on timeout.
         """
         loop = asyncio.get_running_loop()
-        start_time = loop.time()
+        start_wall_time = loop.time()
+        start_vtime = await self.get_virtual_time_ns()
+        
         regex = re.compile(pattern)
-        while loop.time() - start_time < timeout:
+        while True:
             if regex.search(self.uart_buffer):
                 return True
+                
+            current_vtime = await self.get_virtual_time_ns()
+            if current_vtime > start_vtime:
+                # Virtual time is advancing, rely strictly on it
+                if (current_vtime - start_vtime) / 1e9 > timeout:
+                    return False
+            else:
+                # Fallback to wall-clock time if virtual time hasn't advanced
+                if loop.time() - start_wall_time > timeout:
+                    return False
+
             await asyncio.sleep(0.1)
-        return False
 
     def clear_uart_buffer(self):
         """
@@ -131,14 +177,24 @@ class QmpBridge:
 
         raise RuntimeError(f"Could not retrieve PC from 'info registers' output: {hmp_res!r}")
 
-    def get_virtual_time_ns(self) -> int:
+    async def get_virtual_time_ns(self) -> int:
         """
         Returns the current virtual time in nanoseconds.
 
-        In standalone mode (Phase 4), this might return 0 or be un-synced.
-        Full implementation is deferred to Phase 7.
+        In slaved-icount mode, virtual time corresponds to the instruction count (icount).
+        We poll 'query-cpus-fast' to guarantee QEMU's event loop is responsive, and then
+        read the actual virtual time via 'query-replay'.
         """
-        return 0
+        try:
+            # Polling query-cpus-fast as requested by PLAN.md
+            await self.execute("query-cpus-fast")
+            
+            # Retrieving the actual virtual time
+            res = await self.execute("query-replay")
+            return res.get("icount", 0)
+        except Exception as e:
+            logger.debug(f"Failed to query virtual time: {e}")
+            return 0
 
     async def close(self):
         """
