@@ -28,13 +28,15 @@ QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
 # Default architecture
 ARCH="arm"
+ARCH_EXPLICIT=false
 
-# Parse arguments to find if architecture is explicitly provided or if we can infer it
+# Pre-scan arguments to find explicit --arch before processing input files
 TEMP_ARGS=("$@")
 while [[ $# -gt 0 ]]; do
   case $1 in
     --arch)
       ARCH="$2"
+      ARCH_EXPLICIT=true
       shift 2
       ;;
     *)
@@ -115,8 +117,8 @@ elif [[ "$INPUT_FILE" == *.dts ]]; then
     DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
     IS_TEMP_DTB=true
     dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
-    # Detect architecture from DTS
-    if grep -iq "riscv" "$INPUT_FILE"; then
+    # Detect architecture from DTS (only if not explicitly overridden via --arch)
+    if [ "$ARCH_EXPLICIT" = false ] && grep -iq "riscv" "$INPUT_FILE"; then
         ARCH="riscv"
     fi
 elif [[ "$INPUT_FILE" == *.dtb ]]; then
@@ -167,9 +169,21 @@ else
     QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
 fi
 
-# Add zenoh-c to LD_LIBRARY_PATH
+# Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
 if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
     export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
+    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# Docker build path
+if [ -d "/build/zenoh-c/lib" ]; then
+    export LD_LIBRARY_PATH="/build/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# Installed virtmcu path
+if [ -d "/opt/virtmcu/lib" ]; then
+    export LD_LIBRARY_PATH="/opt/virtmcu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 # If a DTB is provided, handle it based on machine

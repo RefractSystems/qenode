@@ -5,7 +5,7 @@ _start:
     # Set stack pointer (optional for this simple loop)
     # la sp, _stack_top
 
-    # UART PL011 base address (0x10000000 for RISC-V virt machine)
+    # NS16550A UART base address (0x10000000 on the QEMU RISC-V virt machine)
     li t0, 0x10000000
 
     # Message "HI RV\n"

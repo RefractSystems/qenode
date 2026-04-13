@@ -31,7 +31,7 @@ def parse_yaml_platform(yaml_path: str) -> ReplPlatform:
         internal_type = "CPU.ARMv7A"
         if "riscv" in cpu_type.lower():
             internal_type = "CPU.RISCV64"
-        
+
         dev = ReplDevice(
             name=cpu["name"],
             type_name=internal_type,
@@ -43,7 +43,7 @@ def parse_yaml_platform(yaml_path: str) -> ReplPlatform:
                 dev.properties["isa"] = cpu["isa"]
             if "mmu-type" in cpu:
                 dev.properties["mmu-type"] = cpu["mmu-type"]
-                
+
         platform.devices.append(dev)
 
     # 2. Map Peripherals

@@ -2,8 +2,13 @@
 # ==============================================================================
 # Phase 11 Smoke Test — RISC-V Expansion
 #
-# This test verifies that the QEMU RISC-V machine can be constructed via the
-# dynamic machine pipeline (FDT) and successfully boot a RISC-V firmware.
+# Verifies that the unified run.sh pipeline can detect a RISC-V DTS, select
+# qemu-system-riscv64, and boot a minimal RISC-V firmware that prints to UART.
+#
+# Test flow:
+#   1. Build the RISC-V firmware + DTB from test/riscv/.
+#   2. Run QEMU via run.sh with a 5-second timeout (firmware loops after output).
+#   3. Capture serial output in a temp file and assert "HI RV" is present.
 # ==============================================================================
 
 set -e
@@ -11,27 +16,36 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RISCV_TEST_DIR="$WORKSPACE_DIR/test/riscv"
+RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
+OUTPUT_LOG=$(mktemp /tmp/phase11-uart-XXXXXX.log)
 
 echo "==> Running Phase 11 Smoke Test (RISC-V Expansion)..."
 
 # Ensure the firmware and DTB are built
 make -C "$RISCV_TEST_DIR"
 
-# Run QEMU with the RISC-V firmware and capture output
-echo "==> Booting RISC-V firmware..."
-OUTPUT=$("$WORKSPACE_DIR/scripts/run.sh" \
+echo "==> Booting RISC-V firmware (5s timeout)..."
+
+# Run QEMU with a hard timeout.  The firmware prints "HI RV" then enters a WFI
+# loop, so QEMU will never exit on its own — the timeout is expected behaviour.
+# -serial file: captures UART output; -monitor none suppresses the QEMU monitor.
+timeout 5s "$RUN_SH" \
     --dts "$RISCV_TEST_DIR/minimal.dts" \
     --kernel "$RISCV_TEST_DIR/hello.elf" \
     -nographic \
-    -d in_asm \
-    -D /tmp/qemu-riscv.log 2>&1)
+    -monitor none \
+    -serial "file:$OUTPUT_LOG" \
+    || true   # timeout exits 124; treat as success so we can inspect output
 
-echo "$OUTPUT"
+echo "==> Serial output captured:"
+cat "$OUTPUT_LOG"
 
-if echo "$OUTPUT" | grep -q "HI RV"; then
-    echo "✓ Phase 11 Smoke Test PASSED: RISC-V firmware successfully executed and output 'HI RV'."
+if grep -q "HI RV" "$OUTPUT_LOG"; then
+    echo "✓ Phase 11 Smoke Test PASSED: RISC-V firmware printed 'HI RV'."
+    rm -f "$OUTPUT_LOG"
     exit 0
 else
-    echo "✗ Phase 11 Smoke Test FAILED: Did not find 'HI RV' in output."
+    echo "✗ Phase 11 Smoke Test FAILED: 'HI RV' not found in serial output."
+    rm -f "$OUTPUT_LOG"
     exit 1
 fi
