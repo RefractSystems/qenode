@@ -50,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cargo \
         rustc \
         gh \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 1: devenv ───────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rustc \
         strace \
         gh \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 24 (required for Gemini CLI)
