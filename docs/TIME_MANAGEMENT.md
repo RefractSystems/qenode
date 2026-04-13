@@ -43,11 +43,13 @@ sequenceDiagram
 
 virtmcu provides three distinct clock modes, controlled by whether the `zenoh-clock` device is instantiated and which properties are passed to it.
 
-| Mode | QEMU Argument | Speed | When to use |
+| Mode | QEMU Arguments | Speed | When to use |
 |---|---|---|---|
-| **Standalone** | *(Omit zenoh-clock device)* | 100% | Pure firmware development, CI/CD unit tests where physics are not required. QEMU uses host wall-clock time. |
-| **Slaved-Suspend** | `-device zenoh-clock,mode=suspend` | ~95% | **Default for FirmwareStudio.** QEMU runs at full native speed, but simply pauses execution when it reaches the end of the physics quantum. Perfect for control loops $\ge$ 1 quantum. |
-| **Slaved-icount** | `-device zenoh-clock,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | ~15-20% | Strict instruction-counting mode. 1 instruction = 1 virtual nanosecond. Required when firmware measures sub-quantum intervals (e.g., bit-banging, PWM, microsecond DMA). |
+| **Standalone** | *(omit `-device zenoh-clock`)* | 100% | Pure firmware development, CI/CD unit tests where physics are not required. QEMU uses host wall-clock time. |
+| **Slaved-Suspend** | `-device zenoh-clock,node=N,router=<url>` | ~95% | **Default for FirmwareStudio.** QEMU runs at full native speed but pauses at Translation Block boundaries when the physics quantum expires. Ideal for control loops >= one quantum. |
+| **Slaved-icount** | `-device zenoh-clock,node=N,router=<url>,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | ~15–20% | Strict instruction-counting mode. 1 instruction = 1 virtual nanosecond. Required when firmware measures sub-quantum intervals (PWM, bit-banging, microsecond DMA). |
+
+Where `N` is the QEMU node index (0-based) and `<url>` is the Zenoh router address (e.g. `tcp/127.0.0.1:7447`).
 
 ---
 
@@ -104,6 +106,9 @@ To solve this, our Python testing library (`qmp_bridge.py`) tracks **virtual tim
 1. It polls QEMU via the QEMU Machine Protocol (QMP) using the `query-replay` command.
 2. `query-replay` returns the current instruction count (`icount`), which in `shift=0` mode exactly correlates to virtual nanoseconds.
 3. Tests timeout based on *simulated* seconds, guaranteeing rock-solid stability regardless of host CPU load or simulation speed.
+
+For the implementation details and worked examples, see
+[tutorial/lesson11.2-virtual-time-timeouts/README.md](../tutorial/lesson11.2-virtual-time-timeouts/README.md).
 
 ---
 
