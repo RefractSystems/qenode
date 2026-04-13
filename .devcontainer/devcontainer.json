@@ -9,11 +9,11 @@
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
     "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",
-    "source=gemini-cli-config,target=/home/vscode/.gemini,type=volume"
+    "source=${localEnv:HOME}/.gemini,target=/home/vscode/.gemini,type=bind"
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini /home/vscode/.claude && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && grep -qxF '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' ~/.bashrc || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.bashrc && grep -qxF \"alias gemini='gemini --yolo'\" ~/.bashrc || echo \"alias gemini='gemini --yolo'\" >> ~/.bashrc && make setup",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && sudo chown -R vscode:vscode /home/vscode/.gemini /home/vscode/.claude && if [ -f /home/vscode/.gemini/gemini-credentials.json ] && ! python3 -m json.tool /home/vscode/.gemini/gemini-credentials.json > /dev/null 2>&1; then rm /home/vscode/.gemini/gemini-credentials.json; fi && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && grep -qxF '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' ~/.bashrc || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.bashrc && grep -qxF \"alias gemini='gemini --yolo'\" ~/.bashrc || echo \"alias gemini='gemini --yolo'\" >> ~/.bashrc && make setup",
   "customizations": {
     "vscode": {
       "extensions": [
