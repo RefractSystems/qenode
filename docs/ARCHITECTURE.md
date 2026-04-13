@@ -229,6 +229,15 @@ not in git). In Docker: built from source at `ZENOH_C_REF` (default `1.8.0`).
 `hw/zenoh/meson.build` resolves `meson.project_source_root()/../zenoh-c`, which is
 correct for both `third_party/qemu` (local) and `/build/qemu` (Docker).
 
+**Runtime Linking Requirement (`LD_LIBRARY_PATH`)**: Because `libzenohc.so` is compiled
+and stored in non-standard project-local paths (e.g., `third_party/zenoh-c/lib` or
+`/opt/virtmcu/lib`) rather than system-wide directories like `/usr/lib`, QEMU cannot
+resolve the dependency when it `dlopen()`s the `hw-virtmcu-zenoh.so` plugin. 
+Therefore, `scripts/run.sh` explicitly prepends the appropriate `zenoh-c/lib` path to
+the `LD_LIBRARY_PATH` environment variable before invoking QEMU. If this path is lost
+(e.g., during refactoring), QEMU will silently fail to load the Zenoh networking and
+clock plugins.
+
 ---
 
 ## 5. Timing Design and Performance
