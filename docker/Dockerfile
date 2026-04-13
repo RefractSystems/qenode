@@ -62,6 +62,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # https://github.com/devcontainers/images/tree/main/src/base-ubuntu
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04 AS devenv
 
+LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
+LABEL org.opencontainers.image.description="virtmcu development environment — toolchain + AI tools"
+LABEL org.opencontainers.image.licenses=MIT
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -206,6 +210,10 @@ ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
+
+LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
+LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
+LABEL org.opencontainers.image.licenses=MIT
 
 ARG ARCH
 ENV ARCH=${ARCH}
