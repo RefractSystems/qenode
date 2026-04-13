@@ -21,7 +21,6 @@
 #include <unistd.h>
 #include <errno.h>
 
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include "remote-port-proto.h"
 
 #define TYPE_REMOTE_PORT_BRIDGE "remote-port-bridge"
@@ -169,9 +168,16 @@ static void send_req_and_wait(RemotePortBridgeState *s, struct rp_pkt *req, size
 {
     if (s->sock_fd < 0) return;
 
-    bql_unlock();
+    /*
+     * Acquire the socket mutex BEFORE releasing the BQL.  If the order were
+     * reversed, the main event loop could run bridge_sock_handler() in the
+     * window between bql_unlock() and qemu_mutex_lock(), setting has_resp=true
+     * before we reset it — causing the vCPU thread to miss the wakeup and
+     * wait forever.
+     */
     qemu_mutex_lock(&s->sock_mutex);
     s->has_resp = false;
+    bql_unlock();
 
     bool ok = writen(s->sock_fd, req, req_len);
     if (ok && req_data) {
@@ -190,8 +196,8 @@ static void send_req_and_wait(RemotePortBridgeState *s, struct rp_pkt *req, size
         }
     }
 
-    qemu_mutex_unlock(&s->sock_mutex);
     bql_lock();
+    qemu_mutex_unlock(&s->sock_mutex);
 }
 
 static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
@@ -201,7 +207,13 @@ static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
     struct rp_pkt resp = {0};
     uint8_t data[8] = {0};
     
+    /* rp_encode_read/write are deprecated in favour of rp_encode_busaccess,
+     * which requires a fully-negotiated rp_peer_state.  Suppress the warning
+     * locally; migrate when peer state tracking is added. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     size_t len = rp_encode_read(s->next_id++, 0, &req.busaccess, 0, 0, addr, 0, size, size, size);
+#pragma GCC diagnostic pop
     send_req_and_wait(s, &req, len, NULL, &resp, data);
 
     uint64_t val = 0;
@@ -224,7 +236,10 @@ static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     else if (size == 4) *(uint32_t*)data = val;
     else if (size == 8) *(uint64_t*)data = val;
     
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     size_t len = rp_encode_write(s->next_id++, 0, &req.busaccess, 0, 0, addr, 0, size, size, size);
+#pragma GCC diagnostic pop
     send_req_and_wait(s, &req, len, data, &resp, NULL);
 }
 
@@ -276,7 +291,8 @@ static void bridge_realize(DeviceState *dev, Error **errp)
     // Remote Port HELLO handshake
     struct rp_pkt hello_req = {0};
     struct rp_pkt hello_resp = {0};
-    size_t len = rp_encode_hello(0, 0, &hello_req.hello, RP_VERSION_MAJOR, RP_VERSION_MINOR);
+    size_t len = rp_encode_hello_caps(0, 0, &hello_req.hello, RP_VERSION_MAJOR, RP_VERSION_MINOR,
+                                       NULL, NULL, 0);
     
     if (!writen(s->sock_fd, &hello_req, len)) {
         error_setg(errp, "Failed to send Remote port HELLO");
