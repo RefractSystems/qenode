@@ -46,7 +46,7 @@ jobs:
         id: meta-devenv
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/devenv
+          images: ghcr.io/${{ github.repository }}/runtime/devenv
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -74,7 +74,7 @@ jobs:
         id: meta-runtime
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}/runtime
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
