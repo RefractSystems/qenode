@@ -19,6 +19,7 @@ COMPAT_MAP = {
     "CPU.ARMv7A": "arm,cortex-a-cpu",
     "CPU.RISCV64": "riscv",
     "Memory.MappedMemory": "qemu-memory-region",
+    "RemotePort.Peripheral": "remote-port-bridge",
 }
 
 

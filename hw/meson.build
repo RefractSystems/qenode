@@ -79,5 +79,15 @@ hw_virtmcu_modules += {'rust-dummy': rust_dummy_ss}
 
 subdir('zenoh')
 
+# ── remote-port-bridge ────────────────────────────────────────────────────────
+# Path B co-simulation bridge: AMD/Xilinx Remote Port over a Unix socket
+# Compiles to hw-virtmcu-remote-port-bridge.so.
+remote_port_ss = ss.source_set()
+remote_port_ss.add(files(
+    'remote-port/remote-port-bridge.c',
+    'remote-port/remote-port-proto.c'
+))
+hw_virtmcu_modules += {'remote-port-bridge': remote_port_ss}
+
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}

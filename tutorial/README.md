@@ -45,3 +45,6 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 
 *   **[Lesson 11.2: Virtual-Time-Aware Timeouts](./lesson11.2-virtual-time-timeouts/README.md)**
     Understand why wall-clock timeouts fail in slaved-icount mode and how `QmpBridge` uses `query-replay` icount to switch between virtual-time and wall-clock timeout sources automatically.
+
+*   **[Lesson 11.3: Remote Port Co-Simulation (Path B)](./lesson11.3-remote-port/README.md)**
+    Learn how to perform full TLM-2.0 co-simulation via the industry-standard AMD/Xilinx Remote Port protocol to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
