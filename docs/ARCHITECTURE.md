@@ -34,26 +34,26 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 ┌──────────────────────────────────────────────────────────────────────┐
 │  FirmwareStudio World                                                │
 │                                                                      │
-│  ┌──────────────┐   mj_step()   ┌──────────────────┐               │
-│  │  MuJoCo      │ ────────────► │  TimeAuthority   │               │
-│  │  (physics)   │               │  (Python)        │               │
-│  │              │ ◄──────────── │                  │               │
-│  └──────────────┘  sensor data  └────────┬─────────┘               │
+│  ┌──────────────┐   mj_step()   ┌──────────────────┐                 │
+│  │  MuJoCo      │ ────────────► │  TimeAuthority   │                 │
+│  │  (physics)   │               │  (Python)        │                 │
+│  │              │ ◄──────────── │                  │                 │
+│  └──────────────┘  sensor data  └────────┬─────────┘                 │
 │                                          │                           │
-│                     Zenoh GET sim/clock/advance/{node_id}           │
-│                     (no Python middleman — native C plugin)         │
+│                     Zenoh GET sim/clock/advance/{node_id}            │
+│                     (no Python middleman — native C plugin)          │
 │                                          │                           │
-│              ┌───────────────────────────┼────────────────────┐     │
-│              │  QEMU node 0              │  QEMU node 1       │     │
-│              │  + hw/zenoh/              │  + hw/zenoh/       │     │
-│              │    zenoh-clock.c  ◄───────┘    zenoh-clock.c   │     │
-│              │    zenoh-netdev.c ◄────────────zenoh-netdev.c  │     │
-│              │    zenoh-chardev.c◄────────────zenoh-chardev.c │     │
-│              │  + QOM peripherals        │  + QOM peripherals │     │
-│              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)│    │
-│              │                           │                    │     │
-│              │  firmware (bare-metal C)  │  firmware          │     │
-│              └───────────────────────────┴────────────────────┘     │
+│              ┌───────────────────────────┼────────────────────┐      │
+│              │  QEMU node 0              │  QEMU node 1       │      │
+│              │  + hw/zenoh/              │  + hw/zenoh/       │      │
+│              │    zenoh-clock.c  ◄───────┘    zenoh-clock.c   │      │
+│              │    zenoh-netdev.c ◄────────────zenoh-netdev.c  │      │
+│              │    zenoh-chardev.c◄────────────zenoh-chardev.c │      │
+│              │  + QOM peripherals        │  + QOM peripherals │      │
+│              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)  │      │
+│              │                           │                    │      │
+│              │  firmware (bare-metal C)  │  firmware          │      │
+│              └───────────────────────────┴────────────────────┘      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,15 +84,13 @@ the next advance.
 3. On reply, re-acquires the BQL and optionally advances `timers_state.qemu_icount_bias`
    for exact nanosecond virtual time in `slaved-icount` mode.
 
-**Two slaved modes**:
+**Three clock modes**:
 
 | Mode | QEMU flags | Throughput | Use when |
 |---|---|---|---|
-| `slaved-suspend` | (none) | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
-| `slaved-icount` | `-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
-
-`standalone` mode (no zenoh-clock device) runs at full TCG speed, used for development
-and CI without a physics engine.
+| `standalone` | (none) | **100%** | Development and CI without a physics engine. Full TCG speed. |
+| `slaved-suspend` | `-device zenoh-clock,mode=suspend` | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
+| `slaved-icount` | `-device zenoh-clock,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
 
 **BQL constraint**: The Zenoh `GET` call must always be made with the BQL released.
 Blocking while holding the BQL deadlocks the QEMU process — the main event loop (QMP,
