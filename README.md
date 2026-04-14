@@ -145,7 +145,7 @@ virtmcu/
 │
 └── docs/
     ├── ARCHITECTURE.md         # Deep-dive: design pillars, timing, prior art, ADRs
-    └── TIME_MANAGEMENT.md      # Detailed guide to BQL mechanics and physics sync
+    └── TIME_MANAGEMENT_DESIGN.md # Detailed guide to BQL mechanics and physics sync
 ```
 
 ---
@@ -156,7 +156,7 @@ virtmcu/
 Sections 1–3 cover the design rationale and the five implementation pillars. Section 5
 covers the timing design and BQL constraints. Section 6 covers prior art (qbox, MINRES).
 
-**For a deep dive on clock modes and BQL mechanics**: [`docs/TIME_MANAGEMENT.md`](docs/TIME_MANAGEMENT.md).
+**For a deep dive on clock modes and BQL mechanics**: [`docs/TIME_MANAGEMENT_DESIGN.md`](docs/TIME_MANAGEMENT_DESIGN.md).
 
 **Write a new peripheral**: Copy `hw/dummy/dummy.c`. Rename, implement MMIO ops, add an
 entry in `hw/meson.build`. Run `make build` then:

@@ -51,7 +51,41 @@ The MCP server is a standalone Python process located in `tools/mcp_server/`.
 ---
 
 ## 6. Implementation Strategy (Phase 13)
-1. Implement the MCP server base using the `mcp-python-sdk`.
+1. Implement the MCP server base using the `mcp` SDK.
 2. Wrap `tools/testing/qmp_bridge.py` for all QMP logic.
 3. Use `eclipse-zenoh` Python bindings for UART/Network interaction.
 4. Add lesson 13 to the tutorial: "AI-Augmented Firmware Debugging with MCP."
+
+---
+
+## 7. Commands
+- **Run the Server**: `python3 -m tools.mcp_server` (will communicate over stdio by default).
+- **Run the Tests**: `pytest tests/mcp_server/`
+- **Lint the Code**: `make lint` and `make fmt` (uses `ruff`).
+
+## 8. Code Style
+The Python code will follow the established `virtmcu` standards enforced by `ruff`.
+```python
+# Example: Use type hints, concise logging, and async where appropriate
+import logging
+from mcp.server import Server
+from tools.testing.qmp_bridge import QmpBridge
+
+logger = logging.getLogger(__name__)
+
+async def read_cpu_state(node_id: str) -> dict:
+    """Returns the CPU registers and state via QMP."""
+    bridge = QmpBridge(f"/tmp/virtmcu/{node_id}.qmp")
+    await bridge.connect()
+    # Logic to fetch CPU state
+    return {"pc": 0x08000000}
+```
+
+## 9. Testing Strategy
+- **Unit Tests (`tests/mcp_server/`)**: Mock QMP sockets and Zenoh connections to verify MCP tool dispatching, payload validation, and JSON serialization.
+- **Integration Tests**: Extend `test/phase13/smoke_test.sh` to spin up a mock AI client that invokes `provision_board` and `read_cpu_state` on a real QEMU instance.
+
+## 10. Boundaries
+- **Always do**: Validate all inputs from the MCP client to prevent injection attacks (e.g., path traversal when flashing firmware). Use `asyncio` for all QMP/Zenoh I/O so the MCP server stays responsive.
+- **Ask first**: Before adding large binary dependencies or changing the underlying QMP bridge protocol.
+- **Never do**: Expose TCP QMP sockets to the host network. Never run the MCP server as `root`.

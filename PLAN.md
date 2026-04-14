@@ -293,7 +293,7 @@ Implement after Path B is validated.
 - [x] **5.2** (Deferred) Implement Path B: strip Renode `IntegrationLibrary` headers from existing
       Verilated models; integrate `libsystemctlm-soc`; write `hw/remote-port/` QOM device;
       validate end-to-end with one Renode-derived Verilated model.
-- [x] **5.3** (Deferred) *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network.
+- [ ] **5.3** (Deferred) *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network. (Deferred to later; no implementation currently in `hw/`)
 - [x] **5.4** Document Path A vs B vs C decision guide (already in `docs/ARCHITECTURE.md` §9).
 - [x] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
 
@@ -534,6 +534,51 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [ ] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
 - [ ] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
 - [ ] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
+
+---
+
+## Phase 14 — Wireless & IoT RF Simulation (BLE, Thread, WiFi)
+
+**Goal**: Provide deterministic, virtual-timestamped simulation of wireless transceivers to bridge the gap between simple Ethernet and complex IoT meshing.
+
+**Tasks**:
+- [ ] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
+- [ ] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
+- [ ] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
+- [ ] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+
+---
+
+## Phase 15 — Distribution & Packaging
+
+**Goal**: Remove the friction of compiling QEMU from source. Distribute `virtmcu` as an easily installable suite.
+
+**Tasks**:
+- [ ] **15.1** **Python Tools PyPI Package**: Package `repl2qemu`, `yaml2qemu`, and `mcp_server` into a standalone PyPI package (`virtmcu-tools`).
+- [ ] **15.2** **Binary Releases**: Establish a GitHub Actions pipeline to compile the patched `qemu-system-arm` and `hw-virtmcu-zenoh.so` binaries for `x86_64-linux` and `aarch64-linux` (and macOS if plugins issue is resolved).
+- [ ] **15.3** **Tutorial Lesson 15**: Setup and Distribution. Installing and running `virtmcu` from binaries instead of source.
+
+---
+
+## Phase 16 — Performance & Determinism CI
+
+**Goal**: Establish rigorous performance regression testing to ensure that the synchronization mechanisms (TCG hooks and Zenoh) do not silently degrade over time.
+
+**Tasks**:
+- [ ] **16.1** **IPS Benchmarking**: Add a CI step that runs a heavy mathematical payload in `standalone`, `slaved-suspend`, and `slaved-icount` modes and logs the Instructions-Per-Second (IPS).
+- [ ] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1ms threshold.
+- [ ] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu.
+
+---
+
+## Phase 17 — Security & Hardening (Fuzzing)
+
+**Goal**: Protect the simulation boundary. Given that virtmcu ingests data from external networks and files, ensure the emulated environment cannot be crashed or escaped via malformed inputs.
+
+**Tasks**:
+- [ ] **17.1** **Network Boundary Fuzzing**: Implement a fuzzer (e.g., AFL++) against `hw/zenoh/zenoh-netdev.c` and `zenoh-chardev.c` to ensure corrupted Zenoh frames do not cause buffer overflows in the QEMU address space.
+- [ ] **17.2** **Parser Fuzzing**: Apply fuzzing to `tools/repl2qemu/parser.py` and the YAML parsers to ensure malformed configuration files fail gracefully.
+- [ ] **17.3** **Tutorial Lesson 17**: Securing the Digital Twin Boundary.
 
 ---
 
