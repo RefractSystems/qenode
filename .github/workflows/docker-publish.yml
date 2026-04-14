@@ -52,29 +52,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME_BASE }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       # ── devenv image ────────────────────────────────────────────────────────
 
-      - name: Build and push — devenv (${{ matrix.arch }})
+      - name: Build and push — devenv (${{ matrix.arch  }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           target: devenv
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-${{ matrix.arch }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-${{ matrix.arch }}
           cache-from: type=gha,scope=devenv-${{ matrix.arch }}
           cache-to: type=gha,scope=devenv-${{ matrix.arch }},mode=max
 
       # ── runtime image ───────────────────────────────────────────────────────
 
-      - name: Build and push — runtime (${{ matrix.arch }})
+      - name: Build and push — runtime (${{ matrix.arch  }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           target: runtime
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-${{ matrix.arch }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime:sha-${{ github.sha }}-${{ matrix.arch }}
           # Reuse the builder cache populated by ci.yml
           cache-from: |
             type=gha,scope=builder-${{ matrix.arch }}
@@ -102,13 +106,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME_BASE }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       # ── devenv manifest ─────────────────────────────────────────────────────
 
       - name: Docker metadata — devenv
         id: meta-devenv
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -125,8 +133,8 @@ jobs:
           TAGS=$(echo "${{ steps.meta-devenv.outputs.tags }}" | xargs -I {} echo "-t {}")
           # hadolint ignore=DL3059
           docker buildx imagetools create $TAGS \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-arm64
 
       # ── runtime manifest ────────────────────────────────────────────────────
 
@@ -134,7 +142,7 @@ jobs:
         id: meta-runtime
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -151,5 +159,5 @@ jobs:
           TAGS=$(echo "${{ steps.meta-runtime.outputs.tags }}" | xargs -I {} echo "-t {}")
           # hadolint ignore=DL3059
           docker buildx imagetools create $TAGS \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime:sha-${{ github.sha }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime:sha-${{ github.sha }}-arm64
