@@ -64,6 +64,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           target: devenv
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-devenv.outputs.tags }}
           labels: ${{ steps.meta-devenv.outputs.labels }}
@@ -96,6 +97,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           target: runtime
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-runtime.outputs.tags }}
           labels: ${{ steps.meta-runtime.outputs.labels }}
