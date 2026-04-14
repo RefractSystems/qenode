@@ -436,3 +436,8 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
+      - name: Run verification script
+        run: |
+          chmod +x tests/test_runtime_image.sh
+          ./tests/test_runtime_image.sh virtmcu-runtime:${{ github.sha }}
+

@@ -33,3 +33,9 @@ docker run --rm "$IMAGE" sh -c '
     fi
 
     echo "4. Checking virtmcu plugins..."
+    if ! qemu-system-arm -device help | grep -q "zenoh-clock"; then
+        echo "❌ Error: virtmcu zenoh-clock device not found"
+        exit 1
+    fi
+'
+echo "✅ Runtime image verification passed!"
