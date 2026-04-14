@@ -128,9 +128,8 @@ ARG QEMU_REF
 ARG ZENOH_C_REF
 ARG TARGETARCH
 
-# Map TARGETARCH to the QEMU binary suffix
-ENV ARCH=${TARGETARCH/amd64/x86_64}
-ENV ARCH=${ARCH/arm64/aarch64}
+# We emulate ARM microcontrollers regardless of the host architecture
+ENV ARCH=arm
 
 WORKDIR /build
 
@@ -219,9 +218,8 @@ LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Pyt
 LABEL org.opencontainers.image.licenses=MIT
 
 ARG TARGETARCH
-# Map TARGETARCH to the QEMU binary suffix
-ENV ARCH=${TARGETARCH/amd64/x86_64}
-ENV ARCH=${ARCH/arm64/aarch64}
+# We emulate ARM microcontrollers regardless of the host architecture
+ENV ARCH=arm
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
