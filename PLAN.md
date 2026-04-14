@@ -513,6 +513,30 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
+## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired)
+
+**Goal**: Provide the backend APIs and deterministic telemetry streams required for FirmwareStudio to build a rich, COOJA-like interactive frontend (visual timelines, dynamic radio environments, and interactive virtual boards) without introducing a GUI into QEMU.
+
+**Tasks**:
+- [ ] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
+- [ ] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates from the physics engine without restarting the simulation.
+- [ ] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) to automatically bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics, allowing any frontend to render interactive widgets.
+- [ ] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology using the new Zenoh APIs.
+
+---
+
+## Phase 13 — AI Debugging & MCP Interface
+
+**Goal**: Provide a Model Context Protocol (MCP) server that enables AI agents to semantically interact with the simulation. This allows an AI to provision boards, flash firmware, and debug running systems via high-level tools rather than raw shell commands.
+
+**Tasks**:
+- [ ] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
+- [ ] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
+- [ ] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
+- [ ] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
+
+---
+
 ## Risks and Open Questions
 
 | # | Risk | Mitigation |
