@@ -15,7 +15,7 @@
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.8.0
-ARG ARCH=arm
+ARG TARGETARCH
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────
 # Plain ubuntu with all build dependencies. Used directly by the builder stage
@@ -125,7 +125,11 @@ FROM toolchain AS builder
 ARG QEMU_REPO
 ARG QEMU_REF
 ARG ZENOH_C_REF
-ARG ARCH
+ARG TARGETARCH
+
+# Map TARGETARCH to the QEMU binary suffix
+ENV ARCH=${TARGETARCH/amd64/x86_64}
+ENV ARCH=${ARCH/arm64/aarch64}
 
 WORKDIR /build
 
@@ -215,8 +219,10 @@ LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
 LABEL org.opencontainers.image.licenses=MIT
 
-ARG ARCH
-ENV ARCH=${ARCH}
+ARG TARGETARCH
+# Map TARGETARCH to the QEMU binary suffix
+ENV ARCH=${TARGETARCH/amd64/x86_64}
+ENV ARCH=${ARCH/arm64/aarch64}
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
