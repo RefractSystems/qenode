@@ -129,3 +129,40 @@ Earlier prototypes of FirmwareStudio tried to run a Python agent that paused QEM
 ### Why have `slaved-suspend` if `slaved-icount` is more accurate?
 * **The Problem:** `-icount` forces QEMU to count every single instruction, disabling many of TCG's speed optimizations. It cuts performance by ~80%.
 * **Our Solution:** 95% of firmware does not care about sub-nanosecond instruction timing; it only cares that the UART fires or the physics state updates every millisecond. `slaved-suspend` lets TCG run at full native speed, only intercepting the loop at the very end of the millisecond to wait for physics. We keep `slaved-icount` strictly for when cycle-accurate PWM or DMA timing is required.
+
+---
+
+## 6. Commands
+
+To run a simulation in the recommended slaved-suspend mode:
+```bash
+./scripts/run.sh --dtb board.dtb -device zenoh-clock,node=0
+```
+
+To run a simulation in cycle-accurate slaved-icount mode:
+```bash
+./scripts/run.sh --dtb board.dtb -device zenoh-clock,node=0,mode=icount -icount shift=0,align=off,sleep=off
+```
+
+## 7. Project Structure
+
+- `hw/zenoh/zenoh-clock.c`: The native QEMU module handling the Zenoh network protocol and QEMU BQL locking.
+- `patches/apply_zenoh_hook.py`: The injection script allowing `zenoh-clock.c` to hook into `accel/tcg/cpu-exec.c`.
+- `tools/testing/qmp_bridge.py`: Testing utility tracking virtual time.
+- `test/phase7/`: Shell scripts verifying determinism across runs using these clock modes.
+
+## 8. Code Style
+
+- C Code (`zenoh-clock.c`): Must strictly adhere to QEMU's C11 style. `#include "qemu/osdep.h"` must be the first line. Uses `OBJECT_DECLARE_SIMPLE_TYPE` and `DEFINE_TYPES`.
+- Concurrency: All Zenoh network callbacks happen on a background thread. Interaction with QEMU state MUST be synchronized using `qemu_mutex_lock_iothread()` / `bql_lock()`.
+
+## 9. Testing Strategy
+
+- **Integration Tests**: `test/phase7/determinism_test.sh` executes the same firmware multiple times under `slaved-icount` and `slaved-suspend` and asserts that the UART output timestamps match exactly bit-for-bit across runs.
+- **Automated Virtual-Time Testing**: The `qemu_keywords.robot` test harness uses `query-replay` (or equivalent `query-cpus-fast`) to ensure that `Wait For Line On UART` correctly factors in execution throttling, avoiding flaky wall-clock timeouts.
+
+## 10. Boundaries
+
+- **Always do**: Unlock the BQL (`bql_unlock()`) before blocking on a Zenoh network reply. If the BQL is held during a block, QEMU will permanently deadlock.
+- **Ask first**: Before proposing any Python-based synchronization scripts inside the simulation loop. Native C plugins are a hard requirement for performance.
+- **Never do**: Use `-accel kvm` when `zenoh-clock` is attached. KVM bypasses the TCG event loop entirely, making the quantum hooks unreachable.

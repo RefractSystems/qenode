@@ -45,6 +45,8 @@ lockstep with the physical world. Specifically, it provides:
 | 9 | Advanced co-simulation (shared physical media) | **Done** |
 | 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
 | 11 | RISC-V Expansion & Framework Maturation | To Do |
+| 12 | Advanced Observability & Interactive APIs | To Do |
+| 13 | AI Debugging & MCP Interface | To Do |
 
 See `PLAN.md` for the per-task checklist.
 
@@ -186,8 +188,11 @@ virtmcu/
 │   └── docker-compose.yml      # Standalone test environment
 │
 ├── docs/
-│   ├── ARCHITECTURE.md         # Full technical deep-dive (read this first)
-│   └── MIGRATION_GUIDE.md      # Step-by-step migration per phase
+│   ├── ARCHITECTURE.md                 # Full technical deep-dive (read this first)
+│   ├── MIGRATION_GUIDE.md              # Step-by-step migration per phase
+│   ├── TIME_MANAGEMENT_DESIGN.md       # Details on clock modes and the Big QEMU Lock
+│   ├── OPENUSD_INTEGRATION_DESIGN.md   # OpenUSD/YAML mapping strategy
+│   └── MCP_DESIGN.md                   # Model Context Protocol server design for AI agents
 │
 └── requirements.txt            # Python: qemu.qmp, robotframework, lark, eclipse-zenoh
 ```

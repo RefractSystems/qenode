@@ -240,7 +240,7 @@ clock plugins.
 
 ## 5. Timing Design and Performance
 
-> **See also:** [docs/TIME_MANAGEMENT.md](TIME_MANAGEMENT.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
+> **See also:** [docs/TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
 
 ### Clock Mode Selection
 
@@ -418,7 +418,28 @@ all Cortex-M targets.
 execution. Cortex-M profiles are not supported by any current hypervisor; QEMU silently
 falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile targets.
 
-## 6. Guide for Junior Developers
+---
+
+## 9. AI and Advanced Observability (Phase 12 & 13)
+
+As virtmcu evolves from a foundational emulator into a robust digital twin environment, observability and AI accessibility become first-class concerns.
+
+### Advanced Observability (COOJA-Inspired)
+FirmwareStudio needs rich, interactive observability (visual timelines, network topologies, interactive virtual boards). virtmcu provides this without embedding a GUI into QEMU by:
+1. Tracing CPU sleep states and peripheral events via `hw/zenoh/zenoh-telemetry.c` and publishing deterministic timelines over Zenoh.
+2. Enabling dynamic manipulation of network latency and drop rates via RPC endpoints on the `zenoh_coordinator`.
+3. Emitting UI state (LEDs, Buttons) via SAL/AAL abstraction topics.
+
+### AI Debugging & MCP Interface
+To support LLM-driven debugging and lifecycle management, virtmcu includes a standalone **Model Context Protocol (MCP)** server (`tools/mcp_server/`).
+- **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause).
+- **Introspection**: AI agents can inspect raw memory, registers, and disassemble code dynamically via the `qmp_bridge.py` wrapper.
+- **I/O Integration**: Agents can interact with UART consoles and monitor network state.
+*(For more details, see `docs/MCP_DESIGN.md`)*.
+
+---
+
+## 10. Guide for Junior Developers
 
 If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:
 

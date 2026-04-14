@@ -101,7 +101,7 @@ Integrating a digital twin into a broader simulation ecosystem (like NVIDIA Omni
 
 ---
 
-## 7. How to Use
+## 7. Commands
 
 To boot a machine defined in this future-proof format:
 
@@ -114,3 +114,31 @@ To modernize an existing Renode project:
 ```bash
 python3 tools/repl2yaml.py legacy_board.repl --out modern_board.yaml
 ```
+
+To test the YAML tooling:
+```bash
+pytest tests/test_yaml2qemu.py
+```
+
+## 8. Project Structure
+
+- `tools/yaml2qemu.py`: Main parser connecting YAML files to the QEMU Device Tree compiler.
+- `tools/repl2yaml.py`: Migrator script converting `.repl` files to `.yaml`.
+- `tools/usd_to_virtmcu.py`: Stub/Draft for future direct `.usd` ingestion.
+- `test/phase3.5/`: Shell scripts verifying the YAML end-to-end boot process.
+
+## 9. Code Style
+
+- Python code handling the schema must use strict typing and explicitly define dictionary shapes using `TypedDict` or `dataclasses`.
+- The YAML output itself must prioritize readability: use inline arrays for short lists and explicit blocks for complex mappings.
+
+## 10. Testing Strategy
+
+- **Parser Validation**: `tests/test_yaml2qemu.py` unit tests all edge cases of the schema (missing containers, malformed relationships).
+- **End-to-End Boot**: `test/phase3.5/smoke_test.sh` executes the emitted DTB under QEMU and asserts the correct bare-metal kernel output.
+
+## 11. Boundaries
+
+- **Always do**: Keep the YAML schema strictly 1:1 mappable to OpenUSD concepts (Prims, Attributes, Relationships).
+- **Ask first**: Before adding QEMU-specific implementation details into the YAML. The YAML should describe the *hardware*, not the emulator.
+- **Never do**: Never introduce a mandatory `pxr` (OpenUSD) library dependency into the core `virtmcu` runtime. The Python USD library is massive; virtmcu must remain lightweight via the YAML bridge for CI/CD usage.
