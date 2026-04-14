@@ -244,6 +244,7 @@ WORKDIR /app
 
 # Make qemu-system-* available on PATH
 ENV PATH="/opt/virtmcu/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/virtmcu/lib:${LD_LIBRARY_PATH}"
 ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # Default: print version and wait (worlds override CMD)
