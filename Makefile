@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean venv test test-unit test-robot test-all lint fmt install-hooks
+.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks
 
 # By default, perform an incremental build
 all: build
@@ -122,9 +122,22 @@ install-hooks:
 # Clean
 # ------------------------------------------------------------------------------
 
-# Clean up Python artifacts and the virtual environment.
-# Note: This does NOT clean the QEMU build tree.
+# Clean up Python artifacts, test binaries, and local tool builds.
+# Note: This does NOT clean the QEMU build tree or remove downloaded sources.
 clean:
-	rm -rf .venv
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	-$(MAKE) -C test/phase1 clean
+	-$(MAKE) -C test/phase8 clean
+	rm -rf tools/cyber_bridge/build
+	rm -rf tools/systemc_adapter/build
+	rm -rf tools/zenoh_coordinator/target
+	@echo "✓ Clean complete (QEMU sources and .venv remain)."
+
+# Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
+# You will need to run 'make setup' again after this.
+distclean: clean
+	rm -rf .venv
+	rm -rf third_party
+	rm -rf test-results
+	@echo "✓ Deep clean complete. Run 'make setup' to rebuild the environment."
