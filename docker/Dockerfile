@@ -109,6 +109,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
 USER vscode
 RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/vscode/.local/bin:${PATH}"
 # hadolint ignore=DL3002
 USER root
 
