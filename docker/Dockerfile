@@ -143,9 +143,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Clone QEMU before COPYing local files so that patch/hw changes do not bust
 # this expensive layer. Cache key: QEMU_REF arg.
 # hadolint ignore=DL3003
-RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
-    && cd qemu \
-    && git submodule update --init --recursive --depth=1
+RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
 # Build zenoh-c from source and install to /build/zenoh-c.
 # Placed after the QEMU clone (both are network-only) so neither busts the

@@ -28,8 +28,6 @@ if [ ! -d "$QEMU_DIR/.git" ]; then
     mkdir -p "$WORKSPACE_DIR/third_party"
     git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" "$QEMU_DIR"
     cd "$QEMU_DIR"
-    git submodule update --init --recursive --depth=1
-    cd "$QEMU_DIR"
     git config user.email "virtmcu-build@example.com"
     git config user.name "virtmcu"
 fi
