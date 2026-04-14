@@ -7,8 +7,11 @@ name: Docker Publish
 #   ghcr.io/<owner>/<repo>/devenv  — toolchain-only devcontainer base
 #   ghcr.io/<owner>/<repo>/runtime — lean runtime with QEMU + Python tools
 #
-# The builder stage is an intermediate build artifact and is NOT published;
-# it is only used as a cache source for the runtime stage.
+# Strategy: Native Matrix Builds
+#   1. 'build' job runs in parallel on ubuntu-latest (AMD64) and ubuntu-24.04-arm (ARM64).
+#   2. Architecture-specific images are pushed with suffixes (-amd64, -arm64).
+#   3. 'merge' job combines them into a single multi-arch manifest using Buildx imagetools.
+#   This avoids slow QEMU software emulation during compilation.
 
 on:
   push:
@@ -16,10 +19,71 @@ on:
     tags:
       - 'v*.*.*'
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BASE: ${{ github.repository }}
 
 jobs:
-  publish:
-    name: Build & Push Docker Images
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── devenv image ────────────────────────────────────────────────────────
+
+      - name: Build and push — devenv (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: devenv
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=devenv-${{ matrix.arch }}
+          cache-to: type=gha,scope=devenv-${{ matrix.arch }},mode=max
+
+      # ── runtime image ───────────────────────────────────────────────────────
+
+      - name: Build and push — runtime (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: runtime
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-${{ matrix.arch }}
+          # Reuse the builder cache populated by ci.yml
+          cache-from: |
+            type=gha,scope=builder-${{ matrix.arch }}
+            type=gha,scope=runtime-${{ matrix.arch }}
+          cache-to: type=gha,scope=runtime-${{ matrix.arch }},mode=max
+
+  merge:
+    name: Merge Manifests
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,19 +98,17 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── devenv image ────────────────────────────────────────────────────────
-      # Toolchain-only image used by the devcontainer. Changes rarely (only
-      # when apt deps or Claude/Gemini CLI versions change).
+      # ── devenv manifest ─────────────────────────────────────────────────────
 
       - name: Docker metadata — devenv
         id: meta-devenv
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/devenv
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -58,28 +120,21 @@ jobs:
             org.opencontainers.image.description=virtmcu development environment — toolchain + AI tools
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
-      - name: Build and push — devenv
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: devenv
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-devenv.outputs.tags }}
-          labels: ${{ steps.meta-devenv.outputs.labels }}
-          cache-from: type=gha,scope=devenv
-          cache-to: type=gha,scope=devenv,mode=max
+      - name: Create and push manifest — devenv
+        run: |
+          TAGS=$(echo "${{ steps.meta-devenv.outputs.tags }}" | xargs -I {} echo "-t {}")
+          # hadolint ignore=DL3059
+          docker buildx imagetools create $TAGS \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/devenv:sha-${{ github.sha }}-arm64
 
-      # ── runtime image ───────────────────────────────────────────────────────
-      # Lean image with patched QEMU + Python tools. Used in docker-compose for
-      # standalone testing and as the base for FirmwareStudio integration.
+      # ── runtime manifest ────────────────────────────────────────────────────
 
       - name: Docker metadata — runtime
         id: meta-runtime
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/runtime
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime
           tags: |
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -91,18 +146,10 @@ jobs:
             org.opencontainers.image.description=virtmcu runtime image — QEMU + Python simulation tools
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
-      - name: Build and push — runtime
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: runtime
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-runtime.outputs.tags }}
-          labels: ${{ steps.meta-runtime.outputs.labels }}
-          # Reuse the builder cache populated by ci.yml
-          cache-from: |
-            type=gha,scope=builder
-            type=gha,scope=runtime
-          cache-to: type=gha,scope=runtime,mode=max
+      - name: Create and push manifest — runtime
+        run: |
+          TAGS=$(echo "${{ steps.meta-runtime.outputs.tags }}" | xargs -I {} echo "-t {}")
+          # hadolint ignore=DL3059
+          docker buildx imagetools create $TAGS \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}/runtime:sha-${{ github.sha }}-arm64
