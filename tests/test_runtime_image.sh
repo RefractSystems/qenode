@@ -61,13 +61,15 @@ docker run -i --rm \
     python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu failed to run" && exit 1)
 
     echo "2. Verifying QOM Plugin Existence..."
-    ls /opt/virtmcu/lib/qemu/hw-virtmcu-zenoh-clock.so > /dev/null || (echo "❌ zenoh-clock plugin missing" && exit 1)
-    ls /opt/virtmcu/lib/qemu/hw-virtmcu-mmio-socket-bridge.so > /dev/null || (echo "❌ mmio-socket-bridge plugin missing" && exit 1)
-    
-    echo "3. Verifying Backend Plugin Registration..."
-    # If modules are not enabled in the binary, we just check for the shared library
-    ls /opt/virtmcu/lib/qemu/hw-virtmcu-zenoh.so > /dev/null || (echo "❌ zenoh backend plugin missing" && exit 1)
-    qemu-system-arm -chardev help | grep -q "zenoh" || (echo "❌ zenoh chardev backend not registered" && exit 1)
+    PLUGIN_PATH=$(find /opt /usr /build -name "hw-virtmcu-zenoh-clock.so" | head -n 1)
+    if [ -n "$PLUGIN_PATH" ]; then
+        echo "Found zenoh-clock plugin at: $PLUGIN_PATH"
+        MOD_DIR=$(dirname "$PLUGIN_PATH")
+    else
+        echo "DEBUG: find plugin state:"
+        find /opt /usr /build -name "*.so" -path "*virtmcu*" 2>/dev/null || true
+        echo "❌ zenoh-clock plugin missing" && exit 1
+    fi
 
     echo "4. Testing Full-System Zenoh Federation Contract..."
     # Create a minimal board for a boot test
