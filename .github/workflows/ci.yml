@@ -484,6 +484,10 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
+      - name: Build test artifacts
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workspace" -w /workspace ${{ env.BUILDER_IMAGE }}:${{ github.sha }} make -C test/phase1
+
       - name: Run verification script
         run: |
           chmod +x tests/test_runtime_image.sh

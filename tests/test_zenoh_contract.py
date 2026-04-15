@@ -44,7 +44,7 @@ def get_libzenohc_version(lib_path):
         # where strings are usually stored.
         matches = re.findall(rb"\b(\d+\.\d+\.\d+)\b", data)
         if matches:
-            # Return the last one, as it's more likely to be the library version 
+            # Return the last one, as it's more likely to be the library version
             # rather than some internal constant.
             return matches[-1].decode()
 
