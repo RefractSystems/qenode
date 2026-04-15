@@ -64,7 +64,7 @@ QEMU_PID=$!
 CLOCK_TOPIC="sim/clock/advance/0"
 deadline=$(( $(date +%s) + 15 ))
 while (( $(date +%s) < deadline )); do
-    if python3 -c "import zenoh, sys, struct; s=zenoh.open(); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:7447\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         break
     fi
     sleep 0.25
