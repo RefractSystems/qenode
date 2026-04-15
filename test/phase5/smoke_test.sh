@@ -94,7 +94,7 @@ _start:
     str r1, [r0]            /* write to offset 0 (reg 0) */
     ldr r2, [r0]            /* read back from offset 0   */
 loop:
-    wfi
+    nop
     b loop
 EOF
 

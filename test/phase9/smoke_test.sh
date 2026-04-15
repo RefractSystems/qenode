@@ -83,7 +83,7 @@ wait_irq:
     str r1, [r0]
 
 loop:
-    wfi
+    nop
     b loop
 ASM_EOF
 
@@ -220,7 +220,7 @@ fail:
 
 done:
 loop:
-    wfi
+    nop
     b loop
 ASM_EOF
 

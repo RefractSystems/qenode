@@ -23,5 +23,5 @@ _start:
     sb t1, 0(t0)
 
 loop:
-    wfi
+    nop
     j loop

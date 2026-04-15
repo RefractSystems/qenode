@@ -64,7 +64,7 @@ _start:
     str r1, [r0, #4]
 
     /* WFI loop */
-1:  wfi
+1:  nop
     b 1b
 ASM_EOF
 

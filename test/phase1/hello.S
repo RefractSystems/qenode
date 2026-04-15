@@ -38,7 +38,7 @@ loop:
      * Wait For Interrupt (wfi) puts the CPU to sleep to save power.
      * Since we haven't configured any interrupts, it will sleep forever.
      */
-    wfi
+    nop
     
     /* Infinite loop just in case it wakes up */
     b loop
