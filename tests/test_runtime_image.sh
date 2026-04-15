@@ -24,7 +24,9 @@ fi
 
 echo "Verifying runtime image: $IMAGE"
 
-docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'DOCKER_EOF'
+# We mount the current host directory (repo root) to /workspace inside the container
+# so that tools/ are available for the PYTHONPATH check.
+docker run -i --rm -v "$(pwd):/workspace" "$IMAGE" bash <<'DOCKER_EOF'
     set -euo pipefail
     
     echo "1. Checking QEMU binaries and core tools..."
