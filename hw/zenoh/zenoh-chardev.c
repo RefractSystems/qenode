@@ -177,8 +177,9 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
     z_owned_config_t config;
     z_config_default(&config);
     if (s->router[0] != '\0') {
-        zc_config_insert_json5(z_config_loan_mut(&config), "mode", "client");
-        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", s->router);
+        char json[256];
+        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
+        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
     }
     
     if (z_open(&s->session, z_move(config), NULL) != 0) {

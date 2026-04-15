@@ -323,6 +323,23 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     z_owned_config_t config;
     z_config_default(&config);
 
+    if (s->router) {
+        char json[256];
+        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
+        if (zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json) != 0) {
+            error_setg(errp, "Failed to set Zenoh router endpoint: %s", s->router);
+            z_config_drop(z_move(config));
+            return;
+        }
+    }
+
+
+    if (s->router) {
+        char endpoints[256];
+        snprintf(endpoints, sizeof(endpoints), "[\"%s\"]", s->router);
+        z_config_insert_json(z_config_loan(&config), "connect/endpoints", endpoints);
+    }
+
     if (z_open(&s->session, z_move(config), NULL) != 0) {
         error_setg(errp, "Failed to open Zenoh session");
         return;
