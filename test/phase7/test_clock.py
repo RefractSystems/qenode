@@ -2,17 +2,20 @@ import sys
 import struct
 import zenoh
 
-DELTA1_NS = 1_000_000   # 1 ms
-DELTA2_NS = 2_000_000   # 2 ms
-TOPIC     = "sim/clock/advance/0"
-TIMEOUT_S = 5.0         # generous timeout for CI
+DELTA1_NS = 1_000_000
+DELTA2_NS = 2_000_000
+TOPIC = "sim/clock/advance/0"
+TIMEOUT_S = 5.0
+
 
 def pack_req(delta_ns):
     return struct.pack("<QQ", delta_ns, 0)
 
+
 def unpack_rep(data):
-    vtime_ns, n_frames = struct.unpack("<QI", data)
+    vtime_ns, _n_frames = struct.unpack("<QI", data)
     return vtime_ns
+
 
 def send_query(session, delta_ns, label):
     replies = list(session.get(TOPIC, payload=pack_req(delta_ns), timeout=TIMEOUT_S))
@@ -24,6 +27,7 @@ def send_query(session, delta_ns, label):
         print(f"{label}: ERROR reply: {reply}", file=sys.stderr)
         sys.exit(1)
     return unpack_rep(reply.ok.payload.to_bytes())
+
 
 def main():
     config = zenoh.Config()
@@ -48,6 +52,7 @@ def main():
 
     session.close()
     print("PASS")
+
 
 if __name__ == "__main__":
     main()
