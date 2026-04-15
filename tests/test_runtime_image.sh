@@ -26,7 +26,11 @@ echo "Verifying runtime image: $IMAGE"
 
 # We mount the current host directory (repo root) to /workspace inside the container
 # so that tools/ are available for the PYTHONPATH check.
-docker run -i --rm -v "$(pwd):/workspace" "$IMAGE" bash <<'DOCKER_EOF'
+docker run -i --rm \
+    -v "$(pwd):/workspace" \
+    -e QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu" \
+    -e PATH="/opt/virtmcu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$IMAGE" bash <<'DOCKER_EOF'
     set -euo pipefail
     
     echo "1. Checking QEMU binaries and core tools..."
