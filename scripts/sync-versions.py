@@ -51,6 +51,24 @@ def sync():
             with open(req_path, "w") as f:
                 f.write(new_content)
 
+    # 3.5 Update pyproject.toml
+    pyproject_path = "pyproject.toml"
+    if os.path.exists(pyproject_path):
+        with open(pyproject_path, "r") as f:
+            content = f.read()
+        new_content = re.sub(r'"eclipse-zenoh==[^"]+"', f'"eclipse-zenoh=={zenoh_ver}"', content)
+        if content != new_content:
+            print(f"Updating {pyproject_path} to eclipse-zenoh {zenoh_ver}")
+            with open(pyproject_path, "w") as f:
+                f.write(new_content)
+            # Run uv lock to update uv.lock
+            import subprocess
+            try:
+                subprocess.run(["uv", "lock"], check=True)
+                print("✓ Updated uv.lock")
+            except Exception as e:
+                print(f"Warning: could not run uv lock: {e}")
+
     # 4. Update docker/Dockerfile
     dockerfile_path = "docker/Dockerfile"
     qemu_ver = versions.get("QEMU_VERSION")

@@ -60,11 +60,15 @@ run:
 # Python & Testing Targets
 # ------------------------------------------------------------------------------
 
-# Create a Python virtual environment and install dependencies.
+# Create a Python virtual environment and install dependencies using uv.
 venv:
-	python3 -m venv .venv
-	.venv/bin/pip install --upgrade pip
-	.venv/bin/pip install -r requirements.txt
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "==> uv not found, installing..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		export PATH="$$HOME/.local/bin:$$PATH"; \
+	fi
+	uv sync
+	@echo "✓ Virtual environment synchronized with uv."
 	@echo "✓ Activate with: source .venv/bin/activate"
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
@@ -84,7 +88,7 @@ smoke-tests: test-integration
 
 # Run all Python unit tests (no QEMU required).
 test: venv
-	.venv/bin/python -m pytest tests/ -v
+	uv run pytest tests/ -v
 
 # Alias: same as test — explicit name for CI scripts.
 test-unit: test
@@ -92,7 +96,7 @@ test-unit: test
 # Run Robot Framework integration tests (requires QEMU built via make setup).
 test-robot: venv
 	export PYTHONPATH=$(CURDIR) && \
-	.venv/bin/robot \
+	uv run robot \
 	  --outputdir test-results/robot \
 	  --loglevel INFO \
 	  tests/test_qmp_keywords.robot \
@@ -107,16 +111,16 @@ test-all: test test-integration test-robot
 # ------------------------------------------------------------------------------
 
 # Check Python style (same rules as CI).
-lint:
+lint: venv
 	@echo "==> ruff check..."
-	@ruff check tools/ tests/ patches/
+	uv run ruff check tools/ tests/ patches/
 	@echo "✓ Lint passed."
 
 # Auto-fix formatting and fixable lint errors.
-fmt:
+fmt: venv
 	@echo "==> ruff format + fix..."
-	@ruff format tools/ tests/ patches/
-	@ruff check tools/ tests/ patches/ --fix
+	uv run ruff format tools/ tests/ patches/
+	uv run ruff check tools/ tests/ patches/ --fix
 	@echo "✓ Done."
 
 # Install a git pre-push hook that runs lint before any push.

@@ -27,9 +27,12 @@ brew install ninja meson dtc pkg-config glib pixman b4
 ### Linux (Debian / Ubuntu)
 
 ```bash
-sudo apt install build-essential libglib2.0-dev ninja-build python3-venv \
+sudo apt install build-essential libglib2.0-dev ninja-build \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config \
                  b4
+
+# Install uv for Python environment management
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ---
@@ -43,7 +46,7 @@ The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
 3. Runs `make setup` — patches and builds QEMU (~10 min, runs once)
-4. Creates the Python venv and installs dependencies
+4. Synchronizes the Python environment using `uv sync`
 5. Activates the venv in every new terminal
 
 Nothing else is needed. Skip to [Development Workflow](#development-workflow).
@@ -121,8 +124,8 @@ git -C third_party/qemu format-patch <base-commit>..HEAD -o patches/
 
 ```bash
 source .venv/bin/activate
-python -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
-python -m pytest tests/ -v
+uv run python -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+uv run pytest tests/ -v
 ```
 
 ---
@@ -173,7 +176,7 @@ For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge
 
 **To run unit/automation tests:**
 ```bash
-# Make sure your virtual environment is active!
+# Make sure your virtual environment is synchronized!
 make test
 ```
 

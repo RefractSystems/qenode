@@ -57,7 +57,7 @@ SystemC handles the *bus*, while QEMU handles the *CPU*. Because all communicati
   Run `scripts/setup-qemu.sh` if not already done.
 - CMake ≥ 3.14, a C++17 compiler, `zenoh-c` built in `third_party/zenoh-c/`.
 - `arm-none-eabi-gcc`, `dtc`, and `python3` on `PATH`.
-- `eclipse-zenoh` Python package: `pip install -r requirements.txt`
+- `eclipse-zenoh` Python package: `uv sync` or `uv pip install eclipse-zenoh`
 
 ### Step 1 — Build the SystemC adapter
 

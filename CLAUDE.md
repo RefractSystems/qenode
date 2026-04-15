@@ -252,12 +252,18 @@ virtmcu/
 ## Python Environment
 
 ```bash
-python3 -m venv .venv
+# Install uv if not already present
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Synchronize the environment
+uv sync
+
+# Activate the virtual environment
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
-Core dependencies: `qemu.qmp`, `robotframework`, `lark`, `eclipse-zenoh`
+Core dependencies are managed in `pyproject.toml` and locked in `uv.lock`.
+Tooling: `uv run pytest`, `uv run robot`, `uv run ruff`.
 
 Lint config lives in `pyproject.toml` (ruff, `E,F,W,I` rules, `E501` ignored,
 `line-length=120`).
