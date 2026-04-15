@@ -484,6 +484,19 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+          cache-from: type=gha,scope=builder-amd64
+          load: true
+
       - name: Build test artifacts
         run: |
           docker run --rm -v "${{ github.workspace }}:/workspace" -w /workspace ${{ env.BUILDER_IMAGE }}:${{ github.sha }} make -C test/phase1
