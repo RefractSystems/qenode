@@ -62,6 +62,8 @@ See `PLAN.md` for the per-task checklist.
 
 *(Python dependencies are managed via `requirements.txt`, but must align with `VERSIONS`)*.
 
+Use **`make sync-versions`** to propagate changes from `VERSIONS` to downstream files like `Cargo.toml`, `requirements.txt`, and `worlds/*.yml`.
+
 ---
 
 ## QEMU Version and Patch Strategy
