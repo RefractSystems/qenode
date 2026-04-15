@@ -29,49 +29,47 @@ docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'EOF'
         exit 1
     fi
 
-    echo "5. Checking Zenoh connectivity (router property)..."
-    
-    # Create a minimal DTB for arm-generic-fdt
-    cat <<DTS > /tmp/minimal.dts
-/dts-v1/;
-/ {
-    model = "test";
-    compatible = "test";
-    #address-cells = <1>;
-    #size-cells = <1>;
-    chosen { stdout-path = "/cpus/cpu@0"; };
-    cpus {
-        #address-cells = <1>;
-        #size-cells = <0>;
-        cpu@0 { device_type = "cpu"; compatible = "arm,cortex-a15"; reg = <0>; };
-    };
-};
-DTS
-    dtc -I dts -O dtb -o /tmp/minimal.dtb /tmp/minimal.dts
+    echo "5. Checking Zenoh connectivity (router= TCP property)..."
 
-    # Start mock router
-    python3 /app/tests/zenoh_router_mock.py &
-    ROUTER_PID=$!
-    
-    sleep 2
-
-    # Start QEMU
-    timeout 15 qemu-system-arm \
-        -M virt -machine dynamic-sysbus=zenoh-clock \
-        -display none -m 64M -S \
-        -device zenoh-clock,router=tcp/127.0.0.1:7447,node=0 \
-        2>&1 | tee /tmp/qemu.log &
-    QEMU_PID=$!
-
-    if wait $ROUTER_PID; then
-        echo "✅ Zenoh connectivity verified"
-    else
-        echo "❌ Zenoh connectivity test failed"
-        cat /tmp/qemu.log
-        kill $QEMU_PID 2>/dev/null || true
+    # Use the pre-built phase1 firmware and DTB (checked in; no toolchain needed).
+    # arm-generic-fdt machine supports -device zenoh-clock via the dynamic-sysbus
+    # patch applied in the Dockerfile.
+    PHASE1_DTB="/app/test/phase1/minimal.dtb"
+    PHASE1_ELF="/app/test/phase1/hello.elf"
+    if [ ! -f "$PHASE1_DTB" ] || [ ! -f "$PHASE1_ELF" ]; then
+        echo "❌ Phase1 test artifacts not found at $PHASE1_DTB / $PHASE1_ELF"
         exit 1
     fi
-    kill $QEMU_PID 2>/dev/null || true
+
+    # Start the mock router first so port 7447 is ready before QEMU connects.
+    # The mock listens on TCP with multicast disabled — if QEMU ignores router=
+    # and uses multicast instead, the GET never reaches it and the test fails.
+    export PYTHONPATH="/app:$PYTHONPATH"
+    python3 /app/tests/zenoh_router_mock.py &
+    ROUTER_PID=$!
+
+    sleep 2
+
+    # QEMU must run (not -S): the clock-advance handshake requires the vCPU hook
+    # to fire at a TB boundary so on_query can complete and send its reply.
+    timeout 30 qemu-system-arm \
+        -M arm-generic-fdt,hw-dtb="$PHASE1_DTB" \
+        -kernel "$PHASE1_ELF" \
+        -device zenoh-clock,router=tcp/127.0.0.1:7447,node=0 \
+        -nographic \
+        -monitor none \
+        > /tmp/qemu_zenoh.log 2>&1 &
+    QEMU_PID=$!
+
+    if wait "$ROUTER_PID"; then
+        echo "✅ Zenoh TCP router connectivity verified"
+    else
+        echo "❌ Zenoh TCP router connectivity test failed"
+        cat /tmp/qemu_zenoh.log
+        kill "$QEMU_PID" 2>/dev/null || true
+        exit 1
+    fi
+    kill "$QEMU_PID" 2>/dev/null || true
 EOF
 
 echo "✅ Runtime image verification passed!"

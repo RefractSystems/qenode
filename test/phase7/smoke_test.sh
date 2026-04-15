@@ -207,4 +207,7 @@ echo "=== Running Phase 7 determinism test ==="
 echo "=== Running Phase 7 netdev test ==="
 "$SCRIPT_DIR/netdev_test.sh"
 
+echo "=== Running Phase 7 TCP router test ==="
+"$SCRIPT_DIR/tcp_router_test.sh"
+
 echo "=== All Phase 7 tests PASSED ==="

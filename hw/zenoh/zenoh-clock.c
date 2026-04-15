@@ -331,13 +331,14 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
             z_config_drop(z_move(config));
             return;
         }
-    }
-
-
-    if (s->router) {
-        char endpoints[256];
-        snprintf(endpoints, sizeof(endpoints), "[\"%s\"]", s->router);
-        z_config_insert_json(z_config_loan(&config), "connect/endpoints", endpoints);
+        /*
+         * Disable multicast scouting when an explicit router is set.
+         * Multi-container environments (Docker Compose on macOS, Kubernetes)
+         * drop multicast UDP between containers; the test must fail if QEMU
+         * ignores router= and falls back to multicast peer discovery.
+         */
+        zc_config_insert_json5(z_config_loan_mut(&config),
+                               "scouting/multicast/enabled", "false");
     }
 
     if (z_open(&s->session, z_move(config), NULL) != 0) {
