@@ -52,7 +52,9 @@ docker run -i --rm -v "$(pwd):/workspace" "$IMAGE" bash <<'DOCKER_EOF'
     fi
 
     export PYTHONPATH="$WS:${PYTHONPATH:-}"
-    python3 -m tools.yaml2qemu --help || (echo "❌ tools.yaml2qemu not found" && exit 1)
+    # Ensure dependencies are installed for the tools to run
+    uv pip install --system --break-system-packages -r "$WS/pyproject.toml" > /dev/null
+    python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu failed to run" && exit 1)
 
     echo "2. Verifying QOM Plugin Dynamic Linking..."
     # Verify every virtmcu .so plugin can be loaded without missing symbol errors
