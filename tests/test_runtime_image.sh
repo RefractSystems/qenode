@@ -31,7 +31,7 @@ docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'DOCKER_EOF'
     which qemu-system-arm > /dev/null || (echo "❌ qemu-system-arm not found" && exit 1)
     which dtc > /dev/null || (echo "❌ dtc (device-tree-compiler) not found" && exit 1)
     
-    export PYTHONPATH="/app:$PYTHONPATH"
+    export PYTHONPATH="/app:${PYTHONPATH:-}"
     python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu not found" && exit 1)
 
     echo "2. Verifying QOM Plugin Dynamic Linking..."
