@@ -32,11 +32,15 @@ docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'DOCKER_EOF'
     which dtc > /dev/null || (echo "❌ dtc (device-tree-compiler) not found" && exit 1)
     
     # In 'runtime' image, code is in /app. In 'builder' image, we mount to /workspace.
-    if [ -d "/app/tools" ]; then
-        WS="/app"
-    elif [ -d "/workspace/tools" ]; then
-        WS="/workspace"
+    # We look for where tools/yaml2qemu.py exists.
+    WS_PATH=$(find /app /workspace /tmp -name "yaml2qemu.py" -path "*/tools/yaml2qemu.py" | head -n 1)
+    if [ -n "$WS_PATH" ]; then
+        WS=$(dirname "$(dirname "$WS_PATH")")
+        echo "Found workspace at: $WS"
     else
+        echo "DEBUG: filesystem state:"
+        ls -d /app /workspace /tmp 2>/dev/null || true
+        ls /app /workspace /tmp 2>/dev/null || true
         echo "❌ Could not find tools directory" && exit 1
     fi
 
