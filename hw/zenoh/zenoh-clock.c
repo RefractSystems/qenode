@@ -209,6 +209,7 @@ static void zclock_quantum_hook(CPUState *cpu)
 
     /* Step 7: consume quantum_ready, release mutex. */
     s->quantum_ready = false;
+    s->quantum_done  = false;
     
     int64_t next_delta = qatomic_read(&s->delta_ns);
     qatomic_set(&s->quantum_start_vtime_ns, s->vtime_ns);
@@ -269,7 +270,6 @@ static void on_query(z_loaned_query_t *query, void *context)
     qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
     qatomic_set(&s->mujoco_time_ns, (int64_t)req.mujoco_time_ns);
     
-    s->quantum_done  = false;
     s->quantum_ready = true;
     qemu_cond_signal(&s->vcpu_cond);
 
