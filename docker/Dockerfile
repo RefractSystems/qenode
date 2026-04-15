@@ -31,8 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson \
         ninja-build \
         python3 \
-        python3-pip \
-        python3-venv \
         pkg-config \
         libglib2.0-dev \
         libpixman-1-dev \
@@ -78,8 +76,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson \
         ninja-build \
         python3 \
-        python3-pip \
-        python3-venv \
         pkg-config \
         libglib2.0-dev \
         libpixman-1-dev \

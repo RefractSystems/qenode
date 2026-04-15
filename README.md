@@ -204,13 +204,14 @@ Open in VS Code and accept **"Reopen in Container"**. Everything runs automatica
 brew install ninja meson dtc pkg-config glib pixman b4
 
 # Linux (Debian/Ubuntu)
-sudo apt install build-essential libglib2.0-dev ninja-build python3-venv \
+sudo apt install build-essential libglib2.0-dev ninja-build \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config b4
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # All platforms
 git submodule update --init --recursive   # fetch QEMU source
 make setup        # apply patches, build QEMU (~10 min first run)
-make venv         # create .venv and install Python deps
+make venv         # synchronize Python environment with uv
 source .venv/bin/activate
 make run          # smoke-test
 ```
