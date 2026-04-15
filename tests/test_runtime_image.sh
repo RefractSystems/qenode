@@ -35,8 +35,16 @@ docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'DOCKER_EOF'
     python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu not found" && exit 1)
 
     echo "2. Verifying QOM Plugin Dynamic Linking..."
+    # Install strace for debugging
+    apt-get update -q && apt-get install -y strace -q > /dev/null
+
+    echo "Checking global device help..."
+    qemu-system-arm -device help > /dev/null || (echo "❌ QEMU failed to list devices" && exit 1)
+
+    echo "Tracing zenoh-clock initialization..."
     # Verify every virtmcu .so plugin can be loaded without missing symbol errors
     # Note: We check for 'help' which forces QEMU to initialize the device classes.
+    strace -f qemu-system-arm -M arm-generic-fdt -device zenoh-clock,help 2>&1 | tail -n 50
     qemu-system-arm -M arm-generic-fdt -device zenoh-clock,help > /dev/null || (echo "❌ zenoh-clock plugin failed to load" && exit 1)
     qemu-system-arm -M arm-generic-fdt -device mmio-socket-bridge,help > /dev/null || (echo "❌ mmio-socket-bridge plugin failed to load" && exit 1)
     
