@@ -167,17 +167,17 @@ jobs:
           - phase: "3"
             pre: ":"
           - phase: "3.5"
-            pre: "make -C test/phase1 && uv pip install --system ."
+            pre: "make -C test/phase1 && uv pip install --system -r pyproject.toml"
           # Phase 4: pytest + robot run directly; needs packages on PATH
           - phase: "4"
-            pre: "make -C test/phase1 && uv pip install --system ."
+            pre: "make -C test/phase1 && uv pip install --system -r pyproject.toml"
           # Phase 8: smoke_test.sh sources .venv, so we pre-create it with uv
           - phase: "8"
             pre: "make -C test/phase1 && make -C test/phase8 && uv sync"
           - phase: "9"
-            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && uv pip install --system ."
+            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && uv pip install --system -r pyproject.toml"
           - phase: "10"
-            pre: "make -C test/phase1 && uv pip install --system ."
+            pre: "make -C test/phase1 && uv pip install --system -r pyproject.toml"
           - phase: "11"
             pre: "make -C test/riscv"
           - phase: "11_3"
@@ -252,7 +252,7 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
-              uv pip install --system .
+              uv pip install --system -r pyproject.toml
               bash test/phase5/smoke_test.sh
             "
 
@@ -292,8 +292,8 @@ jobs:
             -e PYTHONPATH=/workspace \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
-              touch ~/.cargo/env
-              uv pip install --system .
+              . /root/.cargo/env
+              uv pip install --system -r pyproject.toml
               bash test/phase6/smoke_test.sh
             "
 
@@ -337,7 +337,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
-              uv pip install --system .
+              uv pip install --system -r pyproject.toml
               bash test/phase7/smoke_test.sh
             "
 
@@ -383,7 +383,7 @@ jobs:
             bash -c "
               make -C test/phase1
               make -C test/phase8
-              uv pip install --system .
+              uv pip install --system -r pyproject.toml
               pytest tools/testing/test_qmp.py \
                 -v --tb=short \
                 --junitxml=test-results/pytest-qmp.xml
@@ -437,7 +437,7 @@ jobs:
             bash -c "
               make -C test/phase1
               make -C test/phase8
-              uv pip install --system .
+              uv pip install --system -r pyproject.toml
               robot \
                 --outputdir test-results/robot \
                 --xunit test-results/robot.xml \
