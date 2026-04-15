@@ -9,6 +9,21 @@
 
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+smoke_test.sh (Phase 3)
+
+This script tests the repl2qemu toolchain. It parses a Renode .repl file,
+generates a QEMU Device Tree Blob (.dtb), and verifies that QEMU can boot
+the arm-generic-fdt machine using the generated DTB.
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"

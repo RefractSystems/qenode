@@ -20,6 +20,32 @@
 
 set -euo pipefail
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+test/phase7/tcp_router_test.sh — Explicit TCP router connectivity test.
+
+Verifies that the router= property on the zenoh-clock device causes QEMU to
+connect via TCP rather than falling back to multicast peer discovery.
+
+This test is the key guard against multi-container deployment failures: in
+Docker Compose environments (especially macOS) multicast UDP is dropped
+between containers, so the router= TCP path is the ONLY reliable route.
+
+Approach:
+  1. Start a Zenoh listener on tcp/127.0.0.1:7448 with multicast disabled.
+  2. Start QEMU with router=tcp/127.0.0.1:7448 (also multicast disabled via
+     the router= code path in zenoh-clock.c).
+  3. Run a full clock-advance handshake through the TCP connection.
+  4. Verify the reply contains a monotonically increasing vtime.
+
+Port 7448 is used (not 7447) to avoid colliding with other zenoh processes
+that might be running from earlier smoke test phases.
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR_LOCAL="$(mktemp -d /tmp/phase7_tcp_XXXXXX)"

@@ -17,6 +17,29 @@
 
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+smoke_test.sh
+
+This script performs a basic "smoke test" for Phase 1 of the virtmcu project.
+It uses the `run.sh` script to boot the `hello.elf` kernel on the
+`arm-generic-fdt` machine described by `minimal.dtb`.
+
+The `hello.elf` kernel simply writes the string "HI\n" to the PL011 UART.
+This script captures the UART output to a file and verifies that the string
+"HI" is present, ensuring that:
+  1. The QEMU binary works.
+  2. The FDT is parsed and the machine boots.
+  3. The CPU successfully executes the test kernel.
+  4. The UART is correctly instantiated and mapped.
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 # Resolve paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"

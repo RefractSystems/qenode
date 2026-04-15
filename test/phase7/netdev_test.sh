@@ -2,6 +2,15 @@
 # test/phase7/netdev_test.sh — Phase 7 Zenoh netdev backend functional test.
 set -euo pipefail
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+test/phase7/netdev_test.sh — Phase 7 Zenoh netdev backend functional test.
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR_LOCAL="$(mktemp -d /tmp/phase7_net_XXXXXX)"

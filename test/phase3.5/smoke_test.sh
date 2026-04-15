@@ -8,6 +8,20 @@
 
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+smoke_test.sh (Phase 3.5)
+
+This script tests the virtmcu YAML hardware description pipeline. It parses
+a .yaml file, generates a DTB, and verifies that QEMU can boot and print "HI".
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"

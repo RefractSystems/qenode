@@ -10,6 +10,22 @@
 
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+smoke_test.sh (Phase 2)
+
+This script performs a basic integration test for Phase 2.
+It launches QEMU with the `dummy-device` loaded dynamically via `-device`,
+starts a QMP server, and uses a Python script to assert that the module
+correctly registered and instantiated itself into the QOM tree.
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"

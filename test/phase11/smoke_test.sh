@@ -13,6 +13,25 @@
 
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+Phase 11 Smoke Test — RISC-V Expansion
+
+Verifies that the unified run.sh pipeline can detect a RISC-V DTS, select
+qemu-system-riscv64, and boot a minimal RISC-V firmware that prints to UART.
+
+Test flow:
+  1. Build the RISC-V firmware + DTB from test/riscv/.
+  2. Run QEMU via run.sh with a 5-second timeout (firmware loops after output).
+  3. Capture serial output in a temp file and assert "HI RV" is present.
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RISCV_TEST_DIR="$WORKSPACE_DIR/test/riscv"

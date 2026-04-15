@@ -2,6 +2,15 @@
 # Verifies the API contract of the final virtmcu runtime image.
 set -e
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+Verifies the API contract of the final virtmcu runtime image.
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 IMAGE=$1
 if [ -z "$IMAGE" ]; then
     echo "Usage: $0 <runtime_image>"
