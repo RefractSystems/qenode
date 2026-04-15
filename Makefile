@@ -17,10 +17,20 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks
+.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions
 
 # By default, perform an incremental build
 all: build
+
+# ------------------------------------------------------------------------------
+# Version Management
+# ------------------------------------------------------------------------------
+
+# Propagate versions from the VERSIONS file to all downstream configuration files.
+sync-versions:
+	@echo "==> Synchronizing dependency versions..."
+	@python3 scripts/sync-versions.py
+	@echo "✓ Versions synchronized."
 
 # ------------------------------------------------------------------------------
 # Build Targets
