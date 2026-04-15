@@ -235,6 +235,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
         libpixman-1-0 \
         libslirp0 \
+        libssl3 \
+        ca-certificates \
+        libatomic1 \
         iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
