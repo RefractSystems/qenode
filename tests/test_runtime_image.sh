@@ -35,14 +35,19 @@ docker run -i --rm -v "$(pwd):/workspace" "$IMAGE" bash <<'DOCKER_EOF'
     
     # In 'runtime' image, code is in /app. In 'builder' image, we mount to /workspace.
     # We look for where tools/yaml2qemu.py exists.
-    WS_PATH=$(find /app /workspace /tmp -name "yaml2qemu.py" -path "*/tools/yaml2qemu.py" | head -n 1)
+    # We use a list of possible search roots and filter for those that exist.
+    SEARCH_ROOTS=""
+    for d in /app /workspace /tmp; do
+        [ -d "$d" ] && SEARCH_ROOTS="$SEARCH_ROOTS $d"
+    done
+
+    WS_PATH=$(find $SEARCH_ROOTS -name "yaml2qemu.py" -path "*/tools/yaml2qemu.py" | head -n 1)
     if [ -n "$WS_PATH" ]; then
         WS=$(dirname "$(dirname "$WS_PATH")")
         echo "Found workspace at: $WS"
     else
         echo "DEBUG: filesystem state:"
         ls -d /app /workspace /tmp 2>/dev/null || true
-        ls /app /workspace /tmp 2>/dev/null || true
         echo "❌ Could not find tools directory" && exit 1
     fi
 
