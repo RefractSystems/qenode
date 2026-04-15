@@ -34,16 +34,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install lint tools
-        run: pip install ruff
-
       - name: Ruff — Python linting
-        run: ruff check tools/ tests/ patches/
+        run: uv run ruff check tools/ tests/ patches/
 
       - name: ShellCheck — shell scripts
         uses: ludeeus/action-shellcheck@2.0.0
@@ -69,13 +66,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: pip install --break-system-packages -r requirements.txt
+        run: uv sync
 
       # device-tree-compiler needed by test_fdt_emitter (calls dtc)
       - name: Install dtc
@@ -83,25 +80,25 @@ jobs:
 
       - name: pytest — repl2qemu parser
         run: |
-          pytest tests/repl2qemu/ \
+          uv run pytest tests/repl2qemu/ \
             -v --tb=short \
             --junitxml=test-results/unit-parser.xml
 
       - name: pytest — yaml2qemu
         run: |
-          pytest tests/test_yaml2qemu.py \
+          uv run pytest tests/test_yaml2qemu.py \
             -v --tb=short \
             --junitxml=test-results/unit-yaml.xml
 
       - name: pytest — cli_generator
         run: |
-          pytest tests/test_cli_generator.py \
+          uv run pytest tests/test_cli_generator.py \
             -v --tb=short \
             --junitxml=test-results/unit-cli.xml
 
       - name: pytest — fdt_emitter
         run: |
-          pytest tests/test_fdt_emitter.py \
+          uv run pytest tests/test_fdt_emitter.py \
             -v --tb=short \
             --junitxml=test-results/unit-fdt.xml
 
@@ -170,17 +167,17 @@ jobs:
           - phase: "3"
             pre: ":"
           - phase: "3.5"
-            pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
-          # Phase 4: pytest + robot run directly (no venv); needs packages on PATH
+            pre: "make -C test/phase1 && uv pip install --system ."
+          # Phase 4: pytest + robot run directly; needs packages on PATH
           - phase: "4"
-            pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
-          # Phase 8: smoke_test.sh sources .venv, so we pre-create it
+            pre: "make -C test/phase1 && uv pip install --system ."
+          # Phase 8: smoke_test.sh sources .venv, so we pre-create it with uv
           - phase: "8"
-            pre: "make -C test/phase1 && make -C test/phase8 && python3 -m venv .venv && .venv/bin/pip install --break-system-packages -r requirements.txt -q"
+            pre: "make -C test/phase1 && make -C test/phase8 && uv sync"
           - phase: "9"
-            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
+            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && uv pip install --system ."
           - phase: "10"
-            pre: "make -C test/phase1 && pip install --break-system-packages -r requirements.txt -q"
+            pre: "make -C test/phase1 && uv pip install --system ."
           - phase: "11"
             pre: "make -C test/riscv"
           - phase: "11_3"
@@ -255,7 +252,7 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
-              pip install --break-system-packages -r requirements.txt -q
+              uv pip install --system .
               bash test/phase5/smoke_test.sh
             "
 
@@ -296,7 +293,7 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               touch ~/.cargo/env
-              pip install --break-system-packages -r requirements.txt -q
+              uv pip install --system .
               bash test/phase6/smoke_test.sh
             "
 
@@ -340,7 +337,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
-              pip install --break-system-packages -r requirements.txt -q
+              uv pip install --system .
               bash test/phase7/smoke_test.sh
             "
 
@@ -386,7 +383,7 @@ jobs:
             bash -c "
               make -C test/phase1
               make -C test/phase8
-              pip install --break-system-packages -r requirements.txt -q
+              uv pip install --system .
               pytest tools/testing/test_qmp.py \
                 -v --tb=short \
                 --junitxml=test-results/pytest-qmp.xml
@@ -440,7 +437,7 @@ jobs:
             bash -c "
               make -C test/phase1
               make -C test/phase8
-              pip install --break-system-packages -r requirements.txt -q
+              uv pip install --system .
               robot \
                 --outputdir test-results/robot \
                 --xunit test-results/robot.xml \

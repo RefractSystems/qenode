@@ -55,6 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv for fast Python package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
 # ── Stage 1: devenv ───────────────────────────────────────────────────────────
 # Devcontainer image only. MCR base provides the vscode user + sudo setup.
 # The workspace is mounted at runtime — nothing from the repo is baked in here.
@@ -99,6 +102,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gh \
         jq \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
 
 # Install Node.js 24 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
@@ -233,12 +239,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
 COPY --from=builder /opt/virtmcu /opt/virtmcu
 COPY --from=builder /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
 
-# Install Python dependencies
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+# Install Python dependencies using uv
+COPY pyproject.toml /tmp/pyproject.toml
+COPY README.md /tmp/README.md
+RUN cd /tmp && uv pip install --no-cache --system .
 
 # Copy Python tooling
 COPY tools/ /app/tools/
