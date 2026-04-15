@@ -42,6 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -66,6 +69,9 @@ jobs:
           target: devenv
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-${{ matrix.arch }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
           cache-from: type=gha,scope=devenv-${{ matrix.arch }}
           cache-to: type=gha,scope=devenv-${{ matrix.arch }},mode=max
 
@@ -80,6 +86,9 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime:sha-${{ github.sha }}-${{ matrix.arch }}
           # Reuse the builder cache populated by ci.yml
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
           cache-from: |
             type=gha,scope=builder-${{ matrix.arch }}
             type=gha,scope=runtime-${{ matrix.arch }}
@@ -95,6 +104,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

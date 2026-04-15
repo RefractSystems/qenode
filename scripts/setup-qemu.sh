@@ -19,9 +19,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
+if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
+    source "$WORKSPACE_DIR/VERSIONS"
+fi
+
+
 # Clone QEMU if not already present
 QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
-QEMU_REF="${QEMU_REF:-v11.0.0-rc3}"
+QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0-rc3}}"
 
 if [ ! -d "$QEMU_DIR/.git" ]; then
     echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
@@ -97,7 +102,7 @@ python3 patches/apply_zenoh_netdev.py third_party/qemu
 python3 patches/apply_zenoh_chardev.py third_party/qemu
 
 # Phase 7: Fetch Zenoh-C prebuilt library for native QOM plugins
-ZENOHC_VER="1.9.0"
+ZENOHC_VER="${ZENOH_VERSION:-1.9.0}"
 ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
 if [ ! -d "$ZENOHC_DIR/include" ]; then
     echo "==> Fetching Zenoh-C $ZENOHC_VER for native QEMU plugins..."
