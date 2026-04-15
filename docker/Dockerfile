@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson \
         ninja-build \
         python3 \
+        python3-venv \
         pkg-config \
         libglib2.0-dev \
         libpixman-1-dev \
@@ -76,6 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson \
         ninja-build \
         python3 \
+        python3-venv \
         pkg-config \
         libglib2.0-dev \
         libpixman-1-dev \
@@ -226,6 +228,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
+        python3-venv \
         python3-pip \
         device-tree-compiler \
         coreutils \
