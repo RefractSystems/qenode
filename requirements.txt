@@ -2,22 +2,22 @@
 # Install via: pip install -r requirements.txt
 
 # QMP client — async JSON-over-socket protocol for controlling QEMU
-qemu.qmp>=0.0.3
+qemu.qmp==0.0.3
 
 # Robot Framework — test harness (Renode keyword compatibility)
-robotframework>=7.0
+robotframework==7.0.0
 
 # Lark — EBNF parser used by tools/repl2qemu/parser.py for .repl files
-lark>=1.2
+lark==1.1.9
 
 # Zenoh — federation bus used by the FirmwareStudio time authority
 # (required for Phase 7: external time master / MuJoCo integration)
 eclipse-zenoh==1.9.0
 
 # Development / testing
-pytest>=8.0
-pytest-asyncio>=0.23
-pyyaml
+pytest==8.0.0
+pytest-asyncio==0.23.5
+pyyaml==6.0.1
 
 # MCP SDK - used for the AI Debugging interface (Phase 13)
-mcp>=1.0.0
+mcp==1.0.0

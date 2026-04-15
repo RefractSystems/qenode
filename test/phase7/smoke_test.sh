@@ -17,6 +17,11 @@ cleanup() {
     [[ -n "$QEMU_PID" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
+cleanup() {
+    [[ -n "$QEMU_PID" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
+    [[ -n "$ROUTER_PID" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
+    rm -rf "$TMPDIR_LOCAL"
+}
 trap cleanup EXIT
 
 # ── Firmware ────────────────────────────────────────────────────────────────
@@ -164,11 +169,14 @@ EOF
 
 # ── Run: suspend mode ────────────────────────────────────────────────────────
 
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_mock.py" &
+ROUTER_PID_1=$!
+sleep 1
 echo "=== suspend mode ==="
 "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -device zenoh-clock,mode=suspend,node=0 \
+    -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 \
     -nographic \
     -monitor none \
     > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
@@ -179,15 +187,19 @@ python3 "$TMPDIR_LOCAL/test_clock.py"
 
 kill -9 "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
+kill -9 "$ROUTER_PID_1" 2>/dev/null || true
 
 # ── Run: icount mode ─────────────────────────────────────────────────────────
 
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_mock.py" &
+ROUTER_PID_2=$!
+sleep 1
 echo "=== icount mode ==="
 "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=icount,node=0 \
+    -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:7447 \
     -nographic \
     -monitor none \
     > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
@@ -198,6 +210,7 @@ python3 "$TMPDIR_LOCAL/test_clock.py"
 
 kill -9 "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
+kill -9 "$ROUTER_PID_2" 2>/dev/null || true
 
 echo "=== Phase 7 smoke test (Zenoh Clock Suspend/icount) PASSED ==="
 

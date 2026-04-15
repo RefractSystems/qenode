@@ -29,6 +29,10 @@ docker run -i --rm -v "$(pwd):/app" "$IMAGE" bash <<'EOF'
         exit 1
     fi
 
+    echo "4b. Checking mmio-socket-bridge instantiation..."
+    # Verify the plugin actually loads into QEMU without missing symbols or segfaults
+    qemu-system-arm -M arm-generic-fdt -device mmio-socket-bridge,help > /dev/null || (echo "❌ mmio-socket-bridge failed to initialize" && exit 1)
+
     echo "5. Checking Zenoh connectivity (router= TCP property)..."
 
     # Use the pre-built phase1 firmware and DTB (checked in; no toolchain needed).

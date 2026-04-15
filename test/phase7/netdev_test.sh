@@ -31,6 +31,11 @@ cleanup() {
     [[ -n "$QEMU_PID" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
+cleanup() {
+    [[ -n "$QEMU_PID" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
+    [[ -n "$ROUTER_PID" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
+    rm -rf "$TMPDIR_LOCAL"
+}
 trap cleanup EXIT
 
 # ── Minimal firmware: bare infinite loop ─────────────────────────────────────
@@ -78,15 +83,18 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
-# ── Launch QEMU ──────────────────────────────────────────────────────────────
+# ── Launch Router & QEMU ─────────────────────────────────────────────────────
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_mock.py" &
+ROUTER_PID=$!
+sleep 1
 # -netdev zenoh,node=1 registers the Zenoh backend without a peer NIC device.
 # -icount + zenoh-clock,mode=icount give full virtual-time control.
 "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=icount,node=1 \
-    -netdev zenoh,node=1,id=n1 \
+    -device zenoh-clock,mode=icount,node=1,router=tcp/127.0.0.1:7447 \
+    -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:7447 \
     -nographic \
     -monitor none \
     > "$TMPDIR_LOCAL/qemu.log" 2>&1 &

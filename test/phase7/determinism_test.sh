@@ -117,7 +117,7 @@ run_test() {
         --dtb "$TMPDIR_LOCAL/dummy.dtb" \
         -kernel "$TMPDIR_LOCAL/firmware.elf" \
         -icount shift=0,align=off,sleep=off \
-        -device zenoh-clock,mode=icount,node=0 \
+        -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:7447 \
         -nographic \
         -monitor none \
         -qmp "unix:$TMPDIR_LOCAL/qmp.sock,server,nowait" \
