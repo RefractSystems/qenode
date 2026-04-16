@@ -73,14 +73,29 @@ When using \`mmio-socket-bridge\`, every MMIO read/write blocks the QEMU TCG thr
 
 ## Directory Structure
 
-\`\`\`
+```
 virtmcu/
 ├── hw/                         # C/Rust QOM peripheral models
 │   ├── misc/
 │   │   └── mmio-socket-bridge.c # Offset-based Unix socket bridge
 │   └── zenoh/
-│       └── zenoh-clock.c       # Clock sync with error reporting
+│       └── zenoh-clock.c       # Clock sync with error reporting (Migrating to Rust)
 ├── tools/
 │   └── yaml2qemu.py            # YAML -> DTB transpiler with validation
 └── docs/                       # Human-readable documentation
-\`\`\`
+```
+
+---
+
+## Language Selection Policy (ADR-013)
+
+| Component | Language | Rule |
+| :--- | :--- | :--- |
+| **Sim Loop** | **Rust** (Pref) / **C** | **NATIVE ONLY.** No Python bridges. |
+| **Physics/SystemC** | **C++** | Standard for TLM-2.0 / MuJoCo. |
+| **Tooling/Parsing** | **Python** | Out-of-band only. |
+| **Telemetry** | **Rust** | Direct FlatBuffers/Zenoh integration. |
+
+**Banned:** Python in the hot simulation loop (MMIO/Clock/Netdev).
+**Recommended:** Migrate `hw/zenoh/*.c` to native Rust (Phase 18) to eliminate `zenoh-c` FFI.
+

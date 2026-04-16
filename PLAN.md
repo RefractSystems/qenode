@@ -588,6 +588,20 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
+## Phase 18 — Native Rust Zenoh Migration (Oxidization)
+
+**Goal**: Eliminate the `zenoh-c` FFI layer by rewriting the core Zenoh plugins (`hw/zenoh/`) in native Rust. This improves concurrency safety, simplifies the build process, and aligns with the long-term architectural goal of using Rust for all safe simulation-loop components.
+
+**Tasks**:
+- [ ] **18.1** **Rust-QOM Foundation**: Stabilize the Rust QOM bindings (from `hw/rust-dummy/`) into a reusable framework for implementing `SysBusDevice`, `NetClient`, and `Chardev` backends in Rust.
+- [ ] **18.2** **Native Zenoh-Clock (Rust)**: Rewrite `zenoh-clock.c` in Rust. Use the native `zenoh` crate directly. Implement the BQL sandwich (`bql_unlock` -> `wait` -> `bql_lock`) using Rust safety patterns.
+- [ ] **18.3** **Native Zenoh-Netdev (Rust)**: Rewrite `zenoh-netdev.c` in Rust. Replace the C heap with `std::collections::BinaryHeap` for deterministic virtual-time delivery.
+- [ ] **18.4** **Native Zenoh-Chardev (Rust)**: Rewrite `zenoh-chardev.c` in Rust, enabling safe multi-node interactive UART communication.
+- [ ] **18.5** **Native Zenoh-Telemetry (Rust)**: Rewrite `zenoh-telemetry.c` in Rust and integrate with the FlatBuffers tracing schema from Phase 12.
+- [ ] **18.6** **Tutorial Lesson 18**: Developing QEMU Peripherals in Rust. Explain the `qom-rs` bindings and how to leverage Cargo for simulation plugins.
+
+---
+
 ## Risks and Open Questions
 
 | # | Risk | Mitigation |
