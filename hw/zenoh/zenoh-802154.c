@@ -25,7 +25,7 @@
 #include "qemu/module.h"
 #include "qemu/error-report.h"
 #include "hw/core/qdev-properties.h"
-#include "hw/irq.h"
+#include "hw/core/irq.h"
 #include <zenoh.h>
 
 #define TYPE_ZENOH_802154 "zenoh-802154"
