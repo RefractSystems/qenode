@@ -17,13 +17,14 @@
  * they will buffer the message and deliver it into the guest firmware *only*
  * when their virtual clocks catch up to the rewritten delivery timestamp.
  */
-use std::collections::{HashSet, HashMap};
-use clap::Parser;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use clap::Parser;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use zenoh::config::Config;
-use serde::{Deserialize, Serialize};
-use rand::Rng;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -31,6 +32,10 @@ struct Args {
     /// Default propagation delay to add to the virtual timestamp (in nanoseconds)
     #[arg(short, long, default_value_t = 1_000_000)]
     delay_ns: u64,
+
+    /// Seed for the deterministic PRNG used for packet dropping
+    #[arg(short, long, default_value_t = 42)]
+    seed: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -51,16 +56,29 @@ async fn main() {
     let args = Args::parse();
     println!("Starting virtmcu Zenoh Coordinator");
     println!("  Default delay: {} ns", args.delay_ns);
+    println!("  PRNG seed: {}", args.seed);
 
     let session = zenoh::open(Config::default()).await.unwrap();
 
     // Subscribe to all TX topics
-    let eth_sub = session.declare_subscriber("sim/eth/frame/*/tx").await.unwrap();
-    let uart_sub = session.declare_subscriber("virtmcu/uart/*/tx").await.unwrap();
-    let sysc_sub = session.declare_subscriber("sim/systemc/frame/*/tx").await.unwrap();
+    let eth_sub = session
+        .declare_subscriber("sim/eth/frame/*/tx")
+        .await
+        .unwrap();
+    let uart_sub = session
+        .declare_subscriber("virtmcu/uart/*/tx")
+        .await
+        .unwrap();
+    let sysc_sub = session
+        .declare_subscriber("sim/systemc/frame/*/tx")
+        .await
+        .unwrap();
 
     // Subscribe to topology control updates
-    let ctrl_sub = session.declare_subscriber("sim/network/control").await.unwrap();
+    let ctrl_sub = session
+        .declare_subscriber("sim/network/control")
+        .await
+        .unwrap();
 
     // Track active nodes dynamically based on who transmits
     let mut known_eth_nodes = HashSet::new();
@@ -70,15 +88,18 @@ async fn main() {
     // Link properties: (from, to) -> LinkState
     let mut topology: HashMap<(String, String), LinkState> = HashMap::new();
 
+    // Deterministic PRNG
+    let mut rng = ChaCha8Rng::seed_from_u64(args.seed);
+
     println!("Listening for packets and topology updates...");
 
     loop {
         tokio::select! {
             Ok(sample) = eth_sub.recv_async() => {
-                handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns).await;
+                handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns, &mut rng).await;
             }
             Ok(sample) = uart_sub.recv_async() => {
-                handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns).await;
+                handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns, &mut rng).await;
             }
             Ok(sample) = sysc_sub.recv_async() => {
                 handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns).await;
@@ -93,7 +114,7 @@ async fn main() {
                         });
                         if let Some(d) = update.delay_ns { state.delay_ns = d; }
                         if let Some(p) = update.drop_probability { state.drop_probability = p; }
-                        println!("Topology Update: {} -> {} (delay: {} ns, drop: {})", 
+                        println!("Topology Update: {} -> {} (delay: {} ns, drop: {})",
                                  update.from, update.to, state.delay_ns, state.drop_probability);
                     }
                 }
@@ -108,6 +129,7 @@ async fn handle_eth_msg(
     known_nodes: &mut HashSet<String>,
     topology: &HashMap<(String, String), LinkState>,
     default_delay_ns: u64,
+    rng: &mut ChaCha8Rng,
 ) {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
@@ -128,16 +150,19 @@ async fn handle_eth_msg(
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node == &sender_id { continue; }
+        if node == &sender_id {
+            continue;
+        }
 
-        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
-            (state.delay_ns, state.drop_probability)
-        } else {
-            (default_delay_ns, 0.0)
-        };
+        let (delay_ns, drop_prob) =
+            if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+                (state.delay_ns, state.drop_probability)
+            } else {
+                (default_delay_ns, 0.0)
+            };
 
-        // Apply packet drop
-        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+        // Apply deterministic packet drop
+        if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
             println!("ETH: DROPPED packet from {} to {}", sender_id, node);
             continue;
         }
@@ -145,7 +170,9 @@ async fn handle_eth_msg(
         let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload
+            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
+            .unwrap();
         new_payload.write_u32::<LittleEndian>(size).unwrap();
         new_payload.write_all(&payload[12..]).unwrap();
 
@@ -162,6 +189,7 @@ async fn handle_uart_msg(
     known_nodes: &mut HashSet<String>,
     topology: &HashMap<(String, String), LinkState>,
     default_delay_ns: u64,
+    rng: &mut ChaCha8Rng,
 ) {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
@@ -182,22 +210,29 @@ async fn handle_uart_msg(
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node == &sender_id { continue; }
+        if node == &sender_id {
+            continue;
+        }
 
-        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
-            (state.delay_ns, state.drop_probability)
-        } else {
-            (default_delay_ns, 0.0)
-        };
+        let (delay_ns, drop_prob) =
+            if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+                (state.delay_ns, state.drop_probability)
+            } else {
+                (default_delay_ns, 0.0)
+            };
 
-        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+        // Apply deterministic packet drop
+        if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
+            println!("UART: DROPPED packet from {} to {}", sender_id, node);
             continue;
         }
 
         let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload
+            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
+            .unwrap();
         new_payload.write_u32::<LittleEndian>(size).unwrap();
         new_payload.write_all(&payload[12..]).unwrap();
 
@@ -234,22 +269,26 @@ async fn handle_sysc_msg(
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node == &sender_id { continue; }
-
-        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
-            (state.delay_ns, state.drop_probability)
-        } else {
-            (default_delay_ns, 0.0)
-        };
-
-        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+        if node == &sender_id {
             continue;
         }
+
+        let delay_ns = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+            state.delay_ns
+        } else {
+            default_delay_ns
+        };
+
+        // CRITICAL FIX: Do NOT drop SystemC frames (like CAN bus) silently.
+        // Physical layer buses rely on arbitration. Dropping them here breaks
+        // the hardware ACKs in the SystemC controller models.
 
         let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload
+            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
+            .unwrap();
         new_payload.write_u32::<LittleEndian>(size).unwrap();
         new_payload.write_all(&payload[12..]).unwrap();
 

@@ -52,6 +52,12 @@ class NodeManager:
             
         if not node.yaml_path:
             raise RuntimeError(f"Node {node_id} has not been provisioned.")
+
+        # Clean up any stale sockets
+        if os.path.exists(node.qmp_socket_path):
+            os.remove(node.qmp_socket_path)
+        if os.path.exists(node.uart_socket_path):
+            os.remove(node.uart_socket_path)
             
         cmd = [
             "bash", "scripts/run.sh",
@@ -77,14 +83,28 @@ class NodeManager:
         
         # Wait a bit for QEMU to create the sockets
         for _ in range(50):
-            if os.path.exists(node.qmp_socket_path):
+            if os.path.exists(node.qmp_socket_path) and os.path.exists(node.uart_socket_path):
                 break
+            # Check if process exited early
+            if node.process.returncode is not None:
+                stderr = await node.process.stderr.read()
+                raise RuntimeError(f"QEMU process exited early with code {node.process.returncode}: {stderr.decode()}")
             await asyncio.sleep(0.1)
             
         if not os.path.exists(node.qmp_socket_path):
+            if node.process.returncode is None:
+                node.process.terminate()
+                stderr = await node.process.stderr.read()
+                raise RuntimeError(f"QEMU failed to create QMP socket for {node_id}. stderr: {stderr.decode()}")
             raise RuntimeError(f"QEMU failed to start or create QMP socket for {node_id}")
 
-        await node.qmp_bridge.connect(node.qmp_socket_path, node.uart_socket_path)
+        try:
+            await node.qmp_bridge.connect(node.qmp_socket_path, node.uart_socket_path)
+        except Exception as e:
+            if node.process.returncode is None:
+                node.process.terminate()
+            stderr = await node.process.stderr.read()
+            raise RuntimeError(f"QMP connection failed: {e}. QEMU stderr: {stderr.decode()}")
 
     async def stop_node(self, node_id: str):
         if node_id not in self.nodes:

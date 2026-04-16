@@ -6,11 +6,12 @@
 
 #include "qemu/osdep.h"
 #include "hw/core/sysbus.h"
-#include "hw/irq.h"
+#include "hw/core/irq.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
+#include "qemu/main-loop.h"
 #include "qom/object.h"
 #include "hw/core/qdev-properties.h"
 #include "qemu/error-report.h"
@@ -32,6 +33,11 @@ typedef struct {
     z_owned_subscriber_t sub;
 } ZenohButton;
 
+typedef struct {
+    uint32_t led_id;
+    bool state;
+} ZenohLedEvent;
+
 struct ZenohUiState {
     SysBusDevice parent_obj;
     MemoryRegion mmio;
@@ -48,6 +54,10 @@ struct ZenohUiState {
     z_owned_session_t session;
     GHashTable *led_publishers; /* key: led_id -> z_owned_publisher_t* */
     GHashTable *buttons;        /* key: btn_id -> ZenohButton* */
+
+    /* Async publish pipeline */
+    GAsyncQueue *led_queue;
+    GThread     *led_thread;
 };
 
 static void on_button_msg(z_loaned_sample_t *sample, void *context)
@@ -65,10 +75,35 @@ static void on_button_msg(z_loaned_sample_t *sample, void *context)
         if (new_state != btn->state) {
             btn->state = new_state;
             if (btn->irq) {
+                /* CRITICAL FIX: IRQs modify guest state. Must hold the BQL! */
+                qemu_mutex_lock_iothread();
                 qemu_set_irq(btn->irq, btn->state ? 1 : 0);
+                qemu_mutex_unlock_iothread();
             }
         }
     }
+}
+
+/* Called from the background publish thread only. */
+static gpointer led_publish_thread(gpointer arg)
+{
+    ZenohUiState *s = arg;
+
+    while (1) {
+        ZenohLedEvent *ev = g_async_queue_pop(s->led_queue);
+        if (!ev) break; /* NULL sentinel — time to exit */
+
+        z_owned_publisher_t *pub = get_led_publisher(s, ev->led_id);
+        if (pub) {
+            uint8_t state = ev->state ? 1 : 0;
+            z_owned_bytes_t bytes;
+            z_bytes_copy_from_buf(&bytes, &state, 1);
+            z_publisher_put(z_publisher_loan(pub), z_move(bytes), NULL);
+        }
+        g_free(ev);
+    }
+    
+    return NULL;
 }
 
 static z_owned_publisher_t *get_led_publisher(ZenohUiState *s, uint32_t led_id)
@@ -136,13 +171,11 @@ static void zenoh_ui_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
     if (addr == REG_LED_ID) {
         s->active_led_id = (uint32_t)val;
     } else if (addr == REG_LED_STATE) {
-        z_owned_publisher_t *pub = get_led_publisher(s, s->active_led_id);
-        if (pub) {
-            uint8_t state = (val != 0);
-            z_owned_bytes_t bytes;
-            z_bytes_copy_from_buf(&bytes, &state, 1);
-            z_publisher_put(z_publisher_loan(pub), z_move(bytes), NULL);
-        }
+        /* CRITICAL FIX: Delegate network I/O to background thread to avoid stalling TCG */
+        ZenohLedEvent *ev = g_new(ZenohLedEvent, 1);
+        ev->led_id = s->active_led_id;
+        ev->state = (val != 0);
+        g_async_queue_push(s->led_queue, ev);
     } else if (addr == REG_BTN_ID) {
         s->active_btn_id = (uint32_t)val;
         get_button(s, s->active_btn_id); /* Ensure subscriber exists */
@@ -178,6 +211,9 @@ static void zenoh_ui_realize(DeviceState *dev, Error **errp)
     s->led_publishers = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, publisher_destroy);
     s->buttons = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, button_destroy);
 
+    s->led_queue = g_async_queue_new();
+    s->led_thread = g_thread_new("zenoh-ui-led", led_publish_thread, s);
+
     z_owned_config_t config;
     z_config_default(&config);
     if (s->router) {
@@ -194,6 +230,18 @@ static void zenoh_ui_realize(DeviceState *dev, Error **errp)
 static void zenoh_ui_finalize(Object *obj)
 {
     ZenohUiState *s = ZENOH_UI(obj);
+
+    if (s->led_thread) {
+        g_async_queue_push(s->led_queue, NULL); /* sentinel */
+        g_thread_join(s->led_thread);
+        s->led_thread = NULL;
+    }
+
+    if (s->led_queue) {
+        g_async_queue_unref(s->led_queue);
+        s->led_queue = NULL;
+    }
+
     if (s->led_publishers) g_hash_table_destroy(s->led_publishers);
     if (s->buttons) g_hash_table_destroy(s->buttons);
     z_close(z_session_loan_mut(&s->session), NULL);

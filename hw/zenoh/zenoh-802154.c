@@ -26,6 +26,7 @@
 #include "qemu/error-report.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/core/irq.h"
+#include "qemu/bswap.h"
 #include <zenoh.h>
 
 #define TYPE_ZENOH_802154 "zenoh-802154"
@@ -58,6 +59,7 @@ struct Zenoh802154State {
     uint32_t tx_len;
     uint8_t rx_fifo[128];
     uint32_t rx_len;
+    uint32_t rx_read_pos;
     int8_t rx_rssi;
     uint32_t status;
 
@@ -105,9 +107,47 @@ static void on_rx_frame(z_loaned_sample_t *sample, void *context)
         return;
     }
     
+    uint32_t size = le32_to_cpu(hdr.size);
+    uint64_t vtime = le64_to_cpu(hdr.delivery_vtime_ns);
+    
+    if (size > 128) {
+        return; /* Safety: drop oversized frames to prevent buffer overflow */
+    }
+    
     uint8_t frame_data[128];
-    if (hdr.size <= 128 && z_bytes_reader_read(&reader, frame_data, hdr.size) == hdr.size) {
-        push_rx_frame(s, hdr.delivery_vtime_ns, frame_data, hdr.size, hdr.rssi);
+    if (z_bytes_reader_read(&reader, frame_data, size) == size) {
+        push_rx_frame(s, vtime, frame_data, size, hdr.rssi);
+    }
+}
+
+static void check_rx_queue(Zenoh802154State *s)
+{
+    uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (s->rx_count > 0) {
+        int last = s->rx_count - 1;
+        if (s->rx_queue[last].delivery_vtime <= now) {
+            if (!(s->status & 0x01)) {
+                memcpy(s->rx_fifo, s->rx_queue[last].data, s->rx_queue[last].size);
+                s->rx_len = s->rx_queue[last].size;
+                s->rx_rssi = s->rx_queue[last].rssi;
+                s->rx_read_pos = 0;
+                s->rx_count--;
+                
+                s->status |= 0x01; /* RX_READY */
+                qemu_set_irq(s->irq, 1);
+                
+                if (s->rx_count > 0) {
+                    timer_mod(s->rx_timer, s->rx_queue[s->rx_count - 1].delivery_vtime);
+                }
+            } else {
+                /* Hardware FIFO full (RX_READY still set). Packet remains in queue.
+                 * Guest must read and clear RX_READY. Optionally, we could simulate
+                 * drop by setting an overflow bit, but keeping it in the queue provides
+                 * a deterministic hardware-level queueing model. */
+            }
+        } else {
+            timer_mod(s->rx_timer, s->rx_queue[last].delivery_vtime);
+        }
     }
 }
 
@@ -115,26 +155,7 @@ static void rx_timer_cb(void *opaque)
 {
     Zenoh802154State *s = opaque;
     qemu_mutex_lock(&s->mutex);
-    
-    uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    if (s->rx_count > 0) {
-        int last = s->rx_count - 1;
-        if (s->rx_queue[last].delivery_vtime <= now) {
-            memcpy(s->rx_fifo, s->rx_queue[last].data, s->rx_queue[last].size);
-            s->rx_len = s->rx_queue[last].size;
-            s->rx_rssi = s->rx_queue[last].rssi;
-            s->rx_count--;
-            
-            s->status |= 0x01; /* RX_READY */
-            qemu_set_irq(s->irq, 1);
-            
-            if (s->rx_count > 0) {
-                timer_mod(s->rx_timer, s->rx_queue[s->rx_count - 1].delivery_vtime);
-            }
-        } else {
-            timer_mod(s->rx_timer, s->rx_queue[last].delivery_vtime);
-        }
-    }
+    check_rx_queue(s);
     qemu_mutex_unlock(&s->mutex);
 }
 
