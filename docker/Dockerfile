@@ -49,8 +49,6 @@ RUN apt-get update && \
     gcc-arm-none-eabi \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
-    cargo \
-    rustc \
     gh \
     jq || \
     (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
@@ -77,8 +75,6 @@ RUN apt-get update && \
     gcc-arm-none-eabi \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
-    cargo \
-    rustc \
     gh \
     jq)) \
     && rm -rf /var/lib/apt/lists/*
@@ -124,8 +120,6 @@ RUN apt-get update && \
     gcc-arm-none-eabi \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
-    cargo \
-    rustc \
     strace \
     gh \
     jq || \
@@ -153,8 +147,6 @@ RUN apt-get update && \
     gcc-arm-none-eabi \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
-    cargo \
-    rustc \
     strace \
     gh \
     jq)) \
@@ -162,6 +154,11 @@ RUN apt-get update && \
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# Install stable Rust via rustup (for both root and vscode user)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install Node.js 24 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
@@ -171,8 +168,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # Install Claude Code via native installer (as vscode user so auto-update works)
 # npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
 USER vscode
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/home/vscode/.local/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --no-modify-path \
+    && curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/vscode/.local/bin:/home/vscode/.cargo/bin:${PATH}"
 # hadolint ignore=DL3002
 USER root
 
