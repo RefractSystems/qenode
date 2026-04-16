@@ -24,8 +24,7 @@ FROM ubuntu:24.04 AS toolchain
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
-    (apt-get install -y --no-install-recommends --fix-missing \
+RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
     cmake \
@@ -95,8 +94,7 @@ LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
-    (apt-get install -y --no-install-recommends --fix-missing \
+RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
     cmake \
