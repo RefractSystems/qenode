@@ -30,11 +30,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        image: [devenv, runtime]
         include:
-          - os: ubuntu-latest
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+          - arch: amd64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -59,40 +61,21 @@ jobs:
         run: |
           echo "IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME_BASE }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # ── devenv image ────────────────────────────────────────────────────────
-
-      - name: Build and push — devenv (${{ matrix.arch  }})
+      - name: Build and push — ${{ matrix.image }} (${{ matrix.arch  }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
-          target: devenv
+          target: ${{ matrix.image }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-${{ matrix.arch }}
-          build-args: |
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-          cache-from: type=gha,scope=devenv-${{ matrix.arch }}
-          cache-to: type=gha,scope=devenv-${{ matrix.arch }},mode=max
-
-      # ── runtime image ───────────────────────────────────────────────────────
-
-      - name: Build and push — runtime (${{ matrix.arch  }})
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: runtime
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/runtime:sha-${{ github.sha }}-${{ matrix.arch }}
-          # Reuse the builder cache populated by ci.yml
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.arch }}
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
           cache-from: |
             type=gha,scope=builder-${{ matrix.arch }}
-            type=gha,scope=runtime-${{ matrix.arch }}
-          cache-to: type=gha,scope=runtime-${{ matrix.arch }},mode=max
+            type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
 
   merge:
     name: Merge Manifests
