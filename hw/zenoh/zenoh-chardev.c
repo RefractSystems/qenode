@@ -31,6 +31,7 @@
 #include "qemu/module.h"
 #include "qemu/option.h"
 #include "qemu/error-report.h"
+#include "qemu/bswap.h"
 #include <zenoh.h>
 
 #define TYPE_CHARDEV_ZENOH "chardev-zenoh"
@@ -90,9 +91,14 @@ static void on_zenoh_msg(z_loaned_sample_t *sample, void *context)
         return;
     }
     
-    uint8_t *frame_data = g_malloc(hdr.size);
-    if (z_bytes_reader_read(&reader, frame_data, hdr.size) == hdr.size) {
-        push_rx_frame(s, hdr.delivery_vtime_ns, frame_data, hdr.size);
+    uint32_t size = le32_to_cpu(hdr.size);
+    uint64_t vtime = le64_to_cpu(hdr.delivery_vtime_ns);
+    
+    if (size > 1024 * 1024) return; /* safety bounds check for malformed frames */
+    
+    uint8_t *frame_data = g_malloc(size);
+    if (z_bytes_reader_read(&reader, frame_data, size) == size) {
+        push_rx_frame(s, vtime, frame_data, size);
     }
     g_free(frame_data);
 }
@@ -127,10 +133,9 @@ static int zenoh_chr_write(Chardev *chr, const uint8_t *buf, int len)
 {
     ChardevZenoh *s = CHARDEV_ZENOH(chr);
     
-    ZenohFrameHeader hdr = {
-        .delivery_vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .size = len
-    };
+    ZenohFrameHeader hdr;
+    hdr.delivery_vtime_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    hdr.size = cpu_to_le32(len);
     
     uint8_t *msg = g_malloc(sizeof(hdr) + len);
     memcpy(msg, &hdr, sizeof(hdr));

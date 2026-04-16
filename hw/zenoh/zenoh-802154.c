@@ -167,8 +167,8 @@ static uint64_t zenoh_802154_read(void *opaque, hwaddr offset, unsigned size)
     switch (offset) {
     case 0x04: val = s->tx_len; break;
     case 0x0C:
-        if (s->rx_len > 0) {
-            val = s->rx_fifo[0]; /* Simple FIFO read - not a true FIFO in this mock */
+        if ((s->status & 0x01) && (s->rx_read_pos < s->rx_len)) {
+            val = s->rx_fifo[s->rx_read_pos++];
         }
         break;
     case 0x10: val = s->rx_len; break;
@@ -194,12 +194,12 @@ static void zenoh_802154_write(void *opaque, hwaddr offset, uint64_t value, unsi
     case 0x08:
         /* TX GO */
         {
-            ZenohRfHeader hdr = {
-                .delivery_vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-                .size = s->tx_len,
-                .rssi = 0, /* Filled by coordinator */
-                .lqi = 255
-            };
+            ZenohRfHeader hdr;
+            hdr.delivery_vtime_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+            hdr.size = cpu_to_le32(s->tx_len);
+            hdr.rssi = 0; /* Filled by coordinator */
+            hdr.lqi = 255;
+            
             uint8_t msg[sizeof(hdr) + 128];
             memcpy(msg, &hdr, sizeof(hdr));
             memcpy(msg + sizeof(hdr), s->tx_fifo, s->tx_len);
@@ -215,8 +215,11 @@ static void zenoh_802154_write(void *opaque, hwaddr offset, uint64_t value, unsi
         break;
     case 0x14:
         s->status &= ~value;
-        if (s->status == 0) {
+        if (!(s->status & 0x01)) {
             qemu_set_irq(s->irq, 0);
+            qemu_mutex_lock(&s->mutex);
+            check_rx_queue(s); /* Load the next queued frame if one is pending */
+            qemu_mutex_unlock(&s->mutex);
         }
         break;
     }
