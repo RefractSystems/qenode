@@ -144,6 +144,9 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     patch_file(irq_c, irq_marker, irq_insertion, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
+    loop_marker = "while (!cpu_handle_exception(cpu, &ret)) {"
+    loop_insertion = "\n        if (virtmcu_tcg_quantum_hook) { virtmcu_tcg_quantum_hook(cpu); }\n"
+    patch_file(cpu_exec_c, loop_marker, loop_insertion, after=True)
 
     # 6. Patch cpu_handle_halt in cpu-exec.c
     halt_marker = "cpu->halted = 0;"
