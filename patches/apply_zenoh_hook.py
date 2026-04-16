@@ -36,15 +36,43 @@ def patch_file(path, marker, insertion, after=True):
     if marker not in content:
         print(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
         return False
+
+    # If the exact insertion is already there, we are done.
     if insertion.strip() in content:
         return False
-    if after:
-        content = content.replace(marker, marker + insertion, 1)
+
+    # If a DIFFERENT version of the virtmcu hook is there, remove it first.
+    # We identify our hooks by the "virtmcu_" prefix in the function/variable names.
+    # This is a bit hacky but works for our specific hooks.
+    # Try to find if we already patched this file near the marker.
+    # For simplicity, if we find "virtmcu_" followed by the hook name in the file,
+    # and it's NOT the exact insertion, we might want to replace it.
+    # But replacing is hard with regex if it's multi-line.
+    # Use a unique tag for each patch based on the marker.
+    import hashlib
+    import re
+
+    marker_hash = hashlib.md5(marker.encode()).hexdigest()[:8]
+    tag = f"/* VIRTMCU_PATCH_{marker_hash} */"
+    tagged_insertion = f"\n{tag}{insertion}{tag}\n"
+
+    if tagged_insertion.strip() in content:
+        return False
+
+    # Remove old tagged insertions if they exist
+    pattern = re.escape(tag) + r".*?" + re.escape(tag)
+    if re.search(pattern, content, re.DOTALL):
+        content = re.sub(pattern, tagged_insertion.strip(), content, flags=re.DOTALL)
+        print(f"  updated patch in {os.path.relpath(path)} (marker={marker_hash})")
     else:
-        content = content.replace(marker, insertion + marker, 1)
+        if after:
+            content = content.replace(marker, marker + tagged_insertion, 1)
+        else:
+            content = content.replace(marker, tagged_insertion + marker, 1)
+        print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
+
     with open(path, "w") as f:
         f.write(content)
-    print(f"  patched {os.path.relpath(path)}")
     return True
 
 

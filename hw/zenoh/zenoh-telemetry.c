@@ -64,7 +64,7 @@ static uint16_t irq_slot_for(void *opaque)
 }
 
 struct ZenohTelemetryState {
-    SysBusDevice parent_obj;
+    DeviceState parent_obj;
 
     /* Properties */
     uint32_t node_id;
@@ -80,7 +80,7 @@ struct ZenohTelemetryState {
 
     /* Internal state */
     bool session_open;
-    bool last_halted;
+    bool last_halted[32]; /* Support up to 32 cores */
 };
 
 static ZenohTelemetryState *global_telemetry;
@@ -89,14 +89,21 @@ static ZenohTelemetryState *global_telemetry;
 static gpointer telemetry_publish_thread(gpointer arg)
 {
     ZenohTelemetryState *s = arg;
+    fprintf(stderr, "[telemetry] publish thread started\n");
+    fflush(stderr);
     while (1) {
         TraceEvent *ev = g_async_queue_pop(s->event_queue);
         if (!ev) break; /* NULL sentinel — time to exit */
+        
+        // fprintf(stderr, "[telemetry] publishing event: type=%d\n", ev->type);
+        // fflush(stderr);
         z_owned_bytes_t bytes;
         z_bytes_copy_from_buf(&bytes, (const uint8_t *)ev, sizeof(*ev));
         z_publisher_put(z_publisher_loan(&s->publisher), z_move(bytes), NULL);
         g_free(ev);
     }
+    fprintf(stderr, "[telemetry] publish thread exiting\n");
+    fflush(stderr);
     return NULL;
 }
 
@@ -118,9 +125,12 @@ static void send_event(ZenohTelemetryState *s, TraceEventType type,
 static void telemetry_cpu_halt_hook(CPUState *cpu, bool halted)
 {
     ZenohTelemetryState *s = global_telemetry;
-    if (!s || halted == s->last_halted) return;
-    s->last_halted = halted;
-    send_event(s, TRACE_EVENT_CPU_STATE, 0, halted ? 1 : 0);
+    if (!s) return;
+    int idx = cpu->cpu_index;
+    if (idx < 0 || idx >= 32) return;
+    if (halted == s->last_halted[idx]) return;
+    s->last_halted[idx] = halted;
+    send_event(s, TRACE_EVENT_CPU_STATE, (uint32_t)idx, halted ? 1 : 0);
 }
 
 static void telemetry_irq_hook(void *opaque, int n, int level)
@@ -134,6 +144,8 @@ static void telemetry_irq_hook(void *opaque, int n, int level)
 static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
 {
     ZenohTelemetryState *s = ZENOH_TELEMETRY(dev);
+    fprintf(stderr, "[telemetry] realize node=%u\n", s->node_id);
+    fflush(stderr);
     if (global_telemetry) {
         error_setg(errp, "Only one zenoh-telemetry device allowed");
         return;
@@ -222,7 +234,7 @@ static void zenoh_telemetry_class_init(ObjectClass *klass, const void *data)
 static const TypeInfo zenoh_telemetry_types[] = {
     {
         .name              = TYPE_ZENOH_TELEMETRY,
-        .parent            = TYPE_SYS_BUS_DEVICE,
+        .parent            = TYPE_DEVICE,
         .instance_size     = sizeof(ZenohTelemetryState),
         .instance_finalize = zenoh_telemetry_instance_finalize,
         .class_init        = zenoh_telemetry_class_init,

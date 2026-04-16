@@ -14,8 +14,9 @@ SYSC_MSG_RESP = 0
 SYSC_MSG_IRQ_SET = 1
 SYSC_MSG_IRQ_CLEAR = 2
 
-FMT_VIRTMCU_HANDSHAKE = '<II'
+FMT_VIRTMCU_HANDSHAKE = "<II"
 SIZE_VIRTMCU_HANDSHAKE = struct.calcsize(FMT_VIRTMCU_HANDSHAKE)
+
 
 @dataclass
 class VirtmcuHandshake:
@@ -23,7 +24,7 @@ class VirtmcuHandshake:
     version: int  # uint32_t
 
     @classmethod
-    def unpack(cls, data: bytes) -> 'VirtmcuHandshake':
+    def unpack(cls, data: bytes) -> "VirtmcuHandshake":
         if len(data) != SIZE_VIRTMCU_HANDSHAKE:
             raise ValueError(f"Expected {SIZE_VIRTMCU_HANDSHAKE} bytes for VirtmcuHandshake, got {len(data)}")
         unpacked = struct.unpack(FMT_VIRTMCU_HANDSHAKE, data)
@@ -32,8 +33,10 @@ class VirtmcuHandshake:
     def pack(self) -> bytes:
         return struct.pack(FMT_VIRTMCU_HANDSHAKE, self.magic, self.version)
 
-FMT_MMIO_REQ = '<BBHIQQQ'
+
+FMT_MMIO_REQ = "<BBHIQQQ"
 SIZE_MMIO_REQ = struct.calcsize(FMT_MMIO_REQ)
+
 
 @dataclass
 class MmioReq:
@@ -46,17 +49,21 @@ class MmioReq:
     data: int  # uint64_t
 
     @classmethod
-    def unpack(cls, data: bytes) -> 'MmioReq':
+    def unpack(cls, data: bytes) -> "MmioReq":
         if len(data) != SIZE_MMIO_REQ:
             raise ValueError(f"Expected {SIZE_MMIO_REQ} bytes for MmioReq, got {len(data)}")
         unpacked = struct.unpack(FMT_MMIO_REQ, data)
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_MMIO_REQ, self.type, self.size, self.reserved1, self.reserved2, self.vtime_ns, self.addr, self.data)
+        return struct.pack(
+            FMT_MMIO_REQ, self.type, self.size, self.reserved1, self.reserved2, self.vtime_ns, self.addr, self.data
+        )
 
-FMT_SYSC_MSG = '<IIQ'
+
+FMT_SYSC_MSG = "<IIQ"
 SIZE_SYSC_MSG = struct.calcsize(FMT_SYSC_MSG)
+
 
 @dataclass
 class SyscMsg:
@@ -65,7 +72,7 @@ class SyscMsg:
     data: int  # uint64_t
 
     @classmethod
-    def unpack(cls, data: bytes) -> 'SyscMsg':
+    def unpack(cls, data: bytes) -> "SyscMsg":
         if len(data) != SIZE_SYSC_MSG:
             raise ValueError(f"Expected {SIZE_SYSC_MSG} bytes for SyscMsg, got {len(data)}")
         unpacked = struct.unpack(FMT_SYSC_MSG, data)
@@ -74,8 +81,10 @@ class SyscMsg:
     def pack(self) -> bytes:
         return struct.pack(FMT_SYSC_MSG, self.type, self.irq_num, self.data)
 
-FMT_CLOCK_ADVANCE_REQ = '<QQ'
+
+FMT_CLOCK_ADVANCE_REQ = "<QQ"
 SIZE_CLOCK_ADVANCE_REQ = struct.calcsize(FMT_CLOCK_ADVANCE_REQ)
+
 
 @dataclass
 class ClockAdvanceReq:
@@ -83,7 +92,7 @@ class ClockAdvanceReq:
     mujoco_time_ns: int  # uint64_t
 
     @classmethod
-    def unpack(cls, data: bytes) -> 'ClockAdvanceReq':
+    def unpack(cls, data: bytes) -> "ClockAdvanceReq":
         if len(data) != SIZE_CLOCK_ADVANCE_REQ:
             raise ValueError(f"Expected {SIZE_CLOCK_ADVANCE_REQ} bytes for ClockAdvanceReq, got {len(data)}")
         unpacked = struct.unpack(FMT_CLOCK_ADVANCE_REQ, data)
@@ -92,8 +101,10 @@ class ClockAdvanceReq:
     def pack(self) -> bytes:
         return struct.pack(FMT_CLOCK_ADVANCE_REQ, self.delta_ns, self.mujoco_time_ns)
 
-FMT_CLOCK_READY_RESP = '<QII'
+
+FMT_CLOCK_READY_RESP = "<QII"
 SIZE_CLOCK_READY_RESP = struct.calcsize(FMT_CLOCK_READY_RESP)
+
 
 @dataclass
 class ClockReadyResp:
@@ -102,7 +113,7 @@ class ClockReadyResp:
     error_code: int  # uint32_t
 
     @classmethod
-    def unpack(cls, data: bytes) -> 'ClockReadyResp':
+    def unpack(cls, data: bytes) -> "ClockReadyResp":
         if len(data) != SIZE_CLOCK_READY_RESP:
             raise ValueError(f"Expected {SIZE_CLOCK_READY_RESP} bytes for ClockReadyResp, got {len(data)}")
         unpacked = struct.unpack(FMT_CLOCK_READY_RESP, data)
@@ -110,4 +121,3 @@ class ClockReadyResp:
 
     def pack(self) -> bytes:
         return struct.pack(FMT_CLOCK_READY_RESP, self.current_vtime_ns, self.n_frames, self.error_code)
-

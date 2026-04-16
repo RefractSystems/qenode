@@ -1,5 +1,6 @@
-import sys
 import os
+import sys
+
 import zenoh
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7,7 +8,7 @@ TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(SCRIPT_DIR)), "tools")
 if TOOLS_DIR not in sys.path:
     sys.path.append(TOOLS_DIR)
 
-from vproto import ClockAdvanceReq, ClockReadyResp
+from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 DELTA1_NS = 1_000_000
 DELTA2_NS = 2_000_000
