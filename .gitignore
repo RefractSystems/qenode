@@ -51,3 +51,5 @@ target/
 tools/zenoh_coordinator/target/
 hw/rust-dummy/target/
 hw/rust-dummy/Cargo.lock
+*.gcov
+test-results/
