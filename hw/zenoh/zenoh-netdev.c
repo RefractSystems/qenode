@@ -32,6 +32,7 @@
 #include "virtmcu/hooks.h"
 #include "qemu/module.h"
 #include "qemu/error-report.h"
+#include "qemu/bswap.h"
 #include <zenoh.h>
 
 typedef struct ZenohNetdevState {
@@ -96,9 +97,14 @@ static void on_rx_frame(z_loaned_sample_t *sample, void *context)
         return;
     }
     
-    uint8_t *frame_data = g_malloc(hdr.size);
-    if (z_bytes_reader_read(&reader, frame_data, hdr.size) == hdr.size) {
-        push_rx_frame(s, hdr.delivery_vtime_ns, frame_data, hdr.size);
+    uint32_t size = le32_to_cpu(hdr.size);
+    uint64_t vtime = le64_to_cpu(hdr.delivery_vtime_ns);
+    
+    if (size > 65536) return; /* Safety bounds check */
+    
+    uint8_t *frame_data = g_malloc(size);
+    if (z_bytes_reader_read(&reader, frame_data, size) == size) {
+        push_rx_frame(s, vtime, frame_data, size);
     }
     g_free(frame_data);
 }
@@ -133,10 +139,9 @@ static ssize_t zenoh_netdev_receive(NetClientState *nc, const uint8_t *buf, size
 {
     ZenohNetdevState *s = DO_UPCAST(ZenohNetdevState, nc, nc);
     
-    ZenohFrameHeader hdr = {
-        .delivery_vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .size = size,
-    };
+    ZenohFrameHeader hdr;
+    hdr.delivery_vtime_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    hdr.size = cpu_to_le32(size);
     
     uint8_t *msg = g_malloc(sizeof(hdr) + size);
     memcpy(msg, &hdr, sizeof(hdr));
