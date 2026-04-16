@@ -27,9 +27,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
-    wget \
+    curl \
     && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
+    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
     && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
@@ -47,7 +47,6 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     device-tree-compiler \
     libslirp-dev \
     curl \
-    wget \
     ca-certificates \
     b4 \
     gdb \
@@ -63,9 +62,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
-    wget \
+    curl \
     && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
+    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
     && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
@@ -83,7 +82,6 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     device-tree-compiler \
     libslirp-dev \
     curl \
-    wget \
     ca-certificates \
     b4 \
     gdb \
@@ -125,9 +123,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
-    wget \
+    curl \
     && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
+    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
     && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
@@ -145,7 +143,6 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     device-tree-compiler \
     libslirp-dev \
     curl \
-    wget \
     ca-certificates \
     b4 \
     gdb \
@@ -160,9 +157,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
-    wget \
+    curl \
     && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
+    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
     && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
@@ -180,7 +177,6 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     device-tree-compiler \
     libslirp-dev \
     curl \
-    wget \
     ca-certificates \
     b4 \
     gdb \
