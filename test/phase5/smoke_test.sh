@@ -152,6 +152,7 @@ echo "[phase5] Starting QEMU..."
     -nographic \
     -monitor none \
     -qmp "unix:$QMP_SOCK,server,nowait" \
+    -device "mmio-socket-bridge,socket-path=$SOCK_PATH,region-size=0x1000,base-addr=0x50000000" \
     > "$QEMU_LOG" 2>&1 &
 QEMU_PID=$!
 

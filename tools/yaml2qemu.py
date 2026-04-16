@@ -153,7 +153,9 @@ def main():
         with open(args.out_arch, "w") as f:
             f.write(arch)
 
-    # Extract chardev backends which cannot go into the DTB
+    # Extract devices that require explicit CLI instantiation.
+    # zenoh-chardev: CLI-only (no DTB node).
+    # mmio-socket-bridge: both DTB (firmware memory map) and CLI (QEMU instantiation).
     cli_args = []
     filtered_devices = []
     for dev in platform.devices:
@@ -164,6 +166,20 @@ def main():
             cli_args.append(f"zenoh,id={chardev_id},node={node}")
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
+        elif dev.type_name == "mmio-socket-bridge":
+            sock_path = dev.properties.get("socket-path", "")
+            region_size = dev.properties.get("region-size", 0x1000)
+            try:
+                base_addr = int(dev.address_str, 0)
+            except (ValueError, TypeError):
+                base_addr = 0
+            cli_args.append("-device")
+            cli_args.append(
+                f"mmio-socket-bridge,socket-path={sock_path},"
+                f"region-size={region_size},"
+                f"base-addr={hex(base_addr)}"
+            )
+            filtered_devices.append(dev)
         else:
             filtered_devices.append(dev)
 

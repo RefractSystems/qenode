@@ -152,7 +152,7 @@ static void bridge_realize(DeviceState *dev, Error **errp)
     qemu_set_fd_handler(s->sock_fd, bridge_sock_handler, NULL, s);
     memory_region_init_io(&s->mmio, OBJECT(s), &bridge_mmio_ops, s, "mmio-socket-bridge", s->region_size);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
-    if (s->base_addr != 0) {
+    if (s->base_addr != UINT64_MAX) {
         sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, s->base_addr);
     }
 }
@@ -172,7 +172,7 @@ static void bridge_unrealize(DeviceState *dev) {
 static const Property bridge_properties[] = {
     DEFINE_PROP_STRING("socket-path", MmioSocketBridgeState, socket_path),
     DEFINE_PROP_UINT32("region-size", MmioSocketBridgeState, region_size, 0),
-    DEFINE_PROP_UINT64("base-addr", MmioSocketBridgeState, base_addr, 0),
+    DEFINE_PROP_UINT64("base-addr", MmioSocketBridgeState, base_addr, UINT64_MAX),
 };
 static void bridge_class_init(ObjectClass *klass, const void *data) {
     DeviceClass *dc = DEVICE_CLASS(klass);
