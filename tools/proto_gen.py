@@ -25,6 +25,7 @@ TYPE_MAP = {
     "int64_t": "q",
 }
 
+
 def parse_header():
     with open(PROTO_H_PATH, "r") as f:
         content = f.read()
@@ -45,7 +46,7 @@ def parse_header():
     for match in re.finditer(struct_pattern, content):
         struct_name = match.group(1)
         body = match.group(2)
-        
+
         fields = []
         for line in body.split(";"):
             line = line.strip()
@@ -60,6 +61,7 @@ def parse_header():
         structs[struct_name] = fields
 
     return defines, structs
+
 
 def generate_python(defines, structs):
     out = []
@@ -80,24 +82,26 @@ def generate_python(defines, structs):
     # Emit structs
     for struct_name, fields in structs.items():
         class_name = "".join(word.capitalize() for word in struct_name.split("_"))
-        
+
         fmt = "<" + "".join(f[1] for f in fields)
         out.append(f"FMT_{struct_name.upper()} = '{fmt}'")
         out.append(f"SIZE_{struct_name.upper()} = struct.calcsize(FMT_{struct_name.upper()})")
         out.append("")
-        
+
         out.append("@dataclass")
         out.append(f"class {class_name}:")
         for f_name, f_fmt, c_type in fields:
             out.append(f"    {f_name}: int  # {c_type}")
-            
+
         out.append("")
         out.append("    @classmethod")
         out.append(f"    def unpack(cls, data: bytes) -> '{class_name}':")
         out.append(f"        if len(data) != SIZE_{struct_name.upper()}:")
-        out.append(f"            raise ValueError(f\"Expected {{SIZE_{struct_name.upper()}}} bytes for {class_name}, got {{len(data)}}\")")
+        out.append(
+            f'            raise ValueError(f"Expected {{SIZE_{struct_name.upper()}}} bytes for {class_name}, got {{len(data)}}")'
+        )
         out.append(f"        unpacked = struct.unpack(FMT_{struct_name.upper()}, data)")
-        out.append(f"        return cls(*unpacked)")
+        out.append("        return cls(*unpacked)")
         out.append("")
         out.append("    def pack(self) -> bytes:")
         args = ", ".join(f"self.{f[0]}" for f in fields)
@@ -105,6 +109,7 @@ def generate_python(defines, structs):
         out.append("")
 
     return "\n".join(out) + "\n"
+
 
 if __name__ == "__main__":
     defines, structs = parse_header()

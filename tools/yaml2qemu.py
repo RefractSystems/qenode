@@ -181,7 +181,11 @@ def main():
             try:
                 base_addr = int(dev.address_str, 0)
             except (ValueError, TypeError):
-                base_addr = 0
+                print(
+                    f"ERROR: Invalid or missing address for mmio-socket-bridge '{dev.name}': {dev.address_str}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             cli_args.append("-device")
             cli_args.append(
                 f"mmio-socket-bridge,socket-path={sock_path},"

@@ -2,6 +2,7 @@
 import os
 import re
 
+
 def get_versions():
     versions = {}
     with open("VERSIONS", "r") as f:
@@ -10,6 +11,7 @@ def get_versions():
                 key, value = line.strip().split("=")
                 versions[key] = value
     return versions
+
 
 def sync():
     versions = get_versions()
@@ -34,7 +36,9 @@ def sync():
     if os.path.exists(pendulum_path):
         with open(pendulum_path, "r") as f:
             content = f.read()
-        new_content = re.sub(r'uv pip install eclipse-zenoh==[^\s]+', f'uv pip install eclipse-zenoh=={zenoh_ver}', content)
+        new_content = re.sub(
+            r"uv pip install eclipse-zenoh==[^\s]+", f"uv pip install eclipse-zenoh=={zenoh_ver}", content
+        )
         if content != new_content:
             print(f"Updating {pendulum_path} to eclipse-zenoh {zenoh_ver}")
             with open(pendulum_path, "w") as f:
@@ -45,7 +49,7 @@ def sync():
     if os.path.exists(req_path):
         with open(req_path, "r") as f:
             content = f.read()
-        new_content = re.sub(r'eclipse-zenoh==[^\s]+', f'eclipse-zenoh=={zenoh_ver}', content)
+        new_content = re.sub(r"eclipse-zenoh==[^\s]+", f"eclipse-zenoh=={zenoh_ver}", content)
         if content != new_content:
             print(f"Updating {req_path} to eclipse-zenoh {zenoh_ver}")
             with open(req_path, "w") as f:
@@ -63,6 +67,7 @@ def sync():
                 f.write(new_content)
             # Run uv lock to update uv.lock
             import subprocess
+
             try:
                 subprocess.run(["uv", "lock"], check=True)
                 print("✓ Updated uv.lock")
@@ -75,18 +80,22 @@ def sync():
     if os.path.exists(dockerfile_path):
         with open(dockerfile_path, "r") as f:
             content = f.read()
-        
-        new_content = re.sub(r'ARG ZENOH_C_REF=[^\n]+', f'ARG ZENOH_C_REF={zenoh_ver}', content)
+
+        new_content = re.sub(r"ARG ZENOH_C_REF=[^\n]+", f"ARG ZENOH_C_REF={zenoh_ver}", content)
         if qemu_ver:
-            new_content = re.sub(r'ARG QEMU_REF=v[^\n]+', f'ARG QEMU_REF=v{qemu_ver}', new_content)
-        
+            new_content = re.sub(r"ARG QEMU_REF=v[^\n]+", f"ARG QEMU_REF=v{qemu_ver}", new_content)
+
         # Also update the comment example
-        new_content = re.sub(r'\(no \'v\' prefix, e\.g\. [^\)]+\)', f'(no \'v\' prefix, e.g. {zenoh_ver})', new_content)
+        new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)
 
         if content != new_content:
-            print(f"Updating {dockerfile_path} to ZENOH_C_REF {zenoh_ver}" + (f" and QEMU_REF v{qemu_ver}" if qemu_ver else ""))
+            print(
+                f"Updating {dockerfile_path} to ZENOH_C_REF {zenoh_ver}"
+                + (f" and QEMU_REF v{qemu_ver}" if qemu_ver else "")
+            )
             with open(dockerfile_path, "w") as f:
                 f.write(new_content)
+
 
 if __name__ == "__main__":
     sync()

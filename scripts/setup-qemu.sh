@@ -121,6 +121,17 @@ if [ ! -d "$ZENOHC_DIR/include" ]; then
     rm /tmp/zenoh-c.zip
 fi
 
+# Phase 12: Fetch and compile flatcc for Telemetry
+FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
+if [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
+    echo "==> Fetching and compiling flatcc..."
+    mkdir -p "$WORKSPACE_DIR/third_party"
+    git clone https://github.com/dvidelabs/flatcc.git "$FLATCC_DIR"
+    cd "$FLATCC_DIR"
+    ./scripts/build.sh
+    cd "$WORKSPACE_DIR"
+fi
+
 # Phase 2: Allow dynamic loading of SysBus devices via `-device`
 # The arm-generic-fdt patch does not set this by default, which breaks out-of-tree plugins.
 if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" "$QEMU_DIR/hw/arm/arm_generic_fdt.c"; then

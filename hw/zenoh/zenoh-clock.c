@@ -18,7 +18,7 @@
 #include "exec/icount.h"
 #include "virtmcu/hooks.h"
 #include "qemu/error-report.h"
-#include "hw/misc/virtmcu_proto.h"
+#include "../misc/virtmcu_proto.h"
 #include <zenoh.h>
 
 #define TYPE_ZENOH_CLOCK "zenoh-clock"

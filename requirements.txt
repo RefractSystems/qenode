@@ -23,3 +23,6 @@ ruff==0.3.4
 
 # MCP SDK - used for the AI Debugging interface (Phase 13)
 mcp==1.0.0
+
+# FlatBuffers - schema-driven zero-copy serialization
+flatbuffers==25.12.19
