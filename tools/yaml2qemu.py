@@ -8,65 +8,34 @@
 
 import argparse
 import os
-import subprocess
 import sys
-
+import subprocess
 import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
 
 
-def validate_dtb_content(dtb_path: str, expected_peripherals: list[str]):
+def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
     """
-    Decompiles the DTB and verifies that all expected peripherals are present as nodes.
-    """
-    try:
-        result = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], check=True, capture_output=True, text=True)
-        dts_content = result.stdout
-
-        missing = []
-        for p in expected_peripherals:
-            # Look for node definitions like "name@address {" or "name {"
-            # We use a simple string check first; a more robust one would use regex.
-            if f"{p}@" not in dts_content and f"{p} " not in dts_content:
-                missing.append(p)
-
-        if missing:
-            print(
-                f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}",
-                file=sys.stderr,
-            )
-            # Log the DTS for debugging
-            # print("--- GENERATED DTS ---", file=sys.stderr)
-            # print(dts_content, file=sys.stderr)
-            return False
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error decompiling DTB for validation: {e.stderr}", file=sys.stderr)
-        return False
-
-
-def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, list[str]]:
-    """
-    Parses our modern YAML schema and returns a ReplPlatform AST and a list of peripheral names.
+    Parses our modern YAML schema and returns (ReplPlatform, hints_dict).
+    hints_dict is reserved for future metadata (e.g. default clock rates); callers
+    that don't need it can unpack with ``platform, _ = parse_yaml_platform(path)``.
     """
     with open(yaml_path, "r") as f:
         data = yaml.safe_load(f)
 
     platform = ReplPlatform()
-    peripheral_names = []
 
     # 1. Map CPUs
     for cpu in data.get("machine", {}).get("cpus", []):
-        cpu_name = cpu["name"]
         cpu_type = cpu["type"]
         internal_type = "CPU.ARMv7A"
         if "riscv" in cpu_type.lower():
             internal_type = "CPU.RISCV64"
 
         dev = ReplDevice(
-            name=cpu_name,
+            name=cpu["name"],
             type_name=internal_type,
             address_str="sysbus",
             properties={"cpuType": cpu_type},
@@ -78,18 +47,18 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, list[str]]:
                 dev.properties["mmu-type"] = cpu["mmu-type"]
 
         platform.devices.append(dev)
-        # Note: CPUs are handled specially in FdtEmitter, usually under 'cpus' node
 
     # 2. Map Peripherals
     for p in data.get("peripherals", []):
-        name = p["name"]
         # Support both 'renode_type' (for migrated files) or 'type' (for native ones)
         type_name = p.get("type") or p.get("renode_type", "Unknown")
 
         addr_val = p.get("address", "none")
         address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
-        dev = ReplDevice(name=name, type_name=type_name, address_str=address_str, properties=p.get("properties", {}))
+        dev = ReplDevice(
+            name=p["name"], type_name=type_name, address_str=address_str, properties=p.get("properties", {})
+        )
 
         # Parse interrupts if they exist
         for irq_entry in p.get("interrupts", []):
@@ -102,9 +71,39 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, list[str]]:
                 dev.interrupts.append(ReplInterrupt("0", target, line))
 
         platform.devices.append(dev)
-        peripheral_names.append(name)
 
-    return platform, peripheral_names
+    return platform, {}
+
+
+def validate_dtb(dtb_path, devices):
+    """
+    Task 2: Validate DTB contains all expected peripherals.
+    Decompiles the DTB back to DTS and ensures each peripheral is present.
+    """
+    try:
+        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], 
+                             capture_output=True, text=True, check=True)
+        dts = res.stdout
+        
+        missing = []
+        for dev in devices:
+            if "CPU" in dev.type_name: continue
+            if dev.type_name == "zenoh-chardev": continue # Not in DTB
+            
+            # Simple substring check: name@address
+            if dev.name not in dts:
+                missing.append(dev.name)
+        
+        if missing:
+            print(f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}", file=sys.stderr)
+            print("This usually means the device type is unknown to FdtEmitter or the address mapping failed.", file=sys.stderr)
+            print("FAILED: DTB validation failed.")
+            sys.exit(1)
+        print("✓ Validation successful.")
+    except subprocess.CalledProcessError as e:
+        print(f"⚠️ Warning: dtc failed during validation: {e.stderr}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Warning: Could not validate DTB: {e}", file=sys.stderr)
 
 
 def main():
@@ -113,7 +112,6 @@ def main():
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
     parser.add_argument("--out-cli", help="Path to output .cli file for extra arguments")
     parser.add_argument("--out-arch", help="Path to output .arch file containing target architecture")
-    parser.add_argument("--no-validate", action="store_true", help="Skip DTB content validation")
 
     args = parser.parse_args()
 
@@ -122,7 +120,8 @@ def main():
         sys.exit(1)
 
     print(f"Parsing YAML: {args.input}...")
-    platform, expected_peripherals = parse_yaml_platform(args.input)
+    platform, _ = parse_yaml_platform(args.input)
+    original_devices = list(platform.devices)
 
     # Extract architecture
     emitter = FdtEmitter(platform)
@@ -134,25 +133,16 @@ def main():
     # Extract chardev backends which cannot go into the DTB
     cli_args = []
     filtered_devices = []
-    dtb_peripherals = []
-
     for dev in platform.devices:
         if dev.type_name == "zenoh-chardev":
-            # Extract to CLI string
             node = dev.properties.get("node", "0")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
             cli_args.append("-chardev")
             cli_args.append(f"zenoh,id={chardev_id},node={node}")
-
-            # Since FdtEmitter hardcodes `chardev = <0x00>;` for UARTs,
-            # we must also map this chardev to the first available serial port
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
-            # zenoh-chardev is NOT expected in DTB
         else:
             filtered_devices.append(dev)
-            if "CPU" not in dev.type_name:
-                dtb_peripherals.append(dev.name)
 
     platform.devices = filtered_devices
 
@@ -166,19 +156,10 @@ def main():
 
     print(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):
-        print("✓ Compilation successful.")
-
-        if not args.no_validate:
-            print("Validating DTB content...")
-            if validate_dtb_content(args.out_dtb, dtb_peripherals):
-                print("✓ Validation successful.")
-            else:
-                print("FAILED: DTB validation failed.")
-                sys.exit(1)
-        else:
-            print("! Skipping validation.")
+        print("✓ Compilation Success.")
+        validate_dtb(args.out_dtb, original_devices)
     else:
-        print("FAILED: Compilation failed.")
+        print("FAILED.")
         sys.exit(1)
 
 

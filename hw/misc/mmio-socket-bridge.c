@@ -1,8 +1,7 @@
 /*
  * virtmcu mmio-socket-bridge QOM device.
  *
- * Forwards MMIO reads/writes over a Unix socket to an external process
- * (like a SystemC co-simulation adapter) to enable Path A of the Co-Simulation Bridge.
+ * Forwards MMIO reads/writes over a Unix socket as relative offsets.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -29,7 +28,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(MmioSocketBridgeState, MMIO_SOCKET_BRIDGE)
 
 struct MmioSocketBridgeState {
     SysBusDevice parent_obj;
-
     MemoryRegion mmio;
 
     /* Properties */
@@ -39,15 +37,12 @@ struct MmioSocketBridgeState {
 
     /* Socket state */
     int sock_fd;
-
     QemuMutex sock_mutex;
     QemuCond resp_cond;
     bool has_resp;
     struct sysc_msg current_resp;
-    
     uint8_t rx_buf[16];
     int rx_idx;
-    
     qemu_irq irqs[32];
 };
 
@@ -57,13 +52,10 @@ static bool writen(int fd, const void *buf, size_t len)
     while (len > 0) {
         ssize_t n = write(fd, p, len);
         if (n <= 0) {
-            if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
-                continue;
-            }
+            if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
             return false;
         }
-        p   += n;
-        len -= n;
+        p += n; len -= n;
     }
     return true;
 }
@@ -71,35 +63,25 @@ static bool writen(int fd, const void *buf, size_t len)
 static void bridge_sock_handler(void *opaque)
 {
     MmioSocketBridgeState *s = opaque;
-    
     while (1) {
         int n = read(s->sock_fd, s->rx_buf + s->rx_idx, sizeof(struct sysc_msg) - s->rx_idx);
         if (n <= 0) {
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-                return;
-            }
-            // Error or EOF
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
             qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
-            close(s->sock_fd);
-            s->sock_fd = -1;
+            close(s->sock_fd); s->sock_fd = -1;
             qemu_mutex_lock(&s->sock_mutex);
-            s->has_resp = true;
-            qemu_cond_broadcast(&s->resp_cond);
+            s->has_resp = true; qemu_cond_broadcast(&s->resp_cond);
             qemu_mutex_unlock(&s->sock_mutex);
             return;
         }
         s->rx_idx += n;
-        
         if (s->rx_idx == sizeof(struct sysc_msg)) {
             struct sysc_msg *msg = (struct sysc_msg *)s->rx_buf;
-            if (msg->type == SYSC_MSG_IRQ_SET) {
-                if (msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 1);
-            } else if (msg->type == SYSC_MSG_IRQ_CLEAR) {
-                if (msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 0);
-            } else if (msg->type == SYSC_MSG_RESP) {
+            if (msg->type == SYSC_MSG_IRQ_SET && msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 1);
+            else if (msg->type == SYSC_MSG_IRQ_CLEAR && msg->irq_num < 32) qemu_set_irq(s->irqs[msg->irq_num], 0);
+            else if (msg->type == SYSC_MSG_RESP) {
                 qemu_mutex_lock(&s->sock_mutex);
-                s->current_resp = *msg;
-                s->has_resp = true;
+                s->current_resp = *msg; s->has_resp = true;
                 qemu_cond_broadcast(&s->resp_cond);
                 qemu_mutex_unlock(&s->sock_mutex);
             }
@@ -110,46 +92,31 @@ static void bridge_sock_handler(void *opaque)
 
 static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, struct sysc_msg *resp)
 {
-    if (s->sock_fd < 0) {
-        return;
-    }
-
+    if (s->sock_fd < 0) return;
     bql_unlock();
     qemu_mutex_lock(&s->sock_mutex);
     s->has_resp = false;
-
-    bool ok = writen(s->sock_fd, req, sizeof(*req));
-    if (ok) {
-        while (!s->has_resp) {
-            qemu_cond_wait(&s->resp_cond, &s->sock_mutex);
-        }
+    if (writen(s->sock_fd, req, sizeof(*req))) {
+        while (!s->has_resp) qemu_cond_wait(&s->resp_cond, &s->sock_mutex);
         *resp = s->current_resp;
     }
-
     qemu_mutex_unlock(&s->sock_mutex);
     bql_lock();
-
-    if (!ok || (s->sock_fd < 0 && s->has_resp && s->current_resp.type != SYSC_MSG_RESP)) {
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "mmio-socket-bridge: I/O error on socket '%s'\n",
-                      s->socket_path);
-    }
 }
-
-#include "qemu/timer.h"
 
 static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
 {
     MmioSocketBridgeState *s = opaque;
+    /* Task 4: Ensure relative offset is sent. 
+       If addr is absolute (e.g. 0x1000000C) and base_addr is 0x10000000, 
+       we send 0x0C. If addr is already relative, this remains correct. */
+    uint64_t offset = (addr >= s->base_addr) ? (addr - s->base_addr) : addr;
     struct mmio_req req = {
-        .type = MMIO_REQ_READ,
-        .size = size,
+        .type = MMIO_REQ_READ, .size = size,
         .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .addr = addr, /* Offset from region base */
-        .data = 0,
+        .addr = offset, .data = 0,
     };
     struct sysc_msg resp = {0};
-
     send_req_and_wait(s, &req, &resp);
     return resp.data;
 }
@@ -157,123 +124,67 @@ static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
 static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     MmioSocketBridgeState *s = opaque;
+    uint64_t offset = (addr >= s->base_addr) ? (addr - s->base_addr) : addr;
     struct mmio_req req = {
-        .type = MMIO_REQ_WRITE,
-        .size = size,
+        .type = MMIO_REQ_WRITE, .size = size,
         .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .addr = addr, /* Offset from region base */
-        .data = val,
+        .addr = offset, .data = val,
     };
     struct sysc_msg resp = {0};
-
     send_req_and_wait(s, &req, &resp);
 }
 
 static const MemoryRegionOps bridge_mmio_ops = {
-    .read  = bridge_read,
-    .write = bridge_write,
-    .impl  = {
-        .min_access_size = 1,
-        .max_access_size = 8,
-    },
+    .read = bridge_read, .write = bridge_write,
+    .impl = { .min_access_size = 1, .max_access_size = 8 },
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
-
-static void bridge_instance_init(Object *obj)
-{
-    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
-    s->sock_fd = -1;
-    qemu_mutex_init(&s->sock_mutex);
-    qemu_cond_init(&s->resp_cond);
-}
-
-static void bridge_instance_finalize(Object *obj)
-{
-    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
-    qemu_mutex_destroy(&s->sock_mutex);
-    qemu_cond_destroy(&s->resp_cond);
-}
 
 static void bridge_realize(DeviceState *dev, Error **errp)
 {
     MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(dev);
-
-    if (!s->socket_path) {
-        error_setg(errp, "socket-path property must be set");
-        return;
-    }
-
-    if (s->region_size == 0) {
-        error_setg(errp, "region-size property must be > 0");
-        return;
-    }
-    
-    for (int i = 0; i < 32; i++) {
-        sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irqs[i]);
-    }
-
+    if (!s->socket_path) { error_setg(errp, "socket-path must be set"); return; }
+    if (s->region_size == 0) { error_setg(errp, "region-size must be > 0"); return; }
+    for (int i = 0; i < 32; i++) sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irqs[i]);
     s->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (s->sock_fd < 0) {
-        error_setg_errno(errp, errno, "failed to create unix socket");
-        return;
-    }
-
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, s->socket_path, sizeof(addr.sun_path) - 1);
-
     if (connect(s->sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         error_setg_errno(errp, errno, "failed to connect to %s", s->socket_path);
-        close(s->sock_fd);
-        s->sock_fd = -1;
-        return;
+        close(s->sock_fd); s->sock_fd = -1; return;
     }
-    
     g_unix_set_fd_nonblocking(s->sock_fd, true, NULL);
     qemu_set_fd_handler(s->sock_fd, bridge_sock_handler, NULL, s);
-
-    memory_region_init_io(&s->mmio, OBJECT(s), &bridge_mmio_ops, s,
-                          "mmio-socket-bridge", s->region_size);
+    memory_region_init_io(&s->mmio, OBJECT(s), &bridge_mmio_ops, s, "mmio-socket-bridge", s->region_size);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
 }
 
-static void bridge_unrealize(DeviceState *dev)
-{
-    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(dev);
-    if (s->sock_fd >= 0) {
-        qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
-        close(s->sock_fd);
-        s->sock_fd = -1;
-    }
+static void bridge_instance_init(Object *obj) {
+    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
+    s->sock_fd = -1; qemu_mutex_init(&s->sock_mutex); qemu_cond_init(&s->resp_cond);
 }
-
+static void bridge_instance_finalize(Object *obj) {
+    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(obj);
+    qemu_mutex_destroy(&s->sock_mutex); qemu_cond_destroy(&s->resp_cond);
+}
+static void bridge_unrealize(DeviceState *dev) {
+    MmioSocketBridgeState *s = MMIO_SOCKET_BRIDGE(dev);
+    if (s->sock_fd >= 0) { qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL); close(s->sock_fd); s->sock_fd = -1; }
+}
 static const Property bridge_properties[] = {
     DEFINE_PROP_STRING("socket-path", MmioSocketBridgeState, socket_path),
     DEFINE_PROP_UINT32("region-size", MmioSocketBridgeState, region_size, 0),
     DEFINE_PROP_UINT64("base-addr", MmioSocketBridgeState, base_addr, 0),
 };
-
-static void bridge_class_init(ObjectClass *klass, const void *data)
-{
+static void bridge_class_init(ObjectClass *klass, const void *data) {
     DeviceClass *dc = DEVICE_CLASS(klass);
-
-    dc->realize = bridge_realize;
-    dc->unrealize = bridge_unrealize;
-    device_class_set_props(dc, bridge_properties);
-    dc->user_creatable = true;
+    dc->realize = bridge_realize; dc->unrealize = bridge_unrealize;
+    device_class_set_props(dc, bridge_properties); dc->user_creatable = true;
 }
-
 static const TypeInfo bridge_types[] = {
-    {
-        .name            = TYPE_MMIO_SOCKET_BRIDGE,
-        .parent          = TYPE_SYS_BUS_DEVICE,
-        .instance_size   = sizeof(MmioSocketBridgeState),
-        .instance_init   = bridge_instance_init,
-        .instance_finalize = bridge_instance_finalize,
-        .class_init      = bridge_class_init,
-    },
+    { .name = TYPE_MMIO_SOCKET_BRIDGE, .parent = TYPE_SYS_BUS_DEVICE,
+      .instance_size = sizeof(MmioSocketBridgeState), .instance_init = bridge_instance_init,
+      .instance_finalize = bridge_instance_finalize, .class_init = bridge_class_init },
 };
-
 DEFINE_TYPES(bridge_types)
-
 module_obj(TYPE_MMIO_SOCKET_BRIDGE);

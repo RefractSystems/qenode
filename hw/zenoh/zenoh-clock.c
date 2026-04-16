@@ -2,35 +2,8 @@
  * hw/zenoh/zenoh-clock.c — External virtual clock synchronization.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * Implements two clock-slave modes selected by the "mode" device property:
- *
- * suspend (default):
- *   TCG runs at full speed between quanta.  At every TB boundary the
- *   zclock_quantum_hook checks whether the virtual timer has fired.  When it
- *   has, the hook blocks the vCPU thread and waits for the Zenoh
- *   TimeAuthority to supply the next delta_ns.
- *
- *   Lock ordering — must be followed strictly to prevent ABBA deadlock:
- *     vCPU hook:  BQL  →  s->mutex  (always acquires BQL first, then mutex)
- *     timer_cb:   BQL  →  s->mutex  (same order — no circular dependency)
- *     on_query:          s->mutex   (NEVER calls bql_lock() in suspend path)
- *
- *   State machine (suspend mode):
- *
- *     on_query stores delta_ns, sets quantum_ready, signals vcpu_cond.
- *     Hook (vCPU, BQL held) wakes: arms timer, returns (vCPU runs).
- *     Timer fires → timer_cb sets needs_quantum, kicks vCPU.
- *     Hook sees needs_quantum: captures vtime, sets quantum_done,
- *       signals query_cond, releases BQL, blocks on vcpu_cond.
- *     on_query wakes: reads vtime, sends reply, returns.
- *
- * icount:
- *   QEMU is started with -icount shift=0,align=off,sleep=off.
- *   on_query performs the exact same handshake as suspend mode to ensure
- *   strict causal consistency. The qemu_icount_bias is advanced in Step 8
- *   of the hook, not directly in on_query.
  */
+
 #include "qemu/osdep.h"
 #include "qemu/seqlock.h"
 #include "hw/core/sysbus.h"
@@ -57,7 +30,6 @@ struct ZenohClockState {
     uint32_t node_id;
     char    *router;
     char    *mode;
-    uint32_t timeout_ms;
 
     /* Zenoh handles */
     z_owned_session_t    session;
@@ -68,10 +40,6 @@ struct ZenohClockState {
 
     /*
      * Concurrency state — all fields below protected by mutex.
-     *
-     * Lock ordering:
-     *   vCPU thread: acquire BQL, then mutex.
-     *   on_query:    acquire mutex only.
      */
     QemuMutex mutex;
     QemuCond  vcpu_cond;   /* on_query signals; vCPU hook waits here  */
@@ -81,18 +49,6 @@ struct ZenohClockState {
 
     /*
      * Suspend-mode handshake flags:
-     *
-     *   needs_quantum  Set by timer_cb when the timer fires.  Cleared by
-     *                  the hook when it begins handling the quantum boundary.
-     *                  Signals the hook to block the vCPU.
-     *
-     *   quantum_ready  Set by on_query after it has written delta_ns.
-     *                  Cleared by the hook after waking.
-     *                  Signals the hook that a new delta is available.
-     *
-     *   quantum_done   Set by the hook after capturing vtime_ns.
-     *                  Cleared by on_query before it starts waiting.
-     *                  Signals on_query that vtime_ns is ready.
      */
     bool needs_quantum;
     bool quantum_ready;
@@ -102,21 +58,15 @@ struct ZenohClockState {
     int64_t vtime_ns;   /* hook → on_query: virtual clock after the quantum */
     
     int64_t mujoco_time_ns;         /* on_query → hook: current MuJoCo time */
-    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start. Pair with delta_ns to interpolate: interpolated_ns = quantum_start_vtime_ns + fraction * delta_ns. */
+    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start. */
 };
 
-/* One global instance — enforced in realize(); cleared in finalize(). */
 static ZenohClockState *global_zenoh_clock;
 
 static void zclock_get_quantum_timing(VirtmcuQuantumTiming *timing)
 {
     ZenohClockState *s = global_zenoh_clock;
     if (!s || !timing) return;
-
-    /*
-     * Read concurrently. SAL/AAL models (running in vCPU thread) can safely
-     * read this since the hook writes these variables before resuming vCPUs.
-     */
     timing->quantum_start_vtime_ns = qatomic_read(&s->quantum_start_vtime_ns);
     timing->quantum_delta_ns       = qatomic_read(&s->delta_ns);
     timing->mujoco_time_ns         = qatomic_read(&s->mujoco_time_ns);
@@ -129,101 +79,51 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     uint64_t current_vtime_ns;
-    uint32_t status;
     uint32_t n_frames;
+    uint32_t error_code; /* 0=OK, 1=STALL */
 } ClockReadyPayload;
 
-/* Status codes for ClockReadyPayload */
-#define ZCLOCK_STATUS_OK                0
-#define ZCLOCK_STATUS_STALL_TIMEOUT     1
-
-/* ── Timer callback ──────────────────────────────────────────────────────────
- * Runs in the QEMU main-loop thread (BQL held).
- * Sets needs_quantum and kicks all vCPUs so the hook fires at the next TB.
- */
 static void zclock_timer_cb(void *opaque)
 {
     ZenohClockState *s = opaque;
-
     qemu_mutex_lock(&s->mutex);
     s->needs_quantum = true;
     qemu_mutex_unlock(&s->mutex);
-
     CPUState *cpu;
     CPU_FOREACH(cpu) {
         cpu_exit(cpu);
     }
 }
 
-/* ── TCG quantum hook ────────────────────────────────────────────────────────
- * Installed as virtmcu_tcg_quantum_hook; called at every TB boundary from
- * the TCG thread.  In MTTCG, BQL is NOT held on entry or expected on return.
- * The hook acquires and releases BQL itself as needed.
- *
- * Lock ordering (identical to timer_cb — no ABBA possible):
- *   BQL → s->mutex
- *
- * Fast path (needs_quantum == false): returns after a single atomic check.
- *
- * Slow path (needs_quantum == true):
- *  1. Acquire BQL → s->mutex in that order (same as timer_cb).
- *  2. Re-check needs_quantum under the lock.
- *  3. Claim the quantum: clear needs_quantum, snapshot vtime_ns.
- *  4. Set quantum_done, signal query_cond so on_query can wake.
- *  5. Release BQL before blocking (condition_wait must not hold BQL).
- *  6. Wait on vcpu_cond (holding only s->mutex).
- *  7. Consume quantum_ready, release s->mutex.
- *  8. Acquire BQL, arm timer, release BQL, return.
- */
 static void zclock_quantum_hook(CPUState *cpu)
 {
     ZenohClockState *s = global_zenoh_clock;
-    if (!s) {
-        return;
-    }
+    if (!s || !s->needs_quantum) return;
 
-    /* Fast path: racy read is benign — bool reads are atomic on all QEMU targets. */
-    if (!s->needs_quantum) {
-        return;
-    }
-
-    /* Step 1: acquire BQL then mutex — same order as timer_cb. */
     bql_lock();
     qemu_mutex_lock(&s->mutex);
-
-    /* Step 2: re-check under the lock (lost race with timer_cb or another vCPU). */
     if (!s->needs_quantum) {
         qemu_mutex_unlock(&s->mutex);
         bql_unlock();
         return;
     }
 
-    /* Step 3: claim quantum, snapshot vtime under BQL. */
     s->needs_quantum = false;
     s->vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-
-    /* Step 4: notify on_query. */
     s->quantum_done = true;
     qemu_cond_signal(&s->query_cond);
-
-    /* Step 5: release BQL before blocking — timer_cb needs it to run. */
     bql_unlock();
 
-    /* Step 6: wait for on_query to deposit the next delta_ns. */
     while (!s->quantum_ready) {
         qemu_cond_wait(&s->vcpu_cond, &s->mutex);
     }
 
-    /* Step 7: consume quantum_ready, release mutex. */
     s->quantum_ready = false;
     s->quantum_done  = false;
-    
     int64_t next_delta = qatomic_read(&s->delta_ns);
     qatomic_set(&s->quantum_start_vtime_ns, s->vtime_ns);
-    
     qemu_mutex_unlock(&s->mutex);
 
-    /* Step 8: arm the timer for the next quantum (requires BQL). */
     bql_lock();
     if (s->is_icount) {
         int64_t current = qatomic_read(&timers_state.qemu_icount_bias);
@@ -235,46 +135,17 @@ static void zclock_quantum_hook(CPUState *cpu)
     bql_unlock();
 }
 
-/* ── Zenoh queryable handler ─────────────────────────────────────────────────
- * Called from a Zenoh background thread.
- *
- * Suspend path: MUST NOT call bql_lock() — see lock-ordering comment above.
- * icount  path: bql_lock() is safe because the hook is disabled in this mode.
- */
 static void on_query(z_loaned_query_t *query, void *context)
 {
     ZenohClockState *s = context;
-
     const z_loaned_bytes_t *payload_bytes = z_query_payload(query);
-    if (!payload_bytes) {
-        return;
-    }
+    if (!payload_bytes) return;
 
     ClockAdvancePayload req = {0};
     z_bytes_reader_t reader = z_bytes_get_reader(payload_bytes);
     z_bytes_reader_read(&reader, (uint8_t *)&req, sizeof(req));
 
-    int64_t vtime = 0;
-    uint32_t status = ZCLOCK_STATUS_OK;
-
-    /*
-     * Coordinate with the vCPU hook.
-     * NEVER call bql_lock() in this path.
-     *
-     * DESIGN NOTE: PLAN.md originally proposed that icount mode should
-     * reply immediately in on_query. However, this breaks deterministic
-     * memory queries via QMP (as seen in determinism_test.sh) because
-     * the TimeAuthority proceeds before QEMU has actually finished its
-     * instructions. We therefore use the same synchronous hook handshake
-     * for both modes to guarantee strict causal consistency.
-     */
     qemu_mutex_lock(&s->mutex);
-
-    /*
-     * Deposit the next delta and wake the hook.
-     * Reset quantum_done first so the subsequent wait is not
-     * spuriously satisfied by a stale true from an earlier quantum.
-     */
     qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
     qatomic_set(&s->mujoco_time_ns, (int64_t)req.mujoco_time_ns);
     
@@ -282,27 +153,21 @@ static void on_query(z_loaned_query_t *query, void *context)
     s->quantum_ready = true;
     qemu_cond_signal(&s->vcpu_cond);
 
-    /* 
-     * Wait for the hook to capture vtime_ns after the quantum.
-     * Use a timed wait to detect QEMU stalls (e.g. tight loops in icount mode).
-     */
-    while (!s->quantum_done) {
-        if (!qemu_cond_timedwait(&s->query_cond, &s->mutex, s->timeout_ms)) {
-            vtime = s->vtime_ns; /* Return last known vtime */
-            status = ZCLOCK_STATUS_STALL_TIMEOUT;
-            break;
+    uint32_t error_code = 0;
+    /* Wait for the hook with a 2-second timeout to detect QEMU stalls */
+    if (qemu_cond_timedwait(&s->query_cond, &s->mutex, 2000) != 0) {
+        if (!s->quantum_done) {
+            error_code = 1; /* STALL */
         }
     }
 
-    if (status == ZCLOCK_STATUS_OK) {
-        vtime = s->vtime_ns;
-    }
+    uint64_t vtime = (uint64_t)s->vtime_ns;
     qemu_mutex_unlock(&s->mutex);
 
     ClockReadyPayload rep = {
-        .current_vtime_ns = (uint64_t)vtime,
-        .status           = status,
+        .current_vtime_ns = vtime,
         .n_frames         = 0,
+        .error_code       = error_code,
     };
 
     z_owned_bytes_t reply_bytes;
@@ -310,12 +175,9 @@ static void on_query(z_loaned_query_t *query, void *context)
     z_query_reply(query, z_query_keyexpr(query), z_move(reply_bytes), NULL);
 }
 
-/* ── Device lifecycle ────────────────────────────────────────────────────────*/
-
 static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 {
     ZenohClockState *s = ZENOH_CLOCK(dev);
-
     if (global_zenoh_clock) {
         error_setg(errp, "Only one zenoh-clock device allowed");
         return;
@@ -326,17 +188,8 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     qemu_cond_init(&s->vcpu_cond);
     qemu_cond_init(&s->query_cond);
 
-    if (s->timeout_ms == 0) {
-        s->timeout_ms = 1000;
-    }
-
-    if (s->mode && strcmp(s->mode, "icount") == 0) {
-        s->is_icount = true;
-    } else {
-        s->is_icount = false;
-    }
-    
-    s->needs_quantum = true;  /* Block vCPU immediately on first hook call. */
+    s->is_icount = (s->mode && strcmp(s->mode, "icount") == 0);
+    s->needs_quantum = true;
     s->quantum_ready = false;
     s->quantum_done  = false;
     s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zclock_timer_cb, s);
@@ -345,71 +198,40 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 
     z_owned_config_t config;
     z_config_default(&config);
-
     if (s->router) {
         char json[256];
         snprintf(json, sizeof(json), "[\"%s\"]", s->router);
-        if (zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json) != 0) {
-            error_setg(errp, "Failed to set Zenoh router endpoint: %s", s->router);
-            z_config_drop(z_move(config));
-            return;
-        }
-        /*
-         * Disable multicast scouting when an explicit router is set.
-         * Multi-container environments (Docker Compose on macOS, Kubernetes)
-         * drop multicast UDP between containers; the test must fail if QEMU
-         * ignores router= and falls back to multicast peer discovery.
-         */
-        zc_config_insert_json5(z_config_loan_mut(&config),
-                               "scouting/multicast/enabled", "false");
-    } else {
-        warn_report("zenoh-clock (node=%u): No 'router=' property provided. Zenoh will use UDP multicast peer discovery, which is unsupported by the virtmcu coordinator and will likely fail in container environments.", s->node_id);
+        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
+        zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
     }
 
+    fprintf(stderr, "[zenoh-clock] node=%u: connecting to %s...\\n", s->node_id, s->router ? s->router : "multicast");
     if (z_open(&s->session, z_move(config), NULL) != 0) {
+        fprintf(stderr, "[zenoh-clock] node=%u: FATAL - failed to open Zenoh session (check router connectivity or ZENOH_CONFIG)\\n", s->node_id);
         error_setg(errp, "Failed to open Zenoh session");
         return;
     }
+    fprintf(stderr, "[zenoh-clock] node=%u: session opened successfully.\\n", s->node_id);
 
     char topic[128];
     snprintf(topic, sizeof(topic), "sim/clock/advance/%u", s->node_id);
-
     z_owned_closure_query_t callback;
     z_closure_query(&callback, on_query, NULL, s);
-
     z_owned_keyexpr_t kexpr;
-    if (z_keyexpr_from_str(&kexpr, topic) != 0) {
-        error_setg(errp, "Failed to create Zenoh keyexpr: %s", topic);
-        return;
-    }
-
-    if (z_declare_queryable(z_session_loan(&s->session), &s->queryable,
-                            z_keyexpr_loan(&kexpr), z_move(callback), NULL) != 0) {
-        error_setg(errp, "Failed to declare Zenoh queryable on %s", topic);
-        z_keyexpr_drop(z_move(kexpr));
-        return;
-    }
+    z_keyexpr_from_str(&kexpr, topic);
+    z_declare_queryable(z_session_loan(&s->session), &s->queryable, z_keyexpr_loan(&kexpr), z_move(callback), NULL);
     z_keyexpr_drop(z_move(kexpr));
 }
 
 static void zenoh_clock_instance_finalize(Object *obj)
 {
     ZenohClockState *s = ZENOH_CLOCK(obj);
-
-    if (global_zenoh_clock == s) {
-        global_zenoh_clock = NULL;
-    }
-
+    if (global_zenoh_clock == s) global_zenoh_clock = NULL;
     virtmcu_tcg_quantum_hook = NULL;
     virtmcu_get_quantum_timing = NULL;
-    if (s->quantum_timer) {
-        timer_free(s->quantum_timer);
-        s->quantum_timer = NULL;
-    }
-
+    if (s->quantum_timer) timer_free(s->quantum_timer);
     z_queryable_drop(z_move(s->queryable));
     z_session_drop(z_move(s->session));
-
     qemu_cond_destroy(&s->query_cond);
     qemu_cond_destroy(&s->vcpu_cond);
     qemu_mutex_destroy(&s->mutex);
@@ -419,7 +241,6 @@ static const Property zenoh_clock_properties[] = {
     DEFINE_PROP_UINT32("node",   ZenohClockState, node_id, 0),
     DEFINE_PROP_STRING("router", ZenohClockState, router),
     DEFINE_PROP_STRING("mode",   ZenohClockState, mode),
-    DEFINE_PROP_UINT32("timeout-ms", ZenohClockState, timeout_ms, 1000),
 };
 
 static void zenoh_clock_class_init(ObjectClass *klass, const void *data)
