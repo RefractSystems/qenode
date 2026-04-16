@@ -78,31 +78,20 @@ jobs:
       - name: Install dtc
         run: sudo apt-get install -y --no-install-recommends device-tree-compiler
 
-      - name: pytest — repl2qemu parser
+      - name: pytest — unit tests with coverage
         run: |
-          uv run pytest tests/repl2qemu/ \
+          uv run pytest \
+            --cov=tools \
+            --cov-report=xml:test-results/unit-coverage.xml \
+            --cov-report=term \
+            tests/repl2qemu/ \
+            tests/test_yaml2qemu.py \
+            tests/test_cli_generator.py \
+            tests/test_fdt_emitter.py \
             -v --tb=short \
-            --junitxml=test-results/unit-parser.xml
+            --junitxml=test-results/unit-tests.xml
 
-      - name: pytest — yaml2qemu
-        run: |
-          uv run pytest tests/test_yaml2qemu.py \
-            -v --tb=short \
-            --junitxml=test-results/unit-yaml.xml
-
-      - name: pytest — cli_generator
-        run: |
-          uv run pytest tests/test_cli_generator.py \
-            -v --tb=short \
-            --junitxml=test-results/unit-cli.xml
-
-      - name: pytest — fdt_emitter
-        run: |
-          uv run pytest tests/test_fdt_emitter.py \
-            -v --tb=short \
-            --junitxml=test-results/unit-fdt.xml
-
-      - name: Upload unit test results
+      - name: Upload unit test and coverage results
         uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -383,13 +372,16 @@ jobs:
             bash -c "
               make -C test/phase1
               make -C test/phase8
-              uv pip install --system --break-system-packages -r pyproject.toml
+              uv pip install --system --break-system-packages -r pyproject.toml pytest-cov
               pytest tools/testing/test_qmp.py \
+                --cov=tools \
+                --cov-report=xml:test-results/qmp-coverage.xml \
+                --cov-report=term \
                 -v --tb=short \
                 --junitxml=test-results/pytest-qmp.xml
             "
 
-      - name: Upload pytest results
+      - name: Upload pytest and coverage results
         uses: actions/upload-artifact@v6
         if: always()
         with:
