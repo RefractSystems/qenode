@@ -168,16 +168,14 @@ static void telemetry_irq_hook(void *opaque, int n, int level)
     if (!s) return;
     uint32_t id = ((uint32_t)irq_slot_for(opaque) << 16) | (uint32_t)(n & 0xFFFF);
     
-    char *name = NULL;
-    if (opaque) {
-        Object *obj = OBJECT(opaque);
-        /* Simple check if it's likely an Object by seeing if it has a class */
-        if (obj->class) {
-            name = object_get_canonical_path(obj);
-        }
-    }
-    
-    send_event(s, TRACE_EVENT_IRQ, id, (uint32_t)level, name);
+    /* 
+     * CRITICAL FIX: opaque is a raw void*. Blindly casting to OBJECT(opaque) 
+     * and reading obj->class causes segfaults if the opaque pointer isn't an Object.
+     * Furthermore, resolving canonical paths outside the Big QEMU Lock (BQL) 
+     * causes race conditions that corrupt QEMU memory.
+     * We defer safe QOM resolution for a future architecture revision.
+     */
+    send_event(s, TRACE_EVENT_IRQ, id, (uint32_t)level, NULL);
 }
 
 static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)

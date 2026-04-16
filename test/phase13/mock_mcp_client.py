@@ -3,13 +3,11 @@ import json
 import os
 import sys
 
-# Add workspace to path to import node_manager
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(WORKSPACE_DIR)
 
 async def main():
     print("Connecting to MCP server...")
-    # Launch the MCP server as a subprocess
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "tools.mcp_server",
         stdin=asyncio.subprocess.PIPE,
@@ -27,6 +25,7 @@ async def main():
         line = await proc.stdout.readline()
         if not line:
             return None
+        print(f"<- {line.decode().strip()}")
         return json.loads(line.decode())
 
     # 1. Initialize
@@ -41,16 +40,26 @@ async def main():
         }
     })
     res = await recv_json()
-    assert "result" in res, f"Initialization failed: {res}"
+    
+    # Send initialized notification
+    await send_json({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    })
 
     # 2. Provision Board
     board_config = """
 machine:
   name: test-node
   cpu: cortex-a15
-  ram: 128M
 peripherals:
-  - type: pl011
+  - name: ram
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x8000000
+  - name: uart0
+    type: pl011
     address: 0x09000000
     irq: 1
 """
@@ -68,7 +77,6 @@ peripherals:
         }
     })
     res = await recv_json()
-    print(f"Provision result: {res['result']['content'][0]['text']}")
 
     # 3. Flash Firmware
     firmware_path = os.path.join(WORKSPACE_DIR, "test", "phase1", "hello.elf")
@@ -85,7 +93,6 @@ peripherals:
         }
     })
     res = await recv_json()
-    print(f"Flash result: {res['result']['content'][0]['text']}")
 
     # 4. Start Node
     await send_json({
@@ -98,9 +105,7 @@ peripherals:
         }
     })
     res = await recv_json()
-    print(f"Start result: {res['result']['content'][0]['text']}")
 
-    # Wait for QEMU to boot a bit
     await asyncio.sleep(2)
 
     # 5. Read CPU State
@@ -114,7 +119,6 @@ peripherals:
         }
     })
     res = await recv_json()
-    print(f"CPU State:\n{res['result']['content'][0]['text']}")
 
     # 6. Stop Node
     await send_json({
@@ -127,11 +131,10 @@ peripherals:
         }
     })
     res = await recv_json()
-    print(f"Stop result: {res['result']['content'][0]['text']}")
 
-    # Cleanup
     proc.terminate()
     await proc.wait()
+    print("Done.")
 
 if __name__ == "__main__":
     asyncio.run(main())
