@@ -10,12 +10,12 @@ def pack_req(delta_ns):
     return struct.pack("<QQ", delta_ns, 0)
 
 def unpack_rep(data):
-    # Expect 16 bytes: <Q (vtime_ns) I (status) I (n_frames)
+    # Expect 16 bytes: <Q (vtime_ns) I (n_frames) I (error_code)
     if len(data) != 16:
         print(f"ERROR: Expected 16 bytes, got {len(data)}", file=sys.stderr)
         sys.exit(1)
-    vtime_ns, status, n_frames = struct.unpack("<QII", data)
-    return vtime_ns, status
+    vtime_ns, n_frames, error_code = struct.unpack("<QII", data)
+    return vtime_ns, error_code
 
 def main():
     config = zenoh.Config()
@@ -28,16 +28,16 @@ def main():
     if not replies:
         print("FAIL: No reply received", file=sys.stderr)
         sys.exit(1)
-    
+
     payload = replies[0].ok.payload.to_bytes()
-    vtime, status = unpack_rep(payload)
-    
-    print(f"Reply: vtime={vtime}, status={status}")
-    
-    if status == 0:
-        print("PASS: status is OK")
+    vtime, error_code = unpack_rep(payload)
+
+    print(f"Reply: vtime={vtime}, error_code={error_code}")
+
+    if error_code == 0:
+        print("PASS: error_code is OK")
     else:
-        print(f"FAIL: Unexpected status {status}", file=sys.stderr)
+        print(f"FAIL: Unexpected error_code {error_code} (1=STALL, 2=ZENOH_ERROR)", file=sys.stderr)
         sys.exit(1)
 
     session.close()

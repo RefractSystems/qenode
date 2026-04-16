@@ -11,15 +11,15 @@ This document outlines the critical architectural and usability improvements for
 **Goal:** Provide distinct error codes and proactive logging.
 
 ### Tasks:
-- [ ] **Proactive Connection Logging:** In \`hw/zenoh/zenoh-clock.c\`, add explicit \`fprintf(stderr, ...)\` logs during the \`realize\` phase if the Zenoh session fails to open or if the queryable declaration fails.
-- [ ] **Specific Error Payloads:** Update the Zenoh reply payload to include an error type field.
-    - \`0\` = OK
-    - \`1\` = INTERNAL_STALL (QEMU didn't reach TB boundary)
-    - \`2\` = ZENOH_ERROR (Underlying transport failure)
+- [x] **Proactive Connection Logging:** `fprintf(stderr, ...)` added in `realize` for session open failure and successful connect. Missing-router path now emits a clear WARNING with container-specific guidance.
+- [x] **Specific Error Payloads:** `ClockReadyPayload` updated with `error_code` field (`0`=OK, `1`=STALL).
+    - `0` = OK
+    - `1` = INTERNAL_STALL (QEMU didn't reach TB boundary within 2s)
+    - `2` = ZENOH_ERROR — **documented but not yet emitted**; the C code currently has no code path that sets `error_code=2`. Needs a follow-up to emit this from the session-open failure path (currently that path calls `error_setg` and returns before a reply is sent).
 
 ### Verification:
-1. Launch QEMU with a wrong \`router=\` parameter. Verify \`stderr\` contains a clear connection error.
-2. Launch QEMU with \`-icount\` disabled and verify the TimeAuthority receives a specific "STALL" error rather than a generic timeout.
+1. Launch QEMU with a wrong `router=` parameter. Verify `stderr` contains a clear connection error. ✓
+2. Launch QEMU with `-icount` disabled and verify the TimeAuthority receives a specific "STALL" error rather than a generic timeout. ✓
 
 ---
 
@@ -30,12 +30,12 @@ This document outlines the critical architectural and usability improvements for
 **Goal:** Ensure the generated Device Tree actually contains the expected peripherals.
 
 ### Tasks:
-- [ ] **Post-Compilation Check:** After generating the \`.dtb\`, \`yaml2qemu\` must run \`dtc -I dtb -O dts\` on the result.
-- [ ] **Mapping Assertion:** Grep/Parse the DTS output to verify that every peripheral defined in the input YAML (that isn't a \`zenoh-chardev\`) has a corresponding node with a \`reg\` property at the expected address.
-- [ ] **Fatal Exit:** If any device is missing, \`yaml2qemu\` must exit with code \`1\` and print the names of the missing devices.
+- [x] **Post-Compilation Check:** `validate_dtb()` runs `dtc -I dtb -O dts` after every successful compile.
+- [x] **Mapping Assertion:** Checks for `name@address` DTS node format (address-qualified) to catch wrong-address mappings, not just name presence.
+- [x] **Fatal Exit:** Exits with code `1` and prints missing device names. Missing `dtc` binary is also a fatal error (not a silent skip).
 
 ### Verification:
-1. Create a malformed YAML where a device name is illegal. Verify \`yaml2qemu\` fails and reports the missing mapping.
+1. Create a malformed YAML where a device type is unknown to FdtEmitter. Verify `yaml2qemu` fails and reports the missing mapping. ✓ (covered by `tests/test_yaml_validation.py`)
 
 ---
 
@@ -46,8 +46,8 @@ This document outlines the critical architectural and usability improvements for
 **Goal:** Deliver base-relative offsets to the socket server.
 
 ### Tasks:
-- [ ] **Address Translation:** In \`hw/misc/mmio-socket-bridge.c\`, subtract \`s->base_addr\` from the \`hwaddr addr\` before packing it into the \`mmio_req\` struct.
-- [ ] **Protocol Documentation:** Update \`virtmcu_proto.h\` and associated docs to reflect that \`addr\` is now an offset.
+- [x] **Address Translation:** `mmio-socket-bridge.c` now subtracts `s->base_addr` before packing into `mmio_req`. Handles both absolute (legacy) and already-relative addresses defensively.
+- [x] **Protocol Documentation:** `CLAUDE.md` Key Constraints section updated to state offsets are delivered.
 
 ### **CRITICAL WARNING:**
 Changing this is a **BREAKING CHANGE**. You MUST update \`studio_server.py\` in the \`FirmwareStudio\` repository to remove any \`addr &= 0xFFF\` masking logic simultaneously.
@@ -64,9 +64,9 @@ Changing this is a **BREAKING CHANGE**. You MUST update \`studio_server.py\` in 
 **Goal:** Provide clear guidance for firmware developers.
 
 ### Tasks:
-- [ ] **Document WFI Interaction:** Research and document if \`WFI\` in \`-icount\` mode correctly pauses virtual time and yields the host thread. This is a prerequisite for using the ARM Generic Timer.
-- [ ] **Document MMIO Blocking:** Explicitly state that the vCPU is Halted while \`mmio-socket-bridge\` is waiting for a socket response. Clarify if \`icount\` advances or pauses during this window.
-- [ ] **Create \`docs/TIMING_MODEL.md\`:** A central document explaining these nuances to users.
+- [x] **Document WFI Interaction:** `CLAUDE.md` § Timing Model covers WFI in `slaved-suspend` mode.
+- [x] **Document MMIO Blocking:** `CLAUDE.md` § Timing Model explicitly states vCPU is Halted during socket wait and that icount does not advance.
+- [ ] **Create `docs/TIMING_MODEL.md`:** A dedicated standalone timing model document does not yet exist. `CLAUDE.md` covers the content inline but a separate `docs/TIMING_MODEL.md` would improve discoverability for external contributors.
 
 ---
 

@@ -140,7 +140,8 @@ def pack_req(delta_ns: int) -> bytes:
 
 
 def unpack_rep(data: bytes) -> int:
-    vtime_ns, _n_frames = struct.unpack("<QI", data)
+    # 16-byte reply: <Q (vtime_ns) I (n_frames) I (error_code)
+    vtime_ns, _n_frames, _error_code = struct.unpack("<QII", data)
     return vtime_ns
 
 

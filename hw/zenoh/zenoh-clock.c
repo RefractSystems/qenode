@@ -154,14 +154,22 @@ static void on_query(z_loaned_query_t *query, void *context)
     qemu_cond_signal(&s->vcpu_cond);
 
     uint32_t error_code = 0;
-    /* Wait for the hook with a 2-second timeout to detect QEMU stalls */
-    if (qemu_cond_timedwait(&s->query_cond, &s->mutex, 2000) != 0) {
-        if (!s->quantum_done) {
-            error_code = 1; /* STALL */
+    /*
+     * Wait for the hook with a 2-second timeout to detect QEMU stalls.
+     * Must use a while loop — POSIX (and QEMU's wrapper) explicitly allows
+     * spurious wakeups where timedwait returns 0 without quantum_done being
+     * set.  A single if() would send a stale vtime back with error_code=0.
+     */
+    while (!s->quantum_done) {
+        if (qemu_cond_timedwait(&s->query_cond, &s->mutex, 2000) != 0) {
+            if (!s->quantum_done) {
+                error_code = 1; /* STALL */
+            }
+            break;
         }
     }
 
-    uint64_t vtime = (uint64_t)s->vtime_ns;
+    uint64_t vtime = (error_code == 0) ? (uint64_t)s->vtime_ns : 0;
     qemu_mutex_unlock(&s->mutex);
 
     ClockReadyPayload rep = {
@@ -205,13 +213,26 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
         zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
     }
 
-    fprintf(stderr, "[zenoh-clock] node=%u: connecting to %s...\\n", s->node_id, s->router ? s->router : "multicast");
+    if (s->router) {
+        fprintf(stderr, "[zenoh-clock] node=%u: connecting to router %s...\n",
+                s->node_id, s->router);
+    } else {
+        fprintf(stderr,
+                "[zenoh-clock] WARNING: node=%u: no router= set — falling back to "
+                "multicast. This will NOT work in Docker/container environments "
+                "(UDP multicast is dropped on macOS bridge networks). "
+                "Set router=tcp/<host>:7447 for reliable operation.\n",
+                s->node_id);
+    }
     if (z_open(&s->session, z_move(config), NULL) != 0) {
-        fprintf(stderr, "[zenoh-clock] node=%u: FATAL - failed to open Zenoh session (check router connectivity or ZENOH_CONFIG)\\n", s->node_id);
+        fprintf(stderr,
+                "[zenoh-clock] node=%u: FATAL — failed to open Zenoh session "
+                "(check router= value and ZENOH_CONFIG)\n",
+                s->node_id);
         error_setg(errp, "Failed to open Zenoh session");
         return;
     }
-    fprintf(stderr, "[zenoh-clock] node=%u: session opened successfully.\\n", s->node_id);
+    fprintf(stderr, "[zenoh-clock] node=%u: session opened successfully.\n", s->node_id);
 
     char topic[128];
     snprintf(topic, sizeof(topic), "sim/clock/advance/%u", s->node_id);
@@ -229,7 +250,10 @@ static void zenoh_clock_instance_finalize(Object *obj)
     if (global_zenoh_clock == s) global_zenoh_clock = NULL;
     virtmcu_tcg_quantum_hook = NULL;
     virtmcu_get_quantum_timing = NULL;
-    if (s->quantum_timer) timer_free(s->quantum_timer);
+    if (s->quantum_timer) {
+        timer_free(s->quantum_timer);
+        s->quantum_timer = NULL;
+    }
     z_queryable_drop(z_move(s->queryable));
     z_session_drop(z_move(s->session));
     qemu_cond_destroy(&s->query_cond);

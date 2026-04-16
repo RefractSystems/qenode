@@ -92,8 +92,16 @@ def validate_dtb(dtb_path, devices):
             if dev.type_name == "zenoh-chardev":
                 continue  # Not in DTB
 
-            # Simple substring check: name@address
-            if dev.name not in dts:
+            # Check for name@address (DTS node format), e.g. "uart0@9000000".
+            # A name-only check would pass even if the device is mapped at the
+            # wrong address — the address-qualified form catches that too.
+            try:
+                addr_int = int(dev.address_str, 0)
+                dts_node = f"{dev.name}@{addr_int:x}"
+            except (ValueError, TypeError):
+                dts_node = dev.name  # fallback for non-numeric address strings
+
+            if dts_node not in dts:
                 missing.append(dev.name)
 
         if missing:
@@ -110,6 +118,13 @@ def validate_dtb(dtb_path, devices):
         print("✓ Validation successful.")
     except subprocess.CalledProcessError as e:
         print(f"⚠️ Warning: dtc failed during validation: {e.stderr}", file=sys.stderr)
+    except FileNotFoundError:
+        print(
+            "ERROR: 'dtc' (device-tree-compiler) not found — DTB validation skipped. "
+            "Install dtc to enable post-build validation.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except Exception as e:
         print(f"⚠️ Warning: Could not validate DTB: {e}", file=sys.stderr)
 

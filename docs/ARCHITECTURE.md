@@ -146,8 +146,10 @@ virtual time rather than injected at whatever wall-clock moment the user typed.
 **Wire protocol** (TimeAuthority ↔ QEMU):
 ```
 GET sim/clock/advance/{node_id}
-  payload → { uint64 delta_ns; uint64 mujoco_time_ns; }
-  reply   ← { uint64 current_vtime_ns; uint32 n_pending_frames; }
+  payload → { uint64 delta_ns; uint64 mujoco_time_ns; }           (16 bytes)
+  reply   ← { uint64 current_vtime_ns; uint32 n_frames; uint32 error_code; }  (16 bytes)
+
+error_code: 0=OK, 1=STALL (QEMU didn't reach TB boundary), 2=ZENOH_ERROR
 ```
 
 ### Pillar 3 — Sensor/Actuator Abstraction (SAL/AAL)
