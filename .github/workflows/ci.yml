@@ -509,7 +509,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> 
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -564,3 +564,53 @@ jobs:
         with:
           name: peripheral-c-coverage
           path: test-results/
+
+# ── Tier 4: Guest Firmware Coverage ──────────────────────────────────────────
+#
+# Uses QEMU TCG plugins (drcov) to track guest firmware execution and maps
+# results back to ELF symbols to ensure tests exercise the HAL.
+
+  firmware-coverage:
+    name: Guest Firmware Coverage
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+          cache-from: type=gha,scope=builder-amd64
+          load: true
+
+      - name: Run coverage analysis (Phase 1)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              make -C test/phase1
+              uv pip install pyelftools
+              # Run with drcov plugin
+              qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
+                -kernel test/phase1/hello.elf -nographic -m 128M -display none \
+                -plugin /build/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov \
+                -d plugin
+              # Analyze results
+              python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
+            "
