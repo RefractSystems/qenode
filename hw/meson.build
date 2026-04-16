@@ -52,22 +52,16 @@ hw_virtmcu_modules += {'mmio-socket-bridge': mmio_bridge_ss}
 #   code outside the QEMU source tree.
 rust_dummy_lib = custom_target(
   'rust_dummy_lib',
-  input: 'rust-dummy/src/lib.rs',
+  input: 'rust/rust-dummy/src/lib.rs',
   output: ['librust_dummy.a', 'rust_dummy_trigger.c'],
   command: [
     'sh', '-c',
-    # $1 = @INPUT@ (lib.rs), $2 = @OUTPUT0@ (librust_dummy.a), $3 = @OUTPUT1@ (trigger.c)
-    # --crate-name: explicit name (avoids deriving from file stem "lib")
-    # --edition: match Cargo.toml edition 2021
-    # -C panic=abort: panics abort immediately; matches lib.rs panic handler intent
-    # -O: shorthand for -C opt-level=2
-    'rustc --crate-type=staticlib --crate-name=rust_dummy --edition=2021 '
-    + '-C panic=abort -O "$1" -o "$2" && echo "/* generated */" > "$3"',
-    'sh', '@INPUT@', '@OUTPUT0@', '@OUTPUT1@'
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p rust_dummy && cp target/release/librust_dummy.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'librust_dummy.a', meson.current_build_dir() / 'rust_dummy_trigger.c'
   ]
 )
 rust_dummy_ss = ss.source_set()
-rust_dummy_ss.add(files('rust-dummy/rust-dummy.c'))
+rust_dummy_ss.add(files('rust/rust-dummy/rust-dummy.c'))
 # Adding the trigger file (output[1] of the custom_target) as a source creates
 # a compile-time dep on the custom_target, which transitively makes the .so
 # link step depend on librust_dummy.a being present before the linker runs.

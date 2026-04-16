@@ -43,7 +43,7 @@ telemetry_h = custom_target('telemetry_fbs',
 )
 
 zenoh_clock_ss = ss.source_set()
-zenoh_clock_ss.add(files('zenoh-clock.c', 'zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c'))
+zenoh_clock_ss.add(files('zenoh-clock.c', 'zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c', 'zenoh-802154.c', 'zenoh-ui.c'))
 zenoh_clock_ss.add(zenoh_dep, flatcc_dep)
 zenoh_clock_ss.add(telemetry_h)
 hw_virtmcu_modules += {'zenoh': zenoh_clock_ss}

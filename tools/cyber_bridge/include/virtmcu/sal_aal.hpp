@@ -48,4 +48,23 @@ public:
     virtual void register_actuator(Actuator* actuator) = 0;
 };
 
+// Specialized UI interfaces
+class Led : public Actuator {
+public:
+    virtual void apply_command(uint64_t vtime_ns, const std::vector<double>& values) override {
+        if (!values.empty()) {
+            set_state(vtime_ns, values[0] > 0.5);
+        }
+    }
+    virtual void set_state(uint64_t vtime_ns, bool on) = 0;
+};
+
+class Button : public Sensor {
+public:
+    virtual std::vector<double> get_reading(uint64_t vtime_ns) override {
+        return { get_state(vtime_ns) ? 1.0 : 0.0 };
+    }
+    virtual bool get_state(uint64_t vtime_ns) = 0;
+};
+
 } // namespace virtmcu

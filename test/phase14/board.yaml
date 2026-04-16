@@ -1,0 +1,34 @@
+# test/phase14/board.yaml
+# Verification board for Phase 14: Wireless & RF Simulation
+machine:
+  name: iot_node
+  type: arm-generic-fdt
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+
+peripherals:
+  - name: sram
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x01000000
+
+  - name: uart0
+    type: zenoh-chardev
+    properties:
+      node: "0"
+
+  - name: radio0
+    type: zenoh-802154
+    address: 0x09001000
+    interrupts: [38]
+    properties:
+      node: 0
+
+  - name: ble0
+    type: zenoh-chardev
+    properties:
+      node: "0"
+      topic: "sim/rf/hci/0"
+      id: "hci0"
