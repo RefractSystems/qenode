@@ -3,10 +3,14 @@ machine:
     - name: cpu0
       type: cortex-a9
 peripherals:
+  - name: memory
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: '0x01000000'
   - name: bridge0
     type: mmio-socket-bridge
     address: 0x10000000
     properties:
       socket-path: "/tmp/mmio.sock"
       region-size: 0x1000
-      base-addr: 0x10000000

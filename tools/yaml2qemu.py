@@ -93,11 +93,13 @@ def validate_dtb(dtb_path, devices):
                 continue  # CLI-only, no DTB node
 
             # Check for name@address (DTS node format), e.g. "uart0@9000000".
-            # A name-only check would pass even if the device is mapped at the
-            # wrong address — the address-qualified form catches that too.
+            # Memory nodes are special: FdtEmitter always names them "memory@..."
             try:
                 addr_int = int(dev.address_str, 0)
-                dts_node = f"{dev.name}@{addr_int:x}"
+                if dev.type_name == "Memory.MappedMemory":
+                    dts_node = f"memory@{addr_int:x}"
+                else:
+                    dts_node = f"{dev.name}@{addr_int:x}"
             except (ValueError, TypeError):
                 dts_node = dev.name  # fallback for non-numeric address strings
 
@@ -155,7 +157,8 @@ def main():
 
     # Extract devices that require explicit CLI instantiation.
     # zenoh-chardev: CLI-only (no DTB node).
-    # mmio-socket-bridge: both DTB (firmware memory map) and CLI (QEMU instantiation).
+    # zenoh-telemetry: CLI-only (no DTB node).
+    # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
     for dev in platform.devices:
@@ -175,24 +178,6 @@ def main():
             cli_args.append("-device")
             cli_args.append(device_arg)
             # intentionally excluded from filtered_devices — no MMIO, no DTB node
-        elif dev.type_name == "mmio-socket-bridge":
-            sock_path = dev.properties.get("socket-path", "")
-            region_size = dev.properties.get("region-size", 0x1000)
-            try:
-                base_addr = int(dev.address_str, 0)
-            except (ValueError, TypeError):
-                print(
-                    f"ERROR: Invalid or missing address for mmio-socket-bridge '{dev.name}': {dev.address_str}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            cli_args.append("-device")
-            cli_args.append(
-                f"mmio-socket-bridge,socket-path={sock_path},"
-                f"region-size={region_size},"
-                f"base-addr={hex(base_addr)}"
-            )
-            filtered_devices.append(dev)
         else:
             filtered_devices.append(dev)
 
@@ -201,7 +186,7 @@ def main():
     print(f"Generating Device Tree for {len(platform.devices)} devices...")
     dts = emitter.generate_dts()
 
-    if args.out_cli and cli_args:
+    if args.out_cli:
         with open(args.out_cli, "w") as f:
             for arg in cli_args:
                 f.write(arg + "\n")

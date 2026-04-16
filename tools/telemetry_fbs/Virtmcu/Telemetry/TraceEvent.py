@@ -7,8 +7,9 @@ from flatbuffers.compat import import_numpy
 
 np = import_numpy()
 
+
 class TraceEvent(object):
-    __slots__ = ['_tab']
+    __slots__ = ["_tab"]
 
     @classmethod
     def GetRootAs(cls, buf, offset=0):
@@ -21,6 +22,7 @@ class TraceEvent(object):
     def GetRootAsTraceEvent(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+
     # TraceEvent
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -53,21 +55,50 @@ class TraceEvent(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
-def TraceEventStart(builder): builder.StartObject(4)
+
+def TraceEventStart(builder):
+    builder.StartObject(4)
+
+
 def Start(builder):
     return TraceEventStart(builder)
-def TraceEventAddTimestampNs(builder, timestampNs): builder.PrependUint64Slot(0, timestampNs, 0)
+
+
+def TraceEventAddTimestampNs(builder, timestampNs):
+    builder.PrependUint64Slot(0, timestampNs, 0)
+
+
 def AddTimestampNs(builder, timestampNs):
     return TraceEventAddTimestampNs(builder, timestampNs)
-def TraceEventAddType(builder, type): builder.PrependInt8Slot(1, type, 0)
+
+
+def TraceEventAddType(builder, type):
+    builder.PrependInt8Slot(1, type, 0)
+
+
 def AddType(builder, type):
     return TraceEventAddType(builder, type)
-def TraceEventAddId(builder, id): builder.PrependUint32Slot(2, id, 0)
+
+
+def TraceEventAddId(builder, id):
+    builder.PrependUint32Slot(2, id, 0)
+
+
 def AddId(builder, id):
     return TraceEventAddId(builder, id)
-def TraceEventAddValue(builder, value): builder.PrependUint32Slot(3, value, 0)
+
+
+def TraceEventAddValue(builder, value):
+    builder.PrependUint32Slot(3, value, 0)
+
+
 def AddValue(builder, value):
     return TraceEventAddValue(builder, value)
-def TraceEventEnd(builder): return builder.EndObject()
+
+
+def TraceEventEnd(builder):
+    return builder.EndObject()
+
+
 def End(builder):
     return TraceEventEnd(builder)
