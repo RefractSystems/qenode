@@ -13,12 +13,21 @@ EVENT_FMT = "<Q B I I"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 
 
+def decode_id(ev_type, ev_id):
+    if ev_type == 1:  # TRACE_EVENT_IRQ: upper 16 bits = dev_slot, lower 16 = pin
+        dev_slot = (ev_id >> 16) & 0xFFFF
+        pin      = ev_id & 0xFFFF
+        slot_str = "?" if dev_slot == 0xFFFF else str(dev_slot)
+        return f"dev={slot_str} pin={pin}"
+    return f"id={ev_id}"
+
+
 def on_sample(sample):
     payload = sample.payload.to_bytes()
     if len(payload) == EVENT_SIZE:
         ts, ev_type, ev_id, val = struct.unpack(EVENT_FMT, payload)
         type_str = ["CPU_STATE", "IRQ", "PERIPHERAL"][ev_type] if ev_type < 3 else "UNKNOWN"
-        print(f"[{ts:15}] {type_str:10} id={ev_id:3} val={val:3}")
+        print(f"[{ts:15}] {type_str:10} {decode_id(ev_type, ev_id):20} val={val}")
     else:
         print(f"Received malformed payload of size {len(payload)}")
 

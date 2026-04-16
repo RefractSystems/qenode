@@ -1,6 +1,14 @@
 /*
  * hw/zenoh/zenoh-telemetry.c — Deterministic telemetry tracing.
  *
+ * Events are enqueued from QEMU hooks (TCG thread) and published to Zenoh
+ * from a dedicated background thread, keeping the hot IRQ/halt paths
+ * free of network latency.
+ *
+ * IRQ id encoding (uint32_t):
+ *   bits 31-16 — device slot (opaque pointer mapped to 0..MAX_IRQ_SLOTS-1)
+ *   bits 15-0  — pin index n
+ *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
@@ -18,6 +26,11 @@
 #define TYPE_ZENOH_TELEMETRY "zenoh-telemetry"
 OBJECT_DECLARE_SIMPLE_TYPE(ZenohTelemetryState, ZENOH_TELEMETRY)
 
+/* Maximum events buffered before drops occur. */
+#define TELEMETRY_QUEUE_MAX  1024
+/* Maximum distinct IRQ-owning devices tracked. */
+#define MAX_IRQ_SLOTS        64
+
 typedef enum {
     TRACE_EVENT_CPU_STATE  = 0,
     TRACE_EVENT_IRQ        = 1,
@@ -25,11 +38,30 @@ typedef enum {
 } TraceEventType;
 
 typedef struct __attribute__((packed)) {
-    uint64_t timestamp_ns;
+    uint64_t timestamp_ns;  /* LE, QEMU_CLOCK_VIRTUAL */
     uint8_t  type;
-    uint32_t id;
+    uint32_t id;            /* IRQ: (dev_slot << 16) | pin; CPU: 0 */
     uint32_t value;
 } TraceEvent;
+
+/* Device slot registry — maps opaque owner pointer to a stable 16-bit slot. */
+static struct { void *opaque; uint16_t slot; } irq_slots[MAX_IRQ_SLOTS];
+static unsigned irq_slot_count;
+
+static uint16_t irq_slot_for(void *opaque)
+{
+    for (unsigned i = 0; i < irq_slot_count; i++) {
+        if (irq_slots[i].opaque == opaque) {
+            return irq_slots[i].slot;
+        }
+    }
+    if (irq_slot_count < MAX_IRQ_SLOTS) {
+        irq_slots[irq_slot_count].opaque = opaque;
+        irq_slots[irq_slot_count].slot   = (uint16_t)irq_slot_count;
+        return (uint16_t)irq_slot_count++;
+    }
+    return 0xFFFF; /* slot table full — id will still be unique per pin */
+}
 
 struct ZenohTelemetryState {
     SysBusDevice parent_obj;
@@ -42,6 +74,10 @@ struct ZenohTelemetryState {
     z_owned_session_t   session;
     z_owned_publisher_t publisher;
 
+    /* Async publish pipeline */
+    GAsyncQueue *event_queue;
+    GThread     *publish_thread;
+
     /* Internal state */
     bool session_open;
     bool last_halted;
@@ -49,17 +85,34 @@ struct ZenohTelemetryState {
 
 static ZenohTelemetryState *global_telemetry;
 
-static void send_event(ZenohTelemetryState *s, TraceEventType type, uint32_t id, uint32_t value)
+/* Called from the background publish thread only. */
+static gpointer telemetry_publish_thread(gpointer arg)
 {
-    TraceEvent ev = {
-        .timestamp_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)),
-        .type  = (uint8_t)type,
-        .id    = cpu_to_le32(id),
-        .value = cpu_to_le32(value),
-    };
-    z_owned_bytes_t bytes;
-    z_bytes_copy_from_buf(&bytes, (const uint8_t *)&ev, sizeof(ev));
-    z_publisher_put(z_publisher_loan(&s->publisher), z_move(bytes), NULL);
+    ZenohTelemetryState *s = arg;
+    while (1) {
+        TraceEvent *ev = g_async_queue_pop(s->event_queue);
+        if (!ev) break; /* NULL sentinel — time to exit */
+        z_owned_bytes_t bytes;
+        z_bytes_copy_from_buf(&bytes, (const uint8_t *)ev, sizeof(*ev));
+        z_publisher_put(z_publisher_loan(&s->publisher), z_move(bytes), NULL);
+        g_free(ev);
+    }
+    return NULL;
+}
+
+/* Called from QEMU hooks (TCG thread). Enqueues; never blocks. */
+static void send_event(ZenohTelemetryState *s, TraceEventType type,
+                       uint32_t id, uint32_t value)
+{
+    if (g_async_queue_length(s->event_queue) >= TELEMETRY_QUEUE_MAX) {
+        return; /* drop rather than block the TCG thread */
+    }
+    TraceEvent *ev = g_new(TraceEvent, 1);
+    ev->timestamp_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    ev->type  = (uint8_t)type;
+    ev->id    = cpu_to_le32(id);
+    ev->value = cpu_to_le32(value);
+    g_async_queue_push(s->event_queue, ev);
 }
 
 static void telemetry_cpu_halt_hook(CPUState *cpu, bool halted)
@@ -74,7 +127,8 @@ static void telemetry_irq_hook(void *opaque, int n, int level)
 {
     ZenohTelemetryState *s = global_telemetry;
     if (!s) return;
-    send_event(s, TRACE_EVENT_IRQ, (uint32_t)n, (uint32_t)level);
+    uint32_t id = ((uint32_t)irq_slot_for(opaque) << 16) | (uint32_t)(n & 0xFFFF);
+    send_event(s, TRACE_EVENT_IRQ, id, (uint32_t)level);
 }
 
 static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
@@ -114,19 +168,37 @@ static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
     }
     z_keyexpr_drop(z_move(keyexpr));
 
-    global_telemetry = s;
-    virtmcu_cpu_halt_hook = telemetry_cpu_halt_hook;
-    virtmcu_irq_hook = telemetry_irq_hook;
+    s->event_queue   = g_async_queue_new();
+    s->publish_thread = g_thread_new("telemetry-pub", telemetry_publish_thread, s);
+
+    global_telemetry       = s;
+    virtmcu_cpu_halt_hook  = telemetry_cpu_halt_hook;
+    virtmcu_irq_hook       = telemetry_irq_hook;
 }
 
 static void zenoh_telemetry_instance_finalize(Object *obj)
 {
     ZenohTelemetryState *s = ZENOH_TELEMETRY(obj);
+
+    /* Stop hooks first so no new events are enqueued. */
     if (global_telemetry == s) {
-        global_telemetry = NULL;
+        global_telemetry      = NULL;
         virtmcu_cpu_halt_hook = NULL;
-        virtmcu_irq_hook = NULL;
+        virtmcu_irq_hook      = NULL;
     }
+
+    /* Signal publish thread to drain and exit, then wait for it. */
+    if (s->publish_thread) {
+        g_async_queue_push(s->event_queue, NULL); /* sentinel */
+        g_thread_join(s->publish_thread);
+        s->publish_thread = NULL;
+    }
+
+    if (s->event_queue) {
+        g_async_queue_unref(s->event_queue);
+        s->event_queue = NULL;
+    }
+
     if (s->session_open) {
         z_undeclare_publisher(z_move(s->publisher));
         z_session_drop(z_move(s->session));
