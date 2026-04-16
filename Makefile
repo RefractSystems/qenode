@@ -114,6 +114,15 @@ test-coverage-guest: build-test-artifacts
 	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
 	@echo "✓ Guest coverage check passed."
 
+# Generate host-side C/Rust coverage report (requires lcov)
+coverage-report:
+	@echo "==> Generating host-side coverage report..."
+	@mkdir -p test-results/coverage
+	lcov --quiet --capture --directory $(QEMU_BUILD) --output-file test-results/coverage/host.info --rc lcov_branch_coverage=1
+	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc lcov_branch_coverage=1
+	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
+	@echo "✓ Report generated: test-results/coverage/html/index.html"
+
 build-test-artifacts:
 	@$(MAKE) -C test/phase1
 	@$(MAKE) -C test/phase8

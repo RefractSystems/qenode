@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14...3.30)
+cmake_minimum_required(VERSION 3.14...3.31)
 project(cyber_bridge CXX)
 
 set(CMAKE_CXX_STANDARD 17)
