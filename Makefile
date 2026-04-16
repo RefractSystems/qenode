@@ -124,7 +124,7 @@ coverage-report:
 		--directory $(QEMU_BUILD)/libhw-virtmcu-remote-port-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-rust-dummy.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh.a.p \
-		--output-file test-results/coverage/host.info --rc branch_coverage=1
+		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
 	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
 	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
 	@echo "✓ Report generated: test-results/coverage/html/index.html"

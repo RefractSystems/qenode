@@ -35,7 +35,7 @@ def send_query(session, delta_ns, label):
         sys.exit(1)
     reply = replies[0]
     print(f"DEBUG: reply type={type(reply)} dir={dir(reply)}")
-    if hasattr(reply, "err"):
+    if getattr(reply, "err", None) is not None:
         print(f"{label}: ERROR reply: {reply.err}", file=sys.stderr)
         sys.exit(1)
     if not hasattr(reply, "ok"):
@@ -44,7 +44,7 @@ def send_query(session, delta_ns, label):
     if reply.ok is None:
         print(f"{label}: reply.ok IS NONE. Full reply: {reply}", file=sys.stderr)
         sys.exit(1)
-    return unpack_rep(reply.ok.payload)
+    return unpack_rep(reply.ok.payload.to_bytes())
 
 
 def main():

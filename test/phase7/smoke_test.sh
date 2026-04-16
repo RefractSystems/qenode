@@ -67,6 +67,7 @@ sleep 1
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
+sleep 1
 python3 "$WORKSPACE_DIR/test/phase7/test_clock.py"
 kill -9 "$QEMU_PID" "$ROUTER_PID" 2>/dev/null || true
 QEMU_PID=""
@@ -79,6 +80,7 @@ sleep 1
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
+sleep 1
 python3 "$WORKSPACE_DIR/test/phase7/test_clock.py"
 kill -9 "$QEMU_PID" "$ROUTER_PID" 2>/dev/null || true
 
