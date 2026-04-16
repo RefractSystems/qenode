@@ -6,10 +6,7 @@ edition = "2021"
 [lib]
 crate-type = ["staticlib"]
 
+
+
 [dependencies]
-
-[profile.release]
-panic = "abort"
-
-[profile.dev]
-panic = "abort"
+virtmcu-qom = { path = "../virtmcu-qom" }

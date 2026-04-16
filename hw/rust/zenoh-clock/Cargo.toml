@@ -1,0 +1,11 @@
+[package]
+name = "zenoh_clock"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+virtmcu-qom = { path = "../virtmcu-qom" }

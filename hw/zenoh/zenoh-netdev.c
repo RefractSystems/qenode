@@ -205,16 +205,20 @@ static int zenoh_netdev_hook(const Netdev *netdev, const char *name, NetClientSt
         return -1;
     }
     
-    char topic_tx[128];
-    snprintf(topic_tx, sizeof(topic_tx), "sim/eth/frame/%u/tx", s->node_id);
+    char topic_tx[256];
+    char topic_rx[256];
+    if (zenoh_opts->topic) {
+        snprintf(topic_tx, sizeof(topic_tx), "%s/tx", zenoh_opts->topic);
+        snprintf(topic_rx, sizeof(topic_rx), "%s/rx", zenoh_opts->topic);
+    } else {
+        snprintf(topic_tx, sizeof(topic_tx), "sim/eth/frame/%u/tx", s->node_id);
+        snprintf(topic_rx, sizeof(topic_rx), "sim/eth/frame/%u/rx", s->node_id);
+    }
     
     z_owned_keyexpr_t kexpr_tx;
     z_keyexpr_from_str(&kexpr_tx, topic_tx);
     z_declare_publisher(z_session_loan(&s->session), &s->publisher, z_keyexpr_loan(&kexpr_tx), NULL);
     z_keyexpr_drop(z_move(kexpr_tx));
-    
-    char topic_rx[128];
-    snprintf(topic_rx, sizeof(topic_rx), "sim/eth/frame/%u/rx", s->node_id);
     
     z_owned_closure_sample_t callback;
     z_closure_sample(&callback, on_rx_frame, NULL, s);

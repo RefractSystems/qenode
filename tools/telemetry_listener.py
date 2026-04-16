@@ -17,6 +17,11 @@ def on_sample(sample):
         ev_type = ev.Type()
         ev_id = ev.Id()
         val = ev.Value()
+        name = ev.DeviceName()
+        if name:
+            name_str = name.decode('utf-8')
+        else:
+            name_str = ""
 
         if ev_type == 0:  # CPU_STATE
             type_str = "CPU_STATE"
@@ -26,6 +31,8 @@ def on_sample(sample):
             slot = ev_id >> 16
             pin = ev_id & 0xFFFF
             id_str = f"slot={slot:2} pin={pin:2}"
+            if name_str:
+                id_str += f" ({name_str})"
         elif ev_type == 2:  # PERIPHERAL
             type_str = "PERIPHERAL"
             id_str = f"id={ev_id}"

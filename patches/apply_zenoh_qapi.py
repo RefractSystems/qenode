@@ -87,13 +87,15 @@ def main():
 #
 # @node: The zenoh node ID
 # @router: The zenoh router address (optional)
+# @topic: The zenoh topic to publish/subscribe to (optional)
 #
 # Since: 10.0
 ##
 { 'struct': 'NetdevZenohOptions',
   'data': {
     'node': 'str',
-    '*router': 'str' } }
+    '*router': 'str',
+    '*topic': 'str' } }
 
 """
     patch_file(
@@ -143,6 +145,7 @@ def main():
 #
 # @node: The zenoh node ID
 # @router: The zenoh router address (optional)
+# @topic: The zenoh topic to publish/subscribe to (optional)
 #
 # Since: 10.0
 ##
@@ -150,7 +153,8 @@ def main():
   'base': 'ChardevCommon',
   'data': {
     'node': 'str',
-    '*router': 'str' } }
+    '*router': 'str',
+    '*topic': 'str' } }
 
 ##
 # @ChardevZenohWrapper:

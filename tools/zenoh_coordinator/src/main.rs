@@ -4,42 +4,53 @@
  * This Rust daemon replaces the concept of a traditional "WirelessMedium" or
  * central network switch found in other emulation frameworks (like Renode).
  *
- * In a deterministic multi-node simulation, nodes cannot communicate over
- * standard UDP or TCP sockets because the host OS network stack introduces
- * non-deterministic latency. Instead, all inter-node communication (Ethernet,
- * UART, SystemC CAN) flows through Zenoh.
- *
  * The Coordinator's role:
  * 1. Topology Discovery: It dynamically discovers nodes when they publish to
  *    TX topics (e.g., `sim/eth/frame/node0/tx`).
  * 2. Causal Ordering: It reads the `delivery_vtime_ns` timestamp from the
  *    incoming message's header, adds a configurable propagation `delay_ns`,
  *    and rewrites the timestamp.
- * 3. Broadcast: It republishes the message to the RX topics of all *other*
- *    known nodes in the network (e.g., `sim/eth/frame/node1/rx`).
+ * 3. Link Modeling: It applies distance-based attenuation or drop probabilities
+ *    defined via the Dynamic Network Topology API.
  *
  * Because the receiving nodes use `hw/zenoh/zenoh-netdev.c` (or equivalent),
  * they will buffer the message and deliver it into the guest firmware *only*
  * when their virtual clocks catch up to the rewritten delivery timestamp.
  */
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use clap::Parser;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Write};
 use zenoh::config::Config;
+use serde::{Deserialize, Serialize};
+use rand::Rng;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Propagation delay to add to the virtual timestamp (in nanoseconds)
+    /// Default propagation delay to add to the virtual timestamp (in nanoseconds)
     #[arg(short, long, default_value_t = 1_000_000)]
     delay_ns: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct LinkUpdate {
+    from: String,
+    to: String,
+    delay_ns: Option<u64>,
+    drop_probability: Option<f64>,
+}
+
+struct LinkState {
+    delay_ns: u64,
+    drop_probability: f64,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    println!("Starting virtmcu Zenoh Coordinator (delay: {} ns)", args.delay_ns);
+    println!("Starting virtmcu Zenoh Coordinator");
+    println!("  Default delay: {} ns", args.delay_ns);
 
     let session = zenoh::open(Config::default()).await.unwrap();
 
@@ -48,23 +59,44 @@ async fn main() {
     let uart_sub = session.declare_subscriber("virtmcu/uart/*/tx").await.unwrap();
     let sysc_sub = session.declare_subscriber("sim/systemc/frame/*/tx").await.unwrap();
 
+    // Subscribe to topology control updates
+    let ctrl_sub = session.declare_subscriber("sim/network/control").await.unwrap();
+
     // Track active nodes dynamically based on who transmits
     let mut known_eth_nodes = HashSet::new();
     let mut known_uart_nodes = HashSet::new();
     let mut known_sysc_nodes = HashSet::new();
 
-    println!("Listening for packets on sim/eth/frame/*/tx, virtmcu/uart/*/tx, and sim/systemc/frame/*/tx...");
+    // Link properties: (from, to) -> LinkState
+    let mut topology: HashMap<(String, String), LinkState> = HashMap::new();
+
+    println!("Listening for packets and topology updates...");
 
     loop {
         tokio::select! {
             Ok(sample) = eth_sub.recv_async() => {
-                handle_eth_msg(&session, sample, &mut known_eth_nodes, args.delay_ns).await;
+                handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns).await;
             }
             Ok(sample) = uart_sub.recv_async() => {
-                handle_uart_msg(&session, sample, &mut known_uart_nodes, args.delay_ns).await;
+                handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns).await;
             }
             Ok(sample) = sysc_sub.recv_async() => {
-                handle_sysc_msg(&session, sample, &mut known_sysc_nodes, args.delay_ns).await;
+                handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns).await;
+            }
+            Ok(sample) = ctrl_sub.recv_async() => {
+                let payload_bytes = sample.payload().to_bytes();
+                if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
+                    if let Ok(update) = serde_json::from_str::<LinkUpdate>(payload_str) {
+                        let state = topology.entry((update.from.clone(), update.to.clone())).or_insert(LinkState {
+                            delay_ns: args.delay_ns,
+                            drop_probability: 0.0,
+                        });
+                        if let Some(d) = update.delay_ns { state.delay_ns = d; }
+                        if let Some(p) = update.drop_probability { state.drop_probability = p; }
+                        println!("Topology Update: {} -> {} (delay: {} ns, drop: {})", 
+                                 update.from, update.to, state.delay_ns, state.drop_probability);
+                    }
+                }
             }
         }
     }
@@ -74,7 +106,8 @@ async fn handle_eth_msg(
     session: &zenoh::Session,
     sample: zenoh::sample::Sample,
     known_nodes: &mut HashSet<String>,
-    delay_ns: u64,
+    topology: &HashMap<(String, String), LinkState>,
+    default_delay_ns: u64,
 ) {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
@@ -93,25 +126,32 @@ async fn handle_eth_msg(
     let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
     let size = cursor.read_u32::<LittleEndian>().unwrap();
 
-    let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
-
-    let mut new_payload = Vec::with_capacity(payload.len());
-    new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
-    new_payload.write_u32::<LittleEndian>(size).unwrap();
-    new_payload.write_all(&payload[12..]).unwrap();
-
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node != &sender_id {
-            let rx_topic = format!("sim/eth/frame/{}/rx", node);
-            if let Err(e) = session.put(&rx_topic, new_payload.clone()).await {
-                eprintln!("Failed to forward to {}: {}", node, e);
-            } else {
-                println!(
-                    "ETH: Forwarded {} bytes from {} to {} (vtime: {} -> {})",
-                    size, sender_id, node, delivery_vtime_ns, new_delivery_vtime_ns
-                );
-            }
+        if node == &sender_id { continue; }
+
+        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+            (state.delay_ns, state.drop_probability)
+        } else {
+            (default_delay_ns, 0.0)
+        };
+
+        // Apply packet drop
+        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+            println!("ETH: DROPPED packet from {} to {}", sender_id, node);
+            continue;
+        }
+
+        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+
+        let mut new_payload = Vec::with_capacity(payload.len());
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload.write_u32::<LittleEndian>(size).unwrap();
+        new_payload.write_all(&payload[12..]).unwrap();
+
+        let rx_topic = format!("sim/eth/frame/{}/rx", node);
+        if let Err(e) = session.put(&rx_topic, new_payload).await {
+            eprintln!("Failed to forward to {}: {}", node, e);
         }
     }
 }
@@ -120,7 +160,8 @@ async fn handle_uart_msg(
     session: &zenoh::Session,
     sample: zenoh::sample::Sample,
     known_nodes: &mut HashSet<String>,
-    delay_ns: u64,
+    topology: &HashMap<(String, String), LinkState>,
+    default_delay_ns: u64,
 ) {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
@@ -139,25 +180,30 @@ async fn handle_uart_msg(
     let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
     let size = cursor.read_u32::<LittleEndian>().unwrap();
 
-    let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
-
-    let mut new_payload = Vec::with_capacity(payload.len());
-    new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
-    new_payload.write_u32::<LittleEndian>(size).unwrap();
-    new_payload.write_all(&payload[12..]).unwrap();
-
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node != &sender_id {
-            let rx_topic = format!("virtmcu/uart/{}/rx", node);
-            if let Err(e) = session.put(&rx_topic, new_payload.clone()).await {
-                eprintln!("Failed to forward to {}: {}", node, e);
-            } else {
-                println!(
-                    "UART: Forwarded {} bytes from {} to {} (vtime: {} -> {})",
-                    size, sender_id, node, delivery_vtime_ns, new_delivery_vtime_ns
-                );
-            }
+        if node == &sender_id { continue; }
+
+        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+            (state.delay_ns, state.drop_probability)
+        } else {
+            (default_delay_ns, 0.0)
+        };
+
+        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+            continue;
+        }
+
+        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+
+        let mut new_payload = Vec::with_capacity(payload.len());
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload.write_u32::<LittleEndian>(size).unwrap();
+        new_payload.write_all(&payload[12..]).unwrap();
+
+        let rx_topic = format!("virtmcu/uart/{}/rx", node);
+        if let Err(e) = session.put(&rx_topic, new_payload).await {
+            eprintln!("Failed to forward to {}: {}", node, e);
         }
     }
 }
@@ -166,7 +212,8 @@ async fn handle_sysc_msg(
     session: &zenoh::Session,
     sample: zenoh::sample::Sample,
     known_nodes: &mut HashSet<String>,
-    delay_ns: u64,
+    topology: &HashMap<(String, String), LinkState>,
+    default_delay_ns: u64,
 ) {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
@@ -185,25 +232,30 @@ async fn handle_sysc_msg(
     let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
     let size = cursor.read_u32::<LittleEndian>().unwrap();
 
-    let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
-
-    let mut new_payload = Vec::with_capacity(payload.len());
-    new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
-    new_payload.write_u32::<LittleEndian>(size).unwrap();
-    new_payload.write_all(&payload[12..]).unwrap();
-
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
-        if node != &sender_id {
-            let rx_topic = format!("sim/systemc/frame/{}/rx", node);
-            if let Err(e) = session.put(&rx_topic, new_payload.clone()).await {
-                eprintln!("Failed to forward to {}: {}", node, e);
-            } else {
-                println!(
-                    "SYSC: Forwarded {} bytes from {} to {} (vtime: {} -> {})",
-                    size, sender_id, node, delivery_vtime_ns, new_delivery_vtime_ns
-                );
-            }
+        if node == &sender_id { continue; }
+
+        let (delay_ns, drop_prob) = if let Some(state) = topology.get(&(sender_id.clone(), node.clone())) {
+            (state.delay_ns, state.drop_probability)
+        } else {
+            (default_delay_ns, 0.0)
+        };
+
+        if drop_prob > 0.0 && rand::thread_rng().gen::<f64>() < drop_prob {
+            continue;
+        }
+
+        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+
+        let mut new_payload = Vec::with_capacity(payload.len());
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
+        new_payload.write_u32::<LittleEndian>(size).unwrap();
+        new_payload.write_all(&payload[12..]).unwrap();
+
+        let rx_topic = format!("sim/systemc/frame/{}/rx", node);
+        if let Err(e) = session.put(&rx_topic, new_payload).await {
+            eprintln!("Failed to forward to {}: {}", node, e);
         }
     }
 }

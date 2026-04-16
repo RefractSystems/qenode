@@ -116,7 +116,8 @@ class FdtEmitter:
 
             if dev.type_name == "Memory.MappedMemory":
                 if "size" in dev.properties:
-                    size = int(dev.properties["size"], 16)
+                    size_val = dev.properties["size"]
+                    size = int(size_val, 16) if isinstance(size_val, str) else int(size_val)
 
                 # Emit memory node (name must start with 'memory@' for QEMU arm-generic-fdt)
                 lines.append(f"    memory@{base:x} {{")

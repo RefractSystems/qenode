@@ -164,9 +164,18 @@ def main():
     for dev in platform.devices:
         if dev.type_name == "zenoh-chardev":
             node = dev.properties.get("node", "0")
+            router = dev.properties.get("router")
+            topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
+            
+            chardev_arg = f"zenoh,id={chardev_id},node={node}"
+            if router:
+                chardev_arg += f",router={router}"
+            if topic:
+                chardev_arg += f",topic={topic}"
+            
             cli_args.append("-chardev")
-            cli_args.append(f"zenoh,id={chardev_id},node={node}")
+            cli_args.append(chardev_arg)
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
         elif dev.type_name == "zenoh-telemetry":
@@ -177,7 +186,18 @@ def main():
                 device_arg += f",router={router}"
             cli_args.append("-device")
             cli_args.append(device_arg)
-            # intentionally excluded from filtered_devices — no MMIO, no DTB node
+        elif dev.type_name == "zenoh-802154":
+            node = dev.properties.get("node", "0")
+            router = dev.properties.get("router")
+            topic = dev.properties.get("topic")
+            device_arg = f"zenoh-802154,node={node}"
+            if router:
+                device_arg += f",router={router}"
+            if topic:
+                device_arg += f",topic={topic}"
+            cli_args.append("-device")
+            cli_args.append(device_arg)
+            filtered_devices.append(dev) # Keep in DTB
         else:
             filtered_devices.append(dev)
 

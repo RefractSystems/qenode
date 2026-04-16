@@ -2,7 +2,6 @@
 
 # namespace: Telemetry
 
-
 class TraceEventType(object):
     CPU_STATE = 0
     IRQ = 1

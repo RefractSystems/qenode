@@ -149,6 +149,7 @@ static void zenoh_chr_parse(QemuOpts *opts, ChardevBackend *backend, Error **err
 {
     const char *node = qemu_opt_get(opts, "node");
     const char *router = qemu_opt_get(opts, "router");
+    const char *topic = qemu_opt_get(opts, "topic");
 
     if (!node) {
         error_setg(errp, "chardev: zenoh: 'node' is required");
@@ -159,6 +160,9 @@ static void zenoh_chr_parse(QemuOpts *opts, ChardevBackend *backend, Error **err
     zenoh_opts->node = g_strdup(node);
     if (router) {
         zenoh_opts->router = g_strdup(router);
+    }
+    if (topic) {
+        zenoh_opts->topic = g_strdup(topic);
     }
 
     backend->type = CHARDEV_BACKEND_KIND_ZENOH;
@@ -191,8 +195,14 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
         return false;
     }
     
-    char *tx_topic = g_strdup_printf("virtmcu/uart/%s/tx", s->node_id);
-    char *rx_topic = g_strdup_printf("virtmcu/uart/%s/rx", s->node_id);
+    char *tx_topic, *rx_topic;
+    if (opts->topic) {
+        tx_topic = g_strdup_printf("%s/tx", opts->topic);
+        rx_topic = g_strdup_printf("%s/rx", opts->topic);
+    } else {
+        tx_topic = g_strdup_printf("virtmcu/uart/%s/tx", s->node_id);
+        rx_topic = g_strdup_printf("virtmcu/uart/%s/rx", s->node_id);
+    }
     
     z_owned_keyexpr_t kexpr_tx;
     z_keyexpr_from_str(&kexpr_tx, tx_topic);

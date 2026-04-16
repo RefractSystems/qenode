@@ -169,4 +169,80 @@ else
     fi
 fi
 
+# 5. Verify Zenoh Coordinator topology control
+echo "--- Testing Zenoh Coordinator Topology Control ---"
+# Start coordinator in background
+cd "$WORKSPACE_DIR/tools/zenoh_coordinator"
+cargo build > /dev/null
+./target/debug/zenoh_coordinator --delay-ns 1000000 > coordinator.log 2>&1 &
+COORD_PID=$!
+sleep 2
+
+# Send a topology update
+python3 - <<'PY'
+import zenoh, json, time
+session = zenoh.open(zenoh.Config())
+update = {
+    "from": "node0",
+    "to": "node1",
+    "delay_ns": 5000000,
+    "drop_probability": 0.5
+}
+session.put("sim/network/control", json.dumps(update))
+time.sleep(1)
+PY
+
+kill "$COORD_PID" || true
+wait "$COORD_PID" 2>/dev/null || true
+
+if grep -q "Topology Update: node0 -> node1 (delay: 5000000 ns, drop: 0.5)" coordinator.log; then
+    log_pass "Zenoh coordinator correctly received and applied topology update"
+else
+    cat coordinator.log
+    log_fail "Zenoh coordinator did NOT receive topology update correctly"
+fi
+
+# 6. Verify telemetry schema (FlatBuffers) and QOM path resolution via Mock
+echo "--- Testing Telemetry Listener with QOM Path (Mock) ---"
+export PYTHONPATH="$WORKSPACE_DIR:$WORKSPACE_DIR/tools/telemetry_fbs"
+LOG_NEW_TELEMETRY="$WORKSPACE_DIR/test/phase12/new_telemetry.log"
+python3 -u "$WORKSPACE_DIR/tools/telemetry_listener.py" 0 > "$LOG_NEW_TELEMETRY" 2>&1 &
+NEW_LISTENER_PID=$!
+sleep 3
+
+python3 - <<'PY' &
+import os, sys, time, zenoh
+sys.path.append("tools/telemetry_fbs")
+import Virtmcu.Telemetry.TraceEvent as TraceEvent
+import flatbuffers
+builder = flatbuffers.Builder(1024)
+name = builder.CreateString("/machine/peripheral/uart0")
+TraceEvent.Start(builder)
+TraceEvent.AddTimestampNs(builder, 123456789)
+TraceEvent.AddType(builder, 1) # IRQ
+TraceEvent.AddId(builder, (2 << 16) | 7)
+TraceEvent.AddValue(builder, 1)
+TraceEvent.AddDeviceName(builder, name)
+ev = TraceEvent.End(builder)
+builder.Finish(ev)
+payload = builder.Output()
+session = zenoh.open(zenoh.Config())
+time.sleep(2)
+session.put("sim/telemetry/trace/0", payload)
+time.sleep(1)
+PY
+MOCK_PID=$!
+
+sleep 5
+kill "$NEW_LISTENER_PID" 2>/dev/null || true
+wait "$NEW_LISTENER_PID" 2>/dev/null || true
+kill "$MOCK_PID" 2>/dev/null || true
+
+if grep -q "IRQ" "$LOG_NEW_TELEMETRY" && grep -q "/machine/peripheral/uart0" "$LOG_NEW_TELEMETRY"; then
+    log_pass "Telemetry listener correctly parsed QOM path from FlatBuffer"
+else
+    cat "$LOG_NEW_TELEMETRY"
+    log_fail "Telemetry listener failed to parse QOM path"
+fi
+
 echo -e "${GREEN}All Phase 12 smoke tests PASSED!${NC}"

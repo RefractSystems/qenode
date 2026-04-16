@@ -41,30 +41,37 @@ typedef enum {
     TRACE_EVENT_PERIPHERAL = 2,
 } TraceEventType;
 
-typedef struct __attribute__((packed)) {
-    uint64_t timestamp_ns;  /* LE, QEMU_CLOCK_VIRTUAL */
+typedef struct {
+    uint64_t timestamp_ns;
     uint8_t  type;
-    uint32_t id;            /* IRQ: (dev_slot << 16) | pin; CPU: 0 */
+    uint32_t id;
     uint32_t value;
+    char    *device_name;
 } TraceEvent;
 
 /* Device slot registry — maps opaque owner pointer to a stable 16-bit slot. */
 static struct { void *opaque; uint16_t slot; } irq_slots[MAX_IRQ_SLOTS];
 static unsigned irq_slot_count;
+static QemuMutex irq_slots_lock;
 
 static uint16_t irq_slot_for(void *opaque)
 {
+    uint16_t slot = 0xFFFF;
+    qemu_mutex_lock(&irq_slots_lock);
     for (unsigned i = 0; i < irq_slot_count; i++) {
         if (irq_slots[i].opaque == opaque) {
-            return irq_slots[i].slot;
+            slot = irq_slots[i].slot;
+            goto out;
         }
     }
     if (irq_slot_count < MAX_IRQ_SLOTS) {
         irq_slots[irq_slot_count].opaque = opaque;
         irq_slots[irq_slot_count].slot   = (uint16_t)irq_slot_count;
-        return (uint16_t)irq_slot_count++;
+        slot = (uint16_t)irq_slot_count++;
     }
-    return 0xFFFF; /* slot table full — id will still be unique per pin */
+out:
+    qemu_mutex_unlock(&irq_slots_lock);
+    return slot;
 }
 
 struct ZenohTelemetryState {
@@ -103,10 +110,13 @@ static gpointer telemetry_publish_thread(gpointer arg)
         
         flatcc_builder_reset(&builder);
         Virtmcu_Telemetry_TraceEvent_start_as_root(&builder);
-        Virtmcu_Telemetry_TraceEvent_timestamp_ns_add(&builder, le64_to_cpu(ev->timestamp_ns));
+        Virtmcu_Telemetry_TraceEvent_timestamp_ns_add(&builder, ev->timestamp_ns);
         Virtmcu_Telemetry_TraceEvent_type_add(&builder, ev->type);
-        Virtmcu_Telemetry_TraceEvent_id_add(&builder, le32_to_cpu(ev->id));
-        Virtmcu_Telemetry_TraceEvent_value_add(&builder, le32_to_cpu(ev->value));
+        Virtmcu_Telemetry_TraceEvent_id_add(&builder, ev->id);
+        Virtmcu_Telemetry_TraceEvent_value_add(&builder, ev->value);
+        if (ev->device_name) {
+            Virtmcu_Telemetry_TraceEvent_device_name_create_str(&builder, ev->device_name);
+        }
         Virtmcu_Telemetry_TraceEvent_end_as_root(&builder);
 
         size_t size;
@@ -116,6 +126,7 @@ static gpointer telemetry_publish_thread(gpointer arg)
             z_bytes_copy_from_buf(&bytes, buf, size);
             z_publisher_put(z_publisher_loan(&s->publisher), z_move(bytes), NULL);
         }
+        g_free(ev->device_name);
         g_free(ev);
     }
     
@@ -125,16 +136,18 @@ static gpointer telemetry_publish_thread(gpointer arg)
 
 /* Called from QEMU hooks (TCG thread). Enqueues; never blocks. */
 static void send_event(ZenohTelemetryState *s, TraceEventType type,
-                       uint32_t id, uint32_t value)
+                       uint32_t id, uint32_t value, char *device_name)
 {
     if (g_async_queue_length(s->event_queue) >= TELEMETRY_QUEUE_MAX) {
+        g_free(device_name);
         return; /* drop rather than block the TCG thread */
     }
     TraceEvent *ev = g_new(TraceEvent, 1);
-    ev->timestamp_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    ev->timestamp_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     ev->type  = (uint8_t)type;
-    ev->id    = cpu_to_le32(id);
-    ev->value = cpu_to_le32(value);
+    ev->id    = id;
+    ev->value = value;
+    ev->device_name = device_name;
     g_async_queue_push(s->event_queue, ev);
 }
 
@@ -146,7 +159,7 @@ static void telemetry_cpu_halt_hook(CPUState *cpu, bool halted)
     if (idx < 0 || idx >= 32) return;
     if (halted == s->last_halted[idx]) return;
     s->last_halted[idx] = halted;
-    send_event(s, TRACE_EVENT_CPU_STATE, (uint32_t)idx, halted ? 1 : 0);
+    send_event(s, TRACE_EVENT_CPU_STATE, (uint32_t)idx, halted ? 1 : 0, NULL);
 }
 
 static void telemetry_irq_hook(void *opaque, int n, int level)
@@ -154,7 +167,17 @@ static void telemetry_irq_hook(void *opaque, int n, int level)
     ZenohTelemetryState *s = global_telemetry;
     if (!s) return;
     uint32_t id = ((uint32_t)irq_slot_for(opaque) << 16) | (uint32_t)(n & 0xFFFF);
-    send_event(s, TRACE_EVENT_IRQ, id, (uint32_t)level);
+    
+    char *name = NULL;
+    if (opaque) {
+        Object *obj = OBJECT(opaque);
+        /* Simple check if it's likely an Object by seeing if it has a class */
+        if (obj->class) {
+            name = object_get_canonical_path(obj);
+        }
+    }
+    
+    send_event(s, TRACE_EVENT_IRQ, id, (uint32_t)level, name);
 }
 
 static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
@@ -243,6 +266,7 @@ static void zenoh_telemetry_class_init(ObjectClass *klass, const void *data)
     dc->realize = zenoh_telemetry_realize;
     device_class_set_props(dc, zenoh_telemetry_properties);
     dc->user_creatable = true;
+    qemu_mutex_init(&irq_slots_lock);
 }
 
 static const TypeInfo zenoh_telemetry_types[] = {
