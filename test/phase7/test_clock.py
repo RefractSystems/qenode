@@ -13,7 +13,10 @@ def pack_req(delta_ns):
 
 
 def unpack_rep(data):
-    vtime_ns, _n_frames = struct.unpack("<QI", data)
+    # New payload is 16 bytes: <Q (vtime_ns) I (status) I (n_frames)
+    vtime_ns, status, _n_frames = struct.unpack("<QII", data)
+    if status != 0:
+        print(f"WARNING: Reply status = {status}", file=sys.stderr)
     return vtime_ns
 
 
