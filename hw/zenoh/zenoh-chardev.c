@@ -180,6 +180,7 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
         char json[256];
         snprintf(json, sizeof(json), "[\"%s\"]", s->router);
         zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
+        zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
     }
     
     if (z_open(&s->session, z_move(config), NULL) != 0) {

@@ -195,6 +195,7 @@ static int zenoh_netdev_hook(const Netdev *netdev, const char *name, NetClientSt
         char json[256];
         snprintf(json, sizeof(json), "[\"%s\"]", zenoh_opts->router);
         zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
+        zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
     }
     if (z_open(&s->session, z_move(config), NULL) != 0) {
         error_setg(errp, "Failed to open Zenoh session for netdev");
