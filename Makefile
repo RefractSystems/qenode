@@ -102,9 +102,21 @@ test-robot: venv
 	  tests/test_qmp_keywords.robot \
 	  tests/test_interactive_echo.robot
 
+# Run guest firmware coverage analysis (Phase 1)
+test-coverage-guest: build-test-artifacts
+	@echo "==> Running guest firmware coverage (drcov)..."
+	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
+	@./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
+	  -display none -plugin third_party/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov -d plugin
+	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
+	@echo "✓ Guest coverage check passed."
+
+build-test-artifacts:
+	@$(MAKE) -C test/phase1
+	@$(MAKE) -C test/phase8
+
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
-# Requires a built QEMU (run make setup first).
-test-all: test test-integration test-robot
+test-all: test test-integration test-robot test-coverage-guest
 
 # ------------------------------------------------------------------------------
 # Lint & Format

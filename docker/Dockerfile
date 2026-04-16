@@ -270,6 +270,7 @@ RUN cd qemu \
     --disable-werror \
     --disable-docs \
     && make -j"$(nproc)" \
+    && make -j"$(nproc)" plugins \
     && make install
 
 # Make the installed QEMU binary and modules available inside this stage
