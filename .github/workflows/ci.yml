@@ -495,3 +495,72 @@ jobs:
 #          chmod +x tests/test_runtime_image.sh
 #          ./tests/test_runtime_image.sh ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
 
+
+# ── Tier 4: Peripheral Coverage Report ───────────────────────────────────────
+#
+# Collects .gcda files from the QEMU build tree after all integration tests
+# have run and generates a unified coverage report for the C plugins.
+
+  peripheral-coverage:
+    name: Peripheral C Coverage
+    needs: [smoke-tests, smoke-phase5, smoke-phase6, smoke-phase7, pytest-qmp, robot-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> 
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+          cache-from: type=gha,scope=builder-amd64
+          load: true
+
+      # We run all tests AGAIN in one container instance to collect coverage.
+      # This is necessary because coverage data is lost between 'docker run --rm' calls.
+      - name: Generate unified peripheral coverage
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              # Pre-build all artifacts
+              make -C test/phase1
+              make -C test/phase8
+              uv pip install --system --break-system-packages -r pyproject.toml pytest-cov
+
+              # Run a representative subset of tests that exercise the plugins
+              # (Phase 7 exercises zenoh-clock, Phase 5 exercises mmio-socket-bridge)
+              bash test/phase7/smoke_test.sh
+              bash test/phase5/smoke_test.sh
+              
+              # Run full pytest-qmp suite
+              pytest tools/testing/test_qmp.py -v
+
+              # Generate report for our plugins only (under hw/virtmcu)
+              cd /build/qemu
+              gcovr -r /build/qemu/hw/virtmcu \
+                --xml /workspace/test-results/peripheral-coverage.xml \
+                --html-details /workspace/test-results/peripheral-coverage.html \
+                --print-summary
+            "
+
+      - name: Upload peripheral coverage results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: peripheral-c-coverage
+          path: test-results/

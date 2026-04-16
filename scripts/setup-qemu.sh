@@ -144,9 +144,9 @@ cd build-virtmcu
 # Configure the build, handling macOS specific plugin bugs (GitLab #516)
 if [ "$(uname)" = "Darwin" ]; then
     echo "macOS detected: disabling --enable-plugins to avoid GLib module conflicts"
-    ../configure --enable-modules --enable-fdt --enable-debug --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
+    ../configure --enable-modules --enable-fdt --enable-debug --enable-gcov --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
 else
-    ../configure --enable-modules --enable-fdt --enable-plugins --enable-debug --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
+    ../configure --enable-modules --enable-fdt --enable-plugins --enable-debug --enable-gcov --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
 fi
 
 # Compile QEMU using all available CPU cores

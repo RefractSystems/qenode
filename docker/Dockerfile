@@ -49,7 +49,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
     gh \
-    jq || \
+    jq \
+    lcov \
+    gcovr || \
     (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
@@ -75,7 +77,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
     gh \
-    jq)) \
+    jq \
+    lcov \
+    gcovr)) \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
@@ -262,6 +266,7 @@ RUN cd qemu \
     --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
     --enable-modules \
     --enable-fdt \
+    --enable-gcov \
     --disable-werror \
     --disable-docs \
     && make -j"$(nproc)" \
