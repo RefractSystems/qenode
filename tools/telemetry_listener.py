@@ -1,6 +1,7 @@
-import zenoh
 import struct
 import sys
+
+import zenoh
 
 # typedef struct __attribute__((packed)) {
 #     uint64_t timestamp_ns;
@@ -11,6 +12,7 @@ import sys
 EVENT_FMT = "<Q B I I"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 
+
 def on_sample(sample):
     payload = sample.payload.to_bytes()
     if len(payload) == EVENT_SIZE:
@@ -20,16 +22,18 @@ def on_sample(sample):
     else:
         print(f"Received malformed payload of size {len(payload)}")
 
+
 if __name__ == "__main__":
     node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
     topic = f"sim/telemetry/trace/{node_id}"
     print(f"Listening on {topic}...")
-    
+
     session = zenoh.open(zenoh.Config())
     sub = session.declare_subscriber(topic, on_sample)
-    
+
     try:
         import time
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
