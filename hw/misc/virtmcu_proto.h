@@ -13,7 +13,7 @@
  *     uint16_t reserved1;  must be zero
  *     uint32_t reserved2;  must be zero
  *     uint64_t vtime_ns;   QEMU virtual time in nanoseconds
- *     uint64_t addr;       byte offset within the mapped region
+ *     uint64_t addr;       byte offset within the mapped region (NOT absolute address)
  *     uint64_t data;       write value (ignored for reads)
  *
  *   Message (adapter → QEMU, sizeof = 16 bytes):

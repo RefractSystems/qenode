@@ -145,7 +145,7 @@ static uint64_t bridge_read(void *opaque, hwaddr addr, unsigned size)
         .type = MMIO_REQ_READ,
         .size = size,
         .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .addr = addr,
+        .addr = addr, /* Offset from region base */
         .data = 0,
     };
     struct sysc_msg resp = {0};
@@ -161,7 +161,7 @@ static void bridge_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         .type = MMIO_REQ_WRITE,
         .size = size,
         .vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-        .addr = addr,
+        .addr = addr, /* Offset from region base */
         .data = val,
     };
     struct sysc_msg resp = {0};

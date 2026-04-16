@@ -57,6 +57,7 @@ struct ZenohClockState {
     uint32_t node_id;
     char    *router;
     char    *mode;
+    uint32_t timeout_ms;
 
     /* Zenoh handles */
     z_owned_session_t    session;
@@ -128,8 +129,13 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     uint64_t current_vtime_ns;
+    uint32_t status;
     uint32_t n_frames;
 } ClockReadyPayload;
+
+/* Status codes for ClockReadyPayload */
+#define ZCLOCK_STATUS_OK                0
+#define ZCLOCK_STATUS_STALL_TIMEOUT     1
 
 /* ── Timer callback ──────────────────────────────────────────────────────────
  * Runs in the QEMU main-loop thread (BQL held).
@@ -249,6 +255,7 @@ static void on_query(z_loaned_query_t *query, void *context)
     z_bytes_reader_read(&reader, (uint8_t *)&req, sizeof(req));
 
     int64_t vtime = 0;
+    uint32_t status = ZCLOCK_STATUS_OK;
 
     /*
      * Coordinate with the vCPU hook.
@@ -275,16 +282,26 @@ static void on_query(z_loaned_query_t *query, void *context)
     s->quantum_ready = true;
     qemu_cond_signal(&s->vcpu_cond);
 
-    /* Wait for the hook to capture vtime_ns after the quantum. */
+    /* 
+     * Wait for the hook to capture vtime_ns after the quantum.
+     * Use a timed wait to detect QEMU stalls (e.g. tight loops in icount mode).
+     */
     while (!s->quantum_done) {
-        qemu_cond_wait(&s->query_cond, &s->mutex);
+        if (!qemu_cond_timedwait(&s->query_cond, &s->mutex, s->timeout_ms)) {
+            vtime = s->vtime_ns; /* Return last known vtime */
+            status = ZCLOCK_STATUS_STALL_TIMEOUT;
+            break;
+        }
     }
 
-    vtime = s->vtime_ns;
+    if (status == ZCLOCK_STATUS_OK) {
+        vtime = s->vtime_ns;
+    }
     qemu_mutex_unlock(&s->mutex);
 
     ClockReadyPayload rep = {
         .current_vtime_ns = (uint64_t)vtime,
+        .status           = status,
         .n_frames         = 0,
     };
 
@@ -308,6 +325,10 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     qemu_mutex_init(&s->mutex);
     qemu_cond_init(&s->vcpu_cond);
     qemu_cond_init(&s->query_cond);
+
+    if (s->timeout_ms == 0) {
+        s->timeout_ms = 1000;
+    }
 
     if (s->mode && strcmp(s->mode, "icount") == 0) {
         s->is_icount = true;
@@ -398,6 +419,7 @@ static const Property zenoh_clock_properties[] = {
     DEFINE_PROP_UINT32("node",   ZenohClockState, node_id, 0),
     DEFINE_PROP_STRING("router", ZenohClockState, router),
     DEFINE_PROP_STRING("mode",   ZenohClockState, mode),
+    DEFINE_PROP_UINT32("timeout-ms", ZenohClockState, timeout_ms, 1000),
 };
 
 static void zenoh_clock_class_init(ObjectClass *klass, const void *data)
