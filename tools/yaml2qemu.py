@@ -8,8 +8,9 @@
 
 import argparse
 import os
-import sys
 import subprocess
+import sys
+
 import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
@@ -81,22 +82,29 @@ def validate_dtb(dtb_path, devices):
     Decompiles the DTB back to DTS and ensures each peripheral is present.
     """
     try:
-        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], 
-                             capture_output=True, text=True, check=True)
+        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
         dts = res.stdout
-        
+
         missing = []
         for dev in devices:
-            if "CPU" in dev.type_name: continue
-            if dev.type_name == "zenoh-chardev": continue # Not in DTB
-            
+            if "CPU" in dev.type_name:
+                continue
+            if dev.type_name == "zenoh-chardev":
+                continue  # Not in DTB
+
             # Simple substring check: name@address
             if dev.name not in dts:
                 missing.append(dev.name)
-        
+
         if missing:
-            print(f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}", file=sys.stderr)
-            print("This usually means the device type is unknown to FdtEmitter or the address mapping failed.", file=sys.stderr)
+            print(
+                f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}",
+                file=sys.stderr,
+            )
+            print(
+                "This usually means the device type is unknown to FdtEmitter or the address mapping failed.",
+                file=sys.stderr,
+            )
             print("FAILED: DTB validation failed.")
             sys.exit(1)
         print("✓ Validation successful.")
