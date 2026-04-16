@@ -15,7 +15,7 @@ This document outlines the critical architectural and usability improvements for
 - [x] **Specific Error Payloads:** `ClockReadyPayload` updated with `error_code` field (`0`=OK, `1`=STALL).
     - `0` = OK
     - `1` = INTERNAL_STALL (QEMU didn't reach TB boundary within 2s)
-    - `2` = ZENOH_ERROR — **documented but not yet emitted**; the C code currently has no code path that sets `error_code=2`. Needs a follow-up to emit this from the session-open failure path (currently that path calls `error_setg` and returns before a reply is sent).
+    - `2` = ZENOH_ERROR — emitted by `on_query` for: (a) query arrives with no payload, (b) `ClockAdvancePayload` is truncated/malformed. `z_query_reply` failure is logged but cannot carry error_code=2 (the transport is already gone). Session-open failure exits via `error_setg` before any queryable exists — TimeAuthority observes a connection reset, which is the correct signal.
 
 ### Verification:
 1. Launch QEMU with a wrong `router=` parameter. Verify `stderr` contains a clear connection error. ✓
@@ -66,7 +66,7 @@ Changing this is a **BREAKING CHANGE**. You MUST update \`studio_server.py\` in 
 ### Tasks:
 - [x] **Document WFI Interaction:** `CLAUDE.md` § Timing Model covers WFI in `slaved-suspend` mode.
 - [x] **Document MMIO Blocking:** `CLAUDE.md` § Timing Model explicitly states vCPU is Halted during socket wait and that icount does not advance.
-- [ ] **Create `docs/TIMING_MODEL.md`:** A dedicated standalone timing model document does not yet exist. `CLAUDE.md` covers the content inline but a separate `docs/TIMING_MODEL.md` would improve discoverability for external contributors.
+- [x] **Create `docs/TIMING_MODEL.md`:** Standalone reference document covering clock modes, wire protocol, error codes, virtual-time advancement rules, quantum boundary sequence, BQL rules, and performance notes. Cross-references `TIME_MANAGEMENT_DESIGN.md` for tutorial content.
 
 ---
 
