@@ -30,6 +30,7 @@
 #include "qom/object.h"
 #include "qemu/module.h"
 #include "qemu/option.h"
+#include "qemu/error-report.h"
 #include <zenoh.h>
 
 #define TYPE_CHARDEV_ZENOH "chardev-zenoh"
@@ -181,6 +182,8 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
         snprintf(json, sizeof(json), "[\"%s\"]", s->router);
         zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
         zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
+    } else {
+        warn_report("zenoh-chardev (node=%s): No 'router=' property provided. Zenoh will use UDP multicast peer discovery, which is unsupported by the virtmcu coordinator and will likely fail in container environments.", s->node_id);
     }
     
     if (z_open(&s->session, z_move(config), NULL) != 0) {

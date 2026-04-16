@@ -21,6 +21,7 @@
 #include "qemu/timer.h"
 #include "qom/object.h"
 #include "hw/core/qdev-properties.h"
+#include "qemu/error-report.h"
 #include <zenoh.h>
 
 #define TYPE_ZENOH_ACTUATOR "zenoh-actuator"
@@ -168,6 +169,8 @@ static void zenoh_actuator_realize(DeviceState *dev, Error **errp)
         snprintf(json, sizeof(json), "[\"%s\"]", s->router);
         zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
         zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
+    } else {
+        warn_report("zenoh-actuator: No 'router=' property provided. Zenoh will use UDP multicast peer discovery, which is unsupported by the virtmcu coordinator and will likely fail in container environments.");
     }
 
     if (z_open(&s->session, z_move(config), NULL) != 0) {

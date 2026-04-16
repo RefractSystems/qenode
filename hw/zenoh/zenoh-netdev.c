@@ -31,6 +31,7 @@
 #include "qom/object.h"
 #include "virtmcu/hooks.h"
 #include "qemu/module.h"
+#include "qemu/error-report.h"
 #include <zenoh.h>
 
 typedef struct ZenohNetdevState {
@@ -196,6 +197,8 @@ static int zenoh_netdev_hook(const Netdev *netdev, const char *name, NetClientSt
         snprintf(json, sizeof(json), "[\"%s\"]", zenoh_opts->router);
         zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
         zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
+    } else {
+        warn_report("zenoh-netdev (node=%s): No 'router=' property provided. Zenoh will use UDP multicast peer discovery, which is unsupported by the virtmcu coordinator and will likely fail in container environments.", zenoh_opts->node);
     }
     if (z_open(&s->session, z_move(config), NULL) != 0) {
         error_setg(errp, "Failed to open Zenoh session for netdev");
