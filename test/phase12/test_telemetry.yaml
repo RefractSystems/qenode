@@ -1,0 +1,12 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a9
+peripherals:
+  - name: telemetry0
+    type: zenoh-telemetry
+    properties:
+      node: 0
+  - name: uart0
+    type: UART.PL011
+    address: 0x09000000

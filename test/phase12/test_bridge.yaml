@@ -1,0 +1,12 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a9
+peripherals:
+  - name: bridge0
+    type: mmio-socket-bridge
+    address: 0x10000000
+    properties:
+      socket-path: "/tmp/mmio.sock"
+      region-size: 0x1000
+      base-addr: 0x10000000

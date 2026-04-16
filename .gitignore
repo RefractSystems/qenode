@@ -33,6 +33,8 @@ output/
 log.html
 report.html
 *.log
+.coverage
+*_output.txt
 
 # IDEs and Tools
 .vscode/

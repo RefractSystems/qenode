@@ -1,0 +1,8 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a9
+peripherals:
+  - name: known_but_unmapped
+    type: Renode.UnknownType
+    address: 0x10000000
