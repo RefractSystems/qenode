@@ -1,2 +1,13 @@
+# Provenance: virtmcu-baseline
+# Source: test/phase8/echo.S — welcome_msg .asciz "Interactive UART Echo Ready.\r\nType something: "
+# The output below is derived from the firmware source and confirmed by test_interactive_echo.robot
+# running against VirtMCU. It has NOT yet been captured from real Cortex-A15 silicon.
+#
+# Silicon validation TODO:
+#   1. Flash tests/firmware/cortex-a15-virt/echo.elf to a Cortex-A15 board with
+#      a PL011 UART at 0x09000000 (e.g. QEMU virt machine or compatible hardware).
+#   2. Connect a serial terminal, capture the boot output, replace lines below.
+#   3. Update SHA256SUMS provenance comment from [virtmcu-baseline] to [silicon-validated].
+#   4. Commit with board name and date in the commit message.
 Interactive UART Echo Ready.
 Type something:

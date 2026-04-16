@@ -1,11 +1,13 @@
 # SHA256 checksums for binary fidelity reference firmware.
-# Each entry corresponds to a pre-built ELF validated on real silicon.
-# DO NOT update a checksum without re-validating the binary on real hardware first.
-# Format: <sha256>  <path-relative-to-tests/firmware/>
 #
-# To add a new binary:
-#   sha256sum path/to/firmware.elf >> tests/firmware/SHA256SUMS
-#   # then validate on silicon, capture golden_uart.txt, commit both together
+# Rules (see ADR-006):
+# - Do NOT update a checksum without re-validating the binary on real hardware first.
+# - Each ELF must be built with a standard cross-compiler; no VirtMCU-specific flags.
+# - When adding a new binary: sha256sum path/to/fw.elf >> tests/firmware/SHA256SUMS
+#   then validate on silicon, capture golden_uart.txt, and commit both together.
 #
-# Placeholder — replace with actual sha256 of echo.elf once validated on silicon:
-# <sha256-of-echo.elf>  cortex-a15-virt/echo.elf
+# Provenance key (stored in each binary's directory as PROVENANCE.md):
+#   [virtmcu-baseline] Output derived from firmware source + VirtMCU run; silicon TBD.
+#   [silicon-validated] Golden output captured from real hardware; date and board noted.
+
+810886b91efbc2c9c6ff71ffe3b500eba261e35e788926488e9cb176a24a18ec  cortex-a15-virt/echo.elf

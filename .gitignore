@@ -11,6 +11,8 @@ modules/
 *.dtb
 *.o
 *.elf
+# Exception: reference firmware binaries checked into tests/firmware/ for binary fidelity tests
+!tests/firmware/**/*.elf
 
 # Python
 __pycache__/
