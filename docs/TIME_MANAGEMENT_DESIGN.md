@@ -161,7 +161,32 @@ To run a simulation in cycle-accurate slaved-icount mode:
 - **Integration Tests**: `test/phase7/determinism_test.sh` executes the same firmware multiple times under `slaved-icount` and `slaved-suspend` and asserts that the UART output timestamps match exactly bit-for-bit across runs.
 - **Automated Virtual-Time Testing**: The `qemu_keywords.robot` test harness uses `query-replay` (or equivalent `query-cpus-fast`) to ensure that `Wait For Line On UART` correctly factors in execution throttling, avoiding flaky wall-clock timeouts.
 
-## 10. Boundaries
+---
+
+## 11. Advanced Timing: WFI and I/O Blocking
+
+Deterministic simulation requires a clear understanding of what happens to virtual time when the CPU is not executing instructions.
+
+### WFI (Wait For Interrupt) in `slaved-icount` Mode
+When the guest executes a `WFI` instruction, the vCPU thread stops executing instructions. In `slaved-icount` mode with `sleep=off` (the virtmcu default), virtual time (`QEMU_CLOCK_VIRTUAL`) behavior is as follows:
+- If there are pending `QEMUTimer` events (e.g., a hardware timer set by firmware), virtual time **skips forward** to the deadline of the earliest timer.
+- This ensures that `delay()` loops based on hardware timers (like the ARM Generic Timer) work correctly: the CPU sleeps, time "warps" to the next interrupt, and the CPU wakes up.
+- If no timers are active, virtual time remains frozen until an external event (like a Zenoh-driven IRQ) wakes the CPU.
+
+### MMIO Socket Blocking (`mmio-socket-bridge`)
+When a firmware access to an `mmio-socket-bridge` occurs, the vCPU thread blocks waiting for a response from the external Unix socket.
+1. The bridge releases the Big QEMU Lock (BQL).
+2. The vCPU thread blocks on a condition variable.
+3. While blocked, the vCPU is **not executing instructions**.
+
+**Crucial Determinism Rule**: Virtual time **does NOT advance** while the bridge is blocked. Since `icount` only advances based on instructions, and the CPU is suspended, the virtual clock remains frozen at the exact moment of the MMIO access. 
+- Host-side latency (e.g., a 500µs delay in a Python SystemC adapter) has **zero impact** on guest virtual time.
+- From the firmware's perspective, the MMIO read/write appears to take 0 nanoseconds of virtual time, regardless of how long the host-side socket communication took.
+
+### Zenoh-Clock Stalls
+Because virtual time only advances when instructions run (or timers fire), a QEMU process that is heavily throttled by host load might not reach its next quantum boundary within the `TimeAuthority`'s wall-clock deadline.
+- If QEMU fails to reach the boundary, `zenoh-clock` will return `ZCLOCK_STATUS_STALL_TIMEOUT` (status 1) to the requester.
+- This is a **host performance issue**, not a simulation determinism issue. The simulation remains deterministic, but it is running slower than the requester's timeout threshold.
 
 - **Always do**: Unlock the BQL (`bql_unlock()`) before blocking on a Zenoh network reply. If the BQL is held during a block, QEMU will permanently deadlock.
 - **Ask first**: Before proposing any Python-based synchronization scripts inside the simulation loop. Native C plugins are a hard requirement for performance.

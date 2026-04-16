@@ -439,7 +439,27 @@ To support LLM-driven debugging and lifecycle management, virtmcu includes a sta
 
 ---
 
-## 10. Guide for Junior Developers
+## 11. Common Pitfalls & Troubleshooting
+
+### SysBus Mapping vs. `-device` (The arm-generic-fdt Trap)
+A frequent point of confusion for developers migrating from standard QEMU machines is why a device added via the `-device` command line option is not accessible to the guest firmware (resulting in Data Aborts).
+
+**The Cause**: In the `arm-generic-fdt` machine, QEMU uses the Device Tree as the source of truth for both instantiation *and* memory mapping. If you add a device via `-device`, QEMU will instantiate the object, but it will **not** automatically map its MMIO regions into the guest's physical address space. Mapping only occurs if a corresponding node exists in the DTB with a `reg` property.
+
+**The Fix**: Always declare your peripherals in the platform YAML. The `yaml2qemu.py` tool will ensure that both the DTB node is created (mapping the device) and the corresponding `-device` argument is either handled by QEMU's FDT loader or added to the CLI.
+
+### `mmio-socket-bridge` Address Offsets
+The `mmio-socket-bridge` (and most other virtmcu bridges) delivers **offsets relative to the region base**, not absolute physical addresses. 
+
+**The Cause**: This follows standard QEMU `MemoryRegionOps` behavior. If a bridge is mapped at `0x10000000` and the guest performs a read at `0x10000004`, the `addr` field in the `mmio_req` packet will be `0x00000004`.
+
+**The Pitfall**: External co-simulation adapters (e.g., in Python or SystemC) must be aware of this. If your adapter logic expects absolute addresses, you must either add the base address in the adapter or mask the incoming address correctly. 
+
+### Zenoh Router Reachability
+If QEMU hangs at startup or `TimeAuthority` reports a "Timeout" during `sim/clock/advance`, first verify that the Zenoh router is reachable from the QEMU container.
+
+- **Check `ZENOH_ROUTER`**: Ensure the `router=` property on `zenoh-clock` matches your router's endpoint.
+- **Status Codes**: Check the `status` field in the `ClockReadyPayload`. A status of `1` (`ZCLOCK_STATUS_STALL_TIMEOUT`) indicates that QEMU reached the router but failed to advance instructions fast enough to hit the next quantum boundary.
 
 If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:
 
