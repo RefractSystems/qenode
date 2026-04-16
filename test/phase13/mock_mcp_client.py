@@ -47,22 +47,12 @@ async def main():
         "method": "notifications/initialized"
     })
 
+    # Read the exact YAML file used in phase 3.5 tests
+    yaml_path = os.path.join(WORKSPACE_DIR, "test", "phase3", "test_board.yaml")
+    with open(yaml_path, "r") as f:
+        board_config = f.read()
+
     # 2. Provision Board
-    board_config = """
-machine:
-  name: test-node
-  cpu: cortex-a15
-peripherals:
-  - name: ram
-    type: Memory.MappedMemory
-    address: 0x40000000
-    properties:
-      size: 0x8000000
-  - name: uart0
-    type: pl011
-    address: 0x09000000
-    irq: 1
-"""
     await send_json({
         "jsonrpc": "2.0",
         "id": 2,

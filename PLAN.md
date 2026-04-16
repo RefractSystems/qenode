@@ -548,10 +548,17 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Provide deterministic, virtual-timestamped simulation of wireless transceivers to bridge the gap between simple Ethernet and complex IoT meshing.
 
 **Tasks**:
-- [ ] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
-- [ ] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
-- [ ] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
-- [ ] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+- [x] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
+- [x] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
+- [x] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
+- [x] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+
+### Phase 14 Technical Debt & Future Risks
+- [ ] **14.5** **True 802.15.4 MAC State Machine**: `hw/zenoh/zenoh-802154.c` acts as a simple byte-pipe (FIFO). Real radios (e.g., nRF52840, AT86RF233) have complex state machines managing CSMA/CA, auto-ACKs, frame filtering by PAN ID/Short Address, and MAC-level timers. Guest firmware using standard Zephyr/Contiki drivers will fail without these hardware-level behaviors.
+- [ ] **14.6** **O(N²) RF Coordinator Scaling**: The coordinator broadcasts every RF packet to every known node, calculating Euclidean distance for each pair. A dense mesh network (100+ nodes) will bottleneck the single-threaded `tokio` select loop, stalling the deterministic simulation. Requires spatial partitioning (e.g., quad-trees).
+- [ ] **14.7** **Dynamic Topology vs. Static Hashmap**: The coordinator currently hardcodes the `node_positions` hash map. For true cyber-physical simulation, it must dynamically subscribe to `sim/telemetry/position` updates from the physics engine (e.g., MuJoCo).
+- [ ] **14.8** **RF Header Schema Rigidity**: The `ZenohRfHeader` uses rigid, 14-byte packed C-structs. Adding RF metadata (e.g., antenna ID, multi-path hints) will break fleet compatibility. Needs a FlatBuffers/CBOR migration similar to Phase 12 telemetry.
+- [ ] **14.9** **Isotropic RF Assumptions**: The current Free Space Path Loss (FSPL) model assumes perfect omnidirectional antennas and ignores multi-path fading, physical obstacles, and interference from overlapping transmissions.
 
 ---
 
