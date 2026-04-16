@@ -24,7 +24,8 @@ FROM ubuntu:24.04 AS toolchain
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
     cmake \
@@ -51,7 +52,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cargo \
     rustc \
     gh \
-    jq \
+    jq || \
+    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    build-essential \
+    git \
+    cmake \
+    meson \
+    ninja-build \
+    python3 \
+    python3-venv \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    flex \
+    bison \
+    device-tree-compiler \
+    libslirp-dev \
+    curl \
+    wget \
+    ca-certificates \
+    b4 \
+    gdb \
+    gdb-multiarch \
+    gcc-arm-none-eabi \
+    gcc-riscv64-linux-gnu \
+    binutils-riscv64-linux-gnu \
+    cargo \
+    rustc \
+    gh \
+    jq)) \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
@@ -70,7 +99,8 @@ LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
     cmake \
@@ -98,7 +128,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rustc \
     strace \
     gh \
-    jq \
+    jq || \
+    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    build-essential \
+    git \
+    cmake \
+    meson \
+    ninja-build \
+    python3 \
+    python3-venv \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    flex \
+    bison \
+    device-tree-compiler \
+    libslirp-dev \
+    curl \
+    wget \
+    ca-certificates \
+    b4 \
+    gdb \
+    gdb-multiarch \
+    gcc-arm-none-eabi \
+    gcc-riscv64-linux-gnu \
+    binutils-riscv64-linux-gnu \
+    cargo \
+    rustc \
+    strace \
+    gh \
+    jq)) \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
