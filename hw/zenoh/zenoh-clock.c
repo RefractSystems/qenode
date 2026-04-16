@@ -139,11 +139,27 @@ static void on_query(z_loaned_query_t *query, void *context)
 {
     ZenohClockState *s = context;
     const z_loaned_bytes_t *payload_bytes = z_query_payload(query);
-    if (!payload_bytes) return;
+    if (!payload_bytes) {
+        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — query arrived with no payload\n",
+                s->node_id);
+        ClockReadyPayload err = {.current_vtime_ns = 0, .n_frames = 0, .error_code = 2};
+        z_owned_bytes_t err_bytes;
+        z_bytes_copy_from_buf(&err_bytes, (const uint8_t *)&err, sizeof(err));
+        z_query_reply(query, z_query_keyexpr(query), z_move(err_bytes), NULL);
+        return;
+    }
 
     ClockAdvancePayload req = {0};
     z_bytes_reader_t reader = z_bytes_get_reader(payload_bytes);
-    z_bytes_reader_read(&reader, (uint8_t *)&req, sizeof(req));
+    if (z_bytes_reader_read(&reader, (uint8_t *)&req, sizeof(req)) != sizeof(req)) {
+        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — malformed ClockAdvancePayload "
+                "(expected %zu bytes)\n", s->node_id, sizeof(req));
+        ClockReadyPayload err = {.current_vtime_ns = 0, .n_frames = 0, .error_code = 2};
+        z_owned_bytes_t err_bytes;
+        z_bytes_copy_from_buf(&err_bytes, (const uint8_t *)&err, sizeof(err));
+        z_query_reply(query, z_query_keyexpr(query), z_move(err_bytes), NULL);
+        return;
+    }
 
     qemu_mutex_lock(&s->mutex);
     qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
@@ -180,7 +196,11 @@ static void on_query(z_loaned_query_t *query, void *context)
 
     z_owned_bytes_t reply_bytes;
     z_bytes_copy_from_buf(&reply_bytes, (const uint8_t *)&rep, sizeof(rep));
-    z_query_reply(query, z_query_keyexpr(query), z_move(reply_bytes), NULL);
+    if (z_query_reply(query, z_query_keyexpr(query), z_move(reply_bytes), NULL) != 0) {
+        /* Transport is gone — TimeAuthority will timeout and detect the drop. */
+        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — z_query_reply failed; "
+                "TimeAuthority will not receive vtime reply\n", s->node_id);
+    }
 }
 
 static void zenoh_clock_realize(DeviceState *dev, Error **errp)
@@ -240,7 +260,13 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     z_closure_query(&callback, on_query, NULL, s);
     z_owned_keyexpr_t kexpr;
     z_keyexpr_from_str(&kexpr, topic);
-    z_declare_queryable(z_session_loan(&s->session), &s->queryable, z_keyexpr_loan(&kexpr), z_move(callback), NULL);
+    if (z_declare_queryable(z_session_loan(&s->session), &s->queryable,
+                            z_keyexpr_loan(&kexpr), z_move(callback), NULL) != 0) {
+        z_keyexpr_drop(z_move(kexpr));
+        error_setg(errp, "[zenoh-clock] node=%u: failed to declare queryable on '%s'",
+                   s->node_id, topic);
+        return;
+    }
     z_keyexpr_drop(z_move(kexpr));
 }
 
