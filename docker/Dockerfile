@@ -156,7 +156,9 @@ RUN apt-get update && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
 
 # Install stable Rust via rustup (for both root and vscode user)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+# Use a clean home for root to avoid existing settings warnings
+RUN rm -rf /root/.rustup /root/.cargo && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
