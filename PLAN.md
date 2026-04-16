@@ -498,6 +498,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
 - [x] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
 - [x] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+- [x] **10.6** **Native Zenoh Actuator Support**: Implement `zenoh-actuator` QOM device to allow firmware to publish control signals directly to Zenoh topics (e.g. `firmware/control/{node}/{id}`).
 
 ---
 
