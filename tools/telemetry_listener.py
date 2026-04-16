@@ -1,17 +1,18 @@
-import sys
 import os
+import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(SCRIPT_DIR, "telemetry_fbs"))
 
-import zenoh
-from Virtmcu.Telemetry.TraceEvent import TraceEvent
+import zenoh  # noqa: E402
+from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
+
 
 def on_sample(sample):
     payload = sample.payload.to_bytes()
     try:
         ev = TraceEvent.GetRootAs(payload, 0)
-        
+
         ts = ev.TimestampNs()
         ev_type = ev.Type()
         ev_id = ev.Id()
