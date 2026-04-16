@@ -536,10 +536,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Provide a Model Context Protocol (MCP) server that enables AI agents to semantically interact with the simulation. This allows an AI to provision boards, flash firmware, and debug running systems via high-level tools rather than raw shell commands.
 
 **Tasks**:
-- [ ] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
-- [ ] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
-- [ ] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
-- [ ] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
+- [x] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
+- [x] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
+- [x] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
+- [x] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
 
 ---
 

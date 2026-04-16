@@ -15,7 +15,7 @@ The Model Context Protocol (MCP) is an open standard that allows AI models to se
 The virtmcu MCP server is written in Python and is located in `tools/mcp_server`. To use it with an AI client, you configure the client to launch the server as a subprocess.
 
 ```bash
-python3 -m tools.mcp_server
+python3 -m virtmcu.mcp_server
 ```
 
 ## Available Tools
