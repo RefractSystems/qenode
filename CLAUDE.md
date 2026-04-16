@@ -6,6 +6,20 @@ Update it when architectural decisions change or new constraints are discovered.
 
 ---
 
+## TOP PRIORITY: Binary Fidelity
+
+**The same firmware ELF that runs on a real MCU must run unmodified in VirtMCU.**
+
+This is the non-negotiable design constraint from which everything else follows:
+- No virtmcu-specific startup code, linker sections, or compile-time flags in firmware.
+- Peripherals mapped at the **exact** base addresses the real MCU datasheet specifies.
+- Register layouts, reset values, and interrupt numbers must match physical silicon.
+- \`zenoh-clock\` and all co-simulation infrastructure are **invisible to the firmware** — they operate at the QEMU level with no guest MMIO exposure.
+
+Any feature that requires firmware modification to work in VirtMCU is a bug in VirtMCU, not a firmware problem. See [ADR-006](docs/ADR-006-binary-fidelity.md) for the full rationale and enforcement rules.
+
+---
+
 ## What This Project Is
 
 **virtmcu** is a **deterministic multi-node firmware simulation framework** built on QEMU.

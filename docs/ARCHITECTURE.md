@@ -7,12 +7,32 @@ It is the QEMU layer of **FirmwareStudio**, a digital twin platform for embedded
 where a physics engine (MuJoCo) simulates the physical world and acts as the master clock
 for all cyber nodes.
 
-The core thesis: firmware for cyber-physical systems cannot be tested in isolation. It
-reads sensors, drives actuators, and communicates with peer microcontrollers — all of
-which unfold in physical time. Correct simulation of this system requires that every
-virtual microcontroller shares the same notion of time, that inter-node communication is
-deterministically ordered by virtual time (not wall-clock scheduling), and that the
-boundary between firmware registers and physical quantities is explicitly modeled.
+### Binary Fidelity — the non-negotiable constraint
+
+**The same firmware ELF that programs a real MCU must run unmodified inside VirtMCU.**
+
+This is the highest-priority design rule. It means:
+- Peripherals are mapped at the **exact** base addresses and with the **exact** register
+  layouts specified in the target MCU's datasheet.
+- Interrupt numbers match the physical NVIC/GIC configuration.
+- Reset register values match silicon defaults.
+- Co-simulation infrastructure (`zenoh-clock`, `zenoh-netdev`, `zenoh-chardev`) is
+  entirely invisible to the firmware — no guest-visible MMIO, no firmware API.
+- Firmware is compiled once for the MCU target. It does not know whether it is running
+  on silicon or inside QEMU.
+
+Any feature that requires the firmware to be recompiled or modified to work in VirtMCU
+is a defect in VirtMCU's peripheral models or machine description, not a firmware issue.
+See [ADR-006](ADR-006-binary-fidelity.md) for enforcement rules and test requirements.
+
+### The co-simulation thesis
+
+Firmware for cyber-physical systems cannot be tested in isolation. It reads sensors,
+drives actuators, and communicates with peer microcontrollers — all of which unfold in
+physical time. Correct simulation requires that every virtual MCU shares the same notion
+of time, that inter-node communication is deterministically ordered by virtual time (not
+wall-clock scheduling), and that the boundary between firmware registers and physical
+quantities is explicitly modeled.
 
 virtmcu addresses these requirements at the QEMU layer, using native C/Rust QOM modules
 linked directly into the emulator. No Python daemons run in the simulation loop.

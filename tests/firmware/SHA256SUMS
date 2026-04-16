@@ -1,0 +1,11 @@
+# SHA256 checksums for binary fidelity reference firmware.
+# Each entry corresponds to a pre-built ELF validated on real silicon.
+# DO NOT update a checksum without re-validating the binary on real hardware first.
+# Format: <sha256>  <path-relative-to-tests/firmware/>
+#
+# To add a new binary:
+#   sha256sum path/to/firmware.elf >> tests/firmware/SHA256SUMS
+#   # then validate on silicon, capture golden_uart.txt, commit both together
+#
+# Placeholder — replace with actual sha256 of echo.elf once validated on silicon:
+# <sha256-of-echo.elf>  cortex-a15-virt/echo.elf

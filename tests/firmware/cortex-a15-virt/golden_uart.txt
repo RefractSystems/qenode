@@ -1,0 +1,2 @@
+Interactive UART Echo Ready.
+Type something:
