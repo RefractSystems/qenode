@@ -77,6 +77,8 @@ typedef struct {
 
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
 extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
+extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
 extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
@@ -93,23 +95,45 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     insertion0 = '\n#include "virtmcu/hooks.h"'
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Add the function pointer definitions separately for idempotency
-    marker1_a = "/* main execution loop */"
-    insertion1_a = "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\n"
-    patch_file(cpu_exec_c, marker1_a, insertion1_a, after=True)
+    # 3. Patch hw/core/irq.c
+    irq_c = os.path.join(qemu, "hw", "core", "irq.c")
+    patch_file(irq_c, '#include "hw/core/irq.h"', '\n#include "virtmcu/hooks.h"', after=True)
 
-    marker1_b = "void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;"
-    insertion1_b = "\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\n"
-    patch_file(cpu_exec_c, marker1_b, insertion1_b, after=True)
+    # Add the function pointer definitions separately for idempotency
+    patch_file(
+        irq_c,
+        '#include "virtmcu/hooks.h"',
+        "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\nvoid (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;\nvoid (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;\n",
+        after=True,
+    )
+
+    irq_marker = "void qemu_set_irq(qemu_irq irq, int level)\n{"
+    irq_insertion = """
+    if (virtmcu_irq_hook) {
+        virtmcu_irq_hook(irq->opaque, irq->n, level);
+    }
+"""
+    patch_file(irq_c, irq_marker, irq_insertion, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
-    # We use a more specific marker to ensure correct placement and indentation
-    marker2 = "while (!cpu_handle_interrupt(cpu, &last_tb)) {"
-    # Indentation: 12 spaces for the 'if', 16 for the call (while is at 8)
-    insertion2 = (
-        "\n            if (virtmcu_tcg_quantum_hook) {\n                virtmcu_tcg_quantum_hook(cpu);\n            }\n"
-    )
-    patch_file(cpu_exec_c, marker2, insertion2, after=True)
+
+    # 6. Patch cpu_handle_halt in cpu-exec.c
+    halt_marker = "cpu->halted = 0;"
+    halt_insertion = "\n        if (virtmcu_cpu_halt_hook) { virtmcu_cpu_halt_hook(cpu, false); }\n"
+    patch_file(cpu_exec_c, halt_marker, halt_insertion, after=True)
+
+    # We also need to hook where halted is set to 1.
+    # This is target-specific, but let's try to find a generic place or common targets.
+    # In ARM:
+    arm_op_helper = os.path.join(qemu, "target", "arm", "tcg", "op_helper.c")
+    if os.path.exists(arm_op_helper):
+        patch_file(arm_op_helper, '#include "qemu/osdep.h"', '\n#include "virtmcu/hooks.h"', after=True)
+        patch_file(
+            arm_op_helper,
+            "cs->halted = 1;",
+            "\n    if (virtmcu_cpu_halt_hook) { virtmcu_cpu_halt_hook(cs, true); }\n",
+            after=False,
+        )
 
 
 if __name__ == "__main__":
