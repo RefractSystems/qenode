@@ -1,11 +1,12 @@
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Import functions from analyze_coverage
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from tools.analyze_coverage import parse_drcov, get_elf_symbols, main
+from tools.analyze_coverage import get_elf_symbols, main, parse_drcov
 
 
 def test_parse_drcov_not_found(capsys):
@@ -13,6 +14,7 @@ def test_parse_drcov_not_found(capsys):
     assert bbs == []
     out, _ = capsys.readouterr()
     assert "Error: Coverage file nonexistent_file.drcov not found" in out
+
 
 def test_parse_drcov_no_bb_table(tmp_path, capsys):
     f = tmp_path / "bad.drcov"
@@ -22,6 +24,7 @@ def test_parse_drcov_no_bb_table(tmp_path, capsys):
     out, _ = capsys.readouterr()
     assert "Error: Could not find BB Table in drcov file" in out
 
+
 def test_parse_drcov_bad_count(tmp_path, capsys):
     f = tmp_path / "bad.drcov"
     f.write_bytes(b"BB Table: NaN\n")
@@ -30,20 +33,23 @@ def test_parse_drcov_bad_count(tmp_path, capsys):
     out, _ = capsys.readouterr()
     assert "Error: Could not parse BB count: NaN" in out
 
+
 def test_parse_drcov_valid(tmp_path):
     f = tmp_path / "good.drcov"
     # Create valid drcov data: "BB Table: 2\n" + 2 entries of 8 bytes
     import struct
+
     content = b"BB Table: 2\n"
     # bb_entry_t: uint32 start, uint16 size, uint16 mod_id
     content += struct.pack("<IHH", 0x1000, 16, 0)
     content += struct.pack("<IHH", 0x1010, 8, 0)
     f.write_bytes(content)
-    
+
     bbs = parse_drcov(str(f))
     assert len(bbs) == 2
     assert bbs[0] == (0x1000, 16)
     assert bbs[1] == (0x1010, 8)
+
 
 def test_get_elf_symbols_not_found(capsys):
     syms = get_elf_symbols("nonexistent_file.elf")
@@ -51,35 +57,37 @@ def test_get_elf_symbols_not_found(capsys):
     out, _ = capsys.readouterr()
     assert "Error: ELF file nonexistent_file.elf not found" in out
 
+
 @patch("tools.analyze_coverage.ELFFile")
 def test_get_elf_symbols_valid(mock_elf_file_cls, tmp_path):
     f = tmp_path / "dummy.elf"
     f.touch()
-    
+
     # Mock ELF structures
     mock_elf = MagicMock()
     mock_elf_file_cls.return_value = mock_elf
-    
+
     mock_section = MagicMock()
     # Need to trick isinstance(section, SymbolTableSection)
     import elftools.elf.sections
+
     mock_section.__class__ = elftools.elf.sections.SymbolTableSection
-    
+
     sym1 = MagicMock()
     sym1.name = "func1"
     sym1.__getitem__.side_effect = lambda k: {"st_info": {"type": "STT_FUNC"}, "st_value": 0x1000, "st_size": 16}[k]
-    
+
     sym2 = MagicMock()
     sym2.name = "func2"
     sym2.__getitem__.side_effect = lambda k: {"st_info": {"type": "STT_FUNC"}, "st_value": 0x1020, "st_size": 0}[k]
-    
+
     sym3 = MagicMock()
     sym3.name = "func3"
     sym3.__getitem__.side_effect = lambda k: {"st_info": {"type": "STT_FUNC"}, "st_value": 0x1030, "st_size": 0}[k]
-    
+
     mock_section.iter_symbols.return_value = [sym1, sym2, sym3]
     mock_elf.iter_sections.return_value = [mock_section]
-    
+
     syms = get_elf_symbols(str(f))
     assert len(syms) == 3
     assert syms[0]["name"] == "func1"
@@ -88,6 +96,7 @@ def test_get_elf_symbols_valid(mock_elf_file_cls, tmp_path):
     assert syms[1]["size"] == 16  # Automatically derived from next address
     assert syms[2]["name"] == "func3"
     assert syms[2]["size"] == 16  # Fallback since it's the last one
+
 
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
@@ -99,6 +108,7 @@ def test_main_no_bbs(mock_get_elf_symbols, mock_parse_drcov, capsys):
     assert e.value.code == 1
     out, _ = capsys.readouterr()
     assert "No execution data found." in out
+
 
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
@@ -112,34 +122,32 @@ def test_main_no_symbols(mock_get_elf_symbols, mock_parse_drcov, capsys):
     out, _ = capsys.readouterr()
     assert "No symbols found to analyze." in out
 
+
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf", "--fail-under", "100"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
 def test_main_coverage_success_and_failure(mock_get_elf_symbols, mock_parse_drcov, capsys):
-    mock_parse_drcov.return_value = [(0x1000, 8)] # Only half of func1 covered
-    mock_get_elf_symbols.return_value = [
-        {"name": "func1", "address": 0x1000, "size": 16}
-    ]
-    
+    mock_parse_drcov.return_value = [(0x1000, 8)]  # Only half of func1 covered
+    mock_get_elf_symbols.return_value = [{"name": "func1", "address": 0x1000, "size": 16}]
+
     with pytest.raises(SystemExit) as e:
         main()
     assert e.value.code == 1  # Should fail because fail-under=100 and we have 50%
-    
+
     out, _ = capsys.readouterr()
     assert "func1                          Yes            50.0%" in out
     assert "FAILED: Coverage 50.0% is below required 100.0%" in out
+
 
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
 def test_main_coverage_pass(mock_get_elf_symbols, mock_parse_drcov, capsys):
-    mock_parse_drcov.return_value = [(0x1000, 16)] 
-    mock_get_elf_symbols.return_value = [
-        {"name": "func1", "address": 0x1000, "size": 16}
-    ]
-    
-    main() # Shouldn't exit
-    
+    mock_parse_drcov.return_value = [(0x1000, 16)]
+    mock_get_elf_symbols.return_value = [{"name": "func1", "address": 0x1000, "size": 16}]
+
+    main()  # Shouldn't exit
+
     out, _ = capsys.readouterr()
     assert "func1                          Yes           100.0%" in out
     assert "Coverage check passed." in out

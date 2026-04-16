@@ -1,17 +1,15 @@
 import pytest
+
 from tools.vproto import (
+    MMIO_REQ_WRITE,
+    SYSC_MSG_IRQ_SET,
+    VIRTMCU_PROTO_MAGIC,
+    VIRTMCU_PROTO_VERSION,
     ClockAdvanceReq,
     ClockReadyResp,
     MmioReq,
     SyscMsg,
     VirtmcuHandshake,
-    VIRTMCU_PROTO_MAGIC,
-    VIRTMCU_PROTO_VERSION,
-    MMIO_REQ_READ,
-    MMIO_REQ_WRITE,
-    SYSC_MSG_RESP,
-    SYSC_MSG_IRQ_SET,
-    SYSC_MSG_IRQ_CLEAR,
 )
 
 
@@ -19,10 +17,11 @@ def test_virtmcu_handshake_pack_unpack():
     hs = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
     packed = hs.pack()
     assert len(packed) == 8
-    
+
     unpacked = VirtmcuHandshake.unpack(packed)
     assert unpacked.magic == VIRTMCU_PROTO_MAGIC
     assert unpacked.version == VIRTMCU_PROTO_VERSION
+
 
 def test_virtmcu_handshake_unpack_error():
     with pytest.raises(ValueError, match="Expected 8 bytes"):
@@ -42,7 +41,7 @@ def test_mmio_req_pack_unpack():
     packed = req.pack()
     # 1+1+2+4 + 8 + 8 + 8 = 32
     assert len(packed) == 32
-    
+
     unpacked = MmioReq.unpack(packed)
     assert unpacked.type == MMIO_REQ_WRITE
     assert unpacked.size == 4
@@ -51,6 +50,7 @@ def test_mmio_req_pack_unpack():
     assert unpacked.vtime_ns == 1234567890
     assert unpacked.addr == 0x40001000
     assert unpacked.data == 0xDEADBEEF
+
 
 def test_mmio_req_unpack_error():
     with pytest.raises(ValueError, match="Expected 32 bytes"):
@@ -66,11 +66,12 @@ def test_sysc_msg_pack_unpack():
     packed = msg.pack()
     # 4+4+8 = 16
     assert len(packed) == 16
-    
+
     unpacked = SyscMsg.unpack(packed)
     assert unpacked.type == SYSC_MSG_IRQ_SET
     assert unpacked.irq_num == 5
     assert unpacked.data == 0
+
 
 def test_sysc_msg_unpack_error():
     with pytest.raises(ValueError, match="Expected 16 bytes"):
@@ -82,10 +83,11 @@ def test_clock_advance_req_pack_unpack():
     packed = req.pack()
     # 8+8 = 16
     assert len(packed) == 16
-    
+
     unpacked = ClockAdvanceReq.unpack(packed)
     assert unpacked.delta_ns == 1000000
     assert unpacked.mujoco_time_ns == 2000000
+
 
 def test_clock_advance_req_unpack_error():
     with pytest.raises(ValueError, match="Expected 16 bytes"):
@@ -97,11 +99,12 @@ def test_clock_ready_resp_pack_unpack():
     packed = resp.pack()
     # 8+4+4 = 16
     assert len(packed) == 16
-    
+
     unpacked = ClockReadyResp.unpack(packed)
     assert unpacked.current_vtime_ns == 5000000
     assert unpacked.n_frames == 10
     assert unpacked.error_code == 0
+
 
 def test_clock_ready_resp_unpack_error():
     with pytest.raises(ValueError, match="Expected 16 bytes"):
