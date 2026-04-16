@@ -514,20 +514,20 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
-## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired)
+## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired) ✅
 
-**Goal**: Provide the backend APIs and deterministic telemetry streams required for FirmwareStudio to build a rich, COOJA-like interactive frontend (visual timelines, dynamic radio environments, and interactive virtual boards) without introducing a GUI into QEMU.
+**Status**: Done (Hardened)
 
-**Tasks**:
-- [ ] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
-- [ ] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates from the physics engine without restarting the simulation.
-- [ ] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) to automatically bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics, allowing any frontend to render interactive widgets.
-- [ ] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology using the new Zenoh APIs.
+### Tasks
+- [x] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
+- [x] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates.
+- [x] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) and implement `hw/zenoh/zenoh-ui.c` to bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics.
+- [x] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology.
 
 ### Phase 12 Technical Debt & Future Risks
-- [ ] **12.5** **Concurrency inside `irq_slots`**: In `telemetry_irq_hook`, we populate a static `irq_slots` table to map `opaque` pointers to a stable ID. Because `qemu_set_irq` is called under the Big QEMU Lock (BQL) by TCG or standard device handlers, this is currently thread-safe. However, if an external adapter or a custom QEMU subsystem ever fires `qemu_set_irq` outside of the BQL, this array insertion will face race conditions.
-- [ ] **12.6** **Struct Protocol Rigidity**: Since `TraceEvent` is a packed binary struct, if a new field (e.g., `uint32_t metadata`) is ever added, all Python listeners will instantly break with `struct.error`. We need to migrate to a more robust serialization format (like CBOR or FlatBuffers) for telemetry, as discussed during the Phase 12.1 implementation.
-- [ ] **12.7** **QOM Path Resolution for IRQs**: Currently, telemetry maps opaque IRQ owners to arbitrary integer slots (e.g., `dev=2 pin=7`). We need to resolve the QOM path of the device to provide human-readable names (e.g., `uart0`) in the trace. This requires a variable-length string and a new device-registration event type, so it is deferred until the FlatBuffers/CBOR schema redesign (Task 12.6) is complete.
+- [x] **12.5** **Concurrency inside `irq_slots`**: Added `irq_slots_lock` (QemuMutex) to ensure thread-safety when IRQs are triggered outside the BQL.
+- [x] **12.6** **Struct Protocol Rigidity**: Migrated telemetry to FlatBuffers for schema evolution.
+- [ ] **12.7** **Safe QOM Path Resolution for IRQs**: (DEFERRED) Resolving canonical paths in `telemetry_irq_hook` is unsafe outside the BQL. A future revision should populate a name-cache during device realization or use `object_dynamic_cast` within a BQL-guaranteed wrapper.
 
 ---
 
@@ -623,6 +623,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 | R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc3 |
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
+| R11 | Deadlock in `zenoh-clock.c` shutdown | `z_session_drop` in the main thread can deadlock with Zenoh callbacks waiting for the BQL. Needs a non-blocking shutdown sequence. |
 
 ---
 

@@ -8,4 +8,5 @@ authors.workspace = true
 crate-type = ["staticlib"]
 
 [dependencies]
+zenoh = "1.0.0"
 virtmcu-qom = { path = "../virtmcu-qom" }

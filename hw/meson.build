@@ -71,6 +71,27 @@ rust_dummy_ss.add(declare_dependency(
 ))
 hw_virtmcu_modules += {'rust-dummy': rust_dummy_ss}
 
+# ── zenoh-clock-rust ──────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh virtual clock.
+# Compiles to hw-virtmcu-zenoh-clock-rust.so.
+rust_zenoh_clock_lib = custom_target(
+  'rust_zenoh_clock_lib',
+  input: 'rust/zenoh-clock/src/lib.rs',
+  output: ['libzenoh_clock.a', 'rust_zenoh_clock_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh_clock && cp target/release/libzenoh_clock.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_clock.a', meson.current_build_dir() / 'rust_zenoh_clock_trigger.c'
+  ]
+)
+zenoh_clock_rust_ss = ss.source_set()
+zenoh_clock_rust_ss.add(files('zenoh/zenoh-clock-rust.c'))
+zenoh_clock_rust_ss.add(rust_zenoh_clock_lib[1])
+zenoh_clock_rust_ss.add(declare_dependency(
+  link_args: [meson.current_build_dir() / 'libzenoh_clock.a']
+))
+hw_virtmcu_modules += {'zenoh-clock-rust': zenoh_clock_rust_ss}
+
 subdir('zenoh')
 
 # ── remote-port-bridge ────────────────────────────────────────────────────────

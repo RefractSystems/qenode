@@ -122,8 +122,15 @@ async def main():
     })
     res = await recv_json()
 
+    # We must explicitly tell the server to exit before waiting, otherwise it hangs listening to stdin
+    # MCP doesn't have an explicit 'shutdown' in the python sdk that breaks the loop usually
+    # Just terminate and wait.
     proc.terminate()
-    await proc.wait()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
     print("Done.")
 
 if __name__ == "__main__":
