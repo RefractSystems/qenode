@@ -33,7 +33,7 @@ sequenceDiagram
     FW->>TCG: (1ms of virtual time elapses)
     TCG->>ZC: TCG Hook: Quantum Complete!
     Note over ZC: QEMU pauses execution
-    ZC-->>TA: Zenoh REPLY: current_vtime_ns
+    ZC-->>TA: Zenoh REPLY: {vtime_ns, n_frames, error_code}
     Note over TA: Physics engine calculates gravity, collisions, etc.
 ```
 
@@ -185,7 +185,11 @@ When a firmware access to an `mmio-socket-bridge` occurs, the vCPU thread blocks
 
 ### Zenoh-Clock Stalls
 Because virtual time only advances when instructions run (or timers fire), a QEMU process that is heavily throttled by host load might not reach its next quantum boundary within the `TimeAuthority`'s wall-clock deadline.
-- If QEMU fails to reach the boundary, `zenoh-clock` will return `ZCLOCK_STATUS_STALL_TIMEOUT` (status 1) to the requester.
+- If QEMU fails to reach the boundary, `zenoh-clock` will return an error code in the `ClockReadyPayload`.
+- **Error Codes**:
+    - `0` (OK): Quantum completed successfully.
+    - `1` (STALL): QEMU did not reach TB boundary within 2 seconds (likely firmware crash or deadlock).
+    - `2` (ZENOH_ERROR): Transport-level failure or malformed payload.
 - This is a **host performance issue**, not a simulation determinism issue. The simulation remains deterministic, but it is running slower than the requester's timeout threshold.
 
 - **Always do**: Unlock the BQL (`bql_unlock()`) before blocking on a Zenoh network reply. If the BQL is held during a block, QEMU will permanently deadlock.

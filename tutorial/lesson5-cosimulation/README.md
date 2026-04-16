@@ -22,14 +22,14 @@ Firmware
   │  ld/str (ARM MMIO)
   ▼
 QEMU MemoryRegion (mmio-socket-bridge)
-  │  struct mmio_req  [24 bytes]
+  │  struct mmio_req  [32 bytes]
   │  ─────────────► Unix Domain Socket ─────────────►
   │                                                  SystemC QemuAdapter
   │                                                      │  b_transport()
   │                                                      ▼
   │                                                  RegisterFile
   │                                                      │
-  │  struct mmio_resp [ 8 bytes]                         │
+  │  struct sysc_msg [ 16 bytes]                         │
   │  ◄───────────────────────────────────────────────────┘
   ▼
 Firmware gets read value
@@ -43,22 +43,39 @@ both the QEMU device and the SystemC adapter — never duplicate the structs.
 
 ## The Wire Protocol (`hw/misc/virtmcu_proto.h`)
 
+All connections must begin with a **handshake**:
 ```c
-struct mmio_req {          /* QEMU → adapter, 24 bytes */
+struct virtmcu_handshake { /* 8 bytes */
+    uint32_t magic;        /* 0x564D4355 ("VMCU") */
+    uint32_t version;      /* 1 */
+};
+```
+
+### Request Payload
+
+```c
+struct mmio_req {          /* QEMU → adapter, 32 bytes */
     uint8_t  type;         /* MMIO_REQ_READ (0) or MMIO_REQ_WRITE (1) */
     uint8_t  size;         /* access width: 1, 2, 4, or 8 bytes */
     uint16_t reserved1;
     uint32_t reserved2;
+    uint64_t vtime_ns;     /* QEMU virtual time in nanoseconds */
     uint64_t addr;         /* byte offset within the mapped region */
     uint64_t data;         /* write payload (ignored for reads) */
 };
+```
 
-struct mmio_resp {         /* adapter → QEMU, 8 bytes */
-    uint64_t data;         /* read value (ignored for writes) */
+### Response Payload
+
+```c
+struct sysc_msg {          /* adapter → QEMU, 16 bytes */
+    uint32_t type;         /* SYSC_MSG_RESP (0), SYSC_MSG_IRQ_SET (1), SYSC_MSG_IRQ_CLEAR (2) */
+    uint32_t irq_num;      /* IRQ index (ignored for RESP) */
+    uint64_t data;         /* read value (ignored for writes and IRQs) */
 };
 ```
 
-The protocol is synchronous: QEMU sends one request and *blocks* waiting for
+The protocol is synchronous for MMIO: QEMU sends one request and *blocks* waiting for
 exactly one response before returning to the firmware.
 
 ---

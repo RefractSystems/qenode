@@ -92,12 +92,13 @@ not acquire BQL in the suspend path.
 | 0 | 8 | `delta_ns` | Nanoseconds to advance virtual time |
 | 8 | 8 | `mujoco_time_ns` | MuJoCo wall time (informational) |
 
-### Reply payload (`ClockReadyPayload`, 12 bytes, little-endian)
+### Reply payload (`ClockReadyPayload`, 16 bytes, little-endian)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 8 | `current_vtime_ns` | Virtual clock value after the quantum |
 | 8 | 4 | `n_frames` | Reserved, always 0 |
+| 12 | 4 | `error_code` | 0=OK, 1=STALL, 2=ZENOH_ERROR |
 
 ---
 
@@ -133,7 +134,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
 
 # Start QEMU in suspend mode
 scripts/run.sh \
-    --dtb /tmp/dummy.dtb \
+    --dtb test/phase1/minimal.dtb \
     -kernel /tmp/spin.elf \
     -device zenoh-clock,mode=suspend,node=0 \
     -nographic -monitor none &
@@ -145,8 +146,11 @@ s = zenoh.open(zenoh.Config())
 time.sleep(1)  # wait for QEMU to register queryable
 payload = struct.pack("<QQ", 5_000_000, 0)  # advance 5 ms
 for reply in s.get("sim/clock/advance/0", payload=payload, timeout=5.0):
-    vtime_ns, _ = struct.unpack("<QI", reply.ok.payload.to_bytes())
-    print(f"Virtual time after quantum: {vtime_ns} ns")
+    vtime_ns, _, err = struct.unpack("<QII", reply.ok.payload.to_bytes())
+    if err == 0:
+        print(f"Virtual time after quantum: {vtime_ns} ns")
+    else:
+        print(f"Error: {err}")
 s.close()
 PY
 ```

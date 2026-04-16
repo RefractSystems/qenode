@@ -44,7 +44,7 @@ def send_query(session, delta_ns, label):
     if reply.ok is None:
         print(f"{label}: reply.ok IS NONE. Full reply: {reply}", file=sys.stderr)
         sys.exit(1)
-    return unpack_rep(reply.ok.payload.to_bytes())
+    return unpack_rep(reply.ok.payload)
 
 
 def main():

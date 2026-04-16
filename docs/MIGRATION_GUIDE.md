@@ -47,3 +47,21 @@ The original POC used a hardcoded Cortex-A15 PCI machine with IVSHMEM for sensor
 ### 4. Switch from `-icount` to `slaved-suspend`
 The POC used QEMU's `-icount` mode exclusively. virtmcu introduces `slaved-suspend` mode (`-device zenoh-clock,mode=suspend`), which runs at ~95% free-run speed.
 *   **Action:** Use `mode=suspend` for any firmware that does not strictly measure sub-quantum intervals (e.g., standard control loops). Keep `mode=icount` only for firmware doing high-precision sub-quantum timer polling.
+
+## Phase 12: Protocol Hardening and Validation
+
+Phase 12 introduces critical stability improvements and a breaking change to the MMIO bridge protocol to enable modular peripheral reuse.
+
+### 1. MMIO Bridge: Absolute Addresses → Relative Offsets
+The `mmio-socket-bridge` now delivers **base-relative offsets** to the socket, rather than absolute guest physical addresses.
+*   **Action:** Remove any address masking (e.g., `addr &= 0xFFF`) in your external models.
+*   **Why:** This allows the same SystemC or Python model to be mapped at different addresses in different boards without modification.
+
+### 2. Mandatory Handshake
+All socket-based and Zenoh-based bridges now require a 8-byte `virtmcu_handshake` immediately upon connection.
+*   **Action:** Update your client code to send/receive the handshake.
+*   **Python:** Import `tools.vproto` and use `VirtmcuHandshake`.
+
+### 3. YAML Validation
+`yaml2qemu` now performs post-compilation validation of the generated Device Tree.
+*   **Action:** Ensure all peripherals defined in your YAML are correctly mapped. If a mapping is missing, the build will now fail loudly instead of causing a silent Data Abort at runtime.

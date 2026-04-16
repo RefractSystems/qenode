@@ -76,5 +76,7 @@ Just like other formats, `run.sh` supports YAML natively:
 ./scripts/run.sh --yaml test_board.yaml --kernel test/phase1/hello.elf -nographic
 ```
 
+**Note on Validation:** Starting in Phase 12, `yaml2qemu` performs a **post-compilation validation** step. It disassembles the generated `.dtb` and verifies that every device defined in your YAML has a corresponding memory mapping in the Device Tree. This prevents silent "Data Abort" crashes that previously occurred when a device was accidentally omitted from the memory map.
+
 ## Summary
 You have successfully learned how virtmcu provides a flexible, future-proof frontend. Whether you are migrating from Renode's legacy `.repl`, using industry-standard `.dts`, or adopting our modern OpenUSD-aligned YAML, the underlying QEMU engine provides high-performance dynamic emulation for your digital twin.
