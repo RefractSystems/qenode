@@ -23,40 +23,30 @@ import time
 import signal
 import tempfile
 
-# ── Wire format ───────────────────────────────────────────────────────────────
-REQ_FMT  = "<BBHIqqq"   # type, size, reserved1, reserved2, addr, data  (24 bytes)
-RESP_FMT = "<IIQ"      # type, irq_num, data  (16 bytes)
-REQ_SIZE  = struct.calcsize(REQ_FMT)
-RESP_SIZE = struct.calcsize(RESP_FMT)
-assert REQ_SIZE == 32, f"REQ_SIZE={REQ_SIZE}, expected 32"
-assert RESP_SIZE == 16,  f"RESP_SIZE={RESP_SIZE}, expected 16"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(SCRIPT_DIR)), "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.append(TOOLS_DIR)
 
-MMIO_READ  = 0
-MMIO_WRITE = 1
-
-SYSC_MSG_RESP = 0
-SYSC_MSG_IRQ_SET = 1
-SYSC_MSG_IRQ_CLEAR = 2
+from vproto import MmioReq, SyscMsg, VirtmcuHandshake, SIZE_MMIO_REQ, SIZE_SYSC_MSG, SIZE_VIRTMCU_HANDSHAKE, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, MMIO_REQ_READ, MMIO_REQ_WRITE, SYSC_MSG_RESP, SYSC_MSG_IRQ_SET, SYSC_MSG_IRQ_CLEAR
 
 def send_req(sock, req_type, size, addr, data=0):
     """Send one mmio_req and return the resp.data field."""
-    pkt = struct.pack(REQ_FMT, req_type, size, 0, 0, 0, addr, data)
-    sock.sendall(pkt)
+    req = MmioReq(type=req_type, size=size, reserved1=0, reserved2=0, vtime_ns=0, addr=addr, data=data)
+    sock.sendall(req.pack())
     
     while True:
         resp = b""
-        while len(resp) < RESP_SIZE:
-            chunk = sock.recv(RESP_SIZE - len(resp))
+        while len(resp) < SIZE_SYSC_MSG:
+            chunk = sock.recv(SIZE_SYSC_MSG - len(resp))
             if not chunk:
                 raise EOFError("adapter closed connection unexpectedly")
             resp += chunk
-        msg_type, irq_num, value = struct.unpack(RESP_FMT, resp)
+        msg = SyscMsg.unpack(resp)
         
-        if msg_type == SYSC_MSG_RESP:
-            return value
+        if msg.type == SYSC_MSG_RESP:
+            return msg.data
         # Ignore async IRQ messages during sync tests
-
-
 
 def wait_for_socket(path, timeout=5.0):
     deadline = time.time() + timeout
@@ -86,20 +76,28 @@ def run_tests(adapter_bin):
             s.connect(sock_path)
             s.settimeout(5.0)
 
+            # Handshake
+            hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
+            s.sendall(hs_out.pack())
+            hs_in_data = s.recv(SIZE_VIRTMCU_HANDSHAKE)
+            if len(hs_in_data) != SIZE_VIRTMCU_HANDSHAKE:
+                print(f"Handshake failed, got {len(hs_in_data)} bytes")
+                return False
+
             failures = []
 
             # ── T1: write a value, read it back ──────────────────────────────
-            send_req(s, MMIO_WRITE, 4, addr=0, data=0xdeadbeef)
-            got = send_req(s, MMIO_READ, 4, addr=0)
+            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0xdeadbeef)
+            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
             if got != 0xdeadbeef:
                 failures.append(f"T1 FAIL: wrote 0xdeadbeef, read back 0x{got:08x}")
             else:
                 print("T1 PASS: write/read round-trip")
 
             # ── T2: write to a different register, verify independence ────────
-            send_req(s, MMIO_WRITE, 4, addr=4, data=0x12345678)
-            got0 = send_req(s, MMIO_READ, 4, addr=0)
-            got1 = send_req(s, MMIO_READ, 4, addr=4)
+            send_req(s, MMIO_REQ_WRITE, 4, addr=4, data=0x12345678)
+            got0 = send_req(s, MMIO_REQ_READ, 4, addr=0)
+            got1 = send_req(s, MMIO_REQ_READ, 4, addr=4)
             if got0 != 0xdeadbeef:
                 failures.append(f"T2 FAIL: reg0 changed after reg1 write: 0x{got0:08x}")
             elif got1 != 0x12345678:
@@ -108,24 +106,24 @@ def run_tests(adapter_bin):
                 print("T2 PASS: register independence")
 
             # ── T3: overwrite and verify new value ────────────────────────────
-            send_req(s, MMIO_WRITE, 4, addr=0, data=0x00000001)
-            got = send_req(s, MMIO_READ, 4, addr=0)
+            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x00000001)
+            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
             if got != 0x00000001:
                 failures.append(f"T3 FAIL: expected 0x1, got 0x{got:08x}")
             else:
                 print("T3 PASS: overwrite")
 
             # ── T4: zero write ────────────────────────────────────────────────
-            send_req(s, MMIO_WRITE, 4, addr=0, data=0x0)
-            got = send_req(s, MMIO_READ, 4, addr=0)
+            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x0)
+            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
             if got != 0:
                 failures.append(f"T4 FAIL: expected 0, got 0x{got:08x}")
             else:
                 print("T4 PASS: zero write")
 
             # ── T5: last valid register (index 255) ───────────────────────────
-            send_req(s, MMIO_WRITE, 4, addr=255*4, data=0xfeedface)
-            got = send_req(s, MMIO_READ, 4, addr=255*4)
+            send_req(s, MMIO_REQ_WRITE, 4, addr=255*4, data=0xfeedface)
+            got = send_req(s, MMIO_REQ_READ, 4, addr=255*4)
             if got != 0xfeedface:
                 failures.append(f"T5 FAIL: last reg readback wrong: 0x{got:08x}")
             else:
@@ -135,20 +133,20 @@ def run_tests(adapter_bin):
             print("T7: Testing asynchronous IRQ...")
             # Writing non-zero to reg 255 should trigger IRQ SET
             # We use sock.sendall directly because send_req expects a RESP
-            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 1)
-            s.sendall(pkt)
+            req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255*4, data=1)
+            s.sendall(req.pack())
             
             irq_set_received = False
             resp_received = False
             deadline = time.time() + 2.0
             while time.time() < deadline and (not irq_set_received or not resp_received):
-                chunk = s.recv(RESP_SIZE)
+                chunk = s.recv(SIZE_SYSC_MSG)
                 if not chunk: break
-                msg_type, irq_num, value = struct.unpack(RESP_FMT, chunk)
-                if msg_type == SYSC_MSG_IRQ_SET and irq_num == 0:
+                msg = SyscMsg.unpack(chunk)
+                if msg.type == SYSC_MSG_IRQ_SET and msg.irq_num == 0:
                     irq_set_received = True
                     print("T7: Received IRQ_SET(0)")
-                elif msg_type == SYSC_MSG_RESP:
+                elif msg.type == SYSC_MSG_RESP:
                     resp_received = True
             
             if not irq_set_received:
@@ -159,18 +157,18 @@ def run_tests(adapter_bin):
                 print("T7 PASS: Asynchronous IRQ SET")
 
             # Writing zero to reg 255 should trigger IRQ CLEAR
-            pkt = struct.pack(REQ_FMT, MMIO_WRITE, 4, 0, 0, 0, 255*4, 0)
-            s.sendall(pkt)
+            req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255*4, data=0)
+            s.sendall(req.pack())
             irq_clear_received = False
             resp_received = False
             while time.time() < deadline and (not irq_clear_received or not resp_received):
-                chunk = s.recv(RESP_SIZE)
+                chunk = s.recv(SIZE_SYSC_MSG)
                 if not chunk: break
-                msg_type, irq_num, value = struct.unpack(RESP_FMT, chunk)
-                if msg_type == SYSC_MSG_IRQ_CLEAR and irq_num == 0:
+                msg = SyscMsg.unpack(chunk)
+                if msg.type == SYSC_MSG_IRQ_CLEAR and msg.irq_num == 0:
                     irq_clear_received = True
                     print("T7: Received IRQ_CLEAR(0)")
-                elif msg_type == SYSC_MSG_RESP:
+                elif msg.type == SYSC_MSG_RESP:
                     resp_received = True
             
             if not irq_clear_received:
@@ -182,7 +180,7 @@ def run_tests(adapter_bin):
             N = 1000
             t0 = time.monotonic()
             for i in range(N):
-                send_req(s, MMIO_WRITE, 4, addr=0, data=i)
+                send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=i)
             t1 = time.monotonic()
             elapsed = t1 - t0
             us_per_op = (elapsed / N) * 1e6

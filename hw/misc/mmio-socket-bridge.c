@@ -148,6 +148,28 @@ static void bridge_realize(DeviceState *dev, Error **errp)
         error_setg_errno(errp, errno, "failed to connect to %s", s->socket_path);
         close(s->sock_fd); s->sock_fd = -1; return;
     }
+
+    struct virtmcu_handshake hs_out = {
+        .magic = VIRTMCU_PROTO_MAGIC,
+        .version = VIRTMCU_PROTO_VERSION,
+    };
+    if (!writen(s->sock_fd, &hs_out, sizeof(hs_out))) {
+        error_setg(errp, "failed to send handshake to %s", s->socket_path);
+        close(s->sock_fd); s->sock_fd = -1; return;
+    }
+
+    struct virtmcu_handshake hs_in;
+    int n = read(s->sock_fd, &hs_in, sizeof(hs_in));
+    if (n != sizeof(hs_in)) {
+        error_setg(errp, "failed to read handshake from %s", s->socket_path);
+        close(s->sock_fd); s->sock_fd = -1; return;
+    }
+    if (hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION) {
+        error_setg(errp, "handshake mismatch: expected magic 0x%X version %d, got magic 0x%X version %d",
+                   VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, hs_in.magic, hs_in.version);
+        close(s->sock_fd); s->sock_fd = -1; return;
+    }
+
     g_unix_set_fd_nonblocking(s->sock_fd, true, NULL);
     qemu_set_fd_handler(s->sock_fd, bridge_sock_handler, NULL, s);
     memory_region_init_io(&s->mmio, OBJECT(s), &bridge_mmio_ops, s, "mmio-socket-bridge", s->region_size);

@@ -1,24 +1,13 @@
 import os
 import socket
 import struct
+import sys
 
-# REQ_FMT  = "<BBHIqqq"   # type, size, reserved1, reserved2, vtime_ns, addr, data  (32 bytes)
-# (from virtmcu_proto.h: struct mmio_req)
-# struct mmio_req {
-#     uint8_t type;
-#     uint8_t size;
-#     uint16_t reserved1;
-#     uint32_t reserved2;
-#     int64_t vtime_ns;
-#     uint64_t addr;
-#     uint64_t data;
-# };
-REQ_FMT = "<BBHIqQQ"
-REQ_SIZE = struct.calcsize(REQ_FMT)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.append(SCRIPT_DIR)
 
-RESP_FMT = "<IIQ"  # type, irq_num, data
-RESP_SIZE = struct.calcsize(RESP_FMT)
-
+from vproto import MmioReq, SyscMsg, VirtmcuHandshake, SIZE_MMIO_REQ, SIZE_VIRTMCU_HANDSHAKE, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION
 
 def recvall(conn, n):
     data = b""
@@ -28,7 +17,6 @@ def recvall(conn, n):
             return None
         data += chunk
     return data
-
 
 def start_server(sock_path):
     if os.path.exists(sock_path):
@@ -42,20 +30,31 @@ def start_server(sock_path):
     conn, _ = server.accept()
     print("Connected")
 
+    hs_data = recvall(conn, SIZE_VIRTMCU_HANDSHAKE)
+    if not hs_data:
+        print("Failed to receive handshake")
+        return
+    hs_in = VirtmcuHandshake.unpack(hs_data)
+    if hs_in.magic != VIRTMCU_PROTO_MAGIC or hs_in.version != VIRTMCU_PROTO_VERSION:
+        print(f"Handshake mismatch: {hs_in}")
+        return
+    
+    hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
+    conn.sendall(hs_out.pack())
+
     while True:
-        data = recvall(conn, REQ_SIZE)
+        data = recvall(conn, SIZE_MMIO_REQ)
         if not data:
             break
 
-        req_type, size, res1, res2, vtime, addr, val = struct.unpack(REQ_FMT, data)
-        print(f"REQ: type={req_type}, size={size}, vtime={vtime}, addr=0x{addr:x}, data=0x{val:x}", flush=True)
+        req = MmioReq.unpack(data)
+        print(f"REQ: type={req.type}, size={req.size}, vtime={req.vtime_ns}, addr=0x{req.addr:x}, data=0x{req.data:x}", flush=True)
 
         # Send response
-        resp = struct.pack(RESP_FMT, 0, 0, 0)
-        conn.sendall(resp)
+        resp = SyscMsg(type=0, irq_num=0, data=0)
+        conn.sendall(resp.pack())
     conn.close()
     server.close()
-
 
 if __name__ == "__main__":
     start_server("/tmp/mmio.sock")

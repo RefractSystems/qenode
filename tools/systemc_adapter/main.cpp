@@ -217,8 +217,6 @@ SC_MODULE(QemuAdapter) {
         client_fd = accept(server_fd, NULL, NULL);
         if (client_fd < 0) return;
 
-        cout << "[SystemC] QEMU connected." << endl;
-
         auto readn = [](int fd, void* buf, size_t len) -> bool {
             char* p = static_cast<char*>(buf);
             while (len > 0) {
@@ -231,6 +229,24 @@ SC_MODULE(QemuAdapter) {
             }
             return true;
         };
+
+        virtmcu_handshake hs_in;
+        if (!readn(client_fd, &hs_in, sizeof(hs_in))) {
+            cerr << "[SystemC] Failed to read handshake from QEMU." << endl;
+            close(client_fd); client_fd = -1; return;
+        }
+
+        if (hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION) {
+            cerr << "[SystemC] Handshake mismatch: expected magic 0x" << hex << VIRTMCU_PROTO_MAGIC
+                 << " version " << dec << VIRTMCU_PROTO_VERSION << ", got magic 0x" << hex << hs_in.magic
+                 << " version " << dec << hs_in.version << endl;
+            close(client_fd); client_fd = -1; return;
+        }
+
+        virtmcu_handshake hs_out = { VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION };
+        writen_sync(client_fd, &hs_out, sizeof(hs_out));
+
+        cout << "[SystemC] QEMU connected and handshake successful." << endl;
 
         while (running) {
             mmio_req req;

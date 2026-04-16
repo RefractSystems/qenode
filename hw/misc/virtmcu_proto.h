@@ -29,6 +29,14 @@
 
 #include <stdint.h>
 
+#define VIRTMCU_PROTO_MAGIC   0x564D4355 /* "VMCU" */
+#define VIRTMCU_PROTO_VERSION 1
+
+struct virtmcu_handshake {
+    uint32_t magic;
+    uint32_t version;
+} __attribute__((packed));
+
 #define MMIO_REQ_READ  0
 #define MMIO_REQ_WRITE 1
 
