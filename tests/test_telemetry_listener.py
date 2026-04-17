@@ -11,6 +11,7 @@ def test_on_sample_cpu_state(capsys):
     with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:
         mock_ev = MagicMock()
         MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 1000
         mock_ev.Type.return_value = 0  # CPU_STATE
@@ -30,6 +31,7 @@ def test_on_sample_irq(capsys):
     with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:
         mock_ev = MagicMock()
         MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 2000
         mock_ev.Type.return_value = 1  # IRQ
@@ -49,6 +51,7 @@ def test_on_sample_peripheral(capsys):
     with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:
         mock_ev = MagicMock()
         MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 3000
         mock_ev.Type.return_value = 2  # PERIPHERAL
@@ -68,6 +71,7 @@ def test_on_sample_unknown(capsys):
     with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:
         mock_ev = MagicMock()
         MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 4000
         mock_ev.Type.return_value = 999  # UNKNOWN
@@ -107,8 +111,9 @@ def test_main_block(mock_sleep, mock_zenoh, capsys):
 
 
 def test_run_main():
-    import runpy
     import sys
+
+    from tools.telemetry_listener import main
 
     with (
         patch.object(sys, "argv", ["telemetry_listener.py", "5"]),
@@ -119,8 +124,5 @@ def test_run_main():
         mock_zenoh.open.return_value = mock_session
         mock_zenoh.Config.return_value = "mock_config"
 
-        # Suppress output or check output
-        try:
-            runpy.run_module("tools.telemetry_listener", run_name="__main__")
-        except SystemExit:
-            pass
+        # Call main directly
+        main()
