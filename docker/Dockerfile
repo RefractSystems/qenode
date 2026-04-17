@@ -250,7 +250,8 @@ RUN cd qemu \
     --disable-docs \
     && make -j"$(nproc)" \
     && make -j"$(nproc)" plugins \
-    && make install
+    && make install \
+    && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
 
 # Make the installed QEMU binary and modules available inside this stage
 # (used by CI integration jobs that run smoke tests within the builder container).
