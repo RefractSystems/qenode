@@ -64,12 +64,20 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let mut config = Config::default();
     if !router.is_null() {
         let router_str = unsafe { CStr::from_ptr(router) }.to_str().unwrap();
+        eprintln!("[zenoh-clock] node={}: connecting to router {}...", node_id, router_str);
         let json = format!("[\"{}\"]", router_str);
         let _ = config.insert_json5("connect/endpoints", &json);
         let _ = config.insert_json5("scouting/multicast/enabled", "false");
     }
 
-    let session = zenoh::open(config).wait().unwrap();
+    let session = match zenoh::open(config).wait() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[zenoh-clock] node={}: FATAL — failed to open Zenoh session: {}", node_id, e);
+            return ptr::null_mut();
+        }
+    };
+    eprintln!("[zenoh-clock] node={}: session opened successfully.", node_id);
 
     let is_icount = if !mode.is_null() {
         let mode_str = unsafe { CStr::from_ptr(mode) }.to_str().unwrap();
