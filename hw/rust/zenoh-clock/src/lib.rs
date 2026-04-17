@@ -205,15 +205,15 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         (*state.inner).quantum_done = false;
         
         let next_delta = state.delta_ns.load(Ordering::Acquire);
+
         virtmcu_bql_lock();
-        if state.is_icount {
-            virtmcu_icount_advance(next_delta);
-        }
         let vtime_now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         (*state.inner).vtime_ns = vtime_now;
         state.quantum_start_vtime_ns.store(vtime_now, Ordering::Release);
+
         virtmcu_timer_mod(state.quantum_timer, vtime_now + next_delta);
         virtmcu_bql_unlock();
+
         
         virtmcu_mutex_unlock(state.mutex);
     }
@@ -241,15 +241,15 @@ fn on_query(state: &ZenohClockState, query: Query) {
         (*state.inner).quantum_ready = true;
         virtmcu_cond_signal(state.vcpu_cond);
 
-        let mut error_code = 0u32;
+        let mut error_code = 0;
         while !(*state.inner).quantum_done {
-            if virtmcu_cond_timedwait(state.query_cond, state.mutex, 60000) != 0 {
-                if !(*state.inner).quantum_done {
-                    error_code = 1; // STALL
-                }
+            let rc = virtmcu_cond_timedwait(state.query_cond, state.mutex, 60000);
+            if rc == 0 && !(*state.inner).quantum_done {
+                error_code = 1; // STALL
                 break;
             }
         }
+
 
         let vtime = (*state.inner).vtime_ns;
         virtmcu_mutex_unlock(state.mutex);

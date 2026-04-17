@@ -11,9 +11,9 @@ sys.path.append(os.path.join(WORKSPACE_DIR, "tools"))
 
 from vproto import ClockAdvanceReq, ClockReadyResp
 
-# 1 ms quantums: fine-grained latency samples, firmware (~40 ms virtual) fits ~40 quantums
-QUANTUM_NS = 1_000_000
-MAX_QUANTUMS = 500   # 500 ms virtual cap; firmware exits well before this
+# 10 ms quantums: fine-grained latency samples, firmware exits well before 150 quantums
+QUANTUM_NS = 10_000_000
+MAX_QUANTUMS = 500   # 5s virtual cap
 ZENOH_ROUTER = "tcp/127.0.0.1:7447"
 STANDALONE_TIMEOUT = 30
 
@@ -53,51 +53,18 @@ class BenchmarkRunner:
         self.exit_vtime_ns = 0
         self.wall_time = 0.0
         self.latencies = []  # round-trip ms per quantum
+        self.uart_buffer = ""
 
     def _output_reader(self, proc):
         for line in proc.stdout:
+            if "CYCLES: " in line:
+                try:
+                    hex_str = line.split("CYCLES: ")[1].strip()
+                    self.exit_vtime_ns = int(hex_str, 16)
+                except Exception as e:
+                    print(f"  [{self.mode}] Error parsing CYCLES: {e}")
             if "EXIT" in line:
                 self._exit_event.set()
-
-    def run(self):
-        run_sh = os.path.join(WORKSPACE_DIR, "scripts", "run.sh")
-        cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
-               "-nographic", "-serial", "stdio", "-monitor", "none"]
-
-        if "slaved-icount" in self.mode:
-            cmd += [
-                "-icount", "shift=0,align=off,sleep=off",
-                "-device", f"zenoh-clock,mode=icount,node=0,router={ZENOH_ROUTER}",
-            ]
-
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, bufsize=1,
-        )
-
-        reader = threading.Thread(
-            target=self._output_reader, args=(proc,), daemon=True
-        )
-        reader.start()
-
-        t0 = time.perf_counter()
-
-        if "slaved-icount" not in self.mode:
-            deadline = t0 + STANDALONE_TIMEOUT
-            while not self._exit_event.is_set() and proc.poll() is None:
-                if time.perf_counter() > deadline:
-                    break
-                time.sleep(0.05)
-            self.wall_time = time.perf_counter() - t0
-        else:
-            self._run_icount(proc, t0)
-
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
 
     def _run_icount(self, proc, t0):
         config = zenoh.Config()
@@ -107,7 +74,6 @@ class BenchmarkRunner:
 
         topic = "sim/clock/advance/0"
 
-        # Wait for queryable (QEMU zenoh-clock registers it shortly after boot)
         ready = False
         deadline = time.perf_counter() + 15
         while time.perf_counter() < deadline:
@@ -121,7 +87,7 @@ class BenchmarkRunner:
             print(f"  ERROR: [{self.mode}] queryable not found after 15 s")
             session.close()
             self.wall_time = time.perf_counter() - t0
-            return
+            return False
 
         for q in range(MAX_QUANTUMS):
             if proc.poll() is not None:
@@ -143,15 +109,70 @@ class BenchmarkRunner:
             self.latencies.append((lat1 - lat0) * 1e3)
 
             if self._exit_event.is_set():
-                # Record vtime at the quantum boundary right after EXIT was printed.
-                # With icount shift=0, current_vtime_ns ≈ total instructions executed.
-                self.exit_vtime_ns = resp.current_vtime_ns
                 break
         else:
             print(f"  WARN: [{self.mode}] hit MAX_QUANTUMS ({MAX_QUANTUMS}) without EXIT")
 
         self.wall_time = time.perf_counter() - t0
         session.close()
+        return True
+
+    def run(self):
+        retries = 3
+        while retries > 0:
+            self._exit_event.clear()
+            self.exit_vtime_ns = 0
+            self.latencies = []
+            self.uart_buffer = ""
+            
+            run_sh = os.path.join(WORKSPACE_DIR, "scripts", "run.sh")
+            cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
+                   "-nographic", "-serial", "stdio", "-monitor", "none"]
+
+            if "slaved-icount" in self.mode:
+                cmd += [
+                    "-icount", "shift=0,align=off,sleep=off",
+                    "-device", f"zenoh-clock,mode=icount,node=0,router={ZENOH_ROUTER}",
+                ]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, bufsize=1,
+            )
+
+            reader = threading.Thread(
+                target=self._output_reader, args=(proc,), daemon=True
+            )
+            reader.start()
+
+            t0 = time.perf_counter()
+
+            if "slaved-icount" not in self.mode:
+                deadline = t0 + STANDALONE_TIMEOUT
+                while not self._exit_event.is_set() and proc.poll() is None:
+                    if time.perf_counter() > deadline:
+                        print(f"  ERROR: [{self.mode}] timed out (30s)")
+                        break
+                    time.sleep(0.05)
+                self.wall_time = time.perf_counter() - t0
+                success = True
+            else:
+                success = self._run_icount(proc, t0)
+
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                
+            if success:
+                break
+            
+            retries -= 1
+            if retries > 0:
+                print(f"  [{self.mode}] Retrying... ({retries} left)")
+                time.sleep(2)
 
 
 def main():
@@ -192,7 +213,6 @@ def main():
     r_ic = results["slaved-icount"]
     r_ic2 = results["slaved-icount-2"]
 
-    # Instruction count proxy: icount shift=0 means 1 virtual ns = 1 instruction
     instr = r_ic.exit_vtime_ns
     if instr == 0:
         print("ERROR: slaved-icount run did not detect EXIT — no instruction count available")
@@ -205,7 +225,7 @@ def main():
         print("Determinism          : PASSED")
     else:
         delta = abs(r_ic.exit_vtime_ns - r_ic2.exit_vtime_ns)
-        print(f"Determinism          : FAILED (delta={delta} ns)")
+        print(f"Determinism          : FAILED (delta={delta} cycles)")
         sys.exit(1)
 
     # IPS
