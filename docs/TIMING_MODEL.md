@@ -52,7 +52,7 @@ typedef struct __attribute__((packed)) {
 | Code | Name | Meaning | Likely cause |
 |---|---|---|---|
 | `0` | `OK` | Quantum completed; `current_vtime_ns` is valid | — |
-| `1` | `STALL` | QEMU did not reach TB boundary within 60 s | Firmware crash, infinite loop, or host overload |
+| `1` | `STALL` | QEMU did not reach TB boundary within the stall timeout (default 5 s; set via `stall-timeout=<ms>` device property) | Firmware crash, infinite loop, or host overload |
 | `2` | `ZENOH_ERROR` | Transport-level failure before or during reply | Malformed payload, session drop, router unreachable |
 
 ---
