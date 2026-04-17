@@ -8,6 +8,8 @@ test-results
 tools/cyber_bridge/build
 tools/systemc_adapter/build
 tools/zenoh_coordinator/target
+target/
+**/target/
 *.pyc
 *.pyo
 *.pyd

@@ -315,6 +315,7 @@ clean:
 	rm -rf tools/cyber_bridge/build
 	rm -rf tools/systemc_adapter/build
 	rm -rf tools/zenoh_coordinator/target
+	rm -rf hw/rust/target
 	@echo "✓ Clean complete (QEMU sources and .venv remain)."
 
 # Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
