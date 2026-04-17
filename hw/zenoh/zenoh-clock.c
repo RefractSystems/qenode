@@ -16,14 +16,18 @@
 #include "system/cpu-timers.h"
 #include "system/cpu-timers-internal.h"
 #include "exec/icount.h"
+#include "virtmcu/hooks.h"
+#include "virtmcu-rust-ffi.h"
 
 /* ── Rust FFI declarations ────────────────────────────────────────────────── */
 
 typedef struct ZenohClockState ZenohClockState;
 
-extern ZenohClockState *zenoh_clock_init(uint32_t node_id, const char *router, const char *mode,
-                                         uint32_t stall_timeout_ms);
-extern void             zenoh_clock_fini(ZenohClockState *state);
+extern ZenohClockState *zenoh_clock_init(uint32_t node_id, const char *router,
+                                         uint32_t stall_timeout_ms,
+                                         QemuMutex *mutex, QemuCond *vcpu_cond, QemuCond *query_cond);
+extern void             zenoh_clock_free(ZenohClockState *state);
+extern int64_t          zenoh_clock_quantum_wait(ZenohClockState *state, int64_t current_vtime_ns);
 
 /* ── QOM type ─────────────────────────────────────────────────────────────── */
 
@@ -41,14 +45,43 @@ struct ZenohClock {
 
     /* Rust state */
     ZenohClockState *rust_state;
+
+    /* Synchronization */
+    QemuMutex mutex;
+    QemuCond  vcpu_cond;
+    QemuCond  query_cond;
+    
+    int64_t   next_quantum_ns;
 };
+
+static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
+{
+    ZenohClock *s = (ZenohClock *)object_resolve_path_type("", TYPE_ZENOH_CLOCK, NULL);
+    if (!s || !s->rust_state) {
+        return;
+    }
+
+    /* We only care about the transition to HALTED (WFI) or regular quantum boundaries.
+     * For simplicity, we just sync on every halt hook call if we reached the quantum. */
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    
+    if (now >= s->next_quantum_ns || halted) {
+        /* Release BQL to allow other threads (like Zenoh callback) to run if they need it,
+         * though the Rust backend uses its own mutex for internal state. */
+        int64_t delta = zenoh_clock_quantum_wait(s->rust_state, now);
+        s->next_quantum_ns = now + delta;
+    }
+}
 
 static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 {
     ZenohClock *s = ZENOH_CLOCK(dev);
 
-    /* Resolve effective stall timeout: explicit property > env var > built-in default.
-     * stall_timeout_ms==0 means "not set by user"; use VIRTMCU_STALL_TIMEOUT_MS or 5 s. */
+    qemu_mutex_init(&s->mutex);
+    qemu_cond_init(&s->vcpu_cond);
+    qemu_cond_init(&s->query_cond);
+    s->next_quantum_ns = 0;
+
     uint32_t stall_ms = s->stall_timeout_ms;
     if (stall_ms == 0) {
         const char *env = getenv("VIRTMCU_STALL_TIMEOUT_MS");
@@ -58,20 +91,28 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
         }
     }
 
-    s->rust_state = zenoh_clock_init(s->node_id, s->router, s->mode, stall_ms);
+    s->rust_state = zenoh_clock_init(s->node_id, s->router, stall_ms,
+                                     &s->mutex, &s->vcpu_cond, &s->query_cond);
     if (!s->rust_state) {
         error_setg(errp, "Failed to initialize Rust ZenohClock");
         return;
     }
+
+    /* Register the vCPU halt hook for synchronization */
+    virtmcu_cpu_halt_hook = zenoh_clock_cpu_halt_cb;
 }
 
 static void zenoh_clock_instance_finalize(Object *obj)
 {
     ZenohClock *s = ZENOH_CLOCK(obj);
     if (s->rust_state) {
-        zenoh_clock_fini(s->rust_state);
+        virtmcu_cpu_halt_hook = NULL;
+        zenoh_clock_free(s->rust_state);
         s->rust_state = NULL;
     }
+    qemu_mutex_destroy(&s->mutex);
+    qemu_cond_destroy(&s->vcpu_cond);
+    qemu_cond_destroy(&s->query_cond);
 }
 
 static const Property zenoh_clock_properties[] = {
