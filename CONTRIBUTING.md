@@ -189,6 +189,21 @@ When implementing a feature for a new Phase, you **MUST** provide a correspondin
 
 ---
 
+## AI-Assisted Workflows (Auto Green)
+
+If you are using an AI agent (Claude Code, Gemini CLI), you can automate the process of fixing broken CI/CD builds. If a PR build fails:
+
+1.  Open the workspace in your agent.
+2.  Command: **"Fix CI and make it green"**.
+3.  The agent will autonomously:
+    *   Diagnose the failure using `gh`.
+    *   Reproduce the failure locally.
+    *   Align the local test environment if the failure only occurs in CI.
+    *   Apply the fix and verify locally.
+    *   Monitor the remote run until all checks are green.
+
+---
+
 ## Branching and Commits
 
 - Branch off `main`: `git checkout -b feature/<phase>-<short-desc>`
