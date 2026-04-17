@@ -2,6 +2,9 @@
 
 Practical reference for building, testing, and debugging the virtmcu Docker images.
 
+> **CI failing?** See [CI_GUIDE.md](CI_GUIDE.md) — it maps every CI job to its local
+> equivalent command and lists common failure patterns and fixes.
+
 ## Stage overview
 
 ```
