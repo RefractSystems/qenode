@@ -280,7 +280,9 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
 # Configure and build
 # hadolint ignore=DL3003,SC2016
 RUN cd qemu \
-    && ./configure \
+    && mkdir -p build-virtmcu \
+    && cd build-virtmcu \
+    && ../configure \
     --prefix=/opt/virtmcu \
     --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
     --enable-modules \
@@ -290,11 +292,10 @@ RUN cd qemu \
     --disable-werror \
     --disable-docs \
     && make -j"$(nproc)" \
-    && make -C contrib/plugins \
     && make install \
     && mkdir -p /opt/virtmcu/lib/qemu/plugins \
-    && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; \
-    && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; \
+    && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; 2>/dev/null || true \
+    && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
     && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
