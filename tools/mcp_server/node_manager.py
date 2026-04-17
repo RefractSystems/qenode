@@ -8,6 +8,7 @@ from tools.testing.qmp_bridge import QmpBridge
 
 logger = logging.getLogger(__name__)
 
+
 class NodeContext:
     def __init__(self, node_id: str):
         self.node_id = node_id
@@ -17,6 +18,7 @@ class NodeContext:
         self.uart_socket_path = f"/tmp/virtmcu-{node_id}.uart"
         self.yaml_path: Optional[str] = None
         self.firmware_path: Optional[str] = None
+
 
 class NodeManager:
     def __init__(self):
@@ -31,12 +33,12 @@ class NodeManager:
         node = self.get_node(node_id)
         if node.yaml_path and os.path.exists(node.yaml_path):
             os.remove(node.yaml_path)
-            
+
         fd, path = tempfile.mkstemp(suffix=f".{config_type}", prefix=f"virtmcu-{node_id}-")
-        os.write(fd, board_config.encode('utf-8'))
+        os.write(fd, board_config.encode("utf-8"))
         os.close(fd)
         node.yaml_path = path
-        
+
     def flash_firmware(self, node_id: str, firmware_path: str):
         node = self.get_node(node_id)
         if not os.path.isabs(firmware_path):
@@ -49,7 +51,7 @@ class NodeManager:
         node = self.get_node(node_id)
         if node.process and node.process.returncode is None:
             raise RuntimeError(f"Node {node_id} is already running.")
-            
+
         if not node.yaml_path:
             raise RuntimeError(f"Node {node_id} has not been provisioned.")
 
@@ -58,29 +60,33 @@ class NodeManager:
             os.remove(node.qmp_socket_path)
         if os.path.exists(node.uart_socket_path):
             os.remove(node.uart_socket_path)
-            
+
         cmd = [
-            "bash", "scripts/run.sh",
-            f"--{node.yaml_path.split('.')[-1]}", node.yaml_path,
+            "bash",
+            "scripts/run.sh",
+            f"--{node.yaml_path.split('.')[-1]}",
+            node.yaml_path,
         ]
-        
+
         if node.firmware_path:
             cmd.extend(["--kernel", node.firmware_path])
-            
+
         # Add QMP and UART sockets
-        cmd.extend([
-            "-qmp", f"unix:{node.qmp_socket_path},server,nowait",
-            "-serial", f"unix:{node.uart_socket_path},server,nowait",
-            "-nographic"
-        ])
+        cmd.extend(
+            [
+                "-qmp",
+                f"unix:{node.qmp_socket_path},server,nowait",
+                "-serial",
+                f"unix:{node.uart_socket_path},server,nowait",
+                "-nographic",
+            ]
+        )
 
         logger.info(f"Starting node {node_id} with cmd: {' '.join(cmd)}")
         node.process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        
+
         # Wait a bit for QEMU to create the sockets
         for _ in range(50):
             if os.path.exists(node.qmp_socket_path) and os.path.exists(node.uart_socket_path):
@@ -90,7 +96,7 @@ class NodeManager:
                 stderr = await node.process.stderr.read()
                 raise RuntimeError(f"QEMU process exited early with code {node.process.returncode}: {stderr.decode()}")
             await asyncio.sleep(0.1)
-            
+
         if not os.path.exists(node.qmp_socket_path):
             if node.process.returncode is None:
                 node.process.terminate()
@@ -117,9 +123,9 @@ class NodeManager:
             except asyncio.TimeoutError:
                 node.process.kill()
                 await node.process.wait()
-        
+
         await node.qmp_bridge.close()
-        
+
         for path in [node.qmp_socket_path, node.uart_socket_path, node.yaml_path]:
             if path and os.path.exists(path):
                 try:

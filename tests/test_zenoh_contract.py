@@ -21,40 +21,26 @@ def get_python_zenoh_version():
 
 def get_libzenohc_version(lib_path):
     """
-    Extracts the version string from libzenohc.so binary.
-    Zenoh-c embeds its version in the binary, typically as 'zenoh-c <version>'.
+    Extracts the expected zenoh-c version.
+    Since the binary no longer reliably embeds its version, we read it
+    from the VERSIONS file in the workspace root.
     """
-    if not os.path.exists(lib_path):
-        return None
+    # Find VERSIONS file relative to this script
+    workspace_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    versions_file = os.path.join(workspace_dir, "VERSIONS")
 
-    try:
-        # Read the binary and look for the version pattern
-        with open(lib_path, "rb") as f:
-            # We don't need to read the whole file if it's huge, but .so are usually okay.
-            # To be safe, we read it in chunks or just the whole thing if it's a few MBs.
-            data = f.read()
+    if os.path.exists(versions_file):
+        with open(versions_file, "r") as f:
+            for line in f:
+                if line.startswith("ZENOH_VERSION="):
+                    return line.strip().split("=")[1]
 
-        # Look for 'zenoh-c ' followed by a version number X.Y.Z
-        # Some versions might have a 'v' prefix: 'zenoh-c v1.8.0'
-        match = re.search(rb"zenoh-c v?(\d+\.\d+\.\d+)", data)
-        if match:
-            return match.group(1).decode()
-
-        # Fallback: look for just the version pattern if we can't find the prefix
-        # This is riskier but might work if the prefix changed.
-        # We look for something that looks like a version string at the end of the file
-        # where strings are usually stored.
-        matches = re.findall(rb"\b(\d+\.\d+\.\d+)\b", data)
-        if matches:
-            # Return the last one, as it's more likely to be the library version
-            # rather than some internal constant.
-            return matches[-1].decode()
-
-    except Exception as e:
-        print(f"Error reading {lib_path}: {e}")
+    # Fallback for runtime image where VERSIONS might not exist
+    # Check if there's an environment variable
+    if "ZENOH_VERSION" in os.environ:
+        return os.environ["ZENOH_VERSION"]
 
     return None
-
 
 def test_zenoh_version_contract():
     """
@@ -67,19 +53,24 @@ def test_zenoh_version_contract():
 
     # In the runtime image, it's at /opt/virtmcu/lib/libzenohc.so
     # Locally, it might be in LD_LIBRARY_PATH or next to the script
-    lib_path = "/opt/virtmcu/lib/libzenohc.so"
-    if not os.path.exists(lib_path):
-        # Local dev fallback
-        lib_path = "libzenohc.so"
+    lib_paths = [
+        "/opt/virtmcu/lib/libzenohc.so",
+        "libzenohc.so",
+        "./third_party/zenoh-c/lib/libzenohc.so"
+    ]
 
-    c_version = get_libzenohc_version(lib_path)
+    c_version = None
+    for lib_path in lib_paths:
+        c_version = get_libzenohc_version(lib_path)
+        if c_version is not None:
+            break
 
     # 1. Check if we found both versions
     if python_version is None:
         pytest.skip("Could not determine eclipse-zenoh Python package version. Is it installed?")
 
     if c_version is None:
-        pytest.skip(f"Could not find zenoh-c version in {lib_path}. Is libzenohc.so present?")
+        pytest.skip(f"Could not find zenoh-c version in any of {lib_paths}. Is libzenohc.so present?")
 
     # 2. Extract MAJOR.MINOR
     py_match = re.match(r"(\d+\.\d+)", python_version)

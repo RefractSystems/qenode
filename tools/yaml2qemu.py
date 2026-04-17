@@ -167,13 +167,13 @@ def main():
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
-            
+
             chardev_arg = f"zenoh,id={chardev_id},node={node}"
             if router:
                 chardev_arg += f",router={router}"
             if topic:
                 chardev_arg += f",topic={topic}"
-            
+
             cli_args.append("-chardev")
             cli_args.append(chardev_arg)
             cli_args.append("-serial")
@@ -197,7 +197,7 @@ def main():
                 device_arg += f",topic={topic}"
             cli_args.append("-device")
             cli_args.append(device_arg)
-            filtered_devices.append(dev) # Keep in DTB
+            filtered_devices.append(dev)  # Keep in DTB
         else:
             filtered_devices.append(dev)
 

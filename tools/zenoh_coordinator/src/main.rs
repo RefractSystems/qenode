@@ -42,7 +42,7 @@ struct Args {
     tx_power: f32,
 
     /// RX sensitivity in dBm. Packets below this will be dropped.
-    #[arg(short, long, default_value_t = -90.0)]
+    #[arg(long, default_value_t = -90.0)]
     sensitivity: f32,
 }
 
