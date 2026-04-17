@@ -290,11 +290,11 @@ RUN cd qemu \
     --disable-werror \
     --disable-docs \
     && make -j"$(nproc)" \
-    && make -j"$(nproc)" plugins \
+    && make -C contrib/plugins \
     && make install \
     && mkdir -p /opt/virtmcu/lib/qemu/plugins \
-    && cp contrib/plugins/*.so /opt/virtmcu/lib/qemu/plugins/ \
-    && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/ \
+    && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; \
+    && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
     && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
@@ -322,8 +322,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/virtmcu /opt/virtmcu
-
-COPY --from=builder /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
 
 # Install Python dependencies using uv (uv is in base)
 COPY pyproject.toml /tmp/pyproject.toml
