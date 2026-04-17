@@ -1,21 +1,21 @@
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use zenoh::bytes::ZBytes;
+use zenoh::query::Query;
+use zenoh::query::Queryable;
 use zenoh::Config;
 use zenoh::Session;
 use zenoh::Wait;
-use zenoh::query::Query;
-use zenoh::query::Queryable;
-use zenoh::bytes::ZBytes;
 
-use virtmcu_qom::sync::*;
-use virtmcu_qom::timer::*;
 use virtmcu_qom::cpu::*;
 use virtmcu_qom::proto::*;
+use virtmcu_qom::sync::*;
+use virtmcu_qom::timer::*;
 
 // We use a Boxed struct for the state that needs to be shared with Zenoh threads
 // and the C wrapper.
@@ -39,8 +39,8 @@ pub struct ZenohClockState {
     mujoco_time_ns: AtomicI64,
     quantum_start_vtime_ns: AtomicI64,
 
-    // These fields are protected by the mutex. 
-    // In a pure Rust impl we'd use a Mutex<InnerState>, 
+    // These fields are protected by the mutex.
+    // In a pure Rust impl we'd use a Mutex<InnerState>,
     // but we use QemuMutex for BQL compatibility and FFI.
     // We'll use unsafe blocks to access them.
     inner: *mut ZenohClockInner,
@@ -56,7 +56,7 @@ struct ZenohClockInner {
 static mut GLOBAL_ZENOH_CLOCK: *mut ZenohClockState = ptr::null_mut();
 
 #[no_mangle]
-pub extern "C" fn zenoh_clock_init(
+pub unsafe extern "C" fn zenoh_clock_init(
     node_id: u32,
     router: *const c_char,
     mode: *const c_char,
@@ -79,21 +79,9 @@ pub extern "C" fn zenoh_clock_init(
     };
 
     // Allocate QEMU sync primitives
-    let mutex = unsafe {
-        let m = libc::malloc(core::mem::size_of::<QemuMutex>()) as *mut QemuMutex;
-        qemu_mutex_init(m);
-        m
-    };
-    let vcpu_cond = unsafe {
-        let c = libc::malloc(core::mem::size_of::<QemuCond>()) as *mut QemuCond;
-        qemu_cond_init(c);
-        c
-    };
-    let query_cond = unsafe {
-        let c = libc::malloc(core::mem::size_of::<QemuCond>()) as *mut QemuCond;
-        qemu_cond_init(c);
-        c
-    };
+    let mutex = unsafe { virtmcu_mutex_new() };
+    let vcpu_cond = unsafe { virtmcu_cond_new() };
+    let query_cond = unsafe { virtmcu_cond_new() };
 
     let inner = Box::into_raw(Box::new(ZenohClockInner {
         needs_quantum: true,
@@ -150,7 +138,7 @@ pub extern "C" fn zenoh_clock_init(
 }
 
 #[no_mangle]
-pub extern "C" fn zenoh_clock_fini(state: *mut ZenohClockState) {
+pub unsafe extern "C" fn zenoh_clock_fini(state: *mut ZenohClockState) {
     if state.is_null() {
         return;
     }
@@ -167,13 +155,10 @@ pub extern "C" fn zenoh_clock_fini(state: *mut ZenohClockState) {
         }
 
         // Drop s will drop session and queryable
-        qemu_mutex_destroy(s.mutex);
-        qemu_cond_destroy(s.vcpu_cond);
-        qemu_cond_destroy(s.query_cond);
-        libc::free(s.mutex as *mut libc::c_void);
-        libc::free(s.vcpu_cond as *mut libc::c_void);
-        libc::free(s.query_cond as *mut libc::c_void);
-        
+        virtmcu_mutex_free(s.mutex);
+        virtmcu_cond_free(s.vcpu_cond);
+        virtmcu_cond_free(s.query_cond);
+
         let _inner = Box::from_raw(s.inner);
     }
 }
@@ -224,6 +209,7 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         virtmcu_cond_signal(state.query_cond);
         virtmcu_bql_unlock();
 
+        #[allow(clippy::while_immutable_condition)]
         while !(*state.inner).quantum_ready {
             virtmcu_cond_wait(state.vcpu_cond, state.mutex);
         }
@@ -264,7 +250,9 @@ fn on_query(state: &ZenohClockState, query: Query) {
     let req: ClockAdvanceReq = unsafe { ptr::read_unaligned(bytes.as_ptr() as *const _) };
 
     state.delta_ns.store(req.delta_ns as i64, Ordering::Release);
-    state.mujoco_time_ns.store(req.mujoco_time_ns as i64, Ordering::Release);
+    state
+        .mujoco_time_ns
+        .store(req.mujoco_time_ns as i64, Ordering::Release);
 
     unsafe {
         virtmcu_mutex_lock(state.mutex);
@@ -273,6 +261,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
         virtmcu_cond_signal(state.query_cond);
 
         let mut error_code = 0;
+        #[allow(clippy::while_immutable_condition)]
         while !(*state.inner).quantum_done {
             if virtmcu_cond_timedwait(state.query_cond, state.mutex, 10000) != 0 {
                 if !(*state.inner).quantum_done {
@@ -282,7 +271,11 @@ fn on_query(state: &ZenohClockState, query: Query) {
             }
         }
 
-        let vtime = if error_code == 0 { (*state.inner).vtime_ns } else { 0 };
+        let vtime = if error_code == 0 {
+            (*state.inner).vtime_ns
+        } else {
+            0
+        };
         virtmcu_mutex_unlock(state.mutex);
 
         let resp = ClockReadyResp {
@@ -296,7 +289,9 @@ fn on_query(state: &ZenohClockState, query: Query) {
             core::mem::size_of::<ClockReadyResp>(),
         );
 
-        let _ = query.reply(query.key_expr(), ZBytes::from(resp_bytes)).wait();
+        let _ = query
+            .reply(query.key_expr(), ZBytes::from(resp_bytes))
+            .wait();
     }
 }
 
@@ -312,7 +307,9 @@ fn reply_error(query: Query, error_code: u32) {
             core::mem::size_of::<ClockReadyResp>(),
         )
     };
-    let _ = query.reply(query.key_expr(), ZBytes::from(resp_bytes)).wait();
+    let _ = query
+        .reply(query.key_expr(), ZBytes::from(resp_bytes))
+        .wait();
 }
 
 extern "C" {

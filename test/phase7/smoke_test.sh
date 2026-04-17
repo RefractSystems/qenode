@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock suspend & icount modes.
+# test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock-rust suspend & icount modes.
 set -euo pipefail
 
 echo "=============================================================================="
 echo "🧪 RUNNING TEST: $(basename "$0")"
 echo "=============================================================================="
 cat << 'TEST_DOC_BLOCK'
-test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock suspend & icount modes.
+test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock-rust suspend & icount modes.
 TEST_DOC_BLOCK
 echo "=============================================================================="
 
@@ -64,7 +64,7 @@ wait_for_queryable() {
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
 ROUTER_PID=$!
 sleep 1
-"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock-rust,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
 sleep 1
@@ -77,7 +77,7 @@ ROUTER_PID=""
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
 ROUTER_PID=$!
 sleep 1
-"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock-rust,mode=icount,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
 sleep 1

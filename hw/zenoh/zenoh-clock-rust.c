@@ -62,6 +62,32 @@ void virtmcu_cond_signal(QemuCond *cond) { qemu_cond_signal(cond); }
 void virtmcu_cond_broadcast(QemuCond *cond);
 void virtmcu_cond_broadcast(QemuCond *cond) { qemu_cond_broadcast(cond); }
 
+QemuMutex *virtmcu_mutex_new(void);
+QemuMutex *virtmcu_mutex_new(void) {
+    QemuMutex *m = g_new0(QemuMutex, 1);
+    qemu_mutex_init(m);
+    return m;
+}
+
+void virtmcu_mutex_free(QemuMutex *mutex);
+void virtmcu_mutex_free(QemuMutex *mutex) {
+    qemu_mutex_destroy(mutex);
+    g_free(mutex);
+}
+
+QemuCond *virtmcu_cond_new(void);
+QemuCond *virtmcu_cond_new(void) {
+    QemuCond *c = g_new0(QemuCond, 1);
+    qemu_cond_init(c);
+    return c;
+}
+
+void virtmcu_cond_free(QemuCond *cond);
+void virtmcu_cond_free(QemuCond *cond) {
+    qemu_cond_destroy(cond);
+    g_free(cond);
+}
+
 /* QEMU timer functions are often static inlines */
 QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque);
 QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque) {
