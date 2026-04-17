@@ -1,5 +1,8 @@
 [package]
 name = "zenoh-telemetry"
+
+[lib]
+crate-type = ["staticlib"]
 version = "0.1.0"
 edition = "2021"
 
