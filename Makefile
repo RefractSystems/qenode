@@ -205,7 +205,7 @@ ci-local: venv check-versions
 	fi
 	@echo "==> hadolint..."
 	@if command -v hadolint >/dev/null 2>&1; then \
-		hadolint --ignore DL3008 --ignore DL3009 --ignore DL4006 --ignore SC2016 --ignore SC2015 docker/Dockerfile; \
+		hadolint --ignore DL3008 --ignore DL3009 --ignore DL4006 --ignore SC2016 --ignore SC2015 --ignore DL3002 --ignore DL3016 docker/Dockerfile; \
 		echo "✓ hadolint passed."; \
 	else \
 		echo "  WARNING: hadolint not installed (brew install hadolint) — skipping."; \

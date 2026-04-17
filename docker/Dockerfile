@@ -121,8 +121,8 @@ RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-syste
 
 # ── Stage: flatcc-builder ───────────────────────────────────────────────────
 FROM toolchain AS flatcc-builder
-RUN git clone --depth=1 https://github.com/dvidelabs/flatcc.git /build/flatcc \
-    && cd /build/flatcc \
+WORKDIR /build/flatcc
+RUN git clone --depth=1 https://github.com/dvidelabs/flatcc.git . \
     && CFLAGS="-fPIC" ./scripts/build.sh
 
 # ── Stage 4: builder ──────────────────────────────────────────────────────────
@@ -146,12 +146,12 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 
 ENV ARCH=arm
 WORKDIR /build
-
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
 RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
-    https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src \
-    && cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
+    https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src
+WORKDIR /build/zenoh-c-build
+RUN cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
     -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
@@ -161,16 +161,16 @@ RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
 
 COPY patches/ /build/patches/
 
-RUN cd qemu \
-    && git config user.email "virtmcu-build@example.com" \
+WORKDIR /build/qemu
+RUN git config user.email "virtmcu-build@example.com" \
     && git config user.name "virtmcu" \
     && git am --3way /build/patches/arm-generic-fdt-v3.mbx \
     && sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c
 
-RUN cd qemu && python3 /build/patches/apply_zenoh_hook.py .
-RUN cd qemu && python3 /build/patches/apply_zenoh_qapi.py .
-RUN cd qemu && python3 /build/patches/apply_zenoh_netdev.py .
-RUN cd qemu && python3 /build/patches/apply_zenoh_chardev.py .
+RUN python3 /build/patches/apply_zenoh_hook.py . \
+    && python3 /build/patches/apply_zenoh_qapi.py . \
+    && python3 /build/patches/apply_zenoh_netdev.py . \
+    && python3 /build/patches/apply_zenoh_chardev.py .
 
 COPY hw/ /build/virtmcu-hw/
 RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
@@ -178,10 +178,8 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
     || printf "\n# virtmcu out-of-tree peripherals\nsubdir('virtmcu')\n" \
     >> /build/qemu/hw/meson.build
 
-RUN cd qemu \
-    && mkdir -p build-virtmcu \
-    && cd build-virtmcu \
-    && ../configure \
+WORKDIR /build/qemu/build-virtmcu
+RUN ../configure \
     --prefix=/opt/virtmcu \
     --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
     --enable-modules \
