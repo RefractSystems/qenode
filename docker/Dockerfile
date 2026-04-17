@@ -42,17 +42,19 @@ ARG DEBIAN_CODENAME
 FROM debian:${DEBIAN_CODENAME}-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    LC_ALL=en_US.UTF-8 \
     TERM=xterm-256color
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     locales tzdata ca-certificates \
+    && echo "en_US.UTF-8 UTF-8" > /etc/locale.gen \
     && locale-gen en_US.UTF-8 \
     && update-locale LANG=en_US.UTF-8 \
     && ln -sf /usr/share/zoneinfo/UTC /etc/localtime \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8
 
 # GitHub CLI apt source (independent layer for caching)
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg apt-transport-https \
@@ -164,10 +166,10 @@ RUN case "${TARGETARCH}" in \
     && _FILE="node-v${NODE_VERSION}.x-linux-${_HOST}" \
     && curl -fsSL "${_URL}/SHASUMS256.txt" | grep "linux-${_HOST}.tar.xz" > /tmp/shasum \
     && _FULLFILE=$(awk '{print $2}' /tmp/shasum) \
-    && curl -fsSL "${_URL}/${_FULLFILE}" -o /tmp/node.tar.xz \
+    && curl -fsSL "${_URL}/${_FULLFILE}" -o "/tmp/${_FULLFILE}" \
     && cd /tmp && sha256sum -c shasum \
-    && tar -xJ -f /tmp/node.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node.tar.xz /tmp/shasum
+    && tar -xJ -f "/tmp/${_FULLFILE}" -C /usr/local --strip-components=1 \
+    && rm "/tmp/${_FULLFILE}" /tmp/shasum
 
 COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
@@ -304,6 +306,11 @@ ARG TARGETARCH
 # We emulate ARM microcontrollers regardless of the host architecture
 ENV ARCH=arm
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime libraries for QEMU and Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 libglib2.0-0t64 libpixman-1-0 libslirp0 libfdt1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/virtmcu /opt/virtmcu
 
