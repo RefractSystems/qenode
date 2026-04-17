@@ -196,6 +196,10 @@ RUN ../configure \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
     && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
+ENV PATH="/opt/virtmcu/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
+ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
+
 # ── Stage 3: devenv ───────────────────────────────────────────────────────────
 FROM toolchain AS devenv
 
