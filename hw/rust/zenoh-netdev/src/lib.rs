@@ -182,9 +182,6 @@ fn on_rx_frame(state: &ZenohNetdevState, sample: zenoh::sample::Sample) {
             virtmcu_timer_mod(state.rx_timer, queue[0].delivery_vtime as i64);
         }
     }
-    drop(queue);
-    
-    unsafe { virtmcu_bql_unlock(); }
 }
 
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {
