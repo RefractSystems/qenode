@@ -24,7 +24,8 @@ extern "C" {
     pub fn qemu_cond_init(cond: *mut QemuCond);
     pub fn qemu_cond_destroy(cond: *mut QemuCond);
     pub fn virtmcu_cond_wait(cond: *mut QemuCond, mutex: *mut QemuMutex);
-    // Returns 0 on success, non-zero on timeout
+    // Returns non-zero (true) on signal/spurious-wakeup, 0 (false) on timeout.
+    // Mirrors QEMU's qemu_cond_timedwait which returns `err != ETIMEDOUT`.
     pub fn virtmcu_cond_timedwait(cond: *mut QemuCond, mutex: *mut QemuMutex, ms: u32) -> i32;
     pub fn virtmcu_cond_signal(cond: *mut QemuCond);
     pub fn virtmcu_cond_broadcast(cond: *mut QemuCond);

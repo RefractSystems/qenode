@@ -1,21 +1,32 @@
 import os
-import sys
-import time
+import socket
 import subprocess
+import sys
 import threading
+import time
+
 import zenoh
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 sys.path.append(os.path.join(WORKSPACE_DIR, "tools"))
 
-from vproto import ClockAdvanceReq, ClockReadyResp
+from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
-# 10 ms quantums: fine-grained latency samples, firmware exits well before 150 quantums
+# 10 ms quantums give ~30 RTT samples for the benchmark workload.
 QUANTUM_NS = 10_000_000
-MAX_QUANTUMS = 500   # 5s virtual cap
-ZENOH_ROUTER = "tcp/127.0.0.1:7447"
+MAX_QUANTUMS = 500  # 5 s virtual cap
 STANDALONE_TIMEOUT = 30
+
+
+def _free_port() -> int:
+    # bind(0) asks the OS for an ephemeral port, then we close the socket.
+    # There is an inherent TOCTOU window before the Zenoh router binds; this
+    # is acceptable because phase-16 tests are serialised in CI and the window
+    # is <<1 ms on a non-adversarial host.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def pack_req(delta_ns):
@@ -27,8 +38,7 @@ def unpack_rep(data):
 
 
 def _percentile(sorted_vals, p):
-    idx = int(len(sorted_vals) * p / 100)
-    idx = min(idx, len(sorted_vals) - 1)
+    idx = min(int(len(sorted_vals) * p / 100), len(sorted_vals) - 1)
     return sorted_vals[idx]
 
 
@@ -45,30 +55,59 @@ def latency_stats(latencies_ms):
 
 
 class BenchmarkRunner:
-    def __init__(self, mode, dtb, kernel):
+    """Run one mode of the benchmark and capture metrics.
+
+    Attributes
+    ----------
+    exit_cycles : int
+        CNTVCT delta printed by firmware — independent of Zenoh timing,
+        used for the determinism check.
+    exit_vtime_ns : int
+        QEMU virtual-clock nanoseconds at the quantum that covered EXIT.
+        With icount shift=0 this equals total instructions executed and
+        serves as the IPS numerator.
+    cntfrq : int
+        ARM generic-timer frequency reported by the firmware.  In QEMU
+        icount mode the hardware counter increments at 1 tick per virtual
+        ns regardless of this register value; we print it for reference.
+    """
+
+    def __init__(self, mode, dtb, kernel, router: str):
         self.mode = mode
         self.dtb = dtb
         self.kernel = kernel
+        self.router = router
         self._exit_event = threading.Event()
-        self.exit_vtime_ns = 0
+        self.exit_cycles = 0    # firmware CNTVCT delta — determinism proxy
+        self.exit_vtime_ns = 0  # Zenoh quantum vtime at EXIT — IPS proxy
+        self.cntfrq = 0
         self.wall_time = 0.0
-        self.latencies = []  # round-trip ms per quantum
-        self.uart_buffer = ""
+        self.latencies: list[float] = []
+
+    def _stderr_relay(self, proc):
+        for line in proc.stderr:
+            line = line.rstrip()
+            if line:
+                print(f"  [QEMU/{self.mode}] {line}", flush=True)
 
     def _output_reader(self, proc):
         for line in proc.stdout:
-            if "CYCLES: " in line:
+            if "CNTFRQ: " in line and not self.cntfrq:
                 try:
-                    hex_str = line.split("CYCLES: ")[1].strip()
-                    self.exit_vtime_ns = int(hex_str, 16)
+                    self.cntfrq = int(line.split("CNTFRQ: ")[1].strip(), 16)
+                except Exception:
+                    pass
+            if "CYCLES: " in line and not self.exit_cycles:
+                try:
+                    self.exit_cycles = int(line.split("CYCLES: ")[1].strip(), 16)
                 except Exception as e:
-                    print(f"  [{self.mode}] Error parsing CYCLES: {e}")
+                    print(f"  [{self.mode}] CYCLES parse error: {e}")
             if "EXIT" in line:
                 self._exit_event.set()
 
-    def _run_icount(self, proc, t0):
+    def _run_icount(self, proc, t0) -> bool:
         config = zenoh.Config()
-        config.insert_json5("connect/endpoints", f'["{ZENOH_ROUTER}"]')
+        config.insert_json5("connect/endpoints", f'["{self.router}"]')
         config.insert_json5("scouting/multicast/enabled", "false")
         session = zenoh.open(config)
 
@@ -109,6 +148,9 @@ class BenchmarkRunner:
             self.latencies.append((lat1 - lat0) * 1e3)
 
             if self._exit_event.is_set():
+                # current_vtime_ns at quantum boundary after EXIT ≈ total instructions
+                # (icount shift=0: 1 virtual ns = 1 instruction).
+                self.exit_vtime_ns = resp.current_vtime_ns
                 break
         else:
             print(f"  WARN: [{self.mode}] hit MAX_QUANTUMS ({MAX_QUANTUMS}) without EXIT")
@@ -118,41 +160,41 @@ class BenchmarkRunner:
         return True
 
     def run(self):
+        run_sh = os.path.join(WORKSPACE_DIR, "scripts", "run.sh")
         retries = 3
         while retries > 0:
             self._exit_event.clear()
+            self.exit_cycles = 0
             self.exit_vtime_ns = 0
             self.latencies = []
-            self.uart_buffer = ""
-            
-            run_sh = os.path.join(WORKSPACE_DIR, "scripts", "run.sh")
+
             cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
                    "-nographic", "-serial", "stdio", "-monitor", "none"]
-
             if "slaved-icount" in self.mode:
                 cmd += [
                     "-icount", "shift=0,align=off,sleep=off",
-                    "-device", f"zenoh-clock,mode=icount,node=0,router={ZENOH_ROUTER}",
+                    "-device",
+                    f"zenoh-clock,mode=icount,node=0,router={self.router}",
                 ]
 
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
             )
-
-            reader = threading.Thread(
+            threading.Thread(
                 target=self._output_reader, args=(proc,), daemon=True
-            )
-            reader.start()
+            ).start()
+            threading.Thread(
+                target=self._stderr_relay, args=(proc,), daemon=True
+            ).start()
 
             t0 = time.perf_counter()
-
             if "slaved-icount" not in self.mode:
                 deadline = t0 + STANDALONE_TIMEOUT
                 while not self._exit_event.is_set() and proc.poll() is None:
                     if time.perf_counter() > deadline:
-                        print(f"  ERROR: [{self.mode}] timed out (30s)")
+                        print(f"  ERROR: [{self.mode}] timed out ({STANDALONE_TIMEOUT} s)")
                         break
                     time.sleep(0.05)
                 self.wall_time = time.perf_counter() - t0
@@ -165,28 +207,31 @@ class BenchmarkRunner:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                
+
             if success:
                 break
-            
             retries -= 1
             if retries > 0:
-                print(f"  [{self.mode}] Retrying... ({retries} left)")
+                print(f"  [{self.mode}] retrying… ({retries} left)")
                 time.sleep(2)
 
 
 def main():
     dtb = os.path.join(SCRIPT_DIR, "minimal.dtb")
-    dts = os.path.join(WORKSPACE_DIR, "test/phase1/minimal.dts")
     kernel = os.path.join(SCRIPT_DIR, "bench.elf")
 
     subprocess.run(
-        ["dtc", "-I", "dts", "-O", "dtb", "-o", dtb, dts],
+        ["dtc", "-I", "dts", "-O", "dtb", "-o", dtb,
+         os.path.join(WORKSPACE_DIR, "test/phase1/minimal.dts")],
         check=True, capture_output=True,
     )
 
+    port = _free_port()
+    zenoh_router = f"tcp/127.0.0.1:{port}"
     router = subprocess.Popen(
-        ["python3", os.path.join(WORKSPACE_DIR, "tests", "zenoh_router_persistent.py")],
+        ["python3",
+         os.path.join(WORKSPACE_DIR, "tests", "zenoh_router_persistent.py"),
+         zenoh_router],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(2)
@@ -195,14 +240,20 @@ def main():
     try:
         for mode in ("standalone", "slaved-icount", "slaved-icount-2"):
             print(f"--- [{mode}] ---")
-            runner = BenchmarkRunner(mode, dtb, kernel)
+            runner = BenchmarkRunner(mode, dtb, kernel, zenoh_router)
             runner.run()
             results[mode] = runner
-            print(f"  wall : {runner.wall_time:.3f} s")
+            print(f"  wall  : {runner.wall_time:.3f} s")
+            if runner.cntfrq:
+                print(f"  cntfrq: {runner.cntfrq:,} Hz  "
+                      "(NOTE: QEMU counter increments at 1 GHz regardless)")
+            if runner.exit_cycles:
+                print(f"  cycles: {runner.exit_cycles:,}")
             if runner.exit_vtime_ns:
-                print(f"  vtime: {runner.exit_vtime_ns / 1e9:.4f} s  ({runner.exit_vtime_ns:,} ns)")
+                print(f"  vtime : {runner.exit_vtime_ns / 1e6:.3f} ms virtual "
+                      f"({runner.exit_vtime_ns:,} ns ≈ instructions)")
             if runner.latencies:
-                print(f"  rtt  : {latency_stats(runner.latencies)}")
+                print(f"  rtt   : {latency_stats(runner.latencies)}")
     finally:
         router.terminate()
         router.wait()
@@ -213,30 +264,31 @@ def main():
     r_ic = results["slaved-icount"]
     r_ic2 = results["slaved-icount-2"]
 
-    instr = r_ic.exit_vtime_ns
-    if instr == 0:
-        print("ERROR: slaved-icount run did not detect EXIT — no instruction count available")
+    if not r_ic.exit_cycles:
+        print("ERROR: slaved-icount run produced no CYCLES output")
         sys.exit(1)
 
-    print(f"Instructions (proxy) : {instr:,}")
-
-    # Determinism: both icount runs must finish at the exact same virtual time
-    if r_ic.exit_vtime_ns > 0 and r_ic.exit_vtime_ns == r_ic2.exit_vtime_ns:
-        print("Determinism          : PASSED")
+    # Determinism: firmware CNTVCT delta must be bit-identical across icount runs.
+    # This check is independent of Zenoh/quantum-boundary timing.
+    if r_ic.exit_cycles == r_ic2.exit_cycles:
+        print(f"Determinism          : PASSED  ({r_ic.exit_cycles:,} cycles)")
     else:
-        delta = abs(r_ic.exit_vtime_ns - r_ic2.exit_vtime_ns)
-        print(f"Determinism          : FAILED (delta={delta} cycles)")
+        diff = abs(r_ic.exit_cycles - r_ic2.exit_cycles)
+        print(f"Determinism          : FAILED  (delta={diff} cycles)")
         sys.exit(1)
 
-    # IPS
-    if r_ic.wall_time > 0:
-        mips = instr / r_ic.wall_time / 1e6
+    # IPS: use Zenoh vtime (icount shift=0 → vtime_ns == instructions).
+    if r_ic.exit_vtime_ns and r_ic.wall_time > 0:
+        mips = r_ic.exit_vtime_ns / r_ic.wall_time / 1e6
         print(f"slaved-icount MIPS   : {mips:.1f}")
-    if r_sa.wall_time > 0 and r_sa._exit_event.is_set():
-        mips_sa = instr / r_sa.wall_time / 1e6
+    if r_sa.exit_cycles and r_sa.wall_time > 0 and r_ic.exit_vtime_ns:
+        # Use the icount vtime (verified instruction count) as the numerator;
+        # divide by the standalone wall time.  r_sa.exit_cycles reflects real
+        # time at CNTFRQ Hz which differs from the icount virtual clock, so
+        # mixing it with wall time would produce a meaningless ratio.
+        mips_sa = r_ic.exit_vtime_ns / r_sa.wall_time / 1e6
         print(f"standalone MIPS (est): {mips_sa:.1f}")
 
-    # Latency
     if r_ic.latencies:
         print(f"Co-sim latency       : {latency_stats(r_ic.latencies)}")
 

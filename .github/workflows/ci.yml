@@ -23,6 +23,9 @@ concurrency:
 env:
   BUILDER_IMAGE: virtmcu-builder
   PYTHON_VERSION: "3.12"
+  # CI runners can be slow; raise the zenoh-clock STALL timeout so the device
+  # doesn't fire on load spikes.  Local dev keeps the 5 s default for fast feedback.
+  VIRTMCU_STALL_TIMEOUT_MS: "60000"
 
 # ── Tier 1: Lint ──────────────────────────────────────────────────────────────
 
@@ -56,7 +59,8 @@ jobs:
           # DL3008: pin apt versions — acceptable for a dev toolchain image
           # DL3009: apt-get clean — handled by rm -rf /var/lib/apt/lists/*
           # DL4006: set -o pipefail — handled by set -euo pipefail in scripts
-          ignore: DL3008,DL3009,DL4006
+          # SC2016: $ORIGIN in single quotes is literal, which is intended for rpath
+          ignore: DL3008,DL3009,DL4006,SC2016
 
 # ── Tier 1: Unit Tests (no QEMU) ──────────────────────────────────────────────
 
@@ -135,6 +139,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           cache-to: type=gha,scope=builder-amd64,mode=max
           load: true
@@ -214,6 +219,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -223,8 +229,67 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "${{ matrix.pre }} && bash test/phase${{ matrix.phase }}/smoke_test.sh"
+
+# ── Tier 3: Phase 16 — Performance & Determinism (IPS benchmark) ─────────────
+#
+# Runs the icount determinism and IPS benchmark.  CI runners are slower than
+# developer machines, so the STALL timeout is raised to 60 s via the
+# stall-timeout device property (default is 5 s for fast local feedback).
+
+  smoke-phase16:
+    name: Smoke — Phase 16 (perf & determinism)
+    needs: [build-qemu, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore builder image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
+          cache-from: type=gha,scope=builder-amd64
+          load: true
+
+      - name: Run phase 16 smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash -c "
+              make -C test/phase1
+              make -C test/phase16
+              uv pip install --system --break-system-packages -r pyproject.toml
+              bash test/phase16/smoke_test.sh
+            "
 
 # ── Tier 3: Phase 5 — SystemC Co-simulation Bridge ───────────────────────────
 
@@ -261,6 +326,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -270,6 +336,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
@@ -312,6 +379,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -321,6 +389,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               uv pip install --system --break-system-packages -r pyproject.toml
@@ -366,6 +435,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -375,6 +445,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               uv pip install --system --break-system-packages -r pyproject.toml
@@ -420,6 +491,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -429,6 +501,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
@@ -487,6 +560,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -496,6 +570,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
@@ -543,6 +618,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -558,6 +634,7 @@ jobs:
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
             RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -578,7 +655,7 @@ jobs:
 
   peripheral-coverage:
     name: Peripheral C Coverage
-    needs: [smoke-tests, smoke-phase5, smoke-phase6, smoke-phase7, pytest-qmp, robot-tests]
+    needs: [smoke-tests, smoke-phase5, smoke-phase6, smoke-phase7, smoke-phase16, pytest-qmp, robot-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -600,6 +677,8 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -611,6 +690,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               # Pre-build all artifacts
@@ -670,6 +750,8 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
+            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -679,6 +761,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1

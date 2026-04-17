@@ -43,7 +43,7 @@ All clock behaviour is controlled by \`zenoh-clock\`:
 
 ### Error Codes (sim/clock/advance/{id} Reply)
 - \`0\` (OK): Quantum completed successfully.
-- \`1\` (STALL): QEMU failed to reach TB boundary within 2s (likely firmware crash or deadlock).
+- \`1\` (STALL): QEMU failed to reach TB boundary within the stall timeout (default **5 s**; set `stall-timeout=<ms>` on the device — CI uses 60 000 ms via `VIRTMCU_STALL_TIMEOUT_MS`).
 - \`2\` (ZENOH_ERROR): Transport layer failure.
 
 ---

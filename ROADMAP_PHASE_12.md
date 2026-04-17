@@ -14,7 +14,7 @@ This document outlines the critical architectural and usability improvements for
 - [x] **Proactive Connection Logging:** `fprintf(stderr, ...)` added in `realize` for session open failure and successful connect. Missing-router path now emits a clear WARNING with container-specific guidance.
 - [x] **Specific Error Payloads:** `ClockReadyPayload` updated with `error_code` field (`0`=OK, `1`=STALL).
     - `0` = OK
-    - `1` = INTERNAL_STALL (QEMU didn't reach TB boundary within 2s)
+    - `1` = INTERNAL_STALL (QEMU didn't reach TB boundary within stall timeout, default 5 s; see `stall-timeout` device property)
     - `2` = ZENOH_ERROR — emitted by `on_query` for: (a) query arrives with no payload, (b) `ClockAdvancePayload` is truncated/malformed. `z_query_reply` failure is logged but cannot carry error_code=2 (the transport is already gone). Session-open failure exits via `error_setg` before any queryable exists — TimeAuthority observes a connection reset, which is the correct signal.
 
 ### Verification:
