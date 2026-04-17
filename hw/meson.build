@@ -103,6 +103,19 @@ rust_zenoh_chardev_lib = custom_target(
   ]
 )
 
+# ── zenoh-telemetry ────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh telemetry backend.
+rust_zenoh_telemetry_lib = custom_target(
+  'rust_zenoh_telemetry_lib',
+  input: 'rust/zenoh-telemetry/src/lib.rs',
+  output: ['libzenoh_telemetry.a', 'rust_zenoh_telemetry_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-telemetry && cp target/release/libzenoh_telemetry.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_telemetry.a', meson.current_build_dir() / 'rust_zenoh_telemetry_trigger.c'
+  ]
+)
+
 subdir('zenoh')
 
 # ── remote-port-bridge ────────────────────────────────────────────────────────

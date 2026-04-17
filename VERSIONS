@@ -19,4 +19,7 @@ CMAKE_VERSION=4.3.1
 # Rust toolchain
 RUST_VERSION=1.95.0
 
+# FlatBuffers serialization library
+FLATBUFFERS_VERSION=25.12.19
+
 # Python requirements are managed in requirements.txt (must match ZENOH_VERSION)
