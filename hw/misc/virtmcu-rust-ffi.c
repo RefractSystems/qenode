@@ -44,9 +44,13 @@ void virtmcu_mutex_free(QemuMutex *mutex) {
 
 /* ── Cond ────────────────────────────────────────────────────────────────── */
 
-void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) { 
-    // Use timedwait to avoid infinite hang in case of lost signals
-    qemu_cond_timedwait(cond, mutex, 10000); 
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) {
+    /* 300 s is long enough for any realistic quantum; a timeout here
+     * means the sender's signal was lost — log and let the caller's
+     * while-loop recheck the predicate rather than hanging forever. */
+    if (!qemu_cond_timedwait(cond, mutex, 300000)) {
+        fprintf(stderr, "[virtmcu] cond_wait: 300 s timeout — possible lost signal\n");
+    }
 }
 
 int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms) {
