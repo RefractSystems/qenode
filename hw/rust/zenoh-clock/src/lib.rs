@@ -1,5 +1,4 @@
-#![allow(clippy::while_immutable_condition)]
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
+#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero, clippy::while_immutable_condition)]
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
@@ -68,7 +67,8 @@ pub unsafe extern "C" fn zenoh_clock_init(
 
     let session = match zenoh::open(config).wait() {
         Ok(s) => s,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("[zenoh-clock] node={}: FAILED session: {}", node_id, e);
             return ptr::null_mut();
         }
     };
@@ -188,19 +188,15 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
 
     unsafe {
         virtmcu_mutex_lock(state.mutex);
-        if !state.needs_quantum_atomic.load(Ordering::Acquire) {
-            virtmcu_mutex_unlock(state.mutex);
-            return;
-        }
-
+        // Signal done
         virtmcu_bql_lock();
         state.needs_quantum_atomic.store(false, Ordering::Release);
-        let vtime_done = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        (*state.inner).vtime_ns = vtime_done;
+        (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         (*state.inner).quantum_done = true;
         virtmcu_cond_signal(state.query_cond);
         virtmcu_bql_unlock();
 
+        // Wait for ready
         while !(*state.inner).quantum_ready {
             virtmcu_cond_wait(state.vcpu_cond, state.mutex);
         }
@@ -209,16 +205,14 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         (*state.inner).quantum_done = false;
         
         let next_delta = state.delta_ns.load(Ordering::Acquire);
-        
         virtmcu_bql_lock();
         if state.is_icount {
             virtmcu_icount_advance(next_delta);
         }
-        let vtime_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        (*state.inner).vtime_ns = vtime_start;
-        state.quantum_start_vtime_ns.store(vtime_start, Ordering::Release);
-        
-        virtmcu_timer_mod(state.quantum_timer, vtime_start + next_delta);
+        let vtime_now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        (*state.inner).vtime_ns = vtime_now;
+        state.quantum_start_vtime_ns.store(vtime_now, Ordering::Release);
+        virtmcu_timer_mod(state.quantum_timer, vtime_now + next_delta);
         virtmcu_bql_unlock();
         
         virtmcu_mutex_unlock(state.mutex);
@@ -247,9 +241,9 @@ fn on_query(state: &ZenohClockState, query: Query) {
         (*state.inner).quantum_ready = true;
         virtmcu_cond_signal(state.vcpu_cond);
 
-        let mut error_code = 0;
+        let mut error_code = 0u32;
         while !(*state.inner).quantum_done {
-            if virtmcu_cond_timedwait(state.query_cond, state.mutex, 30000) != 0 {
+            if virtmcu_cond_timedwait(state.query_cond, state.mutex, 60000) != 0 {
                 if !(*state.inner).quantum_done {
                     error_code = 1; // STALL
                 }
