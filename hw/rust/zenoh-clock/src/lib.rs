@@ -21,10 +21,12 @@ use virtmcu_qom::timer::*;
 // We use a Boxed struct for the state that needs to be shared with Zenoh threads
 // and the C wrapper.
 pub struct ZenohClockState {
+    #[allow(dead_code)]
     node_id: u32,
     #[allow(dead_code)]
     is_icount: bool,
 
+    #[allow(dead_code)]
     session: Session,
     #[allow(dead_code)]
     queryable: Option<Queryable<()>>,
@@ -65,7 +67,6 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let mut config = Config::default();
     if !router.is_null() {
         let router_str = unsafe { CStr::from_ptr(router) }.to_str().unwrap();
-        eprintln!("[zenoh-clock] node={}: connecting to router {}...", node_id, router_str);
         let json = format!("[\"{}\"]", router_str);
         let _ = config.insert_json5("connect/endpoints", &json);
         let _ = config.insert_json5("scouting/multicast/enabled", "false");
@@ -194,7 +195,6 @@ extern "C" fn zclock_get_quantum_timing(timing: *mut VirtmcuQuantumTiming) {
 }
 
 extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
-    eprintln!("[zenoh-clock] hook called");
     let state = unsafe {
         if GLOBAL_ZENOH_CLOCK.is_null() {
             return;
@@ -211,7 +211,6 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
 
         // Processing quantum hook
         virtmcu_bql_lock();
-        // Check again after BQL if needed, but here we just follow C impl
         (*state.inner).needs_quantum = false;
         (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         (*state.inner).quantum_done = true;
@@ -227,14 +226,12 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         (*state.inner).quantum_done = false;
         let next_delta = state.delta_ns.load(Ordering::Acquire);
         let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        eprintln!("[zenoh-clock] resuming: vtime={}, next_delta={}", vtime, next_delta);
         (*state.inner).vtime_ns = vtime;
         state.quantum_start_vtime_ns.store(vtime, Ordering::Release);
         virtmcu_mutex_unlock(state.mutex);
 
         virtmcu_bql_lock();
         if state.is_icount {
-            eprintln!("[zenoh-clock] advancing icount bias by {}", next_delta);
             virtmcu_icount_advance(next_delta);
             qemu_clock_run_all_timers();
         }

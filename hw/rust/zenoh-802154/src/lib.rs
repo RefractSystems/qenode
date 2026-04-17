@@ -161,6 +161,7 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
     offset: u64,
     value: u64,
 ) {
+    assert!(!state.is_null(), "state pointer is null");
     let s = &mut *state;
     match offset {
         0x00 => {
@@ -229,7 +230,11 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     let mut frame_data = [0u8; 128];
     frame_data[..size].copy_from_slice(&bytes[14..14+size]);
     
-    unsafe { virtmcu_mutex_lock(state.mutex) };
+    // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
+    // to prevent AB-BA deadlocks with the QEMU main thread.
+    unsafe { virtmcu_bql_lock(); }
+    unsafe { virtmcu_mutex_lock(state.mutex); }
+    
     if state.rx_queue.len() < 16 {
         // Insertion sort by vtime (ascending)
         let pos = state.rx_queue.binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
@@ -240,7 +245,9 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
             virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
         }
     }
-    unsafe { virtmcu_mutex_unlock(state.mutex) };
+    
+    unsafe { virtmcu_mutex_unlock(state.mutex); }
+    unsafe { virtmcu_bql_unlock(); }
 }
 
 unsafe fn check_rx_queue(s: &mut Zenoh802154State) {

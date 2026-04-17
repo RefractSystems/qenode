@@ -123,6 +123,10 @@ pub unsafe extern "C" fn zenoh_netdev_receive_rust(
     buf: *const u8,
     size: usize,
 ) -> isize {
+    assert!(!state.is_null(), "state pointer is null");
+    assert!(!buf.is_null(), "rx buffer is null");
+    assert!(size <= 65536, "rx buffer size exceeds maximum MTU");
+
     let s = &*state;
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     
@@ -162,6 +166,10 @@ fn on_rx_frame(state: &ZenohNetdevState, sample: zenoh::sample::Sample) {
     
     let frame_data = bytes[12..12+size].to_vec();
     
+    // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
+    // to prevent AB-BA deadlocks with the QEMU main thread.
+    unsafe { virtmcu_bql_lock(); }
+    
     let mut queue = state.rx_queue.lock().unwrap();
     if queue.len() < 64 {
         // Insertion sort by vtime (ascending)
@@ -174,6 +182,9 @@ fn on_rx_frame(state: &ZenohNetdevState, sample: zenoh::sample::Sample) {
             virtmcu_timer_mod(state.rx_timer, queue[0].delivery_vtime as i64);
         }
     }
+    drop(queue);
+    
+    unsafe { virtmcu_bql_unlock(); }
 }
 
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {

@@ -37,7 +37,7 @@ pub struct ZenohUiState {
     buttons: Arc<Mutex<HashMap<u32, ZenohButton>>>,
     sender: Sender<Option<LedEvent>>,
     #[allow(dead_code)]
-    publish_thread: std::thread::JoinHandle<()>,
+    publish_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[no_mangle]
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn zenoh_ui_init_rust(
         node_id,
         buttons: Arc::new(Mutex::new(HashMap::new())),
         sender: tx,
-        publish_thread: thread,
+        publish_thread: Some(thread),
     });
 
     Box::into_raw(state)
@@ -156,6 +156,9 @@ pub unsafe extern "C" fn zenoh_ui_ensure_button_rust(state: *mut ZenohUiState, b
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_ui_cleanup_rust(state: *mut ZenohUiState) {
     if state.is_null() { return; }
-    let s = Box::from_raw(state);
+    let mut s = Box::from_raw(state);
     let _ = s.sender.send(None);
+    if let Some(t) = s.publish_thread.take() {
+        let _ = t.join();
+    }
 }

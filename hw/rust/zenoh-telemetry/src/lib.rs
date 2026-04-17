@@ -32,7 +32,7 @@ pub struct ZenohTelemetryState {
     session: Session,
     sender: Sender<Option<TraceEvent>>,
     #[allow(dead_code)]
-    publish_thread: std::thread::JoinHandle<()>,
+    publish_thread: Option<std::thread::JoinHandle<()>>,
     last_halted: [AtomicBool; 32],
 }
 
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn zenoh_telemetry_init(
     let state = Box::into_raw(Box::new(ZenohTelemetryState {
         session,
         sender: tx,
-        publish_thread: thread,
+        publish_thread: Some(thread),
         last_halted: Default::default(),
     }));
 
@@ -85,8 +85,11 @@ pub unsafe extern "C" fn zenoh_telemetry_cleanup_rust(state: *mut ZenohTelemetry
     if state.is_null() { return; }
     GLOBAL_TELEMETRY = ptr::null_mut();
     
-    let s = Box::from_raw(state);
+    let mut s = Box::from_raw(state);
     let _ = s.sender.send(None);
+    if let Some(t) = s.publish_thread.take() {
+        let _ = t.join();
+    }
 }
 
 fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: String) {
