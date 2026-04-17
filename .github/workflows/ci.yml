@@ -542,6 +542,7 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -556,6 +557,7 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 

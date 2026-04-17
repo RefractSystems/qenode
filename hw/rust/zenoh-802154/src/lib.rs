@@ -1,0 +1,277 @@
+#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
+extern crate libc;
+
+use core::ffi::{c_char, c_void};
+use std::ffi::CStr;
+use std::ptr;
+use byteorder::{LittleEndian, ByteOrder};
+
+use zenoh::Config;
+use zenoh::Session;
+use zenoh::Wait;
+use zenoh::pubsub::Publisher;
+use zenoh::pubsub::Subscriber;
+
+use virtmcu_qom::sync::*;
+use virtmcu_qom::timer::*;
+use virtmcu_qom::irq::*;
+
+#[repr(C, packed)]
+struct ZenohRfHeader {
+    delivery_vtime_ns: u64,
+    size: u32,
+    rssi: i8,
+    lqi: u8,
+}
+
+struct RxFrame {
+    delivery_vtime: u64,
+    data: [u8; 128],
+    size: usize,
+    rssi: i8,
+}
+
+pub struct Zenoh802154State {
+    irq: qemu_irq,
+    #[allow(dead_code)]
+    session: Session,
+    publisher: Publisher<'static>,
+    #[allow(dead_code)]
+    subscriber: Subscriber<()>,
+    
+    tx_fifo: [u8; 128],
+    tx_len: u32,
+    rx_fifo: [u8; 128],
+    rx_len: u32,
+    rx_read_pos: u32,
+    rx_rssi: i8,
+    status: u32,
+    
+    rx_timer: *mut QemuTimer,
+    rx_queue: Vec<RxFrame>,
+    mutex: *mut QemuMutex,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_802154_init_rust(
+    irq: qemu_irq,
+    node_id: u32,
+    router: *const c_char,
+    topic: *const c_char,
+) -> *mut Zenoh802154State {
+    let mut config = Config::default();
+    if !router.is_null() {
+        let router_str = CStr::from_ptr(router).to_str().unwrap();
+        if !router_str.is_empty() {
+            let json = format!("[\"{}\"]", router_str);
+            let _ = config.insert_json5("connect/endpoints", &json);
+            let _ = config.insert_json5("scouting/multicast/enabled", "false");
+        }
+    }
+
+    let session = match zenoh::open(config).wait() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[zenoh-802154] node={}: FAILED to open Zenoh session: {}", node_id, e);
+            return ptr::null_mut();
+        }
+    };
+
+    let topic_tx;
+    let topic_rx;
+    if !topic.is_null() {
+        let t = CStr::from_ptr(topic).to_str().unwrap();
+        topic_tx = format!("{}/tx", t);
+        topic_rx = format!("{}/rx", t);
+    } else {
+        topic_tx = format!("sim/rf/802154/{}/tx", node_id);
+        topic_rx = format!("sim/rf/802154/{}/rx", node_id);
+    }
+
+    let publisher = session.declare_publisher(topic_tx).wait().unwrap();
+    
+    let state_ptr_raw = libc::malloc(std::mem::size_of::<Zenoh802154State>()) as *mut Zenoh802154State;
+    let state_ptr_usize = state_ptr_raw as usize;
+
+    let subscriber = session.declare_subscriber(topic_rx)
+        .callback(move |sample| {
+            let state = &mut *(state_ptr_usize as *mut Zenoh802154State);
+            on_rx_frame(state, sample);
+        })
+        .wait()
+        .unwrap();
+
+    let rx_timer = virtmcu_timer_new_ns(
+        QEMU_CLOCK_VIRTUAL,
+        rx_timer_cb,
+        state_ptr_raw as *mut c_void,
+    );
+
+    let mutex = virtmcu_mutex_new();
+
+    let state = Zenoh802154State {
+        irq,
+        session,
+        publisher,
+        subscriber,
+        tx_fifo: [0; 128],
+        tx_len: 0,
+        rx_fifo: [0; 128],
+        rx_len: 0,
+        rx_read_pos: 0,
+        rx_rssi: 0,
+        status: 0,
+        rx_timer,
+        rx_queue: Vec::with_capacity(16),
+        mutex,
+    };
+
+    ptr::write(state_ptr_raw, state);
+
+    state_ptr_raw
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_802154_read_rust(
+    state: *mut Zenoh802154State,
+    offset: u64,
+) -> u32 {
+    let s = &mut *state;
+    match offset {
+        0x04 => s.tx_len,
+        0x0C => {
+            if (s.status & 0x01 != 0) && (s.rx_read_pos < s.rx_len) {
+                let val = s.rx_fifo[s.rx_read_pos as usize] as u32;
+                s.rx_read_pos += 1;
+                val
+            } else {
+                0
+            }
+        },
+        0x10 => s.rx_len,
+        0x14 => s.status,
+        0x18 => (s.rx_rssi as u8) as u32,
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_802154_write_rust(
+    state: *mut Zenoh802154State,
+    offset: u64,
+    value: u64,
+) {
+    let s = &mut *state;
+    match offset {
+        0x00 => {
+            if s.tx_len < 128 {
+                s.tx_fifo[s.tx_len as usize] = value as u8;
+                s.tx_len += 1;
+            }
+        },
+        0x04 => {
+            s.tx_len = (value & 0x7F) as u32;
+        },
+        0x08 => {
+            // TX GO
+            let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
+            let mut msg = Vec::with_capacity(14 + s.tx_len as usize);
+            
+            let mut hdr_bytes = [0u8; 14];
+            LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime);
+            LittleEndian::write_u32(&mut hdr_bytes[8..12], s.tx_len);
+            hdr_bytes[12] = 0; // RSSI
+            hdr_bytes[13] = 255; // LQI
+            
+            msg.extend_from_slice(&hdr_bytes);
+            msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
+            
+            let _ = s.publisher.put(msg).wait();
+            
+            s.tx_len = 0;
+            s.status |= 0x02; // TX_DONE
+            qemu_set_irq(s.irq, 1);
+        },
+        0x14 => {
+            s.status &= !(value as u32);
+            if s.status & 0x01 == 0 {
+                qemu_set_irq(s.irq, 0);
+                virtmcu_mutex_lock(s.mutex);
+                check_rx_queue(s);
+                virtmcu_mutex_unlock(s.mutex);
+            }
+        },
+        _ => {},
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_802154_cleanup_rust(state: *mut Zenoh802154State) {
+    if state.is_null() { return; }
+    let s = Box::from_raw(state);
+    if !s.rx_timer.is_null() {
+        virtmcu_timer_free(s.rx_timer);
+    }
+    virtmcu_mutex_free(s.mutex);
+}
+
+fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
+    let payload = sample.payload();
+    if payload.len() < 14 { return; }
+    
+    let bytes = payload.to_bytes();
+    let vtime = LittleEndian::read_u64(&bytes[0..8]);
+    let size = LittleEndian::read_u32(&bytes[8..12]) as usize;
+    let rssi = bytes[12] as i8;
+    
+    if size > 128 || bytes.len() < 14 + size { return; }
+    
+    let mut frame_data = [0u8; 128];
+    frame_data[..size].copy_from_slice(&bytes[14..14+size]);
+    
+    unsafe { virtmcu_mutex_lock(state.mutex) };
+    if state.rx_queue.len() < 16 {
+        // Insertion sort by vtime (ascending)
+        let pos = state.rx_queue.binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
+            .unwrap_or_else(|e| e);
+        state.rx_queue.insert(pos, RxFrame { delivery_vtime: vtime, data: frame_data, size, rssi });
+        
+        unsafe {
+            virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
+        }
+    }
+    unsafe { virtmcu_mutex_unlock(state.mutex) };
+}
+
+unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
+    let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
+    if !s.rx_queue.is_empty() {
+        if s.rx_queue[0].delivery_vtime <= now {
+            if s.status & 0x01 == 0 {
+                let frame = s.rx_queue.remove(0);
+                s.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
+                s.rx_len = frame.size as u32;
+                s.rx_rssi = frame.rssi;
+                s.rx_read_pos = 0;
+                
+                s.status |= 0x01; // RX_READY
+                qemu_set_irq(s.irq, 1);
+                
+                if !s.rx_queue.is_empty() {
+                    virtmcu_timer_mod(s.rx_timer, s.rx_queue[0].delivery_vtime as i64);
+                }
+            }
+        } else {
+            virtmcu_timer_mod(s.rx_timer, s.rx_queue[0].delivery_vtime as i64);
+        }
+    }
+}
+
+extern "C" fn rx_timer_cb(opaque: *mut c_void) {
+    let state = unsafe { &mut *(opaque as *mut Zenoh802154State) };
+    unsafe {
+        virtmcu_mutex_lock(state.mutex);
+        check_rx_queue(state);
+        virtmcu_mutex_unlock(state.mutex);
+    }
+}

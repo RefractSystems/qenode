@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
 #![no_std]
 
 use core::ffi::c_void;
@@ -26,6 +27,7 @@ pub unsafe extern "C" fn rust_dummy_write(
     unsafe { qemu_log_mask(LOG_UNIMP, msg.as_ptr() as *const core::ffi::c_char) };
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     extern "C" {

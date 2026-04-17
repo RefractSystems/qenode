@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero, clippy::manual_range_contains)]
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
@@ -9,13 +10,14 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 use zenoh::Config;
 use zenoh::Session;
 use zenoh::Wait;
+use zenoh::pubsub::Publisher;
 
 use virtmcu_qom::sync::*;
 use virtmcu_qom::timer::*;
 use virtmcu_qom::cpu::*;
 
-mod telemetry;
-use telemetry::virtmcu::telemetry::*;
+// We'll use FlatBufferBuilder directly to avoid version mismatch with generated code.
+use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 pub struct TraceEvent {
     timestamp_ns: u64,
@@ -84,28 +86,27 @@ pub unsafe extern "C" fn zenoh_telemetry_cleanup_rust(state: *mut ZenohTelemetry
     GLOBAL_TELEMETRY = ptr::null_mut();
     
     let s = Box::from_raw(state);
-    let _ = s.sender.send(None); // Signal thread to exit
-    // Thread joined when s is dropped
+    let _ = s.sender.send(None);
 }
 
 fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: String) {
-    let publisher = session.declare_publisher(topic).wait().unwrap();
-    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
+    let publisher: Publisher<'static> = session.declare_publisher(topic).wait().unwrap();
+    let mut builder = FlatBufferBuilder::new();
     
     while let Ok(Some(ev)) = rx.recv() {
         builder.reset();
         
-        let device_name = ev.device_name.as_deref().map(|s| builder.create_string(s));
+        let device_name_off = ev.device_name.as_deref().map(|s| builder.create_string(s));
         
-        let mut event_builder = TraceEventBuilder::new(&mut builder);
-        event_builder.add_timestamp_ns(ev.timestamp_ns);
-        event_builder.add_type_(TraceEventType(ev.event_type));
-        event_builder.add_id(ev.id);
-        event_builder.add_value(ev.value);
-        if let Some(dn) = device_name {
-            event_builder.add_device_name(dn);
+        let start = builder.start_table();
+        builder.push_slot(0, ev.timestamp_ns, 0); // timestamp_ns
+        builder.push_slot(1, ev.event_type, 0);   // type
+        builder.push_slot(2, ev.id, 0);           // id
+        builder.push_slot(3, ev.value, 0);        // value
+        if let Some(dn) = device_name_off {
+            builder.push_slot_always(4, dn);      // device_name
         }
-        let root = event_builder.finish();
+        let root = builder.end_table(start);
         builder.finish(root, None);
         
         let buf = builder.finished_data();

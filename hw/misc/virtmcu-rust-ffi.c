@@ -44,7 +44,10 @@ void virtmcu_mutex_free(QemuMutex *mutex) {
 
 /* ── Cond ────────────────────────────────────────────────────────────────── */
 
-void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) { qemu_cond_wait(cond, mutex); }
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) { 
+    // Use timedwait to avoid infinite hang in case of lost signals
+    qemu_cond_timedwait(cond, mutex, 5000); 
+}
 
 int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms) {
     return qemu_cond_timedwait(cond, mutex, ms);

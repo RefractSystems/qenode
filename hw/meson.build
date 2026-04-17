@@ -116,6 +116,45 @@ rust_zenoh_telemetry_lib = custom_target(
   ]
 )
 
+# ── zenoh-actuator ────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh actuator backend.
+rust_zenoh_actuator_lib = custom_target(
+  'rust_zenoh_actuator_lib',
+  input: 'rust/zenoh-actuator/src/lib.rs',
+  output: ['libzenoh_actuator.a', 'rust_zenoh_actuator_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-actuator && cp target/release/libzenoh_actuator.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_actuator.a', meson.current_build_dir() / 'rust_zenoh_actuator_trigger.c'
+  ]
+)
+
+# ── zenoh-802154 ─────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh 802.15.4 radio.
+rust_zenoh_802154_lib = custom_target(
+  'rust_zenoh_802154_lib',
+  input: 'rust/zenoh-802154/src/lib.rs',
+  output: ['libzenoh_802154.a', 'rust_zenoh_802154_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-802154 && cp target/release/libzenoh_802154.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_802154.a', meson.current_build_dir() / 'rust_zenoh_802154_trigger.c'
+  ]
+)
+
+# ── zenoh-ui ─────────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh UI backend.
+rust_zenoh_ui_lib = custom_target(
+  'rust_zenoh_ui_lib',
+  input: 'rust/zenoh-ui/src/lib.rs',
+  output: ['libzenoh_ui.a', 'rust_zenoh_ui_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-ui && cp target/release/libzenoh_ui.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_ui.a', meson.current_build_dir() / 'rust_zenoh_ui_trigger.c'
+  ]
+)
+
 subdir('zenoh')
 
 # ── remote-port-bridge ────────────────────────────────────────────────────────
