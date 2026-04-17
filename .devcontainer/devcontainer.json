@@ -19,9 +19,11 @@
       },
       "extensions": [
         "ms-python.python",
+        "charliermarsh.ruff",
         "robocorp.robotframework-lsp",
         "ms-vscode.cpptools-extension-pack",
         "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
         "github.vscode-github-actions"
       ]
     }
