@@ -5,7 +5,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(SCRIPT_DIR, "telemetry_fbs"))
 
 import zenoh  # noqa: E402
-
 from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
 
 

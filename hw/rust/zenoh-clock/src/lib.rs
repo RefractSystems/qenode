@@ -29,7 +29,7 @@ pub struct ZenohClockState {
     #[allow(dead_code)]
     session: Session,
     #[allow(dead_code)]
-    queryable: Option<Queryable<()>>,
+    queryable: Option<Queryable<'static, ()>>,
 
     quantum_timer: *mut QemuTimer,
 
@@ -43,9 +43,6 @@ pub struct ZenohClockState {
     quantum_start_vtime_ns: AtomicI64,
 
     // These fields are protected by the mutex.
-    // In a pure Rust impl we'd use a Mutex<InnerState>,
-    // but we use QemuMutex for BQL compatibility and FFI.
-    // We'll use unsafe blocks to access them.
     inner: *mut ZenohClockInner,
 }
 
@@ -217,7 +214,6 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         virtmcu_cond_signal(state.query_cond);
         virtmcu_bql_unlock();
 
-        #[allow(clippy::while_immutable_condition)]
         while !(*state.inner).quantum_ready {
             virtmcu_cond_wait(state.vcpu_cond, state.mutex);
         }
@@ -233,10 +229,10 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         virtmcu_bql_lock();
         if state.is_icount {
             virtmcu_icount_advance(next_delta);
-            qemu_clock_run_all_timers();
         }
         let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         virtmcu_timer_mod(state.quantum_timer, now + next_delta);
+        qemu_clock_run_all_timers();
         virtmcu_bql_unlock();
     }
 }
@@ -266,12 +262,10 @@ fn on_query(state: &ZenohClockState, query: Query) {
 
     unsafe {
         virtmcu_mutex_lock(state.mutex);
-        (*state.inner).quantum_done = false;
         (*state.inner).quantum_ready = true;
         virtmcu_cond_signal(state.vcpu_cond);
 
         let mut error_code = 0;
-        #[allow(clippy::while_immutable_condition)]
         while !(*state.inner).quantum_done {
             if virtmcu_cond_timedwait(state.query_cond, state.mutex, 10000) != 0 {
                 if !(*state.inner).quantum_done {
@@ -281,11 +275,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
             }
         }
 
-        let vtime = if error_code == 0 {
-            (*state.inner).vtime_ns
-        } else {
-            0
-        };
+        let vtime = (*state.inner).vtime_ns;
         virtmcu_mutex_unlock(state.mutex);
 
         let resp = ClockReadyResp {
