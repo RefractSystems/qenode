@@ -92,6 +92,7 @@ RUN sh -c "$(curl -fsSL \
     --connect-timeout 30 --max-time 120 \
     https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
     "" --unattended
+# hadolint ignore=DL3002
 USER root
 
 # uv binary
@@ -167,7 +168,7 @@ RUN case "${TARGETARCH}" in \
     && curl -fsSL "${_URL}/SHASUMS256.txt" | grep "linux-${_HOST}.tar.xz" > /tmp/shasum \
     && _FULLFILE=$(awk '{print $2}' /tmp/shasum) \
     && curl -fsSL "${_URL}/${_FULLFILE}" -o "/tmp/${_FULLFILE}" \
-    && cd /tmp && sha256sum -c shasum \
+    && echo "$(awk '{print $1}' /tmp/shasum)  /tmp/${_FULLFILE}" | sha256sum -c - \
     && tar -xJ -f "/tmp/${_FULLFILE}" -C /usr/local --strip-components=1 \
     && rm "/tmp/${_FULLFILE}" /tmp/shasum
 
@@ -188,10 +189,13 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/vscode/.local/bin:${PATH}"
 USER root
 
-# Gemini CLI (requires node/npm)
-RUN npm install -g @google/gemini-cli
+# Gemini CLI (requires node/npm, version-pinned for reproducibility)
+ARG GEMINI_CLI_VERSION=0.38.1
+RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
 
 WORKDIR /workspace
+# devenv runs as vscode — the expected interactive user
+USER vscode
 
 # ── Stage 4: builder ──────────────────────────────────────────────────────────
 # FROM toolchain (not devenv) — CI builds never require the AI tools in devenv.

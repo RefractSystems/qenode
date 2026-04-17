@@ -30,6 +30,9 @@ DEBIAN_CODENAME=trixie
 # Node.js major version for devtools
 NODE_VERSION=24
 
+# Gemini CLI — pinned for reproducible devcontainer builds
+GEMINI_CLI_VERSION=0.38.1
+
 # Python version — pinned via uv, independent of OS default
 PYTHON_VERSION=3.13
 

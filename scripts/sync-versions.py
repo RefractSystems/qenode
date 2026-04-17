@@ -92,7 +92,7 @@ def sync():
         new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)
 
         # Update new ARGs
-        for key in ["DEBIAN_CODENAME", "NODE_VERSION", "PYTHON_VERSION", "ARM_TOOLCHAIN_VERSION"]:
+        for key in ["DEBIAN_CODENAME", "NODE_VERSION", "PYTHON_VERSION", "ARM_TOOLCHAIN_VERSION", "GEMINI_CLI_VERSION"]:
             val = versions.get(key)
             if val:
                 new_content = re.sub(f"ARG {key}=[^\n]+", f"ARG {key}={val}", new_content)
