@@ -5,8 +5,11 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/module.h"
+#include "qemu/main-loop.h"
 #include "qemu/seqlock.h"
 #include "hw/core/sysbus.h"
+#include "hw/core/cpu.h"
 #include "hw/core/qdev-properties.h"
 #include "qom/object.h"
 #include "qapi/error.h"
@@ -27,6 +30,60 @@ void virtmcu_icount_advance(int64_t delta)
 {
     qatomic_set(&timers_state.qemu_icount_bias,
                 qatomic_read(&timers_state.qemu_icount_bias) + delta);
+}
+
+/* ── C Wrappers for QEMU Macros ───────────────────────────────────────────── */
+/* QEMU defines locking primitives as macros (which inject __FILE__, __LINE__) 
+ * so we export clean C functions for Rust FFI. */
+
+void virtmcu_bql_lock(void);
+void virtmcu_bql_lock(void) { bql_lock(); }
+
+void virtmcu_bql_unlock(void);
+void virtmcu_bql_unlock(void) { bql_unlock(); }
+
+void virtmcu_mutex_lock(QemuMutex *mutex);
+void virtmcu_mutex_lock(QemuMutex *mutex) { qemu_mutex_lock(mutex); }
+
+void virtmcu_mutex_unlock(QemuMutex *mutex);
+void virtmcu_mutex_unlock(QemuMutex *mutex) { qemu_mutex_unlock(mutex); }
+
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex);
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) { qemu_cond_wait(cond, mutex); }
+
+int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms);
+int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms) {
+    return qemu_cond_timedwait(cond, mutex, ms);
+}
+
+void virtmcu_cond_signal(QemuCond *cond);
+void virtmcu_cond_signal(QemuCond *cond) { qemu_cond_signal(cond); }
+
+void virtmcu_cond_broadcast(QemuCond *cond);
+void virtmcu_cond_broadcast(QemuCond *cond) { qemu_cond_broadcast(cond); }
+
+/* QEMU timer functions are often static inlines */
+QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque);
+QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque) {
+    return timer_new_ns(type, cb, opaque);
+}
+
+void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time);
+void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time) {
+    timer_mod(ts, expire_time);
+}
+
+void virtmcu_timer_free(QEMUTimer *ts);
+void virtmcu_timer_free(QEMUTimer *ts) {
+    timer_free(ts);
+}
+
+void virtmcu_cpu_exit_all(void);
+void virtmcu_cpu_exit_all(void) {
+    CPUState *cpu;
+    CPU_FOREACH(cpu) {
+        cpu_exit(cpu);
+    }
 }
 
 /* ── QOM type ─────────────────────────────────────────────────────────────── */
