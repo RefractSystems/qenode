@@ -290,12 +290,27 @@ Implement after Path B is validated.
       Then write `tools/systemc_adapter/` — C++ shim translating those socket messages
       to SystemC TLM-2.0 `b_transport` calls. Validate with a simple register-file model.
       *(No Python daemons. No Verilated models needed to start.)*
+
+  **Known risk — no socket timeout**: `mmio-socket-bridge.c` issues blocking `write()`/`read()` calls on the QEMU TCG thread with no timeout. If the connected SystemC model crashes or hangs, the QEMU TCG thread stalls indefinitely. This freezes the entire VM — no QMP, no UART, no watchdog. See Phase 5 Technical Debt below.
 - [x] **5.2** (Deferred) Implement Path B: strip Renode `IntegrationLibrary` headers from existing
       Verilated models; integrate `libsystemctlm-soc`; write `hw/remote-port/` QOM device;
       validate end-to-end with one Renode-derived Verilated model.
 - [ ] **5.3** (Deferred) *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network. (Deferred to later; no implementation currently in `hw/`)
 - [x] **5.4** Document Path A vs B vs C decision guide (already in `docs/ARCHITECTURE.md` §9).
 - [x] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
+
+### Phase 5 Technical Debt & Future Risks
+
+- [ ] **5.6 mmio-socket-bridge: add per-operation timeout**
+
+  `writen()` and `bridge_sock_handler()` in `hw/misc/mmio-socket-bridge.c` loop on blocking `write()`/`read()` with no timeout. A crashed or hung SystemC model holds the QEMU TCG thread in a kernel syscall — QEMU cannot service QMP, GDB, or watchdog until the socket unblocks.
+
+  - **Assumption**: The socket is always connected to a responsive SystemC model. This is true in development, but breaks in CI flakiness, SystemC assertion failures, or when the adapter is slow to start.
+  - **What can go wrong**: A 5-second stall per MMIO access is invisible to the guest firmware (virtual time does not advance while blocked) but breaks wall-clock CI timeouts and makes the simulation unreachable.
+  - **What can go wrong**: Switching to `SO_RCVTIMEO` / `SO_SNDTIMEO` changes blocking semantics. After a timeout, the socket is in an undefined state — must close and reopen, which requires a QOM `realize`-level reconnect path that does not exist yet.
+  - **Assert**: Add a per-call `poll()` with a 500 ms timeout before every `read()`/`write()`. On timeout, call `error_report("mmio-socket-bridge: timeout on socket fd %d — disconnecting", fd)` and set a `disconnected` flag. Subsequent MMIO accesses return 0 (reads) or silently drop (writes) until the socket reconnects.
+  - **Test**: Add `test/phase5/timeout_test.sh`. Start QEMU with the bridge. Connect the bridge's socket, send one MMIO request, then close the socket from the server side without replying. QEMU must log the timeout error and continue running (QMP `query-status` must still respond within 2 s).
+  - **Coverage check**: `grep -n 'SO_RCVTIMEO\|poll(' hw/misc/mmio-socket-bridge.c` must be non-empty after the fix.
 
 ---
 
