@@ -258,3 +258,20 @@ The core framework development is complete. All architectural pillars and capabi
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<phase>-<short-desc>`.
 Commit style: `scope: imperative description` (e.g., `hw/zenoh: add chardev backend`).
+
+---
+
+## AI-Driven Development (Auto Green)
+
+This repository is optimized for AI-driven development. If the CI/CD builds are failing, you can use the **"Auto Green"** feature by prompting your AI agent (Claude Code or Gemini CLI) with a simple command:
+
+> **"Fix CI"** or **"Make the builds green"**
+
+When you issue this command, the agent will:
+1.  **Diagnose** the failure using `gh` (GitHub CLI) to avoid rate limits.
+2.  **Reproduce** the failure locally.
+3.  **Align Tests**: If it passes locally but fails remotely, it will update the local test environment to match CI.
+4.  **Fix & Verify** the code locally.
+5.  **Push & Monitor**: It will push the fix and keep monitoring the remote run until it is officially green.
+
+This ensures that "it works on my machine" issues are caught and fixed at the test-automation layer.
