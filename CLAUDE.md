@@ -105,3 +105,36 @@ virtmcu/
 **Banned:** Python in the hot simulation loop (MMIO/Clock/Netdev).
 **Recommended:** Migrate `hw/zenoh/*.c` to native Rust (Phase 18) to eliminate `zenoh-c` FFI.
 
+---
+
+## Production Engineering Mandates
+
+To ensure the highest level of professional software engineering, all agents MUST adhere to these standards:
+
+### 1. Environment Agnosticism (Zero Hardcoded Paths)
+- **NO absolute paths** (e.g., `/Users/marcin/...`) or user-specific home directory references.
+- Use **relative paths** based on the project root or the current file's location.
+- Use platform-appropriate path joining (e.g., `os.path.join` in Python, `path::PathBuf` in Rust, `std::filesystem` in C++).
+- Leverage environment variables for system-specific configuration.
+
+### 2. Explicit Constants (No Magic Numbers)
+- **BANNED:** Inline literal numbers without clear context (e.g., `delay(500)`, `buffer[1024]`).
+- **Required:** Define named constants or enums with clear documentation explaining the value's origin (e.g., from a datasheet, a performance budget, or a protocol spec).
+- Group related constants in configuration files or dedicated `constants` modules.
+
+### 3. Verification & TDD (The "Beyonce Rule")
+- **Prove-It Pattern:** For every bug fix, you MUST write a failing test that reproduces the bug BEFORE implementing the fix.
+- **Incremental Implementation:** Every feature or change must include corresponding unit or integration tests.
+- **Surgical Edits:** Keep changes focused. A single logical change per commit/PR. Separate refactoring from behavior changes.
+
+### 4. Quality & Security Gates
+- **Multi-Axis Review:** Evaluate every change for Correctness, Readability, Architecture, Security, and Performance.
+- **Zero Secrets:** Never hardcode or commit API keys, passwords, or sensitive credentials. Use `.env` files (excluded from git) or secret managers.
+- **Input Validation:** Treat all data from external sources (Zenoh, sockets, files, guest MMIO) as untrusted. Validate at the system boundary (e.g., check MMIO write sizes, validate YAML schemas).
+- **No N+1 Patterns:** Ensure data fetching (if any) uses batching or joins. Avoid unbounded loops over external resources.
+
+### 5. Shipping & Reliability
+- **Rollback Readiness:** Every deployment-impacting change should consider how it can be reverted.
+- **Observability:** Ensure critical paths (sim loop, clock sync) have appropriate logging (not in hot loop), error reporting, and health checks.
+- **Documentation:** Update READMEs, ADRs, and API docs as the architecture evolves.
+

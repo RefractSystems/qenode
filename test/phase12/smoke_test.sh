@@ -18,9 +18,19 @@ function log_fail() {
     exit 1
 }
 
+# Initialize PIDs to 0 to avoid 'unbound variable' errors in cleanup
+BRIDGE_PID=0
+LISTENER_PID=0
+COORD_PID=0
+NEW_LISTENER_PID=0
+MOCK_PID=0
+
 function cleanup() {
-    kill "$BRIDGE_PID" 2>/dev/null || true
-    kill "$LISTENER_PID" 2>/dev/null || true
+    [[ $BRIDGE_PID -ne 0 ]] && kill "$BRIDGE_PID" 2>/dev/null || true
+    [[ $LISTENER_PID -ne 0 ]] && kill "$LISTENER_PID" 2>/dev/null || true
+    [[ $COORD_PID -ne 0 ]] && kill "$COORD_PID" 2>/dev/null || true
+    [[ $NEW_LISTENER_PID -ne 0 ]] && kill "$NEW_LISTENER_PID" 2>/dev/null || true
+    [[ $MOCK_PID -ne 0 ]] && kill "$MOCK_PID" 2>/dev/null || true
     rm -f /tmp/bridge_listener_$$.py /tmp/mmio.sock
 }
 trap cleanup EXIT

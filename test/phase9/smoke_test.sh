@@ -15,13 +15,26 @@ ASM_PATH="/tmp/virtmcu-p9-$$.S"
 LD_PATH="/tmp/virtmcu-p9-$$.ld"
 ZENOH_TX_PY="/tmp/virtmcu-zenoh-tx-$$.py"
 
+ADAPTER_PID=0
+QEMU_PID=0
+ROUTER_PID=0
+
 cleanup() {
-    kill "${QEMU_PID:-}"    2>/dev/null || true
-    kill "${ADAPTER_PID:-}" 2>/dev/null || true
+    [[ $QEMU_PID -ne 0 ]] && kill "$QEMU_PID" 2>/dev/null || true
+    [[ $ADAPTER_PID -ne 0 ]] && kill "$ADAPTER_PID" 2>/dev/null || true
+    [[ $ROUTER_PID -ne 0 ]] && kill "$ROUTER_PID" 2>/dev/null || true
     rm -f "$SOCK_PATH" "$ADAPTER_LOG" "$QEMU_LOG" \
           "$DTB_PATH" "$DTS_PATH" "$ELF_PATH" "$ASM_PATH" "$LD_PATH" "$ZENOH_TX_PY"
 }
 trap cleanup EXIT
+
+echo "[phase9] Starting Zenoh Router..."
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+ROUTER_PID=$!
+sleep 1
+
+export ZENOH_CONNECT="tcp/127.0.0.1:7447"
+export ZENOH_MULTICAST_SCOUTING="false"
 
 echo "[phase9] Building SystemC adapter..."
 make -C "$WORKSPACE_DIR/tools/systemc_adapter" > /dev/null

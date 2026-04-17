@@ -11,11 +11,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR_LOCAL="$(mktemp -d /tmp/phase6_XXXXXX)"
 
+COORD_PID=0
+ROUTER_PID=0
+
 cleanup() {
-    kill "${COORD_PID:-}" 2>/dev/null || true
+    [[ $COORD_PID -ne 0 ]] && kill "$COORD_PID" 2>/dev/null || true
+    [[ $ROUTER_PID -ne 0 ]] && kill "$ROUTER_PID" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
+
+echo "Starting Zenoh Router..."
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+ROUTER_PID=$!
+sleep 1
+
+# Ensure Zenoh components connect to our router
+export ZENOH_CONNECT="tcp/127.0.0.1:7447"
+export ZENOH_MULTICAST_SCOUTING="false"
 
 echo "Building Zenoh Coordinator..."
 if [ -f "$HOME/.cargo/env" ]; then
