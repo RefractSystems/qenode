@@ -32,7 +32,6 @@ def check():
             "NODE_VERSION": r"ARG NODE_VERSION=([^ \n]+)",
             "PYTHON_VERSION": r"ARG PYTHON_VERSION=([^ \n]+)",
             "ARM_TOOLCHAIN_VERSION": r"ARG ARM_TOOLCHAIN_VERSION=([^ \n]+)",
-            "GEMINI_CLI_VERSION": r"ARG GEMINI_CLI_VERSION=([^ \n]+)",
         }
 
         for key, pattern in mappings.items():

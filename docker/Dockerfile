@@ -25,6 +25,7 @@ ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG RUST_VERSION=1.95.0
+ARG BINDGEN_VERSION=0.72.1
 ARG FLATBUFFERS_VERSION=25.12.19
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
@@ -35,6 +36,9 @@ ARG TARGETARCH
 # ── Stage 0: rust-builder ─────────────────────────────────────────────────────
 # Dedicated Rust toolchain stage for multi-stage parity.
 FROM rust:${RUST_VERSION}-slim AS rust-builder
+ARG BINDGEN_VERSION
+RUN rustup component add rustfmt \
+    && cargo install bindgen-cli --version ${BINDGEN_VERSION}
 
 # ── Stage 1: base ─────────────────────────────────────────────────────────────
 # OS foundation replacing MCR. Layers ordered slowest-to-fastest changing.
@@ -105,7 +109,7 @@ FROM base AS toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential meson ninja-build python3 python3-venv pkg-config \
     libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
-    libslirp-dev libstdc++6 b4 gdb gdb-multiarch strace \
+    libslirp-dev libclang-dev libstdc++6 b4 gdb gdb-multiarch strace \
     lcov gcovr patchelf \
     gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
@@ -190,9 +194,8 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/vscode/.local/bin:${PATH}"
 USER root
 
-# Gemini CLI (requires node/npm, version-pinned for reproducibility)
-ARG GEMINI_CLI_VERSION=0.38.1
-RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
+# Gemini CLI (requires node/npm)
+RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspace
 # devenv runs as vscode — the expected interactive user
