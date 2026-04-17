@@ -14,6 +14,6 @@ ZENOH_VERSION=1.9.0
 ARM_GENERIC_FDT_PATCH_SET=v3
 
 # CMake build system
-CMAKE_VERSION=3.14
+CMAKE_VERSION=4.3.1
 
 # Python requirements are managed in requirements.txt (must match ZENOH_VERSION)

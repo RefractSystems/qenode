@@ -16,7 +16,7 @@
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
-ARG CMAKE_VERSION=3.14
+ARG CMAKE_VERSION=4.3.1
 ARG TARGETARCH
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────
@@ -30,13 +30,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     ca-certificates \
     gpg \
     curl \
-    && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
-    cmake \
     meson \
     ninja-build \
     python3 \
@@ -60,46 +56,16 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     jq \
     lcov \
     gcovr \
-    flatbuffers-compiler || \
-    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-    ca-certificates \
-    gpg \
-    curl \
-    && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
-    && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-    build-essential \
-    git \
-    cmake \
-    meson \
-    ninja-build \
-    python3 \
-    python3-venv \
-    pkg-config \
-    libglib2.0-dev \
-    libpixman-1-dev \
-    flex \
-    bison \
-    device-tree-compiler \
-    libslirp-dev \
-    curl \
-    ca-certificates \
-    b4 \
-    gdb \
-    gdb-multiarch \
-    gcc-arm-none-eabi \
-    gcc-riscv64-linux-gnu \
-    binutils-riscv64-linux-gnu \
-    gh \
-    jq \
-    lcov \
-    gcovr \
-    flatbuffers-compiler)) \
+    flatbuffers-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# Install specific CMake version
+ARG CMAKE_VERSION=4.3.1
+RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
+
 
 # ── Stage: flatcc-builder ───────────────────────────────────────────────────
 # Build flatcc once to be shared across stages.
@@ -126,13 +92,9 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     ca-certificates \
     gpg \
     curl \
-    && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git \
-    cmake \
     meson \
     ninja-build \
     python3 \
@@ -155,45 +117,16 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     strace \
     gh \
     jq \
-    flatbuffers-compiler || \
-    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-    ca-certificates \
-    gpg \
-    curl \
-    && test -f /usr/share/keyrings/kitware-archive-keyring.gpg || \
-    (curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg) \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" | tee /etc/apt/sources.list.d/kitware.list > /dev/null \
-    && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-    build-essential \
-    git \
-    cmake \
-    meson \
-    ninja-build \
-    python3 \
-    python3-venv \
-    pkg-config \
-    libglib2.0-dev \
-    libpixman-1-dev \
-    flex \
-    bison \
-    device-tree-compiler \
-    libslirp-dev \
-    curl \
-    ca-certificates \
-    b4 \
-    gdb \
-    gdb-multiarch \
-    gcc-arm-none-eabi \
-    gcc-riscv64-linux-gnu \
-    binutils-riscv64-linux-gnu \
-    strace \
-    gh \
-    jq \
-    flatbuffers-compiler)) \
+    flatbuffers-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# Install specific CMake version
+ARG CMAKE_VERSION=4.3.1
+RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
+
 
 COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
