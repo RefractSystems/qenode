@@ -19,6 +19,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
+# Check if QEMU is already pre-installed in the container image
+if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ]; then
+    echo "==> QEMU is already pre-installed in this environment (/opt/virtmcu/bin)."
+    echo "    'make run' and integration tests will work immediately."
+    echo ""
+    echo "    If you want to modify QEMU C code or add new peripherals in hw/,"
+    echo "    run: ./scripts/setup-qemu.sh --force"
+    echo ""
+    exit 0
+fi
+
 if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
     source "$WORKSPACE_DIR/VERSIONS"
 fi

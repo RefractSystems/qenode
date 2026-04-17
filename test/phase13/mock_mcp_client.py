@@ -39,8 +39,8 @@ async def main():
             "clientInfo": {"name": "mock-client", "version": "1.0.0"}
         }
     })
-    res = await recv_json()
-    
+    await recv_json()
+
     # Send initialized notification
     await send_json({
         "jsonrpc": "2.0",
@@ -66,7 +66,7 @@ async def main():
             }
         }
     })
-    res = await recv_json()
+    await recv_json()
 
     # 3. Flash Firmware
     firmware_path = os.path.join(WORKSPACE_DIR, "test", "phase1", "hello.elf")
@@ -82,7 +82,7 @@ async def main():
             }
         }
     })
-    res = await recv_json()
+    await recv_json()
 
     # 4. Start Node
     await send_json({
@@ -94,7 +94,7 @@ async def main():
             "arguments": {"node_id": "node0"}
         }
     })
-    res = await recv_json()
+    await recv_json()
 
     await asyncio.sleep(2)
 
@@ -108,7 +108,7 @@ async def main():
             "arguments": {"node_id": "node0"}
         }
     })
-    res = await recv_json()
+    await recv_json()
 
     # 6. Stop Node
     await send_json({
@@ -120,7 +120,7 @@ async def main():
             "arguments": {"node_id": "node0"}
         }
     })
-    res = await recv_json()
+    await recv_json()
 
     # We must explicitly tell the server to exit before waiting, otherwise it hangs listening to stdin
     # MCP doesn't have an explicit 'shutdown' in the python sdk that breaks the loop usually

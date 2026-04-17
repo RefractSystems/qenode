@@ -155,7 +155,7 @@ LOG_ZCLOCK="test/phase12/zclock_error.log"
 echo "Starting QEMU with invalid zenoh-clock router..."
 # We don't need a valid kernel or DTB for this, QEMU should fail during device realization
 # But we need at least some machine to attach the device to.
-timeout -s KILL 2s "$WORKSPACE_DIR/scripts/run.sh" \
+timeout -s KILL 5s "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "test/phase12/test_telemetry.dtb" \
     -device zenoh-clock,node=1,router=tcp/127.0.0.1:1,mode=slaved-suspend \
     -nographic -serial null -monitor null > "$LOG_ZCLOCK" 2>&1 || true

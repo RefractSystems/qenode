@@ -3,7 +3,10 @@
   "build": {
     "dockerfile": "../docker/Dockerfile",
     "context": "..",
-    "target": "devenv"
+    "target": "devenv",
+    "cacheFrom": [
+      "ghcr.io/refractsystems/virtmcu/devenv:latest"
+    ]
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "initializeCommand": "bash -c 'mkdir -p ~/.claude ~/.gemini ~/.config/gh && touch ~/.claude.json'",
@@ -15,7 +18,7 @@
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "git config --global --add safe.directory /workspace && uv sync && echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc && echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc && echo \"alias gemini='gemini --yolo'\" >> ~/.zshrc && make setup",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && uv sync && echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc && echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc && echo \"alias gemini='gemini --yolo'\" >> ~/.zshrc",
   "customizations": {
     "vscode": {
       "settings": {

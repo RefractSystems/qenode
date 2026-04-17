@@ -16,7 +16,9 @@
 hw_virtmcu_modules = {}
 
 # Common FFI helpers for Rust-backed modules
+hw_virtmcu_inc = include_directories('.', 'misc')
 virtmcu_rust_ffi_file = files('misc/virtmcu-rust-ffi.c')
+virtmcu_ffi_dep = declare_dependency(include_directories: hw_virtmcu_inc)
 
 # ── dummy ─────────────────────────────────────────────────────────────────────
 # Minimal QOM SysBusDevice.  Always included — it is the smoke-test for the
@@ -48,7 +50,7 @@ rust_dummy_lib = custom_target(
 )
 rust_dummy_ss = ss.source_set()
 rust_dummy_ss.add(files('rust/rust-dummy/rust-dummy.c'))
-rust_dummy_ss.add(virtmcu_rust_ffi_file)
+rust_dummy_ss.add(virtmcu_rust_ffi_file, virtmcu_ffi_dep)
 rust_dummy_ss.add(rust_dummy_lib[1])
 rust_dummy_ss.add(declare_dependency(
   link_args: [meson.current_build_dir() / 'librust_dummy.a']
@@ -71,7 +73,7 @@ if true
   )
   zenoh_clock_ss = ss.source_set()
   zenoh_clock_ss.add(files('zenoh/zenoh-clock.c'))
-  zenoh_clock_ss.add(virtmcu_rust_ffi_file)
+  zenoh_clock_ss.add(virtmcu_rust_ffi_file, virtmcu_ffi_dep)
   zenoh_clock_ss.add(rust_zenoh_clock_lib[1])
   zenoh_clock_ss.add(declare_dependency(
     link_args: [meson.current_build_dir() / 'libzenoh_clock.a']

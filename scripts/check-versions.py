@@ -3,6 +3,7 @@ import os
 import re
 import sys
 
+
 def get_versions():
     versions = {}
     with open("VERSIONS", "r") as f:
@@ -21,7 +22,7 @@ def check():
     if os.path.exists(dockerfile_path):
         with open(dockerfile_path, "r") as f:
             content = f.read()
-        
+
         mappings = {
             "QEMU_VERSION": r"ARG QEMU_REF=v([^ \n]+)",
             "ZENOH_VERSION": r"ARG ZENOH_C_REF=([^ \n]+)",
@@ -49,7 +50,7 @@ def check():
     if os.path.exists(pyproject_path):
         with open(pyproject_path, "r") as f:
             content = f.read()
-        
+
         zenoh_ver = versions.get("ZENOH_VERSION")
         if zenoh_ver:
             match = re.search(r'"eclipse-zenoh==([^"]+)"', content)
@@ -71,7 +72,7 @@ def check():
     if os.path.exists(req_path):
         with open(req_path, "r") as f:
             content = f.read()
-        
+
         zenoh_ver = versions.get("ZENOH_VERSION")
         if zenoh_ver:
             match = re.search(r"eclipse-zenoh==([^ \n]+)", content)

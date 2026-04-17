@@ -64,7 +64,10 @@ pub unsafe extern "C" fn zenoh_clock_init(
 
     let session = match zenoh::open(config).wait() {
         Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
+        Err(e) => {
+            eprintln!("failed to open Zenoh session: {:?}", e);
+            return ptr::null_mut();
+        }
     };
 
     let delta_ns = Arc::new(AtomicI64::new(0));

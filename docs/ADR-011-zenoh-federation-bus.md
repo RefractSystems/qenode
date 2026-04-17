@@ -36,3 +36,6 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 If you are reading the code in `hw/zenoh/`:
 - **`zenoh-clock.c`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request (`z_get()`) to ask the `TimeAuthority` to advance time. It blocks until the reply is received.
 - **`zenoh-netdev.c` and `zenoh-chardev.c`** use Zenoh's **Pub/Sub** API. They `z_declare_publisher()` to send outbound bytes and `z_declare_subscriber()` to receive inbound bytes asynchronously. The subscriber callback places the data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
+
+## External References
+* For a complete mapping of all active Zenoh topics in the system, see [Zenoh Topic Map](ZENOH_TOPIC_MAP.md).
