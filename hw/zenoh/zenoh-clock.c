@@ -47,7 +47,18 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 {
     ZenohClock *s = ZENOH_CLOCK(dev);
 
-    s->rust_state = zenoh_clock_init(s->node_id, s->router, s->mode, s->stall_timeout_ms);
+    /* Resolve effective stall timeout: explicit property > env var > built-in default.
+     * stall_timeout_ms==0 means "not set by user"; use VIRTMCU_STALL_TIMEOUT_MS or 5 s. */
+    uint32_t stall_ms = s->stall_timeout_ms;
+    if (stall_ms == 0) {
+        const char *env = getenv("VIRTMCU_STALL_TIMEOUT_MS");
+        stall_ms = (env && *env) ? (uint32_t)strtoul(env, NULL, 10) : 5000;
+        if (stall_ms == 0) {
+            stall_ms = 5000;
+        }
+    }
+
+    s->rust_state = zenoh_clock_init(s->node_id, s->router, s->mode, stall_ms);
     if (!s->rust_state) {
         error_setg(errp, "Failed to initialize Rust ZenohClock");
         return;
@@ -67,7 +78,7 @@ static const Property zenoh_clock_properties[] = {
     DEFINE_PROP_UINT32("node",          ZenohClock, node_id,          0),
     DEFINE_PROP_STRING("router",        ZenohClock, router),
     DEFINE_PROP_STRING("mode",          ZenohClock, mode),
-    DEFINE_PROP_UINT32("stall-timeout", ZenohClock, stall_timeout_ms, 5000),
+    DEFINE_PROP_UINT32("stall-timeout", ZenohClock, stall_timeout_ms, 0),
 };
 
 static void zenoh_clock_class_init(ObjectClass *klass, const void *data)

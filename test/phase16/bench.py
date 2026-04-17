@@ -171,12 +171,10 @@ class BenchmarkRunner:
             cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
                    "-nographic", "-serial", "stdio", "-monitor", "none"]
             if "slaved-icount" in self.mode:
-                stall_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
                 cmd += [
                     "-icount", "shift=0,align=off,sleep=off",
                     "-device",
-                    f"zenoh-clock,mode=icount,node=0,router={self.router}"
-                    f",stall-timeout={stall_ms}",
+                    f"zenoh-clock,mode=icount,node=0,router={self.router}",
                 ]
 
             proc = subprocess.Popen(
