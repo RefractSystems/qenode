@@ -23,3 +23,17 @@ RUST_VERSION=1.95.0
 FLATBUFFERS_VERSION=25.12.19
 
 # Python requirements are managed in requirements.txt (must match ZENOH_VERSION)
+
+# Debian base image codename — single-line upgrade path
+DEBIAN_CODENAME=trixie
+
+# Node.js major version for devtools
+NODE_VERSION=24
+
+# Python version — pinned via uv, independent of OS default
+PYTHON_VERSION=3.13
+
+# ARM GNU Toolchain — downloaded from developer.arm.com official releases
+# Pinned independently of Debian apt to guarantee cross-compiler reproducibility.
+# Binary fidelity (ADR-006) requires the toolchain to be bit-for-bit stable.
+ARM_TOOLCHAIN_VERSION=13.3.rel1

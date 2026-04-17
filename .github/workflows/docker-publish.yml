@@ -70,6 +70,10 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.arch }}
           build-args: |
+            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}

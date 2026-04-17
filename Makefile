@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions
+.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime
 
 # By default, perform an incremental build
 all: build
@@ -31,6 +31,11 @@ sync-versions:
 	@echo "==> Synchronizing dependency versions..."
 	@python3 scripts/sync-versions.py
 	@echo "✓ Versions synchronized."
+
+# Verify that all versions are in sync across the codebase.
+check-versions:
+	@echo "==> Checking version synchronization..."
+	@python3 scripts/check-versions.py
 
 # ------------------------------------------------------------------------------
 # Build Targets
@@ -144,7 +149,7 @@ test-all: test test-integration test-robot test-coverage-guest
 # ------------------------------------------------------------------------------
 
 # Check Python style (same rules as CI).
-lint: venv
+lint: venv check-versions
 	@echo "==> ruff check..."
 	uv run ruff check tools/ tests/ patches/
 	@echo "✓ Lint passed."
@@ -164,6 +169,37 @@ install-hooks:
 	@printf '#!/bin/sh\nset -e\nmake lint\n' > .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push
 	@echo "✓ pre-push hook installed (make lint will run on every push)."
+
+# ------------------------------------------------------------------------------
+# Docker Image Targets
+# ------------------------------------------------------------------------------
+# All versions are read from the VERSIONS file by scripts/docker-build.sh.
+# Pass IMAGE_TAG=<tag> to override the local tag (default: dev).
+#
+#   make docker-dev    — base → toolchain → devenv with smoke tests (fast path)
+#   make docker-all    — full pipeline including builder (~40 min) and runtime
+#   make docker-base   — build a single stage (no smoke test, for debugging)
+
+docker-dev:
+	@bash scripts/docker-build.sh dev
+
+docker-all:
+	@bash scripts/docker-build.sh all
+
+docker-base:
+	@bash scripts/docker-build.sh base
+
+docker-toolchain:
+	@bash scripts/docker-build.sh toolchain
+
+docker-devenv:
+	@bash scripts/docker-build.sh devenv
+
+docker-builder:
+	@bash scripts/docker-build.sh builder
+
+docker-runtime:
+	@bash scripts/docker-build.sh runtime
 
 # ------------------------------------------------------------------------------
 # Clean

@@ -12,9 +12,12 @@
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "git config --global --add safe.directory /workspace && sudo chown -R vscode:vscode /home/vscode/.claude && uv sync && grep -qxF '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' ~/.bashrc || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.bashrc && grep -qxF \"alias gemini='gemini --yolo'\" ~/.bashrc || echo \"alias gemini='gemini --yolo'\" >> ~/.bashrc && make setup",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && sudo mkdir -p /home/vscode/.claude && sudo chown -R vscode:vscode /home/vscode/.claude && uv sync && grep -qxF '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' ~/.zshrc || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc && grep -qxF \"alias gemini='gemini --yolo'\" ~/.zshrc || echo \"alias gemini='gemini --yolo'\" >> ~/.zshrc && make setup",
   "customizations": {
     "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      },
       "extensions": [
         "ms-vscode.cpptools",
         "ms-python.python",

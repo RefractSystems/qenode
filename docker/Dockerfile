@@ -1,17 +1,24 @@
 # virtmcu QEMU container image.
 #
 # Multi-stage build:
-#   toolchain — ubuntu:24.04 + all build deps; base for builder (no MCR dependency)
-#   devenv    — MCR devcontainer base + build tools + AI CLIs (devcontainer only)
+#   base      — debian:${DEBIAN_CODENAME}-slim + vscode user, zsh, oh-my-zsh, common tools
+#   toolchain — FROM base + build deps, ARM toolchain binary, Python pin, CMake, FlatBuffers
+#   devenv    — FROM toolchain + Rust + Node.js + Claude Code + Gemini CLI (devcontainer only)
 #   builder   — FROM toolchain: clones QEMU, builds zenoh-c, compiles everything
-#   runtime   — lean: only runtime libs + Python + the installed QEMU binaries
+#   runtime   — FROM base (lean): only runtime libs + Python + the installed QEMU binaries
 #
-# Build args:
-#   QEMU_REPO     upstream QEMU git URL
-#   QEMU_REF      git ref to check out (tag, branch, or SHA)
-#   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.9.0)
-#   CMAKE_VERSION minimum cmake version required
-#   ARCH          target architecture (arm | aarch64)
+# All versions are sourced from the VERSIONS file. Use 'make sync-versions' after
+# editing VERSIONS; 'make check-versions' (or CI lint) enforces consistency.
+#
+# Build args (see VERSIONS for canonical values):
+#   DEBIAN_CODENAME  Debian release codename (e.g. trixie)
+#   QEMU_REPO        upstream QEMU git URL
+#   QEMU_REF         git ref to check out (tag, branch, or SHA)
+#   ZENOH_C_REF      zenoh-c git tag to build (no 'v' prefix, e.g. 1.9.0)
+#   CMAKE_VERSION    CMake version installed via uv
+#   ARM_TOOLCHAIN_VERSION  ARM GNU Toolchain version from developer.arm.com
+#   PYTHON_VERSION   Python version pinned via uv (independent of OS default)
+#   NODE_VERSION     Node.js major version for devenv
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
@@ -19,57 +26,103 @@ ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG RUST_VERSION=1.95.0
 ARG FLATBUFFERS_VERSION=25.12.19
+ARG DEBIAN_CODENAME=trixie
+ARG NODE_VERSION=24
+ARG PYTHON_VERSION=3.13
+ARG ARM_TOOLCHAIN_VERSION=13.3.rel1
 ARG TARGETARCH
 
 # ── Stage 0: rust-builder ─────────────────────────────────────────────────────
 # Dedicated Rust toolchain stage for multi-stage parity.
 FROM rust:${RUST_VERSION}-slim AS rust-builder
 
-# ── Stage 0: toolchain ────────────────────────────────────────────────────────
-# Plain ubuntu with all build dependencies. Used directly by the builder stage
-# so that CI never has to pull from MCR (which is rate-limited on GHA runners).
-FROM ubuntu:24.04 AS toolchain
+# ── Stage 1: base ─────────────────────────────────────────────────────────────
+# OS foundation replacing MCR. Layers ordered slowest-to-fastest changing.
+ARG DEBIAN_CODENAME
+FROM debian:${DEBIAN_CODENAME}-slim AS base
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    TERM=xterm-256color
 
-RUN sed -i 's/archive.ubuntu.com/azure.archive.ubuntu.com/g' /etc/apt/sources.list.d/ubuntu.sources || true \
-    && sed -i 's/security.ubuntu.com/azure.archive.ubuntu.com/g' /etc/apt/sources.list.d/ubuntu.sources || true
-
-RUN apt-get -y -o Acquire::ForceIPv4=true update && apt-get install -y -o Acquire::ForceIPv4=true --no-install-recommends \
-    ca-certificates \
-    gpg \
-    curl \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get -y -o Acquire::ForceIPv4=true update && apt-get install -y -o Acquire::ForceIPv4=true --no-install-recommends -o Acquire::Retries=3 \
-    build-essential \
-    git \
-    gh \
-    meson \
-    ninja-build \
-    python3 \
-    python3-venv \
-    pkg-config \
-    libglib2.0-dev \
-    libpixman-1-dev \
-    flex \
-    bison \
-    device-tree-compiler \
-    libslirp-dev \
-    curl \
-    ca-certificates \
-    b4 \
-    gdb \
-    gdb-multiarch \
-    gcc-arm-none-eabi \
-    gcc-riscv64-linux-gnu \
-    binutils-riscv64-linux-gnu \
-    jq \
-    lcov \
-    gcovr \
-    patchelf \
-    unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    locales tzdata ca-certificates \
+    && locale-gen en_US.UTF-8 \
+    && update-locale LANG=en_US.UTF-8 \
+    && ln -sf /usr/share/zoneinfo/UTC /etc/localtime \
     && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI apt source (independent layer for caching)
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg apt-transport-https \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+       https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && rm -rf /var/lib/apt/lists/*
+
+# Common tools (MCR parity list)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git gh wget openssh-client gnupg2 lsb-release bash-completion \
+    procps lsof htop net-tools psmisc unzip nano vim-tiny less jq sudo zsh \
+    && rm -rf /var/lib/apt/lists/*
+
+# vscode user
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd \
+       --uid ${USER_UID} \
+       --gid ${USER_GID} \
+       --shell /usr/bin/zsh \
+       --create-home \
+       ${USERNAME} \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" \
+       > /etc/sudoers.d/${USERNAME} \
+    && chmod 0440 /etc/sudoers.d/${USERNAME}
+
+# oh-my-zsh (UX parity)
+USER vscode
+RUN sh -c "$(curl -fsSL \
+    --connect-timeout 30 --max-time 120 \
+    https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
+    "" --unattended
+USER root
+
+# uv binary
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# ── Stage 2: toolchain ────────────────────────────────────────────────────────
+# FROM base, zero duplication. Build-specific tooling.
+FROM base AS toolchain
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential meson ninja-build python3 python3-venv pkg-config \
+    libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
+    libslirp-dev libstdc++6 b4 gdb gdb-multiarch strace \
+    lcov gcovr patchelf \
+    gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+# ARM GNU Toolchain (binary release, version-pinned)
+ARG ARM_TOOLCHAIN_VERSION
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+      amd64) _HOST=x86_64 ;; \
+      arm64) _HOST=aarch64 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
+    esac \
+    && _URL="https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_TOOLCHAIN_VERSION}/binrel" \
+    && _FILE="arm-gnu-toolchain-${ARM_TOOLCHAIN_VERSION}-${_HOST}-arm-none-eabi" \
+    && curl -fsSL "${_URL}/${_FILE}.tar.xz" | tar -xJ -C /opt \
+    && ln -sf /opt/arm-gnu-toolchain-*/bin/* /usr/local/bin/
+
+# Python (pinned via uv, independent of OS default)
+ARG PYTHON_VERSION
+RUN uv python install ${PYTHON_VERSION}
 
 # Install FlatBuffers compiler from GitHub release
 ARG FLATBUFFERS_VERSION
@@ -78,11 +131,8 @@ RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/do
     && chmod +x /usr/local/bin/flatc \
     && rm /tmp/flatc.zip
 
-# Install uv for fast Python package management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
-
 # Install specific CMake version
-ARG CMAKE_VERSION=4.3.1
+ARG CMAKE_VERSION
 RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
 
 
@@ -94,70 +144,30 @@ RUN git clone --depth=1 https://github.com/dvidelabs/flatcc.git /build/flatcc \
     && cd /build/flatcc \
     && CFLAGS="-fPIC" ./scripts/build.sh
 
-# ── Stage 1: devenv ───────────────────────────────────────────────────────────
-# Devcontainer image only. MCR base provides the vscode user + sudo setup.
-# The workspace is mounted at runtime — nothing from the repo is baked in here.
-#
-# https://github.com/devcontainers/images/tree/main/src/base-ubuntu
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04 AS devenv
+# ── Stage 3: devenv ───────────────────────────────────────────────────────────
+# Devcontainer image. Inherits from toolchain (base + build deps + ARM toolchain).
+FROM toolchain AS devenv
 
 LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu development environment — toolchain + AI tools"
 LABEL org.opencontainers.image.licenses=MIT
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN sed -i 's/archive.ubuntu.com/azure.archive.ubuntu.com/g' /etc/apt/sources.list.d/ubuntu.sources || true \
-    && sed -i 's/security.ubuntu.com/azure.archive.ubuntu.com/g' /etc/apt/sources.list.d/ubuntu.sources || true
-
-RUN apt-get -y -o Acquire::ForceIPv4=true update && apt-get install -y -o Acquire::ForceIPv4=true --no-install-recommends \
-    ca-certificates \
-    gpg \
-    curl \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get -y -o Acquire::ForceIPv4=true update && apt-get install -y -o Acquire::ForceIPv4=true --no-install-recommends -o Acquire::Retries=3 \
-    build-essential \
-    git \
-    gh \
-    meson \
-    ninja-build \
-    python3 \
-    python3-venv \
-    pkg-config \
-    libglib2.0-dev \
-    libpixman-1-dev \
-    flex \
-    bison \
-    device-tree-compiler \
-    libslirp-dev \
-    curl \
-    ca-certificates \
-    b4 \
-    gdb \
-    gdb-multiarch \
-    gcc-arm-none-eabi \
-    gcc-riscv64-linux-gnu \
-    binutils-riscv64-linux-gnu \
-    strace \
-    jq \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install FlatBuffers compiler from GitHub release
-ARG FLATBUFFERS_VERSION
-RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
-    && unzip /tmp/flatc.zip -d /usr/local/bin \
-    && chmod +x /usr/local/bin/flatc \
-    && rm /tmp/flatc.zip
-
-# Install uv for fast Python package management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
-
-# Install specific CMake version
-ARG CMAKE_VERSION=4.3.1
-RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
-
+# Node.js — Direct binary download (NodeSource doesn't support trixie yet)
+ARG NODE_VERSION
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+      amd64) _HOST=x64 ;; \
+      arm64) _HOST=arm64 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
+    esac \
+    && _URL="https://nodejs.org/dist/latest-v${NODE_VERSION}.x" \
+    && _FILE="node-v${NODE_VERSION}.x-linux-${_HOST}" \
+    && curl -fsSL "${_URL}/SHASUMS256.txt" | grep "linux-${_HOST}.tar.xz" > /tmp/shasum \
+    && _FULLFILE=$(awk '{print $2}' /tmp/shasum) \
+    && curl -fsSL "${_URL}/${_FULLFILE}" -o /tmp/node.tar.xz \
+    && cd /tmp && sha256sum -c shasum \
+    && tar -xJ -f /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz /tmp/shasum
 
 COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
@@ -170,27 +180,19 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
 
-# Install Node.js 24 (required for Gemini CLI)
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Claude Code via native installer (as vscode user so auto-update works)
-# npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
+# Claude Code (as vscode user)
 USER vscode
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/vscode/.local/bin:${PATH}"
-# hadolint ignore=DL3002
 USER root
 
-# Install Gemini CLI (requires node/npm, installed above)
-# hadolint ignore=DL3016
+# Gemini CLI (requires node/npm)
 RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspace
 
-# ── Stage 2: builder ──────────────────────────────────────────────────────────
-# FROM toolchain (not devenv) so CI never pulls from MCR.
+# ── Stage 4: builder ──────────────────────────────────────────────────────────
+# FROM toolchain (not devenv) — CI builds never require the AI tools in devenv.
 FROM toolchain AS builder
 
 ARG QEMU_REPO
@@ -289,10 +291,10 @@ RUN cd qemu \
 # (used by CI integration jobs that run smoke tests within the builder container).
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
-# ── Stage 3: runtime ──────────────────────────────────────────────────────────
+# ── Stage 5: runtime ──────────────────────────────────────────────────────────
 # Lean: only runtime libs + Python + the installed QEMU binaries.
-# Use toolchain as base to ensure parity with builder environment.
-FROM toolchain AS runtime
+# FROM base (not toolchain) — drops ~400 MB of build tooling from the published image.
+FROM base AS runtime
 
 LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
@@ -307,7 +309,7 @@ COPY --from=builder /opt/virtmcu /opt/virtmcu
 
 COPY --from=builder /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
 
-# Install Python dependencies using uv
+# Install Python dependencies using uv (uv is in base)
 COPY pyproject.toml /tmp/pyproject.toml
 WORKDIR /tmp
 RUN uv pip install --no-cache --system --break-system-packages -r pyproject.toml

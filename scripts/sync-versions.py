@@ -91,6 +91,12 @@ def sync():
         # Also update the comment example
         new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)
 
+        # Update new ARGs
+        for key in ["DEBIAN_CODENAME", "NODE_VERSION", "PYTHON_VERSION", "ARM_TOOLCHAIN_VERSION"]:
+            val = versions.get(key)
+            if val:
+                new_content = re.sub(f"ARG {key}=[^\n]+", f"ARG {key}={val}", new_content)
+
         if content != new_content:
             print(
                 f"Updating {dockerfile_path} to ZENOH_C_REF {zenoh_ver}"
@@ -98,6 +104,18 @@ def sync():
             )
             with open(dockerfile_path, "w") as f:
                 f.write(new_content)
+
+    # 4b. Propagate PYTHON_VERSION into ci.yml hardcoded env block
+    ci_path = ".github/workflows/ci.yml"
+    py_ver = versions.get("PYTHON_VERSION")
+    if py_ver and os.path.exists(ci_path):
+        with open(ci_path, "r") as f:
+            ci_content = f.read()
+        new_ci = re.sub(r'(PYTHON_VERSION:\s*")[^"]+(")', rf'\g<1>{py_ver}\g<2>', ci_content)
+        if ci_content != new_ci:
+            print(f"Updating {ci_path} to PYTHON_VERSION {py_ver}")
+            with open(ci_path, "w") as f:
+                f.write(new_ci)
 
     # 5. Update FlatBuffers versions
     flatbuffers_ver = versions.get("FLATBUFFERS_VERSION")
@@ -112,6 +130,18 @@ def sync():
                 print(f"Updating {req_path} to flatbuffers {flatbuffers_ver}")
                 with open(req_path, "w") as f:
                     f.write(new_req)
+
+        # Update pyproject.toml
+        pyproject_path = "pyproject.toml"
+        if os.path.exists(pyproject_path):
+            with open(pyproject_path, "r") as f:
+                content = f.read()
+            # Handle both "flatbuffers==X" and "flatbuffers>=X"
+            new_content = re.sub(r'"flatbuffers[>=]=?[^"]+"', f'"flatbuffers=={flatbuffers_ver}"', content)
+            if content != new_content:
+                print(f"Updating {pyproject_path} to flatbuffers {flatbuffers_ver}")
+                with open(pyproject_path, "w") as f:
+                    f.write(new_content)
 
         # Update docker/Dockerfile
         dockerfile_path = "docker/Dockerfile"
