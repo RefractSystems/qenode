@@ -42,8 +42,13 @@ telemetry_h = custom_target('telemetry_fbs',
   command: [flatcc_bin, '-a', '-o', '@OUTDIR@', '@INPUT@']
 )
 
-zenoh_clock_ss = ss.source_set()
-zenoh_clock_ss.add(files('zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c', 'zenoh-802154.c', 'zenoh-ui.c'))
-zenoh_clock_ss.add(zenoh_dep, flatcc_dep)
-zenoh_clock_ss.add(telemetry_h)
-hw_virtmcu_modules += {'zenoh': zenoh_clock_ss}
+zenoh_monolith_ss = ss.source_set()
+zenoh_monolith_ss.add(files('zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c', 'zenoh-802154.c', 'zenoh-ui.c'))
+zenoh_monolith_ss.add(virtmcu_rust_ffi_file)
+zenoh_monolith_ss.add(zenoh_dep, flatcc_dep)
+zenoh_monolith_ss.add(telemetry_h)
+zenoh_monolith_ss.add(rust_zenoh_netdev_lib[1])
+zenoh_monolith_ss.add(declare_dependency(
+  link_args: [meson.current_build_dir() / '../libzenoh_netdev.a']
+))
+hw_virtmcu_modules += {'zenoh': zenoh_monolith_ss}

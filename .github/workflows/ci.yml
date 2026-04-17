@@ -109,6 +109,14 @@ jobs:
       - name: Load VERSIONS
         run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -126,6 +134,7 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           cache-to: type=gha,scope=builder-amd64,mode=max
           load: true
@@ -181,6 +190,14 @@ jobs:
       - name: Load VERSIONS
         run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -196,6 +213,7 @@ jobs:
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 

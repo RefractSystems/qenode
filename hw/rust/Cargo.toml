@@ -2,7 +2,7 @@
 members = [
     "rust-dummy",
     "zenoh-clock",
-    "virtmcu-qom",
+    "virtmcu-qom", "zenoh-netdev",
 ]
 resolver = "2"
 

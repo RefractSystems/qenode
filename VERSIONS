@@ -16,4 +16,7 @@ ARM_GENERIC_FDT_PATCH_SET=v3
 # CMake build system
 CMAKE_VERSION=4.3.1
 
+# Rust toolchain
+RUST_VERSION=1.95.0
+
 # Python requirements are managed in requirements.txt (must match ZENOH_VERSION)

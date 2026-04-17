@@ -22,7 +22,7 @@ cleanup() {
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
     rm -rf "$TMPDIR_LOCAL"
 }
-trap cleanup EXIT
+
 
 # Minimal firmware
 cat > "$TMPDIR_LOCAL/linker.ld" <<'LD_EOF'
@@ -57,7 +57,7 @@ sleep 1
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
     -device zenoh-clock,mode=icount,node=1,router=tcp/127.0.0.1:7447 \
-    -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:7447 \
+    -device zenoh-netdev -device zenoh-netdev -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:7447 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
