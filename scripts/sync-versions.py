@@ -99,6 +99,42 @@ def sync():
             with open(dockerfile_path, "w") as f:
                 f.write(new_content)
 
+    # 5. Update FlatBuffers versions
+    flatbuffers_ver = versions.get("FLATBUFFERS_VERSION")
+    if flatbuffers_ver:
+        # Update requirements.txt
+        req_path = "requirements.txt"
+        if os.path.exists(req_path):
+            with open(req_path, "r") as f:
+                req_content = f.read()
+            new_req = re.sub(r"flatbuffers==[^\s]+", f"flatbuffers=={flatbuffers_ver}", req_content)
+            if req_content != new_req:
+                print(f"Updating {req_path} to flatbuffers {flatbuffers_ver}")
+                with open(req_path, "w") as f:
+                    f.write(new_req)
+
+        # Update docker/Dockerfile
+        dockerfile_path = "docker/Dockerfile"
+        if os.path.exists(dockerfile_path):
+            with open(dockerfile_path, "r") as f:
+                df_content = f.read()
+            new_df = re.sub(r"ARG FLATBUFFERS_VERSION=[^\n]+", f"ARG FLATBUFFERS_VERSION={flatbuffers_ver}", df_content)
+            if df_content != new_df:
+                print(f"Updating {dockerfile_path} to FLATBUFFERS_VERSION {flatbuffers_ver}")
+                with open(dockerfile_path, "w") as f:
+                    f.write(new_df)
+
+        # Update Rust Cargo.toml
+        cargo_path = "hw/rust/zenoh-telemetry/Cargo.toml"
+        if os.path.exists(cargo_path):
+            with open(cargo_path, "r") as f:
+                cargo_content = f.read()
+            new_cargo = re.sub(r'flatbuffers = "[^"]+"', f'flatbuffers = "{flatbuffers_ver}"', cargo_content)
+            if cargo_content != new_cargo:
+                print(f"Updating {cargo_path} to flatbuffers {flatbuffers_ver}")
+                with open(cargo_path, "w") as f:
+                    f.write(new_cargo)
+
 
 if __name__ == "__main__":
     sync()
