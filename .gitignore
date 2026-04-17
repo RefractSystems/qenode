@@ -53,3 +53,4 @@ hw/rust-dummy/target/
 hw/rust-dummy/Cargo.lock
 *.gcov
 test-results/
+\n.env

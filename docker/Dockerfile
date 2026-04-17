@@ -179,6 +179,7 @@ COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
 # Copy Rust toolchain from rust-builder
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
@@ -213,6 +214,7 @@ COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
 # Copy Rust toolchain from rust-builder
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
