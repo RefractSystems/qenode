@@ -1,30 +1,123 @@
 /*
- * hw/zenoh/zenoh-clock.c — External virtual clock synchronization.
+ * hw/zenoh/zenoh-clock.c — Rust-backed virtual clock synchronization.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "qemu/osdep.h"
+#include "qemu/module.h"
+#include "qemu/main-loop.h"
 #include "qemu/seqlock.h"
 #include "hw/core/sysbus.h"
-#include "qom/object.h"
+#include "hw/core/cpu.h"
 #include "hw/core/qdev-properties.h"
+#include "qom/object.h"
 #include "qapi/error.h"
-#include "qemu/timer.h"
-#include "qemu/main-loop.h"
-#include "system/cpus.h"
 #include "system/cpu-timers.h"
 #include "system/cpu-timers-internal.h"
 #include "exec/icount.h"
-#include "virtmcu/hooks.h"
-#include "qemu/error-report.h"
-#include "../misc/virtmcu_proto.h"
-#include <zenoh.h>
+
+/* ── Rust FFI declarations ────────────────────────────────────────────────── */
+
+typedef struct ZenohClockState ZenohClockState;
+
+extern ZenohClockState *zenoh_clock_init(uint32_t node_id, const char *router, const char *mode);
+extern void             zenoh_clock_fini(ZenohClockState *state);
+
+/* Helper for Rust to advance icount bias without exposing timers_state struct */
+void virtmcu_icount_advance(int64_t delta);
+void virtmcu_icount_advance(int64_t delta)
+{
+    qatomic_set(&timers_state.qemu_icount_bias,
+                qatomic_read(&timers_state.qemu_icount_bias) + delta);
+}
+
+/* ── C Wrappers for QEMU Macros ───────────────────────────────────────────── */
+/* QEMU defines locking primitives as macros (which inject __FILE__, __LINE__) 
+ * so we export clean C functions for Rust FFI. */
+
+void virtmcu_bql_lock(void);
+void virtmcu_bql_lock(void) { bql_lock(); }
+
+void virtmcu_bql_unlock(void);
+void virtmcu_bql_unlock(void) { bql_unlock(); }
+
+void virtmcu_mutex_lock(QemuMutex *mutex);
+void virtmcu_mutex_lock(QemuMutex *mutex) { qemu_mutex_lock(mutex); }
+
+void virtmcu_mutex_unlock(QemuMutex *mutex);
+void virtmcu_mutex_unlock(QemuMutex *mutex) { qemu_mutex_unlock(mutex); }
+
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex);
+void virtmcu_cond_wait(QemuCond *cond, QemuMutex *mutex) { qemu_cond_wait(cond, mutex); }
+
+int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms);
+int virtmcu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, uint32_t ms) {
+    return qemu_cond_timedwait(cond, mutex, ms);
+}
+
+void virtmcu_cond_signal(QemuCond *cond);
+void virtmcu_cond_signal(QemuCond *cond) { qemu_cond_signal(cond); }
+
+void virtmcu_cond_broadcast(QemuCond *cond);
+void virtmcu_cond_broadcast(QemuCond *cond) { qemu_cond_broadcast(cond); }
+
+QemuMutex *virtmcu_mutex_new(void);
+QemuMutex *virtmcu_mutex_new(void) {
+    QemuMutex *m = g_new0(QemuMutex, 1);
+    qemu_mutex_init(m);
+    return m;
+}
+
+void virtmcu_mutex_free(QemuMutex *mutex);
+void virtmcu_mutex_free(QemuMutex *mutex) {
+    qemu_mutex_destroy(mutex);
+    g_free(mutex);
+}
+
+QemuCond *virtmcu_cond_new(void);
+QemuCond *virtmcu_cond_new(void) {
+    QemuCond *c = g_new0(QemuCond, 1);
+    qemu_cond_init(c);
+    return c;
+}
+
+void virtmcu_cond_free(QemuCond *cond);
+void virtmcu_cond_free(QemuCond *cond) {
+    qemu_cond_destroy(cond);
+    g_free(cond);
+}
+
+/* QEMU timer functions are often static inlines */
+QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque);
+QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque) {
+    return timer_new_ns(type, cb, opaque);
+}
+
+void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time);
+void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time) {
+    timer_mod(ts, expire_time);
+}
+
+void virtmcu_timer_free(QEMUTimer *ts);
+void virtmcu_timer_free(QEMUTimer *ts) {
+    timer_free(ts);
+}
+
+void virtmcu_cpu_exit_all(void);
+void virtmcu_cpu_exit_all(void) {
+    CPUState *cpu;
+    CPU_FOREACH(cpu) {
+        cpu_exit(cpu);
+    }
+}
+
+/* ── QOM type ─────────────────────────────────────────────────────────────── */
 
 #define TYPE_ZENOH_CLOCK "zenoh-clock"
-OBJECT_DECLARE_SIMPLE_TYPE(ZenohClockState, ZENOH_CLOCK)
+OBJECT_DECLARE_SIMPLE_TYPE(ZenohClock, ZENOH_CLOCK)
 
-struct ZenohClockState {
+struct ZenohClock {
     SysBusDevice parent_obj;
 
     /* Properties */
@@ -32,267 +125,34 @@ struct ZenohClockState {
     char    *router;
     char    *mode;
 
-    /* Zenoh handles */
-    z_owned_session_t    session;
-    z_owned_queryable_t  queryable;
-
-    /* Timer (suspend mode only) */
-    QEMUTimer *quantum_timer;
-
-    /*
-     * Concurrency state — all fields below protected by mutex.
-     */
-    QemuMutex mutex;
-    QemuCond  vcpu_cond;   /* on_query signals; vCPU hook waits here  */
-    QemuCond  query_cond;  /* hook signals;     on_query waits here   */
-
-    bool is_icount;
-
-    /*
-     * Suspend-mode handshake flags:
-     */
-    bool needs_quantum;
-    bool quantum_ready;
-    bool quantum_done;
-
-    int64_t delta_ns;   /* on_query → hook: nanoseconds to advance         */
-    int64_t vtime_ns;   /* hook → on_query: virtual clock after the quantum */
-    
-    int64_t mujoco_time_ns;         /* on_query → hook: current MuJoCo time */
-    int64_t quantum_start_vtime_ns; /* hook → SAL/AAL: virtual clock at start. */
+    /* Rust state */
+    ZenohClockState *rust_state;
 };
-
-static ZenohClockState *global_zenoh_clock;
-
-static void zclock_get_quantum_timing(VirtmcuQuantumTiming *timing)
-{
-    ZenohClockState *s = global_zenoh_clock;
-    if (!s || !timing) return;
-    timing->quantum_start_vtime_ns = qatomic_read(&s->quantum_start_vtime_ns);
-    timing->quantum_delta_ns       = qatomic_read(&s->delta_ns);
-    timing->mujoco_time_ns         = qatomic_read(&s->mujoco_time_ns);
-}
-
-static void zclock_timer_cb(void *opaque)
-{
-    ZenohClockState *s = opaque;
-    qemu_mutex_lock(&s->mutex);
-    s->needs_quantum = true;
-    qemu_mutex_unlock(&s->mutex);
-    CPUState *cpu;
-    CPU_FOREACH(cpu) {
-        cpu_exit(cpu);
-    }
-}
-
-static void zclock_quantum_hook(CPUState *cpu)
-{
-    ZenohClockState *s = global_zenoh_clock;
-    if (!s) return;
-    // fprintf(stderr, "[zenoh-clock] node=%u: quantum hook entry\n", s->node_id);
-    if (!s->needs_quantum) return;
-    fprintf(stderr, "[zenoh-clock] node=%u: quantum hook processing (needs_quantum=true)\n", s->node_id);
-
-    bql_lock();
-    qemu_mutex_lock(&s->mutex);
-    if (!s->needs_quantum) {
-        qemu_mutex_unlock(&s->mutex);
-        bql_unlock();
-        return;
-    }
-
-    s->needs_quantum = false;
-    s->vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    fprintf(stderr, "[zenoh-clock] node=%u: hook signalling done (vtime=%ld)\n", s->node_id, (long)s->vtime_ns);
-    s->quantum_done = true;
-    qemu_cond_signal(&s->query_cond);
-    bql_unlock();
-
-    while (!s->quantum_ready) {
-        qemu_cond_wait(&s->vcpu_cond, &s->mutex);
-    }
-
-    s->quantum_ready = false;
-    s->quantum_done  = false;
-    int64_t next_delta = qatomic_read(&s->delta_ns);
-    qatomic_set(&s->quantum_start_vtime_ns, s->vtime_ns);
-    qemu_mutex_unlock(&s->mutex);
-
-    bql_lock();
-    if (s->is_icount) {
-        int64_t current = qatomic_read(&timers_state.qemu_icount_bias);
-        qatomic_set(&timers_state.qemu_icount_bias, current + next_delta);
-        qemu_clock_run_all_timers();
-    }
-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    timer_mod(s->quantum_timer, now + next_delta);
-    bql_unlock();
-}
-
-static void on_query(z_loaned_query_t *query, void *context)
-{
-    ZenohClockState *s = context;
-    const z_loaned_bytes_t *payload_bytes = z_query_payload(query);
-    if (!payload_bytes) {
-        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — query arrived with no payload\n",
-                s->node_id);
-        struct clock_ready_resp err = {.current_vtime_ns = 0, .n_frames = 0, .error_code = 2};
-        z_owned_bytes_t err_bytes;
-        z_bytes_copy_from_buf(&err_bytes, (const uint8_t *)&err, sizeof(err));
-        z_query_reply(query, z_query_keyexpr(query), z_move(err_bytes), NULL);
-        return;
-    }
-
-    struct clock_advance_req req = {0};
-    z_bytes_reader_t reader = z_bytes_get_reader(payload_bytes);
-    if (z_bytes_reader_read(&reader, (uint8_t *)&req, sizeof(req)) != sizeof(req)) {
-        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — malformed clock_advance_req "
-                "(expected %zu bytes)\n", s->node_id, sizeof(req));
-        struct clock_ready_resp err = {.current_vtime_ns = 0, .n_frames = 0, .error_code = 2};
-        z_owned_bytes_t err_bytes;
-        z_bytes_copy_from_buf(&err_bytes, (const uint8_t *)&err, sizeof(err));
-        z_query_reply(query, z_query_keyexpr(query), z_move(err_bytes), NULL);
-        return;
-    }
-
-    fprintf(stderr, "[zenoh-clock] node=%u: ON_QUERY delta=%ld\n", s->node_id, (long)req.delta_ns);
-    qemu_mutex_lock(&s->mutex);
-    qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
-    qatomic_set(&s->mujoco_time_ns, (int64_t)req.mujoco_time_ns);
-    
-    s->quantum_done = false;
-    s->quantum_ready = true;
-    qemu_cond_signal(&s->vcpu_cond);
-
-    uint32_t error_code = 0;
-    /*
-     * Wait for the hook with a 10-second timeout to detect QEMU stalls.
-     * Must use a while loop — POSIX (and QEMU's wrapper) explicitly allows
-     * spurious wakeups where timedwait returns 0 without quantum_done being
-     * set.  A single if() would send a stale vtime back with error_code=0.
-     */
-    while (!s->quantum_done) {
-        if (qemu_cond_timedwait(&s->query_cond, &s->mutex, 10000) != 0) {
-            if (!s->quantum_done) {
-                error_code = 1; /* STALL */
-            }
-            break;
-        }
-    }
-
-    uint64_t vtime = (error_code == 0) ? (uint64_t)s->vtime_ns : 0;
-    qemu_mutex_unlock(&s->mutex);
-
-    fprintf(stderr, "[zenoh-clock] node=%u: REPLYING vtime=%ld err=%u\n", s->node_id, (long)vtime, error_code);
-    struct clock_ready_resp rep = {
-        .current_vtime_ns = vtime,
-        .n_frames         = 0,
-        .error_code       = error_code,
-    };
-
-    z_owned_bytes_t reply_bytes;
-    z_bytes_copy_from_buf(&reply_bytes, (const uint8_t *)&rep, sizeof(rep));
-    if (z_query_reply(query, z_query_keyexpr(query), z_move(reply_bytes), NULL) != 0) {
-        /* Transport is gone — TimeAuthority will timeout and detect the drop. */
-        fprintf(stderr, "[zenoh-clock] node=%u: ZENOH_ERROR — z_query_reply failed; "
-                "TimeAuthority will not receive vtime reply\n", s->node_id);
-    }
-}
 
 static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 {
-    ZenohClockState *s = ZENOH_CLOCK(dev);
-    if (global_zenoh_clock) {
-        error_setg(errp, "Only one zenoh-clock device allowed");
+    ZenohClock *s = ZENOH_CLOCK(dev);
+
+    s->rust_state = zenoh_clock_init(s->node_id, s->router, s->mode);
+    if (!s->rust_state) {
+        error_setg(errp, "Failed to initialize Rust ZenohClock");
         return;
     }
-    global_zenoh_clock = s;
-
-    qemu_mutex_init(&s->mutex);
-    qemu_cond_init(&s->vcpu_cond);
-    qemu_cond_init(&s->query_cond);
-
-    s->is_icount = (s->mode && strcmp(s->mode, "icount") == 0);
-    s->needs_quantum = true;
-    s->quantum_ready = false;
-    s->quantum_done  = false;
-    s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zclock_timer_cb, s);
-    virtmcu_tcg_quantum_hook = zclock_quantum_hook;
-    virtmcu_get_quantum_timing = zclock_get_quantum_timing;
-
-    /* Force a CPU exit to ensure we hit the hook immediately */
-    CPUState *cpu;
-    CPU_FOREACH(cpu) {
-        cpu_exit(cpu);
-    }
-
-    z_owned_config_t config;
-    z_config_default(&config);
-    if (s->router) {
-        char json[256];
-        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
-        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
-        zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
-    }
-
-    if (s->router) {
-        fprintf(stderr, "[zenoh-clock] node=%u: connecting to router %s...\n",
-                s->node_id, s->router);
-    } else {
-        fprintf(stderr,
-                "[zenoh-clock] WARNING: node=%u: no router= set — falling back to "
-                "multicast. This will NOT work in Docker/container environments "
-                "(UDP multicast is dropped on macOS bridge networks). "
-                "Set router=tcp/<host>:7447 for reliable operation.\n",
-                s->node_id);
-    }
-    if (z_open(&s->session, z_move(config), NULL) != 0) {
-        fprintf(stderr,
-                "[zenoh-clock] node=%u: FATAL — failed to open Zenoh session "
-                "(check router= value and ZENOH_CONFIG)\n",
-                s->node_id);
-        error_setg(errp, "Failed to open Zenoh session");
-        return;
-    }
-    fprintf(stderr, "[zenoh-clock] node=%u: session opened successfully.\n", s->node_id);
-
-    char topic[128];
-    snprintf(topic, sizeof(topic), "sim/clock/advance/%u", s->node_id);
-    z_owned_closure_query_t callback;
-    z_closure_query(&callback, on_query, NULL, s);
-    z_owned_keyexpr_t kexpr;
-    z_keyexpr_from_str(&kexpr, topic);
-    if (z_declare_queryable(z_session_loan(&s->session), &s->queryable,
-                            z_keyexpr_loan(&kexpr), z_move(callback), NULL) != 0) {
-        z_keyexpr_drop(z_move(kexpr));
-        error_setg(errp, "[zenoh-clock] node=%u: failed to declare queryable on '%s'",
-                   s->node_id, topic);
-        return;
-    }
-    z_keyexpr_drop(z_move(kexpr));
 }
 
 static void zenoh_clock_instance_finalize(Object *obj)
 {
-    ZenohClockState *s = ZENOH_CLOCK(obj);
-    if (global_zenoh_clock == s) global_zenoh_clock = NULL;
-    virtmcu_tcg_quantum_hook = NULL;
-    virtmcu_get_quantum_timing = NULL;
-    if (s->quantum_timer) {
-        timer_free(s->quantum_timer);
-        s->quantum_timer = NULL;
+    ZenohClock *s = ZENOH_CLOCK(obj);
+    if (s->rust_state) {
+        zenoh_clock_fini(s->rust_state);
+        s->rust_state = NULL;
     }
-    z_queryable_drop(z_move(s->queryable));
-    z_session_drop(z_move(s->session));
-    qemu_cond_destroy(&s->query_cond);
-    qemu_cond_destroy(&s->vcpu_cond);
-    qemu_mutex_destroy(&s->mutex);
 }
 
 static const Property zenoh_clock_properties[] = {
-    DEFINE_PROP_UINT32("node",   ZenohClockState, node_id, 0),
-    DEFINE_PROP_STRING("router", ZenohClockState, router),
-    DEFINE_PROP_STRING("mode",   ZenohClockState, mode),
+    DEFINE_PROP_UINT32("node",   ZenohClock, node_id, 0),
+    DEFINE_PROP_STRING("router", ZenohClock, router),
+    DEFINE_PROP_STRING("mode",   ZenohClock, mode),
 };
 
 static void zenoh_clock_class_init(ObjectClass *klass, const void *data)
@@ -307,7 +167,7 @@ static const TypeInfo zenoh_clock_types[] = {
     {
         .name              = TYPE_ZENOH_CLOCK,
         .parent            = TYPE_SYS_BUS_DEVICE,
-        .instance_size     = sizeof(ZenohClockState),
+        .instance_size     = sizeof(ZenohClock),
         .instance_finalize = zenoh_clock_instance_finalize,
         .class_init        = zenoh_clock_class_init,
     },

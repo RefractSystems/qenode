@@ -214,13 +214,18 @@ echo "Running: ${CMD[*]}"
 # If we have a permanent DTB, we use 'exec' to replace the shell process,
 # which ensures correct PID tracking and signal propagation for callers.
 if [ "$IS_TEMP_DTB" = true ]; then
-    # Cleanup trap fires on EXIT, INT, and TERM
+    # Cleanup trap fires on EXIT
     trap 'rm -f "$DTB"' EXIT
-    trap 'rm -f "$DTB"; exit 130' INT
-    trap 'rm -f "$DTB"; exit 143' TERM
     
-    # Run QEMU as a child
-    "${CMD[@]}"
+    # Run QEMU in background so bash can handle signals immediately
+    "${CMD[@]}" &
+    QEMU_PID=$!
+    
+    # Traps for termination signals
+    trap 'kill -TERM $QEMU_PID 2>/dev/null; wait $QEMU_PID; rm -f "$DTB"; exit 130' INT
+    trap 'kill -TERM $QEMU_PID 2>/dev/null; wait $QEMU_PID; rm -f "$DTB"; exit 143' TERM
+    
+    wait $QEMU_PID
     exit $?
 else
     # Direct execution replaces the shell process

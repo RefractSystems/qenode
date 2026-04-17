@@ -71,6 +71,9 @@ rust_dummy_ss.add(declare_dependency(
 ))
 hw_virtmcu_modules += {'rust-dummy': rust_dummy_ss}
 
+# ── zenoh-clock ──────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh virtual clock.
+# Compiles to hw-virtmcu-zenoh-clock.so.
 # ── zenoh-clock-rust ──────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh virtual clock.
 # Compiles to hw-virtmcu-zenoh-clock-rust.so.
