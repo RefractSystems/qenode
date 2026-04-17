@@ -135,7 +135,7 @@ pub extern "C" fn zenoh_clock_init(
 
     unsafe {
         (*state_ptr).queryable = Some(queryable);
-        (*state_ptr).quantum_timer = timer_new_ns(
+        (*state_ptr).quantum_timer = virtmcu_timer_new_ns(
             QEMU_CLOCK_VIRTUAL,
             zclock_timer_cb,
             state_ptr as *mut c_void,
@@ -163,7 +163,7 @@ pub extern "C" fn zenoh_clock_fini(state: *mut ZenohClockState) {
 
         let s = Box::from_raw(state);
         if !s.quantum_timer.is_null() {
-            timer_free(s.quantum_timer);
+            virtmcu_timer_free(s.quantum_timer);
         }
 
         // Drop s will drop session and queryable
@@ -181,9 +181,9 @@ pub extern "C" fn zenoh_clock_fini(state: *mut ZenohClockState) {
 extern "C" fn zclock_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &*(opaque as *mut ZenohClockState) };
     unsafe {
-        qemu_mutex_lock(state.mutex);
+        virtmcu_mutex_lock(state.mutex);
         (*state.inner).needs_quantum = true;
-        qemu_mutex_unlock(state.mutex);
+        virtmcu_mutex_unlock(state.mutex);
         virtmcu_cpu_exit_all();
     }
 }
@@ -209,23 +209,23 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
     };
 
     unsafe {
-        qemu_mutex_lock(state.mutex);
+        virtmcu_mutex_lock(state.mutex);
         if !(*state.inner).needs_quantum {
-            qemu_mutex_unlock(state.mutex);
+            virtmcu_mutex_unlock(state.mutex);
             return;
         }
 
         // Processing quantum hook
-        bql_lock();
+        virtmcu_bql_lock();
         // Check again after BQL if needed, but here we just follow C impl
         (*state.inner).needs_quantum = false;
         (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         (*state.inner).quantum_done = true;
-        qemu_cond_signal(state.query_cond);
-        bql_unlock();
+        virtmcu_cond_signal(state.query_cond);
+        virtmcu_bql_unlock();
 
         while !(*state.inner).quantum_ready {
-            qemu_cond_wait(state.vcpu_cond, state.mutex);
+            virtmcu_cond_wait(state.vcpu_cond, state.mutex);
         }
 
         (*state.inner).quantum_ready = false;
@@ -233,16 +233,16 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         let next_delta = state.delta_ns.load(Ordering::Acquire);
         let vtime = (*state.inner).vtime_ns;
         state.quantum_start_vtime_ns.store(vtime, Ordering::Release);
-        qemu_mutex_unlock(state.mutex);
+        virtmcu_mutex_unlock(state.mutex);
 
-        bql_lock();
+        virtmcu_bql_lock();
         if state.is_icount {
             virtmcu_icount_advance(next_delta);
             qemu_clock_run_all_timers();
         }
         let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        timer_mod(state.quantum_timer, now + next_delta);
-        bql_unlock();
+        virtmcu_timer_mod(state.quantum_timer, now + next_delta);
+        virtmcu_bql_unlock();
     }
 }
 
@@ -267,14 +267,14 @@ fn on_query(state: &ZenohClockState, query: Query) {
     state.mujoco_time_ns.store(req.mujoco_time_ns as i64, Ordering::Release);
 
     unsafe {
-        qemu_mutex_lock(state.mutex);
+        virtmcu_mutex_lock(state.mutex);
         (*state.inner).quantum_done = false;
         (*state.inner).quantum_ready = true;
-        qemu_cond_signal(state.query_cond);
+        virtmcu_cond_signal(state.query_cond);
 
         let mut error_code = 0;
         while !(*state.inner).quantum_done {
-            if qemu_cond_timedwait(state.query_cond, state.mutex, 10000) != 0 {
+            if virtmcu_cond_timedwait(state.query_cond, state.mutex, 10000) != 0 {
                 if !(*state.inner).quantum_done {
                     error_code = 1; // STALL
                 }
@@ -283,7 +283,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
         }
 
         let vtime = if error_code == 0 { (*state.inner).vtime_ns } else { 0 };
-        qemu_mutex_unlock(state.mutex);
+        virtmcu_mutex_unlock(state.mutex);
 
         let resp = ClockReadyResp {
             current_vtime_ns: vtime as u64,

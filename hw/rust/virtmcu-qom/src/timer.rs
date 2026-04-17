@@ -11,9 +11,9 @@ pub type QemuTimerCb = extern "C" fn(opaque: *mut c_void);
 
 extern "C" {
     pub fn qemu_clock_get_ns(clock_type: i32) -> i64;
-    pub fn timer_new_ns(clock_type: i32, cb: QemuTimerCb, opaque: *mut c_void) -> *mut QemuTimer;
-    pub fn timer_mod(timer: *mut QemuTimer, expire_time: i64);
-    pub fn timer_free(timer: *mut QemuTimer);
+    pub fn virtmcu_timer_new_ns(clock_type: i32, cb: QemuTimerCb, opaque: *mut c_void) -> *mut QemuTimer;
+    pub fn virtmcu_timer_mod(timer: *mut QemuTimer, expire_time: i64);
+    pub fn virtmcu_timer_free(timer: *mut QemuTimer);
 
     pub fn qemu_clock_run_all_timers();
 }
