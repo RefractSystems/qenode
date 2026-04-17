@@ -253,7 +253,7 @@ ci-full: ci-local
 		-e PYTHONPATH=/workspace \
 		virtmcu-builder:dev \
 		bash -c "uv pip install --system --break-system-packages -r pyproject.toml && \
-		         uv run pytest tests/repl2qemu/ tests/test_yaml2qemu.py \
+		         python3 -m pytest tests/repl2qemu/ tests/test_yaml2qemu.py \
 		                        tests/test_cli_generator.py tests/test_fdt_emitter.py \
 		                        -v --tb=short"
 	@echo ""
