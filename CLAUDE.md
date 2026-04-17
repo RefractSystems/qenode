@@ -87,8 +87,9 @@ virtmcu/
 
 ## Dependency & Version Control
 
-- **Centralized Versions**: Agents MUST adhere to the versions defined in the \`VERSIONS\` file for QEMU, Zenoh, and other core dependencies.
-- **Verification**: Before suggesting or implementing upgrades, verify the current pinned versions in \`VERSIONS\` and \`requirements.txt\`.
+- **Centralized Versions**: Agents MUST adhere to the versions defined in the `VERSIONS` file for QEMU, Zenoh, and other core dependencies.
+- **Verification**: Before suggesting or implementing upgrades, verify the current pinned versions in `VERSIONS` and `requirements.txt`.
+- **Package Management**: Prefer `uv` (e.g., `uv pip`, `uv run`) over standard `pip` or system package managers for all Python package management and tool installations (like CMake) due to its speed and conflict resolution.
 
 ---
 
