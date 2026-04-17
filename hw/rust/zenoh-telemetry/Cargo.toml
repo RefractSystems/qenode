@@ -1,15 +1,10 @@
 [package]
 name = "zenoh-telemetry"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-
-[lib]
-crate-type = ["staticlib"]
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
 zenoh = "1.0.0"
-virtmcu-qom = { path = "../virtmcu-qom" }
 libc = "0.2"
-flatbuffers = "25.12.19"
+flatbuffers = "24.12.23"
 crossbeam-channel = "0.5"

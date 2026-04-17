@@ -43,7 +43,11 @@ telemetry_h = custom_target('telemetry_fbs',
 )
 
 zenoh_monolith_ss = ss.source_set()
-zenoh_monolith_ss.add(files('zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c', 'zenoh-802154.c', 'zenoh-ui.c'))
+if have_rust
+  zenoh_monolith_ss.add(files('zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-802154.c', 'zenoh-ui.c'))
+else
+  zenoh_monolith_ss.add(files('zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator.c', 'zenoh-telemetry.c', 'zenoh-802154.c', 'zenoh-ui.c'))
+endif
 zenoh_monolith_ss.add(virtmcu_rust_ffi_file)
 zenoh_monolith_ss.add(zenoh_dep, flatcc_dep)
 zenoh_monolith_ss.add(telemetry_h)
