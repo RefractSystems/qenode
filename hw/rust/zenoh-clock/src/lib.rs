@@ -23,6 +23,7 @@ pub struct ZenohClockState {
     node_id: u32,
     #[allow(dead_code)]
     is_icount: bool,
+    stall_timeout_ms: u32,
 
     #[allow(dead_code)]
     session: Session,
@@ -56,6 +57,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
     node_id: u32,
     router: *const c_char,
     mode: *const c_char,
+    stall_timeout_ms: u32,
 ) -> *mut ZenohClockState {
     let mut config = Config::default();
     if !router.is_null() {
@@ -93,6 +95,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let state_box = Box::new(ZenohClockState {
         node_id,
         is_icount,
+        stall_timeout_ms,
         session: session.clone(),
         queryable: None,
         quantum_timer: ptr::null_mut(),
@@ -243,7 +246,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
 
         let mut error_code = 0;
         while !(*state.inner).quantum_done {
-            let rc = virtmcu_cond_timedwait(state.query_cond, state.mutex, 60000);
+            let rc = virtmcu_cond_timedwait(state.query_cond, state.mutex, state.stall_timeout_ms);
             if rc == 0 && !(*state.inner).quantum_done {
                 error_code = 1; // STALL
                 break;

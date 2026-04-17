@@ -188,7 +188,7 @@ Because virtual time only advances when instructions run (or timers fire), a QEM
 - If QEMU fails to reach the boundary, `zenoh-clock` will return an error code in the `ClockReadyPayload`.
 - **Error Codes**:
     - `0` (OK): Quantum completed successfully.
-    - `1` (STALL): QEMU did not reach TB boundary within 60 seconds (likely firmware crash or deadlock).
+    - `1` (STALL): QEMU did not reach TB boundary within the stall timeout (default 5 s; override with `-device zenoh-clock,stall-timeout=<ms>`; likely firmware crash or deadlock).
     - `2` (ZENOH_ERROR): Transport-level failure or malformed payload.
 - This is a **host performance issue**, not a simulation determinism issue. The simulation remains deterministic, but it is running slower than the requester's timeout threshold.
 

@@ -1,16 +1,17 @@
 import os
-import sys
-import time
 import socket
 import subprocess
+import sys
 import threading
+import time
+
 import zenoh
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 sys.path.append(os.path.join(WORKSPACE_DIR, "tools"))
 
-from vproto import ClockAdvanceReq, ClockReadyResp
+from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 # 10 ms quantums give ~30 RTT samples for the benchmark workload.
 QUANTUM_NS = 10_000_000
@@ -170,10 +171,12 @@ class BenchmarkRunner:
             cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
                    "-nographic", "-serial", "stdio", "-monitor", "none"]
             if "slaved-icount" in self.mode:
+                stall_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
                 cmd += [
                     "-icount", "shift=0,align=off,sleep=off",
                     "-device",
-                    f"zenoh-clock,mode=icount,node=0,router={self.router}",
+                    f"zenoh-clock,mode=icount,node=0,router={self.router}"
+                    f",stall-timeout={stall_ms}",
                 ]
 
             proc = subprocess.Popen(
