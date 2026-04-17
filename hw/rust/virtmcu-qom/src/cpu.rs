@@ -18,7 +18,8 @@ extern "C" {
     pub fn virtmcu_cpu_exit_all();
 
     pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>;
-    pub static mut virtmcu_get_quantum_timing: Option<extern "C" fn(timing: *mut VirtmcuQuantumTiming)>;
+    pub static mut virtmcu_get_quantum_timing:
+        Option<extern "C" fn(timing: *mut VirtmcuQuantumTiming)>;
 
     pub fn cpu_exit(cpu: *mut CPUState);
 }

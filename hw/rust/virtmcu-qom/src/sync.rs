@@ -1,3 +1,4 @@
+/// # Safety
 use core::ffi::c_void;
 
 #[repr(C)]
@@ -14,11 +15,15 @@ extern "C" {
     pub fn virtmcu_bql_lock();
     pub fn virtmcu_bql_unlock();
 
+    pub fn virtmcu_mutex_new() -> *mut QemuMutex;
+    pub fn virtmcu_mutex_free(mutex: *mut QemuMutex);
     pub fn qemu_mutex_init(mutex: *mut QemuMutex);
     pub fn qemu_mutex_destroy(mutex: *mut QemuMutex);
     pub fn virtmcu_mutex_lock(mutex: *mut QemuMutex);
     pub fn virtmcu_mutex_unlock(mutex: *mut QemuMutex);
 
+    pub fn virtmcu_cond_new() -> *mut QemuCond;
+    pub fn virtmcu_cond_free(cond: *mut QemuCond);
     pub fn qemu_cond_init(cond: *mut QemuCond);
     pub fn qemu_cond_destroy(cond: *mut QemuCond);
     pub fn virtmcu_cond_wait(cond: *mut QemuCond, mutex: *mut QemuMutex);
