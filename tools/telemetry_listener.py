@@ -5,6 +5,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(SCRIPT_DIR, "telemetry_fbs"))
 
 import zenoh  # noqa: E402
+
 from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
 
 
@@ -19,7 +20,7 @@ def on_sample(sample):
         val = ev.Value()
         name = ev.DeviceName()
         if name:
-            name_str = name.decode('utf-8')
+            name_str = name.decode("utf-8")
         else:
             name_str = ""
 
@@ -45,13 +46,13 @@ def on_sample(sample):
         print(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
 
 
-if __name__ == "__main__":
+def main():
     node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
     topic = f"sim/telemetry/trace/{node_id}"
     print(f"Listening on {topic}...")
 
     session = zenoh.open(zenoh.Config())
-    sub = session.declare_subscriber(topic, on_sample)
+    _sub = session.declare_subscriber(topic, on_sample)
 
     try:
         import time
@@ -60,3 +61,7 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    main()

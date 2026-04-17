@@ -1,19 +1,17 @@
-import os
-import asyncio
 import logging
-import base64
-from typing import Optional, Dict, Any, List
+import os
 
 from mcp.server import Server
 from mcp.types import (
-    Tool,
-    TextContent,
     Resource,
+    TextContent,
+    Tool,
 )
 
 from tools.mcp_server.node_manager import NodeManager
 
 logger = logging.getLogger(__name__)
+
 
 def create_mcp_server() -> Server:
     server = Server("virtmcu-mcp")
@@ -30,11 +28,14 @@ def create_mcp_server() -> Server:
                     "type": "object",
                     "properties": {
                         "node_id": {"type": "string", "description": "The name/ID of the node (e.g. 'node0')"},
-                        "board_config": {"type": "string", "description": "YAML or REPL configuration content for the board."},
-                        "config_type": {"type": "string", "enum": ["yaml", "repl"], "default": "yaml"}
+                        "board_config": {
+                            "type": "string",
+                            "description": "YAML or REPL configuration content for the board.",
+                        },
+                        "config_type": {"type": "string", "enum": ["yaml", "repl"], "default": "yaml"},
                     },
-                    "required": ["node_id", "board_config"]
-                }
+                    "required": ["node_id", "board_config"],
+                },
             ),
             Tool(
                 name="flash_firmware",
@@ -43,10 +44,13 @@ def create_mcp_server() -> Server:
                     "type": "object",
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node to flash."},
-                        "firmware_path": {"type": "string", "description": "Absolute or workspace-relative path to the firmware file (.elf, .bin, .hex)."}
+                        "firmware_path": {
+                            "type": "string",
+                            "description": "Absolute or workspace-relative path to the firmware file (.elf, .bin, .hex).",
+                        },
                     },
-                    "required": ["node_id", "firmware_path"]
-                }
+                    "required": ["node_id", "firmware_path"],
+                },
             ),
             Tool(
                 name="start_node",
@@ -56,8 +60,8 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node to start."},
                     },
-                    "required": ["node_id"]
-                }
+                    "required": ["node_id"],
+                },
             ),
             Tool(
                 name="stop_node",
@@ -67,8 +71,8 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node to stop."},
                     },
-                    "required": ["node_id"]
-                }
+                    "required": ["node_id"],
+                },
             ),
             Tool(
                 name="pause_node",
@@ -78,8 +82,8 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node to pause."},
                     },
-                    "required": ["node_id"]
-                }
+                    "required": ["node_id"],
+                },
             ),
             Tool(
                 name="resume_node",
@@ -89,8 +93,8 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node to resume."},
                     },
-                    "required": ["node_id"]
-                }
+                    "required": ["node_id"],
+                },
             ),
             Tool(
                 name="read_cpu_state",
@@ -100,8 +104,8 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node."},
                     },
-                    "required": ["node_id"]
-                }
+                    "required": ["node_id"],
+                },
             ),
             Tool(
                 name="read_memory",
@@ -111,10 +115,10 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node."},
                         "address": {"type": "integer", "description": "Memory address to read from."},
-                        "size": {"type": "integer", "description": "Number of bytes to read."}
+                        "size": {"type": "integer", "description": "Number of bytes to read."},
                     },
-                    "required": ["node_id", "address", "size"]
-                }
+                    "required": ["node_id", "address", "size"],
+                },
             ),
             Tool(
                 name="disassemble",
@@ -123,11 +127,17 @@ def create_mcp_server() -> Server:
                     "type": "object",
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node."},
-                        "address": {"type": "integer", "description": "Memory address to disassemble from (use -1 for current PC)."},
-                        "instructions": {"type": "integer", "description": "Number of instructions to disassemble (default 10)."}
+                        "address": {
+                            "type": "integer",
+                            "description": "Memory address to disassemble from (use -1 for current PC).",
+                        },
+                        "instructions": {
+                            "type": "integer",
+                            "description": "Number of instructions to disassemble (default 10).",
+                        },
                     },
-                    "required": ["node_id", "address"]
-                }
+                    "required": ["node_id", "address"],
+                },
             ),
             Tool(
                 name="inject_interrupt",
@@ -136,10 +146,10 @@ def create_mcp_server() -> Server:
                     "type": "object",
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node."},
-                        "irq_number": {"type": "integer", "description": "IRQ number to trigger."}
+                        "irq_number": {"type": "integer", "description": "IRQ number to trigger."},
                     },
-                    "required": ["node_id", "irq_number"]
-                }
+                    "required": ["node_id", "irq_number"],
+                },
             ),
             Tool(
                 name="send_uart_input",
@@ -148,10 +158,10 @@ def create_mcp_server() -> Server:
                     "type": "object",
                     "properties": {
                         "node_id": {"type": "string", "description": "ID of the node."},
-                        "data": {"type": "string", "description": "Data to send to the UART."}
+                        "data": {"type": "string", "description": "Data to send to the UART."},
                     },
-                    "required": ["node_id", "data"]
-                }
+                    "required": ["node_id", "data"],
+                },
             ),
             Tool(
                 name="set_network_latency",
@@ -161,11 +171,11 @@ def create_mcp_server() -> Server:
                     "properties": {
                         "node_a": {"type": "string", "description": "ID of the first node."},
                         "node_b": {"type": "string", "description": "ID of the second node."},
-                        "latency_ns": {"type": "integer", "description": "Latency in nanoseconds."}
+                        "latency_ns": {"type": "integer", "description": "Latency in nanoseconds."},
                     },
-                    "required": ["node_a", "node_b", "latency_ns"]
-                }
-            )
+                    "required": ["node_a", "node_b", "latency_ns"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -175,48 +185,51 @@ def create_mcp_server() -> Server:
             if name == "provision_board":
                 node_id = arguments["node_id"]
                 await server.node_manager.provision_board(
-                    node_id,
-                    arguments["board_config"],
-                    arguments.get("config_type", "yaml")
+                    node_id, arguments["board_config"], arguments.get("config_type", "yaml")
                 )
                 return [TextContent(type="text", text=f"Board provisioned for node {node_id}.")]
-                
+
             elif name == "flash_firmware":
                 node_id = arguments["node_id"]
                 server.node_manager.flash_firmware(node_id, arguments["firmware_path"])
-                return [TextContent(type="text", text=f"Firmware '{arguments['firmware_path']}' associated with node {node_id}.")]
-                
+                return [
+                    TextContent(
+                        type="text", text=f"Firmware '{arguments['firmware_path']}' associated with node {node_id}."
+                    )
+                ]
+
             elif name == "start_node":
                 node_id = arguments["node_id"]
                 await server.node_manager.start_node(node_id)
                 return [TextContent(type="text", text=f"Node {node_id} started.")]
-                
+
             elif name == "stop_node":
                 node_id = arguments["node_id"]
                 await server.node_manager.stop_node(node_id)
                 return [TextContent(type="text", text=f"Node {node_id} stopped.")]
-                
+
             elif name == "pause_node":
                 node = server.node_manager.get_node(arguments["node_id"])
                 await node.qmp_bridge.pause_emulation()
                 return [TextContent(type="text", text=f"Node {arguments['node_id']} paused.")]
-                
+
             elif name == "resume_node":
                 node = server.node_manager.get_node(arguments["node_id"])
                 await node.qmp_bridge.start_emulation()
                 return [TextContent(type="text", text=f"Node {arguments['node_id']} resumed.")]
-                
+
             elif name == "read_cpu_state":
                 node = server.node_manager.get_node(arguments["node_id"])
                 hmp_res = await node.qmp_bridge.execute("human-monitor-command", {"command-line": "info registers"})
                 return [TextContent(type="text", text=hmp_res)]
-                
+
             elif name == "read_memory":
                 node = server.node_manager.get_node(arguments["node_id"])
                 addr = arguments["address"]
                 size = arguments["size"]
                 # pmemsave saves to a file, so we do it via QMP then read it
                 import tempfile
+
                 fd, tmp_path = tempfile.mkstemp()
                 os.close(fd)
                 try:
@@ -227,7 +240,7 @@ def create_mcp_server() -> Server:
                     return [TextContent(type="text", text=f"Memory at {hex(addr)} ({size} bytes):\n{hex_data}")]
                 finally:
                     os.remove(tmp_path)
-                    
+
             elif name == "disassemble":
                 node = server.node_manager.get_node(arguments["node_id"])
                 addr = arguments["address"]
@@ -235,32 +248,50 @@ def create_mcp_server() -> Server:
                     addr = await node.qmp_bridge.get_pc()
                 count = arguments.get("instructions", 10)
                 # No direct QMP disassemble, use HMP
-                hmp_res = await node.qmp_bridge.execute("human-monitor-command", {"command-line": f"x/{count}i {hex(addr)}"})
+                hmp_res = await node.qmp_bridge.execute(
+                    "human-monitor-command", {"command-line": f"x/{count}i {hex(addr)}"}
+                )
                 return [TextContent(type="text", text=hmp_res)]
-                
+
             elif name == "inject_interrupt":
                 # For now we'll simulate via an HMP command if available, or return unsupported.
-                return [TextContent(type="text", text=f"inject_interrupt is not fully supported via QMP yet. Node {arguments['node_id']} IRQ {arguments['irq_number']}")]
-                
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"inject_interrupt is not fully supported via QMP yet. Node {arguments['node_id']} IRQ {arguments['irq_number']}",
+                    )
+                ]
+
             elif name == "send_uart_input":
                 node = server.node_manager.get_node(arguments["node_id"])
                 await node.qmp_bridge.write_to_uart(arguments["data"])
-                return [TextContent(type="text", text=f"Sent {len(arguments['data'])} bytes to UART of node {arguments['node_id']}.")]
-                
+                return [
+                    TextContent(
+                        type="text", text=f"Sent {len(arguments['data'])} bytes to UART of node {arguments['node_id']}."
+                    )
+                ]
+
             elif name == "set_network_latency":
-                import zenoh
                 import json
+
+                import zenoh
+
                 session = zenoh.open(zenoh.Config())
-                topic = f"sim/network/control"
+                topic = "sim/network/control"
                 data = {
                     "node_a": arguments["node_a"],
                     "node_b": arguments["node_b"],
-                    "latency_ns": arguments["latency_ns"]
+                    "latency_ns": arguments["latency_ns"],
                 }
                 session.put(topic, json.dumps(data).encode("utf-8"))
                 session.close()
-                return [TextContent(type="text", text=f"Published latency update for {arguments['node_a']}<->{arguments['node_b']}: {arguments['latency_ns']}ns.")]
-                
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Published latency update for {arguments['node_a']}<->{arguments['node_b']}: {arguments['latency_ns']}ns.",
+                    )
+                ]
+
             else:
                 raise ValueError(f"Unknown tool: {name}")
         except Exception as e:
@@ -275,10 +306,10 @@ def create_mcp_server() -> Server:
                 uri="virtmcu://simulation/status",
                 name="Simulation Status",
                 mimeType="application/json",
-                description="A global view of all running nodes and their status."
+                description="A global view of all running nodes and their status.",
             )
         ]
-        
+
         # Add UART console for each running node
         for node_id, node in server.node_manager.nodes.items():
             if node.process and node.process.returncode is None:
@@ -287,22 +318,24 @@ def create_mcp_server() -> Server:
                         uri=f"virtmcu://nodes/{node_id}/console",
                         name=f"Console - {node_id}",
                         mimeType="text/plain",
-                        description=f"Real-time UART output stream for node {node_id}."
+                        description=f"Real-time UART output stream for node {node_id}.",
                     )
                 )
-                
+
         return resources
-        
+
     @server.read_resource()
     async def handle_read_resource(uri: str) -> str:
+        uri = str(uri)
         if uri == "virtmcu://simulation/status":
             status = {"status": "running", "nodes": []}
             for node_id, node in server.node_manager.nodes.items():
                 node_status = "running" if (node.process and node.process.returncode is None) else "stopped"
                 status["nodes"].append({"id": node_id, "status": node_status})
             import json
+
             return json.dumps(status)
-            
+
         if uri.startswith("virtmcu://nodes/") and uri.endswith("/console"):
             parts = uri.split("/")
             node_id = parts[3]
