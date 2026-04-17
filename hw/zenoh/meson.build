@@ -47,8 +47,11 @@ zenoh_monolith_ss.add(files('zenoh-netdev.c', 'zenoh-chardev.c', 'zenoh-actuator
 zenoh_monolith_ss.add(virtmcu_rust_ffi_file)
 zenoh_monolith_ss.add(zenoh_dep, flatcc_dep)
 zenoh_monolith_ss.add(telemetry_h)
-zenoh_monolith_ss.add(rust_zenoh_netdev_lib[1])
+zenoh_monolith_ss.add(rust_zenoh_netdev_lib[1], rust_zenoh_chardev_lib[1])
 zenoh_monolith_ss.add(declare_dependency(
-  link_args: [meson.current_build_dir() / '../libzenoh_netdev.a']
+  link_args: [
+    meson.current_build_dir() / '../libzenoh_netdev.a',
+    meson.current_build_dir() / '../libzenoh_chardev.a'
+  ]
 ))
 hw_virtmcu_modules += {'zenoh': zenoh_monolith_ss}

@@ -3618,6 +3618,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenoh-chardev"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "libc",
+ "virtmcu-qom",
+ "zenoh",
+]
+
+[[package]]
 name = "zenoh-codec"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

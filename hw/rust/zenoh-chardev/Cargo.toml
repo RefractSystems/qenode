@@ -1,0 +1,14 @@
+[package]
+name = "zenoh-chardev"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+zenoh = "1.0.0"
+virtmcu-qom = { path = "../virtmcu-qom" }
+libc = "0.2"
+byteorder = "1.5"
