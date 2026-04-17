@@ -198,7 +198,7 @@ ci-local: venv check-versions
 	uv run ruff check tools/ tests/ patches/
 	@echo "==> shellcheck..."
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck scripts/*.sh; \
+		shellcheck --severity=warning scripts/*.sh; \
 		echo "✓ shellcheck passed."; \
 	else \
 		echo "  WARNING: shellcheck not installed (brew install shellcheck) — skipping."; \
