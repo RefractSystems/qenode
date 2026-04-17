@@ -58,7 +58,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     gcc-arm-none-eabi \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
-    gh \
     jq \
     lcov \
     gcovr \
@@ -129,7 +128,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     gcc-riscv64-linux-gnu \
     binutils-riscv64-linux-gnu \
     strace \
-    gh \
     jq \
     unzip \
     && rm -rf /var/lib/apt/lists/*
