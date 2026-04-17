@@ -86,6 +86,7 @@ USER vscode
 
 # ── Stage 2: toolchain ────────────────────────────────────────────────────────
 FROM base AS toolchain
+# hadolint ignore=DL3002
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
