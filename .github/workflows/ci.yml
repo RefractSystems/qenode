@@ -60,7 +60,8 @@ jobs:
           # DL3009: apt-get clean — handled by rm -rf /var/lib/apt/lists/*
           # DL4006: set -o pipefail — handled by set -euo pipefail in scripts
           # SC2016: $ORIGIN in single quotes is literal, which is intended for rpath
-          ignore: DL3008,DL3009,DL4006,SC2016
+          # SC2015: we use || true for sed commands
+          ignore: DL3008,DL3009,DL4006,SC2016,SC2015
 
 # ── Tier 1: Unit Tests (no QEMU) ──────────────────────────────────────────────
 
