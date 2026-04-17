@@ -62,6 +62,7 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     jq \
     lcov \
     gcovr \
+    patchelf \
     && rm -rf /var/lib/apt/lists/* )
 
 # Install FlatBuffers compiler from GitHub release
@@ -268,7 +269,9 @@ RUN cd qemu \
     && make -j"$(nproc)" \
     && make -j"$(nproc)" plugins \
     && make install \
-    && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/
+    && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/ \
+    && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
+    && find /opt/virtmcu/lib/qemu -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
 # Make the installed QEMU binary and modules available inside this stage
 # (used by CI integration jobs that run smoke tests within the builder container).

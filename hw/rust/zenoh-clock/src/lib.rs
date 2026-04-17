@@ -1,3 +1,4 @@
+#![allow(clippy::while_immutable_condition)]
 #![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
 extern crate libc;
 
@@ -29,7 +30,7 @@ pub struct ZenohClockState {
     #[allow(dead_code)]
     session: Session,
     #[allow(dead_code)]
-    queryable: Option<Queryable<'static, ()>>,
+    queryable: Option<Queryable<()>>,
 
     quantum_timer: *mut QemuTimer,
 
@@ -207,12 +208,13 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         }
 
         // Processing quantum hook
-        virtmcu_bql_lock();
-        (*state.inner).needs_quantum = false;
-        (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        (*state.inner).quantum_done = true;
-        virtmcu_cond_signal(state.query_cond);
-        virtmcu_bql_unlock();
+        {
+            let _bql_guard = virtmcu_qom::sync::Bql::lock();
+            (*state.inner).needs_quantum = false;
+            (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            (*state.inner).quantum_done = true;
+            virtmcu_cond_signal(state.query_cond);
+        }
 
         while !(*state.inner).quantum_ready {
             virtmcu_cond_wait(state.vcpu_cond, state.mutex);
@@ -226,14 +228,14 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         state.quantum_start_vtime_ns.store(vtime, Ordering::Release);
         virtmcu_mutex_unlock(state.mutex);
 
-        virtmcu_bql_lock();
-        if state.is_icount {
-            virtmcu_icount_advance(next_delta);
+        {
+            let _bql_guard = virtmcu_qom::sync::Bql::lock();
+            if state.is_icount {
+                virtmcu_icount_advance(next_delta);
+            }
+            let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            virtmcu_timer_mod(state.quantum_timer, now + next_delta);
         }
-        let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        virtmcu_timer_mod(state.quantum_timer, now + next_delta);
-        qemu_clock_run_all_timers();
-        virtmcu_bql_unlock();
     }
 }
 

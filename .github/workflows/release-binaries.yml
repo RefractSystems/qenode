@@ -54,8 +54,48 @@ jobs:
           docker cp extract:/opt/virtmcu ./virtmcu-dist
           docker rm extract
           
-          # Create tarball
-          # Use QEMU version and arch in filename
+          # Include basic project info
+          cp LICENSE ./virtmcu-dist/
+          cat <<EOF > ./virtmcu-dist/README-BINARY.md
+          # virtmcu QEMU Binaries
+          
+          This package contains a patched version of QEMU with support for:
+          - arm-generic-fdt machine
+          - Zenoh-based deterministic networking and clock synchronization
+          - Dynamic QOM plugin loading
+          
+          ## System Requirements
+          This is a dynamically linked QEMU build for Ubuntu 24.04 (or compatible glibc-based Linux).
+          You will need the following runtime dependencies installed on your host:
+          \`\`\`bash
+          sudo apt-get update && sudo apt-get install -y libglib2.0-0 libpixman-1-0 libslirp0
+          \`\`\`
+          
+          ## Architecture
+          - Host: ${{ matrix.arch }}
+          - Target Guest Support: ARM, RISC-V (32/64)
+          
+          ## Usage
+          The binaries in \`bin/\` have their RPATH set to find libraries in \`../lib/\`.
+          No LD_LIBRARY_PATH should be required.
+          
+          Example:
+          ./bin/qemu-system-arm -M arm-generic-fdt -dtb your_board.dtb
+          EOF
+
+      - name: Portable Smoke Test
+        run: |
+          # Test the extracted binary in a clean ubuntu container
+          docker run --rm -v $(pwd)/virtmcu-dist:/virtmcu-dist ubuntu:24.04 bash -c "
+            apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libpixman-1-0 libslirp0
+            /virtmcu-dist/bin/qemu-system-arm --version
+            /virtmcu-dist/bin/qemu-system-riscv64 --version
+            # Verify that it can find the modules without LD_LIBRARY_PATH
+            /virtmcu-dist/bin/qemu-system-arm -device help | grep -q 'dummy-device'
+          "
+
+      - name: Create Tarball
+        run: |
           TARBALL_NAME="virtmcu-qemu-${{ env.QEMU_VERSION }}-${{ matrix.arch }}.tar.gz"
           tar -czf "$TARBALL_NAME" -C ./virtmcu-dist .
           echo "TARBALL_PATH=$TARBALL_NAME" >> $GITHUB_ENV
