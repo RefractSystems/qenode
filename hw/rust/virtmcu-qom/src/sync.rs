@@ -56,3 +56,24 @@ impl Drop for BqlGuard {
         unsafe { virtmcu_bql_unlock() };
     }
 }
+
+pub struct QemuMutexGuard<'a> {
+    mutex: *mut QemuMutex,
+    _marker: core::marker::PhantomData<&'a mut QemuMutex>,
+}
+
+impl QemuMutex {
+    pub fn lock(&mut self) -> QemuMutexGuard<'_> {
+        unsafe { virtmcu_mutex_lock(self as *mut _) };
+        QemuMutexGuard {
+            mutex: self as *mut _,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl Drop for QemuMutexGuard<'_> {
+    fn drop(&mut self) {
+        unsafe { virtmcu_mutex_unlock(self.mutex) };
+    }
+}
