@@ -18,6 +18,7 @@ ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG RUST_VERSION=1.95.0
+ARG FLATBUFFERS_VERSION=25.12.19
 ARG TARGETARCH
 
 # ── Stage 0: rust-builder ─────────────────────────────────────────────────────
@@ -61,8 +62,14 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     jq \
     lcov \
     gcovr \
-    flatbuffers-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+# Install FlatBuffers compiler from GitHub release
+ARG FLATBUFFERS_VERSION
+RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
+    && unzip /tmp/flatc.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/flatc \
+    && rm /tmp/flatc.zip
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
@@ -122,8 +129,14 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     strace \
     gh \
     jq \
-    flatbuffers-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+# Install FlatBuffers compiler from GitHub release
+ARG FLATBUFFERS_VERSION
+RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
+    && unzip /tmp/flatc.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/flatc \
+    && rm /tmp/flatc.zip
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
