@@ -1,5 +1,5 @@
 /*
- * hw/zenoh/zenoh-ui.c — Standardized UI Topics (Buttons/LEDs)
+ * hw/zenoh/zenoh-ui.c — Rust-backed standardized UI Topics (Buttons/LEDs)
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -8,37 +8,29 @@
 #include "hw/core/sysbus.h"
 #include "hw/core/irq.h"
 #include "qapi/error.h"
-#include "qemu/log.h"
 #include "qemu/module.h"
-#include "qemu/timer.h"
-#include "qemu/main-loop.h"
 #include "qom/object.h"
 #include "hw/core/qdev-properties.h"
-#include "qemu/error-report.h"
-#include <zenoh.h>
+
+/* ── Rust FFI declarations ────────────────────────────────────────────────── */
+
+typedef struct ZenohUiState ZenohUiState;
+
+extern ZenohUiState *zenoh_ui_init_rust(uint32_t node_id, const char *router);
+extern void          zenoh_ui_cleanup_rust(ZenohUiState *state);
+extern void          zenoh_ui_set_led_rust(ZenohUiState *state, uint32_t led_id, bool on);
+extern bool          zenoh_ui_get_button_rust(ZenohUiState *state, uint32_t btn_id);
+extern void          zenoh_ui_ensure_button_rust(ZenohUiState *state, uint32_t btn_id, qemu_irq irq);
 
 #define TYPE_ZENOH_UI "zenoh-ui"
-OBJECT_DECLARE_SIMPLE_TYPE(ZenohUiState, ZENOH_UI)
+OBJECT_DECLARE_SIMPLE_TYPE(ZenohUiQEMU, ZENOH_UI)
 
 #define REG_LED_ID      0x00
 #define REG_LED_STATE   0x04
 #define REG_BTN_ID      0x10
 #define REG_BTN_STATE   0x14
-#define REG_BTN_CONFIG  0x18
 
-typedef struct {
-    uint32_t id;
-    bool state;
-    qemu_irq irq;
-    z_owned_subscriber_t sub;
-} ZenohButton;
-
-typedef struct {
-    uint32_t led_id;
-    bool state;
-} ZenohLedEvent;
-
-struct ZenohUiState {
+struct ZenohUiQEMU {
     SysBusDevice parent_obj;
     MemoryRegion mmio;
 
@@ -50,137 +42,34 @@ struct ZenohUiState {
     uint32_t active_led_id;
     uint32_t active_btn_id;
 
-    /* Zenoh state */
-    z_owned_session_t session;
-    GHashTable *led_publishers; /* key: led_id -> z_owned_publisher_t* */
-    GHashTable *buttons;        /* key: btn_id -> ZenohButton* */
-
-    /* Async publish pipeline */
-    GAsyncQueue *led_queue;
-    GThread     *led_thread;
+    /* Rust state */
+    ZenohUiState *rust_state;
 };
-
-static void on_button_msg(z_loaned_sample_t *sample, void *context)
-{
-    ZenohButton *btn = context;
-    const z_loaned_bytes_t *payload = z_sample_payload(sample);
-    if (!payload) return;
-
-    size_t len = z_bytes_len(payload);
-    if (len >= 1) {
-        uint8_t val;
-        z_bytes_reader_t reader = z_bytes_get_reader(payload);
-        z_bytes_reader_read(&reader, &val, 1);
-        bool new_state = (val != 0);
-        if (new_state != btn->state) {
-            btn->state = new_state;
-            if (btn->irq) {
-                /* CRITICAL FIX: IRQs modify guest state. Must hold the BQL! */
-                bql_lock();
-                qemu_set_irq(btn->irq, btn->state ? 1 : 0);
-                bql_unlock();
-            }
-        }
-    }
-}
-
-static z_owned_publisher_t *get_led_publisher(ZenohUiState *s, uint32_t led_id);
-
-/* Called from the background publish thread only. */
-static gpointer led_publish_thread(gpointer arg)
-{
-    ZenohUiState *s = arg;
-
-    while (1) {
-        ZenohLedEvent *ev = g_async_queue_pop(s->led_queue);
-        if (!ev) break; /* NULL sentinel — time to exit */
-
-        z_owned_publisher_t *pub = get_led_publisher(s, ev->led_id);
-        if (pub) {
-            uint8_t state = ev->state ? 1 : 0;
-            z_owned_bytes_t bytes;
-            z_bytes_copy_from_buf(&bytes, &state, 1);
-            z_publisher_put(z_publisher_loan(pub), z_move(bytes), NULL);
-        }
-        g_free(ev);
-    }
-    
-    return NULL;
-}
-
-static z_owned_publisher_t *get_led_publisher(ZenohUiState *s, uint32_t led_id)
-{
-    z_owned_publisher_t *pub = g_hash_table_lookup(s->led_publishers, GUINT_TO_POINTER(led_id));
-    if (pub) return pub;
-
-    char topic[128];
-    snprintf(topic, sizeof(topic), "sim/ui/%u/led/%u", s->node_id, led_id);
-    z_owned_keyexpr_t ke;
-    z_keyexpr_from_str(&ke, topic);
-    
-    pub = g_new0(z_owned_publisher_t, 1);
-    if (z_declare_publisher(z_session_loan(&s->session), pub, z_keyexpr_loan(&ke), NULL) != 0) {
-        g_free(pub);
-        z_keyexpr_drop(z_move(ke));
-        return NULL;
-    }
-    z_keyexpr_drop(z_move(ke));
-    g_hash_table_insert(s->led_publishers, GUINT_TO_POINTER(led_id), pub);
-    return pub;
-}
-
-static ZenohButton *get_button(ZenohUiState *s, uint32_t btn_id)
-{
-    ZenohButton *btn = g_hash_table_lookup(s->buttons, GUINT_TO_POINTER(btn_id));
-    if (btn) return btn;
-
-    btn = g_new0(ZenohButton, 1);
-    btn->id = btn_id;
-    
-    char topic[128];
-    snprintf(topic, sizeof(topic), "sim/ui/%u/button/%u", s->node_id, btn_id);
-    z_owned_keyexpr_t ke;
-    z_keyexpr_from_str(&ke, topic);
-    
-    z_owned_closure_sample_t cb;
-    z_closure_sample(&cb, on_button_msg, NULL, btn);
-    
-    if (z_declare_subscriber(z_session_loan(&s->session), &btn->sub, z_keyexpr_loan(&ke), z_move(cb), NULL) != 0) {
-        z_keyexpr_drop(z_move(ke));
-        g_free(btn);
-        return NULL;
-    }
-    z_keyexpr_drop(z_move(ke));
-    g_hash_table_insert(s->buttons, GUINT_TO_POINTER(btn_id), btn);
-    return btn;
-}
 
 static uint64_t zenoh_ui_read(void *opaque, hwaddr addr, unsigned size)
 {
-    ZenohUiState *s = opaque;
+    ZenohUiQEMU *s = opaque;
     if (addr == REG_LED_ID) return s->active_led_id;
     if (addr == REG_BTN_ID) return s->active_btn_id;
     if (addr == REG_BTN_STATE) {
-        ZenohButton *btn = g_hash_table_lookup(s->buttons, GUINT_TO_POINTER(s->active_btn_id));
-        return btn ? (btn->state ? 1 : 0) : 0;
+        return zenoh_ui_get_button_rust(s->rust_state, s->active_btn_id) ? 1 : 0;
     }
     return 0;
 }
 
 static void zenoh_ui_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
-    ZenohUiState *s = opaque;
+    ZenohUiQEMU *s = opaque;
     if (addr == REG_LED_ID) {
         s->active_led_id = (uint32_t)val;
     } else if (addr == REG_LED_STATE) {
-        /* CRITICAL FIX: Delegate network I/O to background thread to avoid stalling TCG */
-        ZenohLedEvent *ev = g_new(ZenohLedEvent, 1);
-        ev->led_id = s->active_led_id;
-        ev->state = (val != 0);
-        g_async_queue_push(s->led_queue, ev);
+        zenoh_ui_set_led_rust(s->rust_state, s->active_led_id, val != 0);
     } else if (addr == REG_BTN_ID) {
         s->active_btn_id = (uint32_t)val;
-        get_button(s, s->active_btn_id); /* Ensure subscriber exists */
+        /* Ensure the button is subscribed. In a real system, we'd know how many
+         * IRQs we have. Here we use the SysBus IRQs. */
+        qemu_irq irq = sysbus_get_connected_irq(SYS_BUS_DEVICE(s), s->active_btn_id);
+        zenoh_ui_ensure_button_rust(s->rust_state, s->active_btn_id, irq);
     }
 }
 
@@ -188,71 +77,37 @@ static const MemoryRegionOps zenoh_ui_ops = {
     .read = zenoh_ui_read,
     .write = zenoh_ui_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
 };
-
-static void publisher_destroy(gpointer data)
-{
-    z_owned_publisher_t *pub = data;
-    z_publisher_drop(z_move(*pub));
-    g_free(pub);
-}
-
-static void button_destroy(gpointer data)
-{
-    ZenohButton *btn = data;
-    z_subscriber_drop(z_move(btn->sub));
-    g_free(btn);
-}
 
 static void zenoh_ui_realize(DeviceState *dev, Error **errp)
 {
-    ZenohUiState *s = ZENOH_UI(dev);
+    ZenohUiQEMU *s = ZENOH_UI(dev);
     memory_region_init_io(&s->mmio, OBJECT(s), &zenoh_ui_ops, s, TYPE_ZENOH_UI, 0x100);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
 
-    s->led_publishers = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, publisher_destroy);
-    s->buttons = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, button_destroy);
-
-    s->led_queue = g_async_queue_new();
-    s->led_thread = g_thread_new("zenoh-ui-led", led_publish_thread, s);
-
-    z_owned_config_t config;
-    z_config_default(&config);
-    if (s->router) {
-        char json[256];
-        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
-        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
-    }
-    if (z_open(&s->session, z_move(config), NULL) != 0) {
-        error_setg(errp, "Failed to open Zenoh session");
+    s->rust_state = zenoh_ui_init_rust(s->node_id, s->router);
+    if (!s->rust_state) {
+        error_setg(errp, "Failed to initialize Rust Zenoh UI");
         return;
     }
 }
 
 static void zenoh_ui_finalize(Object *obj)
 {
-    ZenohUiState *s = ZENOH_UI(obj);
-
-    if (s->led_thread) {
-        g_async_queue_push(s->led_queue, NULL); /* sentinel */
-        g_thread_join(s->led_thread);
-        s->led_thread = NULL;
+    ZenohUiQEMU *s = ZENOH_UI(obj);
+    if (s->rust_state) {
+        zenoh_ui_cleanup_rust(s->rust_state);
+        s->rust_state = NULL;
     }
-
-    if (s->led_queue) {
-        g_async_queue_unref(s->led_queue);
-        s->led_queue = NULL;
-    }
-
-    if (s->led_publishers) g_hash_table_destroy(s->led_publishers);
-    if (s->buttons) g_hash_table_destroy(s->buttons);
-    z_close(z_session_loan_mut(&s->session), NULL);
-    z_session_drop(z_move(s->session));
 }
 
 static const Property zenoh_ui_properties[] = {
-    DEFINE_PROP_UINT32("node", ZenohUiState, node_id, 0),
-    DEFINE_PROP_STRING("router", ZenohUiState, router),
+    DEFINE_PROP_UINT32("node",   ZenohUiQEMU, node_id, 0),
+    DEFINE_PROP_STRING("router", ZenohUiQEMU, router),
 };
 
 static void zenoh_ui_class_init(ObjectClass *klass, const void *data)
@@ -260,13 +115,14 @@ static void zenoh_ui_class_init(ObjectClass *klass, const void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     dc->realize = zenoh_ui_realize;
     device_class_set_props(dc, zenoh_ui_properties);
+    dc->user_creatable = true;
 }
 
 static const TypeInfo zenoh_ui_types[] = {
     {
         .name = TYPE_ZENOH_UI,
         .parent = TYPE_SYS_BUS_DEVICE,
-        .instance_size = sizeof(ZenohUiState),
+        .instance_size = sizeof(ZenohUiQEMU),
         .instance_finalize = zenoh_ui_finalize,
         .class_init = zenoh_ui_class_init,
     },

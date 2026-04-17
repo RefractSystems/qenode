@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 
 #[repr(C)]
 pub struct CPUState {
