@@ -15,6 +15,9 @@
 
 hw_virtmcu_modules = {}
 
+# Common FFI helpers for Rust-backed modules
+virtmcu_rust_ffi_file = files('misc/virtmcu-rust-ffi.c')
+
 # ── dummy ─────────────────────────────────────────────────────────────────────
 # Minimal QOM SysBusDevice.  Always included — it is the smoke-test for the
 # dynamic loading pipeline and the template for all new devices.
@@ -33,23 +36,6 @@ hw_virtmcu_modules += {'mmio-socket-bridge': mmio_bridge_ss}
 # ── rust-dummy ──────────────────────────────────────────────────────────────────
 # Template: QOM device in C + peripheral logic in Rust (raw FFI, no_std).
 # Compiles to hw-virtmcu-rust-dummy.so.
-#
-# Build strategy:
-#   1. A custom_target invokes rustc directly to compile src/lib.rs into a
-#      static archive (librust_dummy.a).  We avoid cargo here so the build is
-#      fully driven by Meson without a network fetch.
-#   2. A generated trigger file (rust_dummy_trigger.c) is added to the source
-#      set.  Meson must compile it before linking the .so, and because it is an
-#      output of the custom_target, this establishes a link-time ordering
-#      dependency:  custom_target → trigger.c.o → .so link step.
-#   3. link_args names the .a archive by its Meson build-dir path so the linker
-#      picks it up.  The ordering via (2) ensures it exists before the link runs.
-#
-# Why not QEMU's official Rust support?
-#   QEMU 10+ can build Rust code via meson+cargo, but it compiles into the
-#   monolithic qemu-system-* binary — it does not produce loadable .so modules.
-#   This custom_target approach works with --enable-modules and keeps peripheral
-#   code outside the QEMU source tree.
 rust_dummy_lib = custom_target(
   'rust_dummy_lib',
   input: 'rust/rust-dummy/src/lib.rs',
@@ -62,21 +48,16 @@ rust_dummy_lib = custom_target(
 )
 rust_dummy_ss = ss.source_set()
 rust_dummy_ss.add(files('rust/rust-dummy/rust-dummy.c'))
-# Adding the trigger file (output[1] of the custom_target) as a source creates
-# a compile-time dep on the custom_target, which transitively makes the .so
-# link step depend on librust_dummy.a being present before the linker runs.
+rust_dummy_ss.add(virtmcu_rust_ffi_file)
 rust_dummy_ss.add(rust_dummy_lib[1])
 rust_dummy_ss.add(declare_dependency(
   link_args: [meson.current_build_dir() / 'librust_dummy.a']
 ))
 hw_virtmcu_modules += {'rust-dummy': rust_dummy_ss}
 
-# ── zenoh-clock ──────────────────────────────────────────────────────────
+# ── zenoh-clock ───────────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh virtual clock.
 # Compiles to hw-virtmcu-zenoh-clock.so.
-# ── zenoh-clock-rust ──────────────────────────────────────────────────────────
-# Rust implementation of the Zenoh virtual clock.
-# Compiles to hw-virtmcu-zenoh-clock-rust.so.
 rust_zenoh_clock_lib = custom_target(
   'rust_zenoh_clock_lib',
   input: 'rust/zenoh-clock/src/lib.rs',
@@ -87,13 +68,27 @@ rust_zenoh_clock_lib = custom_target(
     'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_clock.a', meson.current_build_dir() / 'rust_zenoh_clock_trigger.c'
   ]
 )
-zenoh_clock_rust_ss = ss.source_set()
-zenoh_clock_rust_ss.add(files('zenoh/zenoh-clock-rust.c'))
-zenoh_clock_rust_ss.add(rust_zenoh_clock_lib[1])
-zenoh_clock_rust_ss.add(declare_dependency(
+zenoh_clock_ss = ss.source_set()
+zenoh_clock_ss.add(files('zenoh/zenoh-clock.c'))
+zenoh_clock_ss.add(virtmcu_rust_ffi_file)
+zenoh_clock_ss.add(rust_zenoh_clock_lib[1])
+zenoh_clock_ss.add(declare_dependency(
   link_args: [meson.current_build_dir() / 'libzenoh_clock.a']
 ))
-hw_virtmcu_modules += {'zenoh-clock-rust': zenoh_clock_rust_ss}
+hw_virtmcu_modules += {'zenoh-clock': zenoh_clock_ss}
+
+# ── zenoh-netdev ─────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh ethernet backend.
+rust_zenoh_netdev_lib = custom_target(
+  'rust_zenoh_netdev_lib',
+  input: 'rust/zenoh-netdev/src/lib.rs',
+  output: ['libzenoh_netdev.a', 'rust_zenoh_netdev_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-netdev && cp target/release/libzenoh_netdev.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_netdev.a', meson.current_build_dir() / 'rust_zenoh_netdev_trigger.c'
+  ]
+)
 
 subdir('zenoh')
 

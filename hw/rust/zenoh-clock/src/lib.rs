@@ -77,7 +77,6 @@ pub unsafe extern "C" fn zenoh_clock_init(
             return ptr::null_mut();
         }
     };
-    eprintln!("[zenoh-clock] node={}: session opened successfully.", node_id);
 
     let is_icount = if !mode.is_null() {
         let mode_str = unsafe { CStr::from_ptr(mode) }.to_str().unwrap();
@@ -225,7 +224,9 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         (*state.inner).quantum_ready = false;
         (*state.inner).quantum_done = false;
         let next_delta = state.delta_ns.load(Ordering::Acquire);
-        let vtime = (*state.inner).vtime_ns;
+        let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        eprintln!("[zenoh-clock] resuming: vtime={}, next_delta={}", vtime, next_delta);
+        (*state.inner).vtime_ns = vtime;
         state.quantum_start_vtime_ns.store(vtime, Ordering::Release);
         virtmcu_mutex_unlock(state.mutex);
 
@@ -256,8 +257,9 @@ fn on_query(state: &ZenohClockState, query: Query) {
 
     let bytes = payload.to_bytes();
     let req: ClockAdvanceReq = unsafe { ptr::read_unaligned(bytes.as_ptr() as *const _) };
-
-    state.delta_ns.store(req.delta_ns as i64, Ordering::Release);
+    
+    let delta = req.delta_ns;
+    state.delta_ns.store(delta as i64, Ordering::Release);
     state
         .mujoco_time_ns
         .store(req.mujoco_time_ns as i64, Ordering::Release);
@@ -266,7 +268,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
         virtmcu_mutex_lock(state.mutex);
         (*state.inner).quantum_done = false;
         (*state.inner).quantum_ready = true;
-        virtmcu_cond_signal(state.query_cond);
+        virtmcu_cond_signal(state.vcpu_cond);
 
         let mut error_code = 0;
         #[allow(clippy::while_immutable_condition)]

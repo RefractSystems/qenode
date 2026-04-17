@@ -17,7 +17,12 @@ ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
+ARG RUST_VERSION=1.95.0
 ARG TARGETARCH
+
+# ── Stage 0: rust-builder ─────────────────────────────────────────────────────
+# Dedicated Rust toolchain stage for multi-stage parity.
+FROM rust:${RUST_VERSION}-slim AS rust-builder
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────
 # Plain ubuntu with all build dependencies. Used directly by the builder stage
@@ -132,12 +137,12 @@ COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
 COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
 
-# Install stable Rust via rustup (for both root and vscode user)
-# Use a clean home for root to avoid existing settings warnings
-RUN rm -rf /root/.rustup /root/.cargo && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Copy Rust toolchain from rust-builder
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
 
 # Install Node.js 24 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
@@ -147,10 +152,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # Install Claude Code via native installer (as vscode user so auto-update works)
 # npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
 USER vscode
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --no-modify-path \
-    && curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/home/vscode/.local/bin:/home/vscode/.cargo/bin:${PATH}"
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/vscode/.local/bin:${PATH}"
 # hadolint ignore=DL3002
 USER root
 
@@ -173,16 +176,17 @@ COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
 COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
 
+# Copy Rust toolchain from rust-builder
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+
 # We emulate ARM microcontrollers regardless of the host architecture
 ENV ARCH=arm
 
 WORKDIR /build
-
-# Install stable Rust via rustup; apt rustc (1.75) may be too old for zenoh-c.
-# Layer is cached as long as the toolchain stage is unchanged.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --no-modify-path
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Clone QEMU before COPYing local files so that patch/hw changes do not bust
 # this expensive layer. Cache key: QEMU_REF arg.
