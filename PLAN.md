@@ -613,62 +613,183 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 18 Cleanup — Rust FFI Consolidation 🚧
 
-The following issues were discovered during Phase 18 audit. They are correctness or quality fixes that do not block functionality but should be resolved before Phase 19 begins.
+The following issues were discovered during Phase 18 audit. They are correctness or quality fixes that must be resolved before Phase 19 begins.
 
-- [ ] **18.7 Fix BQL in `zenoh-clock.c`**: The BQL is currently held while `zenoh_clock_quantum_wait()` blocks on a Zenoh reply. The PLAN §7 design spec requires a BQL sandwich: call `bql_unlock()` before entering the wait, then `bql_lock()` on return. Currently safe only because the Zenoh callback does not call QEMU APIs, but this is an undocumented assumption that will break if the callback ever needs the lock.
+**Execution order**: 18.11 → 18.8 → 18.9 → 18.10 → 18.7 → 18.12.
+Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fix type issues before adding new dependencies, fix BQL last (it touches C and needs the Rust types from 18.9 to be in place), and do the session helper last once all crates consistently depend on `virtmcu-zenoh`.
 
-- [ ] **18.8 Fix `zenoh-telemetry` wrong return type**: `qemu_clock_get_ns` is declared locally in `zenoh-telemetry/src/lib.rs` as `-> u64`, but QEMU's signature is `-> i64`. Use `virtmcu_qom::timer::qemu_clock_get_ns` instead to eliminate the duplicate and the type mismatch.
+**Coverage gate**: After every task: `RUSTFLAGS="-D warnings" cargo build --release` for all crates in `hw/rust/` must succeed with zero warnings, and both `test/phase7/smoke_test.sh` and `test/phase8/smoke_test.sh` must pass.
 
-- [ ] **18.9 Adopt `virtmcu-qom` in `zenoh-clock`**: `zenoh-clock` uses `*mut c_void` for `QemuMutex *` / `QemuCond *` pointers and re-declares sync functions inline. Add `virtmcu-qom` as a dependency and use `virtmcu_qom::sync::{QemuMutex, QemuCond, virtmcu_mutex_lock, ...}` for type safety and shared declarations.
+---
 
-- [ ] **18.10 Adopt `virtmcu-qom` in `zenoh-netdev`**: `zenoh-netdev` re-declares `virtmcu_bql_lock`/`virtmcu_bql_unlock` inline. Replace with `use virtmcu_qom::sync::*`.
+- [ ] **18.11 Align Cargo.toml workspace fields**
 
-- [ ] **18.11 Align Cargo.toml workspace fields**: `zenoh-clock` and `zenoh-netdev` Cargo.toml files use hardcoded `version`/`edition` instead of `version.workspace = true` etc. Align with the rest of the workspace.
+  `zenoh-clock` and `zenoh-netdev` use hardcoded `version`/`edition` instead of `version.workspace = true`. They will silently diverge on the next version bump.
 
-- [ ] **18.12 Zenoh session helper**: Extract the repeated `Config::default()` + `insert_json5` + `zenoh::open()` pattern (duplicated in all 7 crates) into a shared `open_zenoh_session(router: *const c_char) -> Option<Session>` helper in `virtmcu-qom`. Reduces ~30 lines of boilerplate per crate.
+  - **Assumption**: No crate has a deliberate version pin that differs from the workspace version.
+  - **What can go wrong**: `cargo publish` or future workspace-level version bumps skip these crates silently if they have standalone `[package]` version fields.
+  - **Assert**: `grep -rn '^version\s*=' hw/rust/zenoh-clock/Cargo.toml hw/rust/zenoh-netdev/Cargo.toml` must return empty after the change.
+  - **Test**: Add `make lint-cargo` step that runs `cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"`. Fails if any crate drifts.
+
+---
+
+- [ ] **18.8 Fix `zenoh-telemetry` wrong return type**
+
+  `qemu_clock_get_ns` is declared locally in `zenoh-telemetry/src/lib.rs` as `-> u64`. QEMU's actual signature returns `int64_t` (`i64`). The C ABI silently accepts the mismatch; on a system where virtual time wraps or a negative timestamp is returned, the u64 cast produces a massive positive value, corrupting the telemetry stream with no error.
+
+  - **Assumption**: QEMU virtual time is always non-negative in practice (starts at 0, only advances). This assumption holds today but is NOT guaranteed by the API contract.
+  - **What can go wrong**: After the fix, any code that relied on the unsigned truncation behavior changes. Scan for casts of the timestamp value before merging.
+  - **What can go wrong**: `virtmcu_qom` is `no_std`. Confirm it can be imported by `zenoh-telemetry` (which is `std`). A `no_std` crate can be used by a `std` crate without issue since `virtmcu-qom` has no `std`/`alloc` usage.
+  - **Assert (runtime)**: After switching to `i64`, add `debug_assert!(ts >= 0, "negative vtime from QEMU clock: {}", ts)` at every use site inside `zenoh-telemetry`. This makes the assumed-non-negative invariant explicit and catchable in debug builds.
+  - **Test (unit)**: Add `#[cfg(test)] mod tests` in `zenoh-telemetry/src/lib.rs`. Mock `qemu_clock_get_ns` to return `-1i64` and assert the result propagates as a negative `i64`, not a large `u64`. Verifies the type is enforced end-to-end.
+  - **Coverage check**: `grep -n 'extern.*qemu_clock_get_ns' hw/rust/zenoh-telemetry/src/lib.rs` must return empty — only the `use virtmcu_qom::timer::qemu_clock_get_ns` import is allowed.
+
+---
+
+- [ ] **18.9 Adopt `virtmcu-qom` in `zenoh-clock`**
+
+  `zenoh-clock/src/lib.rs` stores `mutex`, `vcpu_cond`, and `query_cond` as `*mut c_void`, and re-declares `virtmcu_mutex_lock`, `virtmcu_cond_signal`, etc. inline with `c_void` argument types. The C caller passes `QemuMutex*`/`QemuCond*`; the `c_void` cast is ABI-compatible but erases type information and duplicates the declarations in `virtmcu-qom::sync`.
+
+  - **Assumption**: `virtmcu_qom::sync::QemuMutex` is declared as `struct QemuMutex { _opaque: [u8; 0] }` — a ZST. `*mut QemuMutex` is just a typed pointer; Rust never dereferences it (we only pass it to C). This is pointer-ABI-compatible with `QemuMutex*` in C.
+  - **What can go wrong**: `ZenohClockBackend` contains `*mut QemuMutex` and `*mut QemuCond`. Raw pointers are `!Send`. The `backend_ptr as usize` trick used in the Zenoh callback captures a `usize` to avoid the `!Send` problem. After the type change, `ZenohClockBackend` is still `!Send`; add `unsafe impl Send for ZenohClockBackend` with a comment explaining the invariant (the mutex pointer is only dereferenced via QEMU-thread-safe C functions).
+  - **What can go wrong**: If `virtmcu-qom` ever gains `std` features, verify that `#![no_std]` in `virtmcu-qom/src/lib.rs` doesn't break the new dependency chain.
+  - **Assert (compile-time)**: Add `const _: () = assert!(core::mem::size_of::<virtmcu_qom::sync::QemuMutex>() == 0);` in `zenoh-clock/src/lib.rs`. This documents and enforces the ZST assumption — if QEMU's Rust bindings ever change `QemuMutex` to have a real size, this fires at compile time.
+  - **Test (compile-time)**: `RUSTFLAGS="-D warnings" cargo build -p zenoh-clock` must succeed with zero warnings.
+  - **Test (regression)**: `test/phase7/smoke_test.sh` — no behavior change, confirms FFI call sites are unbroken.
+  - **Coverage check**: `grep -n 'c_void' hw/rust/zenoh-clock/src/lib.rs` must return empty.
+
+---
+
+- [ ] **18.10 Adopt `virtmcu-qom` in `zenoh-netdev`**
+
+  `zenoh-netdev/src/lib.rs` re-declares `virtmcu_bql_lock`/`virtmcu_bql_unlock` as inline `extern "C"` instead of using `virtmcu_qom::sync`.
+
+  - **Assumption**: `virtmcu_qom::sync::virtmcu_bql_lock` and the inline declaration have identical C signatures (no-argument, void return). Verified by inspection: they match.
+  - **What can go wrong**: None significant — this is a pure import consolidation with no behavioral change. The only risk is a typo in the `use` path.
+  - **Assert**: `grep -n 'extern.*virtmcu_bql' hw/rust/zenoh-netdev/src/lib.rs` must return empty after the change.
+  - **Test (compile-time)**: `RUSTFLAGS="-D warnings" cargo build -p zenoh-netdev` must succeed.
+  - **Test (regression)**: `test/phase7/netdev_test.sh` must pass.
+
+---
+
+- [ ] **18.7 Fix BQL in `zenoh-clock.c`**
+
+  `zenoh_clock_cpu_halt_cb` calls `zenoh_clock_quantum_wait()` while holding the BQL. The PLAN §7 design spec requires releasing the BQL before blocking on a Zenoh reply. The comment in the code acknowledges this but doesn't implement it. Currently safe only because the Zenoh callback (`on_clock_query`) does not call any QEMU API that requires the BQL — but that is an undocumented, fragile assumption.
+
+  - **Assumption**: Releasing the BQL before `zenoh_clock_quantum_wait` is safe because: (a) the Rust backend uses its own device mutex for internal state, not the BQL; (b) `bql_unlock` + block + `bql_lock` is the standard QEMU vCPU-thread pattern (same as netdev and chardev RX callbacks).
+  - **What can go wrong — use-after-free**: During the BQL-released window, the QEMU main loop can process QMP commands, including `device_del zenoh-clock`. `zenoh_clock_instance_finalize` would set `virtmcu_cpu_halt_hook = NULL` and call `zenoh_clock_free(s->rust_state)`. We'd return from `zenoh_clock_quantum_wait` into a freed backend. Mitigation: after `bql_lock()` re-acquisition, assert `s->rust_state != NULL` before using it; alternatively hold a local copy of the `rust_state` pointer before unlocking and skip the post-wait work if it has been nulled by finalize.
+  - **What can go wrong — multi-CPU**: If QEMU is configured with multiple vCPUs, each vCPU thread calls `zenoh_clock_cpu_halt_cb` independently. Two threads could both reach the `zenoh_clock_quantum_wait` call. The Rust backend's internal mutex serializes them, but this must be verified — add a comment explaining the expected single-quantum-at-a-time invariant.
+  - **Assert (in C, post-lock)**: `assert(s->rust_state != NULL && "zenoh-clock finalized while blocking in quantum_wait")` immediately after `bql_lock()` re-acquisition.
+  - **Test (new — deadlock guard)**: Add `test/phase18/bql_deadlock_test.sh`. Boot QEMU with `-device zenoh-clock,mode=slaved-suspend`. In the background, send a continuous stream of QMP `query-status` commands (one per 100 ms). In the foreground, send clock advance Zenoh GETs. Assert every QMP response arrives within 2 s. A BQL held across the quantum block would cause QMP to time out.
+  - **Test (regression)**: `test/phase7/smoke_test.sh` must pass — the clock advance round-trip must complete without hang.
+  - **Coverage check**: `grep -n 'bql_unlock\|bql_lock' hw/zenoh/zenoh-clock.c` must show exactly one `bql_unlock` and one `bql_lock` forming a matched pair around the `zenoh_clock_quantum_wait` call.
+
+---
+
+- [ ] **18.12 Zenoh session helper**
+
+  All 7 Rust crates duplicate the same 10-line `Config::default()` + `insert_json5` + `zenoh::open()` pattern. **This helper must NOT go in `virtmcu-qom`** — that crate is pure QEMU FFI and must remain free of Zenoh dependencies (so future code can use QEMU bindings without pulling in Zenoh). Instead, create a new `hw/rust/virtmcu-zenoh/` workspace crate with `zenoh` and `virtmcu-qom` as dependencies. All 7 device crates replace their direct `zenoh.workspace = true` call-site pattern with a call to `virtmcu_zenoh::open_session(router)`.
+
+  - **Assumption**: All 7 crates configure the session identically except for the router endpoint string. Any crate that needs custom Zenoh config (QoS, session mode, etc.) is not yet written — if one arises, the helper must be extended, not worked around.
+  - **What can go wrong**: The new `virtmcu-zenoh` crate adds a `zenoh` dependency to the workspace. All 7 device crates must be updated to `virtmcu-zenoh = { path = "../virtmcu-zenoh" }`. Missing even one call site means the helper is only partially adopted and the duplication remains.
+  - **What can go wrong**: Session open on `NULL` router should open in peer-to-peer (multicast scouting) mode. Session open with a non-null router must disable multicast scouting (`"scouting/multicast/enabled" = false`). If the helper omits the multicast-disable logic, nodes configured with a router will also do multicast discovery and may receive unexpected traffic.
+  - **Assert (in helper)**: `debug_assert!(!router.is_null() || !config_has_endpoints, "if router is null, no explicit endpoints should be set")`.
+  - **Test (unit in `virtmcu-zenoh/tests/`)**: Two tests — `test_null_router_has_no_endpoints` (passes null, asserts the resulting Config has no connect endpoints set) and `test_explicit_router_disables_multicast` (passes a valid router string, asserts `scouting/multicast/enabled` is false in the config before open). These tests run without actually opening a Zenoh session, so they work in any CI environment.
+  - **Test (regression)**: `cargo build --release` for all 7 crates after each call-site update.
+  - **Coverage check**: `grep -rn 'Config::default\|insert_json5\|zenoh::open' hw/rust/zenoh-*/src/lib.rs` must return empty.
 
 ---
 
 ## Phase 19 — Native Rust QOM API Migration
 
-**Goal**: Fully migrate the Zenoh plugins from the "Thin C Shim + Native Rust Backend" architecture to pure Rust, eliminating `hw/zenoh/*.c` and `virtmcu-rust-ffi.c`.
+**Goal**: Eliminate all C shim files in `hw/zenoh/` and `hw/misc/virtmcu-rust-ffi.c`, leaving the Zenoh device logic fully in Rust.
 
-**Context — what QEMU 11.0.0-rc3 already has in Rust**:
+**Why Path B, not Path A**
 
-QEMU 11.0.0-rc3 ships the following Rust crates under `third_party/qemu/rust/`:
+QEMU 11.0.0-rc3 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` Rust crates (see table below). However, every `*-sys` crate's `build.rs` hard-panics without `MESON_BUILD_ROOT`. Consuming them from our standalone `cargo build` pipeline requires either joining the QEMU Meson build or generating bindgen artifacts separately — both are significant, fragile build-system changes that must be re-applied on every QEMU version bump.
 
-| Crate | What it provides | Needed for |
+**Path B** (expanding `virtmcu-qom` with `TypeInfo`/`DeviceClass`/`Property` FFI) achieves the same goal — pure-Rust devices — without touching the QEMU build system. It adds ~60 lines of carefully typed FFI to a crate we already own and control. It works today, stays stable across QEMU bumps, and unblocks all 6 non-netdev devices immediately.
+
+**Path A (Meson integration) is deferred to Phase 20** (or when QEMU v11.1+ ships netdev Rust bindings), at which point a single clean migration to the official `qemu_api` macros becomes worthwhile for all devices at once. Attempting it now buys nothing for netdev and adds fragility.
+
+| QEMU Rust crate | Provides | Available now |
 |---|---|---|
-| `bql` | `bql_lock()`, `bql_unlock()`, `BqlCell`, `BqlRefCell` | All devices |
-| `qom` | `ObjectType`, `IsA`, `qom_isa!`, QOM type registration | All devices |
-| `system` | `SysBusDevice`, `MemoryRegion`, `MemoryRegionOps` | Clock, Telemetry, Actuator, 802154, UI |
-| `chardev` | `Chardev`, `CharFrontend`, safe write wrappers | Chardev |
-| `hw/core` | `DeviceState`, `IRQState`, `DeviceImpl`, `#[derive(Device)]` | All SysBus devices |
-| `qemu-macros` | `#[derive(qom::Object)]`, `#[derive(hwcore::Device)]` | All devices |
+| `bql` | `bql_lock()`, `bql_unlock()`, `BqlCell` | ✅ |
+| `qom` | `ObjectType`, `IsA`, `qom_isa!`, type registration | ✅ |
+| `system` | `SysBusDevice`, `MemoryRegion` | ✅ |
+| `chardev` | `Chardev`, `CharFrontend` | ✅ |
+| `hw/core` | `DeviceState`, `IRQState`, `#[derive(Device)]` | ✅ |
+| netdev | `NetClientInfo`, `NetClientState` | ❌ missing |
 
-**What is still missing**:
-- Netdev Rust bindings (`NetClientInfo`, `NetClientState`, `Netdev`) — no crate exists yet.
+**Execution order**: 19.1 → 19.2 (one device at a time, easiest first) → 19.3 (upstream-gated) → 19.4.
 
-**The actual blocker — build system integration**:
+**Coverage gate**: `make test-integration` must pass after every individual device migration. The C file count under `hw/zenoh/` must decrease strictly with each merged task — no regressions.
 
-QEMU's `*-sys` crates require `MESON_BUILD_ROOT` to be set; their `build.rs` hard-panics otherwise. This means virtmcu crates cannot consume `qom`, `bql`, etc. via a plain `cargo build`. Two paths exist:
+---
 
-- **Path A (Meson integration)**: Register virtmcu's Rust crates inside QEMU's Meson build system. This lets them use the `qom`, `bql`, `system`, and `chardev` crates natively, exactly as PL011 does. The build system work is non-trivial (need to add our crates as Meson `rust_library` targets that depend on QEMU's generated `bindings.inc.rs`).
+- [ ] **19.1 Expand `virtmcu-qom` for QOM type registration**
 
-- **Path B (virtmcu-qom expansion)**: Extend `virtmcu-qom` with FFI for `TypeInfo`, `DeviceClass`, device properties (`Property`, `DEFINE_PROP_*` equivalents), and `type_register_static()`. This allows eliminating C shims for all devices without any Meson changes — QOM type registration moves to Rust via our own FFI layer rather than QEMU's official macros. Simpler, lower risk.
+  Add `TypeInfo`, `DeviceClass`, and `Property` FFI bindings to `virtmcu-qom`. Implement a `declare_device_type!` macro that emits a `#[no_mangle] extern "C" fn dso_${name}_init()` calling `type_register_static()` with a statically-initialized `TypeInfo`. This replaces the C `DEFINE_TYPES` + `module_obj` + `class_init` pattern entirely from Rust.
 
-**For `zenoh-netdev.c` specifically**: Blocked on upstream Netdev Rust bindings regardless of which path is chosen.
+  - **Assumption**: The Rust `TypeInfo` struct layout matches QEMU's C `TypeInfo` exactly. QEMU's `TypeInfo` is a plain-data struct with no padding surprises, but it contains function pointers and a `const char*` — all pointer-sized fields that Rust maps cleanly to `Option<extern "C" fn(...)>` and `*const c_char`.
+  - **What can go wrong — layout mismatch**: If the Rust `TypeInfo` definition has a different field order or alignment than C, `type_register_static` reads garbage and QEMU crashes at startup or at `realize` time. This is silent and hard to debug.
+  - **What can go wrong — null terminator on Property array**: QEMU's property walker expects the `Property` array to end with a zero-initialized sentinel (`DEFINE_PROPS_END_OF_LIST()`). If the Rust macro omits the sentinel, QEMU walks off the end of the array into undefined memory.
+  - **What can go wrong — `instance_size`**: Must exactly equal the Rust struct's `size_of::<YourDevice>()`. If wrong, QEMU allocates the wrong amount of heap for device instances — too small causes heap corruption; too large wastes memory silently.
+  - **What can go wrong — `module_obj` equivalent**: The C `module_obj(TYPE_FOO)` macro causes the module loader to register the type name so `qemu-system-arm -device help` lists it. The Rust equivalent must emit a symbol the QEMU module scanner can find. Verify by checking how existing modules are discovered.
+  - **Assert (layout — compile time)**: Add a `build.rs` or `#[test]` that uses `bindgen` (dev-dependency only) to generate the C `TypeInfo` size and compare against `size_of::<TypeInfo>()`. If bindgen is unavailable in CI, add a manual `const _: () = assert!(size_of::<TypeInfo>() == EXPECTED_SIZE)` with the expected value derived from the QEMU source.
+  - **Assert (Property sentinel — compile time)**: The macro must statically append a `Property { ..Default::default() }` (all-zero sentinel) to the property array. Add a const assertion that the last element of any generated property slice is zero-initialized.
+  - **Test (unit)**: Add `hw/rust/virtmcu-qom/tests/type_registration.rs`. Mock `type_register_static` via a test-only function pointer override. Call `declare_device_type!` with a minimal dummy type and assert the mock was invoked with the correct `TypeInfo` fields (`name`, `instance_size`, parent type string).
+  - **Test (integration)**: Add `test/phase19/qom_registration_test.sh`. Compile a minimal `hw/rust/test-qom-device/` crate using the new macro and load it in QEMU. `qemu-system-arm -device help 2>&1 | grep test-rust-device` must list the type, proving the module loader picked it up.
+  - **Coverage check**: `cargo test -p virtmcu-qom` must pass with at least the layout assertion test and the type registration mock test.
 
-**Tasks**:
-- [ ] **19.1 Evaluate Meson Integration (Path A)**: Prototype adding one virtmcu crate (e.g., `zenoh-clock`) to QEMU's Meson `rust_library` build. If the integration is clean, proceed with Path A for all devices.
+---
 
-- [ ] **19.2 Expand `virtmcu-qom` for QOM Registration (Path B fallback)**: Add `TypeInfo`, `DeviceClass`, and `Property` FFI bindings to `virtmcu-qom`. Implement a safe `register_device_type!` macro that calls `type_register_static()` with a statically-initialized `TypeInfo`. This is the prerequisite for eliminating C shims without Meson changes.
+- [ ] **19.2 Eliminate C shims — non-netdev devices (one at a time)**
 
-- [ ] **19.3 Eliminate C Shims — Non-Netdev Devices**: Using whichever path proved viable (19.1 or 19.2), rewrite `zenoh-clock.c`, `zenoh-chardev.c`, `zenoh-telemetry.c`, `zenoh-actuator.c`, `zenoh-802154.c`, and `zenoh-ui.c` in pure Rust. Delete the corresponding C files and trim `virtmcu-rust-ffi.c`/`h` of any now-unused helpers.
+  Rewrite the 6 C shim files in pure Rust using the `virtmcu-qom` type registration from 19.1. Migrate in order of increasing complexity — each device provides a concrete test of the macro before the next, harder device is attempted.
 
-- [ ] **19.4 Eliminate C Shim — Netdev (Upstream-gated)**: Once QEMU upstream ships `NetClientInfo` / `Netdev` Rust bindings (target: QEMU v11.1+), rewrite `zenoh-netdev.c` in Rust and delete the last C shim. Track upstream progress via `third_party/qemu/rust/bindings/` directory changes.
+  **Migration order and rationale**:
+  1. `zenoh-actuator.c` — simplest: SysBusDevice, no MMIO region, no timer, no chardev. Tests that bare QOM registration + realize + Zenoh publish works. Smoke test: `test/phase10/smoke_test.sh`.
+  2. `zenoh-ui.c` — similar simplicity, adds a subscriber callback. Smoke test: `test/phase12/smoke_test.sh`.
+  3. `zenoh-telemetry.c` — adds a worker thread and the FlatBuffers serialization path. Smoke test: `test/phase12/smoke_test.sh`.
+  4. `zenoh-chardev.c` — introduces the chardev subsystem (different parent class than SysBusDevice). Smoke test: `test/phase8/smoke_test.sh`.
+  5. `zenoh-802154.c` — adds MMIO region, IRQ, and a priority queue. Smoke test: `test/phase14/smoke_test.sh`.
+  6. `zenoh-clock.c` — most complex: TCG hook registration, BQL sandwich, Zenoh queryable. Smoke test: `test/phase7/smoke_test.sh`.
 
-- [ ] **19.5 Delete `virtmcu-rust-ffi.c/h`**: Remove `hw/misc/virtmcu-rust-ffi.c` and `virtmcu-rust-ffi.h` once all C shims are gone and no C file imports them.
+  - **Assumption (all devices)**: The `realize` callback in Rust receives a correctly typed `*mut YourDevice` pointer because QEMU allocated `instance_size` bytes for it. This holds as long as 19.1's `instance_size` assertion is correct.
+  - **What can go wrong — chardev parent class**: `zenoh-chardev.c` derives from `TYPE_CHARDEV`, not `TYPE_SYS_BUS_DEVICE`. The `declare_device_type!` macro must support configurable parent type strings. Verify the macro's `parent` field before starting task 4.
+  - **What can go wrong — TCG hook (zenoh-clock)**: The C code sets `virtmcu_tcg_quantum_hook = zenoh_clock_cpu_halt_cb` at realize time. In the Rust version, the hook function must have `extern "C"` calling convention with the exact signature QEMU expects. A signature mismatch is silent (function pointer cast) and causes stack corruption at the first TB boundary.
+  - **What can go wrong — module init symbol name**: `DEFINE_TYPES` in C emits a `dso_<name>_init` symbol. If the Rust macro emits a different symbol name, the `.so` loads but the device is never registered.
+  - **Assert (per device — binary fidelity)**: Before deleting any C file, capture a reference trace: boot QEMU with the C-shim version and a known firmware, capture UART output. After migration, boot with the Rust-only version and diff the outputs. Any difference is a regression. Diff command: `diff <(run_c_version) <(run_rust_version)`.
+  - **Assert (TCG hook signature)**: Add `const _: () = { let _: extern "C" fn(*mut CPUState) = zenoh_clock_quantum_hook_fn; };` — this is a zero-cost compile-time check that the Rust hook has the exact function pointer type the C hook slot expects.
+  - **Test (per device)**: Run the device's smoke test before and after migration. Must pass both times. Do not merge a device migration without a green smoke test.
+  - **Test (regression gate)**: `make test-integration` must pass after each device migration. Do not batch-migrate multiple devices in a single commit.
+  - **Coverage check after all 6**: `ls hw/zenoh/*.c` must show only `zenoh-netdev.c`. Any other `.c` file is a failure.
+
+---
+
+- [ ] **19.3 Eliminate C shim — `zenoh-netdev.c` (upstream-gated)**
+
+  Once QEMU upstream ships Netdev Rust bindings (`NetClientInfo`, `NetClientState`, `Netdev`), rewrite `zenoh-netdev.c` in Rust and delete the last C file in `hw/zenoh/`.
+
+  - **Trigger**: Do not start until `ls third_party/qemu/rust/bindings/ | grep net` is non-empty. Update QEMU in `third_party/qemu` and re-run `scripts/setup-qemu.sh` before beginning.
+  - **Assumption**: The upstream netdev Rust API will expose `NetClientInfo` as a trait (similar to how `DeviceImpl` works), with a `receive` method and a `cleanup` method. If it uses a different abstraction, the Rust implementation must adapt.
+  - **What can go wrong — `NetClientInfo` vtable layout**: `NetClientInfo` is a C struct of function pointers. If the Rust binding uses a different layout (e.g., extra padding for future fields), QEMU reads wrong function pointers and crashes on the first packet.
+  - **What can go wrong — RX injection thread safety**: The current C netdev subscribes to Zenoh in a background thread and calls `qemu_receive_packet` under the BQL. The Rust version must preserve this BQL pattern exactly. If the upstream Rust `NetClientState` wrapper enforces BQL via `BqlRefCell`, this is handled. If not, add explicit `virtmcu_bql_lock` calls.
+  - **Assert**: After migration, `test/phase7/netdev_test.sh` must pass with 0 dropped frames in the 100-frame test.
+  - **Test (BQL safety)**: Add `test/phase19/netdev_bql_test.sh` — interleave frame TX with QMP `query-status`; all QMP responses must arrive within 500 ms.
+  - **Coverage check**: `ls hw/zenoh/*.c` must return empty.
+
+---
+
+- [ ] **19.4 Delete `virtmcu-rust-ffi.c/h`**
+
+  Remove `hw/misc/virtmcu-rust-ffi.c` and `virtmcu-rust-ffi.h` once 19.2 and 19.3 are complete.
+
+  - **Pre-condition**: `grep -r '#include.*virtmcu-rust-ffi\|virtmcu_bql_lock\|virtmcu_mutex_new\|virtmcu_timer_new' hw/**/*.c` must return empty. If any match remains, there is a missed C shim — do not delete.
+  - **What can go wrong**: `hw/meson.build` references `virtmcu_rust_ffi_file = files('misc/virtmcu-rust-ffi.c')`. Deleting the file without removing the Meson reference causes a build error. Remove both the file and its Meson references atomically.
+  - **Assert**: `find hw -name 'virtmcu-rust-ffi.*'` returns empty after deletion.
+  - **Test**: Full `scripts/setup-qemu.sh` build must succeed. `make test-integration` must pass in full.
 
 ---
 

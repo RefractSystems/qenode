@@ -11,7 +11,7 @@
 # editing VERSIONS; 'make check-versions' (or CI lint) enforces consistency.
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
-ARG QEMU_REF=v11.0.0-rc3
+ARG QEMU_REF=v11.0.0-rc4
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG RUST_VERSION=1.95.0
@@ -81,11 +81,12 @@ RUN sh -c "$(curl -fsSL \
     https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
     "" --unattended
 USER root
-
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+USER vscode
 
 # ── Stage 2: toolchain ────────────────────────────────────────────────────────
 FROM base AS toolchain
+USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential meson ninja-build python3 python3-venv pkg-config \
@@ -146,10 +147,9 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 
 ENV ARCH=arm
 WORKDIR /build
-RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
-
-RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
-    https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src
+RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
+    && git clone --depth=1 --branch "${ZENOH_C_REF}" \
+       https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src
 WORKDIR /build/zenoh-c-build
 RUN cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
     -DCMAKE_BUILD_TYPE=Release \
@@ -165,9 +165,8 @@ WORKDIR /build/qemu
 RUN git config user.email "virtmcu-build@example.com" \
     && git config user.name "virtmcu" \
     && git am --3way /build/patches/arm-generic-fdt-v3.mbx \
-    && sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c
-
-RUN python3 /build/patches/apply_zenoh_hook.py . \
+    && sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c \
+    && python3 /build/patches/apply_zenoh_hook.py . \
     && python3 /build/patches/apply_zenoh_qapi.py . \
     && python3 /build/patches/apply_zenoh_netdev.py . \
     && python3 /build/patches/apply_zenoh_chardev.py .
@@ -241,13 +240,16 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/vscode/.local/bin:${PATH}"
 USER root
 
-RUN npm install -g @google/gemini-cli
+# Always use the latest Gemini CLI; ignore hadolint pinning rule
+# hadolint ignore=DL3016
+RUN npm install -g @google/gemini-cli@latest
 
 WORKDIR /workspace
 USER vscode
 
 # ── Stage 5: runtime ──────────────────────────────────────────────────────────
 FROM base AS runtime
+USER root
 
 LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
@@ -268,7 +270,9 @@ WORKDIR /tmp
 RUN uv pip install --no-cache --system --break-system-packages -r pyproject.toml
 
 COPY tools/ /app/tools/
+RUN chown -R vscode:vscode /app/tools
 WORKDIR /app
+USER vscode
 
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
