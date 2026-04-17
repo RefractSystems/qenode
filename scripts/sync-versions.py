@@ -31,6 +31,17 @@ def sync():
             with open(cargo_path, "w") as f:
                 f.write(new_content)
 
+    # 1.5 Update hw/rust/Cargo.toml
+    hw_cargo_path = "hw/rust/Cargo.toml"
+    if os.path.exists(hw_cargo_path):
+        with open(hw_cargo_path, "r") as f:
+            content = f.read()
+        new_content = re.sub(r'zenoh = "[^"]+"', f'zenoh = "{zenoh_ver}"', content)
+        if content != new_content:
+            print(f"Updating {hw_cargo_path} to zenoh {zenoh_ver}")
+            with open(hw_cargo_path, "w") as f:
+                f.write(new_content)
+
     # 2. Update worlds/pendulum.yml
     pendulum_path = "worlds/pendulum.yml"
     if os.path.exists(pendulum_path):
@@ -155,7 +166,7 @@ def sync():
                     f.write(new_df)
 
         # Update Rust Cargo.toml
-        cargo_path = "hw/rust/zenoh-telemetry/Cargo.toml"
+        cargo_path = "hw/rust/Cargo.toml"
         if os.path.exists(cargo_path):
             with open(cargo_path, "r") as f:
                 cargo_content = f.read()
