@@ -1,0 +1,92 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-binaries:
+    name: Build Binaries (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            os: ubuntu-24.04-arm
+            platform: linux/arm64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load VERSIONS
+        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build builder stage
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: builder
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            QEMU_REF=v${{ env.QEMU_VERSION }}
+            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
+          load: true
+          tags: virtmcu-builder:${{ matrix.arch }}
+          cache-from: type=gha,scope=builder-${{ matrix.arch }}
+
+      - name: Extract binaries from container
+        run: |
+          docker create --name extract virtmcu-builder:${{ matrix.arch }}
+          docker cp extract:/opt/virtmcu ./virtmcu-dist
+          docker rm extract
+          
+          # Create tarball
+          # Use QEMU version and arch in filename
+          TARBALL_NAME="virtmcu-qemu-${{ env.QEMU_VERSION }}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$TARBALL_NAME" -C ./virtmcu-dist .
+          echo "TARBALL_PATH=$TARBALL_NAME" >> $GITHUB_ENV
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtmcu-qemu-${{ matrix.arch }}
+          path: ${{ env.TARBALL_PATH }}
+
+  create-release:
+    name: Create Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: virtmcu-qemu-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/virtmcu-qemu-*.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: false
