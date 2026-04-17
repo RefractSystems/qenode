@@ -42,6 +42,7 @@ def get_libzenohc_version(lib_path):
 
     return None
 
+
 def test_zenoh_version_contract():
     """
     Contract Test: Verifies that the Zenoh C runtime and Python client
@@ -53,11 +54,7 @@ def test_zenoh_version_contract():
 
     # In the runtime image, it's at /opt/virtmcu/lib/libzenohc.so
     # Locally, it might be in LD_LIBRARY_PATH or next to the script
-    lib_paths = [
-        "/opt/virtmcu/lib/libzenohc.so",
-        "libzenohc.so",
-        "./third_party/zenoh-c/lib/libzenohc.so"
-    ]
+    lib_paths = ["/opt/virtmcu/lib/libzenohc.so", "libzenohc.so", "./third_party/zenoh-c/lib/libzenohc.so"]
 
     c_version = None
     for lib_path in lib_paths:

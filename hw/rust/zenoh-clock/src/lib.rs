@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
@@ -193,6 +194,7 @@ extern "C" fn zclock_get_quantum_timing(timing: *mut VirtmcuQuantumTiming) {
 }
 
 extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
+    eprintln!("[zenoh-clock] hook called");
     let state = unsafe {
         if GLOBAL_ZENOH_CLOCK.is_null() {
             return;

@@ -1,6 +1,3 @@
-/// # Safety
-use core::ffi::c_void;
-
 #[repr(C)]
 pub struct QemuMutex {
     _opaque: [u8; 0],
@@ -44,7 +41,9 @@ impl Bql {
     }
 
     /// Explicitly unlocks the BQL. Use this only when you need to block without holding the lock.
-    /// Safety: The caller must ensure the BQL is currently held.
+    ///
+    /// # Safety
+    /// The caller must ensure the BQL is currently held.
     pub unsafe fn unlock() {
         virtmcu_bql_unlock();
     }
