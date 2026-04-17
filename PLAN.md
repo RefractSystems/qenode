@@ -613,6 +613,20 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
+## Phase 19 — Native Rust QOM API Migration (Future)
+
+**Goal**: Fully migrate the Zenoh plugins from the "Thin C Shim + Native Rust Backend" architecture to QEMU's official native Rust API (`qemu_api` / `qom` crates).
+
+**Context**: In Phase 18, we eliminated the `zenoh-c` dependency and moved all networking, parsing, and serialization logic to safe Rust. However, due to the experimental state of QEMU 11.0.0-rc3's Rust support (missing `system-sys` bindings for networking sub-systems like `NetClientState`, `Netdev`, etc., and `Send`/`Sync` trait issues on internal C structs), the QOM object registration and `NetClient` instantiation remained in C.
+
+**Tasks**:
+- [ ] **19.1 Monitor QEMU Upstream**: Track QEMU releases (v11.1+) for stabilized Rust networking bindings (`NetClientInfo`, `NetClientState`), improved Timer abstractions, and robust `system-sys` FFI generation.
+- [ ] **19.2 Pure Rust QOM Devices**: Rewrite `hw/zenoh/zenoh-clock.c`, `zenoh-netdev.c`, and `zenoh-telemetry.c` entirely in Rust using the `qemu_api` macros (e.g., `#[derive(qom::Object)]`, `qom_isa!`).
+- [ ] **19.3 Remove C Shims**: Delete the C wrappers in `hw/zenoh/*.c` and the manual FFI definitions (`virtmcu-rust-ffi.c`/`h`).
+- [ ] **19.4 QEMU Timer & BQL Integration**: Replace the manual FFI `virtmcu_bql_lock()` and timer callbacks with QEMU's native Rust BQL (`bql_lock()`) and Timer abstractions once they are fully implemented upstream.
+
+---
+
 ## Risks and Open Questions
 
 | # | Risk | Mitigation |

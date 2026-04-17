@@ -18,7 +18,7 @@ edition = "2021"
 authors = ["virtmcu developers"]
 
 [workspace.dependencies]
-zenoh = "1.0.0"
+zenoh = "1.9.0"
 libc = "0.2"
 flatbuffers = "24.12.23"
 crossbeam-channel = "0.5"

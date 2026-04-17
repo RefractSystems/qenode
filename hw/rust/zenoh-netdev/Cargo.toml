@@ -7,6 +7,6 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [dependencies]
-zenoh = "1.0.0"
+zenoh = "1.9.0"
 libc = "0.2"
 crossbeam-channel = "0.5"
