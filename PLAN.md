@@ -3,7 +3,7 @@
 **Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine
 instantiation, .repl parsing, and Robot Framework test parity.
 
-**Base**: QEMU 11.0.0-rc3 + 33-patch arm-generic-fdt series (patchew 20260402215629)
+**Base**: QEMU 11.0.0-rc4 + 33-patch arm-generic-fdt series (patchew 20260402215629)
 **Target arch**: ARM (Cortex-A / Cortex-M) complete; RISC-V expansion starting in Phase 11
 **Dev platform**: Linux required (Docker/WSL2 on macOS/Windows)
 
@@ -63,7 +63,7 @@ machine type. Validates that the patch series applies cleanly and FDT-based boot
 
 ### Tasks
 - [x] **1.1** Write `scripts/setup-qemu.sh`:
-  - Confirm QEMU is loaded in `third_party/qemu` and at v11.0.0-rc3
+  - Confirm QEMU is loaded in `third_party/qemu` and at v11.0.0-rc4
   - Apply the 33-patch arm-generic-fdt series from local mailbox `patches/arm-generic-fdt-v3.mbx` via `git am --3way`
   - Apply the libqemu external time master patch via `python3 patches/apply_libqemu.py`
   - Apply the TCG quantum hook patch via `python3 patches/apply_zenoh_hook.py` (exposes a function pointer in `cpu-exec.c` since QOM devices cannot hook the TCG loop natively)
@@ -568,7 +568,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **11.1** **RISC-V Machine Generation**: Extend the dynamic machine generation pipeline (`repl2qemu`) and QEMU patches to support RISC-V targets, removing the ARM-only restriction.
 - [x] **11.2** **Virtual-Time-Aware Timeouts**: Update the Robot Framework QMP library (`qmp_bridge.py`) to poll `query-cpus-fast` for virtual time, replacing wall-clock timeouts for reliable testing in `slaved-icount` mode.
 - [x] **11.3** **Remote Port Co-Simulation (Path B)**: Implement full TLM-2.0 co-simulation via AMD/Xilinx Remote Port to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
-- [ ] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc3 container image.
+- [ ] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc4 container image.
 
 ---
 
@@ -826,7 +826,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 **Why Path B, not Path A**
 
-QEMU 11.0.0-rc3 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` Rust crates (see table below). However, every `*-sys` crate's `build.rs` hard-panics without `MESON_BUILD_ROOT`. Consuming them from our standalone `cargo build` pipeline requires either joining the QEMU Meson build or generating bindgen artifacts separately — both are significant, fragile build-system changes that must be re-applied on every QEMU version bump.
+QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` Rust crates (see table below). However, every `*-sys` crate's `build.rs` hard-panics without `MESON_BUILD_ROOT`. Consuming them from our standalone `cargo build` pipeline requires either joining the QEMU Meson build or generating bindgen artifacts separately — both are significant, fragile build-system changes that must be re-applied on every QEMU version bump.
 
 **Path B** (expanding `virtmcu-qom` with `TypeInfo`/`DeviceClass`/`Property` FFI) achieves the same goal — pure-Rust devices — without touching the QEMU build system. It adds ~60 lines of carefully typed FFI to a crate we already own and control. It works today, stays stable across QEMU bumps, and unblocks all 6 non-netdev devices immediately.
 
@@ -917,14 +917,14 @@ QEMU 11.0.0-rc3 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 | # | Risk | Mitigation |
 |---|------|-----------|
-| R1 | arm-generic-fdt patchew series may not apply cleanly to v11.0.0-rc3 HEAD | Pin to the exact commit the patchew was submitted against; cherry-pick conflicts manually |
+| R1 | arm-generic-fdt patchew series may not apply cleanly to v11.0.0-rc4 HEAD | Pin to the exact commit the patchew was submitted against; cherry-pick conflicts manually |
 | R2 | Native module approach fails on some macOS builds | Omit `--enable-plugins` on Darwin natively to bypass GLib symbol conflict |
 | R3 | macOS `.so` loading is broken with `--enable-plugins` | Enforce Linux-only dev environment in CI |
 | R4 | Native Zenoh plugin (`hw/zenoh/`) adds `zenoh-c` as a QEMU Meson dependency | Pin zenoh-c version; vendor as Meson `subproject()` to avoid system-library conflicts |
 | R5 | Renode .repl parser has undocumented edge cases | Use Renode source (`third_party/renode`) as ground truth; diff parser output against Renode's own AST |
 | R6 | `arm-generic-fdt` v3 patch series may have changed between patchew submission and merger | Track patchew thread; re-fetch if a v4 series is posted |
 | R7 | icount mode reduces firmware execution speed ~5–10× | Acceptable for control loops ≤10 kHz; profile with `perf` if needed |
-| R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc3 |
+| R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc4 |
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
 | R11 | Deadlock in `zenoh-clock.c` shutdown | `z_session_drop` in the main thread can deadlock with Zenoh callbacks waiting for the BQL. Needs a non-blocking shutdown sequence. |

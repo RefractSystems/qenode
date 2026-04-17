@@ -212,7 +212,7 @@ EtherBone packets, and sends them over UDP — mirroring Renode's `EtherBoneBrid
 
 ### Version and Patches
 
-- **Base**: QEMU 11.0.0-rc3 (internally versioned as 10.2.92; git tag `v11.0.0-rc3`)
+- **Base**: QEMU 11.0.0-rc4 (internally versioned as 10.2.92; git tag `v11.0.0-rc4`)
 - **Patches applied in order by `scripts/setup-qemu.sh`**:
   1. `patches/arm-generic-fdt-v3.mbx` — 33-patch series (patchew ID
      `20260402215629.745866-1-ruslichenko.r@gmail.com`), applied via `git am`

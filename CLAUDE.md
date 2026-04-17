@@ -138,6 +138,9 @@ To ensure the highest level of professional software engineering, all agents MUS
 - **Observability:** Ensure critical paths (sim loop, clock sync) have appropriate logging (not in hot loop), error reporting, and health checks.
 - **Documentation:** Update READMEs, ADRs, and API docs as the architecture evolves.
 
+### 6. Protected Files
+- **DO NOT** automatically edit `.env` or `VERSIONS` files. These files contain specific version pins and local secrets (via symlinking) that should only be modified by the user or dedicated synchronization scripts (e.g., `make sync-versions`).
+
 
 ## CI/CD Troubleshooting & "Make CI Green" Workflow
 

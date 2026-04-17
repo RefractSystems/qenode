@@ -37,7 +37,7 @@ fi
 
 # Clone QEMU if not already present
 QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
-QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0-rc3}}"
+QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0-rc4}}"
 
 if [ ! -d "$QEMU_DIR/.git" ]; then
     echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
@@ -50,7 +50,7 @@ fi
 
 cd "$QEMU_DIR"
 
-# Ensure we are on the expected QEMU version (11.0.0-rc3)
+# Ensure we are on the expected QEMU version (11.0.0-rc4)
 VERSION=$(cat VERSION || echo "")
 if [[ "$VERSION" != *"10.2.9"* ]] && [[ "$VERSION" != *"11.0.0-rc"* ]]; then
     echo "Unexpected QEMU version: $VERSION"
