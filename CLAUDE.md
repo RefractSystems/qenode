@@ -85,6 +85,11 @@ virtmcu/
 └── docs/                       # Human-readable documentation
 ```
 
+## Dependency & Version Control
+
+- **Centralized Versions**: Agents MUST adhere to the versions defined in the \`VERSIONS\` file for QEMU, Zenoh, and other core dependencies.
+- **Verification**: Before suggesting or implementing upgrades, verify the current pinned versions in \`VERSIONS\` and \`requirements.txt\`.
+
 ---
 
 ## Language Selection Policy (ADR-013)

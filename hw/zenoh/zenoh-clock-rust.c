@@ -5,6 +5,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/seqlock.h"
 #include "hw/core/sysbus.h"
 #include "hw/core/qdev-properties.h"
 #include "qom/object.h"
@@ -21,6 +22,7 @@ extern ZenohClockState *zenoh_clock_init(uint32_t node_id, const char *router, c
 extern void             zenoh_clock_fini(ZenohClockState *state);
 
 /* Helper for Rust to advance icount bias without exposing timers_state struct */
+void virtmcu_icount_advance(int64_t delta);
 void virtmcu_icount_advance(int64_t delta)
 {
     qatomic_set(&timers_state.qemu_icount_bias,
