@@ -7,7 +7,6 @@ echo "🧪 RUNNING TEST: $(basename "$0")"
 echo "=============================================================================="
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Ensure benchmark firmware is built
 make -C "$SCRIPT_DIR"

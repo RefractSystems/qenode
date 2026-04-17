@@ -1,3 +1,3 @@
 #!/bin/bash
-cd hw/rust
+cd hw/rust || exit
 cargo build --release

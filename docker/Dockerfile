@@ -32,7 +32,7 @@ FROM ubuntu:24.04 AS toolchain
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
     curl \
@@ -63,7 +63,8 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     lcov \
     gcovr \
     patchelf \
-    && rm -rf /var/lib/apt/lists/* )
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install FlatBuffers compiler from GitHub release
 ARG FLATBUFFERS_VERSION
@@ -101,7 +102,7 @@ LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ca-certificates \
     gpg \
     curl \
@@ -130,6 +131,7 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     strace \
     gh \
     jq \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FlatBuffers compiler from GitHub release
