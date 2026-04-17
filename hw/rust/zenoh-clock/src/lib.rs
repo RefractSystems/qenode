@@ -6,7 +6,8 @@ use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use zenoh::{Config, Session, Wait, Query, Queryable};
+use zenoh::{Config, Session, Wait};
+use zenoh::query::{Query, Queryable};
 
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
@@ -25,7 +26,7 @@ pub struct ClockReadyResp {
 
 pub struct ZenohClockBackend {
     session: Session,
-    queryable: Queryable<()>,
+    queryable: Option<Queryable<()>>,
     node_id: u32,
     stall_timeout_ms: u32,
     
@@ -74,7 +75,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
 
     let backend_ptr = Box::into_raw(Box::new(ZenohClockBackend {
         session: session.clone(),
-        queryable: unsafe { std::mem::zeroed() }, // Placeholder, fixed below
+        queryable: None,
         node_id,
         stall_timeout_ms,
         mutex,
@@ -88,9 +89,10 @@ pub unsafe extern "C" fn zenoh_clock_init(
     }));
 
     let topic = format!("sim/clock/advance/{}", node_id);
+    let backend_usize = backend_ptr as usize;
     let queryable = session.declare_queryable(topic)
         .callback(move |query| {
-            let backend = unsafe { &*backend_ptr };
+            let backend = unsafe { &*(backend_usize as *const ZenohClockBackend) };
             on_clock_query(backend, query);
         })
         .wait()
@@ -98,7 +100,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
 
     // Assign queryable back to backend
     let b = &mut *backend_ptr;
-    b.queryable = queryable;
+    b.queryable = Some(queryable);
 
     backend_ptr
 }

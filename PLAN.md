@@ -608,7 +608,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - Safely parses/injects Ethernet frames via Zenoh `sim/eth/frame/{src}/{dst}`.
 - [x] **18.4** **Native Zenoh-Telemetry (Rust)**: Rewrote `hw/rust/zenoh-telemetry/src/lib.rs` to use native `zenoh` crate.
   - Used safe Rust FlatBuffer bindings (manually generated for build stability) for firmware memory state serialization.
-- [x] **18.5** **Verification & CI Integration**: All plugins compile with `meson` and pass build verification.
+- [x] **18.5** **Native Zenoh-Chardev, Actuator, 802154, UI (Rust)**: Maintained and verified existing native Rust implementations for the remaining plugins. Removed `zenoh-c` and `flatcc` dependencies from QEMU entirely.
+- [x] **18.6** **Verification & CI Integration**: All plugins compile with `meson` and pass build verification.
 
 ---
 
