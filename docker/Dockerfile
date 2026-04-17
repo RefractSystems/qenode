@@ -285,12 +285,15 @@ RUN cd qemu \
     --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
     --enable-modules \
     --enable-fdt \
+    --enable-plugins \
     --enable-gcov \
     --disable-werror \
     --disable-docs \
     && make -j"$(nproc)" \
     && make -j"$(nproc)" plugins \
     && make install \
+    && mkdir -p /opt/virtmcu/lib/qemu/plugins \
+    && cp contrib/plugins/*.so /opt/virtmcu/lib/qemu/plugins/ \
     && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/ \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
     && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +

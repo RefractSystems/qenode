@@ -761,6 +761,7 @@ jobs:
               pytest tools/testing/test_qmp.py -v
 
               # Generate report for our plugins only (under hw/virtmcu)
+              mkdir -p /workspace/test-results
               cd /build/qemu
               gcovr -r /build/qemu/hw/virtmcu \
                 --xml /workspace/test-results/peripheral-coverage.xml \
@@ -824,8 +825,13 @@ jobs:
             bash -c "
               make -C test/phase1
               uv pip install --system --break-system-packages pyelftools
-              # Find drcov plugin (path varies between local build and Docker build)
-              DRCOV_SO=$(find /build/qemu -name "libdrcov.so" | head -n 1)
+              # Find drcov plugin (priority: installed prefix, then build tree)
+              DRCOV_SO=$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name "libdrcov.so" 2>/dev/null | head -n 1)
+              if [ -z "$DRCOV_SO" ]; then
+                echo "Error: libdrcov.so not found in /opt/virtmcu or /build/qemu"
+                exit 1
+              fi
+              echo "Using drcov plugin: $DRCOV_SO"
               # Run with drcov plugin
               qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
                 -kernel test/phase1/hello.elf -nographic -m 128M -display none \
