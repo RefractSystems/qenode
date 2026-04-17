@@ -19,6 +19,9 @@ use virtmcu_qom::cpu::*;
 // We'll use FlatBufferBuilder directly to avoid version mismatch with generated code.
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
+mod telemetry_generated;
+use telemetry_generated::virtmcu::telemetry::{TraceEvent as FBTraceEvent, TraceEventArgs, TraceEventType};
+
 pub struct TraceEvent {
     timestamp_ns: u64,
     event_type: i8,
@@ -101,15 +104,15 @@ fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: S
         
         let device_name_off = ev.device_name.as_deref().map(|s| builder.create_string(s));
         
-        let start = builder.start_table();
-        builder.push_slot(0, ev.timestamp_ns, 0); // timestamp_ns
-        builder.push_slot(1, ev.event_type, 0);   // type
-        builder.push_slot(2, ev.id, 0);           // id
-        builder.push_slot(3, ev.value, 0);        // value
-        if let Some(dn) = device_name_off {
-            builder.push_slot_always(4, dn);      // device_name
-        }
-        let root = builder.end_table(start);
+        let args = TraceEventArgs {
+            timestamp_ns: ev.timestamp_ns,
+            type_: TraceEventType(ev.event_type),
+            id: ev.id,
+            value: ev.value,
+            device_name: device_name_off,
+        };
+        
+        let root = FBTraceEvent::create(&mut builder, &args);
         builder.finish(root, None);
         
         let buf = builder.finished_data();

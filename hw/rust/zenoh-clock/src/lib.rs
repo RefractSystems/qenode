@@ -47,6 +47,7 @@ pub struct ZenohClockState {
 struct ZenohClockInner {
     quantum_ready: bool,
     quantum_done: bool,
+    is_first: bool,
     vtime_ns: i64,
 }
 
@@ -62,6 +63,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let mut config = Config::default();
     if !router.is_null() {
         let router_str = unsafe { CStr::from_ptr(router) }.to_str().unwrap();
+        eprintln!("[zenoh-clock] node={}: connecting to router {}...", node_id, router_str);
         let json = format!("[\"{}\"]", router_str);
         let _ = config.insert_json5("connect/endpoints", &json);
         let _ = config.insert_json5("scouting/multicast/enabled", "false");
@@ -70,7 +72,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let session = match zenoh::open(config).wait() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[zenoh-clock] node={}: FAILED session: {}", node_id, e);
+            eprintln!("[zenoh-clock] node={}: failed to open Zenoh session: {}", node_id, e);
             return ptr::null_mut();
         }
     };
@@ -89,6 +91,7 @@ pub unsafe extern "C" fn zenoh_clock_init(
     let inner = Box::into_raw(Box::new(ZenohClockInner {
         quantum_ready: false,
         quantum_done: false,
+        is_first: true,
         vtime_ns: 0,
     }));
 
@@ -191,15 +194,23 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
 
     unsafe {
         virtmcu_mutex_lock(state.mutex);
-        // Signal done
-        virtmcu_bql_lock();
-        state.needs_quantum_atomic.store(false, Ordering::Release);
-        (*state.inner).vtime_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        (*state.inner).quantum_done = true;
-        virtmcu_cond_signal(state.query_cond);
-        virtmcu_bql_unlock();
+        
+        if (*state.inner).is_first {
+            // eprintln!("[zenoh-clock] node={}: first hook call", state.node_id);
+            (*state.inner).is_first = false;
+        } else {
+            // Signal done for the PREVIOUS quantum
+            virtmcu_bql_lock();
+            state.needs_quantum_atomic.store(false, Ordering::Release);
+            let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            // eprintln!("[zenoh-clock] node={}: quantum DONE at vtime={}", state.node_id, vtime);
+            (*state.inner).vtime_ns = vtime;
+            (*state.inner).quantum_done = true;
+            virtmcu_cond_signal(state.query_cond);
+            virtmcu_bql_unlock();
+        }
 
-        // Wait for ready
+        // Wait for ready (NEXT quantum request)
         while !(*state.inner).quantum_ready {
             virtmcu_cond_wait(state.vcpu_cond, state.mutex);
         }
@@ -208,6 +219,7 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         (*state.inner).quantum_done = false;
         
         let next_delta = state.delta_ns.load(Ordering::Acquire);
+        // eprintln!("[zenoh-clock] node={}: quantum READY, next_delta={}", state.node_id, next_delta);
 
         virtmcu_bql_lock();
         let vtime_now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
@@ -217,7 +229,6 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
         virtmcu_timer_mod(state.quantum_timer, vtime_now + next_delta);
         virtmcu_bql_unlock();
 
-        
         virtmcu_mutex_unlock(state.mutex);
     }
 }
@@ -241,6 +252,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
 
     unsafe {
         virtmcu_mutex_lock(state.mutex);
+        (*state.inner).quantum_done = false;
         (*state.inner).quantum_ready = true;
         virtmcu_cond_signal(state.vcpu_cond);
 

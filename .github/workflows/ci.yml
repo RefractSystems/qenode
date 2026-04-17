@@ -823,10 +823,12 @@ jobs:
             bash -c "
               make -C test/phase1
               uv pip install pyelftools
+              # Find drcov plugin (path varies between local build and Docker build)
+              DRCOV_SO=$(find /build/qemu -name "libdrcov.so" | head -n 1)
               # Run with drcov plugin
               qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
                 -kernel test/phase1/hello.elf -nographic -m 128M -display none \
-                -plugin /build/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov \
+                -plugin "$DRCOV_SO",filename=hello.drcov \
                 -d plugin
               # Analyze results
               python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
