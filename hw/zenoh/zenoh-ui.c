@@ -76,13 +76,15 @@ static void on_button_msg(z_loaned_sample_t *sample, void *context)
             btn->state = new_state;
             if (btn->irq) {
                 /* CRITICAL FIX: IRQs modify guest state. Must hold the BQL! */
-                qemu_mutex_lock_iothread();
+                bql_lock();
                 qemu_set_irq(btn->irq, btn->state ? 1 : 0);
-                qemu_mutex_unlock_iothread();
+                bql_unlock();
             }
         }
     }
 }
+
+static z_owned_publisher_t *get_led_publisher(ZenohUiState *s, uint32_t led_id);
 
 /* Called from the background publish thread only. */
 static gpointer led_publish_thread(gpointer arg)

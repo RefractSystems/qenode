@@ -1,10 +1,17 @@
+extern crate libc;
+
 use core::ffi::{c_char, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
 
-use zenoh::prelude::sync::*;
+use zenoh::Config;
+use zenoh::Session;
+use zenoh::Wait;
+use zenoh::query::Query;
+use zenoh::query::Queryable;
+use zenoh::bytes::ZBytes;
+
 use virtmcu_qom::sync::*;
 use virtmcu_qom::timer::*;
 use virtmcu_qom::cpu::*;
@@ -14,11 +21,12 @@ use virtmcu_qom::proto::*;
 // and the C wrapper.
 pub struct ZenohClockState {
     node_id: u32,
+    #[allow(dead_code)]
     is_icount: bool,
 
     session: Session,
     #[allow(dead_code)]
-    queryable: Queryable<'static, ()>,
+    queryable: Option<Queryable<()>>,
 
     quantum_timer: *mut QemuTimer,
 
@@ -57,11 +65,11 @@ pub extern "C" fn zenoh_clock_init(
     if !router.is_null() {
         let router_str = unsafe { CStr::from_ptr(router) }.to_str().unwrap();
         let json = format!("[\"{}\"]", router_str);
-        config.insert_json5("connect/endpoints", &json).unwrap();
-        config.insert_json5("scouting/multicast/enabled", "false").unwrap();
+        let _ = config.insert_json5("connect/endpoints", &json);
+        let _ = config.insert_json5("scouting/multicast/enabled", "false");
     }
 
-    let session = zenoh::open(config).res_sync().unwrap();
+    let session = zenoh::open(config).wait().unwrap();
 
     let is_icount = if !mode.is_null() {
         let mode_str = unsafe { CStr::from_ptr(mode) }.to_str().unwrap();
@@ -98,7 +106,7 @@ pub extern "C" fn zenoh_clock_init(
         node_id,
         is_icount,
         session: session.clone(),
-        queryable: unsafe { core::mem::zeroed() }, // Placeholder, updated below
+        queryable: None,
         quantum_timer: ptr::null_mut(),
         mutex,
         vcpu_cond,
@@ -122,11 +130,11 @@ pub extern "C" fn zenoh_clock_init(
             let state = unsafe { &*(state_ptr_for_zenoh as *const ZenohClockState) };
             on_query(state, query);
         })
-        .res_sync()
+        .wait()
         .unwrap();
 
     unsafe {
-        (*state_ptr).queryable = queryable;
+        (*state_ptr).queryable = Some(queryable);
         (*state_ptr).quantum_timer = timer_new_ns(
             QEMU_CLOCK_VIRTUAL,
             zclock_timer_cb,
@@ -229,8 +237,6 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
 
         bql_lock();
         if state.is_icount {
-            // NOTE: We don't have access to timers_state.qemu_icount_bias yet in Rust.
-            // For now, let's assume we need to add an FFI helper for this.
             virtmcu_icount_advance(next_delta);
             qemu_clock_run_all_timers();
         }
@@ -254,7 +260,8 @@ fn on_query(state: &ZenohClockState, query: Query) {
         return;
     }
 
-    let req: ClockAdvanceReq = unsafe { ptr::read_unaligned(payload.as_ptr() as *const _) };
+    let bytes = payload.to_bytes();
+    let req: ClockAdvanceReq = unsafe { ptr::read_unaligned(bytes.as_ptr() as *const _) };
 
     state.delta_ns.store(req.delta_ns as i64, Ordering::Release);
     state.mujoco_time_ns.store(req.mujoco_time_ns as i64, Ordering::Release);
@@ -263,7 +270,7 @@ fn on_query(state: &ZenohClockState, query: Query) {
         qemu_mutex_lock(state.mutex);
         (*state.inner).quantum_done = false;
         (*state.inner).quantum_ready = true;
-        qemu_cond_signal(state.vcpu_cond);
+        qemu_cond_signal(state.query_cond);
 
         let mut error_code = 0;
         while !(*state.inner).quantum_done {
@@ -284,14 +291,12 @@ fn on_query(state: &ZenohClockState, query: Query) {
             error_code,
         };
 
-        let resp_bytes: &[u8] = unsafe {
-            core::slice::from_raw_parts(
-                &resp as *const _ as *const u8,
-                core::mem::size_of::<ClockReadyResp>(),
-            )
-        };
+        let resp_bytes: &[u8] = core::slice::from_raw_parts(
+            &resp as *const _ as *const u8,
+            core::mem::size_of::<ClockReadyResp>(),
+        );
 
-        query.reply(query.key_expr(), resp_bytes).res_sync().unwrap();
+        let _ = query.reply(query.key_expr(), ZBytes::from(resp_bytes)).wait();
     }
 }
 
@@ -307,14 +312,9 @@ fn reply_error(query: Query, error_code: u32) {
             core::mem::size_of::<ClockReadyResp>(),
         )
     };
-    query.reply(query.key_expr(), resp_bytes).res_sync().unwrap();
+    let _ = query.reply(query.key_expr(), ZBytes::from(resp_bytes)).wait();
 }
 
 extern "C" {
     fn virtmcu_icount_advance(delta: i64);
-}
-
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    unsafe { libc::abort() }
 }
