@@ -1,153 +1,37 @@
 /*
- * hw/zenoh/zenoh-chardev.c — Deterministic Multi-Node UART/Serial Backend
+ * hw/zenoh/zenoh-chardev.c — Rust-backed Deterministic Serial Backend
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * This file implements a custom QEMU `-chardev` backend that forwards serial
- * port bytes over Zenoh pub/sub with embedded virtual timestamps.
- *
- * In cyber-physical simulation, serial communication (UART) between nodes or
- * from a human terminal must be reproducible. Standard QEMU chardevs (like
- * `pty` or `stdio`) inject bytes into the guest OS the moment they arrive on
- * the host's wall-clock, breaking determinism.
- *
- * This backend fixes that:
- * 1. On TX: Outbound bytes are prefixed with the current `QEMU_CLOCK_VIRTUAL`
- *    time and published to `sim/serial/{node_id}/tx`.
- * 2. On RX: Incoming bytes carry a `delivery_vtime_ns` timestamp. They are
- *    buffered and only passed to the guest UART controller when QEMU's
- *    virtual clock catches up to that timestamp.
- *
- * This ensures that a human pressing a key on the terminal results in the
- * exact same firmware execution path across runs.
  */
 #include "qemu/osdep.h"
 #include "chardev/char.h"
 #include "qapi/error.h"
 #include "qapi/qapi-types-char.h"
 #include "qemu/timer.h"
-#include "qemu/main-loop.h"
 #include "qom/object.h"
 #include "qemu/module.h"
 #include "qemu/option.h"
-#include "qemu/error-report.h"
-#include "qemu/bswap.h"
-#include <zenoh.h>
+
+/* ── Rust FFI declarations ────────────────────────────────────────────────── */
+
+typedef struct ZenohChardevState ZenohChardevState;
+
+extern ZenohChardevState *zenoh_chardev_init(Chardev *chr, const char *node_id, const char *router, const char *topic);
+extern void              zenoh_chardev_cleanup_rust(ZenohChardevState *state);
+extern int               zenoh_chardev_write_rust(ZenohChardevState *state, const uint8_t *buf, int len);
 
 #define TYPE_CHARDEV_ZENOH "chardev-zenoh"
 OBJECT_DECLARE_SIMPLE_TYPE(ChardevZenoh, CHARDEV_ZENOH)
 
 struct ChardevZenoh {
     Chardev parent;
-    z_owned_session_t session;
-    z_owned_publisher_t publisher;
-    z_owned_subscriber_t subscriber;
-    QEMUTimer *rx_timer;
-    char *node_id;
-    char *router;
-
-    struct {
-        uint64_t delivery_vtime;
-        uint8_t *data;
-        size_t size;
-    } rx_queue[1024];
-    int rx_count;
-    QemuMutex mutex;
+    ZenohChardevState *rust_state;
 };
-
-typedef struct __attribute__((packed)) {
-    uint64_t delivery_vtime_ns;
-    uint32_t size;
-} ZenohFrameHeader;
-
-static void push_rx_frame(ChardevZenoh *s, uint64_t vtime, const uint8_t *data, size_t size)
-{
-    qemu_mutex_lock(&s->mutex);
-    if (s->rx_count < 1024) {
-        int i = s->rx_count - 1;
-        while (i >= 0 && s->rx_queue[i].delivery_vtime < vtime) {
-            s->rx_queue[i + 1] = s->rx_queue[i];
-            i--;
-        }
-        s->rx_queue[i + 1].delivery_vtime = vtime;
-        s->rx_queue[i + 1].data = g_memdup2(data, size);
-        s->rx_queue[i + 1].size = size;
-        s->rx_count++;
-        
-        timer_mod(s->rx_timer, s->rx_queue[s->rx_count - 1].delivery_vtime);
-    }
-    qemu_mutex_unlock(&s->mutex);
-}
-
-static void on_zenoh_msg(z_loaned_sample_t *sample, void *context)
-{
-    ChardevZenoh *s = context;
-    const z_loaned_bytes_t *payload = z_sample_payload(sample);
-    if (!payload) return;
-    
-    z_bytes_reader_t reader = z_bytes_get_reader(payload);
-    ZenohFrameHeader hdr;
-    if (z_bytes_reader_read(&reader, (uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) {
-        return;
-    }
-    
-    uint32_t size = le32_to_cpu(hdr.size);
-    uint64_t vtime = le64_to_cpu(hdr.delivery_vtime_ns);
-    
-    if (size > 1024 * 1024) return; /* safety bounds check for malformed frames */
-    
-    uint8_t *frame_data = g_malloc(size);
-    if (z_bytes_reader_read(&reader, frame_data, size) == size) {
-        push_rx_frame(s, vtime, frame_data, size);
-    }
-    g_free(frame_data);
-}
-
-static void rx_timer_cb(void *opaque)
-{
-    ChardevZenoh *s = opaque;
-    qemu_mutex_lock(&s->mutex);
-    
-    uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    while (s->rx_count > 0) {
-        int last = s->rx_count - 1;
-        if (s->rx_queue[last].delivery_vtime <= now) {
-            uint8_t *data = s->rx_queue[last].data;
-            size_t size = s->rx_queue[last].size;
-            s->rx_count--;
-            
-            qemu_mutex_unlock(&s->mutex);
-            /* Push received bytes into QEMU's frontend (e.g. PL011) */
-            qemu_chr_be_write(CHARDEV(s), data, size);
-            g_free(data);
-            qemu_mutex_lock(&s->mutex);
-        } else {
-            timer_mod(s->rx_timer, s->rx_queue[last].delivery_vtime);
-            break;
-        }
-    }
-    qemu_mutex_unlock(&s->mutex);
-}
 
 static int zenoh_chr_write(Chardev *chr, const uint8_t *buf, int len)
 {
     ChardevZenoh *s = CHARDEV_ZENOH(chr);
-    
-    ZenohFrameHeader hdr;
-    hdr.delivery_vtime_ns = cpu_to_le64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
-    hdr.size = cpu_to_le32(len);
-    
-    uint8_t *msg = g_malloc(sizeof(hdr) + len);
-    memcpy(msg, &hdr, sizeof(hdr));
-    memcpy(msg + sizeof(hdr), buf, len);
-    
-    z_owned_bytes_t payload;
-    z_bytes_copy_from_buf(&payload, msg, sizeof(hdr) + len);
-    
-    z_publisher_put(z_publisher_loan(&s->publisher), z_move(payload), NULL);
-    
-    g_free(msg);
-    return len;
+    return zenoh_chardev_write_rust(s->rust_state, buf, len);
 }
 
 static void zenoh_chr_parse(QemuOpts *opts, ChardevBackend *backend, Error **errp)
@@ -181,52 +65,11 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
     ChardevZenoh *s = CHARDEV_ZENOH(chr);
     ChardevZenohOptions *opts = backend->u.zenoh.data;
     
-    s->node_id = g_strdup(opts->node);
-    s->router = g_strdup(opts->router ? opts->router : "");
-    
-    z_owned_config_t config;
-    z_config_default(&config);
-    if (s->router[0] != '\0') {
-        char json[256];
-        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
-        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json);
-        zc_config_insert_json5(z_config_loan_mut(&config), "scouting/multicast/enabled", "false");
-    } else {
-        warn_report("zenoh-chardev (node=%s): No 'router=' property provided. Zenoh will use UDP multicast peer discovery, which is unsupported by the virtmcu coordinator and will likely fail in container environments.", s->node_id);
-    }
-    
-    if (z_open(&s->session, z_move(config), NULL) != 0) {
-        error_setg(errp, "Failed to open zenoh session");
+    s->rust_state = zenoh_chardev_init(chr, opts->node, opts->router, opts->topic);
+    if (!s->rust_state) {
+        error_setg(errp, "Failed to initialize Rust Zenoh chardev");
         return false;
     }
-    
-    char *tx_topic, *rx_topic;
-    if (opts->topic) {
-        tx_topic = g_strdup_printf("%s/tx", opts->topic);
-        rx_topic = g_strdup_printf("%s/rx", opts->topic);
-    } else {
-        tx_topic = g_strdup_printf("virtmcu/uart/%s/tx", s->node_id);
-        rx_topic = g_strdup_printf("virtmcu/uart/%s/rx", s->node_id);
-    }
-    
-    z_owned_keyexpr_t kexpr_tx;
-    z_keyexpr_from_str(&kexpr_tx, tx_topic);
-    z_declare_publisher(z_session_loan(&s->session), &s->publisher, z_keyexpr_loan(&kexpr_tx), NULL);
-    z_keyexpr_drop(z_move(kexpr_tx));
-    
-    z_owned_closure_sample_t callback;
-    z_closure_sample(&callback, on_zenoh_msg, NULL, s);
-    
-    z_owned_keyexpr_t kexpr_rx;
-    z_keyexpr_from_str(&kexpr_rx, rx_topic);
-    z_declare_subscriber(z_session_loan(&s->session), &s->subscriber, z_keyexpr_loan(&kexpr_rx), z_move(callback), NULL);
-    z_keyexpr_drop(z_move(kexpr_rx));
-    
-    g_free(tx_topic);
-    g_free(rx_topic);
-    
-    qemu_mutex_init(&s->mutex);
-    s->rx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, s);
     
     return true;
 }
@@ -234,19 +77,10 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
 static void zenoh_chr_finalize(Object *obj)
 {
     ChardevZenoh *s = CHARDEV_ZENOH(obj);
-    if (s->rx_timer) {
-        timer_free(s->rx_timer);
-        s->rx_timer = NULL;
+    if (s->rust_state) {
+        zenoh_chardev_cleanup_rust(s->rust_state);
+        s->rust_state = NULL;
     }
-    
-    z_publisher_drop(z_move(s->publisher));
-    z_subscriber_drop(z_move(s->subscriber));
-    z_close(z_session_loan_mut(&s->session), NULL);
-    z_session_drop(z_move(s->session));
-    
-    qemu_mutex_destroy(&s->mutex);
-    g_free(s->node_id);
-    g_free(s->router);
 }
 
 static void char_zenoh_class_init(ObjectClass *oc, const void *data)

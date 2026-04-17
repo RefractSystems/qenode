@@ -232,6 +232,7 @@ extern "C" fn zclock_quantum_hook(_cpu: *mut CPUState) {
 
         virtmcu_bql_lock();
         if state.is_icount {
+            eprintln!("[zenoh-clock] advancing icount bias by {}", next_delta);
             virtmcu_icount_advance(next_delta);
             qemu_clock_run_all_timers();
         }

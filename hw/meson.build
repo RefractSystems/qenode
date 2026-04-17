@@ -90,6 +90,19 @@ rust_zenoh_netdev_lib = custom_target(
   ]
 )
 
+# ── zenoh-chardev ────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh serial backend.
+rust_zenoh_chardev_lib = custom_target(
+  'rust_zenoh_chardev_lib',
+  input: 'rust/zenoh-chardev/src/lib.rs',
+  output: ['libzenoh_chardev.a', 'rust_zenoh_chardev_trigger.c'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p zenoh-chardev && cp target/release/libzenoh_chardev.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c'
+  ]
+)
+
 subdir('zenoh')
 
 # ── remote-port-bridge ────────────────────────────────────────────────────────

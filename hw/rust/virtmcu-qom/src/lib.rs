@@ -5,3 +5,4 @@ pub mod qom;
 pub mod sync;
 pub mod timer;
 pub mod net;
+pub mod chardev;
