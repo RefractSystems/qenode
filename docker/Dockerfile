@@ -10,11 +10,13 @@
 #   QEMU_REPO     upstream QEMU git URL
 #   QEMU_REF      git ref to check out (tag, branch, or SHA)
 #   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.9.0)
+#   CMAKE_VERSION minimum cmake version required
 #   ARCH          target architecture (arm | aarch64)
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
+ARG CMAKE_VERSION=3.14
 ARG TARGETARCH
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────

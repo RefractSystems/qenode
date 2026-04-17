@@ -77,6 +77,7 @@ def sync():
     # 4. Update docker/Dockerfile
     dockerfile_path = "docker/Dockerfile"
     qemu_ver = versions.get("QEMU_VERSION")
+    cmake_ver = versions.get("CMAKE_VERSION")
     if os.path.exists(dockerfile_path):
         with open(dockerfile_path, "r") as f:
             content = f.read()
@@ -84,6 +85,8 @@ def sync():
         new_content = re.sub(r"ARG ZENOH_C_REF=[^\n]+", f"ARG ZENOH_C_REF={zenoh_ver}", content)
         if qemu_ver:
             new_content = re.sub(r"ARG QEMU_REF=v[^\n]+", f"ARG QEMU_REF=v{qemu_ver}", new_content)
+        if cmake_ver:
+            new_content = re.sub(r"ARG CMAKE_VERSION=[^\n]+", f"ARG CMAKE_VERSION={cmake_ver}", new_content)
 
         # Also update the comment example
         new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)

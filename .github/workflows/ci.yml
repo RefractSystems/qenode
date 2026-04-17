@@ -125,6 +125,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           cache-to: type=gha,scope=builder-amd64,mode=max
           load: true
@@ -194,6 +195,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -231,6 +233,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -272,6 +275,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -317,6 +321,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -361,6 +366,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -418,6 +424,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -472,6 +479,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -485,6 +493,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -526,6 +535,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
@@ -595,6 +605,7 @@ jobs:
           build-args: |
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
+            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           cache-from: type=gha,scope=builder-amd64
           load: true
 
