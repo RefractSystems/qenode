@@ -258,7 +258,7 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
     >> /build/qemu/hw/meson.build
 
 # Configure and build
-# hadolint ignore=DL3003
+# hadolint ignore=DL3003,SC2016
 RUN cd qemu \
     && ./configure \
     --prefix=/opt/virtmcu \
@@ -273,7 +273,7 @@ RUN cd qemu \
     && make install \
     && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/ \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
-    && find /opt/virtmcu/lib/qemu -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
+    && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
 # Make the installed QEMU binary and modules available inside this stage
 # (used by CI integration jobs that run smoke tests within the builder container).
