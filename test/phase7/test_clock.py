@@ -34,7 +34,6 @@ def send_query(session, delta_ns, label):
         print(f"{label}: TIMEOUT — no reply received", file=sys.stderr)
         sys.exit(1)
     reply = replies[0]
-    print(f"DEBUG: reply type={type(reply)} dir={dir(reply)}")
     if getattr(reply, "err", None) is not None:
         print(f"{label}: ERROR reply: {reply.err}", file=sys.stderr)
         sys.exit(1)

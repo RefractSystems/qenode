@@ -51,7 +51,7 @@ echo "[phase11_3] Building SystemC Remote Port adapter..."
 ADAPTER_BUILD_DIR="$WORKSPACE_DIR/tools/systemc_adapter/build"
 if [ ! -f "$ADAPTER_BUILD_DIR/CMakeCache.txt" ]; then
     echo "[phase11_3] CMake not yet configured — running cmake..."
-    cmake -S "$WORKSPACE_DIR/tools/systemc_adapter" -B "$ADAPTER_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 > /dev/null 2>&1
+    cmake -S "$WORKSPACE_DIR/tools/systemc_adapter" -B "$ADAPTER_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DGIT_EXECUTABLE=$(which git) > /dev/null 2>&1
 fi
 make -C "$ADAPTER_BUILD_DIR" rp_adapter > /dev/null 2>&1
 
