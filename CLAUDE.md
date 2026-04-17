@@ -138,3 +138,14 @@ To ensure the highest level of professional software engineering, all agents MUS
 - **Observability:** Ensure critical paths (sim loop, clock sync) have appropriate logging (not in hot loop), error reporting, and health checks.
 - **Documentation:** Update READMEs, ADRs, and API docs as the architecture evolves.
 
+
+## CI/CD Troubleshooting & "Make CI Green" Workflow
+
+When instructed to "fix CI", "make CI green", or address pipeline failures, you MUST follow this autonomous loop until success:
+
+1. **Diagnose Remotely:** Use the GitHub CLI (`gh run list`, `gh run view --log`) to identify the exact failure. Always use `gh` to avoid GitHub API rate limits.
+2. **Reproduce Locally:** BEFORE making code changes, run the corresponding test locally to reproduce the error.
+3. **Align Local with Remote (Crucial):** If the step fails in CI but passes locally, DO NOT fix the code yet. First, modify the local test scripts, `Makefile`, or environment to ensure the failure reproduces locally. **Our local tests must catch what CI catches.**
+4. **Fix & Verify:** Implement the fix and verify it passes the newly aligned local test suite.
+5. **Push:** Commit and push the changes.
+6. **Monitor & Loop:** Autonomously monitor the new CI run (e.g., using `gh run watch`). If it fails, immediately restart this loop. Do not stop or prompt the user until all checks are officially green.
