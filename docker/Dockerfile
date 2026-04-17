@@ -62,7 +62,7 @@ RUN (apt-get update && apt-get install -y --no-install-recommends --fix-missing 
     jq \
     lcov \
     gcovr \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* )
 
 # Install FlatBuffers compiler from GitHub release
 ARG FLATBUFFERS_VERSION

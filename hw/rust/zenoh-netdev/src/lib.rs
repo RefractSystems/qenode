@@ -168,7 +168,7 @@ fn on_rx_frame(state: &ZenohNetdevState, sample: zenoh::sample::Sample) {
     
     // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
     // to prevent AB-BA deadlocks with the QEMU main thread.
-    unsafe { virtmcu_bql_lock(); }
+    let _bql_guard = virtmcu_qom::sync::Bql::lock();
     
     let mut queue = state.rx_queue.lock().unwrap();
     if queue.len() < 64 {

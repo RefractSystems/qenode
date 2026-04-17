@@ -197,9 +197,8 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
             s.status &= !(value as u32);
             if s.status & 0x01 == 0 {
                 qemu_set_irq(s.irq, 0);
-                virtmcu_mutex_lock(s.mutex);
+                let _guard = (*s.mutex).lock();
                 check_rx_queue(s);
-                virtmcu_mutex_unlock(s.mutex);
             }
         },
         _ => {},
@@ -232,8 +231,8 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     
     // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
     // to prevent AB-BA deadlocks with the QEMU main thread.
-    unsafe { virtmcu_bql_lock(); }
-    unsafe { virtmcu_mutex_lock(state.mutex); }
+    let _bql_guard = virtmcu_qom::sync::Bql::lock();
+    let _mutex_guard = unsafe { (*state.mutex).lock() };
     
     if state.rx_queue.len() < 16 {
         // Insertion sort by vtime (ascending)
@@ -245,9 +244,6 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
             virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
         }
     }
-    
-    unsafe { virtmcu_mutex_unlock(state.mutex); }
-    unsafe { virtmcu_bql_unlock(); }
 }
 
 unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
@@ -276,9 +272,6 @@ unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
 
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &mut *(opaque as *mut Zenoh802154State) };
-    unsafe {
-        virtmcu_mutex_lock(state.mutex);
-        check_rx_queue(state);
-        virtmcu_mutex_unlock(state.mutex);
-    }
+    let _guard = unsafe { (*state.mutex).lock() };
+    unsafe { check_rx_queue(state) };
 }
