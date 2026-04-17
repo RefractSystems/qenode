@@ -1,13 +1,6 @@
 {
   "name": "virtmcu",
-  "build": {
-    "dockerfile": "../docker/Dockerfile",
-    "context": "..",
-    "target": "devenv",
-    "cacheFrom": [
-      "ghcr.io/refractsystems/virtmcu/devenv:latest"
-    ]
-  },
+  "image": "ghcr.io/refractsystems/virtmcu/devenv:latest",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "initializeCommand": "bash .devcontainer/initialize.sh",
   "mounts": [
