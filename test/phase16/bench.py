@@ -19,6 +19,10 @@ STANDALONE_TIMEOUT = 30
 
 
 def _free_port() -> int:
+    # bind(0) asks the OS for an ephemeral port, then we close the socket.
+    # There is an inherent TOCTOU window before the Zenoh router binds; this
+    # is acceptable because phase-16 tests are serialised in CI and the window
+    # is <<1 ms on a non-adversarial host.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -78,6 +82,12 @@ class BenchmarkRunner:
         self.cntfrq = 0
         self.wall_time = 0.0
         self.latencies: list[float] = []
+
+    def _stderr_relay(self, proc):
+        for line in proc.stderr:
+            line = line.rstrip()
+            if line:
+                print(f"  [QEMU/{self.mode}] {line}", flush=True)
 
     def _output_reader(self, proc):
         for line in proc.stdout:
@@ -168,11 +178,14 @@ class BenchmarkRunner:
 
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
             )
             threading.Thread(
                 target=self._output_reader, args=(proc,), daemon=True
+            ).start()
+            threading.Thread(
+                target=self._stderr_relay, args=(proc,), daemon=True
             ).start()
 
             t0 = time.perf_counter()
@@ -267,10 +280,12 @@ def main():
     if r_ic.exit_vtime_ns and r_ic.wall_time > 0:
         mips = r_ic.exit_vtime_ns / r_ic.wall_time / 1e6
         print(f"slaved-icount MIPS   : {mips:.1f}")
-    if r_sa.exit_cycles and r_sa.wall_time > 0:
-        # Use icount cycles scaled to ns for standalone IPS estimate.
-        # QEMU counter runs at 1 GHz tied to virtual ns, so cycles == virtual_ns.
-        mips_sa = r_ic.exit_cycles / r_sa.wall_time / 1e6
+    if r_sa.exit_cycles and r_sa.wall_time > 0 and r_ic.exit_vtime_ns:
+        # Use the icount vtime (verified instruction count) as the numerator;
+        # divide by the standalone wall time.  r_sa.exit_cycles reflects real
+        # time at CNTFRQ Hz which differs from the icount virtual clock, so
+        # mixing it with wall time would produce a meaningless ratio.
+        mips_sa = r_ic.exit_vtime_ns / r_sa.wall_time / 1e6
         print(f"standalone MIPS (est): {mips_sa:.1f}")
 
     if r_ic.latencies:
