@@ -50,7 +50,7 @@ jobs:
         with:
           scandir: '.'
           severity: warning
-          ignore_paths: third_party .venv
+          ignore_paths: third_party .venv build tools/systemc_adapter/build
 
       - name: Hadolint — Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
@@ -188,9 +188,9 @@ jobs:
           # Phase 4: pytest + robot run directly; needs packages on PATH
           - phase: "4"
             pre: "make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
-          # Phase 8: smoke_test.sh sources .venv, so we pre-create it with uv
+          # Phase 8: robot tests
           - phase: "8"
-            pre: "make -C test/phase1 && make -C test/phase8 && uv sync"
+            pre: "make -C test/phase1 && make -C test/phase8 && uv pip install --system --break-system-packages -r pyproject.toml"
           - phase: "9"
             pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
           - phase: "10"
@@ -198,9 +198,9 @@ jobs:
           - phase: "11"
             pre: "make -C test/riscv"
           - phase: "11_3"
-            pre: "cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release && make -C tools/systemc_adapter/build rp_adapter"
+            pre: "cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && make -C tools/systemc_adapter/build rp_adapter"
           - phase: "12"
-            pre: "make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
+            pre: "make -C test/phase1 && make -C test/phase12 && uv pip install --system --break-system-packages -r pyproject.toml"
 
     steps:
       - uses: actions/checkout@v5
@@ -747,6 +747,7 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               # Pre-build all artifacts
+              apt-get update && apt-get install -y --no-install-recommends libsystemc-dev
               make -C test/phase1
               make -C test/phase8
               uv pip install --system --break-system-packages -r pyproject.toml pytest-cov
@@ -822,7 +823,7 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
-              uv pip install pyelftools
+              uv pip install --system --break-system-packages pyelftools
               # Find drcov plugin (path varies between local build and Docker build)
               DRCOV_SO=$(find /build/qemu -name "libdrcov.so" | head -n 1)
               # Run with drcov plugin

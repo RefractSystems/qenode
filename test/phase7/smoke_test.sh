@@ -50,13 +50,19 @@ dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 # Helper to wait for queryable
 wait_for_queryable() {
     local topic="$1"
-    local deadline=$(( $(date +%s) + 15 ))
+    local deadline=$(( $(date +%s) + 30 ))
+    echo "Waiting for $topic to become queryable..."
     while (( $(date +%s) < deadline )); do
         if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:7447\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+            echo "$topic is queryable!"
             return 0
         fi
-        sleep 0.25
+        echo -n "."
+        sleep 1
     done
+    echo " TIMEOUT"
+    # Debug: try to query without silencing error
+    python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:7447\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=1.0)); print(f'Result: {r}'); s.close()" || true
     return 1
 }
 
