@@ -3970,8 +3970,10 @@ dependencies = [
 name = "zenoh-netdev"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "crossbeam-channel",
  "libc",
+ "virtmcu-qom",
  "zenoh",
 ]
 

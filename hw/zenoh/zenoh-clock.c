@@ -67,8 +67,14 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
     
     if (now >= s->next_quantum_ns || halted) {
         /* Release BQL to allow other threads (like Zenoh callback) to run if they need it,
-         * though the Rust backend uses its own mutex for internal state. */
+         * though the Rust backend uses its own mutex for internal state.
+         * Note: the Rust backend's internal mutex serializes threads, maintaining a
+         * single-quantum-at-a-time invariant even with multiple vCPUs. */
+        bql_unlock();
         int64_t delta = zenoh_clock_quantum_wait(s->rust_state, now);
+        bql_lock();
+        
+        assert(s->rust_state != NULL && "zenoh-clock finalized while blocking in quantum_wait");
         s->next_quantum_ns = now + delta;
     }
 }

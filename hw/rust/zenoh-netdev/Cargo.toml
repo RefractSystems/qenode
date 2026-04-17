@@ -1,12 +1,15 @@
 [package]
 name = "zenoh-netdev"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 
 [lib]
 crate-type = ["staticlib"]
 
 [dependencies]
 zenoh.workspace = true
+virtmcu-qom = { path = "../virtmcu-qom" }
 libc.workspace = true
 crossbeam-channel.workspace = true
+byteorder = "1.5"

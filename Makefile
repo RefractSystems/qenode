@@ -149,10 +149,17 @@ test-all: test test-integration test-robot test-coverage-guest
 # ------------------------------------------------------------------------------
 
 # Check Python style (same rules as CI).
-lint: venv check-versions
+lint: venv check-versions lint-cargo
 	@echo "==> ruff check..."
 	uv run ruff check tools/ tests/ patches/
 	@echo "✓ Lint passed."
+
+# Check Cargo workspace versions.
+lint-cargo:
+	@echo "==> Checking Cargo workspace version synchronization..."
+	@cd hw/rust && cargo metadata --no-deps --format-version 1 | \
+		python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"
+	@echo "✓ Cargo workspace versions aligned."
 
 # Auto-fix formatting and fixable lint errors.
 fmt: venv

@@ -462,6 +462,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   5. The Zenoh callback runs in a foreign thread; the timer callback runs in the QEMU
      main loop thread. The priority queue must be protected by a `QemuMutex`.
 
+  **IMPLEMENTATION GAP — DETERMINISM BUG**: The current `hw/rust/zenoh-netdev/src/lib.rs` does NOT implement the priority queue + QEMUTimer pattern described above. The Zenoh subscriber callback injects frames directly via `qemu_receive_packet` under the BQL without any virtual-time ordering. This violates the determinism contract and produces different frame delivery sequences across identical runs. See Phase 7 Technical Debt below.
+
 - [x] **7.3** Delete `tools/node_agent/` — superseded by hw/zenoh/
 
 - [x] **7.4** Integration test: boot minimal firmware, step 1000 × 1 ms, assert
@@ -473,6 +475,24 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 - [x] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
 - [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
+
+### Phase 7 Technical Debt & Future Risks
+
+- [ ] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
+
+  `hw/rust/zenoh-netdev/src/lib.rs` injects incoming Ethernet frames directly from the Zenoh subscriber callback (a foreign Zenoh thread) by calling `qemu_receive_packet` under the BQL. Frames are delivered in OS-scheduling order, not virtual-time order. In a two-node simulation where Node A and Node B exchange frames at the same quantum boundary, which node receives first depends on thread scheduling — not on the virtual timestamp in the frame header. This breaks determinism for replay and breaks the Phase 7 contract.
+
+  `zenoh-chardev` implements the correct pattern (priority queue + `QEMUTimer`) and must be used as the reference implementation.
+
+  - **Assumption**: Incoming frames already carry a `delivery_vtime` field embedded in the Zenoh payload header. If the `zenoh_coordinator` does not embed this field, the coordinator must be updated first (task 6.0 / 7.2 spec).
+  - **What can go wrong — queue growth**: If QEMU virtual time stalls (e.g., firmware in tight loop with no WFI and no clock advance), the priority queue accumulates frames without draining. Add a bounded queue (max 1024 frames); on overflow, drop oldest with an error log.
+  - **What can go wrong — timer fired before BQL acquired**: `timer_mod` in the Zenoh thread schedules the callback for the main loop. The main loop fires `rx_timer_cb` while already holding the BQL. Calling `qemu_send_packet` from the timer callback is correct and BQL-safe. Do NOT hold a secondary mutex inside `rx_timer_cb` while also calling QEMU APIs — risk of lock inversion.
+  - **What can go wrong — `timer_del` on finalize**: `netdev_cleanup` must call `timer_del(rx_timer)` and then `timer_free(rx_timer)` before destroying the queue mutex. If the timer fires after the mutex is destroyed, it accesses freed memory.
+  - **Assert (determinism)**: After fixing, run two identical two-node simulations with 1000 frame exchanges each. Capture the virtual-time delivery sequence in both runs. `diff run1.log run2.log` must produce empty output.
+  - **Assert (frame ordering)**: In `rx_timer_cb`, before calling `qemu_send_packet`, assert `frame->delivery_vtime <= qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)`. Frames delivered early are a timer logic bug.
+  - **Test (new — determinism regression test)**: Add `test/phase7/netdev_determinism_test.sh`. Runs two QEMU instances plus a mock coordinator. Sends 100 frames with known delivery vtimes. Asserts both instances receive frames in ascending vtime order. Must replace the existing direct-injection path with a timer-driven path before this test can pass.
+  - **Test (regression)**: Existing `test/phase7/smoke_test.sh` must still pass.
+  - **Coverage check**: `grep -n 'qemu_receive_packet' hw/rust/zenoh-netdev/src/lib.rs` must return empty — all injection must go through `rx_timer_cb`.
 
 ---
 
@@ -489,6 +509,22 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
     - RX: Buffers bytes in a priority queue and injects them via `QEMUTimer` to guarantee multi-node UART determinism.
 - [x] **8.4** **Multi-Node UART Test**: Integration test where Node 1 sends a string over UART to Node 2 via the `zenoh_coordinator`, asserting byte-perfect virtual-time delivery.
 
+### Phase 8 Technical Debt & Future Risks
+
+- [ ] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
+
+  `hw/rust/zenoh-chardev/src/lib.rs` and `hw/rust/zenoh-802154/src/lib.rs` use `libc::malloc(size_of::<State>())` for initial state allocation, then immediately write into the raw pointer with `ptr::write(state_ptr, ...)`. If `malloc` returns `null` (OOM), `ptr::write` is undefined behavior — a null pointer write that will segfault or silently corrupt memory, depending on the system.
+
+  **The fix**: Replace `libc::malloc(...)` with `Box::new(State { ... })` and `Box::into_raw(...)`. This delegates allocation to Rust's allocator, which panics on OOM instead of returning null, and eliminates the unsafe allocation entirely.
+
+  - **Assumption**: The state allocation path runs only during `realize` (device init). It is not on any hot path.
+  - **What can go wrong**: `Box::new(...)` for large states could stack-overflow if the struct is too large (>8 KB) and the compiler doesn't optimize the construction. For large structs, use `Box::<State>::new_zeroed().assume_init()` (nightly) or initialize via `MaybeUninit`. `ZenohChardevState` and the 802154 state are small enough that standard `Box::new` is safe.
+  - **What can go wrong — `Publisher<'static>` in `zenoh-chardev`**: The `ZenohChardevState` struct holds `publisher: Publisher<'static>`. This requires the `Session` to be alive for the entire lifetime of the publisher. Both live in the same heap-allocated struct, but the `'static` bound is a lie — the publisher references the session via internal Arc, not a lifetime. If the struct is dropped, the session is dropped first (struct field drop order: top to bottom), then the publisher — which is correct, but the `'static` annotation hides this invariant. Consider changing to `Publisher<'_>` with an explicit session-tied lifetime, or documenting why the `'static` bound is intentionally unsound here.
+  - **Assert (in Rust, compile-time)**: After the `Box::new` change, no `unsafe` block should remain in the allocation path. Add `#![deny(unsafe_code)]` to a test module covering the state initialization function to enforce this.
+  - **Test (OOM simulation)**: Add a unit test that replaces the allocator with a failing one and confirms `realize` returns an error instead of segfaulting. Use `std::alloc::System` with a wrapper that returns `null` for the expected allocation size.
+  - **Test (regression)**: `test/phase8/smoke_test.sh` must pass after the change.
+  - **Coverage check**: `grep -n 'libc::malloc' hw/rust/zenoh-chardev/src/lib.rs hw/rust/zenoh-802154/src/lib.rs` must return empty.
+
 ---
 
 ## Phase 9 — Advanced Co-Simulation: Shared Media (SystemC) ✅
@@ -497,6 +533,13 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 **Tasks**:
 - [x] **9.1** **Asynchronous IRQ Protocol**: Upgrade `virtmcu_proto.h` and `hw/misc/mmio-socket-bridge.c` to support `IRQ_SET/CLEAR` messages sent from the SystemC adapter back to QEMU.
+
+  **BQL invariant**: `qemu_set_irq()` must be called with the BQL held. The `IRQ_SET/CLEAR` messages arrive on the socket-reader thread (not the TCG thread). Before calling `qemu_set_irq`, the socket thread must acquire the BQL (`bql_lock()`) and release it immediately after (`bql_unlock()`). Failing to hold the BQL while calling `qemu_set_irq` causes silent data races in QEMU's IRQ delivery state machine, resulting in dropped or spurious interrupts in the guest.
+
+  - **Assumption**: The socket-reader thread is a dedicated QEMU I/O thread (`qemu_thread_create(..., QEMU_THREAD_JOINABLE)`). If it is instead a timer callback or main-loop handler (which already holds the BQL), calling `bql_lock()` again will deadlock.
+  - **What can go wrong — BQL inversion**: If the socket thread holds a device-level mutex (protecting the IRQ slot array) and then calls `bql_lock()`, while the TCG thread holds the BQL and then tries to acquire the same device mutex (e.g., in a DMA path), this is a classic ABBA deadlock. The `irq_slots_lock` added in 12.5 must never be held across a `bql_lock()` call.
+  - **Assert (in bridge code)**: Add `assert(bql_held())` immediately before `qemu_set_irq()` at every IRQ delivery call site.
+  - **Test**: Add `test/phase9/irq_timing_test.sh`. Fire 1000 IRQs from the SystemC adapter at maximum rate. The guest must receive all 1000 without hangs or dropped interrupts. Check QEMU's `-d int` output for unexpected interrupt counts.
 - [x] **9.2** **Multi-threaded SystemC Adapter**: Rewrite `tools/systemc_adapter` to use `std::thread` for socket I/O, preventing the host blocking-calls from freezing the SystemC scheduler.
 - [x] **9.3** **Educational CAN Model**: Implement a "CAN-lite" controller in SystemC and a `SharedMedium` bus module that handles arbitration and delivery between two QEMU nodes.
 - [x] **9.4** **Tutorial Lesson 9**: Co-simulating shared buses. Explain how QEMU handles the CPU while SystemC handles the complex timing of the CAN physical layer.
@@ -542,7 +585,18 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 ### Phase 12 Technical Debt & Future Risks
 - [x] **12.5** **Concurrency inside `irq_slots`**: Added `irq_slots_lock` (QemuMutex) to ensure thread-safety when IRQs are triggered outside the BQL.
 - [x] **12.6** **Struct Protocol Rigidity**: Migrated telemetry to FlatBuffers for schema evolution.
-- [ ] **12.7** **Safe QOM Path Resolution for IRQs**: (DEFERRED) Resolving canonical paths in `telemetry_irq_hook` is unsafe outside the BQL. A future revision should populate a name-cache during device realization or use `object_dynamic_cast` within a BQL-guaranteed wrapper.
+- [ ] **12.7** **Safe QOM Path Resolution for IRQs** (DEFERRED — full risk spec below)
+
+  `telemetry_irq_hook` resolves QOM canonical paths (e.g., via `object_resolve_path_type`) from outside the BQL — called from IRQ delivery context, which may be a TCG thread or an I/O thread. `object_resolve_path_type` walks the QOM object tree, which is mutated by `object_property_add`/`object_unparent` under the BQL. Calling it without the BQL is a data race.
+
+  **The correct fix**: During `zenoh_telemetry_realize()` (which runs with the BQL held), walk and cache all IRQ source paths into a pre-allocated flat array. In the IRQ hook, index into the cache array by IRQ slot number — no path traversal needed at hook time.
+
+  - **Assumption**: The IRQ topology is static after `realize` — devices do not hot-add IRQ lines at runtime. This is true for all current virtmcu devices. If dynamic IRQ topology is ever added, the cache must be invalidated and rebuilt.
+  - **What can go wrong — stale cache**: If a device is hot-removed between `realize` and IRQ delivery, the cached path entry points to a freed device. The hook must null-check the cache entry before use and skip logging for entries that were cleaned up (set to NULL in the device's `instance_finalize`).
+  - **What can go wrong — `object_dynamic_cast` without BQL**: Even casting via `object_dynamic_cast` internally acquires no lock — it reads the `type` field of `ObjectClass`. If an object is being finalized concurrently, the type pointer may be in flux. Always resolve at `realize` time, not at hook time.
+  - **Assert (BQL at realize)**: Add `assert(bql_held())` at the start of `zenoh_telemetry_realize` to document that the cache-build path assumes BQL ownership.
+  - **Assert (hook, no path resolution)**: After fixing, `grep -n 'object_resolve_path' hw/zenoh/zenoh-telemetry.c` must return empty — no path resolution outside realize.
+  - **Test**: Add `test/phase12/irq_hook_race_test.sh`. Run a firmware that fires IRQs at 10 kHz while a background thread continuously creates and destroys dummy QOM objects. Run under TSAN (ThreadSanitizer) with `QEMU_SANITIZE=thread`. Must produce zero data-race reports on the IRQ hook path.
 
 ---
 
@@ -570,10 +624,39 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 14 Technical Debt & Future Risks
 - [ ] **14.5** **True 802.15.4 MAC State Machine**: `hw/zenoh/zenoh-802154.c` acts as a simple byte-pipe (FIFO). Real radios (e.g., nRF52840, AT86RF233) have complex state machines managing CSMA/CA, auto-ACKs, frame filtering by PAN ID/Short Address, and MAC-level timers. Guest firmware using standard Zephyr/Contiki drivers will fail without these hardware-level behaviors.
+
+  - **Trigger**: Implement when a Zephyr 802.15.4 driver test (`tests/net/ieee802154/`) fails on virtmcu due to missing MAC behavior.
+  - **Assumption**: Current firmware under test uses a soft-MAC driver that manages CSMA/CA in software. Hard-MAC drivers (which rely on the peripheral to do ACK and backoff) will fail earlier.
+  - **What can go wrong**: State machine complexity grows quickly — CSMA/CA requires virtual-time-accurate backoff timers. Use `QEMUTimer` (QEMU_CLOCK_VIRTUAL) for all MAC timers to preserve determinism.
+  - **Acceptance criteria**: `tests/net/ieee802154/l2/` Zephyr test suite passes with zero failures on a two-node virtmcu setup.
+
 - [ ] **14.6** **O(N²) RF Coordinator Scaling**: The coordinator broadcasts every RF packet to every known node, calculating Euclidean distance for each pair. A dense mesh network (100+ nodes) will bottleneck the single-threaded `tokio` select loop, stalling the deterministic simulation. Requires spatial partitioning (e.g., quad-trees).
+
+  - **Trigger**: Implement when a simulation with more than 20 nodes shows coordinator CPU usage > 50% of one core, or when Zenoh round-trip latency from coordinator exceeds 1 ms per quantum.
+  - **Assumption**: Node positions change slowly relative to the quantum rate (< 10 m/s in simulation space). Spatial index rebuild cost is amortized over many quanta.
+  - **What can go wrong**: Tokio's single-thread executor becomes the bottleneck before the distance calculation does. Profile with `perf` before choosing between quad-tree vs. multi-thread partitioning.
+  - **Acceptance criteria**: 100-node simulation coordinator CPU < 30% of one core at 1 kHz quantum rate; no dropped frames.
+
 - [ ] **14.7** **Dynamic Topology vs. Static Hashmap**: The coordinator currently hardcodes the `node_positions` hash map. For true cyber-physical simulation, it must dynamically subscribe to `sim/telemetry/position` updates from the physics engine (e.g., MuJoCo).
+
+  - **Trigger**: Implement when MuJoCo integration (Phase 10.3) is being tested with mobile nodes.
+  - **Assumption**: Position updates arrive at physics rate (1 kHz); FSPL is recalculated per quantum, not per packet. If packets per quantum > 1, the same FSPL value is used for all packets in that quantum.
+  - **What can go wrong**: Position updates arriving in a Zenoh callback concurrent with packet routing create a data race on `node_positions`. Protect with a `tokio::sync::RwLock`, holding the read lock during routing and the write lock only during position updates.
+  - **Acceptance criteria**: A 10-node simulation with nodes moving at 1 m/s produces monotonically increasing Euclidean distances in the coordinator log over a 10-second run.
+
 - [ ] **14.8** **RF Header Schema Rigidity**: The `ZenohRfHeader` uses rigid, 14-byte packed C-structs. Adding RF metadata (e.g., antenna ID, multi-path hints) will break fleet compatibility. Needs a FlatBuffers/CBOR migration similar to Phase 12 telemetry.
+
+  - **Trigger**: Implement before adding any new field to `ZenohRfHeader`.
+  - **Assumption**: All nodes in a simulation run the same firmware-studio version. Cross-version compatibility is not required at this stage.
+  - **What can go wrong**: FlatBuffers adds a small serialization cost per packet. Benchmark at 100 kpps (100k packets/sec) to verify the coordinator is not the bottleneck after migration.
+  - **Acceptance criteria**: After migration, adding a new optional field to `ZenohRfHeader` does not break existing consumers that do not read the new field. Verified by a two-binary compatibility test (old reader + new writer must produce no errors).
+
 - [ ] **14.9** **Isotropic RF Assumptions**: The current Free Space Path Loss (FSPL) model assumes perfect omnidirectional antennas and ignores multi-path fading, physical obstacles, and interference from overlapping transmissions.
+
+  - **Trigger**: Implement when a research use case requires antenna patterns or indoor propagation (e.g., wall attenuation).
+  - **Assumption**: FSPL is sufficient for open-space drone swarm scenarios. Indoor simulations with walls will need a ray-casting model against the MuJoCo geometry.
+  - **What can go wrong**: Multi-path models are computationally expensive; do not implement inline in the coordinator hot path. Compute offline or in a separate physics thread and inject as a pre-computed attenuation table.
+  - **Acceptance criteria**: Two nodes separated by a 1-meter wall (as defined in the YAML platform description) experience 20 dB additional attenuation compared to two nodes in open space at the same distance.
 
 ---
 
@@ -594,7 +677,29 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 **Tasks**:
 - [ ] **16.1** **IPS Benchmarking**: Add a CI step that runs a heavy mathematical payload in `standalone`, `slaved-suspend`, and `slaved-icount` modes and logs the Instructions-Per-Second (IPS).
-- [ ] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1ms threshold.
+
+  **Numeric thresholds** (baseline from QEMU 11.0 on x86_64, Cortex-A15 TCG, 8-core CI runner):
+  - `standalone`: ≥ 80 MIPS. Failure at < 60 MIPS (20% regression guard).
+  - `slaved-suspend`: ≥ 75 MIPS (≤ 6% overhead vs. standalone). Failure at < 55 MIPS.
+  - `slaved-icount`: ≥ 15 MIPS (icount chaining disabled). Failure at < 10 MIPS.
+
+  - **Assumption**: CI runner is a dedicated x86_64 Linux host with no competing workloads. If CI is shared, add ±20% tolerance or only fail on regression vs. the previous run (trend detection), not an absolute threshold.
+  - **What can go wrong**: Zenoh multicast scouting on startup adds ~200 ms latency before the benchmark starts. Always pass a router URL or disable multicast scouting in the benchmark fixture; otherwise IPS appears lower because startup time is included.
+  - **Assert**: The benchmark script must emit a machine-readable JSON line: `{"mode": "standalone", "mips": 123.4}`. CI parses this and fails if `mips < threshold`.
+  - **Test**: `test/phase16/ips_benchmark.sh`. Runs 10-second compute-bound firmware (tight MULS loop). Parses QEMU's `-d exec` output to count instructions. Outputs JSON. A separate Python script checks against the thresholds.
+
+- [ ] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1 ms threshold.
+
+  **Numeric thresholds**:
+  - P50 round-trip (Zenoh GET → reply): ≤ 200 µs. Fail if P50 > 500 µs.
+  - P99 round-trip: ≤ 1 ms. Fail if P99 > 2 ms (signals system jitter or Zenoh router overload).
+  - Zero stall errors (error_code = 1) in a 1000-quantum test run with `stall-timeout=5000`. Any stall is a CI failure.
+
+  - **Assumption**: Zenoh router is co-located on the same CI machine (loopback or Unix socket transport). Cross-host latency in distributed CI would invalidate these thresholds and requires separate baselines.
+  - **What can go wrong**: Latency spikes at quantum 1 (session setup overhead) skew P99. Warm-up the Zenoh session with 10 dummy GETs before starting the measurement window.
+  - **Assert**: The test captures per-quantum timestamps (before GET, after reply) in a CSV. P50 and P99 are computed from the CSV and checked against thresholds. Emit a summary line: `{"p50_us": 180, "p99_us": 850, "stalls": 0}`.
+  - **Test**: `test/phase16/latency_benchmark.sh`. Starts QEMU with zenoh-clock + mock TimeAuthority (in-process Rust program). Runs 1000 quanta of 1 ms each. Outputs timing CSV + JSON summary. CI parses and enforces thresholds.
+
 - [ ] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu.
 
 ---
