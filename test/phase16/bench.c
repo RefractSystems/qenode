@@ -21,6 +21,15 @@ void puthex(uint32_t v) {
     }
 }
 
+// Read the ARM Generic Timer Counter (CNTVCT_EL0)
+// This requires the generic timer to be present, which it is on cortex-a15
+uint64_t read_cntvct(void) {
+    uint32_t low, high;
+    // mrrc p15, 1, Rt, Rt2, c14 
+    asm volatile("mrrc p15, 1, %0, %1, c14" : "=r" (low), "=r" (high));
+    return ((uint64_t)high << 32) | low;
+}
+
 int main() {
     puts("BENCH START\r\n");
     
@@ -28,9 +37,9 @@ int main() {
     uint32_t iterations = 10000000; 
     uint32_t sum = 0;
     
-    // Use volatile to prevent compiler from optimizing the loop away
-    // or replacing it with a closed-form formula.
     volatile uint32_t *p_sum = &sum;
+
+    uint64_t start_cycles = read_cntvct();
 
     for (uint32_t i = 0; i < iterations; i++) {
         *p_sum += i;
@@ -38,13 +47,23 @@ int main() {
         *p_sum += 0x12345678;
     }
     
+    uint64_t end_cycles = read_cntvct();
+    uint64_t total_cycles = end_cycles - start_cycles;
+
     puts("BENCH DONE: ");
     puthex(sum);
     puts("\r\n");
     
-    // Signal end by printing a specific pattern
+    // Print the exact cycle count for the determinism check
+    puts("CYCLES: ");
+    puthex((uint32_t)(total_cycles >> 32));
+    puthex((uint32_t)total_cycles);
+    puts("\r\n");
+    
     puts("EXIT\r\n");
     
-    while(1);
+    while(1) {
+        for(volatile int i=0; i<1000; i++);
+    }
     return 0;
 }
