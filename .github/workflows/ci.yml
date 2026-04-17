@@ -745,7 +745,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
+            bash -c '
               # Pre-build all artifacts
               apt-get update && apt-get install -y --no-install-recommends libsystemc-dev
               make -C test/phase1
@@ -767,7 +767,7 @@ jobs:
                 --xml /workspace/test-results/peripheral-coverage.xml \
                 --html-details /workspace/test-results/peripheral-coverage.html \
                 --print-summary
-            "
+            '
 
       - name: Upload peripheral coverage results
         uses: actions/upload-artifact@v6
@@ -822,7 +822,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
+            bash -c '
               make -C test/phase1
               uv pip install --system --break-system-packages pyelftools
               # Find drcov plugin (priority: installed prefix, then build tree)
@@ -839,4 +839,4 @@ jobs:
                 -d plugin
               # Analyze results
               python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
-            "
+            '
