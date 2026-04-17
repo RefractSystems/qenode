@@ -23,6 +23,9 @@ concurrency:
 env:
   BUILDER_IMAGE: virtmcu-builder
   PYTHON_VERSION: "3.12"
+  # CI runners can be slow; raise the zenoh-clock STALL timeout so the device
+  # doesn't fire on load spikes.  Local dev keeps the 5 s default for fast feedback.
+  VIRTMCU_STALL_TIMEOUT_MS: "60000"
 
 # ── Tier 1: Lint ──────────────────────────────────────────────────────────────
 
@@ -226,6 +229,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "${{ matrix.pre }} && bash test/phase${{ matrix.phase }}/smoke_test.sh"
 
@@ -278,7 +282,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS=60000 \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
@@ -332,6 +336,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
@@ -384,6 +389,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               uv pip install --system --break-system-packages -r pyproject.toml
@@ -439,6 +445,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               uv pip install --system --break-system-packages -r pyproject.toml
@@ -494,6 +501,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
@@ -562,6 +570,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
@@ -681,6 +690,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               # Pre-build all artifacts
@@ -751,6 +761,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "
               make -C test/phase1
