@@ -27,11 +27,50 @@ use zenoh::pubsub::Subscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
+use virtmcu_api::ZenohFrameHeader;
+use virtmcu_qom::sync::Bql;
+use virtmcu_qom::timer::{
+    qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
+    virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
+};
+
 #[repr(C)]
 pub struct ZenohNetdevQEMU {
     pub parent_obj: SysBusDevice,
     pub nc: NetClientState,
     pub rust_state: *mut ZenohNetdevState,
+}
+
+#[repr(C)]
+pub struct ZenohNetClient {
+    pub nc: NetClientState,
+    pub rust_state: *mut ZenohNetdevState,
+}
+
+struct OrderedPacket {
+    vtime: u64,
+    data: Vec<u8>,
+}
+
+impl PartialEq for OrderedPacket {
+    fn eq(&self, other: &Self) -> bool {
+        self.vtime == other.vtime
+    }
+}
+impl Eq for OrderedPacket {}
+impl PartialOrd for OrderedPacket {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrderedPacket {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.vtime.cmp(&self.vtime)
+    }
 }
 
 pub struct ZenohNetdevState {
@@ -40,6 +79,8 @@ pub struct ZenohNetdevState {
     node_id: u32,
     topic: String,
     subscriber: Option<Subscriber<()>>,
+    rx_timer: *mut QemuTimer,
+    queue: Arc<Mutex<BinaryHeap<OrderedPacket>>>,
 }
 
 unsafe extern "C" fn zenoh_netdev_receive(
@@ -48,8 +89,7 @@ unsafe extern "C" fn zenoh_netdev_receive(
     size: usize,
 ) -> isize {
     // Find ZenohNetdevQEMU from nc using offset_of
-    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
-        as *mut ZenohNetdevQEMU);
+    let s = &mut *(nc as *mut ZenohNetClient);
     if s.rust_state.is_null() {
         return 0;
     }
@@ -61,17 +101,22 @@ unsafe extern "C" fn zenoh_netdev_can_receive(_nc: *mut NetClientState) -> bool 
 }
 
 unsafe extern "C" fn zenoh_netdev_cleanup(nc: *mut NetClientState) {
-    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
-        as *mut ZenohNetdevQEMU);
+    let s = &mut *(nc as *mut ZenohNetClient);
     if !s.rust_state.is_null() {
-        drop(Box::from_raw(s.rust_state));
+        let state = Box::from_raw(s.rust_state);
+        if !state.rx_timer.is_null() {
+            unsafe {
+                virtmcu_timer_del(state.rx_timer);
+                virtmcu_timer_free(state.rx_timer);
+            }
+        }
         s.rust_state = ptr::null_mut();
     }
 }
 
 static NET_ZENOH_INFO: NetClientInfo = NetClientInfo {
     type_id: NET_CLIENT_DRIVER_ZENOH,
-    size: std::mem::size_of::<ZenohNetdevQEMU>(),
+    size: std::mem::size_of::<ZenohNetClient>(),
     receive: Some(zenoh_netdev_receive),
     receive_raw: ptr::null_mut(),
     receive_iov: ptr::null_mut(),
@@ -89,8 +134,7 @@ unsafe extern "C" fn zenoh_netdev_hook(
     let opts = &(*netdev).u.zenoh;
 
     let nc = qemu_new_net_client(&NET_ZENOH_INFO, peer, c"zenoh".as_ptr(), name);
-    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
-        as *mut ZenohNetdevQEMU);
+    let s = &mut *(nc as *mut ZenohNetClient);
 
     let node_id = if opts.node.is_null() {
         0
@@ -108,7 +152,7 @@ unsafe extern "C" fn zenoh_netdev_hook(
     };
 
     let topic = if opts.topic.is_null() {
-        "sim/net".to_string()
+        "sim/eth/frame".to_string()
     } else {
         CStr::from_ptr(opts.topic).to_string_lossy().into_owned()
     };
@@ -153,6 +197,40 @@ declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
+extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
+    let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+
+    let mut queue = state.queue.lock().unwrap();
+
+    while let Some(packet) = queue.peek() {
+        if packet.vtime <= now {
+            let packet = queue.pop().unwrap();
+            unsafe {
+                virtmcu_qom::net::qemu_send_packet(
+                    state.nc,
+                    packet.data.as_ptr(),
+                    packet.data.len(),
+                );
+            }
+            eprintln!(
+                "[virtmcu-netdev] RX deliver node={} vtime={} size={}",
+                state.node_id,
+                packet.vtime,
+                packet.data.len()
+            );
+        } else {
+            break;
+        }
+    }
+
+    if let Some(next_packet) = queue.peek() {
+        unsafe {
+            virtmcu_timer_mod(state.rx_timer, next_packet.vtime as i64);
+        }
+    }
+}
+
 fn zenoh_netdev_init_internal(
     nc: *mut NetClientState,
     node_id: u32,
@@ -166,33 +244,92 @@ fn zenoh_netdev_init_internal(
         }
     };
 
-    let full_topic = format!("{}/{}", topic, node_id);
-    let nc_ptr = nc as usize;
+    let rx_topic = format!("{}/{}/rx", topic, node_id);
+
+    let queue = Arc::new(Mutex::new(BinaryHeap::new()));
+    let queue_clone = queue.clone();
+
+    let timer_ptr = Arc::new(AtomicUsize::new(0));
+    let timer_ptr_clone = timer_ptr.clone();
 
     let subscriber = session
-        .declare_subscriber(&full_topic)
+        .declare_subscriber(&rx_topic)
         .callback(move |sample| {
-            let nc = nc_ptr as *mut NetClientState;
+            let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
+            if tp == 0 {
+                return;
+            }
+            let rx_timer = tp as *mut QemuTimer;
+
             let data = sample.payload().to_bytes();
+            if data.len() < 12 {
+                return;
+            }
+
+            let mut header = ZenohFrameHeader::default();
             unsafe {
-                virtmcu_qom::net::qemu_send_packet(nc, data.as_ptr(), data.len());
+                std::ptr::copy_nonoverlapping(data.as_ptr(), &mut header as *mut _ as *mut u8, 12);
+            }
+
+            let payload = data[12..].to_vec();
+
+            let mut q = queue_clone.lock().unwrap();
+            q.push(OrderedPacket {
+                vtime: header.delivery_vtime_ns,
+                data: payload,
+            });
+            let earliest = q.peek().unwrap().vtime;
+
+            let _bql = Bql::lock();
+            unsafe {
+                virtmcu_timer_mod(rx_timer, earliest as i64);
             }
         })
         .wait()
         .ok();
 
-    Box::into_raw(Box::new(ZenohNetdevState {
+    let mut state = Box::new(ZenohNetdevState {
         session,
         nc,
         node_id,
-        topic,
+        topic: topic.clone(),
         subscriber,
-    }))
+        rx_timer: ptr::null_mut(),
+        queue,
+    });
+
+    let state_ptr = &mut *state as *mut ZenohNetdevState;
+    let rx_timer =
+        unsafe { virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void) };
+    state.rx_timer = rx_timer;
+    timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
+
+    Box::into_raw(state)
 }
 
 fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size: usize) -> isize {
-    let topic = format!("{}/{}", state.topic, state.node_id);
-    let data = unsafe { std::slice::from_raw_parts(buf, size) };
-    let _ = state.session.put(topic, data.to_vec()).wait();
+    let tx_topic = format!("{}/{}/tx", state.topic, state.node_id);
+    let payload = unsafe { std::slice::from_raw_parts(buf, size) };
+
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+
+    let header = ZenohFrameHeader {
+        delivery_vtime_ns: now,
+        size: size as u32,
+    };
+
+    let mut data = Vec::with_capacity(12 + size);
+    let mut header_bytes = [0u8; 12];
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            &header as *const _ as *const u8,
+            header_bytes.as_mut_ptr(),
+            12,
+        );
+    }
+    data.extend_from_slice(&header_bytes);
+    data.extend_from_slice(payload);
+
+    let _ = state.session.put(tx_topic, data).wait();
     size as isize
 }
