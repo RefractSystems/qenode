@@ -48,6 +48,9 @@ pub struct Zenoh802154State {
     rx_rssi: i8,
     status: u32,
     
+    pan_id: u16,
+    short_addr: u16,
+    
     rx_timer: *mut QemuTimer,
     rx_queue: Vec<RxFrame>,
     mutex: *mut QemuMutex,
@@ -124,6 +127,8 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         rx_read_pos: 0,
         rx_rssi: 0,
         status: 0,
+        pan_id: 0xFFFF,
+        short_addr: 0xFFFF,
         rx_timer,
         rx_queue: Vec::with_capacity(16),
         mutex,
@@ -154,6 +159,8 @@ pub unsafe extern "C" fn zenoh_802154_read_rust(
         0x10 => s.rx_len,
         0x14 => s.status,
         0x18 => (s.rx_rssi as u8) as u32,
+        0x20 => s.pan_id as u32,
+        0x24 => s.short_addr as u32,
         _ => 0,
     }
 }
@@ -203,6 +210,12 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
                 let _guard = (*s.mutex).lock();
                 check_rx_queue(s);
             }
+        },
+        0x20 => {
+            s.pan_id = value as u16;
+        },
+        0x24 => {
+            s.short_addr = value as u16;
         },
         _ => {},
     }
