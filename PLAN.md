@@ -742,7 +742,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.11 Align Cargo.toml workspace fields**
+- [x] **18.11 Align Cargo.toml workspace fields**
 
   `zenoh-clock` and `zenoh-netdev` use hardcoded `version`/`edition` instead of `version.workspace = true`. They will silently diverge on the next version bump.
 
