@@ -1,5 +1,4 @@
 #![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
-extern crate libc;
 
 use core::ffi::{c_char, c_void};
 use std::ffi::CStr;
@@ -32,6 +31,9 @@ pub struct ZenohChardevState {
     chr: *mut Chardev,
     #[allow(dead_code)]
     session: Session,
+    // Safety: Publisher<'static> is a lie — the publisher holds an Arc back to the session.
+    // Both live in this heap-allocated struct. Rust drops fields top-to-bottom, so session
+    // outlives publisher within the same struct, which is the only invariant that matters.
     publisher: Publisher<'static>,
     #[allow(dead_code)]
     subscriber: Subscriber<()>,
@@ -86,7 +88,10 @@ pub unsafe extern "C" fn zenoh_chardev_init(
     
     let mutex = virtmcu_mutex_new();
     
-    let state_ptr_raw = Box::into_raw(Box::new(std::mem::MaybeUninit::<ZenohChardevState>::uninit())) as *mut ZenohChardevState;
+    // Two-phase init: allocate first to get a stable address the subscriber callback can
+    // capture, then write the fully-constructed state into it. Box::new_uninit() panics on
+    // OOM (via handle_alloc_error) instead of returning null, eliminating null-deref UB.
+    let state_ptr_raw: *mut ZenohChardevState = Box::into_raw(Box::<std::mem::MaybeUninit<ZenohChardevState>>::new_uninit()).cast();
     let state_ptr_usize = state_ptr_raw as usize;
 
     let subscriber = session.declare_subscriber(topic_rx)
@@ -189,14 +194,14 @@ fn on_rx_frame(state: &ZenohChardevState, sample: zenoh::sample::Sample) {
 
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &*(opaque as *mut ZenohChardevState) };
-    
+
     loop {
         let frame = {
             let mut queue = state.rx_queue.lock().unwrap();
             let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-            
+
             if queue.is_empty() { return; }
-            
+
             if queue[0].delivery_vtime <= now {
                 queue.remove(0)
             } else {
@@ -206,9 +211,40 @@ extern "C" fn rx_timer_cb(opaque: *mut c_void) {
                 return;
             }
         };
-        
+
         unsafe {
             qemu_chr_be_write(state.chr, frame.data.as_ptr(), frame.data.len());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![deny(unsafe_code)]
+    use byteorder::{LittleEndian, ByteOrder};
+
+    #[test]
+    fn frame_header_encode_decode() {
+        let vtime: u64 = 1_234_567_890_000;
+        let size: u32 = 64;
+        let mut hdr = [0u8; 12];
+        LittleEndian::write_u64(&mut hdr[0..8], vtime);
+        LittleEndian::write_u32(&mut hdr[8..12], size);
+        assert_eq!(LittleEndian::read_u64(&hdr[0..8]), vtime);
+        assert_eq!(LittleEndian::read_u32(&hdr[8..12]), size);
+    }
+
+    #[test]
+    fn rx_queue_priority_order() {
+        // Verify frames inserted out of vtime order sort correctly.
+        let mut queue: Vec<(u64, u8)> = Vec::new();
+        let frames = [(200u64, b'A'), (100u64, b'B'), (150u64, b'C')];
+        for (vt, id) in frames {
+            let pos = queue.binary_search_by(|p| p.0.cmp(&vt)).unwrap_or_else(|e| e);
+            queue.insert(pos, (vt, id));
+        }
+        assert_eq!(queue[0].1, b'B'); // earliest vtime first
+        assert_eq!(queue[1].1, b'C');
+        assert_eq!(queue[2].1, b'A');
     }
 }

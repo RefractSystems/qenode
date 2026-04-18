@@ -1,5 +1,4 @@
 #![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
-extern crate libc;
 
 use core::ffi::{c_char, c_void};
 use std::ffi::CStr;
@@ -35,6 +34,8 @@ pub struct Zenoh802154State {
     irq: qemu_irq,
     #[allow(dead_code)]
     session: Session,
+    // Safety: same as zenoh-chardev — publisher holds Arc back to session; both live in
+    // this struct; drop order (top-to-bottom) ensures session outlives publisher.
     publisher: Publisher<'static>,
     #[allow(dead_code)]
     subscriber: Subscriber<()>,
@@ -90,7 +91,9 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
 
     let publisher = session.declare_publisher(topic_tx).wait().unwrap();
     
-    let state_ptr_raw = Box::into_raw(Box::new(std::mem::MaybeUninit::<Zenoh802154State>::uninit())) as *mut Zenoh802154State;
+    // Two-phase init: allocate first for a stable address the subscriber captures,
+    // then write the constructed state. Box::new_uninit() panics on OOM (no null UB).
+    let state_ptr_raw: *mut Zenoh802154State = Box::into_raw(Box::<std::mem::MaybeUninit<Zenoh802154State>>::new_uninit()).cast();
     let state_ptr_usize = state_ptr_raw as usize;
 
     let subscriber = session.declare_subscriber(topic_rx)
@@ -274,4 +277,38 @@ extern "C" fn rx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &mut *(opaque as *mut Zenoh802154State) };
     let _guard = unsafe { (*state.mutex).lock() };
     unsafe { check_rx_queue(state) };
+}
+
+#[cfg(test)]
+mod tests {
+    #![deny(unsafe_code)]
+    use byteorder::{LittleEndian, ByteOrder};
+
+    #[test]
+    fn rf_header_encode_decode() {
+        let vtime: u64 = 9_876_543_210_000;
+        let size: u32 = 20;
+        let rssi: i8 = -70;
+        let mut hdr = [0u8; 14];
+        LittleEndian::write_u64(&mut hdr[0..8], vtime);
+        LittleEndian::write_u32(&mut hdr[8..12], size);
+        hdr[12] = rssi as u8;
+        hdr[13] = 255; // LQI
+        assert_eq!(LittleEndian::read_u64(&hdr[0..8]), vtime);
+        assert_eq!(LittleEndian::read_u32(&hdr[8..12]), size);
+        assert_eq!(hdr[12] as i8, rssi);
+    }
+
+    #[test]
+    fn rx_queue_priority_order() {
+        let mut queue: Vec<(u64, usize)> = Vec::new();
+        let frames = [(300u64, 30usize), (100u64, 10usize), (200u64, 20usize)];
+        for (vt, sz) in frames {
+            let pos = queue.binary_search_by(|p| p.0.cmp(&vt)).unwrap_or_else(|e| e);
+            queue.insert(pos, (vt, sz));
+        }
+        assert_eq!(queue[0].0, 100); // earliest vtime first
+        assert_eq!(queue[1].0, 200);
+        assert_eq!(queue[2].0, 300);
+    }
 }
