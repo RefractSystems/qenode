@@ -3066,6 +3066,7 @@ name = "virtmcu-zenoh"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "virtmcu-qom",
  "zenoh",
 ]
 
