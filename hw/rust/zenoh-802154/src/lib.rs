@@ -242,8 +242,15 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     
     if size > 128 || bytes.len() < 14 + size { return; }
     
-    let mut frame_data = [0u8; 128];
-    frame_data[..size].copy_from_slice(&bytes[14..14+size]);
+    let frame_data = &bytes[14..14+size];
+    
+    // Slice 2: Address Filtering
+    if !frame_matches_address(state, frame_data) {
+        return;
+    }
+    
+    let mut stored_data = [0u8; 128];
+    stored_data[..size].copy_from_slice(frame_data);
     
     // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
     // to prevent AB-BA deadlocks with the QEMU main thread.
@@ -254,11 +261,48 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
         // Insertion sort by vtime (ascending)
         let pos = state.rx_queue.binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
             .unwrap_or_else(|e| e);
-        state.rx_queue.insert(pos, RxFrame { delivery_vtime: vtime, data: frame_data, size, rssi });
+        state.rx_queue.insert(pos, RxFrame { delivery_vtime: vtime, data: stored_data, size, rssi });
         
         unsafe {
             virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
         }
+    }
+}
+
+fn frame_matches_address(s: &Zenoh802154State, frame: &[u8]) -> bool {
+    if frame.len() < 3 { return false; }
+    
+    let fcf = LittleEndian::read_u16(&frame[0..2]);
+    // let seq = frame[2];
+    
+    let dest_addr_mode = (fcf >> 10) & 0x03;
+    
+    match dest_addr_mode {
+        0x00 => {
+            // No destination address. Accepted if it's a beacon or if we are a coordinator.
+            // For now, let's just accept it.
+            true
+        },
+        0x02 => {
+            // 16-bit short address
+            if frame.len() < 7 { return false; }
+            let dest_pan = LittleEndian::read_u16(&frame[3..5]);
+            let dest_addr = LittleEndian::read_u16(&frame[5..7]);
+            
+            let pan_matches = dest_pan == 0xFFFF || dest_pan == s.pan_id;
+            let addr_matches = dest_addr == 0xFFFF || dest_addr == s.short_addr;
+            
+            pan_matches && addr_matches
+        },
+        0x03 => {
+            // 64-bit extended address
+            if frame.len() < 13 { return false; }
+            let dest_pan = LittleEndian::read_u16(&frame[3..5]);
+            // For now, we only support short addresses, so we only match broadcast PAN
+            // and don't match extended address unless it's broadcast (not really a thing for extended?)
+            dest_pan == 0xFFFF || dest_pan == s.pan_id
+        },
+        _ => false,
     }
 }
 
