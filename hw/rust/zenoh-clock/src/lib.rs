@@ -171,6 +171,9 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
                 break;
             }
         }
+        // Reset quantum_done so the next query doesn't see a stale "already done" state.
+        // quantum_wait set it to true to wake us; we've consumed that signal now.
+        backend.quantum_done.store(false, Ordering::Release);
     }
 
     let vtime = backend.vtime_ns.load(Ordering::Acquire);
