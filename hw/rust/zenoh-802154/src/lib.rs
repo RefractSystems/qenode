@@ -30,6 +30,15 @@ struct RxFrame {
     rssi: i8,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum RadioState {
+    Off = 0,
+    Idle = 1,
+    Rx = 2,
+    Tx = 3,
+}
+
 pub struct Zenoh802154State {
     irq: qemu_irq,
     #[allow(dead_code)]
@@ -47,13 +56,19 @@ pub struct Zenoh802154State {
     rx_read_pos: u32,
     rx_rssi: i8,
     status: u32,
+    state: RadioState,
     
     pan_id: u16,
     short_addr: u16,
     
     rx_timer: *mut QemuTimer,
+    backoff_timer: *mut QemuTimer,
     rx_queue: Vec<RxFrame>,
     mutex: *mut QemuMutex,
+    
+    // CSMA/CA state
+    nb: u8,
+    be: u8,
 }
 
 #[no_mangle]
@@ -113,6 +128,12 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         state_ptr_raw as *mut c_void,
     );
 
+    let backoff_timer = virtmcu_timer_new_ns(
+        QEMU_CLOCK_VIRTUAL,
+        backoff_timer_cb,
+        state_ptr_raw as *mut c_void,
+    );
+
     let mutex = virtmcu_mutex_new();
 
     let state = Zenoh802154State {
@@ -127,11 +148,15 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         rx_read_pos: 0,
         rx_rssi: 0,
         status: 0,
+        state: RadioState::Idle,
         pan_id: 0xFFFF,
         short_addr: 0xFFFF,
         rx_timer,
+        backoff_timer,
         rx_queue: Vec::with_capacity(16),
         mutex,
+        nb: 0,
+        be: 3,
     };
 
     ptr::write(state_ptr_raw, state);
@@ -157,8 +182,9 @@ pub unsafe extern "C" fn zenoh_802154_read_rust(
             }
         },
         0x10 => s.rx_len,
-        0x14 => s.status,
+        0x14 => s.status | ((s.state as u32) << 8),
         0x18 => (s.rx_rssi as u8) as u32,
+        0x1C => s.state as u32,
         0x20 => s.pan_id as u32,
         0x24 => s.short_addr as u32,
         _ => 0,
@@ -184,24 +210,8 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
             s.tx_len = (value & 0x7F) as u32;
         },
         0x08 => {
-            // TX GO
-            let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-            let mut msg = Vec::with_capacity(14 + s.tx_len as usize);
-            
-            let mut hdr_bytes = [0u8; 14];
-            LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime);
-            LittleEndian::write_u32(&mut hdr_bytes[8..12], s.tx_len);
-            hdr_bytes[12] = 0; // RSSI
-            hdr_bytes[13] = 255; // LQI
-            
-            msg.extend_from_slice(&hdr_bytes);
-            msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
-            
-            let _ = s.publisher.put(msg).wait();
-            
-            s.tx_len = 0;
-            s.status |= 0x02; // TX_DONE
-            qemu_set_irq(s.irq, 1);
+            // TX GO (legacy)
+            tx_go(s);
         },
         0x14 => {
             s.status &= !(value as u32);
@@ -209,6 +219,20 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
                 qemu_set_irq(s.irq, 0);
                 let _guard = (*s.mutex).lock();
                 check_rx_queue(s);
+            }
+        },
+        0x1C => {
+            let next_state = match value {
+                0 => RadioState::Off,
+                1 => RadioState::Idle,
+                2 => RadioState::Rx,
+                3 => RadioState::Tx,
+                _ => s.state,
+            };
+            if next_state == RadioState::Tx {
+                tx_go(s);
+            } else {
+                s.state = next_state;
             }
         },
         0x20 => {
@@ -221,6 +245,11 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
     }
 }
 
+const UNIT_BACKOFF_PERIOD_NS: u64 = 320_000;
+const MAC_MIN_BE: u8 = 3;
+const MAC_MAX_BE: u8 = 5;
+const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
+
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_802154_cleanup_rust(state: *mut Zenoh802154State) {
     if state.is_null() { return; }
@@ -228,10 +257,89 @@ pub unsafe extern "C" fn zenoh_802154_cleanup_rust(state: *mut Zenoh802154State)
     if !s.rx_timer.is_null() {
         virtmcu_timer_free(s.rx_timer);
     }
+    if !s.backoff_timer.is_null() {
+        virtmcu_timer_free(s.backoff_timer);
+    }
     virtmcu_mutex_free(s.mutex);
 }
 
+fn tx_go(s: &mut Zenoh802154State) {
+    // Slice 4: CSMA/CA Start
+    s.nb = 0;
+    s.be = MAC_MIN_BE;
+    s.state = RadioState::Tx; // We are in TX process (BusyTx)
+    schedule_backoff(s);
+}
+
+fn schedule_backoff(s: &mut Zenoh802154State) {
+    // Generate random backoff between 0 and 2^BE - 1
+    let max_backoff = (1u32 << s.be) - 1;
+    let backoff_count = rand::random::<u32>() % (max_backoff + 1);
+    let delay_ns = backoff_count as u64 * UNIT_BACKOFF_PERIOD_NS;
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    
+    unsafe {
+        virtmcu_timer_mod(s.backoff_timer, (now + delay_ns) as i64);
+    }
+}
+
+fn tx_real(s: &mut Zenoh802154State) {
+    let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let mut msg = Vec::with_capacity(14 + s.tx_len as usize);
+    
+    let mut hdr_bytes = [0u8; 14];
+    LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime);
+    LittleEndian::write_u32(&mut hdr_bytes[8..12], s.tx_len);
+    hdr_bytes[12] = 0; // RSSI
+    hdr_bytes[13] = 255; // LQI
+    
+    msg.extend_from_slice(&hdr_bytes);
+    msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
+    
+    let _ = s.publisher.put(msg).wait();
+    
+    s.tx_len = 0;
+    s.status |= 0x02; // TX_DONE
+    s.state = RadioState::Idle; 
+    unsafe {
+        qemu_set_irq(s.irq, 1);
+    }
+}
+
+extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
+    let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
+    let _guard = unsafe { (*s.mutex).lock() };
+    
+    // Perform CCA
+    // For now, channel is busy if we have something in RX queue that is currently "being received"
+    // or if we just received something.
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let busy = !s.rx_queue.is_empty() && s.rx_queue[0].delivery_vtime <= now;
+    
+    if !busy {
+        tx_real(s);
+    } else {
+        s.nb += 1;
+        if s.nb > MAC_MAX_CSMA_BACKOFFS {
+            // TX failed (Channel Busy)
+            s.tx_len = 0;
+            s.state = RadioState::Idle;
+            // Maybe set a NO_ACK or BUSY status bit?
+            // For now, just raise IRQ as if done but maybe with a different bit.
+            s.status |= 0x02; // Still set TX_DONE for now to avoid hanging firmware
+            unsafe { qemu_set_irq(s.irq, 1); }
+        } else {
+            s.be = std::cmp::min(s.be + 1, MAC_MAX_BE);
+            schedule_backoff(s);
+        }
+    }
+}
+
 fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
+    if state.state != RadioState::Rx {
+        return;
+    }
+    
     let payload = sample.payload();
     if payload.len() < 14 { return; }
     

@@ -11,3 +11,4 @@ crate-type = ["staticlib"]
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 byteorder.workspace = true
+rand = "0.9"
