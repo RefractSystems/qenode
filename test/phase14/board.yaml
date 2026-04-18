@@ -15,9 +15,9 @@ peripherals:
       size: 0x01000000
 
   - name: uart0
-    type: zenoh-chardev
-    properties:
-      node: "0"
+    type: UART.PL011
+    address: 0x09000000
+    interrupts: [33]
 
   - name: radio0
     type: zenoh-802154

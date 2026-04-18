@@ -23,6 +23,7 @@
 #define REG_RADIO_RX_LEN    (RADIO_BASE + 0x10)
 #define REG_RADIO_STATUS    (RADIO_BASE + 0x14)
 #define REG_RADIO_RX_RSSI   (RADIO_BASE + 0x18)
+#define REG_RADIO_COMMAND   (RADIO_BASE + 0x1C)
 
 /* New registers for 14.5 (proposed) */
 #define REG_RADIO_PAN_ID    (RADIO_BASE + 0x20)
@@ -30,6 +31,11 @@
 
 #define STATUS_RX_READY     0x01
 #define STATUS_TX_DONE      0x02
+
+#define CMD_OFF             0
+#define CMD_IDLE            1
+#define CMD_RX              2
+#define CMD_TX              3
 
 void uart_putc(char c) {
     while (*(volatile uint32_t *)UARTFR & UARTFR_TXFF);
@@ -87,6 +93,9 @@ int main() {
     /* Clear TX_DONE */
     *(volatile uint32_t *)REG_RADIO_STATUS = STATUS_TX_DONE;
     uart_puts("Packet sent successfully.\n");
+
+    uart_puts("Entering RX mode...\n");
+    *(volatile uint32_t *)REG_RADIO_COMMAND = CMD_RX;
 
     uart_puts("Waiting for RX...\n");
     while (1) {

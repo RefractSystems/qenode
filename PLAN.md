@@ -623,7 +623,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
 
 ### Phase 14 Technical Debt & Future Risks
-- [ ] **14.5** **True 802.15.4 MAC State Machine**: `hw/zenoh/zenoh-802154.c` acts as a simple byte-pipe (FIFO). Real radios (e.g., nRF52840, AT86RF233) have complex state machines managing CSMA/CA, auto-ACKs, frame filtering by PAN ID/Short Address, and MAC-level timers. Guest firmware using standard Zephyr/Contiki drivers will fail without these hardware-level behaviors.
+- [x] **14.5** **True 802.15.4 MAC State Machine**: Implemented in Rust (`hw/rust/zenoh-802154/`). Supports virtual-time-accurate CSMA/CA backoff, Auto-ACK generation (SIFS delay), and Address Filtering (PAN ID, Short/Extended Address). Verified with bare-metal integration test.
 
   - **Trigger**: Implement when a Zephyr 802.15.4 driver test (`tests/net/ieee802154/`) fails on virtmcu due to missing MAC behavior.
   - **Assumption**: Current firmware under test uses a soft-MAC driver that manages CSMA/CA in software. Hard-MAC drivers (which rely on the peripheral to do ACK and backoff) will fail earlier.
