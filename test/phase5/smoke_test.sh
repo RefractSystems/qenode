@@ -170,13 +170,112 @@ for _ in $(seq 1 50); do
 done
 
 if [ "$PASSED" = true ]; then
-    echo "[phase5] Phase 5 smoke test: PASSED"
-    exit 0
+    echo "[phase5] Functional test: PASSED"
 else
-    echo "[phase5] Phase 5 smoke test: FAILED"
+    echo "[phase5] Functional test: FAILED"
     echo "--- Adapter log ---"
     cat "$ADAPTER_LOG"
     echo "--- QEMU log ---"
     cat "$QEMU_LOG"
     exit 1
 fi
+
+# ── 7. Timeout and Crash Tests (Phase 5.6) ───────────────────────────────────
+
+run_test_case() {
+    local mode=$1
+    local expected_msg=$2
+
+    echo "[phase5.6] RUNNING TIMEOUT TEST CASE: $mode"
+    
+    # ── Start malicious adapter ──
+    rm -f "$SOCK_PATH"
+    python3 -u "$SCRIPT_DIR/malicious_adapter.py" "$SOCK_PATH" "$mode" > "$ADAPTER_LOG" 2>&1 &
+    ADAPTER_PID=$!
+
+    for _ in $(seq 1 50); do
+        [ -S "$SOCK_PATH" ] && break
+        sleep 0.1
+    done
+
+    if [ ! -S "$SOCK_PATH" ]; then
+        echo "[phase5.6] FAILED: Adapter failed to start"
+        cat "$ADAPTER_LOG"
+        return 1
+    fi
+
+    # ── Start QEMU ──
+    rm -f "$QEMU_LOG" "$QMP_SOCK"
+    "$RUN_SH" --dtb "$DTB_PATH" \
+        --kernel "$ELF_PATH" \
+        -nographic \
+        -monitor none \
+        -d guest_errors \
+        -qmp "unix:$QMP_SOCK,server,nowait" > "$QEMU_LOG" 2>&1 &
+    QEMU_PID=$!
+
+    # Wait for QEMU to start and encounter the MMIO operation
+    sleep 5
+
+    # ── Check QMP responsiveness ──
+    echo "[phase5.6]   Checking QMP responsiveness..."
+    if ! python3 -c '
+import socket, sys, json
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2.0)
+try:
+    s.connect(sys.argv[1])
+    s.recv(4096)
+    s.sendall(b"{\"execute\": \"qmp_capabilities\"}\n")
+    s.recv(4096)
+    s.sendall(b"{\"execute\": \"query-status\"}\n")
+    data = s.recv(4096).decode("utf-8")
+    if "return" not in data: sys.exit(1)
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+' "$QMP_SOCK"; then
+        echo "[phase5.6]   FAILED: QEMU is unresponsive (likely hung)"
+        kill -9 "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+        echo "--- QEMU LOG ---"
+        cat "$QEMU_LOG"
+        return 1
+    fi
+
+    # ── Check for expected error in QEMU log ──
+    echo "[phase5.6]   Killing QEMU (PID $QEMU_PID)..."
+    kill -9 "$QEMU_PID" 2>/dev/null || true
+    sleep 1
+    
+    echo "[phase5.6]   Checking for expected error in log..."
+    if grep -q "$expected_msg" "$QEMU_LOG"; then
+        echo "[phase5.6]   SUCCESS: Expected error detected"
+    else
+        echo "[phase5.6]   FAILED: Expected error not found in log"
+        echo "--- QEMU LOG ---"
+        cat "$QEMU_LOG"
+        echo "--- ADAPTER LOG ---"
+        cat "$ADAPTER_LOG"
+        return 1
+    fi
+
+    kill "$ADAPTER_PID" 2>/dev/null || true
+    wait "$ADAPTER_PID" 2>/dev/null || true
+    return 0
+}
+
+# TEST 1: HANG (Timeout)
+if ! run_test_case "hang" "mmio-socket-bridge: timeout on socket fd"; then
+    exit 1
+fi
+
+echo "----------------------------------------------------------------------"
+
+# TEST 2: CRASH (Immediate disconnect)
+if ! run_test_case "crash" "mmio-socket-bridge: remote disconnected"; then
+    exit 1
+fi
+
+echo "[phase5] All Phase 5 tests passed!"
+exit 0
