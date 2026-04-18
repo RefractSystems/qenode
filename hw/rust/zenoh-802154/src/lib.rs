@@ -90,7 +90,7 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
 
     let publisher = session.declare_publisher(topic_tx).wait().unwrap();
     
-    let state_ptr_raw = libc::malloc(std::mem::size_of::<Zenoh802154State>()) as *mut Zenoh802154State;
+    let state_ptr_raw = Box::into_raw(Box::new(std::mem::MaybeUninit::<Zenoh802154State>::uninit())) as *mut Zenoh802154State;
     let state_ptr_usize = state_ptr_raw as usize;
 
     let subscriber = session.declare_subscriber(topic_rx)

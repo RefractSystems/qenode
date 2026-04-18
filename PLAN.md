@@ -478,7 +478,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 7 Technical Debt & Future Risks
 
-- [ ] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
+- [x] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
 
   `hw/rust/zenoh-netdev/src/lib.rs` injects incoming Ethernet frames directly from the Zenoh subscriber callback (a foreign Zenoh thread) by calling `qemu_receive_packet` under the BQL. Frames are delivered in OS-scheduling order, not virtual-time order. In a two-node simulation where Node A and Node B exchange frames at the same quantum boundary, which node receives first depends on thread scheduling — not on the virtual timestamp in the frame header. This breaks determinism for replay and breaks the Phase 7 contract.
 
@@ -511,7 +511,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 8 Technical Debt & Future Risks
 
-- [ ] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
+- [x] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
 
   `hw/rust/zenoh-chardev/src/lib.rs` and `hw/rust/zenoh-802154/src/lib.rs` use `libc::malloc(size_of::<State>())` for initial state allocation, then immediately write into the raw pointer with `ptr::write(state_ptr, ...)`. If `malloc` returns `null` (OOM), `ptr::write` is undefined behavior — a null pointer write that will segfault or silently corrupt memory, depending on the system.
 
@@ -792,7 +792,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.7 Fix BQL in `zenoh-clock.c`**
+- [x] **18.7 Fix BQL in `zenoh-clock.c`**
 
   `zenoh_clock_cpu_halt_cb` calls `zenoh_clock_quantum_wait()` while holding the BQL. The PLAN §7 design spec requires releasing the BQL before blocking on a Zenoh reply. The comment in the code acknowledges this but doesn't implement it. Currently safe only because the Zenoh callback (`on_clock_query`) does not call any QEMU API that requires the BQL — but that is an undocumented, fragile assumption.
 

@@ -66,12 +66,26 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     
     if (now >= s->next_quantum_ns || halted) {
-        /* Release BQL to allow other threads (like Zenoh callback) to run if they need it,
-         * though the Rust backend uses its own mutex for internal state.
-         * Note: the Rust backend's internal mutex serializes threads, maintaining a
-         * single-quantum-at-a-time invariant even with multiple vCPUs. */
-        int64_t delta = zenoh_clock_quantum_wait(s->rust_state, now);
-        
+        /*
+         * BQL sandwich: release before blocking on a Zenoh reply so the QEMU
+         * main loop (QMP, GDB stub, I/O) can make progress while we wait.
+         *
+         * Capture rust_state while the BQL is still held — instance_finalize
+         * can run in the main loop thread once we drop the lock and would set
+         * s->rust_state = NULL after freeing the Rust backend.  Using the
+         * local avoids dereferencing s->rust_state without the lock.
+         *
+         * Multi-vCPU note: if QEMU is configured with multiple vCPUs each one
+         * calls this hook independently.  The Rust backend's internal mutex
+         * serialises them, maintaining the single-quantum-at-a-time invariant.
+         */
+        ZenohClockState *rust_state = s->rust_state;
+        bql_unlock();
+        int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
+        bql_lock();
+
+        assert(s->rust_state != NULL &&
+               "zenoh-clock finalized while blocking in quantum_wait");
         s->next_quantum_ns = now + delta;
     }
 }
