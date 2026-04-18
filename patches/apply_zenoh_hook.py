@@ -167,7 +167,7 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     cpus_c = os.path.join(qemu, "system", "cpus.c")
     patch_file(
         cpus_c,
-        "void bql_unlock(void)\n{\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
+        "void bql_unlock(void)\n{\n    g_assert(bql_locked());\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
         "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n",
         after=True,
     )
