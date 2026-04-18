@@ -1,19 +1,25 @@
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::collapsible_match,
+    dead_code,
+    unused_imports,
+    clippy::len_zero
+)]
 
+use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_void};
 use std::ffi::CStr;
 use std::ptr;
-use byteorder::{LittleEndian, ByteOrder};
 
+use zenoh::pubsub::Publisher;
+use zenoh::pubsub::Subscriber;
 use zenoh::Config;
 use zenoh::Session;
 use zenoh::Wait;
-use zenoh::pubsub::Publisher;
-use zenoh::pubsub::Subscriber;
 
+use virtmcu_qom::irq::*;
 use virtmcu_qom::sync::*;
 use virtmcu_qom::timer::*;
-use virtmcu_qom::irq::*;
 
 #[repr(C, packed)]
 struct ZenohRfHeader {
@@ -48,7 +54,7 @@ pub struct Zenoh802154State {
     publisher: Publisher<'static>,
     #[allow(dead_code)]
     subscriber: Subscriber<()>,
-    
+
     tx_fifo: [u8; 128],
     tx_len: u32,
     rx_fifo: [u8; 128],
@@ -57,21 +63,21 @@ pub struct Zenoh802154State {
     rx_rssi: i8,
     status: u32,
     state: RadioState,
-    
+
     pan_id: u16,
     short_addr: u16,
     ext_addr: u64,
-    
+
     rx_timer: *mut QemuTimer,
     backoff_timer: *mut QemuTimer,
     ack_timer: *mut QemuTimer,
     rx_queue: Vec<RxFrame>,
     mutex: *mut QemuMutex,
-    
+
     // CSMA/CA state
     nb: u8,
     be: u8,
-    
+
     // Auto-ACK state
     ack_pending: bool,
     ack_seq: u8,
@@ -97,7 +103,10 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
     let session = match zenoh::open(config).wait() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[zenoh-802154] node={}: FAILED to open Zenoh session: {}", node_id, e);
+            eprintln!(
+                "[zenoh-802154] node={}: FAILED to open Zenoh session: {}",
+                node_id, e
+            );
             return ptr::null_mut();
         }
     };
@@ -114,13 +123,15 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
     }
 
     let publisher = session.declare_publisher(topic_tx).wait().unwrap();
-    
+
     // Two-phase init: allocate first for a stable address the subscriber captures,
     // then write the constructed state. Box::new_uninit() panics on OOM (no null UB).
-    let state_ptr_raw: *mut Zenoh802154State = Box::into_raw(Box::<std::mem::MaybeUninit<Zenoh802154State>>::new_uninit()).cast();
+    let state_ptr_raw: *mut Zenoh802154State =
+        Box::into_raw(Box::<std::mem::MaybeUninit<Zenoh802154State>>::new_uninit()).cast();
     let state_ptr_usize = state_ptr_raw as usize;
 
-    let subscriber = session.declare_subscriber(topic_rx)
+    let subscriber = session
+        .declare_subscriber(topic_rx)
         .callback(move |sample| {
             let state = &mut *(state_ptr_usize as *mut Zenoh802154State);
             on_rx_frame(state, sample);
@@ -181,10 +192,7 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_802154_read_rust(
-    state: *mut Zenoh802154State,
-    offset: u64,
-) -> u32 {
+pub unsafe extern "C" fn zenoh_802154_read_rust(state: *mut Zenoh802154State, offset: u64) -> u32 {
     let s = &mut *state;
     match offset {
         0x04 => s.tx_len,
@@ -196,7 +204,7 @@ pub unsafe extern "C" fn zenoh_802154_read_rust(
             } else {
                 0
             }
-        },
+        }
         0x10 => s.rx_len,
         0x14 => s.status | ((s.state as u32) << 8),
         0x18 => (s.rx_rssi as u8) as u32,
@@ -223,14 +231,14 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
                 s.tx_fifo[s.tx_len as usize] = value as u8;
                 s.tx_len += 1;
             }
-        },
+        }
         0x04 => {
             s.tx_len = (value & 0x7F) as u32;
-        },
+        }
         0x08 => {
             // TX GO (legacy)
             tx_go(s);
-        },
+        }
         0x14 => {
             s.status &= !(value as u32);
             if s.status & 0x01 == 0 {
@@ -238,7 +246,7 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
                 let _guard = (*s.mutex).lock();
                 check_rx_queue(s);
             }
-        },
+        }
         0x1C => {
             let next_state = match value {
                 0 => RadioState::Off,
@@ -252,20 +260,20 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
             } else {
                 s.state = next_state;
             }
-        },
+        }
         0x20 => {
             s.pan_id = value as u16;
-        },
+        }
         0x24 => {
             s.short_addr = value as u16;
-        },
+        }
         0x28 => {
-            s.ext_addr = (s.ext_addr & 0xFFFFFFFF00000000) | (value as u64);
-        },
+            s.ext_addr = (s.ext_addr & 0xFFFFFFFF00000000) | value;
+        }
         0x2C => {
-            s.ext_addr = (s.ext_addr & 0x00000000FFFFFFFF) | ((value as u64) << 32);
-        },
-        _ => {},
+            s.ext_addr = (s.ext_addr & 0x00000000FFFFFFFF) | (value << 32);
+        }
+        _ => {}
     }
 }
 
@@ -277,7 +285,9 @@ const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
 
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_802154_cleanup_rust(state: *mut Zenoh802154State) {
-    if state.is_null() { return; }
+    if state.is_null() {
+        return;
+    }
     let s = Box::from_raw(state);
     if !s.rx_timer.is_null() {
         virtmcu_timer_free(s.rx_timer);
@@ -305,7 +315,7 @@ fn schedule_backoff(s: &mut Zenoh802154State) {
     let backoff_count = rand::random::<u32>() % (max_backoff + 1);
     let delay_ns = backoff_count as u64 * UNIT_BACKOFF_PERIOD_NS;
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    
+
     unsafe {
         virtmcu_timer_mod(s.backoff_timer, (now + delay_ns) as i64);
     }
@@ -314,21 +324,21 @@ fn schedule_backoff(s: &mut Zenoh802154State) {
 fn tx_real(s: &mut Zenoh802154State) {
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let mut msg = Vec::with_capacity(14 + s.tx_len as usize);
-    
+
     let mut hdr_bytes = [0u8; 14];
     LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime);
     LittleEndian::write_u32(&mut hdr_bytes[8..12], s.tx_len);
     hdr_bytes[12] = 0; // RSSI
     hdr_bytes[13] = 255; // LQI
-    
+
     msg.extend_from_slice(&hdr_bytes);
     msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
-    
+
     let _ = s.publisher.put(msg).wait();
-    
+
     s.tx_len = 0;
     s.status |= 0x02; // TX_DONE
-    s.state = RadioState::Idle; 
+    s.state = RadioState::Idle;
     unsafe {
         qemu_set_irq(s.irq, 1);
     }
@@ -337,13 +347,13 @@ fn tx_real(s: &mut Zenoh802154State) {
 extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
     let _guard = unsafe { (*s.mutex).lock() };
-    
+
     // Perform CCA
     // For now, channel is busy if we have something in RX queue that is currently "being received"
     // or if we just received something.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let busy = !s.rx_queue.is_empty() && s.rx_queue[0].delivery_vtime <= now;
-    
+
     if !busy {
         tx_real(s);
     } else {
@@ -355,7 +365,9 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
             // Maybe set a NO_ACK or BUSY status bit?
             // For now, just raise IRQ as if done but maybe with a different bit.
             s.status |= 0x02; // Still set TX_DONE for now to avoid hanging firmware
-            unsafe { qemu_set_irq(s.irq, 1); }
+            unsafe {
+                qemu_set_irq(s.irq, 1);
+            }
         } else {
             s.be = std::cmp::min(s.be + 1, MAC_MAX_BE);
             schedule_backoff(s);
@@ -366,25 +378,27 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
 extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
     let _guard = unsafe { (*s.mutex).lock() };
-    
-    if !s.ack_pending { return; }
-    
+
+    if !s.ack_pending {
+        return;
+    }
+
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let mut msg = Vec::with_capacity(14 + 3);
-    
+
     let mut hdr_bytes = [0u8; 14];
     LittleEndian::write_u64(&mut hdr_bytes[0..8], now);
     LittleEndian::write_u32(&mut hdr_bytes[8..12], 3);
     hdr_bytes[12] = 0; // RSSI
     hdr_bytes[13] = 255; // LQI
-    
+
     msg.extend_from_slice(&hdr_bytes);
-    
+
     // 802.15.4 ACK frame
     msg.push(0x02); // FCF LSB (Type: ACK)
     msg.push(0x00); // FCF MSB
     msg.push(s.ack_seq);
-    
+
     let _ = s.publisher.put(msg).wait();
     s.ack_pending = false;
 }
@@ -393,24 +407,28 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     if state.state != RadioState::Rx {
         return;
     }
-    
+
     let payload = sample.payload();
-    if payload.len() < 14 { return; }
-    
+    if payload.len() < 14 {
+        return;
+    }
+
     let bytes = payload.to_bytes();
     let vtime = LittleEndian::read_u64(&bytes[0..8]);
     let size = LittleEndian::read_u32(&bytes[8..12]) as usize;
     let rssi = bytes[12] as i8;
-    
-    if size > 128 || bytes.len() < 14 + size { return; }
-    
-    let frame_data = &bytes[14..14+size];
-    
-    // Slice 2: Address Filtering
-    if !frame_matches_address(state, frame_data) {
+
+    if size > 128 || bytes.len() < 14 + size {
         return;
     }
-    
+
+    let frame_data = &bytes[14..14 + size];
+
+    // Slice 2: Address Filtering
+    if !frame_matches_address(state.pan_id, state.short_addr, state.ext_addr, frame_data) {
+        return;
+    }
+
     // Slice 5: Auto-ACK Request detection
     if frame_data.len() >= 3 {
         let fcf = LittleEndian::read_u16(&frame_data[0..2]);
@@ -423,63 +441,79 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
             }
         }
     }
-    
+
     let mut stored_data = [0u8; 128];
     stored_data[..size].copy_from_slice(frame_data);
-    
+
     // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
     // to prevent AB-BA deadlocks with the QEMU main thread.
     let _bql_guard = virtmcu_qom::sync::Bql::lock();
     let _mutex_guard = unsafe { (*state.mutex).lock() };
-    
+
     if state.rx_queue.len() < 16 {
         // Insertion sort by vtime (ascending)
-        let pos = state.rx_queue.binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
+        let pos = state
+            .rx_queue
+            .binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
             .unwrap_or_else(|e| e);
-        state.rx_queue.insert(pos, RxFrame { delivery_vtime: vtime, data: stored_data, size, rssi });
-        
+        state.rx_queue.insert(
+            pos,
+            RxFrame {
+                delivery_vtime: vtime,
+                data: stored_data,
+                size,
+                rssi,
+            },
+        );
+
         unsafe {
             virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
         }
     }
 }
 
-fn frame_matches_address(s: &Zenoh802154State, frame: &[u8]) -> bool {
-    if frame.len() < 3 { return false; }
-    
+fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u8]) -> bool {
+    if frame.len() < 3 {
+        return false;
+    }
+
     let fcf = LittleEndian::read_u16(&frame[0..2]);
     // let seq = frame[2];
-    
+
     let dest_addr_mode = (fcf >> 10) & 0x03;
-    
+
     match dest_addr_mode {
         0x00 => {
             // No destination address. Accepted if it's a beacon or if we are a coordinator.
             // For now, let's just accept it.
             true
-        },
+        }
         0x02 => {
             // 16-bit short address
-            if frame.len() < 7 { return false; }
+            if frame.len() < 7 {
+                return false;
+            }
             let dest_pan = LittleEndian::read_u16(&frame[3..5]);
             let dest_addr = LittleEndian::read_u16(&frame[5..7]);
-            
-            let pan_matches = dest_pan == 0xFFFF || dest_pan == s.pan_id;
-            let addr_matches = dest_addr == 0xFFFF || dest_addr == s.short_addr;
-            
+
+            let pan_matches = dest_pan == 0xFFFF || dest_pan == pan_id;
+            let addr_matches = dest_addr == 0xFFFF || dest_addr == short_addr;
+
             pan_matches && addr_matches
-        },
+        }
         0x03 => {
             // 64-bit extended address
-            if frame.len() < 13 { return false; }
+            if frame.len() < 13 {
+                return false;
+            }
             let dest_pan = LittleEndian::read_u16(&frame[3..5]);
             let dest_addr = LittleEndian::read_u64(&frame[5..13]);
-            
-            let pan_matches = dest_pan == 0xFFFF || dest_pan == s.pan_id;
-            let addr_matches = dest_addr == s.ext_addr;
-            
+
+            let pan_matches = dest_pan == 0xFFFF || dest_pan == pan_id;
+            let addr_matches = dest_addr == ext_addr;
+
             pan_matches && addr_matches
-        },
+        }
         _ => false,
     }
 }
@@ -494,10 +528,10 @@ unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
                 s.rx_len = frame.size as u32;
                 s.rx_rssi = frame.rssi;
                 s.rx_read_pos = 0;
-                
+
                 s.status |= 0x01; // RX_READY
                 qemu_set_irq(s.irq, 1);
-                
+
                 if !s.rx_queue.is_empty() {
                     virtmcu_timer_mod(s.rx_timer, s.rx_queue[0].delivery_vtime as i64);
                 }
@@ -516,8 +550,102 @@ extern "C" fn rx_timer_cb(opaque: *mut c_void) {
 
 #[cfg(test)]
 mod tests {
-    #![deny(unsafe_code)]
-    use byteorder::{LittleEndian, ByteOrder};
+    use super::*;
+    use byteorder::{ByteOrder, LittleEndian};
+
+    #[test]
+    fn test_address_filtering_broadcast() {
+        let pan = 0x1234;
+        let short = 0x5678;
+        let ext = 0x1122334455667788;
+
+        // FCF 0x0801 (dest mode 2: short), seq 0, PAN FFFF, Addr FFFF
+        let mut frame = vec![0x01, 0x08, 0x00, 0xFF, 0xFF, 0xFF, 0xFF];
+        assert!(
+            frame_matches_address(pan, short, ext, &frame),
+            "Broadcast should be accepted"
+        );
+
+        // Broadcast PAN, match short addr
+        frame[5] = 0x78;
+        frame[6] = 0x56;
+        assert!(
+            frame_matches_address(pan, short, ext, &frame),
+            "Broadcast PAN, matching short addr"
+        );
+
+        // Match PAN, Broadcast short addr
+        frame[3] = 0x34;
+        frame[4] = 0x12;
+        frame[5] = 0xFF;
+        frame[6] = 0xFF;
+        assert!(
+            frame_matches_address(pan, short, ext, &frame),
+            "Matching PAN, broadcast short addr"
+        );
+    }
+
+    #[test]
+    fn test_address_filtering_short() {
+        let pan = 0xABCD;
+        let short = 0x1234;
+        let ext = 0x0;
+
+        // FCF 0x0801, seq 0, PAN ABCD, Addr 1234
+        let frame = vec![0x01, 0x08, 0x00, 0xCD, 0xAB, 0x34, 0x12];
+        assert!(
+            frame_matches_address(pan, short, ext, &frame),
+            "Exact match should be accepted"
+        );
+
+        // Wrong PAN
+        let frame_wrong_pan = vec![0x01, 0x08, 0x00, 0x00, 0x00, 0x34, 0x12];
+        assert!(
+            !frame_matches_address(pan, short, ext, &frame_wrong_pan),
+            "Wrong PAN should be rejected"
+        );
+
+        // Wrong Addr
+        let frame_wrong_addr = vec![0x01, 0x08, 0x00, 0xCD, 0xAB, 0x00, 0x00];
+        assert!(
+            !frame_matches_address(pan, short, ext, &frame_wrong_addr),
+            "Wrong address should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_address_filtering_extended() {
+        let pan = 0xABCD;
+        let short = 0x1234;
+        let ext = 0x1122334455667788;
+
+        // FCF 0x0C01 (dest mode 3: ext), seq 0, PAN ABCD, Addr 1122334455667788
+        let frame = vec![
+            0x01, 0x0C, 0x00, 0xCD, 0xAB, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+        ];
+        assert!(
+            frame_matches_address(pan, short, ext, &frame),
+            "Exact extended match should be accepted"
+        );
+
+        // Wrong PAN
+        let frame_wrong_pan = vec![
+            0x01, 0x0C, 0x00, 0x00, 0x00, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+        ];
+        assert!(
+            !frame_matches_address(pan, short, ext, &frame_wrong_pan),
+            "Wrong PAN should be rejected"
+        );
+
+        // Wrong Addr
+        let frame_wrong_addr = vec![
+            0x01, 0x0C, 0x00, 0xCD, 0xAB, 0x00, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+        ];
+        assert!(
+            !frame_matches_address(pan, short, ext, &frame_wrong_addr),
+            "Wrong extended address should be rejected"
+        );
+    }
 
     #[test]
     fn rf_header_encode_decode() {
@@ -539,7 +667,9 @@ mod tests {
         let mut queue: Vec<(u64, usize)> = Vec::new();
         let frames = [(300u64, 30usize), (100u64, 10usize), (200u64, 20usize)];
         for (vt, sz) in frames {
-            let pos = queue.binary_search_by(|p| p.0.cmp(&vt)).unwrap_or_else(|e| e);
+            let pos = queue
+                .binary_search_by(|p| p.0.cmp(&vt))
+                .unwrap_or_else(|e| e);
             queue.insert(pos, (vt, sz));
         }
         assert_eq!(queue[0].0, 100); // earliest vtime first
