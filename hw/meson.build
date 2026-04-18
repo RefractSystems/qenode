@@ -171,5 +171,26 @@ remote_port_ss.add(files(
 ))
 hw_virtmcu_modules += {'remote-port-bridge': remote_port_ss}
 
+# ── test-qom-device ────────────────────────────────────────────────────────
+# Test device for Phase 19 pure Rust QOM registration
+rust_test_qom_device_lib = custom_target(
+  'rust_test_qom_device_lib',
+  input: 'rust/test-qom-device/src/lib.rs',
+  output: ['libtest_qom_device.a'],
+  command: [
+    'sh', '-c',
+    'RUST_DIR="$1"; OUT_A="$2"; cd "$RUST_DIR" && cargo build --release -p test-qom-device && cp target/release/libtest_qom_device.a "$OUT_A"',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libtest_qom_device.a'
+  ]
+)
+test_qom_device_ss = ss.source_set()
+test_qom_device_ss.add(virtmcu_ffi_dep)
+test_qom_device_ss.add(files('rust/test-qom-device/trigger.c'))
+test_qom_device_ss.add(rust_test_qom_device_lib[0])
+test_qom_device_ss.add(declare_dependency(
+  link_args: [meson.current_build_dir() / 'libtest_qom_device.a']
+))
+hw_virtmcu_modules += {'test-qom-device': test_qom_device_ss}
+
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}

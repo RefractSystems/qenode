@@ -1,5 +1,6 @@
 use core::ffi::c_char;
 use std::ffi::CStr;
+use std::time::Duration;
 use zenoh::{Config, Session, Wait};
 
 /// Opens a Zenoh session with a standardized config for virtmcu.
@@ -13,6 +14,7 @@ use zenoh::{Config, Session, Wait};
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
     let mut config = Config::default();
+    let mut has_router = false;
 
     if !router.is_null() {
         if let Ok(r_str) = CStr::from_ptr(router).to_str() {
@@ -20,9 +22,37 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
                 let json = format!("[\"{}\"]", r_str);
                 let _ = config.insert_json5("connect/endpoints", &json);
                 let _ = config.insert_json5("scouting/multicast/enabled", "false");
+                has_router = true;
             }
         }
     }
 
-    zenoh::open(config).wait()
+    let session = zenoh::open(config).wait()?;
+
+    // If a router was provided, verify we can actually reach it.
+    // In Zenoh 1.0, open() returns successfully even if the remote endpoint is unreachable.
+    // virtmcu smoke tests expect immediate failure for unreachable explicit routers.
+    if has_router {
+        // We check for any active connections to routers/peers.
+        // We wait a bit for the connection to be established.
+        let mut connected = false;
+        for _ in 0..10 {
+            if let Ok(info) = session.info().wait() {
+                if let Ok(routers) = info.routers().wait() {
+                    if !routers.is_empty() {
+                        connected = true;
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        if !connected {
+            let _ = session.close().wait();
+            return Err(zenoh::Error::from("Failed to connect to explicit router".to_string()));
+        }
+    }
+
+    Ok(session)
 }

@@ -80,14 +80,24 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
          * serialises them, maintaining the single-quantum-at-a-time invariant.
          */
         ZenohClockState *rust_state = s->rust_state;
-        bql_unlock();
+        bool locked = bql_locked();
+        if (locked) {
+            bql_unlock();
+        }
         int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
-        bql_lock();
+        if (locked) {
+            bql_lock();
+        }
 
         assert(s->rust_state != NULL &&
                "zenoh-clock finalized while blocking in quantum_wait");
         s->next_quantum_ns = now + delta;
     }
+}
+
+static void zenoh_clock_tcg_quantum_cb(CPUState *cpu)
+{
+    zenoh_clock_cpu_halt_cb(cpu, false);
 }
 
 static void zenoh_clock_realize(DeviceState *dev, Error **errp)
@@ -111,12 +121,13 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     s->rust_state = zenoh_clock_init(s->node_id, s->router, stall_ms,
                                      &s->mutex, &s->vcpu_cond, &s->query_cond);
     if (!s->rust_state) {
-        error_setg(errp, "Failed to initialize Rust ZenohClock");
+        error_setg(errp, "zenoh-clock: failed to initialize Rust backend (check Zenoh router/connectivity)");
         return;
     }
 
     /* Register the vCPU halt hook for synchronization */
     virtmcu_cpu_halt_hook = zenoh_clock_cpu_halt_cb;
+    virtmcu_tcg_quantum_hook = zenoh_clock_tcg_quantum_cb;
 }
 
 static void zenoh_clock_instance_finalize(Object *obj)
@@ -124,6 +135,7 @@ static void zenoh_clock_instance_finalize(Object *obj)
     ZenohClock *s = ZENOH_CLOCK(obj);
     if (s->rust_state) {
         virtmcu_cpu_halt_hook = NULL;
+        virtmcu_tcg_quantum_hook = NULL;
         zenoh_clock_free(s->rust_state);
         s->rust_state = NULL;
     }

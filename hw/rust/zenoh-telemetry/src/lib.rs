@@ -78,7 +78,13 @@ pub unsafe extern "C" fn zenoh_telemetry_init(
 ) -> *mut ZenohTelemetryBackend {
     let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
+        Err(e) => {
+            eprintln!(
+                "[zenoh-telemetry] node={}: FAILED to open Zenoh session: {}",
+                node_id, e
+            );
+            return ptr::null_mut();
+        }
     };
 
     let (tx, rx) = bounded(1024);

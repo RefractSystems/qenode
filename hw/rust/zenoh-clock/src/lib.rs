@@ -8,7 +8,7 @@
 )]
 extern crate libc;
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};

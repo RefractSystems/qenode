@@ -10,7 +10,13 @@ ROUTER_ENDPOINT="tcp/127.0.0.1:$PORT"
 # Cleanup on exit
 cleanup() {
     echo "Cleaning up..."
-    kill $(jobs -p) 2>/dev/null || true
+    # Kill all background jobs
+    local pids
+    pids=$(jobs -p)
+    if [ -n "$pids" ]; then
+        # shellcheck disable=SC2086
+        kill $pids 2>/dev/null || true
+    fi
     rm -f "$SCRIPT_DIR/output.log" "$SCRIPT_DIR/test.dtb" "$SCRIPT_DIR/test.cli" "$SCRIPT_DIR/ack_received.tmp"
 }
 trap cleanup EXIT

@@ -2490,6 +2490,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-qom-device"
+version = "0.1.0"
+dependencies = [
+ "virtmcu-qom",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

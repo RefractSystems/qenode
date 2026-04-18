@@ -110,7 +110,7 @@ static void zenoh_actuator_realize(DeviceState *dev, Error **errp)
 
     s->rust_state = zenoh_actuator_init_rust(s->node_id, s->router, s->topic_prefix);
     if (!s->rust_state) {
-        error_setg(errp, "Failed to initialize Rust Zenoh actuator");
+        error_setg(errp, "zenoh-actuator: failed to initialize Rust backend (check Zenoh router/connectivity)");
         return;
     }
 }

@@ -109,7 +109,7 @@ static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
 
     s->rust_state = zenoh_telemetry_init(s->node_id, s->router);
     if (!s->rust_state) {
-        error_setg(errp, "Failed to initialize Rust Zenoh telemetry");
+        error_setg(errp, "zenoh-telemetry: failed to initialize Rust backend (check Zenoh router/connectivity)");
         return;
     }
     

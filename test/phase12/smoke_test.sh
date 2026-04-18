@@ -164,13 +164,13 @@ echo "=== zenoh-clock Error Log ==="
 cat "$LOG_ZCLOCK"
 echo "============================="
 
-if grep -q "failed to open Zenoh session" "$LOG_ZCLOCK"; then
+if grep -q "zenoh-clock: failed to initialize Rust backend" "$LOG_ZCLOCK"; then
     log_pass "zenoh-clock correctly reported session open failure"
 else
     # In some environments, Zenoh might not fail immediately on z_open even with invalid router
     # especially if it thinks it can still scout or if it's asynchronous.
     # But based on the roadmap it should work.
-    echo "Warning: Did not find expected 'failed to open Zenoh session' in log."
+    echo "Warning: Did not find expected 'zenoh-clock: failed to initialize Rust backend' in log."
     # Let's check if it at least tried to connect
     if grep -q "connecting to router tcp/127.0.0.1:1" "$LOG_ZCLOCK"; then
         log_pass "zenoh-clock tried to connect to invalid router (z_open might be async)"

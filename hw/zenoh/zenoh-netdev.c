@@ -67,7 +67,7 @@ static int zenoh_netdev_hook(const Netdev *netdev, const char *name, NetClientSt
     
     s->rust_state = zenoh_netdev_init(nc, node_id, opts->router, opts->topic);
     if (!s->rust_state) {
-        error_setg(errp, "Failed to initialize Rust Zenoh netdev");
+        error_setg(errp, "zenoh-netdev: failed to initialize Rust backend (check Zenoh router/connectivity)");
         return -1;
     }
     

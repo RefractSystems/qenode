@@ -3,7 +3,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "Running netdev determinism test..."
 python3 "$SCRIPT_DIR/netdev_determinism_test.py"

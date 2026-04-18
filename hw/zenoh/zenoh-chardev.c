@@ -67,7 +67,7 @@ static bool zenoh_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
     
     s->rust_state = zenoh_chardev_init(chr, opts->node, opts->router, opts->topic);
     if (!s->rust_state) {
-        error_setg(errp, "Failed to initialize Rust Zenoh chardev");
+        error_setg(errp, "zenoh-chardev: failed to initialize Rust backend (check Zenoh router/connectivity)");
         return false;
     }
     
