@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup-initial build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
+.PHONY: all setup-initial build run clean clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
 
 # By default, perform an incremental build
 all: build
@@ -306,13 +306,31 @@ docker-runtime:
 # Clean
 # ------------------------------------------------------------------------------
 
+# Alias for comprehensive cleanup of generated debugging and test artifacts.
+clean-debug: clean
+
 # Clean up Python artifacts, test binaries, and local tool builds.
 # Note: This does NOT clean the QEMU build tree or remove downloaded sources.
 clean:
+	@echo "==> Cleaning generated files and test artifacts..."
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-	-$(MAKE) -C test/phase1 clean
-	-$(MAKE) -C test/phase8 clean
+	find . -name "*.profraw" -delete
+	find . -name "*.log" -delete
+	find . -name "*.dtb" -not -path "./third_party/*" -delete
+	find . -name "*.o" -not -path "./third_party/*" -delete
+	find . -name "*.elf" -not -path "./tests/firmware/*" -not -path "./third_party/*" -delete
+	find . -name "*.cli" -delete
+	find . -name "*.arch" -delete
+	find . -name "*.gcov" -delete
+	find . -name "virtmcu-timeout-*" -delete
+	rm -f .coverage
+	rm -rf .pytest_cache .ruff_cache
+	rm -rf test-results/
+	rm -rf test/*/results/
+	rm -rf install/
+	rm -f *_output.txt
+	rm -f log.html report.html output.xml
 	rm -rf tools/cyber_bridge/build
 	rm -rf tools/systemc_adapter/build
 	rm -rf tools/zenoh_coordinator/target
