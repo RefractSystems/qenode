@@ -117,8 +117,9 @@ test-robot: venv
 test-coverage-guest: build-test-artifacts
 	@echo "==> Running guest firmware coverage (drcov)..."
 	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
-	@./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
-	  -display none -plugin third_party/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov -d plugin
+	@DRCOV_SO=$$(find third_party/qemu -name "libdrcov.so" 2>/dev/null | head -n 1); \
+	timeout 5s ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
+	  -display none -plugin "$$DRCOV_SO",filename=hello.drcov -d plugin || true
 	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
 	@echo "✓ Guest coverage check passed."
 
