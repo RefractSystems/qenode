@@ -6,7 +6,7 @@ pub struct Error {
 }
 
 extern "C" {
-    pub fn virtmcu_error_setg(errp: *mut *mut Error, fmt: *const c_char, ...);
+    pub fn virtmcu_error_setg(errp: *mut *mut Error, fmt: *const c_char);
 }
 
 #[macro_export]

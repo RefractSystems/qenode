@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use virtmcu_api::{ClockAdvanceReq, ClockReadyResp};
 use virtmcu_qom::cpu::{virtmcu_cpu_exit_all, CPUState, virtmcu_cpu_halt_hook, virtmcu_tcg_quantum_hook};
-use virtmcu_qom::error::{Error, error_setg};
+use virtmcu_qom::error::Error;
 use virtmcu_qom::icount::icount_enabled;
 use virtmcu_qom::qdev::{DeviceClass, SysBusDevice, device_class_set_props};
 use virtmcu_qom::qom::{ObjectClass, TypeInfo, Object};
@@ -24,7 +24,7 @@ use virtmcu_qom::sync::{
     virtmcu_mutex_unlock, QemuCond, QemuMutex, Bql,
 };
 use virtmcu_qom::timer::{QEMU_CLOCK_VIRTUAL, QemuTimer, qemu_clock_get_ns, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns};
-use virtmcu_qom::{declare_device_type, device_class, define_prop_uint32, define_prop_string, define_properties};
+use virtmcu_qom::{declare_device_type, device_class, define_prop_uint32, define_prop_string, define_properties, error_setg, count_props};
 use zenoh::query::{Query, Queryable};
 use zenoh::{Config, Session, Wait};
 
@@ -82,7 +82,7 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
         // Release BQL before blocking
         drop(bql);
 
-        let delta = zenoh_clock_quantum_wait_internal(backend, now);
+        let delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
 
         bql = Bql::lock();
 
@@ -101,11 +101,11 @@ extern "C" fn zenoh_clock_tcg_quantum_cb(cpu: *mut CPUState) {
     zenoh_clock_cpu_halt_cb(cpu, false);
 }
 
-unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut Error) {
+unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut ZenohClock);
 
     if !GLOBAL_CLOCK.is_null() {
-        error_setg!(errp, c"Only one zenoh-clock instance is supported".as_ptr());
+        error_setg!(errp as *mut *mut Error, c"Only one zenoh-clock instance is supported".as_ptr());
         return;
     }
 
@@ -146,7 +146,7 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut Error
                                              &mut s.mutex, &mut s.vcpu_cond, &mut s.query_cond);
     
     if s.rust_state.is_null() {
-        error_setg!(errp, c"zenoh-clock: failed to initialize Rust backend".as_ptr());
+        error_setg!(errp as *mut *mut Error, c"zenoh-clock: failed to initialize Rust backend".as_ptr());
         return;
     }
 
@@ -221,11 +221,13 @@ fn zenoh_clock_init_internal(
     vcpu_cond: *mut QemuCond,
     query_cond: *mut QemuCond,
 ) -> *mut ZenohClockBackend {
-    let session = match virtmcu_zenoh::open_session(router) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("failed to open Zenoh session: {:?}", e);
-            return ptr::null_mut();
+    let session = unsafe {
+        match virtmcu_zenoh::open_session(router) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("failed to open Zenoh session: {:?}", e);
+                return ptr::null_mut();
+            }
         }
     };
 
