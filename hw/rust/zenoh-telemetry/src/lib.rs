@@ -133,7 +133,13 @@ pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_telemetry_trace_irq(backend: *mut ZenohTelemetryBackend, slot: u16, pin: u16, level: i32, name_ptr: *const c_char) {
+pub unsafe extern "C" fn zenoh_telemetry_trace_irq(
+    backend: *mut ZenohTelemetryBackend,
+    slot: u16,
+    pin: u16,
+    level: i32,
+    name_ptr: *const c_char,
+) {
     let b = &*backend;
     let id = ((slot as u32) << 16) | (pin as u32);
     let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
