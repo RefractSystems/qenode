@@ -108,7 +108,7 @@ impl Property {
 #[macro_export]
 macro_rules! define_properties {
     ($name:ident, [ $($prop:expr),* $(,)? ]) => {
-        pub static $name: [$crate::qom::Property; count_props!($($prop)*) + 1] = [
+        pub static $name: [$crate::qom::Property; $crate::count_props!($($prop),*) + 1] = [
             $($prop,)*
             $crate::qom::Property::default(),
         ];
