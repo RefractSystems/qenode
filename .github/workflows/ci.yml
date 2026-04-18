@@ -32,7 +32,7 @@ env:
 jobs:
 
   lint:
-    name: Lint
+    name: Static Analysis (Python/Shell/Docker)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -215,7 +215,7 @@ jobs:
 # or a .venv get a per-phase pre-setup command.
 
   smoke-tests:
-    name: Smoke — Phase ${{ matrix.phase }}
+    name: Smoke — ${{ matrix.name }}
     needs: [build-qemu, unit-tests]
     runs-on: ubuntu-latest
     strategy:
@@ -223,38 +223,55 @@ jobs:
       matrix:
         include:
           - phase: "1"
+            name: "Phase 1 (Minimal Boot)"
             cmd: "make -C test/phase1 && bash test/phase1/smoke_test.sh"
           - phase: "2"
+            name: "Phase 2 (QOM Plugins)"
             cmd: "bash test/phase2/smoke_test.sh"
           - phase: "3"
+            name: "Phase 3 (repl2qemu)"
             cmd: "bash test/phase3/smoke_test.sh"
           - phase: "3.5"
+            name: "Phase 3.5 (YAML Platforms)"
             cmd: "make -C test/phase1 && bash test/phase3.5/smoke_test.sh"
           - phase: "4"
+            name: "Phase 4 (Robot Framework)"
             cmd: "make -C test/phase1 && bash test/phase4/smoke_test.sh"
           - phase: "5"
+            name: "Phase 5 (SystemC Bridge)"
             cmd: "apt-get update && apt-get install -y --no-install-recommends libsystemc-dev && bash test/phase5/smoke_test.sh"
           - phase: "6"
+            name: "Phase 6 (Zenoh Multi-Node)"
             cmd: "bash test/phase6/smoke_test.sh"
           - phase: "7"
+            name: "Phase 7 (Zenoh Clock)"
             cmd: "bash test/phase7/smoke_test.sh"
           - phase: "8"
+            name: "Phase 8 (Multi-Node UART)"
             cmd: "make -C test/phase1 && make -C test/phase8 && bash test/phase8/smoke_test.sh"
           - phase: "9"
+            name: "Phase 9 (SystemC Media)"
             cmd: "apt-get update && apt-get install -y --no-install-recommends libsystemc-dev && make -C test/phase1 && bash test/phase9/smoke_test.sh"
           - phase: "10"
+            name: "Phase 10 (Physics SAL/AAL)"
             cmd: "make -C test/phase1 && bash test/phase10/smoke_test.sh"
           - phase: "11"
+            name: "Phase 11 (RISC-V Expansion)"
             cmd: "make -C test/riscv && bash test/phase11/smoke_test.sh"
           - phase: "11_3"
+            name: "Phase 11.3 (Remote Port)"
             cmd: "cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release && make -C tools/systemc_adapter/build rp_adapter && bash test/phase11_3/smoke_test.sh"
           - phase: "12"
+            name: "Phase 12 (Advanced Observability)"
             cmd: "make -C test/phase1 && make -C test/phase12 && bash test/phase12/smoke_test.sh"
           - phase: "16"
+            name: "Phase 16 (Perf & Determinism)"
             cmd: "make -C test/phase1 && make -C test/phase16 && bash test/phase16/smoke_test.sh"
           - phase: "qmp"
+            name: "pytest (QMP Suite)"
             cmd: "make -C test/phase1 && make -C test/phase8 && pytest tools/testing/test_qmp.py -v --tb=short"
           - phase: "robot"
+            name: "Robot Framework (Renode Parity)"
             cmd: "make -C test/phase1 && make -C test/phase8 && robot --outputdir test-results/robot --xunit test-results/robot.xml tests/test_qmp_keywords.robot tests/test_interactive_echo.robot"
 
     steps:
@@ -286,7 +303,7 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
-      - name: Run phase ${{ matrix.phase }} test
+      - name: Run ${{ matrix.name }}
         run: |
           mkdir -p coverage-data
           docker run --rm \
