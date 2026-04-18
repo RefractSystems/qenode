@@ -60,6 +60,7 @@ pub struct Zenoh802154State {
     
     pan_id: u16,
     short_addr: u16,
+    ext_addr: u64,
     
     rx_timer: *mut QemuTimer,
     backoff_timer: *mut QemuTimer,
@@ -162,6 +163,7 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         state: RadioState::Idle,
         pan_id: 0xFFFF,
         short_addr: 0xFFFF,
+        ext_addr: 0,
         rx_timer,
         backoff_timer,
         ack_timer,
@@ -201,6 +203,8 @@ pub unsafe extern "C" fn zenoh_802154_read_rust(
         0x1C => s.state as u32,
         0x20 => s.pan_id as u32,
         0x24 => s.short_addr as u32,
+        0x28 => (s.ext_addr & 0xFFFFFFFF) as u32,
+        0x2C => (s.ext_addr >> 32) as u32,
         _ => 0,
     }
 }
@@ -254,6 +258,12 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
         },
         0x24 => {
             s.short_addr = value as u16;
+        },
+        0x28 => {
+            s.ext_addr = (s.ext_addr & 0xFFFFFFFF00000000) | (value as u64);
+        },
+        0x2C => {
+            s.ext_addr = (s.ext_addr & 0x00000000FFFFFFFF) | ((value as u64) << 32);
         },
         _ => {},
     }
@@ -463,9 +473,12 @@ fn frame_matches_address(s: &Zenoh802154State, frame: &[u8]) -> bool {
             // 64-bit extended address
             if frame.len() < 13 { return false; }
             let dest_pan = LittleEndian::read_u16(&frame[3..5]);
-            // For now, we only support short addresses, so we only match broadcast PAN
-            // and don't match extended address unless it's broadcast (not really a thing for extended?)
-            dest_pan == 0xFFFF || dest_pan == s.pan_id
+            let dest_addr = LittleEndian::read_u64(&frame[5..13]);
+            
+            let pan_matches = dest_pan == 0xFFFF || dest_pan == s.pan_id;
+            let addr_matches = dest_addr == s.ext_addr;
+            
+            pan_matches && addr_matches
         },
         _ => false,
     }
