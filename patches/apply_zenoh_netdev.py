@@ -56,8 +56,8 @@ def main():
     if os.path.exists(module_c):
         with open(module_c, "r") as f:
             content = f.read()
-        if "assert(QTAILQ_EMPTY(&dso_init_list));" in content:
-            new_content = content.replace("    assert(QTAILQ_EMPTY(&dso_init_list));", insertion7)
+        if marker7.strip() in content:
+            new_content = content.replace(marker7, insertion7)
             with open(module_c, "w") as f:
                 f.write(new_content)
 

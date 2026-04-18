@@ -6,8 +6,8 @@
 # in the `scripts/` directory or to the QEMU build system.
 #
 # Most developers will only need:
-#   make setup    — Clone QEMU, apply patches, and build from scratch (run once).
-#   make          — Perform an incremental rebuild of QEMU after modifying `hw/`.
+#   make setup-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
+#   make build         — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
 #   make run      — Launch QEMU using the minimal Phase 1 test DTB.
 # ==============================================================================
 
@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
+.PHONY: all setup-initial build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
 
 # By default, perform an incremental build
 all: build
@@ -42,7 +42,8 @@ check-versions:
 # ------------------------------------------------------------------------------
 
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
-setup:
+# WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
+setup-initial:
 	@bash scripts/setup-qemu.sh
 
 # Incremental rebuild: useful when you only modify files in the `hw/` directory.
@@ -101,7 +102,7 @@ test: venv
 # Alias: same as test — explicit name for CI scripts.
 test-unit: test
 
-# Run Robot Framework integration tests (requires QEMU built via make setup).
+# Run Robot Framework integration tests (requires QEMU built via make setup-initial).
 test-robot: venv
 	export PYTHONPATH=$(CURDIR) && \
 	uv run robot \
@@ -319,9 +320,9 @@ clean:
 	@echo "✓ Clean complete (QEMU sources and .venv remain)."
 
 # Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
-# You will need to run 'make setup' again after this.
+# You will need to run 'make setup-initial' again after this.
 distclean: clean
 	rm -rf .venv
 	rm -rf third_party
 	rm -rf test-results
-	@echo "✓ Deep clean complete. Run 'make setup' to rebuild the environment."
+	@echo "✓ Deep clean complete. Run 'make setup-initial' to rebuild the environment."

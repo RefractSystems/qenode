@@ -71,6 +71,16 @@ When using \`mmio-socket-bridge\`, every MMIO read/write blocks the QEMU TCG thr
 
 ---
 
+## Development Efficiency
+
+- **Avoid Redundant `make setup`**: Only run `make setup` for the initial environment setup or if QEMU dependencies change. It applies core patches that can trigger massive rebuilds.
+- **Use `make build` for Incremental Changes**: For standard changes to `hw/` peripherals, `make build` is sufficient and much faster.
+- **Targeted Ninja Builds**: For the fastest turnaround when working on a specific peripheral, run ninja directly on the module target:
+  `ninja -C third_party/qemu/build-virtmcu hw-virtmcu-<name>.so`
+- **Pre-installed QEMU**: In many environments, QEMU is pre-installed at `/opt/virtmcu`. You only need to build if you are modifying the emulator or its peripheral plugins.
+
+---
+
 ## Directory Structure
 
 ```

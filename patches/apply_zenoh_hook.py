@@ -62,13 +62,20 @@ def patch_file(path, marker, insertion, after=True):
     # Remove old tagged insertions if they exist
     pattern = re.escape(tag) + r".*?" + re.escape(tag)
     if re.search(pattern, content, re.DOTALL):
-        content = re.sub(pattern, tagged_insertion.strip(), content, flags=re.DOTALL)
+        new_content = re.sub(pattern, tagged_insertion.strip(), content, flags=re.DOTALL)
+        if new_content == content:
+            return False
+        content = new_content
         print(f"  updated patch in {os.path.relpath(path)} (marker={marker_hash})")
     else:
         if after:
-            content = content.replace(marker, marker + tagged_insertion, 1)
+            new_content = content.replace(marker, marker + tagged_insertion, 1)
         else:
-            content = content.replace(marker, tagged_insertion + marker, 1)
+            new_content = content.replace(marker, tagged_insertion + marker, 1)
+
+        if new_content == content:
+            return False
+        content = new_content
         print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
 
     with open(path, "w") as f:

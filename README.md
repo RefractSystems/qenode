@@ -210,7 +210,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # All platforms
 git submodule update --init --recursive   # fetch QEMU source
-make setup        # apply patches, build QEMU (~10 min first run)
+make setup-initial # apply patches, build QEMU (~10 min first run)
 make venv         # synchronize Python environment with uv
 source .venv/bin/activate
 make run          # smoke-test

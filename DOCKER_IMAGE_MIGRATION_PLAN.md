@@ -289,7 +289,7 @@
      docker build --target devenv -t virtmcu-devenv .
      → open devcontainer                                                                                                                                                                   
      → verify: zsh prompt + oh-my-zsh theme, sudo without password,
-       claude --version, gemini --version, uv sync, make setup                                                                                                                             
+       claude --version, gemini --version, uv sync, make setup-initial                                                                                                                             
                                                                                                                                                                                            
   7. CI green → merge
                                                                                                                                                                                            
