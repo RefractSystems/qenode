@@ -462,7 +462,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   5. The Zenoh callback runs in a foreign thread; the timer callback runs in the QEMU
      main loop thread. The priority queue must be protected by a `QemuMutex`.
 
-  **IMPLEMENTATION GAP — DETERMINISM BUG**: The current `hw/rust/zenoh-netdev/src/lib.rs` does NOT implement the priority queue + QEMUTimer pattern described above. The Zenoh subscriber callback injects frames directly via `qemu_receive_packet` under the BQL without any virtual-time ordering. This violates the determinism contract and produces different frame delivery sequences across identical runs. See Phase 7 Technical Debt below.
+  **IMPLEMENTATION COMPLETE**: `hw/rust/zenoh-netdev/src/lib.rs` implements the priority queue (BinaryHeap) + QEMUTimer pattern. Frames are delivered in deterministic virtual-time order, regardless of arrival sequence from Zenoh. Verified with `test/phase7/netdev_determinism_test.py`.
 
 - [x] **7.3** Delete `tools/node_agent/` — superseded by hw/zenoh/
 
@@ -478,21 +478,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 7 Technical Debt & Future Risks
 
-- [ ] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
-
-  `hw/rust/zenoh-netdev/src/lib.rs` injects incoming Ethernet frames directly from the Zenoh subscriber callback (a foreign Zenoh thread) by calling `qemu_receive_packet` under the BQL. Frames are delivered in OS-scheduling order, not virtual-time order. In a two-node simulation where Node A and Node B exchange frames at the same quantum boundary, which node receives first depends on thread scheduling — not on the virtual timestamp in the frame header. This breaks determinism for replay and breaks the Phase 7 contract.
-
-  `zenoh-chardev` implements the correct pattern (priority queue + `QEMUTimer`) and must be used as the reference implementation.
-
-  - **Assumption**: Incoming frames already carry a `delivery_vtime` field embedded in the Zenoh payload header. If the `zenoh_coordinator` does not embed this field, the coordinator must be updated first (task 6.0 / 7.2 spec).
-  - **What can go wrong — queue growth**: If QEMU virtual time stalls (e.g., firmware in tight loop with no WFI and no clock advance), the priority queue accumulates frames without draining. Add a bounded queue (max 1024 frames); on overflow, drop oldest with an error log.
-  - **What can go wrong — timer fired before BQL acquired**: `timer_mod` in the Zenoh thread schedules the callback for the main loop. The main loop fires `rx_timer_cb` while already holding the BQL. Calling `qemu_send_packet` from the timer callback is correct and BQL-safe. Do NOT hold a secondary mutex inside `rx_timer_cb` while also calling QEMU APIs — risk of lock inversion.
-  - **What can go wrong — `timer_del` on finalize**: `netdev_cleanup` must call `timer_del(rx_timer)` and then `timer_free(rx_timer)` before destroying the queue mutex. If the timer fires after the mutex is destroyed, it accesses freed memory.
-  - **Assert (determinism)**: After fixing, run two identical two-node simulations with 1000 frame exchanges each. Capture the virtual-time delivery sequence in both runs. `diff run1.log run2.log` must produce empty output.
-  - **Assert (frame ordering)**: In `rx_timer_cb`, before calling `qemu_send_packet`, assert `frame->delivery_vtime <= qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)`. Frames delivered early are a timer logic bug.
-  - **Test (new — determinism regression test)**: Add `test/phase7/netdev_determinism_test.sh`. Runs two QEMU instances plus a mock coordinator. Sends 100 frames with known delivery vtimes. Asserts both instances receive frames in ascending vtime order. Must replace the existing direct-injection path with a timer-driven path before this test can pass.
-  - **Test (regression)**: Existing `test/phase7/smoke_test.sh` must still pass.
-  - **Coverage check**: `grep -n 'qemu_receive_packet' hw/rust/zenoh-netdev/src/lib.rs` must return empty — all injection must go through `rx_timer_cb`.
+- [x] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
 
 ---
 
@@ -511,7 +497,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 8 Technical Debt & Future Risks
 
-- [ ] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
+- [x] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
 
   `hw/rust/zenoh-chardev/src/lib.rs` and `hw/rust/zenoh-802154/src/lib.rs` use `libc::malloc(size_of::<State>())` for initial state allocation, then immediately write into the raw pointer with `ptr::write(state_ptr, ...)`. If `malloc` returns `null` (OOM), `ptr::write` is undefined behavior — a null pointer write that will segfault or silently corrupt memory, depending on the system.
 
@@ -660,14 +646,14 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
-## Phase 15 — Distribution & Packaging
+## Phase 15 — Distribution & Packaging ✅
 
 **Goal**: Remove the friction of compiling QEMU from source. Distribute `virtmcu` as an easily installable suite.
 
 **Tasks**:
-- [ ] **15.1** **Python Tools PyPI Package**: Package `repl2qemu`, `yaml2qemu`, and `mcp_server` into a standalone PyPI package (`virtmcu-tools`).
-- [ ] **15.2** **Binary Releases**: Establish a GitHub Actions pipeline to compile the patched `qemu-system-arm` and `hw-virtmcu-zenoh.so` binaries for `x86_64-linux` and `aarch64-linux` (and macOS if plugins issue is resolved).
-- [ ] **15.3** **Tutorial Lesson 15**: Setup and Distribution. Installing and running `virtmcu` from binaries instead of source.
+- [x] **15.1** **Python Tools PyPI Package**: Package `repl2qemu`, `yaml2qemu`, and `mcp_server` into a standalone PyPI package (`virtmcu-tools`).
+- [x] **15.2** **Binary Releases**: Establish a GitHub Actions pipeline to compile the patched `qemu-system-arm` and `hw-virtmcu-zenoh.so` binaries for `x86_64-linux` and `aarch64-linux` (and macOS if plugins issue is resolved).
+- [x] **15.3** **Tutorial Lesson 15**: Setup and Distribution. Installing and running `virtmcu` from binaries instead of source.
 
 ---
 
@@ -753,7 +739,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.8 Fix `zenoh-telemetry` wrong return type**
+- [x] **18.8 Fix `zenoh-telemetry` wrong return type**
 
   `qemu_clock_get_ns` is declared locally in `zenoh-telemetry/src/lib.rs` as `-> u64`. QEMU's actual signature returns `int64_t` (`i64`). The C ABI silently accepts the mismatch; on a system where virtual time wraps or a negative timestamp is returned, the u64 cast produces a massive positive value, corrupting the telemetry stream with no error.
 
@@ -780,7 +766,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.10 Adopt `virtmcu-qom` in `zenoh-netdev`**
+- [x] **18.10 Adopt `virtmcu-qom` in `zenoh-netdev`**
 
   `zenoh-netdev/src/lib.rs` re-declares `virtmcu_bql_lock`/`virtmcu_bql_unlock` as inline `extern "C"` instead of using `virtmcu_qom::sync`.
 
@@ -806,7 +792,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.12 Zenoh session helper**
+- [x] **18.12 Zenoh session helper**
 
   All 7 Rust crates duplicate the same 10-line `Config::default()` + `insert_json5` + `zenoh::open()` pattern. **This helper must NOT go in `virtmcu-qom`** — that crate is pure QEMU FFI and must remain free of Zenoh dependencies (so future code can use QEMU bindings without pulling in Zenoh). Instead, create a new `hw/rust/virtmcu-zenoh/` workspace crate with `zenoh` and `virtmcu-qom` as dependencies. All 7 device crates replace their direct `zenoh.workspace = true` call-site pattern with a call to `virtmcu_zenoh::open_session(router)`.
 
