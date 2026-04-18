@@ -925,7 +925,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-## Phase 20 — Shared Rust API Crate (`virtmcu-api`)
+## Phase 20 — Shared Rust API Crate (`virtmcu-api`) ✅
 
 **Goal**: Unblock Firmware Studio and other downstream Rust consumers by providing a stable, public `rlib` containing all serialization schemas, packed structs, and Zenoh headers. Currently, downstream users have to manually duplicate `#[repr(C)]` structs and FlatBuffers definitions because all `hw/rust/*` crates are compiled as `staticlib` for QEMU FFI and cannot be imported natively.
 
@@ -935,13 +935,13 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-- [ ] **20.1 Create `virtmcu-api` crate**
+- [x] **20.1 Create `virtmcu-api` crate**
   - Initialize a new `hw/rust/virtmcu-api` crate configured as `crate-type = ["rlib"]`.
   - Migrate all `#[repr(C)]` structs (e.g., `ClockAdvanceReq`, `ClockReadyResp`) from `zenoh-clock/src/lib.rs` and `virtmcu_proto.h` equivalents to this crate.
   - Migrate the `ZenohFrameHeader` from the network and chardev plugins to this crate.
   - Relocate the FlatBuffers generated bindings (`telemetry_generated.rs` and `telemetry_fb` builder) from `zenoh-telemetry/src/lib.rs` into `virtmcu-api`.
 
-- [ ] **20.2 Refactor Internal Plugins to use `virtmcu-api`**
+- [x] **20.2 Refactor Internal Plugins to use `virtmcu-api`**
   - Update `zenoh-clock`, `zenoh-telemetry`, `zenoh-netdev`, and other relevant `hw/rust/*` plugins to add `virtmcu-api` as a dependency.
   - Remove all inline definitions of the migrated structs from the individual plugin crates.
   - Run the full suite of integration tests to verify the QEMU API contract holds.
