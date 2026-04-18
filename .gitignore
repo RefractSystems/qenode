@@ -37,6 +37,7 @@ report.html
 *_output.txt
 *.cli
 *.arch
+virtmcu-timeout-*
 
 # IDEs and Tools
 .vscode/
