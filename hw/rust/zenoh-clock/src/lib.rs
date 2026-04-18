@@ -90,13 +90,12 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
     if now >= s.next_quantum_ns || halted {
         let backend = unsafe { &*s.rust_state };
 
-        let mut bql = Bql::lock();
         // Release BQL before blocking
-        drop(bql);
+        unsafe { virtmcu_qom::sync::Bql::unlock() };
 
         let delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
 
-        bql = Bql::lock();
+        let _bql = virtmcu_qom::sync::Bql::lock();
 
         s.next_quantum_ns = now + delta;
         if !s.quantum_timer.is_null() {
@@ -105,7 +104,7 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
             }
         }
         // Keep BQL held when returning to QEMU
-        std::mem::forget(bql);
+        std::mem::forget(_bql);
     }
 }
 

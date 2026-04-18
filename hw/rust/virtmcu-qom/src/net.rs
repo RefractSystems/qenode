@@ -25,6 +25,7 @@ pub struct NetClientInfo {
 
 #[repr(C)]
 pub struct Netdev {
+    pub id: *mut c_char,
     pub type_: c_int,
     pub u: NetdevUnion,
 }

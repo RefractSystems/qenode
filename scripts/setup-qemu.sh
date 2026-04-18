@@ -31,6 +31,7 @@ if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d 
 fi
 
 if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
+    # shellcheck source=/dev/null
     source "$WORKSPACE_DIR/VERSIONS"
 fi
 
