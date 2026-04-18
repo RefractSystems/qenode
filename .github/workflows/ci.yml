@@ -71,6 +71,26 @@ jobs:
       - name: Check version synchronization
         run: python3 scripts/check-versions.py
 
+  virtmcu-tools-build:
+    name: virtmcu-tools Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build package
+        run: |
+          cd packaging/virtmcu-tools
+          uv build
+          # Verify the wheel contains expected files
+          WHEEL_FILE=$(ls dist/*.whl)
+          unzip -l "$WHEEL_FILE" | grep "virtmcu_tools/repl2qemu/"
+          unzip -l "$WHEEL_FILE" | grep "virtmcu_tools/yaml2qemu.py"
+          unzip -l "$WHEEL_FILE" | grep "virtmcu_tools/mcp_server/"
+          unzip -l "$WHEEL_FILE" | grep "virtmcu_tools/qmp_bridge.py"
+
   rust-lint:
     name: Rust Lint
     runs-on: ubuntu-latest
