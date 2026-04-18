@@ -3698,6 +3698,7 @@ name = "zenoh-chardev"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "libc",
  "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh",

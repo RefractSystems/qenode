@@ -22,7 +22,7 @@ For blocking, high-frequency bridges where every nanosecond counts, we use **Str
 
 ### 2. Asynchronous Telemetry
 For high-volume, fire-and-forget telemetry events, we use **FlatBuffers**.
-*   **Format:** Defined in `hw/zenoh/telemetry.fbs`.
+*   **Format:** Defined in `hw/misc/telemetry.fbs`.
 *   **Mechanism:** The QEMU TCG thread places lightweight raw structs into a concurrent queue. A dedicated background thread (`telemetry-pub`) pops these and builds the FlatBuffer using `flatcc`, zero-copying the result onto the Zenoh bus.
 *   **Downstream (Firmware Studio, Dashboards):** Consumers use the generated bindings for their language of choice (Rust, Python, TS) and read directly from the memory buffer. This provides schema evolution (adding fields without breaking old clients).
 

@@ -1,35 +1,48 @@
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_int, c_void};
 
 #[repr(C)]
 pub struct NetClientState {
-    _opaque: [u8; 0],
+    pub info: *const NetClientInfo,
+    _opaque: [u8; 376 - 8], // Pad to 376 bytes
 }
 
-pub type NetCanReceive = extern "C" fn(nc: *mut NetClientState) -> bool;
-pub type NetReceive = extern "C" fn(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize;
-pub type NetCleanup = extern "C" fn(nc: *mut NetClientState);
+pub type NetCanReceive = unsafe extern "C" fn(nc: *mut NetClientState) -> bool;
+pub type NetReceive =
+    unsafe extern "C" fn(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize;
+pub type NetCleanup = unsafe extern "C" fn(nc: *mut NetClientState);
 
 #[repr(C)]
 pub struct NetClientInfo {
     pub type_id: i32,
     pub size: usize,
-    pub receive: *mut c_void,
+    pub receive: Option<NetReceive>,
     pub receive_raw: *mut c_void,
     pub receive_iov: *mut c_void,
-    pub cleanup: *mut c_void,
-    pub can_receive: *mut c_void,
-    pub query_rx_filter: *mut c_void,
-    pub announce: *mut c_void,
-    pub set_vnet_hdr_len: *mut c_void,
-    pub set_vnet_le: *mut c_void,
-    pub set_vnet_be: *mut c_void,
-    pub get_vnet_hdr_len: *mut c_void,
-    pub set_offload: *mut c_void,
-    pub has_ufo: *mut c_void,
-    pub has_vnet_hdr: *mut c_void,
-    pub has_vnet_hdr_len: *mut c_void,
-    pub using_vnet_hdr: *mut c_void,
+    pub cleanup: Option<NetCleanup>,
+    pub can_receive: Option<NetCanReceive>,
+    pub _opaque: [u8; 208 - 4 - 8 - 8 - 8 - 8 - 8 - 8], // Pad to 208
 }
+
+#[repr(C)]
+pub struct Netdev {
+    pub type_: c_int,
+    pub u: NetdevUnion,
+}
+
+#[repr(C)]
+pub union NetdevUnion {
+    pub zenoh: NetdevZenohOptions,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct NetdevZenohOptions {
+    pub node: *mut c_char,
+    pub router: *mut c_char,
+    pub topic: *mut c_char,
+}
+
+pub const NET_CLIENT_DRIVER_ZENOH: i32 = 14;
 
 extern "C" {
     pub fn qemu_new_net_client(
@@ -40,4 +53,18 @@ extern "C" {
     ) -> *mut NetClientState;
 
     pub fn qemu_send_packet(nc: *mut NetClientState, buf: *const u8, size: usize);
+
+    pub static mut virtmcu_zenoh_netdev_hook: Option<
+        unsafe extern "C" fn(
+            netdev: *const Netdev,
+            name: *const c_char,
+            peer: *mut NetClientState,
+            errp: *mut *mut crate::error::Error,
+        ) -> c_int,
+    >;
 }
+
+// const _: () = assert!(core::mem::size_of::<NetClientState>() == 376);
+// const _: () = assert!(core::mem::size_of::<NetClientInfo>() == 208);
+
+unsafe impl Sync for NetClientInfo {}

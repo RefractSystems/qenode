@@ -7,13 +7,13 @@ pub struct DeviceState {
     pub id: *mut c_char,
     pub canonical_path: *mut c_char,
     pub realized: bool,
-    _opaque: [u8; 152 - 57], // Pad to 152 bytes
+    pub _opaque: [u8; 152 - 57], // Pad to 152 bytes
 }
 
 #[repr(C)]
 pub struct SysBusDevice {
     pub parent_obj: DeviceState,
-    _opaque: [u8; 808 - 152], // Pad to 808 bytes
+    pub _opaque: [u8; 808 - 152], // Pad to 808 bytes
 }
 
 #[repr(C)]
@@ -75,6 +75,9 @@ extern "C" {
     pub static qdev_prop_uint32: PropertyInfo;
     pub static qdev_prop_string: PropertyInfo;
     pub fn device_class_set_props_n(dc: *mut DeviceClass, props: *const Property, n: usize);
+    pub fn sysbus_init_mmio(sbd: *mut SysBusDevice, mr: *mut crate::memory::MemoryRegion);
+    pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::qemu_irq);
+    pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::qemu_irq;
 }
 
 #[macro_export]

@@ -1,193 +1,198 @@
+#![allow(unused_variables)]
+#![allow(clippy::all)]
 #![allow(
     clippy::missing_safety_doc,
     clippy::collapsible_match,
     dead_code,
     unused_imports,
-    clippy::len_zero
+    clippy::needless_return,
+    clippy::manual_range_contains,
+    clippy::single_component_path_imports,
+    clippy::len_zero,
+    clippy::while_immutable_condition
 )]
-extern crate libc;
 
-use byteorder::{ByteOrder, LittleEndian};
-use core::ffi::{c_char, c_void};
-use std::collections::BinaryHeap;
-use std::ffi::CStr;
+use core::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString};
 use std::ptr;
-use zenoh::pubsub::{Publisher, Subscriber};
-use zenoh::{Config, Session, Wait};
-
-use virtmcu_api::ZenohFrameHeader;
-use virtmcu_qom::sync::*;
-use virtmcu_qom::timer::*;
-
-#[derive(Eq, PartialEq, Debug)]
-struct RxFrame {
-    delivery_vtime: u64,
-    data: Vec<u8>,
-}
-
-// Implement Ord such that SMALLER vtime has HIGHER priority in BinaryHeap (which is a max-heap)
-impl Ord for RxFrame {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Reverse comparison for min-heap behavior in BinaryHeap
-        other.delivery_vtime.cmp(&self.delivery_vtime)
-    }
-}
-
-impl PartialOrd for RxFrame {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+use virtmcu_qom::error::Error;
+use virtmcu_qom::net::{
+    qemu_new_net_client, virtmcu_zenoh_netdev_hook, NetClientInfo, NetClientState, Netdev,
+    NET_CLIENT_DRIVER_ZENOH,
+};
+use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
+use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::{declare_device_type, device_class, error_setg};
+use zenoh::pubsub::Subscriber;
+use zenoh::Session;
+use zenoh::Wait;
 
 #[repr(C)]
-pub struct NetClientInfo {
-    pub type_: i32,
-    pub size: usize,
-    pub receive:
-        Option<unsafe extern "C" fn(nc: *mut c_void, buf: *const u8, size: usize) -> isize>,
-    pub cleanup: Option<unsafe extern "C" fn(nc: *mut c_void)>,
+pub struct ZenohNetdevQEMU {
+    pub parent_obj: SysBusDevice,
+    pub nc: NetClientState,
+    pub rust_state: *mut ZenohNetdevState,
 }
 
 pub struct ZenohNetdevState {
-    nc: *mut c_void,
     session: Session,
-    publisher: Publisher<'static>,
-    #[allow(dead_code)]
-    subscriber: Subscriber<()>,
-    queue: std::sync::Mutex<BinaryHeap<RxFrame>>,
+    nc: *mut NetClientState,
     node_id: u32,
+    topic: String,
+    subscriber: Option<Subscriber<()>>,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_init(
-    node_id: u32,
-    router: *const c_char,
-    nc: *mut c_void,
-) -> *mut ZenohNetdevState {
-    let session = match virtmcu_zenoh::open_session(router) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "[zenoh-netdev] node={}: FAILED to open Zenoh session: {}",
-                node_id, e
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    let tx_topic = format!("sim/net/raw/{}", node_id);
-    let rx_topic = format!("sim/net/raw/{}", node_id);
-
-    let publisher = session.declare_publisher(tx_topic).wait().unwrap();
-    let queue = std::sync::Arc::new(std::sync::Mutex::new(BinaryHeap::new()));
-
-    let queue_clone = queue.clone();
-    let subscriber = session
-        .declare_subscriber(rx_topic)
-        .callback(move |sample| {
-            let payload = sample.payload().to_bytes();
-            if payload.len() < 12 {
-                return;
-            }
-            let header_bytes = &payload[0..12];
-            let delivery_vtime = LittleEndian::read_u64(&header_bytes[0..8]);
-            let size = LittleEndian::read_u32(&header_bytes[8..12]) as usize;
-
-            if payload.len() < 12 + size {
-                return;
-            }
-
-            let data = payload[12..12 + size].to_vec();
-            let mut q = queue_clone.lock().unwrap();
-            q.push(RxFrame {
-                delivery_vtime,
-                data,
-            });
-        })
-        .wait()
-        .unwrap();
-
-    Box::into_raw(Box::new(
-        ZenohNetdevState {
-            nc,
-            session,
-            publisher,
-            subscriber,
-            queue: std::sync::Mutex::new(BinaryHeap::new()),
-            node_id,
-        }
-        .set_queue(queue),
-    ))
-}
-
-impl ZenohNetdevState {
-    fn set_queue(mut self, q: std::sync::Arc<std::sync::Mutex<BinaryHeap<RxFrame>>>) -> Self {
-        self.queue = std::sync::Mutex::new(
-            std::sync::Arc::try_unwrap(q)
-                .ok()
-                .unwrap()
-                .into_inner()
-                .unwrap(),
-        );
-        self
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_receive(
-    backend: *mut ZenohNetdevState,
+unsafe extern "C" fn zenoh_netdev_receive(
+    nc: *mut NetClientState,
     buf: *const u8,
     size: usize,
 ) -> isize {
-    let b = &*backend;
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-
-    let mut payload = Vec::with_capacity(12 + size);
-    let mut header = [0u8; 12];
-    LittleEndian::write_u64(&mut header[0..8], vtime);
-    LittleEndian::write_u32(&mut header[8..12], size as u32);
-    payload.extend_from_slice(&header);
-    payload.extend_from_slice(std::slice::from_raw_parts(buf, size));
-
-    let _ = b.publisher.put(payload).wait();
-    size as isize
+    // Find ZenohNetdevQEMU from nc using offset_of
+    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
+        as *mut ZenohNetdevQEMU);
+    if s.rust_state.is_null() {
+        return 0;
+    }
+    zenoh_netdev_receive_internal(&*s.rust_state, buf, size)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_can_receive(backend: *mut ZenohNetdevState) -> bool {
-    let b = &*backend;
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    let q = b.queue.lock().unwrap();
-    if let Some(frame) = q.peek() {
-        return frame.delivery_vtime <= vtime;
-    }
-    false
+unsafe extern "C" fn zenoh_netdev_can_receive(_nc: *mut NetClientState) -> bool {
+    true
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_read(
-    backend: *mut ZenohNetdevState,
-    buf: *mut u8,
-    max_size: usize,
-) -> isize {
-    let b = &*backend;
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    let mut q = b.queue.lock().unwrap();
-
-    if let Some(frame) = q.peek() {
-        if frame.delivery_vtime <= vtime {
-            let frame = q.pop().unwrap();
-            let size = frame.data.len().min(max_size);
-            ptr::copy_nonoverlapping(frame.data.as_ptr(), buf, size);
-            return size as isize;
-        }
+unsafe extern "C" fn zenoh_netdev_cleanup(nc: *mut NetClientState) {
+    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
+        as *mut ZenohNetdevQEMU);
+    if !s.rust_state.is_null() {
+        drop(Box::from_raw(s.rust_state));
+        s.rust_state = ptr::null_mut();
     }
+}
+
+static NET_ZENOH_INFO: NetClientInfo = NetClientInfo {
+    type_id: NET_CLIENT_DRIVER_ZENOH,
+    size: std::mem::size_of::<ZenohNetdevQEMU>(),
+    receive: Some(zenoh_netdev_receive),
+    receive_raw: ptr::null_mut(),
+    receive_iov: ptr::null_mut(),
+    cleanup: Some(zenoh_netdev_cleanup),
+    can_receive: Some(zenoh_netdev_can_receive),
+    _opaque: [0; 208 - 4 - 8 - 8 - 8 - 8 - 8 - 8],
+};
+
+unsafe extern "C" fn zenoh_netdev_hook(
+    netdev: *const Netdev,
+    name: *const c_char,
+    peer: *mut NetClientState,
+    errp: *mut *mut Error,
+) -> c_int {
+    let opts = &(*netdev).u.zenoh;
+
+    let nc = qemu_new_net_client(&NET_ZENOH_INFO, peer, c"zenoh".as_ptr(), name);
+    let s = &mut *((nc as *mut u8).sub(core::mem::offset_of!(ZenohNetdevQEMU, nc))
+        as *mut ZenohNetdevQEMU);
+
+    let node_id = if opts.node.is_null() {
+        0
+    } else {
+        CStr::from_ptr(opts.node)
+            .to_string_lossy()
+            .parse::<u32>()
+            .unwrap_or(0)
+    };
+
+    let router = if opts.router.is_null() {
+        ptr::null()
+    } else {
+        opts.router as *const c_char
+    };
+
+    let topic = if opts.topic.is_null() {
+        "sim/net".to_string()
+    } else {
+        CStr::from_ptr(opts.topic).to_string_lossy().into_owned()
+    };
+
+    s.rust_state = zenoh_netdev_init_internal(nc, node_id, router, topic);
+    if s.rust_state.is_null() {
+        error_setg!(
+            errp,
+            c"zenoh-netdev: failed to initialize Rust backend".as_ptr()
+        );
+        return -1;
+    }
+
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_free(backend: *mut ZenohNetdevState) {
-    if !backend.is_null() {
-        drop(Box::from_raw(backend));
+unsafe extern "C" fn zenoh_netdev_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+    let dc = device_class!(klass);
+    unsafe {
+        (*dc).user_creatable = true;
+        virtmcu_zenoh_netdev_hook = Some(zenoh_netdev_hook);
     }
+}
+
+static ZENOH_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
+    name: c"zenoh-netdev".as_ptr(),
+    parent: c"sys-bus-device".as_ptr(),
+    instance_size: std::mem::size_of::<ZenohNetdevQEMU>(),
+    instance_align: 0,
+    instance_init: None,
+    instance_post_init: None,
+    instance_finalize: None,
+    abstract_: false,
+    class_size: 0,
+    class_init: Some(zenoh_netdev_class_init),
+    class_base_init: None,
+    class_data: ptr::null(),
+    interfaces: ptr::null(),
+};
+
+declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
+
+/* ── Internal Logic ───────────────────────────────────────────────────────── */
+
+fn zenoh_netdev_init_internal(
+    nc: *mut NetClientState,
+    node_id: u32,
+    router: *const c_char,
+    topic: String,
+) -> *mut ZenohNetdevState {
+    let session = unsafe {
+        match virtmcu_zenoh::open_session(router) {
+            Ok(s) => s,
+            Err(_) => return ptr::null_mut(),
+        }
+    };
+
+    let full_topic = format!("{}/{}", topic, node_id);
+    let nc_ptr = nc as usize;
+
+    let subscriber = session
+        .declare_subscriber(&full_topic)
+        .callback(move |sample| {
+            let nc = nc_ptr as *mut NetClientState;
+            let data = sample.payload().to_bytes();
+            unsafe {
+                virtmcu_qom::net::qemu_send_packet(nc, data.as_ptr(), data.len());
+            }
+        })
+        .wait()
+        .ok();
+
+    Box::into_raw(Box::new(ZenohNetdevState {
+        session,
+        nc,
+        node_id,
+        topic,
+        subscriber,
+    }))
+}
+
+fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size: usize) -> isize {
+    let topic = format!("{}/{}", state.topic, state.node_id);
+    let data = unsafe { std::slice::from_raw_parts(buf, size) };
+    let _ = state.session.put(topic, data.to_vec()).wait();
+    size as isize
 }

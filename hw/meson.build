@@ -94,23 +94,54 @@ rust_zenoh_netdev_lib = custom_target(
   output: ['libzenoh_netdev.a', 'rust_zenoh_netdev_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-netdev && cp target/release/libzenoh_netdev.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-netdev && cp target/release/libzenoh_netdev.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("zenoh-netdev");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_netdev.a', meson.current_build_dir() / 'rust_zenoh_netdev_trigger.c'
   ]
 )
+zenoh_netdev_ss = ss.source_set()
+zenoh_netdev_ss.add(virtmcu_ffi_dep)
+zenoh_netdev_ss.add(virtmcu_rust_ffi_file)
+zenoh_netdev_ss.add(rust_zenoh_netdev_lib[1])
+zenoh_netdev_ss.add(rust_zenoh_netdev_lib[0])
+zenoh_netdev_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_netdev.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-netdev': zenoh_netdev_ss}
 
-# ── zenoh-chardev ────────────────────────────────────────────────────────
-# Rust implementation of the Zenoh serial backend.
+# ── zenoh-chardev ──────────────────────────────────────────────────────────
+# Rust implementation of the Zenoh character device backend.
 rust_zenoh_chardev_lib = custom_target(
   'rust_zenoh_chardev_lib',
   input: 'rust/zenoh-chardev/src/lib.rs',
   output: ['libzenoh_chardev.a', 'rust_zenoh_chardev_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-chardev && cp target/release/libzenoh_chardev.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-chardev && cp target/release/libzenoh_chardev.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("chardev-zenoh");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c'
   ]
 )
+zenoh_chardev_ss = ss.source_set()
+zenoh_chardev_ss.add(virtmcu_ffi_dep)
+zenoh_chardev_ss.add(virtmcu_rust_ffi_file)
+zenoh_chardev_ss.add(rust_zenoh_chardev_lib[1])
+zenoh_chardev_ss.add(rust_zenoh_chardev_lib[0])
+zenoh_chardev_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_chardev.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-chardev': zenoh_chardev_ss}
+
 
 # ── zenoh-telemetry ────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh telemetry backend.
@@ -120,10 +151,26 @@ rust_zenoh_telemetry_lib = custom_target(
   output: ['libzenoh_telemetry.a', 'rust_zenoh_telemetry_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-telemetry && cp target/release/libzenoh_telemetry.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-telemetry && cp target/release/libzenoh_telemetry.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("zenoh-telemetry");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_telemetry.a', meson.current_build_dir() / 'rust_zenoh_telemetry_trigger.c'
   ]
 )
+zenoh_telemetry_ss = ss.source_set()
+zenoh_telemetry_ss.add(virtmcu_ffi_dep)
+zenoh_telemetry_ss.add(virtmcu_rust_ffi_file)
+zenoh_telemetry_ss.add(rust_zenoh_telemetry_lib[1])
+zenoh_telemetry_ss.add(rust_zenoh_telemetry_lib[0])
+zenoh_telemetry_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_telemetry.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-telemetry': zenoh_telemetry_ss}
+
 
 # ── zenoh-actuator ────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh actuator backend.
@@ -133,10 +180,26 @@ rust_zenoh_actuator_lib = custom_target(
   output: ['libzenoh_actuator.a', 'rust_zenoh_actuator_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-actuator && cp target/release/libzenoh_actuator.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-actuator && cp target/release/libzenoh_actuator.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("zenoh-actuator");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_actuator.a', meson.current_build_dir() / 'rust_zenoh_actuator_trigger.c'
   ]
 )
+zenoh_actuator_ss = ss.source_set()
+zenoh_actuator_ss.add(virtmcu_ffi_dep)
+zenoh_actuator_ss.add(virtmcu_rust_ffi_file)
+zenoh_actuator_ss.add(rust_zenoh_actuator_lib[1])
+zenoh_actuator_ss.add(rust_zenoh_actuator_lib[0])
+zenoh_actuator_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_actuator.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-actuator': zenoh_actuator_ss}
+
 
 # ── zenoh-802154 ─────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh 802.15.4 radio.
@@ -146,10 +209,26 @@ rust_zenoh_802154_lib = custom_target(
   output: ['libzenoh_802154.a', 'rust_zenoh_802154_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-802154 && cp target/release/libzenoh_802154.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-802154 && cp target/release/libzenoh_802154.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("zenoh-802154");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_802154.a', meson.current_build_dir() / 'rust_zenoh_802154_trigger.c'
   ]
 )
+zenoh_802154_ss = ss.source_set()
+zenoh_802154_ss.add(virtmcu_ffi_dep)
+zenoh_802154_ss.add(virtmcu_rust_ffi_file)
+zenoh_802154_ss.add(rust_zenoh_802154_lib[1])
+zenoh_802154_ss.add(rust_zenoh_802154_lib[0])
+zenoh_802154_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_802154.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-802154': zenoh_802154_ss}
+
 
 # ── zenoh-ui ─────────────────────────────────────────────────────────────
 # Rust implementation of the Zenoh UI backend.
@@ -159,12 +238,26 @@ rust_zenoh_ui_lib = custom_target(
   output: ['libzenoh_ui.a', 'rust_zenoh_ui_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-ui && cp target/release/libzenoh_ui.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-ui && cp target/release/libzenoh_ui.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("zenoh-ui");
+EOF
+''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_ui.a', meson.current_build_dir() / 'rust_zenoh_ui_trigger.c'
   ]
 )
+zenoh_ui_ss = ss.source_set()
+zenoh_ui_ss.add(virtmcu_ffi_dep)
+zenoh_ui_ss.add(virtmcu_rust_ffi_file)
+zenoh_ui_ss.add(rust_zenoh_ui_lib[1])
+zenoh_ui_ss.add(rust_zenoh_ui_lib[0])
+zenoh_ui_ss.add(declare_dependency(
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libzenoh_ui.a', '-Wl,--no-whole-archive']
+))
+hw_virtmcu_modules += {'zenoh-ui': zenoh_ui_ss}
 
-subdir('zenoh')
 
 # ── remote-port-bridge ────────────────────────────────────────────────────────
 # Path B co-simulation bridge: AMD/Xilinx Remote Port over a Unix socket

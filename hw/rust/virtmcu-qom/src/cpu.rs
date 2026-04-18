@@ -1,6 +1,11 @@
+use core::ffi::c_int;
+
 #[repr(C)]
 pub struct CPUState {
-    _opaque: [u8; 0],
+    pub parent_obj: crate::qom::Object,
+    _padding1: [u8; 816 - 40], // Pad to cpu_index
+    pub cpu_index: c_int,
+    pub _opaque: [u8; 16624 - 816 - 4], // Pad to 16624
 }
 
 #[repr(C)]
@@ -22,3 +27,6 @@ extern "C" {
 
     pub fn cpu_exit(cpu: *mut CPUState);
 }
+
+const _: () = assert!(core::mem::size_of::<CPUState>() == 16624);
+const _: () = assert!(core::mem::offset_of!(CPUState, cpu_index) == 816);
