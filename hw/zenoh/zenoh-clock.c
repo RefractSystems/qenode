@@ -52,9 +52,20 @@ struct ZenohClock {
     QemuCond  query_cond;
     
     int64_t   next_quantum_ns;
+    QEMUTimer *quantum_timer;
 };
 
 static ZenohClock *global_clock;
+
+static void zenoh_clock_timer_cb(void *opaque)
+{
+    /*
+     * Fires from the QEMU main loop (IO thread) with BQL already held.
+     * Kick all vCPUs so they exit their current TB and re-evaluate the
+     * quantum boundary in virtmcu_tcg_quantum_hook.
+     */
+    virtmcu_cpu_exit_all();
+}
 
 static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
 {
@@ -80,11 +91,12 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
         ZenohClockState *rust_state = s->rust_state;
         
         /* Use our own BQL wrappers to avoid symbol resolution issues with TLS in DSOs */
-        virtmcu_bql_unlock();
+        bool locked = virtmcu_bql_locked();
+        if (locked) { virtmcu_bql_unlock(); }
 
         int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
 
-        virtmcu_bql_lock();
+        if (locked) { virtmcu_bql_lock(); }
 
         assert(s->rust_state != NULL &&
                "zenoh-clock finalized while blocking in quantum_wait");
@@ -92,6 +104,10 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
         /* Update next quantum. If we entered due to halt, we might still be at the 
          * same time, but we now have a new budget. */
         s->next_quantum_ns = now + delta;
+
+        if (s->quantum_timer) {
+            timer_mod(s->quantum_timer, s->next_quantum_ns);
+        }
     }
 }
 
@@ -113,6 +129,12 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
     qemu_cond_init(&s->vcpu_cond);
     qemu_cond_init(&s->query_cond);
     s->next_quantum_ns = 0;
+
+    if (!icount_enabled()) {
+        s->quantum_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, zenoh_clock_timer_cb, s);
+    } else {
+        s->quantum_timer = NULL;
+    }
 
     uint32_t stall_ms = s->stall_timeout_ms;
     if (stall_ms == 0) {
@@ -148,6 +170,10 @@ static void zenoh_clock_instance_finalize(Object *obj)
     if (s->rust_state) {
         zenoh_clock_free(s->rust_state);
         s->rust_state = NULL;
+    }
+    if (s->quantum_timer) {
+        timer_free(s->quantum_timer);
+        s->quantum_timer = NULL;
     }
     qemu_mutex_destroy(&s->mutex);
     qemu_cond_destroy(&s->vcpu_cond);
