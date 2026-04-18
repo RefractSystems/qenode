@@ -104,7 +104,7 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
     if (writen(s->sock_fd, req, sizeof(*req))) {
         bool timed_out = false;
         while (!s->has_resp) {
-            if (qemu_cond_timedwait(&s->resp_cond, &s->sock_mutex, BRIDGE_TIMEOUT_MS)) {
+            if (!qemu_cond_timedwait(&s->resp_cond, &s->sock_mutex, BRIDGE_TIMEOUT_MS)) {
                 timed_out = true;
                 break;
             }
