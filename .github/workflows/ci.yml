@@ -222,103 +222,46 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Phases 1–3.5: no Python runtime needed
           - phase: "1"
-            pre: "make -C test/phase1"
+            cmd: "make -C test/phase1 && bash test/phase1/smoke_test.sh"
           - phase: "2"
-            pre: ":"
+            cmd: "bash test/phase2/smoke_test.sh"
           - phase: "3"
-            pre: ":"
+            cmd: "bash test/phase3/smoke_test.sh"
           - phase: "3.5"
-            pre: "make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
-          # Phase 4: pytest + robot run directly; needs packages on PATH
+            cmd: "make -C test/phase1 && bash test/phase3.5/smoke_test.sh"
           - phase: "4"
-            pre: "make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
-          # Phase 8: robot tests
+            cmd: "make -C test/phase1 && bash test/phase4/smoke_test.sh"
+          - phase: "5"
+            cmd: "apt-get update && apt-get install -y --no-install-recommends libsystemc-dev && bash test/phase5/smoke_test.sh"
+          - phase: "6"
+            cmd: "bash test/phase6/smoke_test.sh"
+          - phase: "7"
+            cmd: "bash test/phase7/smoke_test.sh"
           - phase: "8"
-            pre: "make -C test/phase1 && make -C test/phase8 && uv pip install --system --break-system-packages -r pyproject.toml"
+            cmd: "make -C test/phase1 && make -C test/phase8 && bash test/phase8/smoke_test.sh"
           - phase: "9"
-            pre: "apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true && make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
+            cmd: "apt-get update && apt-get install -y --no-install-recommends libsystemc-dev && make -C test/phase1 && bash test/phase9/smoke_test.sh"
           - phase: "10"
-            pre: "make -C test/phase1 && uv pip install --system --break-system-packages -r pyproject.toml"
+            cmd: "make -C test/phase1 && bash test/phase10/smoke_test.sh"
           - phase: "11"
-            pre: "make -C test/riscv"
+            cmd: "make -C test/riscv && bash test/phase11/smoke_test.sh"
           - phase: "11_3"
-            pre: "cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && make -C tools/systemc_adapter/build rp_adapter"
+            cmd: "cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release && make -C tools/systemc_adapter/build rp_adapter && bash test/phase11_3/smoke_test.sh"
           - phase: "12"
-            pre: "make -C test/phase1 && make -C test/phase12 && uv pip install --system --break-system-packages -r pyproject.toml"
+            cmd: "make -C test/phase1 && make -C test/phase12 && bash test/phase12/smoke_test.sh"
+          - phase: "16"
+            cmd: "make -C test/phase1 && make -C test/phase16 && bash test/phase16/smoke_test.sh"
+          - phase: "qmp"
+            cmd: "make -C test/phase1 && make -C test/phase8 && pytest tools/testing/test_qmp.py -v --tb=short"
+          - phase: "robot"
+            cmd: "make -C test/phase1 && make -C test/phase8 && robot --outputdir test-results/robot --xunit test-results/robot.xml tests/test_qmp_keywords.robot tests/test_interactive_echo.robot"
 
     steps:
       - uses: actions/checkout@v5
 
       - name: Load VERSIONS
         run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Re-build from GHA cache — fast if no patches/hw changes.
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run phase ${{ matrix.phase }} smoke test
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "${{ matrix.pre }} && bash test/phase${{ matrix.phase }}/smoke_test.sh"
-
-# ── Tier 3: Phase 16 — Performance & Determinism (IPS benchmark) ─────────────
-#
-# Runs the icount determinism and IPS benchmark.  CI runners are slower than
-# developer machines, so the STALL timeout is raised to 60 s via the
-# stall-timeout device property (default is 5 s for fast local feedback).
-
-  smoke-phase16:
-    name: Smoke — Phase 16 (perf & determinism)
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -343,340 +286,26 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
-      - name: Run phase 16 smoke test
+      - name: Run phase ${{ matrix.phase }} test
         run: |
+          mkdir -p coverage-data
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
+            -e GCOV_PREFIX=/workspace/coverage-data \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              make -C test/phase1
-              make -C test/phase16
-              uv pip install --system --break-system-packages -r pyproject.toml
-              bash test/phase16/smoke_test.sh
-            "
+            bash -c "${{ matrix.cmd }}"
 
-# ── Tier 3: Phase 5 — SystemC Co-simulation Bridge ───────────────────────────
-
-  smoke-phase5:
-    name: Smoke — Phase 5 (SystemC bridge)
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run phase 5 smoke test
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              apt-get install -y --no-install-recommends libsystemc-dev 2>/dev/null || true
-              uv pip install --system --break-system-packages -r pyproject.toml
-              bash test/phase5/smoke_test.sh
-            "
-
-# ── Tier 3: Phase 6 — Multi-Node Zenoh Coordinator ───────────────────────────
-
-  smoke-phase6:
-    name: Smoke — Phase 6 (Zenoh coordinator)
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run phase 6 smoke test
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              uv pip install --system --break-system-packages -r pyproject.toml
-              bash test/phase6/smoke_test.sh
-            "
-
-# ── Tier 3: Phase 7 — Zenoh Clock (suspend + icount modes) ───────────────────
-#
-# Phase 7 is self-contained: the smoke test launches QEMU with the zenoh-clock
-# device and acts as its own mock TimeAuthority via the Python Zenoh client.
-# No MuJoCo or FirmwareStudio stack is required.
-
-  smoke-phase7:
-    name: Smoke — Phase 7 (zenoh-clock)
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run phase 7 smoke test
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              uv pip install --system --break-system-packages -r pyproject.toml
-              bash test/phase7/smoke_test.sh
-            "
-
-# ── Tier 3: pytest QMP Integration Suite ─────────────────────────────────────
-#
-# Runs tools/testing/test_qmp.py which launches real QEMU instances and
-# communicates via QMP. Enforces the Phase 4 isolation constraint: no
-# -device zenoh-clock in standalone tests (validated by conftest.py).
-
-  pytest-qmp:
-    name: pytest — QMP Integration
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run pytest QMP suite
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              make -C test/phase1
-              make -C test/phase8
-              uv pip install --system --break-system-packages -r pyproject.toml pytest-cov
-              pytest tools/testing/test_qmp.py \
-                --cov=tools \
-                --cov-report=xml:test-results/qmp-coverage.xml \
-                --cov-report=term \
-                -v --tb=short \
-                --junitxml=test-results/pytest-qmp.xml
-            "
-
-      - name: Upload pytest and coverage results
+      - name: Upload results and coverage
         uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: pytest-qmp-results
-          path: test-results/
-
-# ── Tier 3: Robot Framework Test Suite ───────────────────────────────────────
-#
-# Runs the Renode-compatible keyword suite. Covers the same scenarios as
-# pytest-qmp but via the Robot Framework compatibility layer.
-
-  robot-tests:
-    name: Robot Framework Tests
-    needs: [build-qemu, unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Load VERSIONS
-        run: cat VERSIONS | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore builder image from cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: builder
-          tags: ${{ env.BUILDER_IMAGE }}:${{ github.sha }}
-          build-args: |
-            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            ARM_TOOLCHAIN_VERSION=${{ env.ARM_TOOLCHAIN_VERSION }}
-            QEMU_REF=v${{ env.QEMU_VERSION }}
-            ZENOH_C_REF=${{ env.ZENOH_VERSION }}
-            CMAKE_VERSION=${{ env.CMAKE_VERSION }}
-            RUST_VERSION=${{ env.RUST_VERSION }}
-            FLATBUFFERS_VERSION=${{ env.FLATBUFFERS_VERSION }}
-          cache-from: type=gha,scope=builder-amd64
-          load: true
-
-      - name: Run Robot Framework tests
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
-            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash -c "
-              make -C test/phase1
-              make -C test/phase8
-              uv pip install --system --break-system-packages -r pyproject.toml
-              robot \
-                --outputdir test-results/robot \
-                --xunit test-results/robot.xml \
-                --loglevel INFO \
-                tests/test_qmp_keywords.robot \
-                tests/test_interactive_echo.robot
-            "
-
-      - name: Upload Robot results
-        uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: robot-test-results
-          path: test-results/
+          name: results-phase-${{ matrix.phase }}
+          path: |
+            test-results/
+            coverage-data/
 
 # ── Tier 4: Runtime Image Verification ───────────────────────────────────────
 
@@ -750,7 +379,7 @@ jobs:
 
   peripheral-coverage:
     name: Peripheral C Coverage
-    needs: [smoke-tests, smoke-phase5, smoke-phase6, smoke-phase7, smoke-phase16, pytest-qmp, robot-tests]
+    needs: [smoke-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -781,35 +410,27 @@ jobs:
           cache-from: type=gha,scope=builder-amd64
           load: true
 
-      # We run all tests AGAIN in one container instance to collect coverage.
-      # This is necessary because coverage data is lost between 'docker run --rm' calls.
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-coverage
+          pattern: results-phase-*
+          merge-multiple: true
+
       - name: Generate unified peripheral coverage
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            -e PYTHONPATH=/workspace \
-            -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c '
-              # Pre-build all artifacts
-              apt-get update && apt-get install -y --no-install-recommends libsystemc-dev
-              make -C test/phase1
-              make -C test/phase8
-              uv pip install --system --break-system-packages -r pyproject.toml pytest-cov
-
-              # Run a representative subset of tests that exercise the plugins
-              # (Phase 7 exercises zenoh-clock, Phase 5 exercises mmio-socket-bridge)
-              bash test/phase7/smoke_test.sh
-              bash test/phase5/smoke_test.sh
-              
-              # Run full pytest-qmp suite
-              pytest tools/testing/test_qmp.py -v
-
-              # Generate report for our plugins only (under hw/virtmcu)
               mkdir -p /workspace/test-results
-              cd /build/qemu
+              # gcovr can find .gcda files in the mounted coverage directory
+              # We need to tell it where the source files are (/build/qemu/hw/virtmcu)
+              # and where the object files/gcda files are (/workspace/all-coverage)
               gcovr -r /build/qemu/hw/virtmcu \
+                --gcov-executable gcov \
+                --object-directory /workspace/all-coverage \
                 --xml /workspace/test-results/peripheral-coverage.xml \
                 --html-details /workspace/test-results/peripheral-coverage.html \
                 --print-summary

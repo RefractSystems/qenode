@@ -122,6 +122,10 @@ RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/do
 ARG CMAKE_VERSION
 RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
 
+# Pre-install Python dependencies for the simulation tools
+COPY pyproject.toml /tmp/pyproject.toml
+RUN uv pip install --no-cache --system --break-system-packages -r /tmp/pyproject.toml
+
 # ── Stage: flatcc-builder ───────────────────────────────────────────────────
 FROM toolchain AS flatcc-builder
 WORKDIR /build/flatcc
