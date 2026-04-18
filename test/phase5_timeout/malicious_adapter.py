@@ -1,8 +1,7 @@
+import os
 import socket
 import struct
 import sys
-import os
-import time
 
 # From virtmcu_proto.h
 VIRTMCU_PROTO_MAGIC = 0x564D4355
@@ -16,7 +15,7 @@ def main():
 
     sock_path = sys.argv[1]
     mode = sys.argv[2]
-    
+
     if os.path.exists(sock_path):
         os.remove(sock_path)
 
@@ -35,7 +34,7 @@ def main():
         return
     magic, version = struct.unpack("<II", data)
     print(f"Received handshake: magic=0x{magic:X}, version={version}", flush=True)
-    
+
     hs_out = struct.pack("<II", VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION)
     conn.sendall(hs_out)
     print("Sent handshake", flush=True)
@@ -52,7 +51,7 @@ def main():
     if len(req_data) == 32:
         req_type = req_data[0]
         print(f"Received MMIO request: type={req_type}", flush=True)
-        
+
         if mode == "hang":
             print("Ignoring request to trigger timeout in QEMU...")
             # Keep the connection open but do nothing
@@ -60,7 +59,7 @@ def main():
                 try:
                     if not conn.recv(1024):
                         break
-                except:
+                except Exception:
                     break
         elif mode == "crash":
             print("Closing connection immediately to simulate crash...")

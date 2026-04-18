@@ -101,7 +101,7 @@ run_test_case() {
     local expected_msg=$2
 
     echo "[phase5.6] RUNNING TEST CASE: $mode"
-    
+
     # ── Start malicious adapter ──
     rm -f "$SOCK_PATH"
     python3 -u "$SCRIPT_DIR/malicious_adapter.py" "$SOCK_PATH" "$mode" > "$ADAPTER_LOG" 2>&1 &
@@ -163,7 +163,7 @@ sys.exit(0)
     echo "[phase5.6]   Killing QEMU (PID $QEMU_PID)..."
     kill -9 "$QEMU_PID" 2>/dev/null || true
     sleep 1
-    
+
     echo "[phase5.6]   Checking for expected error in log..."
     if [ ! -f "$QEMU_LOG" ]; then
         echo "[phase5.6]   FAILED: QEMU log file $QEMU_LOG not found"
@@ -187,7 +187,6 @@ sys.exit(0)
 }
 
 # TEST 1: HANG (Timeout)
-# Expected message from mmio-socket-bridge.c
 if ! run_test_case "hang" "mmio-socket-bridge: timeout on socket fd"; then
     exit 1
 fi
@@ -195,6 +194,7 @@ fi
 echo "----------------------------------------------------------------------"
 
 # TEST 2: CRASH (Immediate disconnect)
+# For crash case, we don't need 20s, but let's allow some time.
 if ! run_test_case "crash" "mmio-socket-bridge: remote disconnected"; then
     exit 1
 fi

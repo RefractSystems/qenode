@@ -21,6 +21,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <poll.h>
 
 #include "virtmcu_proto.h"
 
@@ -53,7 +54,13 @@ struct MmioSocketBridgeState {
 static bool writen(int fd, const void *buf, size_t len)
 {
     const char *p = buf;
+    struct pollfd pfd = { .fd = fd, .events = POLLOUT };
     while (len > 0) {
+        int ret = poll(&pfd, 1, BRIDGE_TIMEOUT_MS);
+        if (ret <= 0) {
+            if (ret < 0 && errno == EINTR) continue;
+            return false;
+        }
         ssize_t n = write(fd, p, len);
         if (n <= 0) {
             if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
@@ -62,6 +69,14 @@ static bool writen(int fd, const void *buf, size_t len)
         p += n; len -= n;
     }
     return true;
+}
+
+static int read_timeout(int fd, void *buf, size_t len, int timeout_ms)
+{
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    int ret = poll(&pfd, 1, timeout_ms);
+    if (ret <= 0) return ret;
+    return read(fd, buf, len);
 }
 
 static void bridge_sock_handler(void *opaque)
@@ -181,9 +196,9 @@ static void bridge_realize(DeviceState *dev, Error **errp)
     }
 
     struct virtmcu_handshake hs_in;
-    int n = read(s->sock_fd, &hs_in, sizeof(hs_in));
+    int n = read_timeout(s->sock_fd, &hs_in, sizeof(hs_in), BRIDGE_TIMEOUT_MS);
     if (n != sizeof(hs_in)) {
-        error_setg(errp, "failed to read handshake from %s", s->socket_path);
+        error_setg(errp, "failed to read handshake from %s (timeout or disconnect)", s->socket_path);
         close(s->sock_fd); s->sock_fd = -1; return;
     }
     if (hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION) {
