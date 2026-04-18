@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "virtmcu-tools"
+version = "0.1.0"
+description = "Standalone tools for virtmcu: repl2qemu, yaml2qemu, and mcp-server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "qemu.qmp>=0.0.3",
+    "pyyaml>=6.0.1",
+    "mcp>=1.0.0",
+    "eclipse-zenoh>=1.0.0",
+]
+
+[project.scripts]
+repl2qemu = "virtmcu_tools.repl2qemu.__main__:main"
+yaml2qemu = "virtmcu_tools.yaml2qemu:main"
+virtmcu-mcp = "virtmcu_tools.mcp_server.__main__:run_server"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/virtmcu_tools"]
