@@ -153,11 +153,6 @@ pub unsafe extern "C" fn zenoh_telemetry_trace_irq(backend: *mut ZenohTelemetryB
         device_name,
     }));
 }
-        id,
-        value: level as u32,
-        device_name: None,
-    }));
-}
 
 fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: String) {
     let publisher = match session.declare_publisher(topic).wait() {
