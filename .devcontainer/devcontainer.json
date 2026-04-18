@@ -24,7 +24,8 @@
         "ms-vscode.cpptools-extension-pack",
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
-        "github.vscode-github-actions"
+        "github.vscode-github-actions",
+        "timonwong.shellcheck"
       ]
     }
   }
