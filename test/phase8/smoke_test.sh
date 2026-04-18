@@ -18,6 +18,11 @@ if [ ! -f "$WORKSPACE_DIR/test/phase1/minimal.dtb" ] || [ ! -f "$WORKSPACE_DIR/t
     make -C "$WORKSPACE_DIR/test/phase1"
 fi
 
+if [ ! -f "$WORKSPACE_DIR/test/phase8/echo.elf" ]; then
+    echo "Phase 8 artifacts not found. Building Phase 8 first..."
+    make -C "$WORKSPACE_DIR/test/phase8"
+fi
+
 echo "==> Running Interactive Echo Test"
 export PYTHONPATH="$WORKSPACE_DIR"
 # robot is expected to be installed in the system environment
