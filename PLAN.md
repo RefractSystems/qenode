@@ -309,7 +309,7 @@ Implement after Path B is validated.
   - **What can go wrong**: A 5-second stall per MMIO access is invisible to the guest firmware (virtual time does not advance while blocked) but breaks wall-clock CI timeouts and makes the simulation unreachable.
   - **What can go wrong**: Switching to `SO_RCVTIMEO` / `SO_SNDTIMEO` changes blocking semantics. After a timeout, the socket is in an undefined state — must close and reopen, which requires a QOM `realize`-level reconnect path that does not exist yet.
   - **Assert**: Add a per-call `poll()` with a 500 ms timeout before every `read()`/`write()`. On timeout, call `error_report("mmio-socket-bridge: timeout on socket fd %d — disconnecting", fd)` and set a `disconnected` flag. Subsequent MMIO accesses return 0 (reads) or silently drop (writes) until the socket reconnects.
-  - **Test**: Add `test/phase5/timeout_test.sh`. Start QEMU with the bridge. Connect the bridge's socket, send one MMIO request, then close the socket from the server side without replying. QEMU must log the timeout error and continue running (QMP `query-status` must still respond within 2 s).
+  - **Test**: Integrated into `test/phase5/smoke_test.sh`. Start QEMU with the bridge. Connect the bridge's socket, send one MMIO request, then close the socket from the server side without replying. QEMU must log the timeout error and continue running (QMP `query-status` must still respond within 2 s).
   - **Coverage check**: `grep -n 'SO_RCVTIMEO\|poll(' hw/misc/mmio-socket-bridge.c` must be non-empty after the fix.
 
 ---
