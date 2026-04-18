@@ -59,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg apt-
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git gh wget openssh-client gnupg2 lsb-release bash-completion \
     procps lsof htop net-tools psmisc unzip nano vim-tiny less jq sudo zsh \
+    shellcheck \
     && rm -rf /var/lib/apt/lists/*
 
 ARG USERNAME=vscode
