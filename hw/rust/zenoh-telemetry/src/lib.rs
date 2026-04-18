@@ -1,20 +1,27 @@
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero, clippy::manual_range_contains)]
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::collapsible_match,
+    dead_code,
+    unused_imports,
+    clippy::len_zero,
+    clippy::manual_range_contains
+)]
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
+use crossbeam_channel::{bounded, Receiver, Sender};
+use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crossbeam_channel::{bounded, Sender, Receiver};
-use zenoh::{Config, Session, Wait};
-use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
+use zenoh::{Config, Session, Wait};
 
 // Minimal manual generation of FlatBuffer bindings for TraceEvent
 #[allow(dead_code, non_snake_case)]
 pub mod telemetry_fb {
-    use flatbuffers::{WIPOffset, FlatBufferBuilder};
+    use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
     #[derive(Copy, Clone, PartialEq, Debug)]
     #[repr(i8)]
@@ -34,7 +41,7 @@ pub mod telemetry_fb {
 
     pub fn create_trace_event<'a>(
         fbb: &mut FlatBufferBuilder<'a>,
-        args: &TraceEventArgs<'a>
+        args: &TraceEventArgs<'a>,
     ) -> WIPOffset<flatbuffers::Table<'a>> {
         let start = fbb.start_table();
         fbb.push_slot(0, args.timestamp_ns, 0);
@@ -77,7 +84,7 @@ pub unsafe extern "C" fn zenoh_telemetry_init(
     let (tx, rx) = bounded(1024);
     let topic = format!("sim/telemetry/trace/{}", node_id);
     let sess_clone = session.clone();
-    
+
     std::thread::spawn(move || {
         telemetry_worker(rx, sess_clone, topic);
     });
@@ -99,12 +106,20 @@ pub unsafe extern "C" fn zenoh_telemetry_free(backend: *mut ZenohTelemetryBacken
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(backend: *mut ZenohTelemetryBackend, cpu_index: i32, halted: bool) {
+pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(
+    backend: *mut ZenohTelemetryBackend,
+    cpu_index: i32,
+    halted: bool,
+) {
     let b = &*backend;
-    if cpu_index < 0 || cpu_index >= 32 { return; }
-    
+    if cpu_index < 0 || cpu_index >= 32 {
+        return;
+    }
+
     let was_halted = b.last_halted[cpu_index as usize].swap(halted, Ordering::SeqCst);
-    if was_halted == halted { return; }
+    if was_halted == halted {
+        return;
+    }
 
     let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     debug_assert!(vtime >= 0, "negative vtime from QEMU clock: {}", vtime);
@@ -118,14 +133,26 @@ pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(backend: *mut ZenohTelemetryB
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_telemetry_trace_irq(backend: *mut ZenohTelemetryBackend, slot: u16, pin: u16, level: i32) {
+pub unsafe extern "C" fn zenoh_telemetry_trace_irq(backend: *mut ZenohTelemetryBackend, slot: u16, pin: u16, level: i32, name_ptr: *const c_char) {
     let b = &*backend;
     let id = ((slot as u32) << 16) | (pin as u32);
     let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     debug_assert!(vtime >= 0, "negative vtime from QEMU clock: {}", vtime);
+
+    let device_name = if name_ptr.is_null() {
+        None
+    } else {
+        Some(CStr::from_ptr(name_ptr).to_string_lossy().into_owned())
+    };
+
     let _ = b.sender.try_send(Some(TraceEvent {
         timestamp_ns: vtime as u64,
         event_type: 1,
+        id,
+        value: level as u32,
+        device_name,
+    }));
+}
         id,
         value: level as u32,
         device_name: None,
@@ -138,12 +165,12 @@ fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: S
         Err(_) => return,
     };
     let mut builder = FlatBufferBuilder::new();
-    
+
     while let Ok(Some(ev)) = rx.recv() {
         builder.reset();
-        
+
         let device_name_off = ev.device_name.as_deref().map(|s| builder.create_string(s));
-        
+
         let args = telemetry_fb::TraceEventArgs {
             timestamp_ns: ev.timestamp_ns,
             type_: match ev.event_type {
@@ -155,10 +182,10 @@ fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: S
             value: ev.value,
             device_name: device_name_off,
         };
-        
+
         let root = telemetry_fb::create_trace_event(&mut builder, &args);
         builder.finish(root, None);
-        
+
         let buf = builder.finished_data();
         let _ = publisher.put(buf).wait();
     }
@@ -175,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_qemu_clock_get_ns_type() {
-        let vtime = unsafe { qemu_clock_get_ns(0) };
+        let vtime = qemu_clock_get_ns(0);
         // If it was u64, -1 would be a huge positive number.
         // The fact that we can compare it to -1 and it's equal proves it's i64.
         assert_eq!(vtime, -1i64);

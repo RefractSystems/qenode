@@ -11,11 +11,12 @@
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "postCreateCommand": "git config --global --add safe.directory /workspace && uv sync && echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc && echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc && echo \"alias gemini='gemini --yolo'\" >> ~/.zshrc",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && uv sync && rustup component add clippy rustfmt && echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc && echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc && echo \"alias gemini='gemini --yolo'\" >> ~/.zshrc",
   "customizations": {
     "vscode": {
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "zsh"
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "rust-analyzer.check.command": "clippy"
       },
       "extensions": [
         "ms-python.python",

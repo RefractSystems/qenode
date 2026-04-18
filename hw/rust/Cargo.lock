@@ -3631,6 +3631,7 @@ name = "zenoh-802154"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "rand 0.9.4",
  "virtmcu-qom",
  "zenoh",
 ]

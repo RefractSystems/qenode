@@ -1,4 +1,10 @@
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::collapsible_match,
+    dead_code,
+    unused_imports,
+    clippy::len_zero
+)]
 #![no_std]
 
 use core::ffi::c_void;

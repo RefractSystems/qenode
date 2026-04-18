@@ -1,4 +1,11 @@
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero, clippy::while_immutable_condition)]
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::collapsible_match,
+    dead_code,
+    unused_imports,
+    clippy::len_zero,
+    clippy::while_immutable_condition
+)]
 extern crate libc;
 
 use core::ffi::{c_char, c_void};
@@ -6,9 +13,12 @@ use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use zenoh::{Config, Session, Wait};
+use virtmcu_qom::sync::{
+    virtmcu_cond_signal, virtmcu_cond_timedwait, virtmcu_cond_wait, virtmcu_mutex_lock,
+    virtmcu_mutex_unlock, QemuCond, QemuMutex,
+};
 use zenoh::query::{Query, Queryable};
-use virtmcu_qom::sync::{QemuMutex, QemuCond, virtmcu_mutex_lock, virtmcu_mutex_unlock, virtmcu_cond_signal, virtmcu_cond_wait, virtmcu_cond_timedwait};
+use zenoh::{Config, Session, Wait};
 
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
@@ -30,12 +40,12 @@ pub struct ZenohClockBackend {
     queryable: Option<Queryable<()>>,
     node_id: u32,
     stall_timeout_ms: u32,
-    
+
     // Shared state with QEMU vCPU thread
     mutex: *mut QemuMutex,
     vcpu_cond: *mut QemuCond,
     query_cond: *mut QemuCond,
-    
+
     delta_ns: Arc<AtomicI64>,
     mujoco_time_ns: Arc<AtomicI64>,
     vtime_ns: Arc<AtomicI64>,
@@ -86,7 +96,8 @@ pub unsafe extern "C" fn zenoh_clock_init(
 
     let topic = format!("sim/clock/advance/{}", node_id);
     let backend_usize = backend_ptr as usize;
-    let queryable = session.declare_queryable(topic)
+    let queryable = session
+        .declare_queryable(topic)
         .callback(move |query| {
             let backend = unsafe { &*(backend_usize as *const ZenohClockBackend) };
             on_clock_query(backend, query);
@@ -111,7 +122,10 @@ pub unsafe extern "C" fn zenoh_clock_free(backend: *mut ZenohClockBackend) {
 unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     let payload = match query.payload() {
         Some(p) => p,
-        None => { reply_error(query, 2); return; }
+        None => {
+            reply_error(query, 2);
+            return;
+        }
     };
 
     if payload.len() < 16 {
@@ -126,7 +140,9 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     ptr::copy_nonoverlapping(data.as_ptr().add(8), &mut mujoco as *mut u64 as *mut u8, 8);
 
     backend.delta_ns.store(delta as i64, Ordering::Release);
-    backend.mujoco_time_ns.store(mujoco as i64, Ordering::Release);
+    backend
+        .mujoco_time_ns
+        .store(mujoco as i64, Ordering::Release);
 
     virtmcu_mutex_lock(backend.mutex);
     backend.quantum_done.store(false, Ordering::Release);
@@ -135,8 +151,13 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
 
     let mut error_code = 0;
     while !backend.quantum_done.load(Ordering::Acquire) {
-        let rc = virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms);
+        let rc =
+            virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms);
         if rc == 0 && !backend.quantum_done.load(Ordering::Acquire) {
+            eprintln!(
+                "[zenoh-clock] STALL: timeout after {} ms waiting for quantum_done",
+                backend.stall_timeout_ms
+            );
             error_code = 1; // STALL
             break;
         }
@@ -150,7 +171,7 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         n_frames: 0,
         error_code,
     };
-    
+
     let resp_bytes = std::slice::from_raw_parts(&resp as *const _ as *const u8, 16);
     let _ = query.reply(query.key_expr(), resp_bytes).wait();
 }
@@ -161,16 +182,17 @@ fn reply_error(query: Query, error_code: u32) {
         n_frames: 0,
         error_code,
     };
-    let resp_bytes = unsafe {
-        std::slice::from_raw_parts(&resp as *const _ as *const u8, 16)
-    };
+    let resp_bytes = unsafe { std::slice::from_raw_parts(&resp as *const _ as *const u8, 16) };
     let _ = query.reply(query.key_expr(), resp_bytes).wait();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_clock_quantum_wait(backend: *mut ZenohClockBackend, current_vtime_ns: i64) -> i64 {
+pub unsafe extern "C" fn zenoh_clock_quantum_wait(
+    backend: *mut ZenohClockBackend,
+    current_vtime_ns: i64,
+) -> i64 {
     let b = &*backend;
-    
+
     virtmcu_mutex_lock(b.mutex);
     b.vtime_ns.store(current_vtime_ns, Ordering::Release);
     b.quantum_done.store(true, Ordering::Release);

@@ -1,21 +1,27 @@
-#![allow(clippy::missing_safety_doc, clippy::collapsible_match, dead_code, unused_imports, clippy::len_zero)]
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::collapsible_match,
+    dead_code,
+    unused_imports,
+    clippy::len_zero
+)]
 extern crate libc;
 
 use core::ffi::c_char;
+use crossbeam_channel::{bounded, Receiver, Sender};
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ptr;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use crossbeam_channel::{bounded, Sender, Receiver};
 
+use zenoh::pubsub::Publisher;
+use zenoh::pubsub::Subscriber;
 use zenoh::Config;
 use zenoh::Session;
 use zenoh::Wait;
-use zenoh::pubsub::Publisher;
-use zenoh::pubsub::Subscriber;
 
-use virtmcu_qom::sync::*;
 use virtmcu_qom::irq::*;
+use virtmcu_qom::sync::*;
 
 struct ZenohButton {
     #[allow(dead_code)]
@@ -58,7 +64,10 @@ pub unsafe extern "C" fn zenoh_ui_init_rust(
     let session = match zenoh::open(config).wait() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[zenoh-ui] node={}: FAILED to open Zenoh session: {}", node_id, e);
+            eprintln!(
+                "[zenoh-ui] node={}: FAILED to open Zenoh session: {}",
+                node_id, e
+            );
             return ptr::null_mut();
         }
     };
@@ -107,7 +116,11 @@ pub unsafe extern "C" fn zenoh_ui_get_button_rust(state: *mut ZenohUiState, btn_
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_ui_ensure_button_rust(state: *mut ZenohUiState, btn_id: u32, irq: qemu_irq) {
+pub unsafe extern "C" fn zenoh_ui_ensure_button_rust(
+    state: *mut ZenohUiState,
+    btn_id: u32,
+    irq: qemu_irq,
+) {
     let s = &mut *state;
     {
         let mut btns = s.buttons.lock().unwrap();
@@ -121,12 +134,16 @@ pub unsafe extern "C" fn zenoh_ui_ensure_button_rust(state: *mut ZenohUiState, b
     let btns_clone = Arc::clone(&s.buttons);
     let btn_id_clone = btn_id;
 
-    let subscriber = s.session.declare_subscriber(topic)
+    let subscriber = s
+        .session
+        .declare_subscriber(topic)
         .callback(move |sample| {
             let payload = sample.payload();
-            if payload.len() < 1 { return; }
+            if payload.len() < 1 {
+                return;
+            }
             let val = payload.to_bytes()[0] != 0;
-            
+
             let mut btns = btns_clone.lock().unwrap();
             if let Some(btn) = btns.get_mut(&btn_id_clone) {
                 if btn.state != val {
@@ -145,17 +162,22 @@ pub unsafe extern "C" fn zenoh_ui_ensure_button_rust(state: *mut ZenohUiState, b
         .unwrap();
 
     let mut btns = s.buttons.lock().unwrap();
-    btns.insert(btn_id, ZenohButton {
-        id: btn_id,
-        state: false,
-        irq: SafeIrq(irq),
-        subscriber,
-    });
+    btns.insert(
+        btn_id,
+        ZenohButton {
+            id: btn_id,
+            state: false,
+            irq: SafeIrq(irq),
+            subscriber,
+        },
+    );
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_ui_cleanup_rust(state: *mut ZenohUiState) {
-    if state.is_null() { return; }
+    if state.is_null() {
+        return;
+    }
     let mut s = Box::from_raw(state);
     let _ = s.sender.send(None);
     if let Some(t) = s.publish_thread.take() {
