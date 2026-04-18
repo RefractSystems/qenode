@@ -45,7 +45,7 @@ Open the repo in VS Code and accept **"Reopen in Container"** when prompted.
 The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
-3. Runs `make setup` — patches and builds QEMU (~10 min, runs once)
+3. Runs `make setup-initial` — patches and builds QEMU (~10 min, runs once)
 4. Synchronizes the Python environment using `uv sync`
 5. Activates the venv in every new terminal
 
