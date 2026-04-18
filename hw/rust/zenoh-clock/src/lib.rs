@@ -145,21 +145,27 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         .store(mujoco as i64, Ordering::Release);
 
     virtmcu_mutex_lock(backend.mutex);
+    // If the vCPU already arrived at the quantum boundary before this query,
+    // it will have set quantum_done=true and be blocked in cond_wait. In that
+    // case we can skip the wait — we already have vtime — and just wake it.
+    let already_done = backend.quantum_done.load(Ordering::Acquire);
     backend.quantum_done.store(false, Ordering::Release);
     backend.quantum_ready.store(true, Ordering::Release);
     virtmcu_cond_signal(backend.vcpu_cond);
 
     let mut error_code = 0;
-    while !backend.quantum_done.load(Ordering::Acquire) {
-        let rc =
-            virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms);
-        if rc == 0 && !backend.quantum_done.load(Ordering::Acquire) {
-            eprintln!(
-                "[zenoh-clock] STALL: timeout after {} ms waiting for quantum_done",
-                backend.stall_timeout_ms
-            );
-            error_code = 1; // STALL
-            break;
+    if !already_done {
+        while !backend.quantum_done.load(Ordering::Acquire) {
+            let rc =
+                virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms);
+            if rc == 0 && !backend.quantum_done.load(Ordering::Acquire) {
+                eprintln!(
+                    "[zenoh-clock] STALL: timeout after {} ms waiting for quantum_done",
+                    backend.stall_timeout_ms
+                );
+                error_code = 1; // STALL
+                break;
+            }
         }
     }
 

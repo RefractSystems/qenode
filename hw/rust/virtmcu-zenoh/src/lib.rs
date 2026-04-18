@@ -38,7 +38,9 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         let mut connected = false;
         for _ in 0..10 {
             let info = session.info();
-            if info.routers_zid().wait().next().is_some() {
+            if info.routers_zid().wait().next().is_some()
+                || info.peers_zid().wait().next().is_some()
+            {
                 connected = true;
                 break;
             }

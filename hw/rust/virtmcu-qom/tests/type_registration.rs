@@ -27,8 +27,8 @@ pub extern "C" fn type_register_static(info: *const TypeInfo) -> *mut c_void {
 }
 
 static TEST_TYPE_INFO: TypeInfo = TypeInfo {
-    name: b"test-device\0".as_ptr() as *const c_char,
-    parent: b"sys-bus-device\0".as_ptr() as *const c_char,
+    name: c"test-device".as_ptr(),
+    parent: c"sys-bus-device".as_ptr(),
     instance_size: 128,
     instance_align: 0,
     instance_init: None,

@@ -728,7 +728,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.11 Align Cargo.toml workspace fields**
+- [x] **18.11 Align Cargo.toml workspace fields**
 
   `zenoh-clock` and `zenoh-netdev` use hardcoded `version`/`edition` instead of `version.workspace = true`. They will silently diverge on the next version bump.
 
@@ -752,7 +752,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [ ] **18.9 Adopt `virtmcu-qom` in `zenoh-clock`**
+- [x] **18.9 Adopt `virtmcu-qom` in `zenoh-clock`**
 
   `zenoh-clock/src/lib.rs` stores `mutex`, `vcpu_cond`, and `query_cond` as `*mut c_void`, and re-declares `virtmcu_mutex_lock`, `virtmcu_cond_signal`, etc. inline with `c_void` argument types. The C caller passes `QemuMutex*`/`QemuCond*`; the `c_void` cast is ABI-compatible but erases type information and duplicates the declarations in `virtmcu-qom::sync`.
 

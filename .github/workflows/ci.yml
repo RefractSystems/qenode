@@ -112,10 +112,10 @@ jobs:
           workspaces: hw/rust
 
       - name: cargo fmt --check
-        run: cargo fmt --manifest-path hw/rust/Cargo.toml --check
+        run: cargo fmt --manifest-path hw/rust/Cargo.toml --all --check
 
       - name: cargo clippy
-        run: cargo clippy --manifest-path hw/rust/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path hw/rust/Cargo.toml --workspace -- -D warnings
 
 # ── Tier 1: Unit Tests (no QEMU) ──────────────────────────────────────────────
 
