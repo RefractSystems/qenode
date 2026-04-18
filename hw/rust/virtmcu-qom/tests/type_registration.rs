@@ -1,6 +1,6 @@
-use virtmcu_qom::qom::TypeInfo;
+use core::ffi::{c_char, c_void};
 use virtmcu_qom::declare_device_type;
-use core::ffi::{c_void, c_char};
+use virtmcu_qom::qom::TypeInfo;
 
 // A simple static to track if our mock was called
 static mut MOCK_CALLED: bool = false;
@@ -11,12 +11,16 @@ pub extern "C" fn type_register_static(info: *const TypeInfo) -> *mut c_void {
     unsafe {
         MOCK_CALLED = true;
         // Verify some fields
-        let name_str = std::ffi::CStr::from_ptr((*info).name as *const core::ffi::c_char).to_str().unwrap();
+        let name_str = std::ffi::CStr::from_ptr((*info).name as *const core::ffi::c_char)
+            .to_str()
+            .unwrap();
         assert_eq!(name_str, "test-device");
-        
-        let parent_str = std::ffi::CStr::from_ptr((*info).parent as *const core::ffi::c_char).to_str().unwrap();
+
+        let parent_str = std::ffi::CStr::from_ptr((*info).parent as *const core::ffi::c_char)
+            .to_str()
+            .unwrap();
         assert_eq!(parent_str, "sys-bus-device");
-        
+
         assert_eq!((*info).instance_size, 128);
     }
     std::ptr::null_mut()
@@ -46,6 +50,9 @@ fn test_declare_device_type_macro() {
     unsafe {
         MOCK_CALLED = false;
         dso_test_init();
-        assert!(MOCK_CALLED, "The init function did not call type_register_static");
+        assert!(
+            MOCK_CALLED,
+            "The init function did not call type_register_static"
+        );
     }
 }

@@ -176,19 +176,26 @@ hw_virtmcu_modules += {'remote-port-bridge': remote_port_ss}
 rust_test_qom_device_lib = custom_target(
   'rust_test_qom_device_lib',
   input: 'rust/test-qom-device/src/lib.rs',
-  output: ['libtest_qom_device.a'],
+  output: ['libtest_qom_device.a', 'rust_test_qom_device_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; cd "$RUST_DIR" && cargo build --release -p test-qom-device && cp target/release/libtest_qom_device.a "$OUT_A"',
-    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libtest_qom_device.a'
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release -p test-qom-device && cp target/release/libtest_qom_device.a "$OUT_A"
+cat <<EOF > "$OUT_TRIG"
+#include "qemu/osdep.h"
+#include "qemu/module.h"
+module_obj("test-rust-device");
+EOF
+''',
+    'sh', meson.project_source_root() / 'hw/virtmcu/rust', meson.current_build_dir() / 'libtest_qom_device.a', meson.current_build_dir() / 'rust_test_qom_device_trigger.c'
   ]
 )
 test_qom_device_ss = ss.source_set()
 test_qom_device_ss.add(virtmcu_ffi_dep)
-test_qom_device_ss.add(files('rust/test-qom-device/trigger.c'))
+test_qom_device_ss.add(virtmcu_rust_ffi_file)
+test_qom_device_ss.add(rust_test_qom_device_lib[1])
 test_qom_device_ss.add(rust_test_qom_device_lib[0])
 test_qom_device_ss.add(declare_dependency(
-  link_args: [meson.current_build_dir() / 'libtest_qom_device.a']
+  link_args: ['-Wl,--whole-archive', meson.current_build_dir() / 'libtest_qom_device.a', '-Wl,--no-whole-archive']
 ))
 hw_virtmcu_modules += {'test-qom-device': test_qom_device_ss}
 

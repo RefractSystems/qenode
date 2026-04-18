@@ -1,5 +1,5 @@
-use virtmcu_qom::qom::TypeInfo;
 use virtmcu_qom::declare_device_type;
+use virtmcu_qom::qom::TypeInfo;
 
 static TEST_TYPE_INFO: TypeInfo = TypeInfo {
     name: b"test-rust-device\0".as_ptr() as *const core::ffi::c_char,

@@ -324,6 +324,7 @@ clean:
 	find . -name "*.arch" -delete
 	find . -name "*.gcov" -delete
 	find . -name "virtmcu-timeout-*" -delete
+	find . -name "qmp-timeout-*" -delete
 	rm -f .coverage
 	rm -rf .pytest_cache .ruff_cache
 	rm -rf test-results/

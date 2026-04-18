@@ -37,20 +37,19 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         // We wait a bit for the connection to be established.
         let mut connected = false;
         for _ in 0..10 {
-            if let Ok(info) = session.info().wait() {
-                if let Ok(routers) = info.routers().wait() {
-                    if !routers.is_empty() {
-                        connected = true;
-                        break;
-                    }
-                }
+            let info = session.info();
+            if info.routers_zid().wait().next().is_some() {
+                connected = true;
+                break;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
 
         if !connected {
             let _ = session.close().wait();
-            return Err(zenoh::Error::from("Failed to connect to explicit router".to_string()));
+            return Err(zenoh::Error::from(
+                "Failed to connect to explicit router".to_string(),
+            ));
         }
     }
 
