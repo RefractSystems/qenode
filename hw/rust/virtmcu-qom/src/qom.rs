@@ -13,6 +13,14 @@ extern "C" {
         func: *const c_char,
     ) -> *mut ObjectClass;
     pub fn register_dso_module_init(fn_: extern "C" fn(), type_: c_int);
+    pub fn object_get_root() -> *mut Object;
+    pub fn object_dynamic_cast(obj: *mut Object, typename: *const c_char) -> *mut Object;
+    pub fn object_child_foreach_recursive(
+        obj: *mut Object,
+        fn_: unsafe extern "C" fn(obj: *mut Object, opaque: *mut c_void) -> c_int,
+        opaque: *mut c_void,
+    ) -> c_int;
+    pub fn object_get_canonical_path(obj: *mut Object) -> *mut c_char;
 }
 
 pub const MODULE_INIT_QOM: c_int = 3;

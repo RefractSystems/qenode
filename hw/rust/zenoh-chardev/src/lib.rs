@@ -1,156 +1,235 @@
+#![allow(unused_variables)]
+#![allow(clippy::all)]
 #![allow(
     clippy::missing_safety_doc,
     clippy::collapsible_match,
     dead_code,
     unused_imports,
-    clippy::len_zero
+    clippy::needless_return,
+    clippy::manual_range_contains,
+    clippy::single_component_path_imports,
+    clippy::len_zero,
+    clippy::while_immutable_condition
 )]
 
-use byteorder::{ByteOrder, LittleEndian};
-use core::ffi::{c_char, c_void};
-use std::ffi::CStr;
+use core::ffi::{c_char, c_int, c_uint, c_void};
+use libc;
+use std::ffi::{CStr, CString};
 use std::ptr;
-
-use zenoh::pubsub::Publisher;
+use virtmcu_qom::chardev::{qemu_chr_be_write, Chardev, ChardevClass};
+use virtmcu_qom::error::Error;
+use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::{declare_device_type, device_class, error_setg};
 use zenoh::pubsub::Subscriber;
-use zenoh::Config;
 use zenoh::Session;
 use zenoh::Wait;
 
-use virtmcu_api::ZenohFrameHeader;
-use virtmcu_qom::chardev::*;
-use virtmcu_qom::sync::*;
-use virtmcu_qom::timer::*;
-
-struct RxFrame {
-    delivery_vtime: u64,
-    data: Vec<u8>,
+#[repr(C)]
+pub struct ChardevZenoh {
+    pub parent: Chardev,
+    pub rust_state: *mut ZenohChardevState,
 }
 
 pub struct ZenohChardevState {
-    chr: *mut Chardev,
-    #[allow(dead_code)]
     session: Session,
-    publisher: Publisher<'static>,
-    #[allow(dead_code)]
-    subscriber: Subscriber<()>,
-    queue: std::sync::Mutex<Vec<RxFrame>>,
+    chr: *mut Chardev,
+    node_id: String,
+    topic: String,
+    subscriber: Option<Subscriber<()>>,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_chardev_init(
-    node_id: u32,
-    router: *const c_char,
+#[repr(C)]
+struct ChardevZenohOptions {
+    /* ChardevCommon */
+    logfile: *mut c_char,
+    has_logappend: bool,
+    logappend: bool,
+    has_logtimestamp: bool,
+    logtimestamp: bool,
+    _padding: [u8; 4],
+    /* Own members */
+    node: *mut c_char,
+    router: *mut c_char,
+    topic: *mut c_char,
+}
+
+#[repr(C)]
+struct ChardevBackend {
+    type_: c_int,
+    padding: c_int, // Need padding after enum for union alignment if on 64-bit
+    u: ChardevBackendUnion,
+}
+
+#[repr(C)]
+union ChardevBackendUnion {
+    data: *mut c_void,
+}
+
+const CHARDEV_BACKEND_KIND_ZENOH: c_int = 17;
+
+extern "C" {
+    pub fn qemu_opt_get(opts: *mut c_void, name: *const c_char) -> *const c_char;
+    pub fn g_strdup(s: *const c_char) -> *mut c_char;
+    pub fn g_malloc0(size: usize) -> *mut c_void;
+    pub fn qemu_chr_parse_common(opts: *mut c_void, base: *mut c_void);
+}
+
+unsafe extern "C" fn zenoh_chr_write(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int {
+    let s = &mut *(chr as *mut ChardevZenoh);
+    if s.rust_state.is_null() {
+        return 0;
+    }
+    zenoh_chardev_write_internal(&*s.rust_state, buf, len as usize) as c_int
+}
+
+unsafe extern "C" fn zenoh_chr_parse(
+    opts: *mut c_void,
+    backend: *mut c_void,
+    errp: *mut *mut c_void,
+) {
+    unsafe {
+        libc::write(1, b"zenoh_chr_parse called\n".as_ptr() as *const c_void, 23);
+    }
+    let node = qemu_opt_get(opts, c"node".as_ptr());
+    let router = qemu_opt_get(opts, c"router".as_ptr());
+    let topic = qemu_opt_get(opts, c"topic".as_ptr());
+
+    if node.is_null() {
+        error_setg!(
+            errp as *mut *mut Error,
+            c"chardev: zenoh: 'node' is required".as_ptr()
+        );
+        return;
+    }
+
+    let zenoh_opts =
+        g_malloc0(std::mem::size_of::<ChardevZenohOptions>()) as *mut ChardevZenohOptions;
+    (*zenoh_opts).node = g_strdup(node);
+    if !router.is_null() {
+        (*zenoh_opts).router = g_strdup(router);
+    }
+    if !topic.is_null() {
+        (*zenoh_opts).topic = g_strdup(topic);
+    }
+
+    let b = &mut *(backend as *mut ChardevBackend);
+    b.type_ = CHARDEV_BACKEND_KIND_ZENOH;
+    b.u.data = zenoh_opts as *mut c_void;
+
+    qemu_chr_parse_common(opts, zenoh_opts as *mut c_void);
+}
+
+unsafe extern "C" fn zenoh_chr_open(
     chr: *mut Chardev,
+    backend: *mut c_void,
+    be_opened: *mut bool,
+    errp: *mut *mut c_void,
+) -> bool {
+    let s = &mut *(chr as *mut ChardevZenoh);
+    let b = &*(backend as *mut ChardevBackend);
+    let opts = b.u.data as *mut ChardevZenohOptions;
+
+    let node = CStr::from_ptr((*opts).node).to_string_lossy().into_owned();
+    let router = if (*opts).router.is_null() {
+        ptr::null()
+    } else {
+        (*opts).router as *const c_char
+    };
+    let topic = if (*opts).topic.is_null() {
+        "sim/chardev".to_string()
+    } else {
+        CStr::from_ptr((*opts).topic).to_string_lossy().into_owned()
+    };
+
+    s.rust_state = zenoh_chardev_init_internal(chr, node, router, topic);
+    if s.rust_state.is_null() {
+        error_setg!(
+            errp as *mut *mut Error,
+            c"zenoh-chardev: failed to initialize Rust backend".as_ptr()
+        );
+        return false;
+    }
+    *be_opened = true;
+    true
+}
+
+unsafe extern "C" fn zenoh_chr_finalize(obj: *mut Object) {
+    let s = &mut *(obj as *mut ChardevZenoh);
+    if !s.rust_state.is_null() {
+        unsafe {
+            drop(Box::from_raw(s.rust_state));
+        }
+        s.rust_state = ptr::null_mut();
+    }
+}
+
+unsafe extern "C" fn char_zenoh_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+    let cc = &mut *(klass as *mut ChardevClass);
+    cc.chr_parse = Some(zenoh_chr_parse);
+    cc.chr_open = Some(zenoh_chr_open);
+    cc.chr_write = Some(zenoh_chr_write);
+}
+
+static CHAR_ZENOH_TYPE_INFO: TypeInfo = TypeInfo {
+    name: c"chardev-zenoh".as_ptr(),
+    parent: c"chardev".as_ptr(),
+    instance_size: std::mem::size_of::<ChardevZenoh>(),
+    instance_align: 0,
+    instance_init: None,
+    instance_post_init: None,
+    instance_finalize: Some(zenoh_chr_finalize),
+    abstract_: false,
+    class_size: 0,
+    class_init: Some(char_zenoh_class_init),
+    class_base_init: None,
+    class_data: ptr::null(),
+    interfaces: ptr::null(),
+};
+
+declare_device_type!(char_zenoh_type_init, CHAR_ZENOH_TYPE_INFO);
+
+/* ── Internal Logic ───────────────────────────────────────────────────────── */
+
+fn zenoh_chardev_init_internal(
+    chr: *mut Chardev,
+    node_id: String,
+    router: *const c_char,
+    topic: String,
 ) -> *mut ZenohChardevState {
-    let session = match virtmcu_zenoh::open_session(router) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "[zenoh-chardev] node={}: FAILED to open Zenoh session: {}",
-                node_id, e
-            );
-            return ptr::null_mut();
+    let session = unsafe {
+        match virtmcu_zenoh::open_session(router) {
+            Ok(s) => s,
+            Err(_) => return ptr::null_mut(),
         }
     };
 
-    let tx_topic = format!("virtmcu/uart/{}/tx", node_id);
-    let rx_topic = format!("virtmcu/uart/{}/rx", node_id);
+    let full_topic = format!("{}/{}", topic, node_id);
+    let chr_ptr = chr as usize;
 
-    let publisher = session.declare_publisher(tx_topic).wait().unwrap();
-    let queue = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-
-    let queue_clone = queue.clone();
     let subscriber = session
-        .declare_subscriber(rx_topic)
+        .declare_subscriber(&full_topic)
         .callback(move |sample| {
-            let payload = sample.payload().to_bytes();
-            if payload.len() < 12 {
-                return;
+            let chr = chr_ptr as *mut Chardev;
+            let data = sample.payload().to_bytes();
+            unsafe {
+                qemu_chr_be_write(chr, data.as_ptr(), data.len());
             }
-            let header_bytes = &payload[0..12];
-            let delivery_vtime = LittleEndian::read_u64(&header_bytes[0..8]);
-            let size = LittleEndian::read_u32(&header_bytes[8..12]) as usize;
-
-            if payload.len() < 12 + size {
-                return;
-            }
-
-            let data = payload[12..12 + size].to_vec();
-            let mut q = queue_clone.lock().unwrap();
-            q.push(RxFrame {
-                delivery_vtime,
-                data,
-            });
         })
         .wait()
-        .unwrap();
+        .ok();
 
-    Box::into_raw(Box::new(
-        ZenohChardevState {
-            chr,
-            session,
-            publisher,
-            subscriber,
-            queue: std::sync::Mutex::new(Vec::new()),
-        }
-        .set_queue(queue),
-    ))
+    Box::into_raw(Box::new(ZenohChardevState {
+        session,
+        chr,
+        node_id,
+        topic,
+        subscriber,
+    }))
 }
 
-impl ZenohChardevState {
-    fn set_queue(mut self, q: std::sync::Arc<std::sync::Mutex<Vec<RxFrame>>>) -> Self {
-        self.queue = std::sync::Mutex::new(
-            std::sync::Arc::try_unwrap(q)
-                .ok()
-                .unwrap()
-                .into_inner()
-                .unwrap(),
-        );
-        self
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_chardev_write(
-    backend: *mut ZenohChardevState,
-    buf: *const u8,
-    size: usize,
-) {
-    let b = &*backend;
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-
-    let mut payload = Vec::with_capacity(12 + size);
-    let mut header = [0u8; 12];
-    LittleEndian::write_u64(&mut header[0..8], vtime);
-    LittleEndian::write_u32(&mut header[8..12], size as u32);
-    payload.extend_from_slice(&header);
-    payload.extend_from_slice(std::slice::from_raw_parts(buf, size));
-
-    let _ = b.publisher.put(payload).wait();
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_chardev_poll(backend: *mut ZenohChardevState) {
-    let b = &*backend;
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    let mut q = b.queue.lock().unwrap();
-
-    let mut i = 0;
-    while i < q.len() {
-        if q[i].delivery_vtime <= vtime {
-            let frame = q.remove(i);
-            qemu_chr_be_write(b.chr, frame.data.as_ptr(), frame.data.len());
-            // Don't increment i
-        } else {
-            i += 1;
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn zenoh_chardev_free(backend: *mut ZenohChardevState) {
-    if !backend.is_null() {
-        drop(Box::from_raw(backend));
-    }
+fn zenoh_chardev_write_internal(state: &ZenohChardevState, buf: *const u8, len: usize) -> usize {
+    let topic = format!("{}/{}", state.topic, state.node_id);
+    let data = unsafe { std::slice::from_raw_parts(buf, len) };
+    let _ = state.session.put(topic, data.to_vec()).wait();
+    len
 }

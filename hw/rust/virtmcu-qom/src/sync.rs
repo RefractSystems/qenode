@@ -11,6 +11,7 @@ pub struct QemuCond {
 }
 
 extern "C" {
+    pub fn virtmcu_bql_locked() -> bool;
     pub fn virtmcu_bql_lock();
     pub fn virtmcu_bql_unlock();
 

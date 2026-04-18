@@ -1,3 +1,4 @@
+#[allow(clippy::all)]
 pub mod telemetry_generated;
 
 pub const VIRTMCU_PROTO_MAGIC: u32 = 0x564D4355;

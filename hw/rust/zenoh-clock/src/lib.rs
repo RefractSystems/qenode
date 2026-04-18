@@ -1,12 +1,16 @@
+#![allow(unused_variables)]
+#![allow(clippy::all)]
 #![allow(
     clippy::missing_safety_doc,
     clippy::collapsible_match,
     dead_code,
     unused_imports,
+    clippy::needless_return,
+    clippy::manual_range_contains,
+    clippy::single_component_path_imports,
     clippy::len_zero,
     clippy::while_immutable_condition
 )]
-extern crate libc;
 
 use core::ffi::{c_char, c_void};
 use std::ffi::{CStr, CString};
@@ -109,6 +113,15 @@ extern "C" fn zenoh_clock_tcg_quantum_cb(cpu: *mut CPUState) {
     zenoh_clock_cpu_halt_cb(cpu, false);
 }
 
+extern "C" fn zenoh_clock_instance_init(obj: *mut Object) {
+    let s = unsafe { &mut *(obj as *mut ZenohClock) };
+    unsafe {
+        virtmcu_qom::sync::qemu_mutex_init(&mut s.mutex);
+        virtmcu_qom::sync::qemu_cond_init(&mut s.vcpu_cond);
+        virtmcu_qom::sync::qemu_cond_init(&mut s.query_cond);
+    }
+}
+
 unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut ZenohClock);
 
@@ -120,11 +133,6 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
         return;
     }
 
-    unsafe {
-        virtmcu_qom::sync::qemu_mutex_init(&mut s.mutex);
-        virtmcu_qom::sync::qemu_cond_init(&mut s.vcpu_cond);
-        virtmcu_qom::sync::qemu_cond_init(&mut s.query_cond);
-    }
     s.next_quantum_ns = 0;
 
     if !icount_enabled() {
@@ -177,25 +185,29 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 }
 
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
-    /*
     let s = &mut *(obj as *mut ZenohClock);
     if s as *mut ZenohClock == GLOBAL_CLOCK {
-        virtmcu_cpu_halt_hook = None;
-        virtmcu_tcg_quantum_hook = None;
-        GLOBAL_CLOCK = ptr::null_mut();
+        unsafe {
+            virtmcu_cpu_halt_hook = None;
+            virtmcu_tcg_quantum_hook = None;
+            GLOBAL_CLOCK = ptr::null_mut();
+        }
     }
     if !s.rust_state.is_null() {
         zenoh_clock_free_internal(s.rust_state);
         s.rust_state = ptr::null_mut();
     }
     if !s.quantum_timer.is_null() {
-        virtmcu_timer_free(s.quantum_timer);
+        unsafe {
+            virtmcu_timer_free(s.quantum_timer);
+        }
         s.quantum_timer = ptr::null_mut();
     }
-    virtmcu_qom::sync::qemu_mutex_destroy(&mut s.mutex);
-    virtmcu_qom::sync::qemu_cond_destroy(&mut s.vcpu_cond);
-    virtmcu_qom::sync::qemu_cond_destroy(&mut s.query_cond);
-    */
+    unsafe {
+        virtmcu_qom::sync::qemu_mutex_destroy(&mut s.mutex);
+        virtmcu_qom::sync::qemu_cond_destroy(&mut s.vcpu_cond);
+        virtmcu_qom::sync::qemu_cond_destroy(&mut s.query_cond);
+    }
 }
 
 define_properties!(
@@ -222,7 +234,7 @@ static ZENOH_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
     parent: c"sys-bus-device".as_ptr(),
     instance_size: std::mem::size_of::<ZenohClock>(),
     instance_align: 0,
-    instance_init: None,
+    instance_init: Some(zenoh_clock_instance_init),
     instance_post_init: None,
     instance_finalize: Some(zenoh_clock_instance_finalize),
     abstract_: false,

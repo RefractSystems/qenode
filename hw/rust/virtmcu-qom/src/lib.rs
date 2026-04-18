@@ -11,6 +11,7 @@ pub mod cpu;
 pub mod error;
 pub mod icount;
 pub mod irq;
+pub mod memory;
 pub mod net;
 pub mod qdev;
 pub mod qom;
