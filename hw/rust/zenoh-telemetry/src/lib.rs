@@ -15,54 +15,9 @@ use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use virtmcu_api::{telemetry_fb, TraceEvent};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use zenoh::{Config, Session, Wait};
-
-// Minimal manual generation of FlatBuffer bindings for TraceEvent
-#[allow(dead_code, non_snake_case)]
-pub mod telemetry_fb {
-    use flatbuffers::{FlatBufferBuilder, WIPOffset};
-
-    #[derive(Copy, Clone, PartialEq, Debug)]
-    #[repr(i8)]
-    pub enum TraceEventType {
-        CpuState = 0,
-        Irq = 1,
-        Peripheral = 2,
-    }
-
-    pub struct TraceEventArgs<'a> {
-        pub timestamp_ns: u64,
-        pub type_: TraceEventType,
-        pub id: u32,
-        pub value: u32,
-        pub device_name: Option<WIPOffset<&'a str>>,
-    }
-
-    pub fn create_trace_event<'a>(
-        fbb: &mut FlatBufferBuilder<'a>,
-        args: &TraceEventArgs<'a>,
-    ) -> WIPOffset<flatbuffers::Table<'a>> {
-        let start = fbb.start_table();
-        fbb.push_slot(4, args.timestamp_ns, 0);
-        fbb.push_slot(8, args.id, 0);
-        fbb.push_slot(10, args.value, 0);
-        if let Some(x) = args.device_name {
-            fbb.push_slot_always(12, x);
-        }
-        fbb.push_slot(6, args.type_ as i8, 0);
-        let end = fbb.end_table(start);
-        WIPOffset::new(end.value())
-    }
-}
-
-pub struct TraceEvent {
-    pub timestamp_ns: u64,
-    pub event_type: i8,
-    pub id: u32,
-    pub value: u32,
-    pub device_name: Option<String>,
-}
 
 pub struct ZenohTelemetryBackend {
     session: Session,

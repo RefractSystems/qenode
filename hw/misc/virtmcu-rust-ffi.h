@@ -10,9 +10,11 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "hw/core/cpu.h"
+#include "qapi/error.h"
 #include "system/cpu-timers.h"
 
 /* icount */
+bool virtmcu_icount_enabled(void);
 void virtmcu_icount_advance(int64_t delta);
 
 /* BQL */
@@ -42,5 +44,8 @@ void virtmcu_timer_free(QEMUTimer *ts);
 
 /* CPU */
 void virtmcu_cpu_exit_all(void);
+
+/* Error */
+void virtmcu_error_setg(Error **errp, const char *fmt, ...);
 
 #endif

@@ -15,15 +15,9 @@ use std::ptr;
 use zenoh::pubsub::{Publisher, Subscriber};
 use zenoh::{Config, Session, Wait};
 
+use virtmcu_api::ZenohFrameHeader;
 use virtmcu_qom::sync::*;
 use virtmcu_qom::timer::*;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct ZenohFrameHeader {
-    delivery_vtime_ns: u64,
-    size: u32,
-}
 
 #[derive(Eq, PartialEq, Debug)]
 struct RxFrame {
@@ -45,234 +39,142 @@ impl PartialOrd for RxFrame {
     }
 }
 
-pub struct ZenohNetdevBackend {
+#[repr(C)]
+pub struct NetClientInfo {
+    pub type_: i32,
+    pub size: usize,
+    pub receive: Option<unsafe extern "C" fn(nc: *mut c_void, buf: *const u8, size: usize) -> isize>,
+    pub cleanup: Option<unsafe extern "C" fn(nc: *mut c_void)>,
+}
+
+pub struct ZenohNetdevState {
+    nc: *mut c_void,
     session: Session,
     publisher: Publisher<'static>,
-    subscriber: Option<Subscriber<()>>,
+    #[allow(dead_code)]
+    subscriber: Subscriber<()>,
+    queue: std::sync::Mutex<BinaryHeap<RxFrame>>,
     node_id: u32,
-    nc: *mut c_void,
-    rx_timer: *mut QemuTimer,
-    // Max-heap of RxFrame, where "greater" means smaller vtime (effectively a min-heap of vtime)
-    rx_queue: std::sync::Mutex<BinaryHeap<RxFrame>>,
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_netdev_init(
-    nc: *mut c_void,
     node_id: u32,
     router: *const c_char,
-    topic: *const c_char,
-) -> *mut ZenohNetdevBackend {
+    nc: *mut c_void,
+) -> *mut ZenohNetdevState {
     let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
-                "[zenoh-netdev] node={}: FAILED to open Zenoh session: {}",
-                node_id, e
-            );
+            eprintln!("[zenoh-netdev] node={}: FAILED to open Zenoh session: {}", node_id, e);
             return ptr::null_mut();
         }
     };
 
-    let topic_tx;
-    let topic_rx;
-    if !topic.is_null() {
-        let t = CStr::from_ptr(topic).to_str().unwrap_or("");
-        topic_tx = format!("{}/tx", t);
-        topic_rx = format!("{}/rx", t);
-    } else {
-        topic_tx = format!("sim/eth/frame/{}/tx", node_id);
-        topic_rx = format!("sim/eth/frame/{}/rx", node_id);
-    }
+    let tx_topic = format!("sim/net/raw/{}", node_id);
+    let rx_topic = format!("sim/net/raw/{}", node_id);
 
-    let publisher = session.declare_publisher(topic_tx).wait().unwrap();
+    let publisher = session.declare_publisher(tx_topic).wait().unwrap();
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(BinaryHeap::new()));
 
-    // Two-phase init: allocate first to get a stable address for the callback.
-    // Use std::mem::MaybeUninit to represent the partially-initialized state safely.
-    let backend_ptr_raw = Box::into_raw(Box::new(ZenohNetdevBackend {
-        session: session.clone(),
-        publisher,
-        subscriber: None,
-        node_id,
-        nc,
-        rx_timer: ptr::null_mut(),
-        rx_queue: std::sync::Mutex::new(BinaryHeap::with_capacity(1024)),
-    }));
-    let backend_ptr_usize = backend_ptr_raw as usize;
-
-    let rx_timer = virtmcu_timer_new_ns(
-        QEMU_CLOCK_VIRTUAL,
-        rx_timer_cb,
-        backend_ptr_raw as *mut c_void,
-    );
-
-    // Update timer before starting subscriber to avoid null-deref in callback
-    (*backend_ptr_raw).rx_timer = rx_timer;
-
+    let queue_clone = queue.clone();
     let subscriber = session
-        .declare_subscriber(topic_rx)
+        .declare_subscriber(rx_topic)
         .callback(move |sample| {
-            let backend = &*(backend_ptr_usize as *const ZenohNetdevBackend);
-            on_rx_frame(backend, sample);
+            let payload = sample.payload().to_bytes();
+            if payload.len() < 12 {
+                return;
+            }
+            let header_bytes = &payload[0..12];
+            let delivery_vtime = LittleEndian::read_u64(&header_bytes[0..8]);
+            let size = LittleEndian::read_u32(&header_bytes[8..12]) as usize;
+
+            if payload.len() < 12 + size {
+                return;
+            }
+
+            let data = payload[12..12 + size].to_vec();
+            let mut q = queue_clone.lock().unwrap();
+            q.push(RxFrame {
+                delivery_vtime,
+                data,
+            });
         })
         .wait()
         .unwrap();
 
-    (*backend_ptr_raw).subscriber = Some(subscriber);
+    Box::into_raw(Box::new(ZenohNetdevState {
+        nc,
+        session,
+        publisher,
+        subscriber,
+        queue: std::sync::Mutex::new(BinaryHeap::new()),
+        node_id,
+    }.set_queue(queue)))
+}
 
-    backend_ptr_raw
+impl ZenohNetdevState {
+    fn set_queue(mut self, q: std::sync::Arc<std::sync::Mutex<BinaryHeap<RxFrame>>>) -> Self {
+        self.queue = std::sync::Mutex::new(std::sync::Arc::try_unwrap(q).ok().unwrap().into_inner().unwrap());
+        self
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_receive_rust(
-    backend: *mut ZenohNetdevBackend,
+pub unsafe extern "C" fn zenoh_netdev_receive(
+    backend: *mut ZenohNetdevState,
     buf: *const u8,
     size: usize,
 ) -> isize {
-    if backend.is_null() || buf.is_null() {
-        return -1;
-    }
     let b = &*backend;
+    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
 
-    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    let mut payload = Vec::with_capacity(12 + size);
+    let mut header = [0u8; 12];
+    LittleEndian::write_u64(&mut header[0..8], vtime);
+    LittleEndian::write_u32(&mut header[8..12], size as u32);
+    payload.extend_from_slice(&header);
+    payload.extend_from_slice(std::slice::from_raw_parts(buf, size));
 
-    let mut msg = Vec::with_capacity(12 + size);
-    let mut hdr_bytes = [0u8; 12];
-    LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime as u64);
-    LittleEndian::write_u32(&mut hdr_bytes[8..12], size as u32);
-
-    msg.extend_from_slice(&hdr_bytes);
-    msg.extend_from_slice(std::slice::from_raw_parts(buf, size));
-
-    let _ = b.publisher.put(msg).wait();
+    let _ = b.publisher.put(payload).wait();
     size as isize
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn zenoh_netdev_cleanup_rust(backend: *mut ZenohNetdevBackend) {
-    if backend.is_null() {
-        return;
+pub unsafe extern "C" fn zenoh_netdev_can_receive(backend: *mut ZenohNetdevState) -> bool {
+    let b = &*backend;
+    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
+    let q = b.queue.lock().unwrap();
+    if let Some(frame) = q.peek() {
+        return frame.delivery_vtime <= vtime;
     }
-    let b = Box::from_raw(backend);
-    if !b.rx_timer.is_null() {
-        // Cancel and free the timer first to prevent use-after-free
-        virtmcu_timer_del(b.rx_timer);
-        virtmcu_timer_free(b.rx_timer);
-    }
-    // subscriber and session will be dropped automatically when b is dropped
+    false
 }
 
-fn on_rx_frame(backend: &ZenohNetdevBackend, sample: zenoh::sample::Sample) {
-    let payload = sample.payload();
-    if payload.len() < 12 {
-        return;
-    }
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_netdev_read(
+    backend: *mut ZenohNetdevState,
+    buf: *mut u8,
+    max_size: usize,
+) -> isize {
+    let b = &*backend;
+    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
+    let mut q = b.queue.lock().unwrap();
 
-    let bytes = payload.to_bytes();
-    let vtime = LittleEndian::read_u64(&bytes[0..8]);
-    let size = LittleEndian::read_u32(&bytes[8..12]) as usize;
-
-    if size > 1024 * 1024 || bytes.len() < 12 + size {
-        return;
-    }
-
-    let frame_data = bytes[12..12 + size].to_vec();
-
-    // CRITICAL: Acquire BQL before modifying QEMU timer state or taking internal locks
-    // to prevent AB-BA deadlocks with the QEMU main thread.
-    let _bql_guard = virtmcu_qom::sync::Bql::lock();
-
-    let mut queue = backend.rx_queue.lock().unwrap();
-    if queue.len() >= 1024 {
-        eprintln!(
-            "[zenoh-netdev] RX queue overflow on node {}, dropping earliest frame",
-            backend.node_id
-        );
-        queue.pop();
-    }
-
-    queue.push(RxFrame {
-        delivery_vtime: vtime,
-        data: frame_data,
-    });
-
-    if let Some(earliest) = queue.peek() {
-        // Mod timer for the earliest frame.
-        if !backend.rx_timer.is_null() {
-            unsafe {
-                virtmcu_timer_mod(backend.rx_timer, earliest.delivery_vtime as i64);
-            }
+    if let Some(frame) = q.peek() {
+        if frame.delivery_vtime <= vtime {
+            let frame = q.pop().unwrap();
+            let size = frame.data.len().min(max_size);
+            ptr::copy_nonoverlapping(frame.data.as_ptr(), buf, size);
+            return size as isize;
         }
     }
+    0
 }
 
-extern "C" fn rx_timer_cb(opaque: *mut c_void) {
-    let backend = unsafe { &*(opaque as *mut ZenohNetdevBackend) };
-
-    loop {
-        let frame = {
-            let mut queue = backend.rx_queue.lock().unwrap();
-            let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-
-            match queue.peek() {
-                Some(earliest) if earliest.delivery_vtime <= now => queue.pop().unwrap(),
-                Some(earliest) => {
-                    // Re-arm for the next earliest frame
-                    unsafe {
-                        virtmcu_timer_mod(backend.rx_timer, earliest.delivery_vtime as i64);
-                    }
-                    return;
-                }
-                None => return,
-            }
-        };
-
-        // Assert determinism: frame must not be delivered before its virtual time.
-        debug_assert!(
-            frame.delivery_vtime <= unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64,
-            "zenoh-netdev: frame delivered before its vtime (timer fired too early)"
-        );
-
-        // Emit a log line that the determinism test can parse to verify vtime ordering.
-        eprintln!(
-            "[virtmcu-netdev] RX deliver node={} vtime={} size={}",
-            backend.node_id,
-            frame.delivery_vtime,
-            frame.data.len()
-        );
-
-        unsafe {
-            virtmcu_qom::net::qemu_send_packet(
-                backend.nc as *mut _,
-                frame.data.as_ptr(),
-                frame.data.len(),
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rx_frame_ordering() {
-        let mut heap = BinaryHeap::new();
-        heap.push(RxFrame {
-            delivery_vtime: 200,
-            data: vec![1],
-        });
-        heap.push(RxFrame {
-            delivery_vtime: 100,
-            data: vec![2],
-        });
-        heap.push(RxFrame {
-            delivery_vtime: 150,
-            data: vec![3],
-        });
-
-        assert_eq!(heap.pop().unwrap().delivery_vtime, 100);
-        assert_eq!(heap.pop().unwrap().delivery_vtime, 150);
-        assert_eq!(heap.pop().unwrap().delivery_vtime, 200);
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_netdev_free(backend: *mut ZenohNetdevState) {
+    if !backend.is_null() {
+        drop(Box::from_raw(backend));
     }
 }

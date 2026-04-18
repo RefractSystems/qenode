@@ -5,6 +5,8 @@ echo "Rebuilding QEMU to include test-qom-device..."
 make -C third_party/qemu/build-virtmcu install
 
 echo "Running QEMU to list devices..."
+# Set QEMU_MODULE_DIR to the directory where we just installed the modules
+export QEMU_MODULE_DIR=$(find third_party/qemu/build-virtmcu/install -name "hw-virtmcu-*.so" | head -n1 | xargs dirname)
 if third_party/qemu/build-virtmcu/install/bin/qemu-system-arm -device help 2>&1 | grep -q "test-rust-device"; then
     echo "SUCCESS: test-rust-device found!"
     exit 0

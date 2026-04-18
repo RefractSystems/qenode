@@ -5,7 +5,32 @@ pub const LOG_UNIMP: i32 = 0x400;
 extern "C" {
     pub fn qemu_log_mask(mask: c_int, fmt: *const c_char, ...) -> c_int;
     pub fn type_register_static(info: *const TypeInfo) -> *mut c_void;
-    pub fn device_class_set_props(dc: *mut DeviceClass, props: *const Property);
+    pub fn object_class_dynamic_cast_assert(
+        klass: *mut ObjectClass,
+        typename: *const c_char,
+        file: *const c_char,
+        line: c_int,
+        func: *const c_char,
+    ) -> *mut ObjectClass;
+    pub fn register_dso_module_init(fn_: extern "C" fn(), type_: c_int);
+}
+
+pub const MODULE_INIT_QOM: c_int = 3;
+pub const TYPE_DEVICE: *const c_char = c"device".as_ptr();
+
+#[macro_export]
+macro_rules! device_class {
+    ($klass:expr) => {
+        unsafe {
+            $crate::qom::object_class_dynamic_cast_assert(
+                $klass,
+                $crate::qom::TYPE_DEVICE,
+                core::ptr::null(),
+                0,
+                core::ptr::null(),
+            ) as *mut $crate::qdev::DeviceClass
+        }
+    };
 }
 
 #[repr(C)]
@@ -24,6 +49,7 @@ pub struct ObjectClass {
     pub object_cast_cache: [*const c_char; 4],
     pub class_cast_cache: [*const c_char; 4],
     pub unparent: Option<unsafe extern "C" fn(obj: *mut Object)>,
+    pub properties: *mut c_void,
 }
 
 #[repr(C)]
@@ -60,25 +86,6 @@ pub struct Property {
 
 unsafe impl Sync for TypeInfo {}
 unsafe impl Sync for Property {}
-unsafe impl Sync for DeviceClass {}
-
-#[repr(C)]
-pub struct DeviceClass {
-    pub parent_class: ObjectClass,
-    pub categories: [c_ulong; 1],
-    pub fw_name: *const c_char,
-    pub desc: *const c_char,
-    pub props_: *const Property,
-    pub props_count_: u16,
-    pub user_creatable: bool,
-    pub hotpluggable: bool,
-    pub legacy_reset: Option<unsafe extern "C" fn(dev: *mut c_void)>,
-    pub realize: Option<unsafe extern "C" fn(dev: *mut c_void, errp: *mut *mut c_void)>,
-    pub unrealize: Option<unsafe extern "C" fn(dev: *mut c_void)>,
-    pub sync_config: Option<unsafe extern "C" fn(dev: *mut c_void, errp: *mut *mut c_void)>,
-    pub vmsd: *const c_void,
-    pub bus_type: *const c_char,
-}
 
 impl Property {
     pub const fn default() -> Self {
@@ -115,6 +122,7 @@ macro_rules! count_props {
 }
 const _: () = assert!(core::mem::size_of::<TypeInfo>() == 104);
 const _: () = assert!(core::mem::size_of::<Property>() == 72);
+const _: () = assert!(core::mem::size_of::<ObjectClass>() == 96);
 
 #[macro_export]
 macro_rules! declare_device_type {
@@ -131,6 +139,13 @@ macro_rules! declare_device_type {
         #[cfg_attr(target_os = "linux", link_section = ".init_array")]
         #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
         #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
-        pub static __DSO_INIT_PTR: extern "C" fn() = $init_fn;
+        pub static __DSO_INIT_PTR: extern "C" fn() = {
+            extern "C" fn wrapper() {
+                unsafe {
+                    $crate::qom::register_dso_module_init($init_fn, $crate::qom::MODULE_INIT_QOM);
+                }
+            }
+            wrapper
+        };
     };
 }

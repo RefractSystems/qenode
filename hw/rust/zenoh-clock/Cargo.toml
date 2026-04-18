@@ -8,6 +8,7 @@ authors.workspace = true
 crate-type = ["staticlib"]
 
 [dependencies]
+virtmcu-api.workspace = true
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 virtmcu-zenoh.workspace = true

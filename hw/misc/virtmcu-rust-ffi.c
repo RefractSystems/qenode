@@ -9,11 +9,17 @@
 #include "qemu/main-loop.h"
 #include "qemu/seqlock.h"
 #include "hw/core/cpu.h"
+#include "qapi/error.h"
 #include "system/cpu-timers.h"
 #include "system/cpu-timers-internal.h"
 #include "exec/icount.h"
 
 /* ── icount ──────────────────────────────────────────────────────────────── */
+
+bool virtmcu_icount_enabled(void)
+{
+    return icount_enabled();
+}
 
 void virtmcu_icount_advance(int64_t delta)
 {
@@ -100,4 +106,14 @@ void virtmcu_cpu_exit_all(void) {
     CPU_FOREACH(cpu) {
         cpu_exit(cpu);
     }
+}
+
+/* ── Error ───────────────────────────────────────────────────────────────── */
+
+void virtmcu_error_setg(Error **errp, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    error_vsetg(errp, fmt, ap);
+    va_end(ap);
 }

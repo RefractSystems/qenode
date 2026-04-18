@@ -1,0 +1,8 @@
+[package]
+name = "virtmcu-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+flatbuffers.workspace = true

@@ -8,9 +8,11 @@
 #![no_std]
 pub mod chardev;
 pub mod cpu;
+pub mod error;
+pub mod icount;
 pub mod irq;
 pub mod net;
-pub mod proto;
+pub mod qdev;
 pub mod qom;
 pub mod sync;
 pub mod timer;
