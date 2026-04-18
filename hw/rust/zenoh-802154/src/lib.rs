@@ -63,12 +63,17 @@ pub struct Zenoh802154State {
     
     rx_timer: *mut QemuTimer,
     backoff_timer: *mut QemuTimer,
+    ack_timer: *mut QemuTimer,
     rx_queue: Vec<RxFrame>,
     mutex: *mut QemuMutex,
     
     // CSMA/CA state
     nb: u8,
     be: u8,
+    
+    // Auto-ACK state
+    ack_pending: bool,
+    ack_seq: u8,
 }
 
 #[no_mangle]
@@ -134,6 +139,12 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         state_ptr_raw as *mut c_void,
     );
 
+    let ack_timer = virtmcu_timer_new_ns(
+        QEMU_CLOCK_VIRTUAL,
+        ack_timer_cb,
+        state_ptr_raw as *mut c_void,
+    );
+
     let mutex = virtmcu_mutex_new();
 
     let state = Zenoh802154State {
@@ -153,10 +164,13 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
         short_addr: 0xFFFF,
         rx_timer,
         backoff_timer,
+        ack_timer,
         rx_queue: Vec::with_capacity(16),
         mutex,
         nb: 0,
         be: 3,
+        ack_pending: false,
+        ack_seq: 0,
     };
 
     ptr::write(state_ptr_raw, state);
@@ -246,6 +260,7 @@ pub unsafe extern "C" fn zenoh_802154_write_rust(
 }
 
 const UNIT_BACKOFF_PERIOD_NS: u64 = 320_000;
+const SIFS_NS: u64 = 192_000;
 const MAC_MIN_BE: u8 = 3;
 const MAC_MAX_BE: u8 = 5;
 const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
@@ -259,6 +274,9 @@ pub unsafe extern "C" fn zenoh_802154_cleanup_rust(state: *mut Zenoh802154State)
     }
     if !s.backoff_timer.is_null() {
         virtmcu_timer_free(s.backoff_timer);
+    }
+    if !s.ack_timer.is_null() {
+        virtmcu_timer_free(s.ack_timer);
     }
     virtmcu_mutex_free(s.mutex);
 }
@@ -335,6 +353,32 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
     }
 }
 
+extern "C" fn ack_timer_cb(opaque: *mut c_void) {
+    let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
+    let _guard = unsafe { (*s.mutex).lock() };
+    
+    if !s.ack_pending { return; }
+    
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let mut msg = Vec::with_capacity(14 + 3);
+    
+    let mut hdr_bytes = [0u8; 14];
+    LittleEndian::write_u64(&mut hdr_bytes[0..8], now);
+    LittleEndian::write_u32(&mut hdr_bytes[8..12], 3);
+    hdr_bytes[12] = 0; // RSSI
+    hdr_bytes[13] = 255; // LQI
+    
+    msg.extend_from_slice(&hdr_bytes);
+    
+    // 802.15.4 ACK frame
+    msg.push(0x02); // FCF LSB (Type: ACK)
+    msg.push(0x00); // FCF MSB
+    msg.push(s.ack_seq);
+    
+    let _ = s.publisher.put(msg).wait();
+    s.ack_pending = false;
+}
+
 fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     if state.state != RadioState::Rx {
         return;
@@ -355,6 +399,19 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     // Slice 2: Address Filtering
     if !frame_matches_address(state, frame_data) {
         return;
+    }
+    
+    // Slice 5: Auto-ACK Request detection
+    if frame_data.len() >= 3 {
+        let fcf = LittleEndian::read_u16(&frame_data[0..2]);
+        if (fcf & (1 << 5)) != 0 {
+            // ACK requested
+            state.ack_pending = true;
+            state.ack_seq = frame_data[2];
+            unsafe {
+                virtmcu_timer_mod(state.ack_timer, (vtime + SIFS_NS) as i64);
+            }
+        }
     }
     
     let mut stored_data = [0u8; 128];
