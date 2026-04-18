@@ -39,18 +39,51 @@ pub struct PropertyInfo {
     pub name: *const c_char,
     pub description: *const c_char,
     pub enum_table: *const c_void,
-    pub print: Option<unsafe extern "C" fn(dev: *mut c_void, prop: *mut Property, f: *mut c_void, name: *const c_char)>,
+    pub print: Option<
+        unsafe extern "C" fn(
+            dev: *mut c_void,
+            prop: *mut Property,
+            f: *mut c_void,
+            name: *const c_char,
+        ),
+    >,
     pub get_default_value: Option<unsafe extern "C" fn(prop: *mut Property, val: *mut u64)>,
     pub set_default_value: Option<unsafe extern "C" fn(prop: *mut Property, val: u64)>,
-    pub get: Option<unsafe extern "C" fn(obj: *mut Object, visitor: *mut c_void, name: *const c_char, opaque: *mut c_void, errp: *mut *mut c_void)>,
-    pub set: Option<unsafe extern "C" fn(obj: *mut Object, visitor: *mut c_void, name: *const c_char, opaque: *mut c_void, errp: *mut *mut c_void)>,
-    pub release: Option<unsafe extern "C" fn(obj: *mut Object, name: *const c_char, opaque: *mut c_void)>,
+    pub get: Option<
+        unsafe extern "C" fn(
+            obj: *mut Object,
+            visitor: *mut c_void,
+            name: *const c_char,
+            opaque: *mut c_void,
+            errp: *mut *mut c_void,
+        ),
+    >,
+    pub set: Option<
+        unsafe extern "C" fn(
+            obj: *mut Object,
+            visitor: *mut c_void,
+            name: *const c_char,
+            opaque: *mut c_void,
+            errp: *mut *mut c_void,
+        ),
+    >,
+    pub release:
+        Option<unsafe extern "C" fn(obj: *mut Object, name: *const c_char, opaque: *mut c_void)>,
 }
 
 extern "C" {
     pub static qdev_prop_uint32: PropertyInfo;
     pub static qdev_prop_string: PropertyInfo;
-    pub fn device_class_set_props(dc: *mut DeviceClass, props: *const Property);
+    pub fn device_class_set_props_n(dc: *mut DeviceClass, props: *const Property, n: usize);
+}
+
+#[macro_export]
+macro_rules! device_class_set_props {
+    ($dc:expr, $props:expr) => {
+        unsafe {
+            $crate::qdev::device_class_set_props_n($dc, $props.as_ptr(), $props.len());
+        }
+    };
 }
 
 #[macro_export]

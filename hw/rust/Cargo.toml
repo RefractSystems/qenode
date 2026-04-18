@@ -1,0 +1,37 @@
+[workspace]
+members = [
+    "rust-dummy",
+    "virtmcu-zenoh",
+    "zenoh-clock",
+    "virtmcu-qom",
+    "virtmcu-api",
+    "zenoh-netdev",
+    "zenoh-chardev",
+    "zenoh-telemetry",
+    "zenoh-actuator",
+    "zenoh-802154",
+    "zenoh-ui",
+    "test-qom-device",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["virtmcu developers"]
+
+[workspace.dependencies]
+zenoh = "1.9.0"
+libc = "0.2"
+flatbuffers = "25.12.19"
+crossbeam-channel = "0.5"
+byteorder = "1.5"
+virtmcu-qom = { path = "virtmcu-qom" }
+virtmcu-zenoh = { path = "virtmcu-zenoh" }
+virtmcu-api = { path = "virtmcu-api" }
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

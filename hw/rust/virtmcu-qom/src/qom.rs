@@ -108,17 +108,17 @@ impl Property {
 #[macro_export]
 macro_rules! define_properties {
     ($name:ident, [ $($prop:expr),* $(,)? ]) => {
-        pub static $name: [$crate::qom::Property; $crate::count_props!($($prop),*) + 1] = [
+        pub static $name: [$crate::qom::Property; $crate::count_props!($($prop),*)] = [
             $($prop,)*
-            $crate::qom::Property::default(),
         ];
     };
 }
 
 #[macro_export]
 macro_rules! count_props {
-    () => (0);
-    ($x:expr $(, $xs:expr)* $(,)?) => (1 + $crate::count_props!($($xs),*));
+    ($($xs:expr),* $(,)?) => {
+        0usize $(+ { let _ = stringify!($xs); 1usize })*
+    };
 }
 const _: () = assert!(core::mem::size_of::<TypeInfo>() == 104);
 const _: () = assert!(core::mem::size_of::<Property>() == 72);

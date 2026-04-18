@@ -46,7 +46,10 @@ pub unsafe extern "C" fn zenoh_chardev_init(
     let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[zenoh-chardev] node={}: FAILED to open Zenoh session: {}", node_id, e);
+            eprintln!(
+                "[zenoh-chardev] node={}: FAILED to open Zenoh session: {}",
+                node_id, e
+            );
             return ptr::null_mut();
         }
     };
@@ -83,18 +86,27 @@ pub unsafe extern "C" fn zenoh_chardev_init(
         .wait()
         .unwrap();
 
-    Box::into_raw(Box::new(ZenohChardevState {
-        chr,
-        session,
-        publisher,
-        subscriber,
-        queue: std::sync::Mutex::new(Vec::new()),
-    }.set_queue(queue)))
+    Box::into_raw(Box::new(
+        ZenohChardevState {
+            chr,
+            session,
+            publisher,
+            subscriber,
+            queue: std::sync::Mutex::new(Vec::new()),
+        }
+        .set_queue(queue),
+    ))
 }
 
 impl ZenohChardevState {
     fn set_queue(mut self, q: std::sync::Arc<std::sync::Mutex<Vec<RxFrame>>>) -> Self {
-        self.queue = std::sync::Mutex::new(std::sync::Arc::try_unwrap(q).ok().unwrap().into_inner().unwrap());
+        self.queue = std::sync::Mutex::new(
+            std::sync::Arc::try_unwrap(q)
+                .ok()
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+        );
         self
     }
 }

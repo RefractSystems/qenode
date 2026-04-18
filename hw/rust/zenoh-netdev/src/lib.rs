@@ -43,7 +43,8 @@ impl PartialOrd for RxFrame {
 pub struct NetClientInfo {
     pub type_: i32,
     pub size: usize,
-    pub receive: Option<unsafe extern "C" fn(nc: *mut c_void, buf: *const u8, size: usize) -> isize>,
+    pub receive:
+        Option<unsafe extern "C" fn(nc: *mut c_void, buf: *const u8, size: usize) -> isize>,
     pub cleanup: Option<unsafe extern "C" fn(nc: *mut c_void)>,
 }
 
@@ -66,7 +67,10 @@ pub unsafe extern "C" fn zenoh_netdev_init(
     let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[zenoh-netdev] node={}: FAILED to open Zenoh session: {}", node_id, e);
+            eprintln!(
+                "[zenoh-netdev] node={}: FAILED to open Zenoh session: {}",
+                node_id, e
+            );
             return ptr::null_mut();
         }
     };
@@ -103,19 +107,28 @@ pub unsafe extern "C" fn zenoh_netdev_init(
         .wait()
         .unwrap();
 
-    Box::into_raw(Box::new(ZenohNetdevState {
-        nc,
-        session,
-        publisher,
-        subscriber,
-        queue: std::sync::Mutex::new(BinaryHeap::new()),
-        node_id,
-    }.set_queue(queue)))
+    Box::into_raw(Box::new(
+        ZenohNetdevState {
+            nc,
+            session,
+            publisher,
+            subscriber,
+            queue: std::sync::Mutex::new(BinaryHeap::new()),
+            node_id,
+        }
+        .set_queue(queue),
+    ))
 }
 
 impl ZenohNetdevState {
     fn set_queue(mut self, q: std::sync::Arc<std::sync::Mutex<BinaryHeap<RxFrame>>>) -> Self {
-        self.queue = std::sync::Mutex::new(std::sync::Arc::try_unwrap(q).ok().unwrap().into_inner().unwrap());
+        self.queue = std::sync::Mutex::new(
+            std::sync::Arc::try_unwrap(q)
+                .ok()
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+        );
         self
     }
 }

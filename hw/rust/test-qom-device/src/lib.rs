@@ -1,7 +1,7 @@
-use virtmcu_qom::declare_device_type;
-use virtmcu_qom::qom::{ObjectClass, TypeInfo};
-use virtmcu_qom::device_class;
 use core::ffi::c_void;
+use virtmcu_qom::declare_device_type;
+use virtmcu_qom::device_class;
+use virtmcu_qom::qom::{ObjectClass, TypeInfo};
 
 unsafe extern "C" fn test_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);

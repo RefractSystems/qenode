@@ -14,17 +14,25 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use virtmcu_api::{ClockAdvanceReq, ClockReadyResp};
-use virtmcu_qom::cpu::{virtmcu_cpu_exit_all, CPUState, virtmcu_cpu_halt_hook, virtmcu_tcg_quantum_hook};
+use virtmcu_qom::cpu::{
+    virtmcu_cpu_exit_all, virtmcu_cpu_halt_hook, virtmcu_tcg_quantum_hook, CPUState,
+};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::icount::icount_enabled;
-use virtmcu_qom::qdev::{DeviceClass, SysBusDevice, device_class_set_props};
-use virtmcu_qom::qom::{ObjectClass, TypeInfo, Object};
+use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
+use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::{
     virtmcu_cond_signal, virtmcu_cond_timedwait, virtmcu_cond_wait, virtmcu_mutex_lock,
-    virtmcu_mutex_unlock, QemuCond, QemuMutex, Bql,
+    virtmcu_mutex_unlock, Bql, QemuCond, QemuMutex,
 };
-use virtmcu_qom::timer::{QEMU_CLOCK_VIRTUAL, QemuTimer, qemu_clock_get_ns, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns};
-use virtmcu_qom::{declare_device_type, device_class, define_prop_uint32, define_prop_string, define_properties, error_setg, count_props};
+use virtmcu_qom::timer::{
+    qemu_clock_get_ns, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer,
+    QEMU_CLOCK_VIRTUAL,
+};
+use virtmcu_qom::{
+    count_props, declare_device_type, define_prop_string, define_prop_uint32, define_properties,
+    device_class, device_class_set_props, error_setg,
+};
 use zenoh::query::{Query, Queryable};
 use zenoh::{Config, Session, Wait};
 
@@ -77,7 +85,7 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     if now >= s.next_quantum_ns || halted {
         let backend = unsafe { &*s.rust_state };
-        
+
         let mut bql = Bql::lock();
         // Release BQL before blocking
         drop(bql);
@@ -105,7 +113,10 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
     let s = &mut *(dev as *mut ZenohClock);
 
     if !GLOBAL_CLOCK.is_null() {
-        error_setg!(errp as *mut *mut Error, c"Only one zenoh-clock instance is supported".as_ptr());
+        error_setg!(
+            errp as *mut *mut Error,
+            c"Only one zenoh-clock instance is supported".as_ptr()
+        );
         return;
     }
 
@@ -117,9 +128,8 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
     s.next_quantum_ns = 0;
 
     if !icount_enabled() {
-        s.quantum_timer = unsafe {
-            virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, zenoh_clock_timer_cb, dev)
-        };
+        s.quantum_timer =
+            unsafe { virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, zenoh_clock_timer_cb, dev) };
     } else {
         s.quantum_timer = ptr::null_mut();
     }
@@ -142,11 +152,20 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
         s.router as *const c_char
     };
 
-    s.rust_state = zenoh_clock_init_internal(s.node_id, router_str, stall_ms,
-                                             &mut s.mutex, &mut s.vcpu_cond, &mut s.query_cond);
-    
+    s.rust_state = zenoh_clock_init_internal(
+        s.node_id,
+        router_str,
+        stall_ms,
+        &mut s.mutex,
+        &mut s.vcpu_cond,
+        &mut s.query_cond,
+    );
+
     if s.rust_state.is_null() {
-        error_setg!(errp as *mut *mut Error, c"zenoh-clock: failed to initialize Rust backend".as_ptr());
+        error_setg!(
+            errp as *mut *mut Error,
+            c"zenoh-clock: failed to initialize Rust backend".as_ptr()
+        );
         return;
     }
 
@@ -158,6 +177,7 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 }
 
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
+    /*
     let s = &mut *(obj as *mut ZenohClock);
     if s as *mut ZenohClock == GLOBAL_CLOCK {
         virtmcu_cpu_halt_hook = None;
@@ -175,22 +195,26 @@ unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
     virtmcu_qom::sync::qemu_mutex_destroy(&mut s.mutex);
     virtmcu_qom::sync::qemu_cond_destroy(&mut s.vcpu_cond);
     virtmcu_qom::sync::qemu_cond_destroy(&mut s.query_cond);
+    */
 }
 
-define_properties!(ZENOH_CLOCK_PROPERTIES, [
-    define_prop_uint32!(c"node".as_ptr(), ZenohClock, node_id, 0),
-    define_prop_string!(c"router".as_ptr(), ZenohClock, router),
-    define_prop_string!(c"mode".as_ptr(), ZenohClock, mode),
-    define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout_ms, 0),
-]);
+define_properties!(
+    ZENOH_CLOCK_PROPERTIES,
+    [
+        define_prop_uint32!(c"node".as_ptr(), ZenohClock, node_id, 0),
+        define_prop_string!(c"router".as_ptr(), ZenohClock, router),
+        define_prop_string!(c"mode".as_ptr(), ZenohClock, mode),
+        define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout_ms, 0),
+    ]
+);
 
 unsafe extern "C" fn zenoh_clock_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     unsafe {
         (*dc).realize = Some(zenoh_clock_realize);
         (*dc).user_creatable = true;
-        device_class_set_props(dc, ZENOH_CLOCK_PROPERTIES.as_ptr());
     }
+    virtmcu_qom::device_class_set_props!(dc, ZENOH_CLOCK_PROPERTIES);
 }
 
 static ZENOH_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
@@ -311,11 +335,8 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         virtmcu_cond_signal(backend.vcpu_cond);
 
         while backend.query_ready.load(Ordering::Acquire) {
-            if virtmcu_cond_timedwait(
-                backend.query_cond,
-                backend.mutex,
-                backend.stall_timeout_ms,
-            ) != 0
+            if virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms)
+                != 0
             {
                 // Stall detected
                 break;
@@ -339,5 +360,8 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         );
     }
 
-    query.reply(query.key_expr(), resp_bytes.as_slice()).wait().unwrap();
+    query
+        .reply(query.key_expr(), resp_bytes.as_slice())
+        .wait()
+        .unwrap();
 }
