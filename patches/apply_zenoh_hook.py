@@ -160,6 +160,27 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     halt_insertion = "\n        if (virtmcu_cpu_halt_hook) { virtmcu_cpu_halt_hook(cpu, false); }\n"
     patch_file(cpu_exec_c, halt_marker, halt_insertion, after=True)
 
+    # 7. Inject BQL helper implementations into system/cpus.c
+    # bql_locked() uses a file-static TLS variable in cpus.c; DSOs read a separate
+    # copy and always see false. These wrappers live inside the main binary and
+    # return the authoritative value.
+    cpus_c = os.path.join(qemu, "system", "cpus.c")
+    patch_file(
+        cpus_c,
+        "void bql_unlock(void)\n{\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
+        "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n",
+        after=True,
+    )
+
+    # 8. Inject BQL helper declarations into include/qemu/main-loop.h
+    main_loop_h = os.path.join(qemu, "include", "qemu", "main-loop.h")
+    patch_file(
+        main_loop_h,
+        "bool bql_locked(void);",
+        "\nbool virtmcu_is_bql_locked(void);\nvoid virtmcu_safe_bql_unlock(void);\nvoid virtmcu_safe_bql_lock(void);\n",
+        after=True,
+    )
+
     # We also need to hook where halted is set to 1.
     # This is target-specific, but let's try to find a generic place or common targets.
     # In ARM:
