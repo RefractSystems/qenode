@@ -32,6 +32,7 @@ function cleanup() {
     [[ $NEW_LISTENER_PID -ne 0 ]] && kill "$NEW_LISTENER_PID" 2>/dev/null || true
     [[ $MOCK_PID -ne 0 ]] && kill "$MOCK_PID" 2>/dev/null || true
     rm -f /tmp/bridge_listener_$$.py /tmp/mmio.sock
+    bash "$WORKSPACE_DIR/scripts/cleanup-sim.sh" --quiet
 }
 trap cleanup EXIT
 

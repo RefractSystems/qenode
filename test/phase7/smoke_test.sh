@@ -20,7 +20,8 @@ ROUTER_PID=""
 cleanup() {
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
-    # rm -rf "$TMPDIR_LOCAL"
+    # Use the global cleanup script to be sure
+    bash "$WORKSPACE_DIR/scripts/cleanup-sim.sh" --quiet
 }
 trap cleanup EXIT
 

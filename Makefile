@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup-initial build run clean clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
 
 # By default, perform an incremental build
 all: build
@@ -79,6 +79,7 @@ venv:
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
 test-integration: venv
+	@bash scripts/cleanup-sim.sh --quiet
 	@echo "==> Building test artifacts..."
 	@$(MAKE) -C test/phase1
 	@$(MAKE) -C test/phase8
@@ -88,7 +89,8 @@ test-integration: venv
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
-		bash "$$test_script" || exit 1; \
+		bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
+		bash scripts/cleanup-sim.sh --quiet; \
 	done
 	@echo "✓ All integration tests passed."
 
@@ -305,6 +307,10 @@ docker-runtime:
 # ------------------------------------------------------------------------------
 # Clean
 # ------------------------------------------------------------------------------
+
+# Kill all simulation-related processes and clean up temporary test files.
+clean-sim:
+	@bash scripts/cleanup-sim.sh
 
 # Alias for comprehensive cleanup of generated debugging and test artifacts.
 clean-debug: clean
