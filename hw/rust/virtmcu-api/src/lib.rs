@@ -1,5 +1,42 @@
 pub mod telemetry_generated;
 
+pub const VIRTMCU_PROTO_MAGIC: u32 = 0x564D4355;
+pub const VIRTMCU_PROTO_VERSION: u32 = 1;
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct VirtmcuHandshake {
+    pub magic: u32,
+    pub version: u32,
+}
+
+pub const MMIO_REQ_READ: u8 = 0;
+pub const MMIO_REQ_WRITE: u8 = 1;
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct MmioReq {
+    pub type_: u8,
+    pub size: u8,
+    pub reserved1: u16,
+    pub reserved2: u32,
+    pub vtime_ns: u64,
+    pub addr: u64,
+    pub data: u64,
+}
+
+pub const SYSC_MSG_RESP: u32 = 0;
+pub const SYSC_MSG_IRQ_SET: u32 = 1;
+pub const SYSC_MSG_IRQ_CLEAR: u32 = 2;
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct SyscMsg {
+    pub type_: u32,
+    pub irq_num: u32,
+    pub data: u64,
+}
+
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct ClockAdvanceReq {
