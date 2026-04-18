@@ -130,7 +130,7 @@ run_test_case() {
     QEMU_PID=$!
 
     # Wait for QEMU to start and encounter the MMIO operation
-    sleep 5
+    sleep 20
 
     # ── Check QMP responsiveness ──
     echo "[phase5.6]   Checking QMP responsiveness..."
@@ -160,11 +160,16 @@ sys.exit(0)
     fi
 
     # ── Check for expected error in QEMU log ──
-    echo "[phase5.6]   Checking for expected error in log..."
-    # Kill QEMU first to ensure logs are flushed
-    kill "$QEMU_PID" 2>/dev/null || true
-    wait "$QEMU_PID" 2>/dev/null || true
+    echo "[phase5.6]   Killing QEMU (PID $QEMU_PID)..."
+    kill -9 "$QEMU_PID" 2>/dev/null || true
+    sleep 1
     
+    echo "[phase5.6]   Checking for expected error in log..."
+    if [ ! -f "$QEMU_LOG" ]; then
+        echo "[phase5.6]   FAILED: QEMU log file $QEMU_LOG not found"
+        return 1
+    fi
+
     if grep -q "$expected_msg" "$QEMU_LOG"; then
         echo "[phase5.6]   SUCCESS: Expected error detected"
     else
