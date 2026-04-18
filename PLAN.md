@@ -301,7 +301,7 @@ Implement after Path B is validated.
 
 ### Phase 5 Technical Debt & Future Risks
 
-- [ ] **5.6 mmio-socket-bridge: add per-operation timeout**
+- [x] **5.6 mmio-socket-bridge: add per-operation timeout**
 
   `writen()` and `bridge_sock_handler()` in `hw/misc/mmio-socket-bridge.c` loop on blocking `write()`/`read()` with no timeout. A crashed or hung SystemC model holds the QEMU TCG thread in a kernel syscall — QEMU cannot service QMP, GDB, or watchdog until the socket unblocks.
 

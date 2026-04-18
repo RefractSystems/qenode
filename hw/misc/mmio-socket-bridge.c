@@ -24,6 +24,9 @@
 #include "virtmcu_proto.h"
 
 #define TYPE_MMIO_SOCKET_BRIDGE "mmio-socket-bridge"
+
+/* Maximum time to wait for a response from the SystemC adapter per MMIO op. */
+#define BRIDGE_TIMEOUT_MS 500
 OBJECT_DECLARE_SIMPLE_TYPE(MmioSocketBridgeState, MMIO_SOCKET_BRIDGE)
 
 struct MmioSocketBridgeState {
@@ -97,7 +100,25 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
     qemu_mutex_lock(&s->sock_mutex);
     s->has_resp = false;
     if (writen(s->sock_fd, req, sizeof(*req))) {
-        while (!s->has_resp) qemu_cond_wait(&s->resp_cond, &s->sock_mutex);
+        bool timed_out = false;
+        while (!s->has_resp) {
+            if (qemu_cond_timedwait(&s->resp_cond, &s->sock_mutex, BRIDGE_TIMEOUT_MS)) {
+                timed_out = true;
+                break;
+            }
+        }
+        if (timed_out) {
+            int fd = s->sock_fd;
+            s->sock_fd = -1;
+            qemu_mutex_unlock(&s->sock_mutex);
+            bql_lock();
+            qemu_log_mask(LOG_GUEST_ERROR,
+                "mmio-socket-bridge: timeout on socket fd %d after %d ms, disconnecting\n",
+                fd, BRIDGE_TIMEOUT_MS);
+            qemu_set_fd_handler(fd, NULL, NULL, NULL);
+            close(fd);
+            return;
+        }
         *resp = s->current_resp;
     }
     qemu_mutex_unlock(&s->sock_mutex);
