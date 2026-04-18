@@ -15,149 +15,247 @@
 use core::ffi::{c_char, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
-use virtmcu_api::{ClockAdvanceReq, ClockReadyResp};
-use virtmcu_qom::cpu::{
-    virtmcu_cpu_exit_all, virtmcu_cpu_halt_hook, virtmcu_tcg_quantum_hook, CPUState,
-};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 use virtmcu_qom::error::Error;
-use virtmcu_qom::icount::icount_enabled;
 use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{
-    virtmcu_cond_signal, virtmcu_cond_timedwait, virtmcu_cond_wait, virtmcu_mutex_lock,
-    virtmcu_mutex_unlock, Bql, QemuCond, QemuMutex,
-};
 use virtmcu_qom::timer::{
     qemu_clock_get_ns, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer,
     QEMU_CLOCK_VIRTUAL,
 };
-use virtmcu_qom::vlog;
 use virtmcu_qom::{
-    count_props, declare_device_type, define_prop_string, define_prop_uint32, define_properties,
-    device_class, device_class_set_props, error_setg,
+    declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
+    device_class_set_props, vlog,
 };
-use zenoh::query::{Query, Queryable};
-use zenoh::{Config, Session, Wait};
+use zenoh::query::Query;
+use zenoh::Session;
+use zenoh::Wait;
+
+/* ── FFI Types ────────────────────────────────────────────────────────────── */
+
+#[repr(C)]
+pub struct CPUState {
+    _opaque: [u8; 0],
+}
+
+extern "C" {
+    pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(*mut CPUState, bool)>);
+    pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(*mut CPUState)>);
+}
+
+/* ── QOM Object ───────────────────────────────────────────────────────────── */
 
 #[repr(C)]
 pub struct ZenohClock {
     pub parent_obj: SysBusDevice,
-    pub node_id: u32,
-    pub router: *mut c_char,
-    pub mode: *mut c_char,
-    pub stall_timeout_ms: u32,
 
-    pub rust_state: *mut ZenohClockBackend,
-    pub mutex: QemuMutex,
-    pub vcpu_cond: QemuCond,
-    pub query_cond: QemuCond,
+    /* Properties */
+    pub node_id: u32,
+    pub mode: *mut c_char,
+    pub router: *mut c_char,
+    pub stall_timeout: u32,
+
+    /* Internal State */
     pub next_quantum_ns: i64,
+    pub last_halt_vtime: i64,
     pub quantum_timer: *mut QemuTimer,
+
+    /* Rust state */
+    pub rust_state: *mut ZenohClockBackend,
 }
 
 pub struct ZenohClockBackend {
     session: Session,
-    queryable: Option<Queryable<()>>,
     node_id: u32,
     stall_timeout_ms: u32,
-    mutex: *mut QemuMutex,
-    vcpu_cond: *mut QemuCond,
-    query_cond: *mut QemuCond,
-    delta_ns: AtomicI64,
-    mujoco_time_ns: AtomicI64,
-    query_ready: AtomicBool,
-    current_vtime_ns: std::sync::atomic::AtomicU64,
+
+    /* Communication state */
+    mutex: Mutex<()>,
+    cond: Condvar,
+    
+    quantum_ready: AtomicBool,
+    quantum_done: AtomicBool,
+    delta_ns: AtomicU64,
+    vtime_ns: AtomicU64,
+    mujoco_time_ns: AtomicU64,
 }
 
-unsafe impl Send for ZenohClockBackend {}
-unsafe impl Sync for ZenohClockBackend {}
+/* ── Logic ────────────────────────────────────────────────────────────────── */
 
 static mut GLOBAL_CLOCK: *mut ZenohClock = ptr::null_mut();
 
-extern "C" fn zenoh_clock_timer_cb(_opaque: *mut c_void) {
-    unsafe {
-        virtmcu_cpu_exit_all();
-    }
+extern "C" fn zenoh_clock_quantum_timer_cb(opaque: *mut c_void) {
+    zenoh_clock_cpu_halt_cb(ptr::null_mut(), false);
+}
+
+extern "C" fn zenoh_clock_cpu_tcg_hook(_cpu: *mut CPUState) {
+    zenoh_clock_cpu_halt_cb(_cpu, false);
 }
 
 extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
-    let s = unsafe { &mut *GLOBAL_CLOCK };
+    let s_ptr = unsafe { GLOBAL_CLOCK };
+    if s_ptr.is_null() {
+        return;
+    }
+    let s = unsafe { &mut *s_ptr };
     if s.rust_state.is_null() {
         return;
     }
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-    if now >= s.next_quantum_ns || halted {
+    
+    // In slaved mode, we ONLY block when we reach the virtual time boundary.
+    // This handles both instruction execution and WFI (where 
+    // virtual time advances via host clock in suspend mode).
+    let should_block = now >= s.next_quantum_ns;
+    
+    if should_block {
         let backend = unsafe { &*s.rust_state };
 
         // Release BQL before blocking
-        if unsafe { virtmcu_qom::sync::virtmcu_bql_locked() } {
+        let was_locked = unsafe { virtmcu_qom::sync::virtmcu_bql_locked() };
+        if was_locked {
             unsafe { virtmcu_qom::sync::Bql::unlock() };
-        } else {
-            vlog!("[zenoh-clock] WARNING: BQL not locked in halt_cb!");
         }
 
-        vlog!("[zenoh-clock] VCPU reaching boundary/halt (now={}, next={}, halted={}). Waiting for query...", now, s.next_quantum_ns, halted);
         let delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
 
-        let _bql = virtmcu_qom::sync::Bql::lock();
+        if was_locked {
+            let _bql = virtmcu_qom::sync::Bql::lock();
+            std::mem::forget(_bql);
+        }
 
-        s.next_quantum_ns = now + delta;
+        // 1. Advance virtual clock manually if requested by TA.
+        // This ensures that 'suspend' mode advances and 'icount' mode wakes up from WFI.
+        let target_vtime = s.next_quantum_ns + delta as i64;
+        let now_after_block = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+        
+        if delta > 0 {
+             let should_advance = !virtmcu_qom::icount::icount_enabled() || halted;
+             if should_advance && target_vtime > now_after_block {
+                 virtmcu_qom::icount::icount_advance(target_vtime - now_after_block);
+             }
+        }
+
+        // 2. Set next boundary
+        s.next_quantum_ns = target_vtime;
+        
+        // Final safety: ensure it's always in the future relative to final time
+        let now_final = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+        if s.next_quantum_ns <= now_final {
+            s.next_quantum_ns = now_final + 1;
+        }
+
         if !s.quantum_timer.is_null() {
             unsafe {
                 virtmcu_timer_mod(s.quantum_timer, s.next_quantum_ns);
             }
         }
-        // Keep BQL held when returning to QEMU
-        std::mem::forget(_bql);
     }
 }
 
-extern "C" fn zenoh_clock_tcg_quantum_cb(cpu: *mut CPUState) {
-    zenoh_clock_cpu_halt_cb(cpu, false);
+fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> u64 {
+    backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
+    backend.quantum_done.store(true, Ordering::SeqCst);
+    
+    {
+        let _guard = backend.mutex.lock().unwrap();
+        backend.cond.notify_all();
+    }
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
+    
+    let mut guard = backend.mutex.lock().unwrap();
+    while !backend.quantum_ready.load(Ordering::SeqCst) {
+        let (new_guard, result) = backend.cond.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+        guard = new_guard;
+        if result.timed_out() && start.elapsed() > timeout {
+            break;
+        }
+    }
+    
+    backend.quantum_ready.store(false, Ordering::SeqCst);
+    backend.delta_ns.load(Ordering::SeqCst)
 }
 
-extern "C" fn zenoh_clock_instance_init(obj: *mut Object) {
-    let s = unsafe { &mut *(obj as *mut ZenohClock) };
+fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
+    let payload = match query.payload() {
+        Some(p) => p,
+        None => return,
+    };
+
+    if payload.len() < 16 {
+        return;
+    }
+
+    let payload_bytes = payload.to_bytes();
+    let delta = u64::from_le_bytes(payload_bytes[0..8].try_into().unwrap());
+    let mujoco = u64::from_le_bytes(payload_bytes[8..16].try_into().unwrap());
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
+
+    let mut guard = backend.mutex.lock().unwrap();
+    while !backend.quantum_done.load(Ordering::SeqCst) {
+        let (new_guard, result) = backend.cond.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+        guard = new_guard;
+        if result.timed_out() && start.elapsed() > timeout {
+            return;
+        }
+    }
+    
+    backend.quantum_done.store(false, Ordering::SeqCst);
+    let reached_vtime = backend.vtime_ns.load(Ordering::SeqCst);
+    
+    backend.delta_ns.store(delta, Ordering::SeqCst);
+    backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
+    backend.quantum_ready.store(true, Ordering::SeqCst);
+    backend.cond.notify_all();
+
+    drop(guard);
+
+    #[repr(C)]
+    struct ClockReadyResp {
+        vtime_ns: u64,
+        n_frames: u32,
+        error_code: u32,
+    }
+
+    let resp = ClockReadyResp {
+        vtime_ns: reached_vtime,
+        n_frames: 0,
+        error_code: 0,
+    };
+
+    let mut resp_bytes = [0u8; 16];
     unsafe {
-        virtmcu_qom::sync::qemu_mutex_init(&mut s.mutex);
-        virtmcu_qom::sync::qemu_cond_init(&mut s.vcpu_cond);
-        virtmcu_qom::sync::qemu_cond_init(&mut s.query_cond);
+        ptr::copy_nonoverlapping(
+            &resp as *const ClockReadyResp as *const u8,
+            resp_bytes.as_mut_ptr(),
+            16,
+        );
     }
+
+    let _ = query.reply(query.key_expr(), resp_bytes.as_slice()).wait();
 }
+
+/* ── Boilerplate ──────────────────────────────────────────────────────────── */
 
 unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut ZenohClock);
 
-    if !GLOBAL_CLOCK.is_null() {
-        error_setg!(
-            errp as *mut *mut Error,
-            c"Only one zenoh-clock instance is supported".as_ptr()
-        );
-        return;
-    }
-
-    s.next_quantum_ns = 0;
-
-    if !icount_enabled() {
-        s.quantum_timer =
-            unsafe { virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, zenoh_clock_timer_cb, dev) };
+    let mode_str = if s.mode.is_null() {
+        "slaved-suspend"
     } else {
-        s.quantum_timer = ptr::null_mut();
-    }
+        CStr::from_ptr(s.mode).to_str().unwrap_or("slaved-suspend")
+    };
 
-    let mut stall_ms = s.stall_timeout_ms;
-    if stall_ms == 0 {
-        if let Ok(env_val) = std::env::var("VIRTMCU_STALL_TIMEOUT_MS") {
-            if let Ok(val) = env_val.parse::<u32>() {
-                stall_ms = val;
-            }
-        }
-        if stall_ms == 0 {
-            stall_ms = 5000;
-        }
+    if mode_str != "icount" && mode_str != "suspend" && mode_str != "slaved-suspend" {
+        return;
     }
 
     let router_str = if s.router.is_null() {
@@ -166,30 +264,41 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
         s.router as *const c_char
     };
 
-    s.rust_state = zenoh_clock_init_internal(
-        s.node_id,
-        router_str,
-        stall_ms,
-        &mut s.mutex,
-        &mut s.vcpu_cond,
-        &mut s.query_cond,
-    );
+    let stall_ms = if s.stall_timeout == 0 {
+        5000
+    } else {
+        s.stall_timeout
+    };
+
+    s.rust_state = zenoh_clock_init_internal(s.node_id, router_str, stall_ms);
 
     if s.rust_state.is_null() {
-        error_setg!(
+        virtmcu_qom::error_setg!(
             errp as *mut *mut Error,
             c"zenoh-clock: failed to initialize Rust backend".as_ptr()
         );
         return;
     }
 
+    s.next_quantum_ns = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+    s.last_halt_vtime = -1;
+    s.quantum_timer = unsafe {
+        virtmcu_timer_new_ns(
+            QEMU_CLOCK_VIRTUAL,
+            zenoh_clock_quantum_timer_cb,
+            dev as *mut c_void,
+        )
+    };
+
     unsafe {
         GLOBAL_CLOCK = s;
-        virtmcu_cpu_halt_hook = Some(zenoh_clock_cpu_halt_cb);
-        virtmcu_tcg_quantum_hook = Some(zenoh_clock_tcg_quantum_cb);
+        virtmcu_cpu_set_halt_hook(Some(zenoh_clock_cpu_halt_cb));
+        virtmcu_cpu_set_tcg_hook(Some(zenoh_clock_cpu_tcg_hook));
     }
+
     vlog!(
-        "[zenoh-clock] Realized (node={}, stall_timeout={} ms)",
+        "[zenoh-clock] Realized (mode={}, node={}, stall_timeout={} ms)\n",
+        mode_str,
         s.node_id,
         stall_ms
     );
@@ -197,15 +306,10 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohClock);
-    if s as *mut ZenohClock == GLOBAL_CLOCK {
-        unsafe {
-            virtmcu_cpu_halt_hook = None;
-            virtmcu_tcg_quantum_hook = None;
-            GLOBAL_CLOCK = ptr::null_mut();
-        }
-    }
     if !s.rust_state.is_null() {
-        zenoh_clock_free_internal(s.rust_state);
+        unsafe {
+            drop(Box::from_raw(s.rust_state));
+        }
         s.rust_state = ptr::null_mut();
     }
     if !s.quantum_timer.is_null() {
@@ -215,19 +319,25 @@ unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
         s.quantum_timer = ptr::null_mut();
     }
     unsafe {
-        virtmcu_qom::sync::qemu_mutex_destroy(&mut s.mutex);
-        virtmcu_qom::sync::qemu_cond_destroy(&mut s.vcpu_cond);
-        virtmcu_qom::sync::qemu_cond_destroy(&mut s.query_cond);
+        virtmcu_cpu_set_halt_hook(None);
+        virtmcu_cpu_set_tcg_hook(None);
+        GLOBAL_CLOCK = ptr::null_mut();
     }
+}
+
+unsafe extern "C" fn zenoh_clock_instance_init(obj: *mut Object) {
+    let s = &mut *(obj as *mut ZenohClock);
+    s.rust_state = ptr::null_mut();
+    s.quantum_timer = ptr::null_mut();
 }
 
 define_properties!(
     ZENOH_CLOCK_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), ZenohClock, node_id, 0),
-        define_prop_string!(c"router".as_ptr(), ZenohClock, router),
         define_prop_string!(c"mode".as_ptr(), ZenohClock, mode),
-        define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout_ms, 0),
+        define_prop_string!(c"router".as_ptr(), ZenohClock, router),
+        define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout, 5000),
     ]
 );
 
@@ -258,27 +368,13 @@ static ZENOH_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(zenoh_clock_type_init, ZENOH_CLOCK_TYPE_INFO);
 
-/* ── Backend Logic (formerly in lib.rs) ────────────────────────────────────── */
+/* ── Internal Rust State ─────────────────────────────────────────────────── */
 
 fn zenoh_clock_init_internal(
     node_id: u32,
     router: *const c_char,
     stall_timeout_ms: u32,
-    mutex: *mut QemuMutex,
-    vcpu_cond: *mut QemuCond,
-    query_cond: *mut QemuCond,
 ) -> *mut ZenohClockBackend {
-    vlog!(
-        "[zenoh-clock] init_internal: node={}, router={:?}\n",
-        node_id,
-        if router.is_null() {
-            "NULL"
-        } else {
-            unsafe { CStr::from_ptr(router).to_str().unwrap_or("ERR") }
-        }
-    );
-
-    vlog!("[zenoh-clock] TEST LOG BEFORE OPEN\n");
     let session = unsafe {
         match virtmcu_zenoh::open_session(router) {
             Ok(s) => s,
@@ -288,26 +384,22 @@ fn zenoh_clock_init_internal(
             }
         }
     };
-    vlog!("[zenoh-clock] TEST LOG AFTER OPEN\n");
-    vlog!("[zenoh-clock] Zenoh session opened successfully.\n");
 
-    let backend = Arc::new(ZenohClockBackend {
+    let backend = Box::new(ZenohClockBackend {
         session: session.clone(),
-        queryable: None,
         node_id,
         stall_timeout_ms,
-        mutex,
-        vcpu_cond,
-        query_cond,
-        delta_ns: AtomicI64::new(0),
-        mujoco_time_ns: AtomicI64::new(0),
-        query_ready: AtomicBool::new(false),
-        current_vtime_ns: std::sync::atomic::AtomicU64::new(u64::MAX),
+        mutex: Mutex::new(()),
+        cond: Condvar::new(),
+        quantum_ready: AtomicBool::new(false),
+        quantum_done: AtomicBool::new(false),
+        delta_ns: AtomicU64::new(0),
+        vtime_ns: AtomicU64::new(0),
+        mujoco_time_ns: AtomicU64::new(0),
     });
 
-    let backend_ptr = Arc::as_ptr(&backend) as usize;
+    let backend_ptr = Box::into_raw(backend) as usize;
     let topic = format!("sim/clock/advance/{}", node_id);
-    vlog!("[zenoh-clock] Declaring queryable on {}", topic);
 
     let queryable = session
         .declare_queryable(topic)
@@ -318,132 +410,16 @@ fn zenoh_clock_init_internal(
         .wait()
         .unwrap();
 
-    vlog!("[zenoh-clock] Queryable declared successfully.");
+    std::mem::forget(queryable);
 
     // Heartbeat thread
     let hb_session = session.clone();
     let node_id_hb = node_id;
     std::thread::spawn(move || loop {
-        let _ = hb_session
-            .put(format!("sim/heartbeat/{}", node_id_hb), "ALIVE")
-            .wait();
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        let topic = format!("sim/clock/heartbeat/{}", node_id_hb);
+        let _ = hb_session.put(topic, vec![1]).wait();
+        std::thread::sleep(Duration::from_millis(1000));
     });
 
-    let mut backend_mut = Arc::try_unwrap(backend).ok().unwrap();
-    backend_mut.queryable = Some(queryable);
-
-    Box::into_raw(Box::new(backend_mut))
-}
-
-fn zenoh_clock_free_internal(backend: *mut ZenohClockBackend) {
-    if !backend.is_null() {
-        unsafe {
-            drop(Box::from_raw(backend));
-        }
-    }
-}
-
-fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> i64 {
-    unsafe {
-        virtmcu_mutex_lock(backend.mutex);
-
-        // Predicate: VCPU is ready and waiting for query
-        backend.current_vtime_ns.store(_vtime_ns, Ordering::Release);
-
-        // Signal query handler that we are ready
-        virtmcu_cond_signal(backend.query_cond);
-
-        while !backend.query_ready.load(Ordering::Acquire) {
-            // Wait for query handler to provide new delta
-            // Using timedwait to avoid permanent hangs if signal is lost
-            virtmcu_cond_timedwait(backend.vcpu_cond, backend.mutex, 1000);
-        }
-
-        backend.query_ready.store(false, Ordering::Release);
-
-        // Signal query handler that we've consumed the delta
-        virtmcu_cond_signal(backend.query_cond);
-
-        virtmcu_mutex_unlock(backend.mutex);
-    }
-    backend.delta_ns.load(Ordering::Acquire)
-}
-
-fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
-    let payload = match query.payload() {
-        Some(p) => p,
-        None => return,
-    };
-
-    if payload.len() < 16 {
-        return;
-    }
-
-    let mut delta: u64 = 0;
-    let mut mujoco: u64 = 0;
-    let data = payload.to_bytes();
-    unsafe {
-        ptr::copy_nonoverlapping(data.as_ptr(), &mut delta as *mut u64 as *mut u8, 8);
-        ptr::copy_nonoverlapping(data.as_ptr().add(8), &mut mujoco as *mut u64 as *mut u8, 8);
-    }
-
-    backend.delta_ns.store(delta as i64, Ordering::Release);
-    backend
-        .mujoco_time_ns
-        .store(mujoco as i64, Ordering::Release);
-
-    unsafe {
-        virtmcu_mutex_lock(backend.mutex);
-
-        // Wait until VCPU is actually ready to receive (prevents lost signals)
-        // Check current_vtime_ns as indicator of VCPU waiting
-        while backend.current_vtime_ns.load(Ordering::Acquire) == u64::MAX {
-            if virtmcu_cond_timedwait(backend.query_cond, backend.mutex, 100) != 0 {
-                // Spurious or signal
-            }
-            // check if we should abort?
-        }
-
-        backend.query_ready.store(true, Ordering::Release);
-        virtmcu_cond_signal(backend.vcpu_cond);
-
-        // Wait for VCPU to acknowledge it saw query_ready=true
-        while backend.query_ready.load(Ordering::Acquire) {
-            if virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms)
-                != 0
-            {
-                // Signal received or timeout
-            } else {
-                // ETIMEDOUT (0 in our wrapper)
-                vlog!(
-                    "[zenoh-clock] Stall detected (timeout {} ms)",
-                    backend.stall_timeout_ms
-                );
-                break;
-            }
-        }
-
-        // Reset readiness for next round
-        backend.current_vtime_ns.store(u64::MAX, Ordering::Release);
-
-        virtmcu_mutex_unlock(backend.mutex);
-    }
-
-    let resp = ClockReadyResp {
-        current_vtime_ns: backend.current_vtime_ns.load(Ordering::Acquire) as u64,
-        n_frames: 0,
-        error_code: 0,
-    };
-
-    let mut resp_bytes = [0u8; 16];
-    unsafe {
-        ptr::copy_nonoverlapping(
-            &resp as *const ClockReadyResp as *const u8,
-            resp_bytes.as_mut_ptr(),
-            16,
-        );
-    }
-
-    let _ = query.reply(query.key_expr(), resp_bytes.as_slice()).wait();
+    backend_ptr as *mut ZenohClockBackend
 }

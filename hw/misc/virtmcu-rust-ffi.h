@@ -44,6 +44,8 @@ void virtmcu_timer_free(QEMUTimer *ts);
 
 /* CPU */
 void virtmcu_cpu_exit_all(void);
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *, bool));
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *));
 
 /* Error */
 void virtmcu_error_setg(Error **errp, const char *fmt);

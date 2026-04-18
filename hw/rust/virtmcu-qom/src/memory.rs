@@ -41,7 +41,10 @@ pub struct MemoryRegion {
     pub _opaque: [u8; 272 - 40], // Pad to 272 bytes
 }
 
-pub const DEVICE_LITTLE_ENDIAN: c_int = 1;
+pub const DEVICE_NATIVE_ENDIAN: c_int = 0;
+pub const DEVICE_BIG_ENDIAN: c_int = 1;
+pub const DEVICE_LITTLE_ENDIAN: c_int = 2;
+pub const DEVICE_HOST_ENDIAN: c_int = 3;
 
 extern "C" {
     pub fn memory_region_init_io(
