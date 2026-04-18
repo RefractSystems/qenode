@@ -86,7 +86,7 @@ pub unsafe extern "C" fn zenoh_chardev_init(
     
     let mutex = virtmcu_mutex_new();
     
-    let state_ptr_raw = libc::malloc(std::mem::size_of::<ZenohChardevState>()) as *mut ZenohChardevState;
+    let state_ptr_raw = Box::into_raw(Box::new(std::mem::MaybeUninit::<ZenohChardevState>::uninit())) as *mut ZenohChardevState;
     let state_ptr_usize = state_ptr_raw as usize;
 
     let subscriber = session.declare_subscriber(topic_rx)

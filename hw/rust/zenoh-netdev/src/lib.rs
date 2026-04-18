@@ -75,8 +75,7 @@ pub unsafe extern "C" fn zenoh_netdev_init(
 
     let publisher = session.declare_publisher(topic_tx).wait().unwrap();
 
-    let backend_ptr_raw =
-        libc::malloc(std::mem::size_of::<ZenohNetdevBackend>()) as *mut ZenohNetdevBackend;
+    let backend_ptr_raw = Box::into_raw(Box::new(std::mem::MaybeUninit::<ZenohNetdevBackend>::uninit())) as *mut ZenohNetdevBackend;
     let backend_ptr_usize = backend_ptr_raw as usize;
 
     let subscriber = session
