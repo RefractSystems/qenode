@@ -149,6 +149,10 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     // it will have set quantum_done=true and be blocked in cond_wait. In that
     // case we can skip the wait — we already have vtime — and just wake it.
     let already_done = backend.quantum_done.load(Ordering::Acquire);
+    eprintln!(
+        "[zenoh-clock-rust] on_clock_query node={} delta={} already_done={}",
+        backend.node_id, delta, already_done
+    );
     backend.quantum_done.store(false, Ordering::Release);
     backend.quantum_ready.store(true, Ordering::Release);
     virtmcu_cond_signal(backend.vcpu_cond);
@@ -160,8 +164,8 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
                 virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms);
             if rc == 0 && !backend.quantum_done.load(Ordering::Acquire) {
                 eprintln!(
-                    "[zenoh-clock] STALL: timeout after {} ms waiting for quantum_done",
-                    backend.stall_timeout_ms
+                    "[zenoh-clock] STALL: node={} timeout after {} ms waiting for quantum_done",
+                    backend.node_id, backend.stall_timeout_ms
                 );
                 error_code = 1; // STALL
                 break;
@@ -170,6 +174,10 @@ unsafe fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     }
 
     let vtime = backend.vtime_ns.load(Ordering::Acquire);
+    eprintln!(
+        "[zenoh-clock-rust] on_clock_query end node={} vtime={} error={}",
+        backend.node_id, vtime, error_code
+    );
     virtmcu_mutex_unlock(backend.mutex);
 
     let resp = ClockReadyResp {
@@ -199,6 +207,10 @@ pub unsafe extern "C" fn zenoh_clock_quantum_wait(
 ) -> i64 {
     let b = &*backend;
 
+    eprintln!(
+        "[zenoh-clock-rust] quantum_wait start node={} vtime={}",
+        b.node_id, current_vtime_ns
+    );
     virtmcu_mutex_lock(b.mutex);
     b.vtime_ns.store(current_vtime_ns, Ordering::Release);
     b.quantum_done.store(true, Ordering::Release);
@@ -210,6 +222,10 @@ pub unsafe extern "C" fn zenoh_clock_quantum_wait(
 
     b.quantum_ready.store(false, Ordering::Release);
     let delta = b.delta_ns.load(Ordering::Acquire);
+    eprintln!(
+        "[zenoh-clock-rust] quantum_wait end node={} delta={}",
+        b.node_id, delta
+    );
     virtmcu_mutex_unlock(b.mutex);
 
     delta

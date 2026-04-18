@@ -16,6 +16,7 @@
 void virtmcu_icount_advance(int64_t delta);
 
 /* BQL */
+bool virtmcu_bql_locked(void);
 void virtmcu_bql_lock(void);
 void virtmcu_bql_unlock(void);
 

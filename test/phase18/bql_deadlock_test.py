@@ -75,6 +75,11 @@ def send_query(session, delta_ns, label):
         raise Exception(f"{label}: ERROR reply: {reply.err}")
     if not hasattr(reply, "ok") or reply.ok is None:
         raise Exception(f"{label}: NO 'ok' in reply: {reply}")
+    
+    resp = ClockReadyResp.unpack(reply.ok.payload.to_bytes())
+    if resp.error_code != 0:
+        raise Exception(f"{label}: Reply error_code = {resp.error_code} (1=STALL, 2=ZENOH_ERROR)")
+    
     return True
 
 def main():

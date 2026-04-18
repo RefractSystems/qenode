@@ -72,23 +72,25 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
          * BQL sandwich: release before blocking on a Zenoh reply so the QEMU
          * main loop (QMP, GDB stub, I/O) can make progress while we wait.
          */
-        if (halted) {
-            fprintf(stderr, "zenoh-clock: blocking due to HALT at vtime %ld\n", (long)now);
-        } else {
-            fprintf(stderr, "zenoh-clock: blocking due to QUANTUM at vtime %ld (next was %ld)\n", (long)now, (long)s->next_quantum_ns);
-        }
+        
+        /* Debug logging (optional, can be noisy) */
+        fprintf(stderr, "[zenoh-clock] sync at %lld ns (halted=%d, next=%lld)\n",
+                (long long)now, halted, (long long)s->next_quantum_ns);
+
         ZenohClockState *rust_state = s->rust_state;
-        bool locked = bql_locked();
-        if (locked) {
-            bql_unlock();
-        }
+        
+        /* Use our own BQL wrappers to avoid symbol resolution issues with TLS in DSOs */
+        virtmcu_bql_unlock();
+
         int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
-        if (locked) {
-            bql_lock();
-        }
+
+        virtmcu_bql_lock();
 
         assert(s->rust_state != NULL &&
                "zenoh-clock finalized while blocking in quantum_wait");
+        
+        /* Update next quantum. If we entered due to halt, we might still be at the 
+         * same time, but we now have a new budget. */
         s->next_quantum_ns = now + delta;
     }
 }
