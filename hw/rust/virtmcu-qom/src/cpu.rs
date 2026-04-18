@@ -1,4 +1,3 @@
-
 #[repr(C)]
 pub struct CPUState {
     _opaque: [u8; 0],

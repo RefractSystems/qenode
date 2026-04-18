@@ -17,6 +17,7 @@ extern "C" {
         opaque: *mut c_void,
     ) -> *mut QemuTimer;
     pub fn virtmcu_timer_mod(timer: *mut QemuTimer, expire_time: i64);
+    pub fn virtmcu_timer_del(timer: *mut QemuTimer);
     pub fn virtmcu_timer_free(timer: *mut QemuTimer);
 
     pub fn qemu_clock_run_all_timers();

@@ -3,6 +3,7 @@
     "defaultMode": "auto"
   },
   "enabledPlugins": {
-    "agent-sdk-dev@claude-plugins-official": true
+    "agent-sdk-dev@claude-plugins-official": true,
+    "rust-analyzer-lsp": true
   }
 }

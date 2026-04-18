@@ -20,6 +20,8 @@ COMPAT_MAP = {
     "CPU.RISCV64": "riscv",
     "Memory.MappedMemory": "qemu-memory-region",
     "RemotePort.Peripheral": "remote-port-bridge",
+    "Network.IMX_FEC": "imx.fec",
+    "Network.LAN9118": "lan9118",
 }
 
 

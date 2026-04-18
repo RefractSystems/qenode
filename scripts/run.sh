@@ -133,13 +133,14 @@ elif [ "$ARCH" = "riscv32" ]; then
     QEMU_ARCH_NAME="riscv32"
 fi
 
-QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || echo "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME")
-
-# Fallback to build directory if not installed yet
-if [ ! -f "$QEMU_BIN" ] && [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
+# Prioritize the build directory for developers
+if [ -f "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
+    QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME"
+elif [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
     QEMU_BIN="$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME"
-    # Make it executable if needed
     chmod +x "$QEMU_BIN"
+else
+    QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || echo "/opt/virtmcu/bin/qemu-system-$QEMU_ARCH_NAME")
 fi
 
 # Ensure QEMU has been built

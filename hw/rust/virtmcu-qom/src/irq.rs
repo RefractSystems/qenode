@@ -1,4 +1,3 @@
-
 #[repr(C)]
 pub struct IRQState {
     _opaque: [u8; 0],

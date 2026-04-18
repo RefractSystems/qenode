@@ -36,6 +36,7 @@ void virtmcu_cond_free(QemuCond *cond);
 /* Timer */
 QEMUTimer *virtmcu_timer_new_ns(QEMUClockType type, QEMUTimerCB *cb, void *opaque);
 void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time);
+void virtmcu_timer_del(QEMUTimer *ts);
 void virtmcu_timer_free(QEMUTimer *ts);
 
 /* CPU */

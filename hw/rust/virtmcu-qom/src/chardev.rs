@@ -1,4 +1,3 @@
-
 #[repr(C)]
 pub struct Chardev {
     _opaque: [u8; 0],

@@ -81,6 +81,10 @@ void virtmcu_timer_mod(QEMUTimer *ts, int64_t expire_time) {
     timer_mod(ts, expire_time);
 }
 
+void virtmcu_timer_del(QEMUTimer *ts) {
+    timer_del(ts);
+}
+
 void virtmcu_timer_free(QEMUTimer *ts) {
     timer_free(ts);
 }

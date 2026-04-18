@@ -38,6 +38,6 @@ extern "C" {
         model: *const c_char,
         name: *const c_char,
     ) -> *mut NetClientState;
-    
+
     pub fn qemu_send_packet(nc: *mut NetClientState, buf: *const u8, size: usize);
 }

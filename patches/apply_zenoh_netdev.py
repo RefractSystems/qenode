@@ -44,6 +44,23 @@ def main():
     insertion6 = "\n  'zenoh.c',"
     patch_file(meson_build, marker6, insertion6, after=True)
 
+    # 7. Patch util/module.c to allow re-entrant module loads gracefully
+    module_c = os.path.join(qemu, "util", "module.c")
+    marker7 = "    assert(QTAILQ_EMPTY(&dso_init_list));"
+    insertion7 = """    /* assert(QTAILQ_EMPTY(&dso_init_list)); */
+    if (!QTAILQ_EMPTY(&dso_init_list)) {
+        error_setg(errp, "module_load_dso: re-entrant call detected loading %s"
+                   " — skipping to avoid corruption", fname);
+        return false;
+    }"""
+    if os.path.exists(module_c):
+        with open(module_c, "r") as f:
+            content = f.read()
+        if "assert(QTAILQ_EMPTY(&dso_init_list));" in content:
+            new_content = content.replace("    assert(QTAILQ_EMPTY(&dso_init_list));", insertion7)
+            with open(module_c, "w") as f:
+                f.write(new_content)
+
     # 6. Generate net/zenoh.c stub
     zenoh_c = os.path.join(qemu, "net", "zenoh.c")
     zenoh_c_content = """#include "qemu/osdep.h"
@@ -62,10 +79,7 @@ int net_init_zenoh(const Netdev *netdev, const char *name, NetClientState *peer,
     /* QEMU modules are loaded by object types. Try to load the module providing zenoh-netdev */
     if (!virtmcu_zenoh_netdev_hook) {
         module_load_qom("zenoh-netdev", NULL);
-        /* Force class_init to run and register the hook */
-        if (object_class_by_name("zenoh-netdev")) {
-            /* success */
-        }
+        object_class_by_name("zenoh-netdev");
     }
 
     if (virtmcu_zenoh_netdev_hook) {
