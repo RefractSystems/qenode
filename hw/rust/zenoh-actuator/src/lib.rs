@@ -34,23 +34,13 @@ pub unsafe extern "C" fn zenoh_actuator_init_rust(
     router: *const c_char,
     topic_prefix: *const c_char,
 ) -> *mut ZenohActuatorState {
-    let mut config = Config::default();
-    if !router.is_null() {
-        let router_str = CStr::from_ptr(router).to_str().unwrap();
-        if !router_str.is_empty() {
-            let json = format!("[\"{}\"]", router_str);
-            let _ = config.insert_json5("connect/endpoints", &json);
-            let _ = config.insert_json5("scouting/multicast/enabled", "false");
-        }
-    }
-
     let prefix = if !topic_prefix.is_null() {
         CStr::from_ptr(topic_prefix).to_str().unwrap().to_owned()
     } else {
         "firmware/control".to_owned()
     };
 
-    let session = match zenoh::open(config).wait() {
+    let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(

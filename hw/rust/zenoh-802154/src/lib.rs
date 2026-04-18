@@ -90,17 +90,7 @@ pub unsafe extern "C" fn zenoh_802154_init_rust(
     router: *const c_char,
     topic: *const c_char,
 ) -> *mut Zenoh802154State {
-    let mut config = Config::default();
-    if !router.is_null() {
-        let router_str = CStr::from_ptr(router).to_str().unwrap();
-        if !router_str.is_empty() {
-            let json = format!("[\"{}\"]", router_str);
-            let _ = config.insert_json5("connect/endpoints", &json);
-            let _ = config.insert_json5("scouting/multicast/enabled", "false");
-        }
-    }
-
-    let session = match zenoh::open(config).wait() {
+    let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(

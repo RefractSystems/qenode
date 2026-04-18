@@ -3633,6 +3633,7 @@ dependencies = [
  "byteorder",
  "rand 0.9.4",
  "virtmcu-qom",
+ "virtmcu-zenoh",
  "zenoh",
 ]
 
@@ -3643,6 +3644,7 @@ dependencies = [
  "byteorder",
  "libc",
  "virtmcu-qom",
+ "virtmcu-zenoh",
  "zenoh",
 ]
 
@@ -3661,6 +3663,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "virtmcu-qom",
+ "virtmcu-zenoh",
  "zenoh",
 ]
 
@@ -4128,6 +4131,7 @@ dependencies = [
  "crossbeam-channel",
  "libc",
  "virtmcu-qom",
+ "virtmcu-zenoh",
  "zenoh",
 ]
 

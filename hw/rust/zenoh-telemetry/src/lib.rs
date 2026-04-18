@@ -44,13 +44,13 @@ pub mod telemetry_fb {
         args: &TraceEventArgs<'a>,
     ) -> WIPOffset<flatbuffers::Table<'a>> {
         let start = fbb.start_table();
-        fbb.push_slot(0, args.timestamp_ns, 0);
-        fbb.push_slot(2, args.id, 0);
-        fbb.push_slot(3, args.value, 0);
+        fbb.push_slot(4, args.timestamp_ns, 0);
+        fbb.push_slot(8, args.id, 0);
+        fbb.push_slot(10, args.value, 0);
         if let Some(x) = args.device_name {
-            fbb.push_slot_always(4, x);
+            fbb.push_slot_always(12, x);
         }
-        fbb.push_slot(1, args.type_ as i8, 0);
+        fbb.push_slot(6, args.type_ as i8, 0);
         let end = fbb.end_table(start);
         WIPOffset::new(end.value())
     }
