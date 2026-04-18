@@ -198,3 +198,39 @@ When instructed to "fix CI", "make CI green", or address pipeline failures, you 
 4. **Fix & Verify:** Implement the fix and verify it passes the newly aligned local test suite.
 5. **Push:** Commit and push the changes.
 6. **Monitor & Loop:** Autonomously monitor the new CI run (e.g., using `gh run watch`). If it fails, immediately restart this loop. Do not stop or prompt the user until all checks are officially green.
+
+---
+
+## Local CI Loop Workflow (The "Local Green" Loop)
+
+When asked to **"Fix CI locally"**, **"Run CI loop"**, or **"Make it pass"**, you MUST enter this autonomous loop:
+
+1. **Identify Pipeline:** Determine the full suite of local validation commands (e.g., `make lint`, `make build`, `make test`).
+2. **Execute & Diagnose:** Run the entire suite. Capture all failures (lint errors, build breaks, test regressions).
+3. **Surgical Fix:** Address the first failure.
+4. **Commit:** Once a fix is verified locally, commit the changes with a descriptive message (**DO NOT push**).
+5. **Iterate:** Repeat steps 2-4 until the *entire* suite passes.
+6. **Final Report:** Once all checks are green, report the major findings and fixes. Do not stop until the pipeline is fully passing.
+
+---
+
+## Test Coverage Loop Workflow (The "Coverage" Loop)
+
+When asked to **"Increase coverage"** or **"Improve test coverage"**, you MUST enter this autonomous loop:
+
+1. **Baseline:** Run the coverage tool (e.g., `make coverage` or `pytest --cov`) to identify current gaps.
+2. **Targeting:** Identify the most critical untested paths (e.g., error handling, boundary conditions).
+3. **Implement Tests:** Write new tests specifically targeting the identified gaps.
+4. **Verify:** Run coverage again to confirm the increase. Ensure no existing tests were broken.
+5. **Commit:** Commit the new tests and any necessary code changes.
+6. **Iterate:** Repeat until the coverage goal is met or there are no more obvious improvements to be made.
+
+---
+
+## Note to Developers: Invoking Autonomous Loops
+
+To trigger these workflows, use direct commands:
+- *"Fix CI locally and commit."*
+- *"Run the local CI loop until everything passes."*
+- *"Increase code coverage for the physics module."*
+- *"Keep fixing CI locally, don't stop until all lints and tests pass."*
