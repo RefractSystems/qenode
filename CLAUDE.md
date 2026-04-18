@@ -151,6 +151,42 @@ To ensure the highest level of professional software engineering, all agents MUS
 ### 6. Protected Files
 - **DO NOT** automatically edit `.env` or `VERSIONS` files. These files contain specific version pins and local secrets (via symlinking) that should only be modified by the user or dedicated synchronization scripts (e.g., `make sync-versions`).
 
+---
+
+## Common Pitfalls & Troubleshooting
+
+### Stale Simulation Processes (Multiple QEMU Instances)
+During development, you may encounter "stale" or orphaned QEMU or Zenoh processes. These processes can hold onto ports, UNIX sockets, or CPU resources, causing subsequent runs to fail with "Address already in use" or mysterious timeouts.
+
+**The Fix:** Manually terminate any lingering processes or use the project cleanup script:
+```bash
+make clean-sim
+# or
+bash scripts/cleanup-sim.sh
+```
+*Note: Stale process interference is the #1 cause of "it passes locally but fails next time" bugs.*
+
+### Interactive QEMU Debugging
+If a node hangs or fails to boot, run it interactively to see the firmware's console output.
+- **Action**: Run the `run.sh` command without `-monitor none` or `-serial file:...` and use `-nographic`.
+- **Exit**: To exit an interactive QEMU session, press `Ctrl+A` followed by `X`.
+
+### SysBus Mapping vs. `-device`
+In the `arm-generic-fdt` machine, a device added via `-device` is NOT automatically mapped into guest memory. 
+- **The Cause**: Mapping only occurs if a corresponding node exists in the Device Tree (DTB) with a `reg` property.
+- **The Fix**: Always declare peripherals in the board YAML files. The `yaml2qemu.py` tool handles the mapping.
+
+### MMIO Offset Contract
+The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute physical addresses. 
+- **Example**: If a bridge is at `0x10000000` and the guest reads `0x10000004`, the bridge receives `0x04`.
+- **Requirement**: Your MMIO adapter/model must handle these offsets directly without adding the base address.
+
+### "Works on My Machine" (Local vs. CI Drift)
+If a fix passes locally but fails in CI, it's often due to manual edits in `third_party/qemu` or untracked files that aren't part of the automated patch mechanism.
+- **The Rule**: If CI cannot reproduce your local setup from `git clone` + `make setup`, your fix is not complete.
+- **The Check**: Always run `git status` after a debugging session to ensure all changes are tracked.
+
+---
 
 ## CI/CD Troubleshooting & "Make CI Green" Workflow
 

@@ -47,5 +47,6 @@ void virtmcu_cpu_exit_all(void);
 
 /* Error */
 void virtmcu_error_setg(Error **errp, const char *fmt);
+void virtmcu_log(const char *fmt);
 
 #endif

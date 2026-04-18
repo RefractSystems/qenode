@@ -7,3 +7,5 @@ authors.workspace = true
 [dependencies]
 zenoh.workspace = true
 libc.workspace = true
+virtmcu-qom.workspace = true
+

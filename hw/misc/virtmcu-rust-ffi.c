@@ -114,3 +114,9 @@ void virtmcu_error_setg(Error **errp, const char *fmt)
 {
     error_setg_internal(errp, "rust", 0, "rust", "%s", fmt);
 }
+
+void virtmcu_log(const char *fmt)
+{
+    fprintf(stderr, "%s", fmt);
+    fflush(stderr);
+}

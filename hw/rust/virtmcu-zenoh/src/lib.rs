@@ -28,6 +28,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     }
 
     let session = zenoh::open(config).wait()?;
+    virtmcu_qom::vlog!("[virtmcu-zenoh] Session returned from zenoh::open.wait().\n");
 
     // If a router was provided, verify we can actually reach it.
     // In Zenoh 1.0, open() returns successfully even if the remote endpoint is unreachable.
@@ -36,18 +37,28 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         // We check for any active connections to routers/peers.
         // We wait a bit for the connection to be established.
         let mut connected = false;
-        for _ in 0..10 {
+        for i in 0..20 {
             let info = session.info();
-            if info.routers_zid().wait().next().is_some()
-                || info.peers_zid().wait().next().is_some()
-            {
+            let routers: Vec<_> = info.routers_zid().wait().collect();
+            let peers: Vec<_> = info.peers_zid().wait().collect();
+
+            if !routers.is_empty() || !peers.is_empty() {
+                virtmcu_qom::vlog!(
+                    "[virtmcu-zenoh] Connected after {} attempts. Routers={:?}, Peers={:?}",
+                    i,
+                    routers,
+                    peers
+                );
                 connected = true;
                 break;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         if !connected {
+            virtmcu_qom::vlog!(
+                "[virtmcu-zenoh] Failed to connect to explicit router after 2 seconds."
+            );
             let _ = session.close().wait();
             return Err(zenoh::Error::from(
                 "Failed to connect to explicit router".to_string(),
