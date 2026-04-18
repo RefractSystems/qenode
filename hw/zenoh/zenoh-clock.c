@@ -54,9 +54,11 @@ struct ZenohClock {
     int64_t   next_quantum_ns;
 };
 
+static ZenohClock *global_clock;
+
 static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
 {
-    ZenohClock *s = (ZenohClock *)object_resolve_path_type("", TYPE_ZENOH_CLOCK, NULL);
+    ZenohClock *s = global_clock;
     if (!s || !s->rust_state) {
         return;
     }
@@ -69,16 +71,12 @@ static void zenoh_clock_cpu_halt_cb(CPUState *cpu, bool halted)
         /*
          * BQL sandwich: release before blocking on a Zenoh reply so the QEMU
          * main loop (QMP, GDB stub, I/O) can make progress while we wait.
-         *
-         * Capture rust_state while the BQL is still held — instance_finalize
-         * can run in the main loop thread once we drop the lock and would set
-         * s->rust_state = NULL after freeing the Rust backend.  Using the
-         * local avoids dereferencing s->rust_state without the lock.
-         *
-         * Multi-vCPU note: if QEMU is configured with multiple vCPUs each one
-         * calls this hook independently.  The Rust backend's internal mutex
-         * serialises them, maintaining the single-quantum-at-a-time invariant.
          */
+        if (halted) {
+            fprintf(stderr, "zenoh-clock: blocking due to HALT at vtime %ld\n", (long)now);
+        } else {
+            fprintf(stderr, "zenoh-clock: blocking due to QUANTUM at vtime %ld (next was %ld)\n", (long)now, (long)s->next_quantum_ns);
+        }
         ZenohClockState *rust_state = s->rust_state;
         bool locked = bql_locked();
         if (locked) {
@@ -104,6 +102,11 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 {
     ZenohClock *s = ZENOH_CLOCK(dev);
 
+    if (global_clock) {
+        error_setg(errp, "Only one zenoh-clock instance is supported");
+        return;
+    }
+
     qemu_mutex_init(&s->mutex);
     qemu_cond_init(&s->vcpu_cond);
     qemu_cond_init(&s->query_cond);
@@ -125,6 +128,8 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    global_clock = s;
+
     /* Register the vCPU halt hook for synchronization */
     virtmcu_cpu_halt_hook = zenoh_clock_cpu_halt_cb;
     virtmcu_tcg_quantum_hook = zenoh_clock_tcg_quantum_cb;
@@ -133,9 +138,12 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 static void zenoh_clock_instance_finalize(Object *obj)
 {
     ZenohClock *s = ZENOH_CLOCK(obj);
-    if (s->rust_state) {
+    if (s == global_clock) {
         virtmcu_cpu_halt_hook = NULL;
         virtmcu_tcg_quantum_hook = NULL;
+        global_clock = NULL;
+    }
+    if (s->rust_state) {
         zenoh_clock_free(s->rust_state);
         s->rust_state = NULL;
     }

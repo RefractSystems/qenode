@@ -31,14 +31,11 @@ static QemuMutex irq_slots_lock;
 
 static ZenohTelemetryState *global_rust_state;
 
-static uint16_t irq_slot_for(void *opaque)
+static uint16_t irq_slot_for_locked(void *opaque)
 {
-    uint16_t slot = 0xFFFF;
-    qemu_mutex_lock(&irq_slots_lock);
     for (unsigned i = 0; i < irq_slot_count; i++) {
         if (irq_slots[i].opaque == opaque) {
-            slot = irq_slots[i].slot;
-            goto out;
+            return irq_slots[i].slot;
         }
     }
     if (irq_slot_count < MAX_IRQ_SLOTS) {
@@ -46,11 +43,9 @@ static uint16_t irq_slot_for(void *opaque)
         irq_slots[irq_slot_count].slot   = (uint16_t)irq_slot_count;
         /* path is NULL for dynamically discovered items outside realize */
         irq_slots[irq_slot_count].path   = NULL;
-        slot = (uint16_t)irq_slot_count++;
+        return (uint16_t)irq_slot_count++;
     }
-out:
-    qemu_mutex_unlock(&irq_slots_lock);
-    return slot;
+    return 0xFFFF;
 }
 
 static int cache_irq_paths_cb(Object *obj, void *opaque)
@@ -70,25 +65,31 @@ static int cache_irq_paths_cb(Object *obj, void *opaque)
 
 static void telemetry_cpu_halt_cb(CPUState *cpu, bool halted)
 {
+    qemu_mutex_lock(&irq_slots_lock);
     if (global_rust_state) {
         zenoh_telemetry_trace_cpu(global_rust_state, cpu->cpu_index, halted);
     }
+    qemu_mutex_unlock(&irq_slots_lock);
 }
 
 static void telemetry_irq_cb(void *opaque, int n, int level)
 {
-    uint16_t slot = irq_slot_for(opaque);
     const char *path = NULL;
+    uint16_t slot;
     
     qemu_mutex_lock(&irq_slots_lock);
+    if (!global_rust_state) {
+        qemu_mutex_unlock(&irq_slots_lock);
+        return;
+    }
+
+    slot = irq_slot_for_locked(opaque);
     if (slot < irq_slot_count && irq_slots[slot].opaque == opaque) {
         path = irq_slots[slot].path;
     }
-    qemu_mutex_unlock(&irq_slots_lock);
 
-    if (global_rust_state) {
-        zenoh_telemetry_trace_irq(global_rust_state, slot, (uint16_t)n, level, path);
-    }
+    zenoh_telemetry_trace_irq(global_rust_state, slot, (uint16_t)n, level, path);
+    qemu_mutex_unlock(&irq_slots_lock);
 }
 
 #define TYPE_ZENOH_TELEMETRY "zenoh-telemetry"
@@ -133,6 +134,8 @@ static void zenoh_telemetry_realize(DeviceState *dev, Error **errp)
 static void zenoh_telemetry_finalize(Object *obj)
 {
     ZenohTelemetryQOM *s = ZENOH_TELEMETRY(obj);
+
+    qemu_mutex_lock(&irq_slots_lock);
     if (s->rust_state) {
         if (global_rust_state == s->rust_state) {
             virtmcu_cpu_halt_hook = NULL;
@@ -143,7 +146,6 @@ static void zenoh_telemetry_finalize(Object *obj)
         s->rust_state = NULL;
     }
     
-    qemu_mutex_lock(&irq_slots_lock);
     for (unsigned i = 0; i < irq_slot_count; i++) {
         g_free(irq_slots[i].path);
         irq_slots[i].path = NULL;

@@ -30,11 +30,17 @@ def main():
     start_time = time.time()
     i = 0
     while time.time() - start_time < 3: # run for 3 seconds
-        device_id = f"dummy_dev_{i}"
-        # Create a dummy device
-        qmp_cmd(sock, "device_add", {"driver": "sys-bus-device", "id": device_id})
+        obj_id = f"obj_{i}"
+        # Create a secret object
+        resp = qmp_cmd(sock, "object-add", {"qom-type": "secret", "id": obj_id, "data": "dummy"})
+        if "error" in resp:
+            print(f"Error adding object: {resp['error']}")
+            sys.exit(1)
         # Delete it immediately
-        qmp_cmd(sock, "device_del", {"id": device_id})
+        resp = qmp_cmd(sock, "object-del", {"id": obj_id})
+        if "error" in resp:
+            print(f"Error deleting object: {resp['error']}")
+            sys.exit(1)
         i += 1
     print(f"Stress test complete. Performed {i} add/del cycles.")
 

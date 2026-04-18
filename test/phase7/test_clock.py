@@ -53,18 +53,22 @@ def main():
     session = zenoh.open(config)
 
     vtime1 = send_query(session, DELTA1_NS, "Q1")
-    print(f"Q1 vtime = {vtime1} ns  (expected >= {DELTA1_NS})")
-    if vtime1 < DELTA1_NS:
-        print(f"FAIL: Q1 vtime {vtime1} < expected {DELTA1_NS}", file=sys.stderr)
-        sys.exit(1)
+    print(f"Q1 vtime = {vtime1} ns")
+    # Q1 returns the time at the first quantum boundary (usually 0 or very small).
+    # QEMU will now run for DELTA1_NS.
 
     vtime2 = send_query(session, DELTA2_NS, "Q2")
-    print(f"Q2 vtime = {vtime2} ns  (expected >= {DELTA1_NS + DELTA2_NS})")
-    if vtime2 <= vtime1:
-        print(f"FAIL: Q2 vtime {vtime2} not > Q1 vtime {vtime1}", file=sys.stderr)
+    print(f"Q2 vtime = {vtime2} ns  (expected approx {vtime1 + DELTA1_NS})")
+    # Q2 returns the time after QEMU has finished the delta from Q1.
+    if vtime2 < vtime1 + DELTA1_NS:
+        print(f"FAIL: Q2 vtime {vtime2} < Q1 vtime {vtime1} + DELTA1 {DELTA1_NS}", file=sys.stderr)
         sys.exit(1)
-    if vtime2 < DELTA1_NS + DELTA2_NS:
-        print(f"FAIL: Q2 vtime {vtime2} < cumulative {DELTA1_NS + DELTA2_NS}", file=sys.stderr)
+
+    vtime3 = send_query(session, 0, "Q3")
+    print(f"Q3 vtime = {vtime3} ns  (expected approx {vtime2 + DELTA2_NS})")
+    # Q3 returns the time after QEMU has finished the delta from Q2.
+    if vtime3 < vtime2 + DELTA2_NS:
+        print(f"FAIL: Q3 vtime {vtime3} < Q2 vtime {vtime2} + DELTA2 {DELTA2_NS}", file=sys.stderr)
         sys.exit(1)
 
     session.close()
