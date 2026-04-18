@@ -46,18 +46,7 @@ pub unsafe extern "C" fn zenoh_netdev_init(
     router: *const c_char,
     topic: *const c_char,
 ) -> *mut ZenohNetdevBackend {
-    let mut config = Config::default();
-    if !router.is_null() {
-        if let Ok(r_str) = CStr::from_ptr(router).to_str() {
-            if !r_str.is_empty() {
-                let json = format!("[\"{}\"]", r_str);
-                let _ = config.insert_json5("connect/endpoints", &json);
-                let _ = config.insert_json5("scouting/multicast/enabled", "false");
-            }
-        }
-    }
-
-    let session = match zenoh::open(config).wait() {
+    let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };

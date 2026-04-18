@@ -8,6 +8,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "qemu/error-report.h"
 #include "qemu/module.h"
 #include "qemu/main-loop.h"
 #include "qemu/sockets.h"
@@ -70,6 +71,7 @@ static void bridge_sock_handler(void *opaque)
         int n = read(s->sock_fd, s->rx_buf + s->rx_idx, sizeof(struct sysc_msg) - s->rx_idx);
         if (n <= 0) {
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
+            error_report("mmio-socket-bridge: remote disconnected, closing socket fd %d", s->sock_fd);
             qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
             close(s->sock_fd); s->sock_fd = -1;
             qemu_mutex_lock(&s->sock_mutex);
@@ -112,8 +114,7 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
             s->sock_fd = -1;
             qemu_mutex_unlock(&s->sock_mutex);
             bql_lock();
-            qemu_log_mask(LOG_GUEST_ERROR,
-                "mmio-socket-bridge: timeout on socket fd %d after %d ms, disconnecting\n",
+            error_report("mmio-socket-bridge: timeout on socket fd %d after %d ms, disconnecting",
                 fd, BRIDGE_TIMEOUT_MS);
             qemu_set_fd_handler(fd, NULL, NULL, NULL);
             close(fd);

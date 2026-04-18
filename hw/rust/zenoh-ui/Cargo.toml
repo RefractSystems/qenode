@@ -9,6 +9,6 @@ crate-type = ["staticlib"]
 
 [dependencies]
 zenoh.workspace = true
-virtmcu-qom = { path = "../virtmcu-qom" }
+virtmcu-qom.workspace = true
 libc.workspace = true
 crossbeam-channel.workspace = true

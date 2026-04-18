@@ -511,7 +511,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 8 Technical Debt & Future Risks
 
-- [x] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
+- [ ] **8.5 Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`**
 
   `hw/rust/zenoh-chardev/src/lib.rs` and `hw/rust/zenoh-802154/src/lib.rs` use `libc::malloc(size_of::<State>())` for initial state allocation, then immediately write into the raw pointer with `ptr::write(state_ptr, ...)`. If `malloc` returns `null` (OOM), `ptr::write` is undefined behavior — a null pointer write that will segfault or silently corrupt memory, depending on the system.
 

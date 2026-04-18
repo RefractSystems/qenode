@@ -1,13 +1,9 @@
 [package]
-name = "rust_dummy"
+name = "virtmcu-zenoh"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
-[lib]
-crate-type = ["staticlib"]
-
-
-
 [dependencies]
-virtmcu-qom.workspace = true
+zenoh.workspace = true
+libc.workspace = true

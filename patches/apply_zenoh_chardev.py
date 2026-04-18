@@ -35,6 +35,9 @@ def main():
             .type = QEMU_OPT_STRING,
         },{
             .name = "router",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "topic",
             .type = QEMU_OPT_STRING,"""
     patch_file(char_c, marker4, insertion4, after=False)
 

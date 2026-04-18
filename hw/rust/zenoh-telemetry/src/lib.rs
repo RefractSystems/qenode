@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crossbeam_channel::{bounded, Sender, Receiver};
 use zenoh::{Config, Session, Wait};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 
 // Minimal manual generation of FlatBuffer bindings for TraceEvent
 #[allow(dead_code, non_snake_case)]
@@ -68,18 +69,7 @@ pub unsafe extern "C" fn zenoh_telemetry_init(
     node_id: u32,
     router: *const c_char,
 ) -> *mut ZenohTelemetryBackend {
-    let mut config = Config::default();
-    if !router.is_null() {
-        if let Ok(r_str) = CStr::from_ptr(router).to_str() {
-            if !r_str.is_empty() {
-                let json = format!("[\"{}\"]", r_str);
-                let _ = config.insert_json5("connect/endpoints", &json);
-                let _ = config.insert_json5("scouting/multicast/enabled", "false");
-            }
-        }
-    }
-
-    let session = match zenoh::open(config).wait() {
+    let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
@@ -116,7 +106,8 @@ pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(backend: *mut ZenohTelemetryB
     let was_halted = b.last_halted[cpu_index as usize].swap(halted, Ordering::SeqCst);
     if was_halted == halted { return; }
 
-    let vtime = qemu_clock_get_ns(0);
+    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    debug_assert!(vtime >= 0, "negative vtime from QEMU clock: {}", vtime);
     let _ = b.sender.try_send(Some(TraceEvent {
         timestamp_ns: vtime as u64,
         event_type: 0,
@@ -130,7 +121,8 @@ pub unsafe extern "C" fn zenoh_telemetry_trace_cpu(backend: *mut ZenohTelemetryB
 pub unsafe extern "C" fn zenoh_telemetry_trace_irq(backend: *mut ZenohTelemetryBackend, slot: u16, pin: u16, level: i32) {
     let b = &*backend;
     let id = ((slot as u32) << 16) | (pin as u32);
-    let vtime = qemu_clock_get_ns(0);
+    let vtime = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    debug_assert!(vtime >= 0, "negative vtime from QEMU clock: {}", vtime);
     let _ = b.sender.try_send(Some(TraceEvent {
         timestamp_ns: vtime as u64,
         event_type: 1,
@@ -172,6 +164,20 @@ fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: S
     }
 }
 
-extern "C" {
-    fn qemu_clock_get_ns(type_: i32) -> u64;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[no_mangle]
+    extern "C" fn qemu_clock_get_ns(_type: i32) -> i64 {
+        -1
+    }
+
+    #[test]
+    fn test_qemu_clock_get_ns_type() {
+        let vtime = unsafe { qemu_clock_get_ns(0) };
+        // If it was u64, -1 would be a huge positive number.
+        // The fact that we can compare it to -1 and it's equal proves it's i64.
+        assert_eq!(vtime, -1i64);
+    }
 }

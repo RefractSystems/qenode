@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use zenoh::{Config, Session, Wait};
 use zenoh::query::{Query, Queryable};
+use virtmcu_qom::sync::{QemuMutex, QemuCond, virtmcu_mutex_lock, virtmcu_mutex_unlock, virtmcu_cond_signal, virtmcu_cond_wait, virtmcu_cond_timedwait};
 
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
@@ -31,9 +32,9 @@ pub struct ZenohClockBackend {
     stall_timeout_ms: u32,
     
     // Shared state with QEMU vCPU thread
-    mutex: *mut c_void,
-    vcpu_cond: *mut c_void,
-    query_cond: *mut c_void,
+    mutex: *mut QemuMutex,
+    vcpu_cond: *mut QemuCond,
+    query_cond: *mut QemuCond,
     
     delta_ns: Arc<AtomicI64>,
     mujoco_time_ns: Arc<AtomicI64>,
@@ -42,27 +43,19 @@ pub struct ZenohClockBackend {
     quantum_done: Arc<AtomicBool>,
 }
 
+unsafe impl Send for ZenohClockBackend {}
+unsafe impl Sync for ZenohClockBackend {}
+
 #[no_mangle]
 pub unsafe extern "C" fn zenoh_clock_init(
     node_id: u32,
     router: *const c_char,
     stall_timeout_ms: u32,
-    mutex: *mut c_void,
-    vcpu_cond: *mut c_void,
-    query_cond: *mut c_void,
+    mutex: *mut QemuMutex,
+    vcpu_cond: *mut QemuCond,
+    query_cond: *mut QemuCond,
 ) -> *mut ZenohClockBackend {
-    let mut config = Config::default();
-    if !router.is_null() {
-        if let Ok(r_str) = CStr::from_ptr(router).to_str() {
-            if !r_str.is_empty() {
-                let json = format!("[\"{}\"]", r_str);
-                let _ = config.insert_json5("connect/endpoints", &json);
-                let _ = config.insert_json5("scouting/multicast/enabled", "false");
-            }
-        }
-    }
-
-    let session = match zenoh::open(config).wait() {
+    let session = match virtmcu_zenoh::open_session(router) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to open Zenoh session: {:?}", e);
@@ -194,10 +187,5 @@ pub unsafe extern "C" fn zenoh_clock_quantum_wait(backend: *mut ZenohClockBacken
     delta
 }
 
-extern "C" {
-    fn virtmcu_mutex_lock(mutex: *mut c_void);
-    fn virtmcu_mutex_unlock(mutex: *mut c_void);
-    fn virtmcu_cond_signal(cond: *mut c_void);
-    fn virtmcu_cond_wait(cond: *mut c_void, mutex: *mut c_void);
-    fn virtmcu_cond_timedwait(cond: *mut c_void, mutex: *mut c_void, ms: u32) -> i32;
-}
+const _: () = assert!(core::mem::size_of::<QemuMutex>() == 0);
+const _: () = assert!(core::mem::size_of::<QemuCond>() == 0);
