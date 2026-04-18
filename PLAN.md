@@ -585,7 +585,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 ### Phase 12 Technical Debt & Future Risks
 - [x] **12.5** **Concurrency inside `irq_slots`**: Added `irq_slots_lock` (QemuMutex) to ensure thread-safety when IRQs are triggered outside the BQL.
 - [x] **12.6** **Struct Protocol Rigidity**: Migrated telemetry to FlatBuffers for schema evolution.
-- [ ] **12.7** **Safe QOM Path Resolution for IRQs** (DEFERRED — full risk spec below)
+- [x] **12.7** **Safe QOM Path Resolution for IRQs**
 
   `telemetry_irq_hook` resolves QOM canonical paths (e.g., via `object_resolve_path_type`) from outside the BQL — called from IRQ delivery context, which may be a TCG thread or an I/O thread. `object_resolve_path_type` walks the QOM object tree, which is mutated by `object_property_add`/`object_unparent` under the BQL. Calling it without the BQL is a data race.
 
