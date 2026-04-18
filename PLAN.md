@@ -311,6 +311,10 @@ Implement after Path B is validated.
   - **Assert**: Add a per-call `poll()` with a 500 ms timeout before every `read()`/`write()`. On timeout, call `error_report("mmio-socket-bridge: timeout on socket fd %d — disconnecting", fd)` and set a `disconnected` flag. Subsequent MMIO accesses return 0 (reads) or silently drop (writes) until the socket reconnects.
   - **Test**: Integrated into `test/phase5/smoke_test.sh`. Start QEMU with the bridge. Connect the bridge's socket, send one MMIO request, then close the socket from the server side without replying. QEMU must log the timeout error and continue running (QMP `query-status` must still respond within 2 s).
   - **Coverage check**: `grep -n 'SO_RCVTIMEO\|poll(' hw/misc/mmio-socket-bridge.c` must be non-empty after the fix.
+- [ ] **5.7 High-Frequency MMIO Stress Test**
+  Saturate the `mmio-socket-bridge` with 10M+ MMIO operations/sec from a mock SystemC adapter. Assert that the QEMU TCG thread remains responsive to QMP and that throughput does not degrade over a 5-minute burst.
+- [ ] **5.8 Bridge Resilience & Reconnection Hardening**
+  Implement a "Silent Fail" mode and automated reconnection logic. Verify that if the SystemC adapter crashes and restarts, QEMU automatically re-establishes the bridge without a restart or guest-visible hang (beyond the expected halt in virtual time).
 
 ---
 
@@ -340,6 +344,8 @@ delivers a UDP datagram to QEMU's receive path.
 - [x] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
 - [x] **6.2** Update `tools/zenoh_coordinator` to subscribe and route `virtmcu/uart/*` topics, applying virtual time propagation delay for deterministic multi-node serial (Phase 8).
 - [x] **6.3** Update `tools/zenoh_coordinator` to route SystemC shared medium messages (e.g., CAN bus frames) between nodes (Phase 9).
+- [ ] **6.4 Multi-Node Scalability Stress Test**
+  Run a simulation with 100+ nodes and 1M+ packets/sec in `zenoh_coordinator`. Verify that the single-threaded packet routing loop does not become a bottleneck for the deterministic virtual clock.
 
 ---
 
@@ -475,6 +481,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 - [x] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
 - [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
+- [ ] **7.9 Long-Duration Determinism (Soak) Test**
+  Run a 1-hour soak test with 1ms quanta, asserting zero cumulative drift between host-logged virtual time and guest-logged vtime. Verify that no `ZENOH_ERROR` or `STALL` occurs under sustained load.
+- [ ] **7.10 BQL Contention Analysis & Profiling**
+  Use QEMU internal tracing to measure vCPU wait time on `bql_lock()` specifically during clock advances. If contention exceeds 10% of wall time, evaluate moving Zenoh state management to a separate lock-free thread.
 
 ### Phase 7 Technical Debt & Future Risks
 
@@ -494,6 +504,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
     - TX: Publishes bytes to Zenoh with `QEMU_CLOCK_VIRTUAL` timestamps.
     - RX: Buffers bytes in a priority queue and injects them via `QEMUTimer` to guarantee multi-node UART determinism.
 - [x] **8.4** **Multi-Node UART Test**: Integration test where Node 1 sends a string over UART to Node 2 via the `zenoh_coordinator`, asserting byte-perfect virtual-time delivery.
+- [ ] **8.6 High-Baud UART Stress Test**
+  Saturate `zenoh-chardev` with 10Mbps equivalent serial traffic. Assert no dropped bytes and perfect deterministic delivery via the virtual-time priority queue.
 
 ### Phase 8 Technical Debt & Future Risks
 
@@ -567,6 +579,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates.
 - [x] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) and implement `hw/zenoh/zenoh-ui.c` to bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics.
 - [x] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology.
+- [ ] **12.8 Telemetry Throughput Benchmark**
+  Stream 100k+ telemetry events/sec (IRQs, sleep states, memory writes) via `zenoh-telemetry`. Measure the impact on vCPU MIPS and ensure the host-side FlatBuffer serialization does not stall the guest.
 
 ### Phase 12 Technical Debt & Future Risks
 - [x] **12.5** **Concurrency inside `irq_slots`**: Added `irq_slots_lock` (QemuMutex) to ensure thread-safety when IRQs are triggered outside the BQL.
@@ -687,6 +701,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - **Test**: `test/phase16/latency_benchmark.sh`. Starts QEMU with zenoh-clock + mock TimeAuthority (in-process Rust program). Runs 1000 quanta of 1 ms each. Outputs timing CSV + JSON summary. CI parses and enforces thresholds.
 
 - [ ] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu.
+- [ ] **16.4 Jitter Injection Determinism Test**
+  Randomize Zenoh message delivery times (within ±200 µs bounds) using a middleware proxy and verify that the guest vCPU execution remains byte-perfect across 10 runs. Proves that the virtual-time gating logic correctly neutralizes host network jitter.
+- [ ] **16.5 Automated Performance Trend Tracking**
+  Integrate IPS and Latency benchmark results into the CI pipeline. Fail PRs that regress vCPU MIPS by >5% or increase P99 latency by >10% without a justified architectural rationale.
 
 ---
 
@@ -804,6 +822,11 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
   - **Test (regression)**: `cargo build --release` for all 7 crates after each call-site update.
   - **Coverage check**: `grep -rn 'Config::default\|insert_json5\|zenoh::open' hw/rust/zenoh-*/src/lib.rs` must return empty.
 
+- [ ] **18.13 Rust FFI Safety & Memory Audit**
+  Use `cargo-geiger` and manual code review to audit every `unsafe` block in `hw/rust/`. Document the invariants for each block and verify that no raw pointers are dereferenced without a prior null check or alignment verification.
+- [ ] **18.14 Lock-Free Priority Queue Evaluation**
+  Profile `zenoh-netdev` and `zenoh-chardev` RX paths under saturation. If `QemuMutex` contention is high, evaluate replacing the `BinaryHeap` with a lock-free or RCU-style priority queue to further reduce jitter.
+
 ---
 
 ## Phase 19 — Native Rust QOM API Migration
@@ -896,6 +919,32 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
   - **What can go wrong**: `hw/meson.build` references `virtmcu_rust_ffi_file = files('misc/virtmcu-rust-ffi.c')`. Deleting the file without removing the Meson reference causes a build error. Remove both the file and its Meson references atomically.
   - **Assert**: `find hw -name 'virtmcu-rust-ffi.*'` returns empty after deletion.
   - **Test**: Full `scripts/setup-qemu.sh` build must succeed. `make test-integration` must pass in full.
+
+- [ ] **19.5 Memory Layout Verification Suite**
+  Implement an automated test that uses `bindgen` to generate Rust structs from QEMU's C headers (e.g., `TypeInfo`, `DeviceClass`) and compares their `size_of` and `offset_of` against the manually defined structs in `virtmcu-qom`. Prevents silent crashes due to padding differences between C and Rust.
+
+---
+
+## Phase 20 — Shared Rust API Crate (`virtmcu-api`)
+
+**Goal**: Unblock Firmware Studio and other downstream Rust consumers by providing a stable, public `rlib` containing all serialization schemas, packed structs, and Zenoh headers. Currently, downstream users have to manually duplicate `#[repr(C)]` structs and FlatBuffers definitions because all `hw/rust/*` crates are compiled as `staticlib` for QEMU FFI and cannot be imported natively.
+
+**Execution order**: 20.1 → 20.2.
+
+**Coverage gate**: All `hw/rust/*` plugin crates must compile with the new `virtmcu-api` dependency. `make test-integration` must pass to ensure no ABI changes broke the existing QEMU integration.
+
+---
+
+- [ ] **20.1 Create `virtmcu-api` crate**
+  - Initialize a new `hw/rust/virtmcu-api` crate configured as `crate-type = ["rlib"]`.
+  - Migrate all `#[repr(C)]` structs (e.g., `ClockAdvanceReq`, `ClockReadyResp`) from `zenoh-clock/src/lib.rs` and `virtmcu_proto.h` equivalents to this crate.
+  - Migrate the `ZenohFrameHeader` from the network and chardev plugins to this crate.
+  - Relocate the FlatBuffers generated bindings (`telemetry_generated.rs` and `telemetry_fb` builder) from `zenoh-telemetry/src/lib.rs` into `virtmcu-api`.
+
+- [ ] **20.2 Refactor Internal Plugins to use `virtmcu-api`**
+  - Update `zenoh-clock`, `zenoh-telemetry`, `zenoh-netdev`, and other relevant `hw/rust/*` plugins to add `virtmcu-api` as a dependency.
+  - Remove all inline definitions of the migrated structs from the individual plugin crates.
+  - Run the full suite of integration tests to verify the QEMU API contract holds.
 
 ---
 

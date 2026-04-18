@@ -24,7 +24,7 @@ For blocking, high-frequency bridges where every nanosecond counts, we use **Str
 For high-volume, fire-and-forget telemetry events, we use **FlatBuffers**.
 *   **Format:** Defined in `hw/zenoh/telemetry.fbs`.
 *   **Mechanism:** The QEMU TCG thread places lightweight raw structs into a concurrent queue. A dedicated background thread (`telemetry-pub`) pops these and builds the FlatBuffer using `flatcc`, zero-copying the result onto the Zenoh bus.
-*   **Downstream (Firmware Studio, Dashboards):** Consumers compile the `telemetry.fbs` schema into their language of choice (Rust, Python, TS) and read directly from the memory buffer. This provides schema evolution (adding fields without breaking old clients).
+*   **Downstream (Firmware Studio, Dashboards):** Consumers use the generated bindings for their language of choice (Rust, Python, TS) and read directly from the memory buffer. This provides schema evolution (adding fields without breaking old clients).
 
 ## Consequences
 
@@ -35,5 +35,5 @@ For high-volume, fire-and-forget telemetry events, we use **FlatBuffers**.
 
 ## Note for Downstream Consumers (e.g., Firmware Studio)
 
-*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `virtmcu_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, replicate the packed structs from `virtmcu_proto.h` and verify `MAGIC` and `VERSION`.
-*   **For Telemetry Consumption:** Subscribe to `sim/telemetry/trace/<node_id>` and decode the payload using standard FlatBuffers tooling generated from `telemetry.fbs`. Do not attempt to parse it manually.
+*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `virtmcu_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, add the `virtmcu-api` crate as a dependency and use the exported packed structs.
+*   **For Telemetry Consumption:** Subscribe to `sim/telemetry/trace/<node_id>`. If using Rust, consume the `virtmcu-api` crate to access the pre-generated FlatBuffers bindings rather than compiling `telemetry.fbs` manually.
