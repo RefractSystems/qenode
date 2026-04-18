@@ -301,7 +301,7 @@ Implement after Path B is validated.
 
 ### Phase 5 Technical Debt & Future Risks
 
-- [x] **5.6 mmio-socket-bridge: add per-operation timeout**
+- [x] **5.6 mmio-socket-bridge: add per-operation timeout and disconnection handling**
 
   `writen()` and `bridge_sock_handler()` in `hw/misc/mmio-socket-bridge.c` loop on blocking `write()`/`read()` with no timeout. A crashed or hung SystemC model holds the QEMU TCG thread in a kernel syscall — QEMU cannot service QMP, GDB, or watchdog until the socket unblocks.
 
@@ -478,7 +478,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ### Phase 7 Technical Debt & Future Risks
 
-- [x] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
+- [ ] **7.8 Fix `zenoh-netdev` RX determinism bug — add priority queue + QEMUTimer**
 
   `hw/rust/zenoh-netdev/src/lib.rs` injects incoming Ethernet frames directly from the Zenoh subscriber callback (a foreign Zenoh thread) by calling `qemu_receive_packet` under the BQL. Frames are delivered in OS-scheduling order, not virtual-time order. In a two-node simulation where Node A and Node B exchange frames at the same quantum boundary, which node receives first depends on thread scheduling — not on the virtual timestamp in the frame header. This breaks determinism for replay and breaks the Phase 7 contract.
 
@@ -742,7 +742,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-- [x] **18.11 Align Cargo.toml workspace fields**
+- [ ] **18.11 Align Cargo.toml workspace fields**
 
   `zenoh-clock` and `zenoh-netdev` use hardcoded `version`/`edition` instead of `version.workspace = true`. They will silently diverge on the next version bump.
 
