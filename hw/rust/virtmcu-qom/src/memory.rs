@@ -35,7 +35,7 @@ pub struct MemoryRegionImplRange {
     pub _padding: [u8; 7],
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct MemoryRegion {
     pub parent_obj: Object,
     pub _opaque: [u8; 272 - 40], // Pad to 272 bytes

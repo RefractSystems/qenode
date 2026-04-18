@@ -1,11 +1,11 @@
 use core::ffi::c_uint;
 
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct QemuMutex {
     _opaque: [u8; 64],
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct QemuCond {
     _opaque: [u8; 56],
 }

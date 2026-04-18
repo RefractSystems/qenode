@@ -5,7 +5,12 @@ use virtmcu_qom::qom::TypeInfo;
 // A simple static to track if our mock was called
 static mut MOCK_CALLED: bool = false;
 
-// Provide the mock implementation of the extern "C" function that QEMU usually provides.
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn register_dso_module_init(_fn_: extern "C" fn(), _type_: core::ffi::c_int) {
+    // Mock for testing
+}
+
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn type_register_static(info: *const TypeInfo) -> *mut c_void {

@@ -20,7 +20,7 @@ pub struct NetClientInfo {
     pub receive_iov: *mut c_void,
     pub cleanup: Option<NetCleanup>,
     pub can_receive: Option<NetCanReceive>,
-    pub _opaque: [u8; 208 - 4 - 8 - 8 - 8 - 8 - 8 - 8], // Pad to 208
+    pub _opaque: [u8; 208 - 56], // Pad to 208 bytes (56 bytes of known fields including padding)
 }
 
 #[repr(C)]

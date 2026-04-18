@@ -77,7 +77,7 @@ static NET_ZENOH_INFO: NetClientInfo = NetClientInfo {
     receive_iov: ptr::null_mut(),
     cleanup: Some(zenoh_netdev_cleanup),
     can_receive: Some(zenoh_netdev_can_receive),
-    _opaque: [0; 208 - 4 - 8 - 8 - 8 - 8 - 8 - 8],
+    _opaque: [0; 208 - 56],
 };
 
 unsafe extern "C" fn zenoh_netdev_hook(

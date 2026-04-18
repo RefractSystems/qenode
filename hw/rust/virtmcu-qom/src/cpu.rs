@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct CPUState {
     pub parent_obj: crate::qom::Object,
     _padding1: [u8; 816 - 40], // Pad to cpu_index
