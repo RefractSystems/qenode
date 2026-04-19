@@ -20,14 +20,18 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         if let Ok(r_str) = CStr::from_ptr(router).to_str() {
             if !r_str.is_empty() {
                 let json = format!("[\"{}\"]", r_str);
+                let _ = config.insert_json5("mode", "\"client\"");
                 let _ = config.insert_json5("connect/endpoints", &json);
                 let _ = config.insert_json5("scouting/multicast/enabled", "false");
+                let _ = config.insert_json5("transport/shared_memory/enabled", "false");
                 has_router = true;
             }
         }
     }
 
-    let session = zenoh::open(config).wait()?;
+    let session = zenoh::open(config).wait().map_err(|e| {
+        zenoh::Error::from(format!("Failed to open Zenoh session: {}", e))
+    })?;
     virtmcu_qom::vlog!("[virtmcu-zenoh] Session returned from zenoh::open.wait().\n");
 
     // If a router was provided, verify we can actually reach it.
@@ -37,7 +41,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         // We check for any active connections to routers/peers.
         // We wait a bit for the connection to be established.
         let mut connected = false;
-        for i in 0..20 {
+        for i in 0..40 { // Increased from 10 to 40 (2 seconds)
             let info = session.info();
             let routers: Vec<_> = info.routers_zid().wait().collect();
             let peers: Vec<_> = info.peers_zid().wait().collect();
