@@ -24,6 +24,7 @@ LISTENER_PID=0
 COORD_PID=0
 NEW_LISTENER_PID=0
 MOCK_PID=0
+ROUTER_PID=0
 
 function cleanup() {
     [[ $BRIDGE_PID -ne 0 ]] && kill "$BRIDGE_PID" 2>/dev/null || true
@@ -31,6 +32,7 @@ function cleanup() {
     [[ $COORD_PID -ne 0 ]] && kill "$COORD_PID" 2>/dev/null || true
     [[ $NEW_LISTENER_PID -ne 0 ]] && kill "$NEW_LISTENER_PID" 2>/dev/null || true
     [[ $MOCK_PID -ne 0 ]] && kill "$MOCK_PID" 2>/dev/null || true
+    [[ $ROUTER_PID -ne 0 ]] && kill "$ROUTER_PID" 2>/dev/null || true
     rm -f /tmp/bridge_listener_$$.py /tmp/mmio.sock
     bash "$WORKSPACE_DIR/scripts/cleanup-sim.sh" --quiet
 }
@@ -107,7 +109,7 @@ PYTHONPATH="$WORKSPACE_DIR" timeout 2s "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$DTB_FILE" \
     $CLI_ARGS \
     -kernel "test/phase12/test_mmio.elf" \
-    -nographic -serial null -monitor null || true
+    -nographic -serial null -monitor null -d guest_errors,unimp || true
 
 kill -TERM "$BRIDGE_PID" || true
 wait "$BRIDGE_PID" || true
@@ -124,12 +126,19 @@ fi
 
 # 3. Telemetry Test
 echo "--- Testing Telemetry ---"
+ROUTER_ENDPOINT="tcp/127.0.0.1:7450"
+python3 "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "$ROUTER_ENDPOINT" > /dev/null 2>&1 &
+ROUTER_PID=$!
+sleep 2
+
 python3 -m tools.yaml2qemu "test/phase12/test_telemetry.yaml" --out-dtb "test/phase12/test_telemetry.dtb" --out-cli "test/phase12/test_telemetry.cli" --out-arch "test/phase12/test_telemetry.arch"
+# Update CLI args to include the router
+sed -i "s|zenoh-telemetry,node=0|zenoh-telemetry,node=0,router=$ROUTER_ENDPOINT|" test/phase12/test_telemetry.cli
 CLI_ARGS=$(cat "test/phase12/test_telemetry.cli")
 DTB_FILE="test/phase12/test_telemetry.dtb"
 
 LOG_TELEMETRY="test/phase12/telemetry.log"
-PYTHONPATH="$WORKSPACE_DIR" PYTHONUNBUFFERED=1 python3 -u "$WORKSPACE_DIR/tools/telemetry_listener.py" 0 > "$LOG_TELEMETRY" 2>&1 &
+PYTHONPATH="$WORKSPACE_DIR" PYTHONUNBUFFERED=1 python3 -u "$WORKSPACE_DIR/tools/telemetry_listener.py" 0 --router "$ROUTER_ENDPOINT" > "$LOG_TELEMETRY" 2>&1 &
 LISTENER_PID=$!
 sleep 1
 
@@ -138,10 +147,12 @@ PYTHONPATH="$WORKSPACE_DIR" timeout 3s "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$DTB_FILE" \
     $CLI_ARGS \
     -kernel "test/phase12/test_wfi.elf" \
-    -nographic -serial null -monitor null || true
+    -nographic -serial null -monitor null -d guest_errors,unimp || true
 
 kill -TERM "$LISTENER_PID" || true
 wait "$LISTENER_PID" || true
+kill -TERM "$ROUTER_PID" || true
+wait "$ROUTER_PID" || true
 
 if grep -q "CPU_STATE" "$LOG_TELEMETRY" && grep -q "IRQ" "$LOG_TELEMETRY"; then
     log_pass "Telemetry events captured"
@@ -159,7 +170,7 @@ echo "Starting QEMU with invalid zenoh-clock router..."
 timeout -s KILL 5s "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "test/phase12/test_telemetry.dtb" \
     -device zenoh-clock,node=1,router=tcp/127.0.0.1:1,mode=slaved-suspend \
-    -nographic -serial null -monitor null > "$LOG_ZCLOCK" 2>&1 || true
+    -nographic -serial null -monitor null -d guest_errors,unimp > "$LOG_ZCLOCK" 2>&1 || true
 
 echo "=== zenoh-clock Error Log ==="
 cat "$LOG_ZCLOCK"

@@ -19,4 +19,13 @@ make -C "$WORKSPACE_DIR/test/phase1"
 # Run the mock client
 python3 "$SCRIPT_DIR/mock_mcp_client.py"
 
+echo "Running Multi-node MCP test..."
+python3 "$SCRIPT_DIR/multi_node_mcp_test.py"
+
+echo "Running MCP stress test..."
+python3 "$SCRIPT_DIR/mcp_stress_test.py"
+
+echo "Running validation test..."
+python3 "$SCRIPT_DIR/validation_test.py"
+
 echo "Phase 13 tests passed!"

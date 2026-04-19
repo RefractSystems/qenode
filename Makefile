@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full perf-bench perf-check perf-baseline
 
 # By default, perform an incremental build
 all: build
@@ -89,7 +89,7 @@ test-integration: venv
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
-		bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
+		uv run bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
 		bash scripts/cleanup-sim.sh --quiet; \
 	done
 	@echo "✓ All integration tests passed."
@@ -98,8 +98,8 @@ test-integration: venv
 smoke-tests: test-integration
 
 # Run all Python unit tests (no QEMU required).
-test: venv
-	uv run pytest tests/ -v
+test: venv build-test-artifacts
+	PYTHONPATH=$(CURDIR) uv run pytest tests/ -v
 
 # Alias: same as test — explicit name for CI scripts.
 test-unit: test
@@ -114,13 +114,18 @@ test-robot: venv
 	  tests/test_interactive_echo.robot
 
 # Run guest firmware coverage analysis (Phase 1)
-test-coverage-guest: build-test-artifacts
-	@echo "==> Running guest firmware coverage (drcov)..."
-	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
-	@DRCOV_SO=$$(find third_party/qemu -name "libdrcov.so" 2>/dev/null | head -n 1); \
-	timeout 5s ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
-	  -display none -plugin "$$DRCOV_SO",filename=hello.drcov -d plugin || true
-	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
+test-coverage-guest:
+	@echo "==> Running guest firmware coverage (drcov) inside builder..."
+	@docker run --rm \
+		-v "$(CURDIR):/workspace" -w /workspace \
+		-e PYTHONPATH=/workspace \
+		virtmcu-builder:dev \
+		bash -c "make -C test/phase1 && \
+		         DRCOV_SO=\$$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
+		         qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
+		           -kernel test/phase1/hello.elf -nographic -m 128M -display none \
+		           -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin && \
+		         python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80"
 	@echo "✓ Guest coverage check passed."
 
 # Generate host-side C/Rust coverage report (requires lcov)
@@ -132,7 +137,14 @@ coverage-report:
 		--directory $(QEMU_BUILD)/libhw-virtmcu-mmio-socket-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-remote-port-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-rust-dummy.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-clock.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-chardev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-netdev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-actuator.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-telemetry.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-802154.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-ui.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-test-qom-device.a.p \
 		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
 	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
 	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
@@ -147,17 +159,6 @@ build-test-artifacts:
 
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
 test-all: test test-integration test-robot test-coverage-guest
-
-# ------------------------------------------------------------------------------
-# Continuous Integration (CI) - Parity with GitHub Actions
-# ------------------------------------------------------------------------------
-# This target guarantees that local CI passes only if the GitHub Actions CI
-# and the GHCR Docker Publish workflows will also pass.
-ci-local: lint test-all
-	@echo "==> Verifying Docker Publish (GitHub Actions parity)..."
-	@bash scripts/docker-build.sh devenv
-	@bash scripts/docker-build.sh runtime
-	@echo "✓ Local CI complete! Code and Docker artifacts are ready for GitHub."
 
 # ------------------------------------------------------------------------------
 # Lint & Format
@@ -195,6 +196,27 @@ install-hooks:
 	@printf '#!/bin/sh\nset -e\nmake lint\n' > .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push
 	@echo "✓ pre-push hook installed (make lint will run on every push)."
+
+# ------------------------------------------------------------------------------
+# Performance Benchmarking & Trend Tracking (Phase 16)
+# ------------------------------------------------------------------------------
+
+# Run the full performance benchmark and save results to test/phase16/last_results.json.
+perf-bench: venv
+	@$(MAKE) -C test/phase16 bench.elf
+	PYTHONPATH=$(CURDIR) uv run python3 test/phase16/bench.py
+
+# Save the current benchmark results as the performance baseline.
+perf-baseline: perf-bench
+	uv run python3 scripts/perf_trend.py --save-baseline
+	@echo "✓ Performance baseline updated."
+
+# Check current benchmark results against the saved baseline; exit 1 on regression.
+perf-check: venv
+	@if [ ! -f test/phase16/last_results.json ]; then \
+		$(MAKE) -C test/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run python3 test/phase16/bench.py; \
+	fi
+	uv run python3 scripts/perf_trend.py --check
 
 # ------------------------------------------------------------------------------
 # Local CI Simulation
@@ -240,11 +262,8 @@ ci-local: venv check-versions
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Tier 1 — Unit Tests (no QEMU)"
 	@echo "════════════════════════════════════════════════════"
-	uv run pytest \
+	PYTHONPATH=$(CURDIR) uv run pytest \
 		tests/repl2qemu/ \
-		tests/test_yaml2qemu.py \
-		tests/test_cli_generator.py \
-		tests/test_fdt_emitter.py \
 		-v --tb=short
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
@@ -254,6 +273,21 @@ ci-local: venv check-versions
 	@echo ""
 	@echo "✓ ci-local passed."
 	@echo "  To run the full pipeline (builder ~40 min + integration tests): make ci-full"
+
+# Run host-side C coverage for peripheral plugins (inside builder)
+test-coverage-peripheral:
+	@echo "==> Running peripheral C coverage (gcovr)..."
+	@mkdir -p test-results
+	@docker run --rm \
+		-v "$(CURDIR):/workspace" -w /workspace \
+		virtmcu-builder:dev \
+		bash -c "gcovr -r /build/qemu/hw/virtmcu \
+			--gcov-executable gcov \
+			--object-directory /build/qemu/build-virtmcu \
+			--object-directory /workspace/coverage-data \
+			--xml /workspace/test-results/peripheral-coverage.xml \
+			--html-details /workspace/test-results/peripheral-coverage.html \
+			--print-summary"
 
 ci-full: ci-local
 	@echo ""
@@ -266,13 +300,19 @@ ci-full: ci-local
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Integration smoke tests (inside builder)"
 	@echo "════════════════════════════════════════════════════"
-	@echo "  Running Phase 1 (ARM bare-metal boot)..."
+	@echo "  Running representative phases (1, 8, 12, riscv)..."
+	@mkdir -p coverage-data
 	docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
 		-e VIRTMCU_STALL_TIMEOUT_MS=60000 \
+		-e GCOV_PREFIX=/workspace/coverage-data \
+		-e GCOV_PREFIX_STRIP=3 \
 		virtmcu-builder:dev \
-		bash -c "make -C test/phase1 && bash test/phase1/smoke_test.sh"
+		bash -c "make -C test/phase1 && make -C test/phase8 && make -C test/phase12 && make -C test/riscv && \
+		         bash test/phase1/smoke_test.sh && \
+		         bash test/phase8/smoke_test.sh && \
+		         bash test/phase12/smoke_test.sh"
 	@echo "  Running pytest unit tests inside builder..."
 	docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
@@ -282,6 +322,12 @@ ci-full: ci-local
 		         python3 -m pytest tests/repl2qemu/ tests/test_yaml2qemu.py \
 		                        tests/test_cli_generator.py tests/test_fdt_emitter.py \
 		                        -v --tb=short"
+	@echo ""
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI Full — Coverage Checks"
+	@echo "════════════════════════════════════════════════════"
+	$(MAKE) test-coverage-guest
+	$(MAKE) test-coverage-peripheral
 	@echo ""
 	@echo "✓ ci-full passed."
 	@echo "  NOTE: Phase 4-16 smoke tests, pytest-qmp, and Robot Framework"

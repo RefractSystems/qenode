@@ -1,6 +1,8 @@
-import zenoh
 import sys
 import time
+
+import zenoh
+
 
 def main():
     port = sys.argv[1] if len(sys.argv) > 1 else "7448"

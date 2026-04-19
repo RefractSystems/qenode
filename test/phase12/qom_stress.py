@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import socket
 import json
+import socket
 import sys
 import time
+
 
 def qmp_cmd(sock, cmd, args=None):
     req = {"execute": cmd}
@@ -18,14 +19,14 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: qom_stress.py <qmp_socket_path>")
         sys.exit(1)
-        
+
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.connect(sys.argv[1])
-    
+
     # Wait for greeting and send qmp_capabilities
     sock.recv(4096)
     qmp_cmd(sock, "qmp_capabilities")
-    
+
     print("Starting QOM stress...")
     start_time = time.time()
     i = 0

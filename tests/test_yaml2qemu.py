@@ -186,3 +186,60 @@ def test_cpu_and_peripherals_combined():
         assert names == {"cpu0", "sram", "uart0"}
     finally:
         os.unlink(path)
+
+
+# ── FdtEmitter Integration ───────────────────────────────────────────────────
+
+
+def test_mmio_socket_bridge_property_mapping():
+    from tools.repl2qemu.fdt_emitter import FdtEmitter
+    from tools.repl2qemu.parser import ReplDevice, ReplPlatform
+
+    platform = ReplPlatform()
+    dev = ReplDevice(
+        name="bridge0",
+        type_name="mmio-socket-bridge",
+        address_str="0x10000000",
+        properties={
+            "socket-path": "/tmp/mmio.sock",
+            "size": 0x1000,
+            "address": 0x10000000,
+        },
+    )
+    platform.devices.append(dev)
+
+    emitter = FdtEmitter(platform)
+    dts = emitter.generate_dts()
+
+    # Check that 'size' was mapped to 'region-size'
+    assert "region-size = <0x1000>;" in dts
+    # Check that 'address' was mapped to 'base-addr' (64-bit split)
+    assert "base-addr = <0x0 0x10000000>;" in dts
+    # Check that 'socket-path' is still there
+    assert 'socket-path = "/tmp/mmio.sock";' in dts
+    # Original 'address' should NOT be there as a raw property
+    assert "address = <0x10000000>;" not in dts
+
+
+def test_mmio_socket_bridge_no_double_mapping():
+    from tools.repl2qemu.fdt_emitter import FdtEmitter
+    from tools.repl2qemu.parser import ReplDevice, ReplPlatform
+
+    platform = ReplPlatform()
+    dev = ReplDevice(
+        name="bridge0",
+        type_name="mmio-socket-bridge",
+        address_str="0x10000000",
+        properties={
+            "region-size": 0x2000,
+            "base-addr": 0x20000000,
+        },
+    )
+    platform.devices.append(dev)
+
+    emitter = FdtEmitter(platform)
+    dts = emitter.generate_dts()
+
+    # Check that it uses the provided ones
+    assert "region-size = <0x2000>;" in dts
+    assert "base-addr = <0x0 0x20000000>;" in dts

@@ -1,7 +1,19 @@
 import asyncio
 import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from typing import List, Optional, Tuple, Union
 
-from tools.testing.qmp_bridge import QmpBridge
+# Ensure workspace root is in sys.path for Robot Framework environments
+workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
+
+from tools.testing.qmp_bridge import QmpBridge  # noqa: E402
 
 
 class QemuLibrary:
@@ -19,18 +31,21 @@ class QemuLibrary:
         # running loop exists, and raises RuntimeError in 3.12.
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        self.proc: Optional[subprocess.Popen] = None
+        self.tmpdir: Optional[str] = None
 
     def _run(self, coro):
+        if self.loop.is_closed():
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
         return self.loop.run_until_complete(coro)
 
-    def launch_qemu(self, dtb_path, kernel_path=None, extra_args=None):
+    def launch_qemu(
+        self, dtb_path: str, kernel_path: Optional[str] = None, extra_args: Optional[Union[str, List[str]]] = None
+    ) -> Tuple[str, str]:
         """
         Launches QEMU using the run.sh script and returns the QMP and UART socket paths.
         """
-        import subprocess
-        import tempfile
-        import time
-
         tmpdir = tempfile.mkdtemp(prefix="virtmcu-robot-")
         qmp_sock = os.path.join(tmpdir, "qmp.sock")
         uart_sock = os.path.join(tmpdir, "uart.sock")
@@ -65,7 +80,7 @@ class QemuLibrary:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=os.environ.copy(),
-            preexec_fn=os.setsid,  # To allow killing the whole process group
+            start_new_session=True,  # Replace preexec_fn=os.setsid
         )
         self.tmpdir = tmpdir
 
@@ -89,7 +104,7 @@ class QemuLibrary:
 
         return qmp_sock, uart_sock
 
-    def connect_to_qemu(self, qmp_socket_path, uart_socket_path=None):
+    def connect_to_qemu(self, qmp_socket_path: str, uart_socket_path: Optional[str] = None):
         """
         Connects to the QEMU QMP and UART sockets.
         """
@@ -113,7 +128,7 @@ class QemuLibrary:
         """
         self._run(self.bridge.execute("system_reset"))
 
-    def wait_for_line_on_uart(self, pattern, timeout=10.0):
+    def wait_for_line_on_uart(self, pattern: str, timeout: Union[float, str] = 10.0):
         """
         Waits for a specific pattern to appear on the UART.
         """
@@ -124,13 +139,13 @@ class QemuLibrary:
                 f"Current buffer: {repr(self.bridge.uart_buffer)}"
             )
 
-    def write_to_uart(self, text):
+    def write_to_uart(self, text: str):
         """
         Writes text to the UART socket.
         """
         self._run(self.bridge.write_to_uart(text))
 
-    def pc_should_be_equal(self, expected_pc):
+    def pc_should_be_equal(self, expected_pc: Union[int, str]):
         """
         Asserts that the current Program Counter is equal to the expected value.
         """
@@ -139,7 +154,7 @@ class QemuLibrary:
         if actual_pc != expected:
             raise AssertionError(f"PC expected to be {hex(expected)}, but was {hex(actual_pc)}")
 
-    def execute_monitor_command(self, command):
+    def execute_monitor_command(self, command: str) -> str:
         """
         Executes a Human Monitor Command (HMP) and returns the output.
         """
@@ -150,17 +165,20 @@ class QemuLibrary:
         Closes all QMP and UART connections and cleans up the QEMU process.
         """
         self._run(self.bridge.close())
-        if hasattr(self, "proc"):
-            import signal
-
+        if self.proc:
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
                 self.proc.wait(timeout=5)
             except Exception:
-                if hasattr(self, "proc"):
+                if self.proc:
                     self.proc.kill()
+            self.proc = None
 
-        if hasattr(self, "tmpdir"):
-            import shutil
-
+        if self.tmpdir:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
+            self.tmpdir = None
+
+        if self.loop.is_running():
+            # Should not be running if _run finished
+            pass
+        self.loop.close()

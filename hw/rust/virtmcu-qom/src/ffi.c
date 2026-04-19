@@ -12,7 +12,12 @@
 #include "qapi/error.h"
 #include "system/cpu-timers.h"
 #include "system/cpu-timers-internal.h"
+#include "system/runstate.h"
 #include "exec/icount.h"
+#include "hw/core/sysbus.h"
+#include "chardev/char.h"
+#include "chardev/char-fe.h"
+#include "hw/ssi/ssi.h"
 
 /* ── icount ──────────────────────────────────────────────────────────────── */
 
@@ -126,6 +131,11 @@ void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *)) {
 
 /* ── Error ───────────────────────────────────────────────────────────────── */
 
+bool virtmcu_runstate_is_running(void)
+{
+    return runstate_is_running();
+}
+
 void virtmcu_error_setg(Error **errp, const char *fmt)
 {
     error_setg_internal(errp, "rust", 0, "rust", "%s", fmt);
@@ -136,3 +146,14 @@ void virtmcu_log(const char *fmt)
     fprintf(stderr, "%s", fmt);
     fflush(stderr);
 }
+
+/* ── Sizes ───────────────────────────────────────────────────────────────── */
+
+size_t virtmcu_sizeof_device_state(void) { return sizeof(struct DeviceState); }
+size_t virtmcu_sizeof_sys_bus_device(void) { return sizeof(struct SysBusDevice); }
+size_t virtmcu_sizeof_device_class(void) { return sizeof(struct DeviceClass); }
+size_t virtmcu_sizeof_ssi_peripheral(void) { return sizeof(struct SSIPeripheral); }
+size_t virtmcu_sizeof_ssi_peripheral_class(void) { return sizeof(struct SSIPeripheralClass); }
+size_t virtmcu_sizeof_chardev(void) { return sizeof(struct Chardev); }
+size_t virtmcu_sizeof_chardev_class(void) { return sizeof(struct ChardevClass); }
+size_t virtmcu_sizeof_char_backend(void) { return sizeof(struct CharFrontend); }

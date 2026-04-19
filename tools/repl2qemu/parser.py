@@ -1,3 +1,4 @@
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -15,6 +16,7 @@ class ReplDevice:
     name: str
     type_name: str
     address_str: Optional[str] = None
+    parent: Optional[str] = None
     properties: Dict[str, str] = field(default_factory=dict)
     interrupts: List[ReplInterrupt] = field(default_factory=list)
 
@@ -24,7 +26,7 @@ class ReplPlatform:
     devices: List[ReplDevice] = field(default_factory=list)
 
 
-def parse_repl(content: str) -> ReplPlatform:
+def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
     """
     Parses a Renode .repl file and extracts device definitions, ignoring complex
     inline initialization blocks and non-device nodes.
@@ -41,6 +43,8 @@ def parse_repl(content: str) -> ReplPlatform:
     re_irq_simple = re.compile(r"^\s+->\s*([a-zA-Z0-9_]+)@(\d+)$")
     # Interrupt (ranged): [0-3] -> nvic@[19-22]
     re_irq_range = re.compile(r"^\s+\[(\d+-\d+)\]\s+->\s+([a-zA-Z0-9_]+)@\[(\d+-\d+)\]$")
+    # Using: using "path/to/file.repl"
+    re_using = re.compile(r'^using\s+"([^"]+)"')
 
     in_multiline_block = False
 
@@ -48,6 +52,19 @@ def parse_repl(content: str) -> ReplPlatform:
         # Remove comments and strip trailing whitespace
         line = raw_line.split("//")[0].rstrip()
         if not line:
+            continue
+
+        # Handle 'using' statement
+        match_using = re_using.match(line)
+        if match_using:
+            included_file = match_using.group(1)
+            full_path = os.path.join(base_dir, included_file)
+            if os.path.exists(full_path):
+                with open(full_path, "r") as f:
+                    included_platform = parse_repl(f.read(), os.path.dirname(full_path))
+                    platform.devices.extend(included_platform.devices)
+            else:
+                print(f"Warning: Included file not found: {full_path}")
             continue
 
         # Start of a new device block (no leading whitespace)

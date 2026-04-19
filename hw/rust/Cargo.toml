@@ -11,7 +11,7 @@ members = [
     "zenoh-actuator",
     "zenoh-802154",
     "zenoh-ui",
-    "test-qom-device",
+    "test-qom-device", "virtmcu-test-devices",
 ]
 resolver = "2"
 

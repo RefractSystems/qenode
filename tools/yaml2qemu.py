@@ -58,7 +58,11 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
         address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
         dev = ReplDevice(
-            name=p["name"], type_name=type_name, address_str=address_str, properties=p.get("properties", {})
+            name=p["name"],
+            type_name=type_name,
+            address_str=address_str,
+            parent=p.get("parent"),
+            properties=p.get("properties", {}),
         )
 
         # Parse interrupts if they exist

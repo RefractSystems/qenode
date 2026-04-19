@@ -1,7 +1,10 @@
 import asyncio
+import io
 import logging
 import os
+import sys
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Dict, Optional
 
 from ..qmp_bridge import QmpBridge
@@ -23,6 +26,20 @@ class NodeContext:
 class NodeManager:
     def __init__(self):
         self.nodes: Dict[str, NodeContext] = {}
+        self._zenoh_session = None
+
+    def get_zenoh_session(self):
+        import zenoh
+        if self._zenoh_session is None:
+            self._zenoh_session = zenoh.open(zenoh.Config())
+        return self._zenoh_session
+
+    async def close(self):
+        for node in self.nodes.values():
+            await self.stop_node(node.node_id)
+        if self._zenoh_session:
+            self._zenoh_session.close()
+            self._zenoh_session = None
 
     def get_node(self, node_id: str) -> NodeContext:
         if node_id not in self.nodes:
@@ -31,12 +48,58 @@ class NodeManager:
 
     async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml"):
         node = self.get_node(node_id)
-        if node.yaml_path and os.path.exists(node.yaml_path):
-            os.remove(node.yaml_path)
 
+        # Save to temporary file for validation
         fd, path = tempfile.mkstemp(suffix=f".{config_type}", prefix=f"virtmcu-{node_id}-")
         os.write(fd, board_config.encode("utf-8"))
         os.close(fd)
+
+        # Validate by trying to generate DTB
+        dtb_fd, dtb_path = tempfile.mkstemp(suffix=".dtb")
+        os.close(dtb_fd)
+
+        f_out = io.StringIO()
+        f_err = io.StringIO()
+
+        try:
+            with redirect_stdout(f_out), redirect_stderr(f_err):
+                if config_type == "yaml":
+                    from ..yaml2qemu import main as yaml2qemu_main
+                    old_argv = sys.argv
+                    sys.argv = ["yaml2qemu", "--out-dtb", dtb_path, path]
+                    try:
+                        yaml2qemu_main()
+                    except SystemExit as e:
+                        if e.code != 0:
+                            raise ValueError(f"yaml2qemu failed with code {e.code}: {f_err.getvalue()}")
+                    finally:
+                        sys.argv = old_argv
+                else:
+                    # REPL validation
+                    from ..repl2qemu.__main__ import main as repl2qemu_main
+                    old_argv = sys.argv
+                    sys.argv = ["repl2qemu", path, "--out-dtb", dtb_path]
+                    try:
+                        repl2qemu_main()
+                    except SystemExit as e:
+                        if e.code != 0:
+                            raise ValueError(f"repl2qemu failed with code {e.code}: {f_err.getvalue()}")
+                    finally:
+                        sys.argv = old_argv
+        except (Exception, BaseException) as e:
+            if os.path.exists(path):
+                os.remove(path)
+            if os.path.exists(dtb_path):
+                os.remove(dtb_path)
+            # Log the captured output for debugging
+            logger.error(f"Validation failed. stdout: {f_out.getvalue()} stderr: {f_err.getvalue()}")
+            raise ValueError(f"Invalid board configuration: {e}")
+        finally:
+            if os.path.exists(dtb_path):
+                os.remove(dtb_path)
+
+        if node.yaml_path and os.path.exists(node.yaml_path):
+            os.remove(node.yaml_path)
         node.yaml_path = path
 
     def flash_firmware(self, node_id: str, firmware_path: str):

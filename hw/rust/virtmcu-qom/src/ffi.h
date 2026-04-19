@@ -7,11 +7,18 @@
 #ifndef VIRTMCU_RUST_FFI_H
 #define VIRTMCU_RUST_FFI_H
 
+/* Suppress noisy warnings from QEMU system headers */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "hw/core/cpu.h"
 #include "qapi/error.h"
 #include "system/cpu-timers.h"
+
+#pragma GCC diagnostic pop
 
 /* icount */
 bool virtmcu_icount_enabled(void);
@@ -50,5 +57,15 @@ void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *));
 /* Error */
 void virtmcu_error_setg(Error **errp, const char *fmt);
 void virtmcu_log(const char *fmt);
+
+/* Sizes */
+size_t virtmcu_sizeof_device_state(void);
+size_t virtmcu_sizeof_sys_bus_device(void);
+size_t virtmcu_sizeof_device_class(void);
+size_t virtmcu_sizeof_ssi_peripheral(void);
+size_t virtmcu_sizeof_ssi_peripheral_class(void);
+size_t virtmcu_sizeof_chardev(void);
+size_t virtmcu_sizeof_chardev_class(void);
+size_t virtmcu_sizeof_char_backend(void);
 
 #endif

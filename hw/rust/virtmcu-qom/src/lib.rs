@@ -15,13 +15,24 @@ pub mod memory;
 pub mod net;
 pub mod qdev;
 pub mod qom;
+pub mod ssi;
 pub mod sync;
+pub mod sysemu;
 pub mod timer;
 
 use core::ffi::c_char;
 
 extern "C" {
     pub fn virtmcu_log(fmt: *const c_char);
+
+    pub fn virtmcu_sizeof_device_state() -> usize;
+    pub fn virtmcu_sizeof_sys_bus_device() -> usize;
+    pub fn virtmcu_sizeof_device_class() -> usize;
+    pub fn virtmcu_sizeof_ssi_peripheral() -> usize;
+    pub fn virtmcu_sizeof_ssi_peripheral_class() -> usize;
+    pub fn virtmcu_sizeof_chardev() -> usize;
+    pub fn virtmcu_sizeof_chardev_class() -> usize;
+    pub fn virtmcu_sizeof_char_backend() -> usize;
 }
 
 #[macro_export]

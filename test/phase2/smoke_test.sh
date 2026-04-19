@@ -31,6 +31,8 @@ WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 CHECK_SCRIPT="$SCRIPT_DIR/check_dummy_qmp.py"
 
+cd "$SCRIPT_DIR"
+
 # Use the DTB from phase 1 as a base
 DTB="$WORKSPACE_DIR/test/phase1/minimal.dtb"
 

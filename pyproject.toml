@@ -7,15 +7,17 @@ requires-python = ">=3.13"
 dependencies = [
     "qemu.qmp==0.0.3",
     "robotframework==7.0.0",
-    "lark==1.1.9",
     "eclipse-zenoh==1.9.0",
     "pytest==8.0.0",
     "pytest-asyncio==0.23.5",
     "pytest-cov==4.1.0",
     "pyyaml==6.0.1",
+    "lark==1.1.9",
+"hypothesis==6.152.1",
     "mcp==1.0.0",
-    "ruff==0.3.4",
+    "ruff==0.15.11",
     "flatbuffers==25.12.19",
+    "pyelftools==0.32",
 ]
 
 [tool.ruff]
@@ -32,7 +34,6 @@ ignore = [
     "E501",   # line-too-long — acceptable in a C/embedded project with long strings
 ]
 
-[dependency-groups]
-dev = [
-    "pyelftools>=0.32",
-]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "strict"

@@ -203,6 +203,26 @@ When implementing a feature for a new Phase, you **MUST** provide a correspondin
 
 ---
 
+## Testing Strategy (Bifurcated: Rust + Python)
+
+We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, safety, and orchestration reliability.
+
+1.  **White-Box Internals (Rust `#[test]`)**
+    *   **What goes here:** State machines, lock-free queue logic, protocol parsing, memory layout validation (via `bindgen`), and anything testing internal C/Rust FFI boundaries.
+    *   **How:** Write native `#[test]` modules inside the `hw/rust/` crates. These tests should *not* boot QEMU. Mock the necessary FFI calls.
+    *   **Why:** Rust's test runner is exceptionally fast, and it can catch concurrency or memory alignment issues at compile time.
+
+2.  **Black-Box Orchestration (Python `pytest`)**
+    *   **What goes here:** Multi-node integration tests, QMP interaction, UART verification, process management (QEMU + Zenoh + TimeAuthority), and end-to-end regression testing.
+    *   **How:** Write structured tests using `pytest` and `asyncio` using our existing fixtures in `tools/testing/qmp_bridge.py` and `conftest.py`.
+    *   **Why:** Python handles complex multi-process orchestration, asynchronous teardowns, and string matching much better than Rust or Bash.
+
+3.  **Thin CI Wrappers (Bash)**
+    *   **Rule:** Bash (`test/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
+    *   **Never** write complex background process setup/teardown loops in Bash. Just call `pytest` or `cargo test`.
+
+---
+
 ## AI-Assisted Workflows (Auto Green)
 
 If you are using an AI agent (Claude Code, Gemini CLI), you can automate the process of fixing broken CI/CD builds. If a PR build fails:

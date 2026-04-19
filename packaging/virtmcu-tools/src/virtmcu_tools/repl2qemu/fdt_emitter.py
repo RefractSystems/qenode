@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from typing import Dict, Tuple
 
 from .parser import ReplPlatform
 
@@ -11,10 +12,11 @@ COMPAT_MAP = {
     "UART.Cadence_UART": "cadence_uart",
     "IRQControllers.NVIC": "armv7m_nvic",
     "IRQControllers.ARM_GenericInterruptController": "arm_gic",
+    "IRQControllers.GIC": "arm_gic",
     "Timers.ARM_GenericTimer": "armv8-timer",
     "Timers.ARM_PrivateTimer": "arm_mptimer",
-    "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv",  # Or similar depending on exact board
-    "CPU.CortexM": "arm,cortex-m-cpu",  # Actually handled specially
+    "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv",
+    "CPU.CortexM": "arm,cortex-m-cpu",
     "CPU.CortexA": "arm,cortex-a-cpu",
     "CPU.ARMv7A": "arm,cortex-a-cpu",
     "CPU.RISCV64": "riscv",
@@ -24,11 +26,21 @@ COMPAT_MAP = {
     "Network.LAN9118": "lan9118",
 }
 
+# Devices that act as interrupt controllers
+INT_CONTROLLERS = {
+    "IRQControllers.NVIC",
+    "IRQControllers.ARM_GenericInterruptController",
+    "IRQControllers.GIC",
+}
+
 
 class FdtEmitter:
     def __init__(self, platform: ReplPlatform):
         self.platform = platform
         self.arch = self._detect_arch()
+        self.phandles: Dict[str, int] = {}
+        self.next_phandle = 1
+        self._assign_phandles()
 
     def _detect_arch(self) -> str:
         for dev in self.platform.devices:
@@ -36,14 +48,26 @@ class FdtEmitter:
                 return "riscv"
         return "arm"
 
-    def _parse_addr(self, addr_str: str) -> tuple[int, int]:
+    def _assign_phandles(self):
+        # Always have a sysmem phandle
+        self.phandles["qemu_sysmem"] = self.next_phandle
+        self.next_phandle += 1
+
+        # Assign phandles to all devices that might be referenced
+        for dev in self.platform.devices:
+            self.phandles[dev.name] = self.next_phandle
+            self.next_phandle += 1
+
+    def _get_phandle(self, name: str) -> int:
+        return self.phandles.get(name, 0)
+
+    def _parse_addr(self, addr_str: str) -> Tuple[int, int]:
         """Parses address string '0x60000000' or '<0x40011000, +0x100>'."""
         if not addr_str or addr_str.lower() == "none" or not any(c.isdigit() for c in addr_str):
             return 0, 0
 
         addr_str = addr_str.strip()
         if addr_str.startswith("<"):
-            # <0x40011000, +0x100>
             parts = addr_str.strip("<>").split(",")
             base = int(parts[0].strip(), 16)
             size_part = parts[1].strip()
@@ -53,7 +77,6 @@ class FdtEmitter:
             return base, size
         else:
             try:
-                # 0x60000000 (size usually in properties)
                 return int(addr_str, 16), 0
             except ValueError:
                 return 0, 0
@@ -73,7 +96,7 @@ class FdtEmitter:
         lines.append("")
         lines.append("    qemu_sysmem: qemu_sysmem {")
         lines.append('        compatible = "qemu:system-memory";')
-        lines.append("        phandle = <0x01>;")
+        lines.append(f"        phandle = <{self._get_phandle('qemu_sysmem')}>;")
         lines.append("    };")
         lines.append("")
 
@@ -87,7 +110,6 @@ class FdtEmitter:
         cpu_index = 0
         for dev in self.platform.devices:
             if "CPU" in dev.type_name:
-                # E.g., cpuType: "cortex-a15" or "rv64"
                 cpu_type = dev.properties.get("cpuType", "cortex-m3" if self.arch == "arm" else "rv64")
                 lines.append(f"        {dev.name}@{cpu_index} {{")
                 lines.append('            device_type = "cpu";')
@@ -98,12 +120,15 @@ class FdtEmitter:
                 else:
                     lines.append(f'            compatible = "{cpu_type}-arm-cpu";')
                 lines.append(f"            reg = <{cpu_index}>;")
-                lines.append("            memory = <0x01>;")
+                lines.append(f"            memory = <{self._get_phandle('qemu_sysmem')}>;")
                 if self.arch == "riscv":
                     lines.append(f"            {dev.name}_intc: interrupt-controller {{")
                     lines.append("                #interrupt-cells = <1>;")
                     lines.append("                interrupt-controller;")
                     lines.append('                compatible = "riscv,cpu-intc";')
+                    lines.append(f"                phandle = <{self.next_phandle}>;")
+                    self.phandles[f"{dev.name}_intc"] = self.next_phandle
+                    self.next_phandle += 1
                     lines.append("            };")
                 lines.append("        };")
                 cpu_index += 1
@@ -112,7 +137,7 @@ class FdtEmitter:
 
         for dev in self.platform.devices:
             if "CPU" in dev.type_name:
-                continue  # Handled above
+                continue
 
             base, size = self._parse_addr(dev.address_str)
 
@@ -121,16 +146,12 @@ class FdtEmitter:
                     size_val = dev.properties["size"]
                     size = int(size_val, 16) if isinstance(size_val, str) else int(size_val)
 
-                # Emit memory node (name must start with 'memory@' for QEMU arm-generic-fdt)
                 lines.append(f"    memory@{base:x} {{")
                 lines.append('        compatible = "qemu-memory-region";')
-                lines.append("        qemu,ram = <0x01>;")
-                lines.append("        container = <0x01>;")
-                # Handle 64-bit address/size for 2-cell reg
-                base_hi = (base >> 32) & 0xFFFFFFFF
-                base_lo = base & 0xFFFFFFFF
-                size_hi = (size >> 32) & 0xFFFFFFFF
-                size_lo = size & 0xFFFFFFFF
+                lines.append(f"        qemu,ram = <{self._get_phandle('qemu_sysmem')}>;")
+                lines.append(f"        container = <{self._get_phandle('qemu_sysmem')}>;")
+                base_hi, base_lo = (base >> 32) & 0xFFFFFFFF, base & 0xFFFFFFFF
+                size_hi, size_lo = (size >> 32) & 0xFFFFFFFF, size & 0xFFFFFFFF
                 lines.append(f"        reg = <0x{base_hi:x} 0x{base_lo:x} 0x{size_hi:x} 0x{size_lo:x}>;")
                 lines.append("    };")
 
@@ -146,38 +167,63 @@ class FdtEmitter:
                 compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
 
                 if size == 0:
-                    size = 0x1000  # Default size if not provided
+                    size = 0x1000
 
                 lines.append(f"    {dev.name}@{base:x} {{")
                 lines.append(f'        compatible = "{compat_str}";')
+                lines.append(f"        phandle = <{self._get_phandle(dev.name)}>;")
 
-                # armv8-timer doesn't have MMIO registers in QEMU DTS
                 if compat_str != "armv8-timer":
-                    base_hi = (base >> 32) & 0xFFFFFFFF
-                    base_lo = base & 0xFFFFFFFF
-                    size_hi = (size >> 32) & 0xFFFFFFFF
-                    size_lo = size & 0xFFFFFFFF
+                    base_hi, base_lo = (base >> 32) & 0xFFFFFFFF, base & 0xFFFFFFFF
+                    size_hi, size_lo = (size >> 32) & 0xFFFFFFFF, size & 0xFFFFFFFF
                     lines.append(f"        reg = <0x{base_hi:x} 0x{base_lo:x} 0x{size_hi:x} 0x{size_lo:x}>;")
 
                 if dev.type_name.startswith("UART") or compat_str == "pl011":
                     lines.append("        chardev = <0x00>;")
 
-                # We could map interrupts here
                 if dev.interrupts:
+                    # Find interrupt parent
+                    target_name = dev.interrupts[0].target_device
+                    parent_phandle = self._get_phandle(target_name)
+                    if parent_phandle:
+                        lines.append(f"        interrupt-parent = <{parent_phandle}>;")
+
                     # simplistic mapping: SPI, ID, level/edge
                     irqs = []
                     for irq in dev.interrupts:
                         target_irq = irq.target_range
                         if "-" not in target_irq:
-                            irqs.append(f"<0 {target_irq} 4>")
+                            # TODO: Detect if parent is GIC or NVIC
+                            # GIC expects <type id flags>, NVIC expects <id>
+                            is_gic = any(
+                                ic in target_name.upper()
+                                or (i_dev.name == target_name and "GIC" in i_dev.type_name.upper())
+                                for ic in ["GIC", "DISTRIBUTOR"]
+                                for i_dev in self.platform.devices
+                            )
+
+                            if is_gic:
+                                # Renode often uses SPI index (0+) for GIC interrupts.
+                                # QEMU's GIC expects absolute IRQ number (32+) for SPIs.
+                                irq_num = int(target_irq)
+                                if irq_num < 32:
+                                    irq_num += 32
+                                irqs.append(f"<0 {irq_num} 4>")
+                            else:
+                                irqs.append(f"<{target_irq}>")
                     if irqs:
                         lines.append(f"        interrupts = {', '.join(irqs)};")
 
-                # Add extra properties defined in the YAML/Repl
+                if dev.type_name in INT_CONTROLLERS:
+                    lines.append("        interrupt-controller;")
+                    if "NVIC" in dev.type_name:
+                        lines.append("        #interrupt-cells = <1>;")
+                    else:
+                        lines.append("        #interrupt-cells = <3>;")
+
                 for k, v in dev.properties.items():
                     if k in ["size", "cpuType", "isa", "mmu-type"]:
-                        continue  # Handled elsewhere
-
+                        continue
                     if isinstance(v, bool):
                         if v:
                             lines.append(f"        {k};")
@@ -186,7 +232,7 @@ class FdtEmitter:
                     else:
                         lines.append(f'        {k} = "{v}";')
 
-                lines.append("        container = <0x01>;")
+                lines.append(f"        container = <{self._get_phandle('qemu_sysmem')}>;")
                 lines.append("    };")
 
         lines.append("};")
@@ -199,7 +245,6 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
     try:
         with open(dts_path, "w") as f:
             f.write(dts_content)
-
         subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True, capture_output=True)
         return True
     except subprocess.CalledProcessError as e:
@@ -208,18 +253,3 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
     finally:
         if os.path.exists(dts_path):
             os.unlink(dts_path)
-
-
-if __name__ == "__main__":
-    import sys
-
-    from .parser import parse_repl
-
-    filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
-    with open(filename, "r") as f:
-        plat = parse_repl(f.read())
-
-    emitter = FdtEmitter(plat)
-    dts = emitter.generate_dts()
-    print(dts)
-    compile_dtb(dts, "test_out.dtb")

@@ -15,6 +15,7 @@
 
 hw_virtmcu_modules = {}
 
+
 # Common FFI helpers for Rust-backed modules
 hw_virtmcu_inc = include_directories('.', 'misc')
 
@@ -119,7 +120,12 @@ rust_zenoh_chardev_lib = custom_target(
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
+#include "qapi/qapi-types-char.h"
 module_obj("chardev-zenoh");
+int get_chardev_backend_kind_zenoh(void);
+int get_chardev_backend_kind_zenoh(void) {
+    return CHARDEV_BACKEND_KIND_ZENOH;
+}
 EOF
 ''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c', meson.project_source_root(), meson.project_build_root()
@@ -265,6 +271,8 @@ cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("test-rust-device");
+module_obj("spi-echo");
+module_obj("uart-echo");
 EOF
 ''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libtest_qom_device.a', meson.current_build_dir() / 'rust_test_qom_device_trigger.c', meson.project_source_root(), meson.project_build_root()
@@ -278,5 +286,8 @@ test_qom_device_ss.add(declare_dependency(
 ))
 hw_virtmcu_modules += {'test-qom-device': test_qom_device_ss}
 
+
+
 # ── Add new devices above this line ──────────────────────────────────────────
 modules += {'hw-virtmcu': hw_virtmcu_modules}
+

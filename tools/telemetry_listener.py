@@ -46,11 +46,22 @@ def on_sample(sample):
 
 
 def main():
-    node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
-    topic = f"sim/telemetry/trace/{node_id}"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Zenoh Telemetry Listener")
+    parser.add_argument("node_id", nargs="?", default="0", help="Node ID to listen for")
+    parser.add_argument("--router", help="Zenoh router endpoint")
+    args = parser.parse_args()
+
+    topic = f"sim/telemetry/trace/{args.node_id}"
     print(f"Listening on {topic}...")
 
-    session = zenoh.open(zenoh.Config())
+    conf = zenoh.Config()
+    if args.router:
+        conf.insert_json5("mode", '"client"')
+        conf.insert_json5("connect/endpoints", f'["{args.router}"]')
+
+    session = zenoh.open(conf)
     _sub = session.declare_subscriber(topic, on_sample)
 
     try:

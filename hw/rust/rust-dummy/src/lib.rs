@@ -9,15 +9,16 @@
 
 use core::ffi::c_void;
 use core::panic::PanicInfo;
-use virtmcu_qom::qom::{qemu_log_mask, LOG_UNIMP};
+use virtmcu_qom::qemu_log_mask;
+use virtmcu_qom::qom::LOG_UNIMP;
 
 #[no_mangle]
 pub unsafe extern "C" fn rust_dummy_read(_priv_state: *mut c_void, addr: u64, _size: u32) -> u64 {
-    let msg = b"rust_dummy_read called from Rust!\n\0";
-    unsafe { qemu_log_mask(LOG_UNIMP, msg.as_ptr() as *const core::ffi::c_char) };
+    qemu_log_mask!(LOG_UNIMP, "rust_dummy_read called from Rust!");
 
     match addr {
         0 => 0xdead_beef,
+        8 => 0xface_babe,
         _ => 0,
     }
 }
@@ -25,19 +26,19 @@ pub unsafe extern "C" fn rust_dummy_read(_priv_state: *mut c_void, addr: u64, _s
 #[no_mangle]
 pub unsafe extern "C" fn rust_dummy_write(
     _priv_state: *mut c_void,
-    _addr: u64,
-    _val: u64,
-    __size: u32,
+    addr: u64,
+    val: u64,
+    _size: u32,
 ) {
-    let msg = b"rust_dummy_write called from Rust!\n\0";
-    unsafe { qemu_log_mask(LOG_UNIMP, msg.as_ptr() as *const core::ffi::c_char) };
+    qemu_log_mask!(
+        LOG_UNIMP,
+        "rust_dummy_write called from Rust: addr=0x{:x}, val=0x{:x}",
+        addr,
+        val
+    );
 }
 
-#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    extern "C" {
-        fn abort() -> !;
-    }
-    unsafe { abort() }
+    loop {}
 }

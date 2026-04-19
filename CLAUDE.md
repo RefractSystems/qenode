@@ -117,6 +117,22 @@ virtmcu/
 
 ---
 
+## Bifurcated Testing Strategy (Rust + Python)
+
+We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, safety, and orchestration reliability.
+
+| Layer | Language | Framework | Purpose |
+| :--- | :--- | :--- | :--- |
+| **White-Box Internals** | **Rust** | `cargo test` | State machines, memory layout validation (via `bindgen`), protocol parsing, lock-free queues, and FFI boundaries. |
+| **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration (QEMU + Zenoh + TimeAuthority), QMP integration, UART verification, topology setup, and end-to-end regression testing. |
+| **Thin CI Wrappers** | **Bash** | `make test` / `.sh` | Entry points *only*. Bash scripts must never manage multi-process orchestration. They should merely be 2-3 line scripts that invoke `pytest` or `cargo test`. |
+
+**Mandates:**
+- Never write complex setup/teardown loops in Bash. If a test requires booting QEMU alongside a background process (e.g., `zenoh_coordinator`), it **must** be written in Python using `pytest` fixtures to ensure safe teardown and prevent zombie processes.
+- Internal logic (like CSMA/CA backoffs, flatbuffer serialization, struct alignment) **must** be tested natively in Rust using `#[test]`, bypassing QEMU boot entirely where possible.
+
+---
+
 ## Production Engineering Mandates
 
 To ensure the highest level of professional software engineering, all agents MUST adhere to these standards:

@@ -1,0 +1,30 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+
+peripherals:
+  - name: ram0
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x04000000 # 64MB
+
+  - name: uart0
+    type: UART.PL011
+    address: 0x09000000
+    interrupts: [33]
+
+  - name: spi0
+    type: SPI.PL022
+    address: 0x09001000
+    interrupts: [34]
+
+  - name: spi_echo
+    type: spi-echo
+    parent: spi0
+    address: 0 # CS 0
+
+  - name: test_dev
+    type: test-rust-device
+    address: 0x09002000

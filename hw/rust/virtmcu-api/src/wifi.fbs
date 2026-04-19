@@ -1,0 +1,12 @@
+namespace virtmcu.wifi;
+
+table WifiHeader {
+  delivery_vtime_ns: uint64;
+  size: uint32;
+  channel: uint16;
+  rssi: int8;
+  snr: int8;
+  frame_type: uint8;
+}
+
+root_type WifiHeader;

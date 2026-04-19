@@ -7,6 +7,22 @@ fn main() {
     let build_dir = std::env::var("QEMU_BUILD_DIR")
         .unwrap_or_else(|_| "../../../third_party/qemu/build-virtmcu".to_string());
 
+    // Check if QEMU headers are present
+    let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
+    if !osdep_h.exists() {
+        println!(
+            "cargo:warning=QEMU headers not found at {:?}. Skipping binding and FFI generation.",
+            osdep_h
+        );
+        // Create an empty bindings file so the build doesn't fail
+        let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        std::fs::write(out_path.join("bindings.rs"), "").expect("Couldn't write dummy bindings!");
+        // Create an empty wrapper too
+        let wrapper_path = out_path.join("qemu_bindings.rs");
+        std::fs::write(&wrapper_path, "pub mod qemu {}").unwrap();
+        return;
+    }
+
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=src/ffi.c");
     println!("cargo:rerun-if-changed=src/ffi.h");
@@ -20,20 +36,10 @@ fn main() {
         .include("/usr/include/glib-2.0")
         .include("/usr/lib/aarch64-linux-gnu/glib-2.0/include")
         .include("/usr/lib/x86_64-linux-gnu/glib-2.0/include")
+        .warnings(false)
+        .flag_if_supported("-Wno-unused-parameter")
+        .flag_if_supported("-Wno-sign-compare")
         .compile("virtmcu_ffi");
-
-    // Check if QEMU headers are present
-    let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
-    if !osdep_h.exists() {
-        println!(
-            "cargo:warning=QEMU headers not found at {:?}. Skipping binding generation.",
-            osdep_h
-        );
-        // Create an empty bindings file so the build doesn't fail
-        let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-        std::fs::write(out_path.join("bindings.rs"), "").expect("Couldn't write dummy bindings!");
-        return;
-    }
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")

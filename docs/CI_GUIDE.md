@@ -178,6 +178,8 @@ Each smoke test job:
 3. Runs a `pre` command to build test artifacts (cross-compiled firmware).
 4. Runs `bash test/phaseN/smoke_test.sh`.
 
+> **Note on Testing Strategy**: We use a **Bifurcated Testing Strategy**. Bash scripts like `smoke_test.sh` must be kept as thin CI wrappers. **White-Box** internal testing is done via Rust `cargo test` in Tier 1. **Black-Box** orchestration (multi-process setup, QMP, UART assertions) must be delegated to Python `pytest` suites invoked from these bash wrappers. Do not write complex orchestration loops in Bash.
+
 ### Running a specific phase smoke test locally
 
 ```bash

@@ -20,14 +20,14 @@ def check_dummy():
 
     # Try to connect to QEMU's QMP socket (wait for QEMU to start)
     # This loop handles the race condition where QEMU is still initializing its socket.
-    for _ in range(10):
+    for _ in range(20):
         try:
             s.connect("qmp.sock")
             break
         except Exception:
-            time.sleep(0.5)
+            time.sleep(1.0)
     else:
-        print("FAILED: Could not connect to QEMU QMP socket")
+        print("FAILED: Could not connect to QEMU QMP socket (timeout 20s)")
         sys.exit(1)
 
     # Read the initial QMP greeting message

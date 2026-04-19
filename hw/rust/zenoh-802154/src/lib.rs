@@ -16,6 +16,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_uint, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
+use virtmcu_api::rf_generated::rf_header;
 use virtmcu_qom::error::Error;
 use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
 use virtmcu_qom::memory::{
@@ -466,15 +467,9 @@ fn schedule_backoff(s: &mut Zenoh802154State) {
 
 fn tx_real(s: &mut Zenoh802154State) {
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let mut msg = Vec::with_capacity(14 + s.tx_len as usize);
-
-    let mut hdr_bytes = [0u8; 14];
-    LittleEndian::write_u64(&mut hdr_bytes[0..8], vtime);
-    LittleEndian::write_u32(&mut hdr_bytes[8..12], s.tx_len);
-    hdr_bytes[12] = 0; // RSSI
-    hdr_bytes[13] = 255; // LQI
-
-    msg.extend_from_slice(&hdr_bytes);
+    let hdr = rf_header::encode(vtime, s.tx_len, 0, 255);
+    let mut msg = Vec::with_capacity(hdr.len() + s.tx_len as usize);
+    msg.extend_from_slice(&hdr);
     msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
 
     let _ = s.publisher.put(msg).wait();
@@ -521,15 +516,10 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     }
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let mut msg = Vec::with_capacity(14 + 3);
-
-    let mut hdr_bytes = [0u8; 14];
-    LittleEndian::write_u64(&mut hdr_bytes[0..8], now);
-    LittleEndian::write_u32(&mut hdr_bytes[8..12], 3);
-    hdr_bytes[12] = 0; // RSSI
-    hdr_bytes[13] = 255; // LQI
-
-    msg.extend_from_slice(&hdr_bytes);
+    // ACK frame: FCF(2) + seq(1) = 3 bytes
+    let hdr = rf_header::encode(now, 3, 0, 255);
+    let mut msg = Vec::with_capacity(hdr.len() + 3);
+    msg.extend_from_slice(&hdr);
 
     msg.push(0x02); // FCF LSB (Type: ACK)
     msg.push(0x00); // FCF MSB
@@ -545,20 +535,31 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     }
 
     let payload = sample.payload();
-    if payload.len() < 14 {
+    if payload.len() < rf_header::MIN_ENCODED_BYTES {
         return;
     }
 
     let bytes = payload.to_bytes();
-    let vtime = LittleEndian::read_u64(&bytes[0..8]);
-    let size = LittleEndian::read_u32(&bytes[8..12]) as usize;
-    let rssi = bytes[12] as i8;
 
-    if size > 128 || bytes.len() < 14 + size {
+    // Decode FlatBuffer header; skip malformed frames.
+    let (vtime, raw_size, rssi, _lqi) = match rf_header::decode(&bytes) {
+        Some(fields) => fields,
+        None => return,
+    };
+    let size = raw_size as usize;
+
+    // The FlatBuffer header is size-prefixed; its length = 4 + le32 value.
+    let hdr_len = if bytes.len() >= 4 {
+        4 + u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize
+    } else {
+        return;
+    };
+
+    if size > 128 || bytes.len() < hdr_len + size {
         return;
     }
 
-    let frame_data = &bytes[14..14 + size];
+    let frame_data = &bytes[hdr_len..hdr_len + size];
 
     if !frame_matches_address(state.pan_id, state.short_addr, state.ext_addr, frame_data) {
         return;

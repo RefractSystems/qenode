@@ -260,7 +260,7 @@ def test_fdt_emitter_extra_properties():
     emitter = FdtEmitter(platform)
     dts = emitter.generate_dts()
     assert "bool_prop;" in dts
-    assert "int_prop = <123>;" in dts
+    assert "int_prop = <0x7b>;" in dts
     assert 'str_prop = "hello";' in dts
 
 

@@ -6,3 +6,6 @@ authors.workspace = true
 
 [dependencies]
 flatbuffers.workspace = true
+
+[dev-dependencies]
+proptest = "1.0"

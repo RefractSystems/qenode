@@ -70,3 +70,46 @@ fn test_firmware_studio_telemetry_consumption() {
     // Note: TraceEventType casting handles the i8 enum value mapping
     assert_eq!(parsed_event.type_().0, 2); // 2 == Peripheral
 }
+
+#[test]
+fn test_telemetry_consumption_no_device_name() {
+    let mut builder = FlatBufferBuilder::new();
+
+    let args = telemetry_fb::TraceEventArgs {
+        timestamp_ns: 987_654_321,
+        type_: telemetry_fb::TraceEventType::CpuState,
+        id: 10,
+        value: 20,
+        device_name: None,
+    };
+
+    let root = telemetry_fb::create_trace_event(&mut builder, &args);
+    builder.finish(root, None);
+    let payload = builder.finished_data();
+
+    let parsed_event =
+        flatbuffers::root::<GenTraceEvent>(payload).expect("Failed to parse flatbuffer");
+
+    assert_eq!(parsed_event.timestamp_ns(), 987_654_321);
+    assert_eq!(parsed_event.id(), 10);
+    assert_eq!(parsed_event.value(), 20);
+    assert_eq!(parsed_event.device_name(), None);
+    assert_eq!(parsed_event.type_().0, 0); // 0 == CpuState
+}
+
+#[test]
+fn test_default_instantiation() {
+    let mmio = MmioReq::default();
+    assert_eq!(mmio.type_, 0);
+    assert_eq!(mmio.size, 0);
+    assert_eq!({ mmio.vtime_ns }, 0);
+
+    let sysc = SyscMsg::default();
+    assert_eq!({ sysc.type_ }, 0);
+
+    let clk_adv = ClockAdvanceReq::default();
+    assert_eq!({ clk_adv.delta_ns }, 0);
+
+    let clk_rdy = ClockReadyResp::default();
+    assert_eq!({ clk_rdy.error_code }, 0);
+}

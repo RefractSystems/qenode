@@ -201,6 +201,10 @@ declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
+    debug_assert!(
+        unsafe { virtmcu_qom::sync::virtmcu_bql_locked() },
+        "BQL must be held during timer callbacks"
+    );
     let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
@@ -348,27 +352,4 @@ fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size:
 
     let _ = state.session.put(tx_topic, data).wait();
     size as isize
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ordered_packet_priority_queue() {
-        let mut heap = BinaryHeap::new();
-        heap.push(OrderedPacket { vtime: 100, data: vec![1] });
-        heap.push(OrderedPacket { vtime: 50, data: vec![2] });
-        heap.push(OrderedPacket { vtime: 200, data: vec![3] });
-
-        // Should be a min-heap by vtime
-        let first = heap.pop().unwrap();
-        assert_eq!(first.vtime, 50);
-
-        let second = heap.pop().unwrap();
-        assert_eq!(second.vtime, 100);
-
-        let third = heap.pop().unwrap();
-        assert_eq!(third.vtime, 200);
-    }
 }

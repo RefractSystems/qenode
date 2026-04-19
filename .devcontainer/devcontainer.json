@@ -3,6 +3,13 @@
   "image": "ghcr.io/refractsystems/virtmcu/devenv:latest",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "initializeCommand": "bash .devcontainer/initialize.sh",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "enableNonRootDocker": "true",
+      "moby": "false"
+    }
+  },
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
     "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",

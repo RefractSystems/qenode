@@ -312,6 +312,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e GCOV_PREFIX=/workspace/coverage-data \
+            -e GCOV_PREFIX_STRIP=3 \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "${{ matrix.cmd }}"
 
@@ -428,7 +429,7 @@ jobs:
           load: true
 
       - name: Download all coverage artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: all-coverage
           pattern: results-phase-*
@@ -442,15 +443,20 @@ jobs:
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c '
               mkdir -p /workspace/test-results
-              # gcovr can find .gcda files in the mounted coverage directory
-              # We need to tell it where the source files are (/build/qemu/hw/virtmcu)
-              # and where the object files/gcda files are (/workspace/all-coverage)
+              # Ensure the directory exists to avoid gcovr error if no artifacts found
+              mkdir -p /workspace/all-coverage
+              
+              # gcovr searches for .gcno files in --object-directory
+              # and .gcda files in positional arguments or --object-directory.
+              # We pass /workspace/all-coverage as a positional search path.
               gcovr -r /build/qemu/hw/virtmcu \
                 --gcov-executable gcov \
-                --object-directory /workspace/all-coverage \
+                --gcov-ignore-errors=no_working_dir_found \
+                --object-directory /build/qemu/build-virtmcu \
                 --xml /workspace/test-results/peripheral-coverage.xml \
                 --html-details /workspace/test-results/peripheral-coverage.html \
-                --print-summary
+                --print-summary \
+                /workspace/all-coverage
             '
 
       - name: Upload peripheral coverage results

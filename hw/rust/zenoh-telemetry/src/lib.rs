@@ -150,7 +150,11 @@ unsafe extern "C" fn zenoh_telemetry_realize(dev: *mut c_void, errp: *mut *mut c
 
     unsafe {
         GLOBAL_TELEMETRY = s;
-        object_child_foreach_recursive(object_get_root(), cache_irq_paths_cb, ptr::null_mut());
+        object_child_foreach_recursive(
+            object_get_root(),
+            Some(cache_irq_paths_cb),
+            ptr::null_mut(),
+        );
         virtmcu_cpu_halt_hook = Some(telemetry_cpu_halt_cb);
         virtmcu_irq_hook = Some(telemetry_irq_cb);
     }
@@ -332,3 +336,4 @@ fn telemetry_worker(rx: Receiver<Option<TraceEvent>>, session: Session, topic: S
         let _ = publisher.put(buf).wait();
     }
 }
+// force rebuild

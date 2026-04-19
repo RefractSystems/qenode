@@ -52,7 +52,8 @@ struct ReplyContext {
 
 static void on_reply(z_loaned_reply_t *reply, void *context)
 {
-    auto *ctx = static_cast<ReplyContext *>(context);
+    auto *ctx_shared_ptr = static_cast<std::shared_ptr<ReplyContext> *>(context);
+    ReplyContext *ctx = ctx_shared_ptr->get();
     std::lock_guard<std::mutex> lock(ctx->mtx);
 
     if (z_reply_is_ok(reply)) {
@@ -107,6 +108,13 @@ int main(int argc, char *argv[])
     /* ── Open Zenoh session ──────────────────────────────────────────── */
     z_owned_config_t  config;
     z_config_default(&config);
+    
+    /* Support ZENOH_CONNECT env var for easy testing/deployment locators */
+    const char* connect_env = std::getenv("ZENOH_CONNECT");
+    if (connect_env) {
+        zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", connect_env);
+    }
+
     z_owned_session_t session;
     if (z_open(&session, z_move(config), NULL) != 0) {
         std::cerr << "[RESD Replay] Failed to open Zenoh session\n";
@@ -159,12 +167,17 @@ int main(int argc, char *argv[])
         z_get_options_default(&options);
         options.payload = z_move(req_bytes);
 
-        /* ReplyContext is shared_ptr so the Zenoh thread never touches freed
-         * memory even if we time-out and move to the next iteration. */
+        /* 
+         * Use a heap-allocated shared_ptr to ensure the context lives as long
+         * as Zenoh might call the callback OR the drop function.
+         */
         auto ctx = std::make_shared<ReplyContext>();
+        auto *ctx_ptr = new std::shared_ptr<ReplyContext>(ctx);
 
         z_owned_closure_reply_t callback;
-        z_closure_reply(&callback, on_reply, NULL, ctx.get());
+        z_closure_reply(&callback, on_reply, 
+            [](void* p){ delete static_cast<std::shared_ptr<ReplyContext>*>(p); }, 
+            ctx_ptr);
 
         z_get(z_session_loan(&session), z_keyexpr_loan(&ke), "",
               z_move(callback), &options);
@@ -175,11 +188,11 @@ int main(int argc, char *argv[])
             if (!ctx->cv.wait_for(lock, std::chrono::seconds(5),
                                   [&] { return ctx->received; })) {
                 std::cerr << "[RESD Replay] Timeout waiting for QEMU\n";
-                break;
+                return 1;
             }
             if (!ctx->success) {
                 std::cerr << "[RESD Replay] Error reply from QEMU\n";
-                break;
+                return 1;
             }
             current_vtime = ctx->current_vtime_ns;
         }

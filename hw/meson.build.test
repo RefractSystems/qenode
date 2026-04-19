@@ -1,0 +1,5 @@
+hw_virtmcu_modules = {}
+test_devices_ss = ss.source_set()
+test_devices_ss.add(files('rust/virtmcu-test-devices/trigger.c'))
+hw_virtmcu_modules += {'test-devices': test_devices_ss}
+modules += {'hw-virtmcu': hw_virtmcu_modules}

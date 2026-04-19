@@ -19,49 +19,27 @@ using namespace sc_core;
 using namespace sc_dt;
 using namespace std;
 
-// Forward declaration
-class QemuAdapter;
-
-// 1. Simple Register File SystemC Module
-SC_MODULE(RegisterFile) {
-    tlm_utils::simple_target_socket<RegisterFile> socket;
-    uint32_t regs[256];
-    QemuAdapter* adapter;
-
-    SC_CTOR(RegisterFile) : socket("socket"), adapter(nullptr) {
-        socket.register_b_transport(this, &RegisterFile::b_transport);
-        for (int i = 0; i < 256; i++) regs[i] = 0;
-    }
-
-    void b_transport(tlm::tlm_generic_payload& trans, sc_time& delay);
-};
-
-/*
- * 2. Multi-threaded QEMU to TLM Adapter
- */
-
-class AsyncEvent : public sc_prim_channel {
-    sc_event e;
+class AsyncEvent : public sc_core::sc_prim_channel {
+    sc_core::sc_event e;
 public:
-    AsyncEvent() : sc_prim_channel(sc_gen_unique_name("safe_event")) {}
+    AsyncEvent() : sc_core::sc_prim_channel(sc_core::sc_gen_unique_name("safe_event")) {}
     void notify_from_os_thread() {
         async_request_update();
     }
     void update() override {
-        e.notify(SC_ZERO_TIME);
+        e.notify(sc_core::SC_ZERO_TIME);
     }
-    const sc_event& default_event() const {
+    const sc_core::sc_event& default_event() const {
         return e;
     }
 };
 
-class StopEvent : public sc_prim_channel {
+class StopEvent : public sc_core::sc_prim_channel {
 public:
-    StopEvent() : sc_prim_channel(sc_gen_unique_name("stop_event")) {}
+    StopEvent() : sc_core::sc_prim_channel(sc_core::sc_gen_unique_name("stop_event")) {}
     void notify_from_os_thread() { async_request_update(); }
-    void update() override { sc_stop(); }
+    void update() override { sc_core::sc_stop(); }
 };
-
 SC_MODULE(QemuAdapter) {
     tlm_utils::simple_initiator_socket<QemuAdapter> socket;
     std::string socket_path;
@@ -88,13 +66,6 @@ SC_MODULE(QemuAdapter) {
         client_fd(-1), running(true), has_resp(false) 
     {
         SC_THREAD(systemc_thread);
-        SC_THREAD(keep_alive_thread);
-    }
-
-    void keep_alive_thread() {
-        while (running) {
-            wait(1000000, SC_SEC);
-        }
     }
 
     void trigger_irq(uint32_t irq_num, bool level) {
@@ -105,11 +76,12 @@ SC_MODULE(QemuAdapter) {
         send_msg(msg);
     }
 
-    void send_msg(const sysc_msg& msg) {
+    bool send_msg(const sysc_msg& msg) {
         std::lock_guard<std::mutex> lock(socket_mtx);
         if (client_fd >= 0) {
-            writen_sync(client_fd, &msg, sizeof(msg));
+            return writen_sync(client_fd, &msg, sizeof(msg));
         }
+        return false;
     }
 
     bool writen_sync(int fd, const void* buf, size_t len) {
@@ -125,16 +97,28 @@ SC_MODULE(QemuAdapter) {
         return true;
     }
 
+    bool readn(int fd, void* buf, size_t len) {
+        char* p = static_cast<char*>(buf);
+        while (len > 0) {
+            ssize_t n = ::read(fd, p, len);
+            if (n <= 0) {
+                if (n < 0 && errno == EINTR) continue;
+                return false;
+            }
+            p += n; len -= n;
+        }
+        return true;
+    }
+
     void end_of_elaboration() override {
         io_thread = std::thread(&QemuAdapter::socket_thread, this);
     }
 
     ~QemuAdapter() {
         running = false;
-        safe_event.notify_from_os_thread(); // Wake up systemc if waiting
+        safe_event.notify_from_os_thread(); 
         if (client_fd >= 0) {
             shutdown(client_fd, SHUT_RDWR);
-            close(client_fd);
         }
         if (io_thread.joinable()) io_thread.join();
     }
@@ -146,17 +130,22 @@ SC_MODULE(QemuAdapter) {
             
             while (true) {
                 mmio_req req;
+                bool found = false;
                 {
                     std::lock_guard<std::mutex> lock(mtx);
-                    if (req_queue.empty()) break;
-                    req = req_queue.front();
-                    req_queue.pop();
+                    if (!req_queue.empty()) {
+                        req = req_queue.front();
+                        req_queue.pop();
+                        found = true;
+                    }
                 }
+                if (!found) break;
 
-                // Clock sync: advance SystemC time to match QEMU's vtime_ns
                 sc_time target_time = sc_time(req.vtime_ns, SC_NS);
                 if (target_time > sc_time_stamp()) {
                     wait(target_time - sc_time_stamp());
+                } else if (target_time < sc_time_stamp()) {
+                    cerr << "[QemuAdapter] WARNING: Time regression! target=" << req.vtime_ns << " ns, current=" << sc_time_stamp().to_double() << " ns" << endl;
                 }
 
                 tlm::tlm_generic_payload trans;
@@ -172,22 +161,21 @@ SC_MODULE(QemuAdapter) {
                 uint64_t data_buf = req.data;
                 trans.set_data_ptr((unsigned char*)&data_buf);
 
-                if (req.type == MMIO_REQ_READ) {
-                    trans.set_command(tlm::TLM_READ_COMMAND);
-                } else {
-                    trans.set_command(tlm::TLM_WRITE_COMMAND);
-                }
+                if (req.type == MMIO_REQ_READ) trans.set_command(tlm::TLM_READ_COMMAND);
+                else trans.set_command(tlm::TLM_WRITE_COMMAND);
 
-                socket->b_transport(trans, delay);
-                wait(delay);
+                if (req.size > 4 || req.size == 0) {
+                    cerr << "[QemuAdapter] ERROR: Unsupported size " << (int)req.size << endl;
+                    trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
+                } else {
+                    socket->b_transport(trans, delay);
+                    wait(delay);
+                }
 
                 sysc_msg resp = {0};
                 resp.type = SYSC_MSG_RESP;
-                if (req.type == MMIO_REQ_READ && trans.is_response_ok()) {
-                    resp.data = data_buf;
-                } else {
-                    resp.data = 0;
-                }
+                if (req.type == MMIO_REQ_READ && trans.is_response_ok()) resp.data = data_buf;
+                else resp.data = 0;
 
                 {
                     std::lock_guard<std::mutex> lock(mtx);
@@ -209,80 +197,64 @@ SC_MODULE(QemuAdapter) {
         strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
         unlink(socket_path.c_str());
-        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) return;
-        if (listen(server_fd, 1) < 0) return;
+        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(server_fd); return; }
+        if (listen(server_fd, 1) < 0) { close(server_fd); return; }
 
         cout << "[SystemC] Listening on " << socket_path << "..." << endl;
 
-        client_fd = accept(server_fd, NULL, NULL);
-        if (client_fd < 0) return;
-
-        auto readn = [](int fd, void* buf, size_t len) -> bool {
-            char* p = static_cast<char*>(buf);
-            while (len > 0) {
-                ssize_t n = ::read(fd, p, len);
-                if (n <= 0) {
-                    if (n < 0 && errno == EINTR) continue;
-                    return false;
-                }
-                p += n; len -= n;
-            }
-            return true;
-        };
-
-        virtmcu_handshake hs_in;
-        if (!readn(client_fd, &hs_in, sizeof(hs_in))) {
-            cerr << "[SystemC] Failed to read handshake from QEMU." << endl;
-            close(client_fd); client_fd = -1; return;
-        }
-
-        if (hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION) {
-            cerr << "[SystemC] Handshake mismatch: expected magic 0x" << hex << VIRTMCU_PROTO_MAGIC
-                 << " version " << dec << VIRTMCU_PROTO_VERSION << ", got magic 0x" << hex << hs_in.magic
-                 << " version " << dec << hs_in.version << endl;
-            close(client_fd); client_fd = -1; return;
-        }
-
-        virtmcu_handshake hs_out = { VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION };
-        writen_sync(client_fd, &hs_out, sizeof(hs_out));
-
-        cout << "[SystemC] QEMU connected and handshake successful." << endl;
-
         while (running) {
-            mmio_req req;
-            if (!readn(client_fd, &req, sizeof(req))) break;
+            client_fd = accept(server_fd, NULL, NULL);
+            if (client_fd < 0) { if (running) perror("accept"); break; }
 
-            {
-                std::lock_guard<std::mutex> lock(mtx);
-                req_queue.push(req);
-                has_resp = false;
+            virtmcu_handshake hs_in;
+            if (!readn(client_fd, &hs_in, sizeof(hs_in))) { close(client_fd); client_fd = -1; continue; }
+            if (hs_in.magic != VIRTMCU_PROTO_MAGIC) { close(client_fd); client_fd = -1; continue; }
+
+            virtmcu_handshake hs_out = { VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION };
+            writen_sync(client_fd, &hs_out, sizeof(hs_out));
+            cout << "[SystemC] QEMU connected." << endl;
+
+            while (running) {
+                mmio_req req;
+                if (!readn(client_fd, &req, sizeof(req))) break;
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    req_queue.push(req);
+                    has_resp = false;
+                }
+                safe_event.notify_from_os_thread();
+                sysc_msg resp;
+                {
+                    std::unique_lock<std::mutex> lock(mtx);
+                    cv.wait(lock, [this]() { return has_resp || !running; });
+                    if (!running) break;
+                    resp = resp_msg;
+                    has_resp = false;
+                }
+                if (!send_msg(resp)) break;
             }
-            
-            safe_event.notify_from_os_thread();
-
-            // Wait for response from SystemC thread
-            sysc_msg resp;
-            {
-                std::unique_lock<std::mutex> lock(mtx);
-                cv.wait(lock, [this]() { return has_resp || !running; });
-                if (!running) break;
-                resp = resp_msg;
-                has_resp = false;
-            }
-
-            send_msg(resp);
+            close(client_fd); client_fd = -1;
+            cout << "[SystemC] QEMU disconnected." << endl;
         }
-
-        cout << "[SystemC] OS thread exiting." << endl;
-        running = false;
-        safe_event.notify_from_os_thread();
-        close(client_fd);
-        client_fd = -1;
         close(server_fd);
         unlink(socket_path.c_str());
-        
         stop_event.notify_from_os_thread();
     }
+};
+
+
+// 1. Simple Register File SystemC Module
+SC_MODULE(RegisterFile) {
+    tlm_utils::simple_target_socket<RegisterFile> socket;
+    uint32_t regs[256];
+    QemuAdapter* adapter;
+
+    SC_CTOR(RegisterFile) : socket("socket"), adapter(nullptr) {
+        socket.register_b_transport(this, &RegisterFile::b_transport);
+        for (int i = 0; i < 256; i++) regs[i] = 0;
+    }
+
+    void b_transport(tlm::tlm_generic_payload& trans, sc_time& delay);
 };
 
 void RegisterFile::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay) {
@@ -313,7 +285,6 @@ void RegisterFile::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay) 
         regs[reg_idx] = val;
         cout << "[SystemC] Wrote " << hex << val << " to reg " << dec << reg_idx << " (addr " << adr << ")" << endl;
         
-        // Trigger IRQ 0 if writing to reg 255
         if (reg_idx == 255 && adapter) {
             adapter->trigger_irq(0, val != 0);
         }
@@ -324,13 +295,6 @@ void RegisterFile::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay) 
 
 // --- Educational CAN-lite Model ---
 
-/**
- * CAN Wire Format (20 bytes):
- * Bytes 0-7:   delivery_vtime_ns (uint64_t)
- * Bytes 8-11:  size (uint32_t, always 8 for CAN-lite)
- * Bytes 12-15: can_id (uint32_t)
- * Bytes 16-19: can_data (uint32_t)
- */
 struct CanWireFrame {
     uint64_t delivery_vtime_ns;
     uint32_t size;
@@ -388,9 +352,7 @@ public:
         snprintf(topic_tx, sizeof(topic_tx), "sim/systemc/frame/%s/tx", node_id.c_str());
         z_owned_keyexpr_t kexpr_tx;
         z_keyexpr_from_str(&kexpr_tx, topic_tx);
-        if (z_declare_publisher(z_session_loan(&session), &pub, z_keyexpr_loan(&kexpr_tx), NULL) != 0) {
-            cerr << "[SharedMedium] Failed to declare publisher" << endl;
-        }
+        z_declare_publisher(z_session_loan(&session), &pub, z_keyexpr_loan(&kexpr_tx), NULL);
         z_keyexpr_drop(z_move(kexpr_tx));
 
         char topic_rx[128];
@@ -399,9 +361,7 @@ public:
         z_closure_sample(&callback, on_zenoh_rx, NULL, this);
         z_owned_keyexpr_t kexpr_rx;
         z_keyexpr_from_str(&kexpr_rx, topic_rx);
-        if (z_declare_subscriber(z_session_loan(&session), &sub, z_keyexpr_loan(&kexpr_rx), z_move(callback), NULL) != 0) {
-            cerr << "[SharedMedium] Failed to declare subscriber" << endl;
-        }
+        z_declare_subscriber(z_session_loan(&session), &sub, z_keyexpr_loan(&kexpr_rx), z_move(callback), NULL);
         z_keyexpr_drop(z_move(kexpr_rx));
     }
 
@@ -437,8 +397,12 @@ public:
     }
 
     void process_rx() {
-        while (true) {
-            wait(rx_async_event.default_event());
+        while (running) {
+            if (rx_queue.empty()) {
+                wait(rx_async_event.default_event());
+            }
+            if (!running) break;
+
             while (true) {
                 CanInternalFrame internal;
                 {
@@ -448,10 +412,12 @@ public:
                     rx_queue.pop();
                 }
 
-                // Deterministic wait: wait until delivery time
                 sc_time delivery_time = sc_time(internal.delivery_vtime_ns, SC_NS);
                 if (delivery_time > sc_time_stamp()) {
                     wait(delivery_time - sc_time_stamp());
+                } else if (delivery_time < sc_time_stamp()) {
+                    cerr << "[SharedMedium] LATE FRAME! delivery=" << internal.delivery_vtime_ns << " ns, current=" << sc_time_stamp().to_double() << " ns. DROPPING." << endl;
+                    continue; 
                 }
 
                 self_deliver(internal.frame);
@@ -463,12 +429,11 @@ public:
 
     void transmit(CanFrame frame) {
         CanWireFrame wire = {
-            .delivery_vtime_ns = (uint64_t)sc_time_stamp().to_double(), // SystemC time in NS
+            .delivery_vtime_ns = (uint64_t)sc_time_stamp().to_double(),
             .size = 8,
             .can_id = frame.id,
             .can_data = frame.data
         };
-
         {
             std::lock_guard<std::mutex> lock(tx_mtx);
             tx_queue.push(wire);
@@ -486,7 +451,6 @@ public:
                 wire = tx_queue.front();
                 tx_queue.pop();
             }
-
             z_owned_bytes_t payload;
             z_bytes_copy_from_buf(&payload, (uint8_t*)&wire, sizeof(wire));
             z_publisher_put(z_publisher_loan(&pub), z_move(payload), NULL);
@@ -501,15 +465,21 @@ public:
     SharedMedium* bus;
 
     uint32_t tx_id, tx_data;
-    uint32_t rx_id, rx_data;
-    uint32_t status; // bit 0: rx_pending, bit 1: tx_ready
+    uint32_t status; 
+
+    struct RxFrame {
+        uint32_t id;
+        uint32_t data;
+    };
+    std::queue<RxFrame> rx_fifo;
+    static const size_t FIFO_SIZE = 16;
 
     sc_event rx_event;
 
     SC_HAS_PROCESS(CanController);
     CanController(sc_module_name name) : sc_module(name), socket("socket"), adapter(nullptr), bus(nullptr) {
         socket.register_b_transport(this, &CanController::b_transport);
-        tx_id = 0; tx_data = 0; rx_id = 0; rx_data = 0;
+        tx_id = 0; tx_data = 0;
         status = 2; // tx_ready
         SC_METHOD(on_rx);
         dont_initialize();
@@ -518,10 +488,13 @@ public:
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_time& delay);
     void receive_frame(CanFrame frame) {
-        rx_id = frame.id;
-        rx_data = frame.data;
-        status |= 1; // rx_pending
-        rx_event.notify(SC_ZERO_TIME);
+        if (rx_fifo.size() < FIFO_SIZE) {
+            rx_fifo.push({frame.id, frame.data});
+            status |= 1; 
+            rx_event.notify(SC_ZERO_TIME);
+        } else {
+            cerr << "[CanController] FIFO OVERFLOW!" << endl;
+        }
     }
     void on_rx() {
         if (adapter) {
@@ -538,14 +511,9 @@ void SharedMedium::self_deliver(CanFrame frame) {
 
 void CanController::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay) {
     tlm::tlm_command cmd = trans.get_command();
-    uint64_t         adr = trans.get_address();
-    unsigned char*   ptr = trans.get_data_ptr();
-    unsigned int     len = trans.get_data_length();
-
-    if (len > 4) {
-        trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
-        return;
-    }
+    uint64_t adr = trans.get_address();
+    unsigned char* ptr = trans.get_data_ptr();
+    unsigned int len = trans.get_data_length();
 
     if (cmd == tlm::TLM_READ_COMMAND) {
         uint32_t val = 0;
@@ -553,16 +521,12 @@ void CanController::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay)
         if (adr == 0x00) val = tx_id;
         else if (adr == 0x04) val = tx_data;
         else if (adr == 0x0C) val = status;
-        else if (adr == 0x10) val = rx_id;
-        else if (adr == 0x14) val = rx_data;
+        else if (adr == 0x10) { if (!rx_fifo.empty()) val = rx_fifo.front().id; }
+        else if (adr == 0x14) { if (!rx_fifo.empty()) val = rx_fifo.front().data; }
         else addr_ok = false;
 
-        if (addr_ok) {
-            memcpy(ptr, &val, len);
-            trans.set_response_status(tlm::TLM_OK_RESPONSE);
-        } else {
-            trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
-        }
+        if (addr_ok) { memcpy(ptr, &val, len); trans.set_response_status(tlm::TLM_OK_RESPONSE); }
+        else trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
     } else if (cmd == tlm::TLM_WRITE_COMMAND) {
         uint32_t val = 0;
         memcpy(&val, ptr, len);
@@ -575,9 +539,12 @@ void CanController::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay)
                 bus->transmit(frame);
             }
         } else if (adr == 0x18) {
-            status &= ~1;
-            if (adapter) {
-                adapter->trigger_irq(0, false);
+            if (!rx_fifo.empty()) rx_fifo.pop();
+            if (rx_fifo.empty()) {
+                status &= ~1;
+                if (adapter) adapter->trigger_irq(0, false);
+            } else {
+                rx_event.notify(SC_ZERO_TIME);
             }
         } else {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
@@ -593,12 +560,10 @@ int sc_main(int argc, char* argv[]) {
         cerr << "Usage: " << argv[0] << " <socket_path> [node_id]" << endl;
         return 1;
     }
-
     std::string socket_path = argv[1];
     std::string node_id = (argc > 2) ? argv[2] : "";
 
     QemuAdapter adapter("adapter", socket_path);
-
     RegisterFile* regfile = nullptr;
     CanController* can = nullptr;
     SharedMedium* bus = nullptr;
@@ -617,11 +582,13 @@ int sc_main(int argc, char* argv[]) {
     }
 
     while (adapter.running) {
-        sc_start(100, SC_MS);
+        sc_start(); 
+        if (adapter.running) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
-    
     if (regfile) delete regfile;
-    if (bus)     delete bus;
-    if (can)     delete can;
+    if (bus) delete bus;
+    if (can) delete can;
     return 0;
 }

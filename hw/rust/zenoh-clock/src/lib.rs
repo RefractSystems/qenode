@@ -15,10 +15,11 @@
 use core::ffi::{c_char, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, CLOCK_ERROR_OK, CLOCK_ERROR_STALL};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -81,6 +82,17 @@ pub struct ZenohClockBackend {
     delta_ns: AtomicU64,
     vtime_ns: AtomicU64,
     mujoco_time_ns: AtomicU64,
+    stall_count: AtomicU64,
+
+    /* Profiling state */
+    total_bql_wait_ns: AtomicU64,
+    total_iterations: AtomicU64,
+    total_no_bql_iterations: AtomicU64,
+    last_report_time: Mutex<Instant>,
+    start_time: Instant,
+
+    /* Lifecycle */
+    shutdown: AtomicBool,
 }
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
@@ -121,11 +133,27 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
             unsafe { virtmcu_qom::sync::Bql::unlock() };
         }
 
-        let delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
+        let raw_delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
+        // On stall the sentinel is returned; treat as zero advance (hold position).
+        let delta = if raw_delta == QUANTUM_WAIT_STALL_SENTINEL {
+            0
+        } else {
+            raw_delta
+        };
 
         if was_locked {
+            let bql_start = Instant::now();
             let _bql = virtmcu_qom::sync::Bql::lock();
+            let bql_wait = bql_start.elapsed().as_nanos() as u64;
+            backend
+                .total_bql_wait_ns
+                .fetch_add(bql_wait, Ordering::Relaxed);
+            backend.total_iterations.fetch_add(1, Ordering::Relaxed);
             std::mem::forget(_bql);
+        } else {
+            backend
+                .total_no_bql_iterations
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // 1. Advance virtual clock manually if requested by TA.
@@ -157,12 +185,30 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
     }
 }
 
+/// Return value of `zenoh_clock_quantum_wait_internal`: delta_ns on success,
+/// or `u64::MAX` as a sentinel indicating a stall timeout.
+const QUANTUM_WAIT_STALL_SENTINEL: u64 = u64::MAX;
+
 fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> u64 {
+    // Runtime assertion (not just debug_assert): BQL must NOT be held here.
+    // Violating this causes a deadlock when on_clock_query tries to reply.
+    if unsafe { virtmcu_qom::sync::virtmcu_bql_locked() } {
+        // We only warn if the VM is actually running. During initialization or
+        // teardown (teardown_cpus), hooks might be called with BQL held from
+        // the main thread; since sync is bypassed anyway, logging is just noise.
+        if virtmcu_qom::sysemu::runstate_is_running() {
+            virtmcu_qom::vlog!(
+                "[zenoh-clock] WARNING: BQL held entering quantum_wait — would deadlock. Skipping sync.\n"
+            );
+        }
+        return QUANTUM_WAIT_STALL_SENTINEL;
+    }
+
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
     backend.quantum_done.store(true, Ordering::SeqCst);
 
     {
-        let _guard = backend.mutex.lock().unwrap();
+        let _guard = backend.mutex.lock().unwrap_or_else(|p| p.into_inner());
         backend.cond.notify_all();
     }
 
@@ -178,15 +224,24 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
     }
 
     if !backend.quantum_ready.load(Ordering::SeqCst) {
-        let mut guard = backend.mutex.lock().unwrap();
+        let mut guard = backend.mutex.lock().unwrap_or_else(|p| p.into_inner());
         while !backend.quantum_ready.load(Ordering::SeqCst) {
             let (new_guard, result) = backend
                 .cond
                 .wait_timeout(guard, Duration::from_millis(100))
-                .unwrap();
+                .unwrap_or_else(|p| p.into_inner());
             guard = new_guard;
             if result.timed_out() && start.elapsed() > timeout {
-                break;
+                backend.stall_count.fetch_add(1, Ordering::Relaxed);
+                virtmcu_qom::vlog!(
+                    "[virtmcu-clock] STALL: no clock-advance reply after {} ms (stall #{}). \
+                     Time authority may be lagging. Continuing without sync.\n",
+                    backend.stall_timeout_ms,
+                    backend.stall_count.load(Ordering::Relaxed)
+                );
+                // Reset handshake flags so the next quantum attempt starts clean.
+                backend.quantum_done.store(false, Ordering::SeqCst);
+                return QUANTUM_WAIT_STALL_SENTINEL;
             }
         }
     }
@@ -206,8 +261,9 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     }
 
     let payload_bytes = payload.to_bytes();
-    let delta = u64::from_le_bytes(payload_bytes[0..8].try_into().unwrap());
-    let mujoco = u64::from_le_bytes(payload_bytes[8..16].try_into().unwrap());
+    let req = unsafe { std::ptr::read_unaligned(payload_bytes.as_ptr() as *const ClockAdvanceReq) };
+    let delta = req.delta_ns;
+    let mujoco = req.mujoco_time_ns;
 
     let start = Instant::now();
     let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
@@ -221,14 +277,38 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     }
 
     if !backend.quantum_done.load(Ordering::SeqCst) {
-        let mut guard = backend.mutex.lock().unwrap();
+        let mut guard = backend.mutex.lock().unwrap_or_else(|p| p.into_inner());
         while !backend.quantum_done.load(Ordering::SeqCst) {
             let (new_guard, result) = backend
                 .cond
                 .wait_timeout(guard, Duration::from_millis(100))
-                .unwrap();
+                .unwrap_or_else(|p| p.into_inner());
             guard = new_guard;
             if result.timed_out() && start.elapsed() > timeout {
+                // Stall on the TA side: QEMU did not reach a quantum boundary in time.
+                // Reply with STALL so the time authority knows to retry.
+                let stalls = backend.stall_count.fetch_add(1, Ordering::Relaxed) + 1;
+                virtmcu_qom::vlog!(
+                    "[virtmcu-clock] TA-side stall: QEMU did not reach quantum boundary after {} ms (stall #{}).\n",
+                    backend.stall_timeout_ms,
+                    stalls,
+                );
+                let resp = ClockReadyResp {
+                    current_vtime_ns: backend.vtime_ns.load(Ordering::SeqCst),
+                    n_frames: 0,
+                    error_code: CLOCK_ERROR_STALL,
+                };
+                let mut resp_bytes = [0u8; 16];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &resp as *const ClockReadyResp as *const u8,
+                        resp_bytes.as_mut_ptr(),
+                        16,
+                    );
+                }
+                std::thread::spawn(move || {
+                    let _ = query.reply(query.key_expr(), resp_bytes.as_slice()).wait();
+                });
                 return;
             }
         }
@@ -242,21 +322,14 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     backend.quantum_ready.store(true, Ordering::SeqCst);
 
     {
-        let _guard = backend.mutex.lock().unwrap();
+        let _guard = backend.mutex.lock().unwrap_or_else(|p| p.into_inner());
         backend.cond.notify_all();
     }
 
-    #[repr(C)]
-    struct ClockReadyResp {
-        vtime_ns: u64,
-        n_frames: u32,
-        error_code: u32,
-    }
-
     let resp = ClockReadyResp {
-        vtime_ns: reached_vtime,
+        current_vtime_ns: reached_vtime,
         n_frames: 0,
-        error_code: 0,
+        error_code: CLOCK_ERROR_OK,
     };
 
     let mut resp_bytes = [0u8; 16];
@@ -284,7 +357,11 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
         CStr::from_ptr(s.mode).to_str().unwrap_or("slaved-suspend")
     };
 
-    if mode_str != "icount" && mode_str != "suspend" && mode_str != "slaved-suspend" {
+    if mode_str != "icount"
+        && mode_str != "slaved-icount"
+        && mode_str != "suspend"
+        && mode_str != "slaved-suspend"
+    {
         return;
     }
 
@@ -337,6 +414,30 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohClock);
     if !s.rust_state.is_null() {
+        let backend = unsafe { &*s.rust_state };
+        // Signal heartbeat thread to exit before we free the backend.
+        backend.shutdown.store(true, Ordering::Release);
+
+        let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
+        let iterations = backend.total_iterations.load(Ordering::Relaxed);
+        let no_bql = backend.total_no_bql_iterations.load(Ordering::Relaxed);
+        if iterations > 0 || no_bql > 0 {
+            let elapsed = backend.start_time.elapsed().as_secs_f64();
+            let avg_wait_us = if iterations > 0 {
+                (total_wait as f64 / iterations as f64) / 1000.0
+            } else {
+                0.0
+            };
+            let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
+            vlog!(
+                "[zenoh-clock] FINAL BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {}, no_bql: {})\n",
+                contention,
+                avg_wait_us,
+                iterations,
+                no_bql
+            );
+        }
+
         unsafe {
             drop(Box::from_raw(s.rust_state));
         }
@@ -426,6 +527,13 @@ fn zenoh_clock_init_internal(
         delta_ns: AtomicU64::new(0),
         vtime_ns: AtomicU64::new(0),
         mujoco_time_ns: AtomicU64::new(0),
+        stall_count: AtomicU64::new(0),
+        total_bql_wait_ns: AtomicU64::new(0),
+        total_iterations: AtomicU64::new(0),
+        total_no_bql_iterations: AtomicU64::new(0),
+        last_report_time: Mutex::new(Instant::now()),
+        start_time: Instant::now(),
+        shutdown: AtomicBool::new(false),
     });
 
     let backend_ptr = Box::into_raw(backend) as usize;
@@ -448,14 +556,49 @@ fn zenoh_clock_init_internal(
 
     std::mem::forget(queryable);
 
-    // Heartbeat thread
+    // Heartbeat thread — exits when backend.shutdown is set by instance_finalize.
     let hb_session = session.clone();
     let node_id_hb = node_id;
-    std::thread::spawn(move || loop {
-        let topic = format!("sim/clock/heartbeat/{}", node_id_hb);
-        let _ = hb_session.put(topic, vec![1]).wait();
-        std::thread::sleep(Duration::from_millis(1000));
-    });
+    let backend_ptr_hb = backend_ptr;
+    std::thread::Builder::new()
+        .name(format!("zenoh-clock-hb-{}", node_id_hb))
+        .spawn(move || loop {
+            let backend = unsafe { &*(backend_ptr_hb as *const ZenohClockBackend) };
+            if backend.shutdown.load(Ordering::Acquire) {
+                break;
+            }
+
+            let topic = format!("sim/clock/heartbeat/{}", node_id_hb);
+            let _ = hb_session.put(topic, vec![1]).wait();
+
+            let iterations = backend.total_iterations.load(Ordering::Relaxed);
+            let no_bql = backend.total_no_bql_iterations.load(Ordering::Relaxed);
+            if iterations > 0 || no_bql > 0 {
+                let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
+                let mut last_report = backend.last_report_time.lock().unwrap_or_else(|p| p.into_inner());
+                let elapsed = last_report.elapsed().as_secs_f64();
+
+                if elapsed >= 1.0 {
+                    let avg_wait_us = if iterations > 0 {
+                        (total_wait as f64 / iterations as f64) / 1000.0
+                    } else {
+                        0.0
+                    };
+                    let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
+
+                    vlog!("[zenoh-clock] BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {}, no_bql: {})\n",
+                        contention, avg_wait_us, iterations, no_bql);
+
+                    backend.total_bql_wait_ns.store(0, Ordering::Relaxed);
+                    backend.total_iterations.store(0, Ordering::Relaxed);
+                    backend.total_no_bql_iterations.store(0, Ordering::Relaxed);
+                    *last_report = Instant::now();
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(1000));
+        })
+        .expect("failed to spawn zenoh-clock heartbeat thread");
 
     backend_ptr as *mut ZenohClockBackend
 }

@@ -21,13 +21,13 @@ No guest NIC is required — the netdev backend operates independently and
 the delivery ordering is observable purely from QEMU's stderr.
 """
 
+import argparse
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
-import struct
-import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
@@ -167,7 +167,7 @@ def main():
             time.sleep(0.5)
 
         if not ready:
-            print(f"FAIL: Could not get valid initial clock state.", file=sys.stderr)
+            print("FAIL: Could not get valid initial clock state.", file=sys.stderr)
             # Dump stderr for debugging
             stderr_file.flush()
             with open(stderr_path) as f:

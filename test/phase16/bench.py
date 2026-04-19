@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -15,8 +16,18 @@ from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 # 10 ms quantums give ~30 RTT samples for the benchmark workload.
 QUANTUM_NS = 10_000_000
-MAX_QUANTUMS = 1000  # 5 s virtual cap
+MAX_QUANTUMS = 5000  # 50 s virtual cap
 STANDALONE_TIMEOUT = 30
+
+# IPS thresholds (PLAN §16.1). Values are MIPS; CI fails below the FAIL level.
+MIPS_THRESHOLDS = {
+    "standalone":    {"warn": 80,  "fail": 60},
+    "slaved-icount": {"warn": 15,  "fail": 10},
+}
+
+# Latency thresholds µs (PLAN §16.2). CI fails if either threshold is exceeded.
+LATENCY_P50_FAIL_US  = 500
+LATENCY_P99_FAIL_US  = 2_000
 
 
 def _free_port() -> int:
@@ -65,6 +76,7 @@ class BenchmarkRunner:
         self.exit_vtime_ns = 0
         self.wall_time = 0
         self.latencies = []
+        self.stall_count = 0
         self._exit_event = threading.Event()
         self._bench_done = False
 
@@ -135,6 +147,8 @@ class BenchmarkRunner:
             resp = unpack_rep(replies[0].ok.payload.to_bytes())
             if resp.error_code != 0:
                 print(f"  ERROR: [{self.mode}] quantum {q} — error_code={resp.error_code}")
+                if resp.error_code == 1:  # STALL
+                    self.stall_count += 1
                 break
 
             self.latencies.append((lat1 - lat0) * 1e3)
@@ -159,6 +173,7 @@ class BenchmarkRunner:
             self.exit_cycles = 0
             self.exit_vtime_ns = 0
             self.latencies = []
+            self.stall_count = 0
 
             cmd = [run_sh, "--dtb", self.dtb, "--kernel", self.kernel,
                    "-nographic", "-serial", "stdio", "-monitor", "none"]
@@ -262,8 +277,7 @@ def main():
         print("ERROR: slaved-icount run produced no CYCLES output")
         sys.exit(1)
 
-    # Determinism: firmware CNTVCT delta must be nearly identical across runs.
-    # In slaved-suspend mode with icount, we expect perfect cycle determinism.
+    # Determinism: firmware CNTVCT delta must be identical across runs.
     drift_threshold = 0
     if abs(r_ic.exit_cycles - r_ic2.exit_cycles) <= drift_threshold:
         print(f"Determinism          : PASSED  ({r_ic.exit_cycles:,} vs {r_ic2.exit_cycles:,} cycles)")
@@ -273,19 +287,69 @@ def main():
         sys.exit(1)
 
     # IPS: use Zenoh vtime (icount shift=0 → vtime_ns == instructions).
+    failures = []
+    json_results = []
+
+    mips_ic = 0.0
     if r_ic.exit_vtime_ns and r_ic.wall_time > 0:
-        mips = r_ic.exit_vtime_ns / r_ic.wall_time / 1e6
-        print(f"slaved-icount MIPS   : {mips:.1f}")
+        mips_ic = r_ic.exit_vtime_ns / r_ic.wall_time / 1e6
+        print(f"slaved-icount MIPS   : {mips_ic:.1f}")
+        record = {"mode": "slaved-icount", "mips": round(mips_ic, 1)}
+        json_results.append(record)
+        print(json.dumps(record))
+        thresh = MIPS_THRESHOLDS.get("slaved-icount")
+        if thresh and mips_ic < thresh["fail"]:
+            failures.append(
+                f"slaved-icount MIPS {mips_ic:.1f} < fail threshold {thresh['fail']}"
+            )
+
+    mips_sa = 0.0
     if r_sa.exit_cycles and r_sa.wall_time > 0 and r_ic.exit_vtime_ns:
-        # Use the icount vtime (verified instruction count) as the numerator;
-        # divide by the standalone wall time.  r_sa.exit_cycles reflects real
-        # time at CNTFRQ Hz which differs from the icount virtual clock, so
-        # mixing it with wall time would produce a meaningless ratio.
         mips_sa = r_ic.exit_vtime_ns / r_sa.wall_time / 1e6
         print(f"standalone MIPS (est): {mips_sa:.1f}")
+        record = {"mode": "standalone", "mips": round(mips_sa, 1)}
+        json_results.append(record)
+        print(json.dumps(record))
+        thresh = MIPS_THRESHOLDS.get("standalone")
+        if thresh and mips_sa < thresh["fail"]:
+            failures.append(
+                f"standalone MIPS {mips_sa:.1f} < fail threshold {thresh['fail']}"
+            )
 
+    # Latency thresholds (PLAN §16.2).
     if r_ic.latencies:
         print(f"Co-sim latency       : {latency_stats(r_ic.latencies)}")
+        sorted_lat = sorted(r_ic.latencies)
+        p50_us = _percentile(sorted_lat, 50) * 1_000
+        p99_us = _percentile(sorted_lat, 99) * 1_000
+        stall_count = r_ic.stall_count + r_ic2.stall_count
+        latency_record = {
+            "p50_us": round(p50_us, 1),
+            "p99_us": round(p99_us, 1),
+            "stalls": stall_count,
+        }
+        json_results.append(latency_record)
+        print(json.dumps(latency_record))
+        if p50_us > LATENCY_P50_FAIL_US:
+            failures.append(
+                f"P50 latency {p50_us:.0f} µs > fail threshold {LATENCY_P50_FAIL_US} µs"
+            )
+        if p99_us > LATENCY_P99_FAIL_US:
+            failures.append(
+                f"P99 latency {p99_us:.0f} µs > fail threshold {LATENCY_P99_FAIL_US} µs"
+            )
+        if stall_count > 0:
+            failures.append(f"clock stalls detected: {stall_count} (must be 0)")
+
+    # Persist results for trend tracking (Phase 16.5).
+    results_path = os.path.join(SCRIPT_DIR, "last_results.json")
+    with open(results_path, "w") as f:
+        json.dump(json_results, f, indent=2)
+
+    if failures:
+        for msg in failures:
+            print(f"THRESHOLD FAILURE: {msg}")
+        sys.exit(1)
 
     print("=== Phase 16 PASSED ===")
 

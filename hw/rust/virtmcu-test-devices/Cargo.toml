@@ -1,0 +1,11 @@
+[package]
+name = "virtmcu-test-devices"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+virtmcu-qom = { path = "../virtmcu-qom" }
+virtmcu-api = { path = "../virtmcu-api" }

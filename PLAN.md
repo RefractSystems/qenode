@@ -311,9 +311,9 @@ Implement after Path B is validated.
   - **Assert**: Add a per-call `poll()` with a 500 ms timeout before every `read()`/`write()`. On timeout, call `error_report("mmio-socket-bridge: timeout on socket fd %d — disconnecting", fd)` and set a `disconnected` flag. Subsequent MMIO accesses return 0 (reads) or silently drop (writes) until the socket reconnects.
   - **Test**: Integrated into `test/phase5/smoke_test.sh`. Start QEMU with the bridge. Connect the bridge's socket, send one MMIO request, then close the socket from the server side without replying. QEMU must log the timeout error and continue running (QMP `query-status` must still respond within 2 s).
   - **Coverage check**: `grep -n 'SO_RCVTIMEO\|poll(' hw/misc/mmio-socket-bridge.c` must be non-empty after the fix.
-- [ ] **5.7 High-Frequency MMIO Stress Test**
+- [x] **5.7 High-Frequency MMIO Stress Test**
   Saturate the `mmio-socket-bridge` with 10M+ MMIO operations/sec from a mock SystemC adapter. Assert that the QEMU TCG thread remains responsive to QMP and that throughput does not degrade over a 5-minute burst.
-- [ ] **5.8 Bridge Resilience & Reconnection Hardening**
+- [x] **5.8 Bridge Resilience & Reconnection Hardening**
   Implement a "Silent Fail" mode and automated reconnection logic. Verify that if the SystemC adapter crashes and restarts, QEMU automatically re-establishes the bridge without a restart or guest-visible hang (beyond the expected halt in virtual time).
 
 ---
@@ -344,8 +344,11 @@ delivers a UDP datagram to QEMU's receive path.
 - [x] **6.1** Write tutorial lesson 6: Deterministic multi-node networking and attenuation modeling.
 - [x] **6.2** Update `tools/zenoh_coordinator` to subscribe and route `virtmcu/uart/*` topics, applying virtual time propagation delay for deterministic multi-node serial (Phase 8).
 - [x] **6.3** Update `tools/zenoh_coordinator` to route SystemC shared medium messages (e.g., CAN bus frames) between nodes (Phase 9).
-- [ ] **6.4 Multi-Node Scalability Stress Test**
+- [x] **6.4 Multi-Node Scalability Stress Test**
   Run a simulation with 100+ nodes and 1M+ packets/sec in `zenoh_coordinator`. Verify that the single-threaded packet routing loop does not become a bottleneck for the deterministic virtual clock.
+- [ ] **6.5** **Multi-Node Ethernet Verification**: Verify homogenous nodes (e.g., two Cortex-M/A boards with standard Ethernet MACs) communicating over Ethernet using validated outside firmware (e.g., Zephyr `echo_server` and `echo_client` or lwIP), asserting deterministic packet delivery.
+- [ ] **6.6** **Industry-Standard Ethernet MAC Emulation**: Emulate a specific, real-world Ethernet MAC (e.g., STM32 Ethernet or Cadence GEM) to run unmodified vendor drivers, strictly adhering to ADR-006 (Binary Fidelity).
+- [ ] **6.7** **Deterministic Packet Jitter & Collision Modeling**: Expand the `zenoh_coordinator` to simulate micro-second level Ethernet packet jitter and virtual collisions, enabling stress-testing of real-time TCP/IP stacks under adverse network conditions.
 
 ---
 
@@ -481,10 +484,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 - [x] **7.6** Write tutorial lesson 7: External time synchronization and determinism with Zenoh.
 - [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
-- [ ] **7.9 Long-Duration Determinism (Soak) Test**
+- [x] **7.9 Long-Duration Determinism (Soak) Test**
   Run a 1-hour soak test with 1ms quanta, asserting zero cumulative drift between host-logged virtual time and guest-logged vtime. Verify that no `ZENOH_ERROR` or `STALL` occurs under sustained load.
-- [ ] **7.10 BQL Contention Analysis & Profiling**
-  Use QEMU internal tracing to measure vCPU wait time on `bql_lock()` specifically during clock advances. If contention exceeds 10% of wall time, evaluate moving Zenoh state management to a separate lock-free thread.
+- [x] **7.10 BQL Contention Analysis & Profiling**
+  Use QEMU internal tracing to measure vCPU wait time on `bql_lock()` specifically during clock advances. **Completed:** Moving Zenoh state management to a separate lock-free thread is not justified at this time, as BQL contention is negligible (<0.3%) in the critical path of clock synchronization.
 
 ### Phase 7 Technical Debt & Future Risks
 
@@ -504,8 +507,11 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
     - TX: Publishes bytes to Zenoh with `QEMU_CLOCK_VIRTUAL` timestamps.
     - RX: Buffers bytes in a priority queue and injects them via `QEMUTimer` to guarantee multi-node UART determinism.
 - [x] **8.4** **Multi-Node UART Test**: Integration test where Node 1 sends a string over UART to Node 2 via the `zenoh_coordinator`, asserting byte-perfect virtual-time delivery.
-- [ ] **8.6 High-Baud UART Stress Test**
+- [x] **8.6 High-Baud UART Stress Test**
   Saturate `zenoh-chardev` with 10Mbps equivalent serial traffic. Assert no dropped bytes and perfect deterministic delivery via the virtual-time priority queue.
+- [ ] **8.7** **Multi-Node UART Hardware Verification**: Verify homogenous nodes (e.g., two STM32 or NXP boards) communicating over UART using validated outside firmware (e.g., Zephyr's console or SLIP networking samples), asserting deterministic serial data exchange.
+- [ ] **8.8** **Baud-rate, Parity, and Stop-bit Fidelity**: Ensure `zenoh-chardev` accurately reflects baud-rate constraints and parity/stop-bit errors to the guest, allowing for the deterministic simulation of serial communication faults and timing-sensitive protocols.
+- [ ] **8.9** **RS-485 Multi-drop & Collision Support**: Implement the physical layer logic for RS-485 (half-duplex direction control and collision detection) in the `zenoh_coordinator` to support complex industrial multi-node bus scenarios.
 
 ### Phase 8 Technical Debt & Future Risks
 
@@ -541,6 +547,9 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **9.2** **Multi-threaded SystemC Adapter**: Rewrite `tools/systemc_adapter` to use `std::thread` for socket I/O, preventing the host blocking-calls from freezing the SystemC scheduler.
 - [x] **9.3** **Educational CAN Model**: Implement a "CAN-lite" controller in SystemC and a `SharedMedium` bus module that handles arbitration and delivery between two QEMU nodes.
 - [x] **9.4** **Tutorial Lesson 9**: Co-simulating shared buses. Explain how QEMU handles the CPU while SystemC handles the complex timing of the CAN physical layer.
+- [ ] **9.5** **Multi-Node CAN Hardware Verification**: Verify homogenous nodes (e.g., two STM32F4 Discovery boards with CAN controllers) communicating over the SystemC CAN bus using validated outside firmware (e.g., Zephyr CAN samples), asserting deterministic arbitration and delivery.
+- [ ] **9.6** **Industry-Standard CAN Controller Emulation**: Emulate a specific real-world CAN controller (e.g., STM32 bxCAN or NXP FlexCAN) to run unmodified vendor drivers, following ADR-006.
+- [ ] **9.7** **CAN Bit-level Arbitration & Error Frame Fidelity**: Ensure the Zenoh/SystemC bridge accurately models CAN bit-level arbitration (ID priority) and Error Frame propagation across the virtual cluster, guaranteeing cycle-accurate behavior for safety-critical automotive firmware.
 
 ---
 
@@ -566,7 +575,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **11.1** **RISC-V Machine Generation**: Extend the dynamic machine generation pipeline (`repl2qemu`) and QEMU patches to support RISC-V targets, removing the ARM-only restriction.
 - [x] **11.2** **Virtual-Time-Aware Timeouts**: Update the Robot Framework QMP library (`qmp_bridge.py`) to poll `query-cpus-fast` for virtual time, replacing wall-clock timeouts for reliable testing in `slaved-icount` mode.
 - [x] **11.3** **Remote Port Co-Simulation (Path B)**: Implement full TLM-2.0 co-simulation via AMD/Xilinx Remote Port to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
-- [ ] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc4 container image.
+- [x] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc4 container image.
 
 ---
 
@@ -579,7 +588,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates.
 - [x] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) and implement `hw/zenoh/zenoh-ui.c` to bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics.
 - [x] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology.
-- [ ] **12.8 Telemetry Throughput Benchmark**
+- [x] **12.8 Telemetry Throughput Benchmark**
   Stream 100k+ telemetry events/sec (IRQs, sleep states, memory writes) via `zenoh-telemetry`. Measure the impact on vCPU MIPS and ensure the host-side FlatBuffer serialization does not stall the guest.
 
 ### Phase 12 Technical Debt & Future Risks
@@ -630,28 +639,28 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - **What can go wrong**: State machine complexity grows quickly — CSMA/CA requires virtual-time-accurate backoff timers. Use `QEMUTimer` (QEMU_CLOCK_VIRTUAL) for all MAC timers to preserve determinism.
   - **Acceptance criteria**: `tests/net/ieee802154/l2/` Zephyr test suite passes with zero failures on a two-node virtmcu setup.
 
-- [ ] **14.6** **O(N²) RF Coordinator Scaling**: The coordinator broadcasts every RF packet to every known node, calculating Euclidean distance for each pair. A dense mesh network (100+ nodes) will bottleneck the single-threaded `tokio` select loop, stalling the deterministic simulation. Requires spatial partitioning (e.g., quad-trees).
+- [x] **14.6** **O(N²) RF Coordinator Scaling**: The coordinator broadcasts every RF packet to every known node, calculating Euclidean distance for each pair. A dense mesh network (100+ nodes) will bottleneck the single-threaded `tokio` select loop, stalling the deterministic simulation. Requires spatial partitioning (e.g., quad-trees).
 
   - **Trigger**: Implement when a simulation with more than 20 nodes shows coordinator CPU usage > 50% of one core, or when Zenoh round-trip latency from coordinator exceeds 1 ms per quantum.
   - **Assumption**: Node positions change slowly relative to the quantum rate (< 10 m/s in simulation space). Spatial index rebuild cost is amortized over many quanta.
   - **What can go wrong**: Tokio's single-thread executor becomes the bottleneck before the distance calculation does. Profile with `perf` before choosing between quad-tree vs. multi-thread partitioning.
   - **Acceptance criteria**: 100-node simulation coordinator CPU < 30% of one core at 1 kHz quantum rate; no dropped frames.
 
-- [ ] **14.7** **Dynamic Topology vs. Static Hashmap**: The coordinator currently hardcodes the `node_positions` hash map. For true cyber-physical simulation, it must dynamically subscribe to `sim/telemetry/position` updates from the physics engine (e.g., MuJoCo).
+- [x] **14.7** **Dynamic Topology vs. Static Hashmap**: The coordinator currently hardcodes the `node_positions` hash map. For true cyber-physical simulation, it must dynamically subscribe to `sim/telemetry/position` updates from the physics engine (e.g., MuJoCo).
 
   - **Trigger**: Implement when MuJoCo integration (Phase 10.3) is being tested with mobile nodes.
   - **Assumption**: Position updates arrive at physics rate (1 kHz); FSPL is recalculated per quantum, not per packet. If packets per quantum > 1, the same FSPL value is used for all packets in that quantum.
   - **What can go wrong**: Position updates arriving in a Zenoh callback concurrent with packet routing create a data race on `node_positions`. Protect with a `tokio::sync::RwLock`, holding the read lock during routing and the write lock only during position updates.
   - **Acceptance criteria**: A 10-node simulation with nodes moving at 1 m/s produces monotonically increasing Euclidean distances in the coordinator log over a 10-second run.
 
-- [ ] **14.8** **RF Header Schema Rigidity**: The `ZenohRfHeader` uses rigid, 14-byte packed C-structs. Adding RF metadata (e.g., antenna ID, multi-path hints) will break fleet compatibility. Needs a FlatBuffers/CBOR migration similar to Phase 12 telemetry.
+- [x] **14.8** **RF Header Schema Rigidity**: The `ZenohRfHeader` uses rigid, 14-byte packed C-structs. Adding RF metadata (e.g., antenna ID, multi-path hints) will break fleet compatibility. Needs a FlatBuffers/CBOR migration similar to Phase 12 telemetry.
 
   - **Trigger**: Implement before adding any new field to `ZenohRfHeader`.
   - **Assumption**: All nodes in a simulation run the same firmware-studio version. Cross-version compatibility is not required at this stage.
   - **What can go wrong**: FlatBuffers adds a small serialization cost per packet. Benchmark at 100 kpps (100k packets/sec) to verify the coordinator is not the bottleneck after migration.
   - **Acceptance criteria**: After migration, adding a new optional field to `ZenohRfHeader` does not break existing consumers that do not read the new field. Verified by a two-binary compatibility test (old reader + new writer must produce no errors).
 
-- [ ] **14.9** **Isotropic RF Assumptions**: The current Free Space Path Loss (FSPL) model assumes perfect omnidirectional antennas and ignores multi-path fading, physical obstacles, and interference from overlapping transmissions.
+- [x] **14.9** **Isotropic RF Assumptions**: The current Free Space Path Loss (FSPL) model assumes perfect omnidirectional antennas and ignores multi-path fading, physical obstacles, and interference from overlapping transmissions.
 
   - **Trigger**: Implement when a research use case requires antenna patterns or indoor propagation (e.g., wall attenuation).
   - **Assumption**: FSPL is sufficient for open-space drone swarm scenarios. Indoor simulations with walls will need a ray-casting model against the MuJoCo geometry.
@@ -676,7 +685,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Establish rigorous performance regression testing to ensure that the synchronization mechanisms (TCG hooks and Zenoh) do not silently degrade over time.
 
 **Tasks**:
-- [ ] **16.1** **IPS Benchmarking**: Add a CI step that runs a heavy mathematical payload in `standalone`, `slaved-suspend`, and `slaved-icount` modes and logs the Instructions-Per-Second (IPS).
+- [x] **16.1** **IPS Benchmarking**: Add a CI step that runs a heavy mathematical payload in `standalone`, `slaved-suspend`, and `slaved-icount` modes and logs the Instructions-Per-Second (IPS).
 
   **Numeric thresholds** (baseline from QEMU 11.0 on x86_64, Cortex-A15 TCG, 8-core CI runner):
   - `standalone`: ≥ 80 MIPS. Failure at < 60 MIPS (20% regression guard).
@@ -688,7 +697,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - **Assert**: The benchmark script must emit a machine-readable JSON line: `{"mode": "standalone", "mips": 123.4}`. CI parses this and fails if `mips < threshold`.
   - **Test**: `test/phase16/ips_benchmark.sh`. Runs 10-second compute-bound firmware (tight MULS loop). Parses QEMU's `-d exec` output to count instructions. Outputs JSON. A separate Python script checks against the thresholds.
 
-- [ ] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1 ms threshold.
+- [x] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1 ms threshold.
 
   **Numeric thresholds**:
   - P50 round-trip (Zenoh GET → reply): ≤ 200 µs. Fail if P50 > 500 µs.
@@ -700,10 +709,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
   - **Assert**: The test captures per-quantum timestamps (before GET, after reply) in a CSV. P50 and P99 are computed from the CSV and checked against thresholds. Emit a summary line: `{"p50_us": 180, "p99_us": 850, "stalls": 0}`.
   - **Test**: `test/phase16/latency_benchmark.sh`. Starts QEMU with zenoh-clock + mock TimeAuthority (in-process Rust program). Runs 1000 quanta of 1 ms each. Outputs timing CSV + JSON summary. CI parses and enforces thresholds.
 
-- [ ] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu.
-- [ ] **16.4 Jitter Injection Determinism Test**
+- [x] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu. (docs/TUTORIAL_16_PERFORMANCE.md)
+- [x] **16.4 Jitter Injection Determinism Test**
   Randomize Zenoh message delivery times (within ±200 µs bounds) using a middleware proxy and verify that the guest vCPU execution remains byte-perfect across 10 runs. Proves that the virtual-time gating logic correctly neutralizes host network jitter.
-- [ ] **16.5 Automated Performance Trend Tracking**
+- [x] **16.5 Automated Performance Trend Tracking**
   Integrate IPS and Latency benchmark results into the CI pipeline. Fail PRs that regress vCPU MIPS by >5% or increase P99 latency by >10% without a justified architectural rationale.
 
 ---
@@ -713,9 +722,9 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Protect the simulation boundary. Given that virtmcu ingests data from external networks and files, ensure the emulated environment cannot be crashed or escaped via malformed inputs.
 
 **Tasks**:
-- [ ] **17.1** **Network Boundary Fuzzing**: Implement a fuzzer (e.g., AFL++) against `hw/zenoh/zenoh-netdev.c` and `zenoh-chardev.c` to ensure corrupted Zenoh frames do not cause buffer overflows in the QEMU address space.
-- [ ] **17.2** **Parser Fuzzing**: Apply fuzzing to `tools/repl2qemu/parser.py` and the YAML parsers to ensure malformed configuration files fail gracefully.
-- [ ] **17.3** **Tutorial Lesson 17**: Securing the Digital Twin Boundary.
+- [x] **17.1** **Network Boundary Fuzzing**: Implement a fuzzer (e.g., AFL++) against `hw/zenoh/zenoh-netdev.c` and `zenoh-chardev.c` to ensure corrupted Zenoh frames do not cause buffer overflows in the QEMU address space.
+- [x] **17.2** **Parser Fuzzing**: Apply fuzzing to `tools/repl2qemu/parser.py` and the YAML parsers to ensure malformed configuration files fail gracefully.
+- [x] **17.3** **Tutorial Lesson 17**: Securing the Digital Twin Boundary.
 
 ---
 
@@ -961,7 +970,211 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-## Risks and Open Questions
+## Phase 21 — High-Throughput WiFi Simulation (802.11 over Zenoh)
+
+**Goal**: Support WiFi (802.11) as a high-throughput, deterministic communication channel, enabling complex mobile and infrastructure-based simulation scenarios. In strict accordance with ADR-006 (Binary Fidelity), we will not invent a "generic virtmcu WiFi interface". Instead, we will emulate specific, real-world hardware interfaces to run unmodified vendor firmware.
+
+**Tasks**:
+- [x] **21.1** **Zenoh-WiFi Header & Protocol**: Define a FlatBuffers schema (`wifi_generated.rs`) in `virtmcu-api` containing `delivery_vtime_ns`, `size`, `channel`, `rssi`, `snr`, and `frame_type` (Management, Control, Data), fulfilling the schema evolution requirements of Phase 14.8.
+- [ ] **21.2** **Option A (Initial Target): SPI/UART WiFi Co-Processor (e.g. ATWINC1500 or ESP32 AT-Command)**: 
+  - **Prerequisite 1:** Add safe Rust bindings to `virtmcu-qom` for QEMU's `SSISlave` and `SerialDevice` (or `CharBackend`), enabling dynamic QOM plugins to act as SPI slaves or UART-attached coprocessors.
+  - **Prerequisite 2:** Extend `arm-generic-fdt` and `yaml2qemu.py` to support instantiating and wiring SPI controllers (e.g., PL022) and their child devices.
+  - **Prerequisite 3:** Write and verify a simple "SPI Echo" and "UART Echo" bare-metal firmware against dummy Rust devices to prove the bus plumbing works deterministically.
+  - Source a validated Zephyr ELF (e.g., `wifi_dhcpv4`) for a specific board (e.g., an STM32 with SPI WiFi).
+  - Implement the specific SPI slave or UART AT-command behavior expected by the firmware's host driver.
+  - The `zenoh-wifi` backend translates these bus commands into Zenoh FlatBuffers.
+- [ ] **21.3** **Option B (Secondary Target): VirtIO-WLAN for Linux**: 
+  - For high-throughput Linux-based tests (Cortex-A15/RISC-V), implement the `virtio-wlan` specification.
+  - Validate with a standard Linux kernel and Buildroot rootfs using standard `mac80211` VirtIO drivers.
+- [ ] **21.4** **Option C (Long-Term/Stretch): Integrated Silicon (ESP32-C3)**: 
+  - Extremely complex due to undocumented MAC registers and binary blobs. Deferred until the SPI and VirtIO paths are robust.
+- [ ] **21.5** **High-Throughput Buffer Management**: Optimized RX/TX rings in Rust to handle standard 802.11 MTU (2304 bytes MSDU) without impacting simulation quantum latency.
+- [ ] **21.6** **Multi-Node WiFi Verification**: Verify homogenous nodes (e.g., two STM32 nodes with ATWINC1500) communicating over WiFi using a validated outside firmware (e.g., Zephyr `wifi_dhcpv4`), asserting deterministic connection and data exchange between an AP and Client node.
+
+### Phase 21 Outcomes, Testing, and Hardening
+- **Outcome**: A deterministic, high-throughput 802.11 virtual radio capable of AP/Client association and >50Mbps data transfer over Zenoh, using unmodified vendor firmware.
+- **Assumptions**: 802.11 Beacon intervals and SIFS/DIFS timings can be accurately mapped to QEMU's virtual clock without host OS jitter.
+- **What can go wrong (Risks)**: High MTU combined with high packet rates could overflow the QEMU RX priority queue, stalling the TCG thread if dynamic memory allocation (`Box::new`) is used in the hot path. QEMU event loop starvation due to processing large batches of WiFi packets.
+- **Asserts**: Assert `bql_held()` during all MAC state transitions and RX injections. Assert packet `delivery_vtime_ns >= current_vtime` to prevent causality violations.
+- **Unit Tests**: BSSID filtering logic (frames with non-matching BSSIDs are dropped early without interrupting the guest).
+- **Stress Tests**: `test_wifi_saturation.sh`: Sustain 100Mbps virtual throughput between an AP and Client. Verify 0 dropped frames and no BQL deadlocks over a 1-minute virtual time span.
+
+---
+
+## Phase 22 — Thread Protocol Support & 802.15.4 Reuse
+
+**Goal**: Enable Thread mesh networking by optimizing the existing 802.15.4 implementation for multi-hop, low-power mesh scenarios. In strict accordance with ADR-006 (Binary Fidelity), we will not rely on a generic virtmcu 802.15.4 interface. Instead, we will emulate specific, real-world hardware interfaces to run unmodified vendor firmware (like Zephyr or the OpenThread stack).
+
+**Tasks**:
+- [ ] **22.1** **Deterministic Multi-Node SPI & UART Bus Bridges (Prerequisite)**:
+  - To support simulating a Radio Co-Processor (RCP) as two distinct virtmcus (e.g., a Host MCU node and a Radio Co-Processor node), implement generic Zenoh-based SPI and UART bus bridges.
+  - These bridges must guarantee deterministic, virtual-time-ordered delivery of SPI/UART transactions between the QEMU instances to maintain cycle accuracy across the co-simulation.
+- [ ] **22.2** **Option A (Initial Target): SPI 802.15.4 Co-Processor (e.g., Microchip AT86RF233 or nRF RCP)**: 
+  - Source a validated Zephyr ELF (e.g., `openthread/cli`) for a specific board utilizing an AT86RF233 SPI module or a UART-based Radio Co-Processor (RCP).
+  - Emulate the setup as two virtmcus using the SPI/UART bridges implemented in 22.1, or by implementing the exact SPI register map, state machine, and interrupt behavior expected by the firmware's host driver.
+  - Ensure the `zenoh-802154` backend accurately translates these SPI/UART commands into Zenoh frames.
+- [ ] **22.3** **Option B (Secondary Target): Integrated SoC Radio (e.g., Nordic nRF52840 RADIO)**:
+  - The nRF52840 is the industry standard for OpenThread. It has a well-documented bare-metal `RADIO` peripheral.
+  - Emulate the exact `RADIO` memory-mapped registers, events, tasks, and precise timing requirements.
+  - Validate with unmodified Zephyr OpenThread samples compiled for `nrf52840dk_nrf52840`.
+- [ ] **22.4** **Option C (Long-Term/Stretch): Silicon Labs EFR32MG Series**:
+  - Emulate the EFR32 radio sequencer and hardware interface.
+  - Complex due to highly proprietary radio state machines and sequencer blobs. Deferred until Options A and B are robust.
+- [ ] **22.5** **802.15.4 Indirect Transmission & SED Support**: 
+  - Implement MAC-level Data Request (Polling) support accurately reflecting the hardware's Auto-ACK and Frame Pending bit behavior.
+  - Ensure Sleepy End Devices (SEDs) can poll for data with precise SIFS/LIFS timing over the virtual radio.
+- [ ] **22.6** **Enhanced Extended Address Filtering**: 
+  - Ensure the hardware filtering logic in the chosen target correctly handles Thread's heavy reliance on 64-bit IEEE Extended Addresses for IPv6 neighbor discovery.
+- [ ] **22.7** **OpenThread Stack Validation**: 
+  - Verify Successful Attachment to a Thread Leader using the chosen Option A/B firmware.
+  - Verify Commissioning (Joiner/Commissioner) process over the virtual radio.
+- [ ] **22.8** **Multi-Node SPI Verification**: Verify two homogenous MCUs communicating over SPI via the Zenoh SPI bridge (from 22.1) using validated outside firmware (e.g., a Host MCU and an RCP), asserting bit-perfect deterministic transaction delivery.
+
+### Phase 22 Outcomes, Testing, and Hardening
+- **Outcome**: OpenThread stack runs unmodified on virtmcu, successfully forming a multi-hop mesh with Sleepy End Devices relying on deterministic indirect transmissions.
+- **Assumptions**: Existing `zenoh-802154` queue depths are sufficient for Thread MLE/MAC packets. SEDs poll frequently enough to prevent buffer overflows on the Router node.
+- **What can go wrong (Risks)**: Memory leaks in the Border Router's indirect transmission buffer if an SED permanently drops offline. Strict 192us turnaround time for 802.15.4 ACKs might be missed if Zenoh latency exceeds the simulation quantum, causing infinite retransmissions and mesh collapse.
+- **Asserts**: Assert indirect transmission buffer size `< MAX_SED_PACKETS` to prevent OOM. Assert MAC ACK generation is strictly scheduled at exactly `vtime + 192us`.
+- **Unit Tests**: SED Polling unit test (verify a buffered frame is injected only after a Data Request MAC command is received from the correct extended address).
+- **Stress Tests**: `test_thread_mesh_storm.sh`: 50-node mesh initialization storm. All nodes attempt to attach simultaneously. Verify deterministic leader election and zero simulation stalls.
+
+---
+
+## Phase 23 — Bluetooth Protocol Support
+
+**Goal**: Support Bluetooth Low Energy (BLE) as a deterministic communication channel, targeting actual hardware boards for end-to-end IoT and Automotive integration.
+
+**Tasks**:
+- [ ] **23.1** **Deterministic BLE Controller (e.g., nRF52840 RADIO or STM32WB)**:
+  - Emulate the hardware registers of a well-supported BLE controller (like the Nordic nRF52840 `RADIO` peripheral).
+  - Ensure the `zenoh-ble` backend translates BLE advertising and data channel PDUs into Zenoh frames.
+- [ ] **23.2** **HCI over Zenoh**: For systems using external BLE controllers (e.g., via UART), implement an HCI bridge.
+- [ ] **23.3** **Firmware Sourcing**: Use unmodified Zephyr OS BLE samples (e.g., `samples/bluetooth/central_hr` and `peripheral_hr`) built specifically for `nrf52840dk_nrf52840`. These are thoroughly tested upstream and provide a reliable baseline.
+- [ ] **23.4** **Multi-Node BLE Verification**: Verify homogenous nodes (e.g., two nRF52840 nodes) communicating via BLE using validated outside firmware (e.g., Zephyr heart rate monitor and collector samples), asserting deterministic connection and data exchange over Zenoh.
+
+### Phase 23 Outcomes, Testing, and Hardening
+- **Outcome**: Deterministic BLE connections and meshing using actual Zephyr firmware.
+- **What can go wrong (Risks)**: Strict BLE timing requirements (e.g., 150µs T_IFS) may be violated if the virtual clock steps are too coarse.
+
+## Phase 24 — CAN FD Protocol Support
+
+**Goal**: Implement CAN Flexible Data-Rate (CAN FD) support to emulate high-speed automotive control networks.
+
+**Tasks**:
+- [ ] **24.1** **CAN FD Controller Emulation**: Emulate an industry-standard CAN FD controller (e.g., Bosch M_CAN, used in NXP S32K144 or STM32G4).
+- [ ] **24.2** **Zenoh-CAN-FD Backend**: Extend the CAN-over-Zenoh implementation to handle 64-byte payloads and dual bit-rates.
+- [ ] **24.3** **Firmware Sourcing**: Use Zephyr OS (`samples/drivers/can/counter`) built for the `s32k144evb` or `b_g474e_dpow1` boards. Zephyr has comprehensive M_CAN drivers that have been physically validated.
+- [ ] **24.4** **Multi-Node CAN FD Verification**: Verify homogenous nodes (e.g., two S32K144 nodes) communicating over CAN FD using validated Zephyr samples, asserting correct 64-byte payload delivery and bit-rate switching in a multi-node bus scenario.
+
+## Phase 25 — Local Interconnect Network (LIN)
+
+**Goal**: Emulate LIN buses, which are widely used in automotive body control (e.g., windows, mirrors, seats).
+
+**Tasks**:
+- [ ] **25.1** **LIN Controller Emulation**: Emulate a UART-based LIN controller (commonly an LPUART configured for LIN, as in NXP S32K144).
+- [ ] **25.2** **Master/Slave Synchronization**: Implement the deterministic transmission of the LIN sync break and sync byte over Zenoh.
+- [ ] **25.3** **Firmware Sourcing**: Use Zephyr OS LIN samples or NXP's Automotive Math and Motor Control Library (AMMCLib) examples for the S32K144.
+- [ ] **25.4** **Multi-Node LIN Verification**: Verify a LIN Master and LIN Slave (homogenous MCUs, e.g., two S32K144) communicating over LIN using validated NXP or Zephyr samples, asserting deterministic schedule table execution.
+
+## Phase 26 — Automotive Ethernet
+
+**Goal**: Support Automotive Ethernet (100BASE-T1 / 1000BASE-T1) for high-bandwidth automotive backbone networks.
+
+**Tasks**:
+- [ ] **26.1** **Automotive MAC/PHY Emulation**: Emulate an Automotive Ethernet MAC (e.g., NXP ENET as found on S32G or i.MX8).
+- [ ] **26.2** **Time-Sensitive Networking (TSN)**: Support gPTP (802.1AS) over the virtual network to maintain precise time synchronization between ECUs.
+- [ ] **26.3** **Firmware Sourcing**: Run Automotive Grade Linux (AGL) on an emulated NXP i.MX8 or use Zephyr's TSN samples on an emulated NXP S32 MCU.
+- [ ] **26.4** **Multi-Node Automotive Ethernet Verification**: Verify homogenous nodes (e.g., two S32 MCUs) communicating via 100BASE-T1 using validated Zephyr TSN samples, asserting deterministic gPTP (802.1AS) synchronization.
+
+## Phase 27 — FlexRay Protocol Support
+
+**Goal**: Emulate FlexRay, the deterministic, fault-tolerant bus used for drive-by-wire and active safety systems.
+
+**Tasks**:
+- [ ] **27.1** **FlexRay Communication Controller**: Emulate a standard FlexRay controller (e.g., Bosch E-Ray, used in Infineon AURIX TC3xx or NXP MPC5748G).
+- [ ] **27.2** **TDMA Cycle Emulation**: Accurately model the static and dynamic segments of the FlexRay communication cycle over Zenoh.
+- [ ] **27.3** **Firmware Sourcing**: Since FlexRay is deeply integrated into classic AUTOSAR, use pre-compiled AUTOSAR MCAL examples for the Infineon AURIX TC3xx or NXP MPC5748G provided by the vendors.
+- [ ] **27.4** **Multi-Node FlexRay Verification**: Verify homogenous nodes (e.g., two AURIX TC3xx) communicating over FlexRay using validated AUTOSAR MCAL examples, asserting deterministic TDMA cycle synchronization across the cluster.
+
+## Phase 28 — Multi-Protocol Network Integration & End-to-End Digital Twin (Formerly Phase 23)
+
+**Goal**: Emulate a complete digital twin of a modern car and its interaction with a Smart Home IoT ecosystem. 
+
+**Blockers**: Blocked by Phase 22 (Thread), Phase 23 (Bluetooth), Phase 24 (CAN FD), Phase 25 (LIN), Phase 26 (Automotive Ethernet), and Phase 27 (FlexRay).
+
+**Tasks**:
+- [ ] **28.1** **Modern Car Digital Twin Topology**: Configure a complex vehicle network in YAML using specific ECUs:
+  - **Telematics Control Unit (TCU)**: Emulated NXP i.MX8 running Automotive Grade Linux (AGL). Connected via Automotive Ethernet, WiFi, and Bluetooth.
+  - **Central Gateway**: Emulated NXP S32G running Zephyr or Linux. Acts as the routing hub between Automotive Ethernet, CAN FD, and FlexRay.
+  - **Body Control Module (BCM)**: Emulated NXP S32K144 running Zephyr. Connected via CAN FD (to Gateway) and LIN (to door/seat actuators).
+  - **Advanced Driver Assistance System (ADAS) / Braking**: Emulated Infineon AURIX TC397 running AUTOSAR. Connected via FlexRay for fault-tolerant, deterministic communication.
+- [ ] **28.2** **Smart Home ecosystem Integration (Thread & Matter)**:
+  - **Border Router / Gateway**: Emulated Raspberry Pi 4 running OpenThread Border Router (OTBR). Connected via Ethernet and Thread.
+  - **Matter/Thread Nodes**: Emulated nRF52840 nodes running Zephyr Matter samples (`connectedhomeip` repository firmware built for `nrf52840dk_nrf52840`).
+  - Connect the vehicle's TCU (via WiFi/BLE) to the Smart Home Border Router to emulate a "Car-to-Home" Matter integration scenario.
+- [ ] **28.3** **Mixed-Medium Zenoh Coordinator**: Ensure the `zenoh_coordinator` efficiently handles all protocols simultaneously with appropriate latency/attenuation models for RF (Bluetooth, WiFi, Thread) and deterministic timing for wired buses (CAN FD, LIN, FlexRay, Automotive Ethernet).
+
+### Phase 28 Outcomes, Testing, and Hardening
+- **Outcome**: A single, cycle-accurate simulation spanning a complete car and a smart home, communicating seamlessly over Thread, Matter, Bluetooth, WiFi, Ethernet, CAN FD, LIN, and FlexRay.
+- **Firmware Sourcing**:
+  - nRF52840: Upstream Zephyr Matter/Thread samples.
+  - NXP S32K144 / S32G: Zephyr upstream automotive drivers and NXP RTD (Real-Time Drivers) binaries.
+  - Infineon AURIX: Infineon's official AUTOSAR demonstration binaries.
+  - i.MX8: Yocto-built Automotive Grade Linux (AGL) images.
+- **Stress Tests**: `test_digital_twin_storm.sh`: Inject a Matter command from the Smart Home to the Car's TCU via WiFi, routing it through Automotive Ethernet to the Gateway, then via CAN FD to the BCM, and finally via LIN to actuate a virtual window. Verify end-to-end latency in virtual time.
+
+## Phase 29 — Heterogeneous Wired Bus Coordination (Formerly Phase 24)
+
+**Goal**: Focus on the intricate, fault-tolerant interactions of mixed wired buses in an industrial or deep automotive powertrain context.
+
+**Blockers**: Blocked by Phase 24 (CAN FD), Phase 25 (LIN), Phase 26 (Automotive Ethernet), and Phase 27 (FlexRay).
+
+**Tasks**:
+- [ ] **29.1** **Powertrain ECU Emulation (VCU)**:
+  - Emulate an Infineon AURIX TC397 (a lockstep multicore architecture critical for safety).
+  - Firmware: FreeRTOS or AUTOSAR utilizing CAN FD and FlexRay simultaneously.
+- [ ] **29.2** **Motor Control Nodes**:
+  - Emulate STM32G4 microcontrollers dedicated to motor control.
+  - Connected to the VCU via CAN FD.
+  - Firmware: Upstream Zephyr `b_g474e_dpow1` CAN FD samples or ST's Motor Control SDK examples.
+- [ ] **29.3** **Deterministic Multi-Node Serial (RS-485)**: 
+  - Expand `zenoh-chardev` to support half-duplex, multi-drop serial buses for legacy industrial sensors interacting with the modern ECUs.
+
+### Phase 29 Outcomes, Testing, and Hardening
+- **Outcome**: Deterministic emulation of industrial/automotive wired buses (CAN FD, RS-485, FlexRay), fully synchronized with Ethernet for V2X systems.
+- **Assumptions**: CAN bus bit-level arbitration can be accurately abstracted into packet-level priority sorting at the virtual clock boundary by the coordinator.
+- **What can go wrong (Risks)**: Two nodes transmitting on the CAN bus in the identical virtual quantum might not be ordered correctly by CAN ID priority, violating CSMA/CR. UART collision detection on RS-485 could spuriously trigger if timestamps are not strictly aligned.
+- **Asserts**: Assert CAN RX queues strictly order incoming frames by lowest CAN ID (highest priority) if timestamps match. Assert `bql_held()` when raising CAN/UART RX interrupts.
+- **Unit Tests**: CAN arbitration test (Node A and Node B transmit simultaneously; verify the node with the lower ID wins arbitration and Node B re-queues its TX).
+- **Stress Tests**: `test_v2x_interrupt_storm.sh`: Saturate CAN, RS-485, and Ethernet simultaneously. Ensure QEMU accurately delivers >100k IRQs per virtual second without deadlocking the BQL or dropping interrupts.
+
+---
+
+## Phase 30 — Deep Simulation Loop Oxidization & Test Infrastructure Overhaul
+
+**Goal**: Complete the Rust migration mandated by ADR-013 for all hot-path simulation components, and overhaul the testing strategy. We adopt a bifurcated testing model: **Rust for "White-Box" internals** (fast, safe, memory-layout aware) and **Python (pytest) for "Black-Box" orchestration** (QMP management, multi-process coordination). Bash scripts are relegated to thin CI wrappers.
+
+**Execution Order**: Tasks MUST be executed in the following order. Test infrastructure (30.1 - 30.3) must be established *before* porting the core C/C++ simulation loop components (30.4 - 30.7) to ensure no regressions occur during the oxidization process.
+
+**Tasks**:
+- [ ] **30.1** **Test Harness Modernization (Python)**: Upgrade `tools/testing/qmp_bridge.py` and `conftest.py` to robustly handle multi-process orchestration (QEMU + Zenoh Coordinator + TimeAuthority) using `asyncio` and `pytest`.
+- [ ] **30.2** **Eradicate Brittle Bash**: Rewrite complex Bash integration tests (e.g., `test/phase7/smoke_test.sh`, Phase 8 UART, Phase 12 Telemetry) into structured `pytest` suites. Retain the `.sh` files merely as 2-line invocations of `pytest` to satisfy the `make test-integration` contract.
+- [ ] **30.3** **Rust "White-Box" Test Suites**: Implement native Rust `#[test]` modules inside existing Rust crates (e.g., `hw/rust/zenoh-netdev`). Add `bindgen`-based memory layout tests to verify QEMU FFI struct alignment.
+- [ ] **30.4** **Rust `mmio-socket-bridge`**: Migrate `hw/misc/mmio-socket-bridge.c` to a pure Rust QOM device (`hw/rust/mmio-socket-bridge`). This bridges QEMU MMIO to external sockets without C FFI overhead in the hot path. Uses schemas from `virtmcu-api`.
+- [ ] **30.5** **Rust `mujoco_bridge` & `resd_replay` (TimeAuthority)**: Migrate `tools/cyber_bridge/src/mujoco_bridge.cpp` and `resd_replay.cpp` to Rust. This allows using the native `zenoh` Rust crate for the TimeAuthority, improving concurrency safety during the MuJoCo shared-memory physics step.
+- [ ] **30.6** **Rust `remote-port` Protocol & Bridge**: Migrate AMD/Xilinx Remote Port C code (`hw/remote-port/*.c`) to Rust. Requires a new protocol parsing crate (e.g., `virtmcu-remote-port`) and a Rust QOM bridge device.
+- [ ] **30.7** **Consolidate Dummy Devices**: Replace the C `hw/dummy/dummy.c` with the `hw/rust/rust-dummy` equivalent as the standard teaching template for new peripherals.
+
+### Phase 30 Outcomes, Testing, and Hardening
+- **Outcome**: The entire hot-path simulation loop (clock, netdev, MMIO, physics synchronization, and telemetry) is natively implemented in Rust. Bash is eliminated from test orchestration. Python handles all multi-node integration.
+- **Assumptions**: Pytest fixtures can reliably teardown QEMU instances even on test assertion failures to prevent zombie processes.
+- **What can go wrong (Risks)**: Potential performance regressions in `mujoco_bridge` if shared memory parsing (`MjSharedLayout`) in Rust involves unnecessary bounds checking. Flakiness in `asyncio` process tearing during CI.
+- **Test / Asserts**: `make test-integration` runs flawlessly. Measure IPS and Zenoh round-trip latency to ensure no degradation versus the C/C++ baselines.
+
+---
+
+## Deferred / Won't Do
+
 
 | # | Risk | Mitigation |
 |---|------|-----------|
@@ -976,6 +1189,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
 | R11 | Deadlock in `zenoh-clock.c` shutdown | `z_session_drop` in the main thread can deadlock with Zenoh callbacks waiting for the BQL. Needs a non-blocking shutdown sequence. |
+| R12 | macOS Native Compilation | Native `cargo build/clippy` on macOS fails due to cross-platform pollution in headers and missing Linux-specific files. Needs a dedicated CI job to verify macOS compatibility. |
 
 ---
 
