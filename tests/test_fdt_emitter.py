@@ -346,5 +346,5 @@ def test_emitter_int_and_string_props():
     )
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
-    assert "int_prop = <123>;" in dts
+    assert "int_prop = <0x7b>;" in dts
     assert 'str_prop = "hello";' in dts
