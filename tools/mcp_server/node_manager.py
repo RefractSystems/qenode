@@ -1,7 +1,10 @@
 import asyncio
+import io
 import logging
 import os
+import sys
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Dict, Optional
 
 from tools.testing.qmp_bridge import QmpBridge
@@ -54,10 +57,12 @@ class NodeManager:
         # Validate by trying to generate DTB
         dtb_fd, dtb_path = tempfile.mkstemp(suffix=".dtb")
         os.close(dtb_fd)
+
+        f_out = io.StringIO()
+        f_err = io.StringIO()
+
         try:
-            import contextlib
-            import sys
-            with contextlib.redirect_stdout(sys.stderr):
+            with redirect_stdout(f_out), redirect_stderr(f_err):
                 if config_type == "yaml":
                     from tools.yaml2qemu import main as yaml2qemu_main
                     old_argv = sys.argv
@@ -66,7 +71,7 @@ class NodeManager:
                         yaml2qemu_main()
                     except SystemExit as e:
                         if e.code != 0:
-                            raise ValueError(f"yaml2qemu failed with code {e.code}")
+                            raise ValueError(f"yaml2qemu failed with code {e.code}: {f_err.getvalue()}")
                     finally:
                         sys.argv = old_argv
                 else:
@@ -78,14 +83,16 @@ class NodeManager:
                         repl2qemu_main()
                     except SystemExit as e:
                         if e.code != 0:
-                            raise ValueError(f"repl2qemu failed with code {e.code}")
+                            raise ValueError(f"repl2qemu failed with code {e.code}: {f_err.getvalue()}")
                     finally:
                         sys.argv = old_argv
-        except (Exception, SystemExit) as e:
+        except (Exception, BaseException) as e:
             if os.path.exists(path):
                 os.remove(path)
             if os.path.exists(dtb_path):
                 os.remove(dtb_path)
+            # Log the captured output for debugging
+            logger.error(f"Validation failed. stdout: {f_out.getvalue()} stderr: {f_err.getvalue()}")
             raise ValueError(f"Invalid board configuration: {e}")
         finally:
             if os.path.exists(dtb_path):

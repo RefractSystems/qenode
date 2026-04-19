@@ -52,14 +52,14 @@ async def test_multi_node_stress():
     def on_query(query):
         # topic: sim/clock/advance/{id}
         node_id = int(str(query.key_expr).split("/")[-1])
-        payload = query.payload
+        payload = query.payload.to_bytes()
         delta_ns, mujoco_time = struct.unpack("<QQ", payload)
 
         node_vtimes[node_id] += delta_ns
 
         # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
-        reply_payload = struct.pack("<QI", node_vtimes[node_id], 1)
-        query.reply(zenoh.Sample(query.key_expr, reply_payload))
+        reply_payload = struct.pack("<QII", node_vtimes[node_id], 1, 0)
+        query.reply(query.key_expr, reply_payload)
 
     # Subscribe to clock advance for all nodes
     queryables = []

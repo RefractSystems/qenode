@@ -132,7 +132,14 @@ coverage-report:
 		--directory $(QEMU_BUILD)/libhw-virtmcu-mmio-socket-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-remote-port-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-rust-dummy.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-clock.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-chardev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-netdev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-actuator.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-telemetry.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-802154.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-ui.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-test-qom-device.a.p \
 		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
 	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
 	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage

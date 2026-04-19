@@ -51,7 +51,7 @@ def test_flash_firmware(node_manager):
 async def test_start_node_failure(mock_exec, node_manager):
     node_id = "fail_node"
     # Provision but don't actually start
-    await node_manager.provision_board(node_id, "test")
+    await node_manager.provision_board(node_id, "machine:\n  cpus: []")
 
     # Mock process failure
     mock_proc = AsyncMock()

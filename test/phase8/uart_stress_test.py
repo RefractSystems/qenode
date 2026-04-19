@@ -5,9 +5,9 @@ import time
 
 import zenoh
 
-# 10 Mbps = 1,250,000 bytes per second
-# Interval between bytes = 1 / 1,250,000 = 800 ns
-BAUD_10MBPS_INTERVAL_NS = 800
+# 1 Mbps = 125,000 bytes per second
+# Interval between bytes = 1 / 125,000 = 8000 ns
+BAUD_10MBPS_INTERVAL_NS = 8000
 TOTAL_BYTES = 50000
 NODE_ID = "0"
 TOPIC_BASE = "sim/chardev"
@@ -25,10 +25,13 @@ received_all_event = threading.Event()
 
 def on_tx_sample(sample):
     data = sample.payload.to_bytes()
+    # print(f"[UART Stress] Received {len(data)} bytes from Zenoh")
     if len(data) >= 12:
         # Skip header
         payload = data[12:]
         received_bytes.extend(payload)
+        if len(received_bytes) % 1000 == 0:
+             print(f"[UART Stress] Progress: {len(received_bytes)} bytes received")
         if len(received_bytes) >= TOTAL_BYTES:
             received_all_event.set()
 
