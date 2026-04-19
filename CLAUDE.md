@@ -127,9 +127,15 @@ To ensure the highest level of professional software engineering, all agents MUS
 - Use platform-appropriate path joining (e.g., `os.path.join` in Python, `path::PathBuf` in Rust, `std::filesystem` in C++).
 - Leverage environment variables for system-specific configuration.
 
-### 2. Explicit Constants (No Magic Numbers)
-- **BANNED:** Inline literal numbers without clear context (e.g., `delay(500)`, `buffer[1024]`).
-- **Required:** Define named constants or enums with clear documentation explaining the value's origin (e.g., from a datasheet, a performance budget, or a protocol spec).
+### 2. Explicit Constants (NEVER Use Magic Numbers!)
+- **BANNED:** Inline literal numbers or "magic numbers" in the code.
+- **REQUIRED:** If a number needs to be entered (e.g., `1024`), you MUST create a `const` descriptive variable with a comment explaining what it is and why it has that value, and then use that variable.
+- Example: Instead of `buffer = [0; 1024]`, do:
+  ```rust
+  /// Standard payload size for the bridge
+  const MAX_PAYLOAD_SIZE: usize = 1024;
+  let buffer = [0; MAX_PAYLOAD_SIZE];
+  ```
 - Group related constants in configuration files or dedicated `constants` modules.
 
 ### 3. Verification & TDD (The "Beyonce Rule")

@@ -27,7 +27,7 @@ use zenoh::pubsub::Subscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
@@ -52,9 +52,9 @@ pub struct ZenohNetClient {
     pub rust_state: *mut ZenohNetdevState,
 }
 
-struct OrderedPacket {
-    vtime: u64,
-    data: Vec<u8>,
+pub struct OrderedPacket {
+    pub vtime: u64,
+    pub data: Vec<u8>,
 }
 
 impl PartialEq for OrderedPacket {
@@ -253,7 +253,7 @@ fn zenoh_netdev_init_internal(
         }
     };
 
-    let (tx, rx) = unbounded();
+    let (tx, rx) = bounded(1024);
     let local_heap = Mutex::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = earliest_vtime.clone();
@@ -348,4 +348,27 @@ fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size:
 
     let _ = state.session.put(tx_topic, data).wait();
     size as isize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ordered_packet_priority_queue() {
+        let mut heap = BinaryHeap::new();
+        heap.push(OrderedPacket { vtime: 100, data: vec![1] });
+        heap.push(OrderedPacket { vtime: 50, data: vec![2] });
+        heap.push(OrderedPacket { vtime: 200, data: vec![3] });
+
+        // Should be a min-heap by vtime
+        let first = heap.pop().unwrap();
+        assert_eq!(first.vtime, 50);
+
+        let second = heap.pop().unwrap();
+        assert_eq!(second.vtime, 100);
+
+        let third = heap.pop().unwrap();
+        assert_eq!(third.vtime, 200);
+    }
 }
