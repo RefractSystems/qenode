@@ -283,14 +283,20 @@ fn zenoh_clock_init_internal(
     let backend_ptr = Arc::as_ptr(&backend) as usize;
     let topic = format!("sim/clock/advance/{}", node_id);
 
-    let queryable = session
+    let queryable = match session
         .declare_queryable(topic)
         .callback(move |query| {
             let backend = unsafe { &*(backend_ptr as *const ZenohClockBackend) };
             on_clock_query(backend, query);
         })
         .wait()
-        .unwrap();
+    {
+        Ok(q) => q,
+        Err(e) => {
+            eprintln!("zenoh-clock: failed to declare queryable: {:?}", e);
+            return ptr::null_mut();
+        }
+    };
 
     let mut backend_mut = Arc::try_unwrap(backend).ok().unwrap();
     backend_mut.queryable = Some(queryable);
@@ -372,8 +378,9 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         );
     }
 
-    query
-        .reply(query.key_expr(), resp_bytes.as_slice())
-        .wait()
-        .unwrap();
+    std::thread::spawn(move || {
+        if let Err(e) = query.reply(query.key_expr(), resp_bytes.as_slice()).wait() {
+            eprintln!("zenoh-clock: failed to send clock reply: {:?}", e);
+        }
+    });
 }
