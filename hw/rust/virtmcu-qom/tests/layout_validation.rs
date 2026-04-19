@@ -3,7 +3,8 @@
     non_snake_case,
     dead_code,
     non_upper_case_globals,
-    clippy::all
+    clippy::all,
+    unnecessary_transmutes
 )]
 mod qemu {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

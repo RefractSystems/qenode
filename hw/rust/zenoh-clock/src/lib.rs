@@ -426,90 +426,6 @@ fn zenoh_clock_init_internal(
 
     std::mem::forget(queryable);
 
-<<<<<<< HEAD
-    Box::into_raw(Box::new(backend_mut))
-}
-
-fn zenoh_clock_free_internal(backend: *mut ZenohClockBackend) {
-    if !backend.is_null() {
-        unsafe {
-            drop(Box::from_raw(backend));
-        }
-    }
-}
-
-fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> i64 {
-    unsafe {
-        virtmcu_mutex_lock(backend.mutex);
-        while !backend.query_ready.load(Ordering::Acquire) {
-            virtmcu_cond_wait(backend.vcpu_cond, backend.mutex);
-        }
-        backend.query_ready.store(false, Ordering::Release);
-        virtmcu_mutex_unlock(backend.mutex);
-    }
-    backend.delta_ns.load(Ordering::Acquire)
-}
-
-fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
-    let payload = match query.payload() {
-        Some(p) => p,
-        None => return,
-    };
-
-    if payload.len() < 16 {
-        return;
-    }
-
-    let mut delta: u64 = 0;
-    let mut mujoco: u64 = 0;
-    let data = payload.to_bytes();
-    unsafe {
-        ptr::copy_nonoverlapping(data.as_ptr(), &mut delta as *mut u64 as *mut u8, 8);
-        ptr::copy_nonoverlapping(data.as_ptr().add(8), &mut mujoco as *mut u64 as *mut u8, 8);
-    }
-
-    backend.delta_ns.store(delta as i64, Ordering::Release);
-    backend
-        .mujoco_time_ns
-        .store(mujoco as i64, Ordering::Release);
-
-    unsafe {
-        virtmcu_mutex_lock(backend.mutex);
-        backend.query_ready.store(true, Ordering::Release);
-        virtmcu_cond_signal(backend.vcpu_cond);
-
-        while backend.query_ready.load(Ordering::Acquire) {
-            if virtmcu_cond_timedwait(backend.query_cond, backend.mutex, backend.stall_timeout_ms)
-                != 0
-            {
-                // Stall detected
-                break;
-            }
-        }
-        virtmcu_mutex_unlock(backend.mutex);
-    }
-
-    let resp = ClockReadyResp {
-        current_vtime_ns: 0,
-        n_frames: 0,
-        error_code: 0,
-    };
-
-    let mut resp_bytes = [0u8; 16];
-    unsafe {
-        ptr::copy_nonoverlapping(
-            &resp as *const ClockReadyResp as *const u8,
-            resp_bytes.as_mut_ptr(),
-            16,
-        );
-    }
-
-    std::thread::spawn(move || {
-        if let Err(e) = query.reply(query.key_expr(), resp_bytes.as_slice()).wait() {
-            eprintln!("zenoh-clock: failed to send clock reply: {:?}", e);
-        }
-    });
-=======
     // Heartbeat thread
     let hb_session = session.clone();
     let node_id_hb = node_id;
@@ -520,5 +436,4 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     });
 
     backend_ptr as *mut ZenohClockBackend
->>>>>>> main
 }
