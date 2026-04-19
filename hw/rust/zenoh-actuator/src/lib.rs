@@ -100,8 +100,7 @@ unsafe extern "C" fn zenoh_actuator_write(opaque: *mut c_void, addr: u64, val: u
             let rs = &*s.rust_state;
             zenoh_actuator_publish(rs, s.actuator_id, s.data_size, &s.data);
         }
-    }
- else if addr >= REG_DATA_START && addr < REG_DATA_START + 8 * 8 {
+    } else if addr >= REG_DATA_START && addr < REG_DATA_START + 8 * 8 {
         let idx = ((addr - REG_DATA_START) / 8) as usize;
         let offset = ((addr - REG_DATA_START) % 8) as usize;
         if offset + (size as usize) <= 8 {
@@ -255,9 +254,9 @@ fn zenoh_actuator_publish(
     data_size: u32,
     data: &[f64; 8],
 ) {
-    let vtime_ns = unsafe {
-        virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
-    } as u64;
+    let vtime_ns =
+        unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) }
+            as u64;
 
     let topic = format!("{}/{}/{}", state.topic_prefix, state.node_id, actuator_id);
     let mut payload = Vec::with_capacity(8 + (data_size as usize) * 8);
@@ -266,6 +265,10 @@ fn zenoh_actuator_publish(
         payload.extend_from_slice(&data[i].to_le_bytes());
     }
 
-    virtmcu_qom::vlog!("[zenoh-actuator] Publishing to {} (size={})\n", topic, payload.len());
+    virtmcu_qom::vlog!(
+        "[zenoh-actuator] Publishing to {} (size={})\n",
+        topic,
+        payload.len()
+    );
     let _ = state.session.put(topic, payload).wait();
 }

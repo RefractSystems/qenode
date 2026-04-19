@@ -75,7 +75,7 @@ pub struct ZenohClockBackend {
     /* Communication state */
     mutex: Mutex<()>,
     cond: Condvar,
-    
+
     quantum_ready: AtomicBool,
     quantum_done: AtomicBool,
     delta_ns: AtomicU64,
@@ -106,12 +106,12 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
     }
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-    
+
     // In slaved mode, we ONLY block when we reach the virtual time boundary.
-    // This handles both instruction execution and WFI (where 
+    // This handles both instruction execution and WFI (where
     // virtual time advances via host clock in suspend mode).
     let should_block = now >= s.next_quantum_ns;
-    
+
     if should_block {
         let backend = unsafe { &*s.rust_state };
 
@@ -132,17 +132,17 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
         // This ensures that 'suspend' mode advances and 'icount' mode wakes up from WFI.
         let target_vtime = s.next_quantum_ns + delta as i64;
         let now_after_block = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-        
+
         if delta > 0 {
-             let should_advance = !virtmcu_qom::icount::icount_enabled() || halted;
-             if should_advance && target_vtime > now_after_block {
-                 virtmcu_qom::icount::icount_advance(target_vtime - now_after_block);
-             }
+            let should_advance = !virtmcu_qom::icount::icount_enabled() || halted;
+            if should_advance && target_vtime > now_after_block {
+                virtmcu_qom::icount::icount_advance(target_vtime - now_after_block);
+            }
         }
 
         // 2. Set next boundary
         s.next_quantum_ns = target_vtime;
-        
+
         // Final safety: ensure it's always in the future relative to final time
         let now_final = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
         if s.next_quantum_ns <= now_final {
@@ -160,7 +160,7 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
 fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> u64 {
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
     backend.quantum_done.store(true, Ordering::SeqCst);
-    
+
     {
         let _guard = backend.mutex.lock().unwrap();
         backend.cond.notify_all();
@@ -168,16 +168,19 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
 
     let start = Instant::now();
     let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
-    
+
     let mut guard = backend.mutex.lock().unwrap();
     while !backend.quantum_ready.load(Ordering::SeqCst) {
-        let (new_guard, result) = backend.cond.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+        let (new_guard, result) = backend
+            .cond
+            .wait_timeout(guard, Duration::from_millis(100))
+            .unwrap();
         guard = new_guard;
         if result.timed_out() && start.elapsed() > timeout {
             break;
         }
     }
-    
+
     backend.quantum_ready.store(false, Ordering::SeqCst);
     backend.delta_ns.load(Ordering::SeqCst)
 }
@@ -201,16 +204,19 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
 
     let mut guard = backend.mutex.lock().unwrap();
     while !backend.quantum_done.load(Ordering::SeqCst) {
-        let (new_guard, result) = backend.cond.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+        let (new_guard, result) = backend
+            .cond
+            .wait_timeout(guard, Duration::from_millis(100))
+            .unwrap();
         guard = new_guard;
         if result.timed_out() && start.elapsed() > timeout {
             return;
         }
     }
-    
+
     backend.quantum_done.store(false, Ordering::SeqCst);
     let reached_vtime = backend.vtime_ns.load(Ordering::SeqCst);
-    
+
     backend.delta_ns.store(delta, Ordering::SeqCst);
     backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
     backend.quantum_ready.store(true, Ordering::SeqCst);
