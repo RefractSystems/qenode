@@ -303,7 +303,11 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
         CStr::from_ptr(s.mode).to_str().unwrap_or("slaved-suspend")
     };
 
-    if mode_str != "icount" && mode_str != "suspend" && mode_str != "slaved-suspend" {
+    if mode_str != "icount"
+        && mode_str != "slaved-icount"
+        && mode_str != "suspend"
+        && mode_str != "slaved-suspend"
+    {
         return;
     }
 

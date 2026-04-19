@@ -74,24 +74,24 @@ pub struct ZenohChardevState {
     rx_receiver: Receiver<OrderedPacket>,
     local_heap: Mutex<BinaryHeap<OrderedPacket>>,
     earliest_vtime: Arc<AtomicU64>,
+    // Fire-and-forget TX channel: zenoh_chr_write sends here (no BQL hold);
+    // a background thread drains and publishes to Zenoh outside BQL.
+    tx_sender: Sender<Vec<u8>>,
 }
 
+// Must exactly mirror the QAPI-generated ChardevZenohOptions (qapi-types-char.h).
+// Offsets: logfile=0, has_logappend=8, logappend=9, has_logtimestamp=10,
+//          logtimestamp=11, _pad=12-15, node=16, router=24, topic=32.
 #[repr(C)]
 struct ChardevZenohOptions {
-    has_logfile: bool,
-    _pad1: [u8; 7],
     logfile: *mut c_char,
     has_logappend: bool,
     logappend: bool,
     has_logtimestamp: bool,
     logtimestamp: bool,
-    _pad2: [u8; 4],
+    _pad: [u8; 4],
     node: *mut c_char,
-    has_router: bool,
-    _pad3: [u8; 7],
     router: *mut c_char,
-    has_topic: bool,
-    _pad4: [u8; 7],
     topic: *mut c_char,
 }
 
@@ -116,10 +116,6 @@ extern "C" {
 }
 
 unsafe extern "C" fn zenoh_chr_write(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int {
-    vlog!(
-        "[zenoh-chardev] zenoh_chr_write called with {} bytes\n",
-        len
-    );
     let s = &mut *(chr as *mut ChardevZenoh);
     if s.rust_state.is_null() {
         return 0;
@@ -132,21 +128,11 @@ unsafe extern "C" fn zenoh_chr_parse(
     backend: *mut c_void,
     errp: *mut *mut c_void,
 ) {
-    unsafe {
-        libc::write(1, b"zenoh_chr_parse start\n".as_ptr() as *const c_void, 22);
-    }
     let node = qemu_opt_get(opts, c"node".as_ptr());
     let router = qemu_opt_get(opts, c"router".as_ptr());
     let topic = qemu_opt_get(opts, c"topic".as_ptr());
 
     if node.is_null() {
-        unsafe {
-            libc::write(
-                1,
-                b"zenoh_chr_parse: node is null\n".as_ptr() as *const c_void,
-                30,
-            );
-        }
         error_setg!(
             errp as *mut *mut Error,
             c"chardev: zenoh: 'node' is required".as_ptr()
@@ -158,32 +144,19 @@ unsafe extern "C" fn zenoh_chr_parse(
         g_malloc0(std::mem::size_of::<ChardevZenohOptions>()) as *mut ChardevZenohOptions;
     (*zenoh_opts).node = g_strdup(node);
     if !router.is_null() {
-        (*zenoh_opts).has_router = true;
         (*zenoh_opts).router = g_strdup(router);
     }
     if !topic.is_null() {
-        (*zenoh_opts).has_topic = true;
         (*zenoh_opts).topic = g_strdup(topic);
     }
 
-    let wrapper = g_malloc0(8) as *mut *mut ChardevZenohOptions;
-    *wrapper = zenoh_opts;
-
+    // ChardevZenohWrapper is embedded inside the ChardevBackend union — the union
+    // stores the ChardevZenohOptions* directly (not a pointer-to-pointer).
     let b = &mut *(backend as *mut ChardevBackend);
     b.type_ = get_chardev_backend_kind_zenoh();
-    b.u.data = wrapper as *mut c_void;
+    b.u.data = zenoh_opts as *mut c_void;
 
-    unsafe {
-        libc::write(
-            1,
-            b"zenoh_chr_parse: calling qemu_chr_parse_common\n".as_ptr() as *const c_void,
-            47,
-        );
-    }
     qemu_chr_parse_common(opts, zenoh_opts as *mut c_void);
-    unsafe {
-        libc::write(1, b"zenoh_chr_parse end\n".as_ptr() as *const c_void, 20);
-    }
 }
 
 unsafe extern "C" fn zenoh_chr_open(
@@ -194,8 +167,7 @@ unsafe extern "C" fn zenoh_chr_open(
     vlog!("[zenoh-chardev] zenoh_chr_open called\n");
     let s = &mut *(chr as *mut ChardevZenoh);
     let b = &*(backend as *mut ChardevBackend);
-    let wrapper = b.u.data as *mut *mut ChardevZenohOptions;
-    let opts = *wrapper;
+    let opts = b.u.data as *mut ChardevZenohOptions;
 
     let node = CStr::from_ptr((*opts).node).to_string_lossy().into_owned();
     let router = if (*opts).router.is_null() {
@@ -291,22 +263,13 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
             if can_write > 0 {
                 let mut packet = heap.pop().unwrap();
                 let to_write = std::cmp::min(can_write, packet.data.len());
-                vlog!(
-                    "[zenoh-chardev] rx_timer_cb: writing {} bytes to chr\n",
-                    to_write
-                );
-
                 qemu_chr_be_write(state.chr, packet.data.as_ptr(), to_write);
-
                 if to_write < packet.data.len() {
-                    // Packet didn't fit completely, keep the remainder and schedule for the next tick
                     packet.data.drain(0..to_write);
                     heap.push(packet);
                     retry_later = true;
                 }
             } else {
-                // Buffer is full. We can't write right now.
-                vlog!("[zenoh-chardev] rx_timer_cb: buffer full\n");
                 retry_later = true;
             }
         }
@@ -351,7 +314,7 @@ fn zenoh_chardev_init_internal(
         }
     };
 
-    let (tx, rx) = unbounded(); // Larger buffer for flood tests
+    let (tx, rx) = unbounded(); // RX packet channel (subscriber → rx_timer_cb)
     let local_heap = Mutex::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = earliest_vtime.clone();
@@ -359,18 +322,25 @@ fn zenoh_chardev_init_internal(
     let timer_ptr_clone = Arc::new(AtomicUsize::new(0));
     let timer_ptr = timer_ptr_clone.clone();
 
+    // TX background publisher: drains tx_pub_recv and calls session.put() outside BQL,
+    // preventing the QEMU main thread from blocking inside zenoh_chr_write.
+    let (tx_pub_send, tx_pub_recv) = unbounded::<Vec<u8>>();
+    let tx_session = session.clone();
+    let tx_topic_bg = format!("{}/{}/tx", topic, node_id);
+    std::thread::Builder::new()
+        .name("zenoh-chardev-tx".into())
+        .spawn(move || {
+            while let Ok(data) = tx_pub_recv.recv() {
+                let _ = tx_session.put(&tx_topic_bg, data).wait();
+            }
+        })
+        .expect("failed to spawn zenoh-chardev TX thread");
+
     let rx_topic = format!("{}/{}/rx", topic, node_id);
 
     let subscriber = session
         .declare_subscriber(&rx_topic)
         .callback(move |sample| {
-            unsafe {
-                libc::write(
-                    1,
-                    b"zenoh-chardev: rx callback fired\n".as_ptr() as *const c_void,
-                    33,
-                );
-            }
             let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
             if tp == 0 {
                 return;
@@ -428,6 +398,7 @@ fn zenoh_chardev_init_internal(
         rx_receiver: rx,
         local_heap,
         earliest_vtime,
+        tx_sender: tx_pub_send,
     });
 
     let state_ptr = &mut *state as *mut ZenohChardevState;
@@ -441,7 +412,6 @@ fn zenoh_chardev_init_internal(
 }
 
 fn zenoh_chardev_write_internal(state: &ZenohChardevState, buf: *const u8, len: usize) -> usize {
-    let tx_topic = format!("{}/{}/tx", state.topic, state.node_id);
     let payload = unsafe { std::slice::from_raw_parts(buf, len) };
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
@@ -463,6 +433,8 @@ fn zenoh_chardev_write_internal(state: &ZenohChardevState, buf: *const u8, len: 
     data.extend_from_slice(&header_bytes);
     data.extend_from_slice(payload);
 
-    let _ = state.session.put(tx_topic, data).wait();
+    // Non-blocking send to background TX thread — avoids blocking the QEMU main
+    // thread (BQL held) inside session.put().wait() for every echoed byte.
+    let _ = state.tx_sender.send(data);
     len
 }

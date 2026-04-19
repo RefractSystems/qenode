@@ -16,15 +16,6 @@ _start:
     ldr r0, =0x301  // UARTEN (bit 0) | TXE (bit 8) | RXE (bit 9)
     str r0, [r1]
 
-    // Print initial welcome message
-    ldr r1, =welcome_msg
-print_welcome:
-    ldrb r0, [r1], #1
-    cmp r0, #0
-    beq loop
-    bl putc
-    b print_welcome
-
 loop:
     // 1. Wait until a character is received (RXFE is 0)
     ldr r1, =UART0_FR

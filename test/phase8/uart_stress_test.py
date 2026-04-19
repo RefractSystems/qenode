@@ -72,8 +72,9 @@ print("[UART Stress] Pre-publish complete. Starting Time Authority to advance cl
 def time_authority_loop():
     current_vtime = 0
     QUANTA_NS = 10_000_000  # 10ms
-    # 50k bytes at 800ns spacing = 40ms; start_vtime = 10ms → all bytes by ~50ms
-    TOTAL_NS = 200_000_000  # 200ms — ample margin
+    # 50k bytes at 800ns spacing = 40ms; PL011 1-byte FIFO causes 10μs retry per byte
+    # → effective delivery time = 50k × 10μs = 500ms; start_vtime = 10ms
+    TOTAL_NS = 1_000_000_000  # 1 second — covers all retries with margin
 
     while current_vtime < TOTAL_NS and not received_all_event.is_set():
         replies = session.get("sim/clock/advance/0", payload=pack_clock_advance(QUANTA_NS))
