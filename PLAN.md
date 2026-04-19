@@ -920,8 +920,11 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
   - **Assert**: `find hw -name 'virtmcu-rust-ffi.*'` returns empty after deletion.
   - **Test**: Full `scripts/setup-qemu.sh` build must succeed. `make test-integration` must pass in full.
 
-- [ ] **19.5 Memory Layout Verification Suite**
+- [x] **19.5 Memory Layout Verification Suite**
   Implement an automated test that uses `bindgen` to generate Rust structs from QEMU's C headers (e.g., `TypeInfo`, `DeviceClass`) and compares their `size_of` and `offset_of` against the manually defined structs in `virtmcu-qom`. Prevents silent crashes due to padding differences between C and Rust.
+
+- [ ] **19.6 Refactor `virtmcu-qom` bindgen lint suppression**
+  Move the lint suppression (`#![allow(...)]`) from the consuming test file (`layout_validation.rs`) directly into the `bindgen::Builder` via `raw_line()` in `build.rs`. This correctly isolates the FFI lints to the generated code, preventing scope leakage and masking of real bugs in safe Rust code. Needs a stress test to confirm.
 
 ---
 
