@@ -3,11 +3,17 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from typing import List, Optional, Tuple, Union
 
-from tools.testing.qmp_bridge import QmpBridge
+# Ensure workspace root is in sys.path for Robot Framework environments
+workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
+
+from tools.testing.qmp_bridge import QmpBridge  # noqa: E402
 
 
 class QemuLibrary:
