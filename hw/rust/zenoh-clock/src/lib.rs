@@ -85,6 +85,7 @@ pub struct ZenohClockBackend {
     /* Profiling state */
     total_bql_wait_ns: AtomicU64,
     total_iterations: AtomicU64,
+    total_no_bql_iterations: AtomicU64,
     last_report_time: Mutex<Instant>,
     start_time: Instant,
 }
@@ -138,6 +139,10 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
                 .fetch_add(bql_wait, Ordering::Relaxed);
             backend.total_iterations.fetch_add(1, Ordering::Relaxed);
             std::mem::forget(_bql);
+        } else {
+            backend
+                .total_no_bql_iterations
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // 1. Advance virtual clock manually if requested by TA.
@@ -353,15 +358,21 @@ unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
         let backend = unsafe { &*s.rust_state };
         let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
         let iterations = backend.total_iterations.load(Ordering::Relaxed);
-        if iterations > 0 {
+        let no_bql = backend.total_no_bql_iterations.load(Ordering::Relaxed);
+        if iterations > 0 || no_bql > 0 {
             let elapsed = backend.start_time.elapsed().as_secs_f64();
-            let avg_wait_us = (total_wait as f64 / iterations as f64) / 1000.0;
+            let avg_wait_us = if iterations > 0 {
+                (total_wait as f64 / iterations as f64) / 1000.0
+            } else {
+                0.0
+            };
             let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
             vlog!(
-                "[zenoh-clock] FINAL BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {})\n",
+                "[zenoh-clock] FINAL BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {}, no_bql: {})\n",
                 contention,
                 avg_wait_us,
-                iterations
+                iterations,
+                no_bql
             );
         }
 
@@ -456,6 +467,7 @@ fn zenoh_clock_init_internal(
         mujoco_time_ns: AtomicU64::new(0),
         total_bql_wait_ns: AtomicU64::new(0),
         total_iterations: AtomicU64::new(0),
+        total_no_bql_iterations: AtomicU64::new(0),
         last_report_time: Mutex::new(Instant::now()),
         start_time: Instant::now(),
     });
@@ -490,24 +502,26 @@ fn zenoh_clock_init_internal(
         let _ = hb_session.put(topic, vec![1]).wait();
 
         let iterations = backend.total_iterations.load(Ordering::Relaxed);
-        if iterations > 0 {
+        let no_bql = backend.total_no_bql_iterations.load(Ordering::Relaxed);
+        if iterations > 0 || no_bql > 0 {
             let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
             let mut last_report = backend.last_report_time.lock().unwrap();
             let elapsed = last_report.elapsed().as_secs_f64();
 
             if elapsed >= 1.0 {
-                let avg_wait_us = (total_wait as f64 / iterations as f64) / 1000.0;
+                let avg_wait_us = if iterations > 0 {
+                    (total_wait as f64 / iterations as f64) / 1000.0
+                } else {
+                    0.0
+                };
                 let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
 
-                vlog!(
-                    "[zenoh-clock] BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {})\n",
-                    contention,
-                    avg_wait_us,
-                    iterations
-                );
+                vlog!("[zenoh-clock] BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {}, no_bql: {})\n",
+                    contention, avg_wait_us, iterations, no_bql);
 
                 backend.total_bql_wait_ns.store(0, Ordering::Relaxed);
                 backend.total_iterations.store(0, Ordering::Relaxed);
+                backend.total_no_bql_iterations.store(0, Ordering::Relaxed);
                 *last_report = Instant::now();
             }
         }

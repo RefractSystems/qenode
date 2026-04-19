@@ -12,6 +12,7 @@ COMPAT_MAP = {
     "UART.Cadence_UART": "cadence_uart",
     "IRQControllers.NVIC": "armv7m_nvic",
     "IRQControllers.ARM_GenericInterruptController": "arm_gic",
+    "IRQControllers.GIC": "arm_gic",
     "Timers.ARM_GenericTimer": "armv8-timer",
     "Timers.ARM_PrivateTimer": "arm_mptimer",
     "Miscellaneous.ArmSnoopControlUnit": "a9mpcore_priv",

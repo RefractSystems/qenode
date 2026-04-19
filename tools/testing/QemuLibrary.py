@@ -29,6 +29,9 @@ class QemuLibrary:
         self.tmpdir: Optional[str] = None
 
     def _run(self, coro):
+        if self.loop.is_closed():
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
         return self.loop.run_until_complete(coro)
 
     def launch_qemu(self, dtb_path: str, kernel_path: Optional[str] = None, extra_args: Optional[Union[str, List[str]]] = None) -> Tuple[str, str]:

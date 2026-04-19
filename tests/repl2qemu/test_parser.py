@@ -97,19 +97,51 @@ cpu: CPU.CortexM @ sysbus
     assert dev.properties["nvic"] == "nvic"
 
 
-def test_parse_using_statement():
-    # CURRENTLY FAILS: parser.py doesn't handle 'using'
-    repl = """
-using "platforms/cpus/stm32f4.repl"
-usart1: UART.STM32_UART @ sysbus 0x40011000
-"""
-    platform = parse_repl(repl)
-    # The 'using' line might be misidentified as a device or just ignored
-    # If it's ignored, we only get 1 device.
-    # If it's misidentified, we might get 0 or 2.
+def test_parse_using_statement(tmp_path):
+    child_repl = tmp_path / "child.repl"
+    child_repl.write_text("usart1: UART.STM32_UART @ sysbus 0x40011000\n")
+
+    parent_repl = tmp_path / "parent.repl"
+    parent_repl.write_text(f'using "{child_repl.name}"\n')
+
+    platform = parse_repl(parent_repl.read_text(), str(tmp_path))
+    assert len(platform.devices) == 1
+    assert platform.devices[0].name == "usart1"
+
+def test_parse_recursive_using(tmp_path):
+    a_repl = tmp_path / "a.repl"
+    b_repl = tmp_path / "b.repl"
+    c_repl = tmp_path / "c.repl"
+
+    a_repl.write_text(f'using "b.repl"\ndevA: CPU.CortexM\n')
+    b_repl.write_text(f'using "c.repl"\ndevB: CPU.CortexM\n')
+    c_repl.write_text(f'devC: CPU.CortexM\n')
+
+    platform = parse_repl(a_repl.read_text(), str(tmp_path))
+    assert len(platform.devices) == 3
     names = [d.name for d in platform.devices]
-    assert "usart1" in names
-    assert "using" not in names
+    assert set(names) == {"devA", "devB", "devC"}
+
+def test_stress_test_parser():
+    lines = []
+    for i in range(1000):
+        lines.append(f"dev{i}: CPU.CortexM @ sysbus {hex(0x1000 * i)}")
+        lines.append(f"    prop: {i}")
+        lines.append(f"    -> nvic@{i % 100}")
+    
+    repl = "\n".join(lines)
+    platform = parse_repl(repl)
+    assert len(platform.devices) == 1000
+    assert platform.devices[999].name == "dev999"
+
+def test_parser_main(tmp_path):
+    import subprocess
+    repl_file = tmp_path / "test.repl"
+    repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n")
+    
+    result = subprocess.run([sys.executable, "-m", "tools.repl2qemu.parser", str(repl_file)], capture_output=True, text=True, cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+    assert result.returncode == 0
+    assert "sram" in result.stdout
 
 
 def test_parse_complex_attributes():
