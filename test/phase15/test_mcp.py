@@ -55,7 +55,7 @@ async def test_mcp_provision_and_fail():
             # Note: board_config expects the CONTENT of the config, not the path.
             # But wait, if it's the content, let's see how it's handled.
             result = await session.call_tool(
-                "provision_board", 
+                "provision_board",
                 arguments={"node_id": "test_board", "board_config": "invalid content", "config_type": "yaml"}
             )
 

@@ -24,7 +24,7 @@ use zenoh::pubsub::Subscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
@@ -116,6 +116,9 @@ extern "C" {
 }
 
 unsafe extern "C" fn zenoh_chr_write(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int {
+    unsafe {
+        libc::write(1, b"zenoh_chr_write\n".as_ptr() as *const c_void, 16);
+    }
     let s = &mut *(chr as *mut ChardevZenoh);
     if s.rust_state.is_null() {
         return 0;
@@ -162,9 +165,12 @@ unsafe extern "C" fn zenoh_chr_parse(
         (*zenoh_opts).topic = g_strdup(topic);
     }
 
+    let wrapper = g_malloc0(8) as *mut *mut ChardevZenohOptions;
+    *wrapper = zenoh_opts;
+
     let b = &mut *(backend as *mut ChardevBackend);
     b.type_ = get_chardev_backend_kind_zenoh();
-    b.u.data = zenoh_opts as *mut c_void;
+    b.u.data = wrapper as *mut c_void;
 
     unsafe {
         libc::write(
@@ -186,7 +192,8 @@ unsafe extern "C" fn zenoh_chr_open(
 ) -> bool {
     let s = &mut *(chr as *mut ChardevZenoh);
     let b = &*(backend as *mut ChardevBackend);
-    let opts = b.u.data as *mut ChardevZenohOptions;
+    let wrapper = b.u.data as *mut *mut ChardevZenohOptions;
+    let opts = *wrapper;
 
     let node = CStr::from_ptr((*opts).node).to_string_lossy().into_owned();
     let router = if (*opts).router.is_null() {
@@ -340,7 +347,7 @@ fn zenoh_chardev_init_internal(
         }
     };
 
-    let (tx, rx) = bounded(10240); // Larger buffer for flood tests
+    let (tx, rx) = unbounded(); // Larger buffer for flood tests
     let local_heap = Mutex::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = earliest_vtime.clone();
@@ -353,6 +360,13 @@ fn zenoh_chardev_init_internal(
     let subscriber = session
         .declare_subscriber(&rx_topic)
         .callback(move |sample| {
+            unsafe {
+                libc::write(
+                    1,
+                    b"zenoh-chardev: rx callback fired\n".as_ptr() as *const c_void,
+                    33,
+                );
+            }
             let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
             if tp == 0 {
                 return;

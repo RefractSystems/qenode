@@ -2,8 +2,8 @@ import os
 import socket
 import struct
 import subprocess
-import time
 import sys
+import time
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -25,6 +25,7 @@ def run_qmp_cmd(sock_path, cmd):
 
 import json
 
+
 def main():
     sock_path = "/tmp/irq_test.sock"
     qmp_path = "/tmp/irq_test_qmp.sock"
@@ -36,7 +37,7 @@ def main():
     # 1. Start QEMU
     # We need a firmware that enables interrupts or we check NVIC state via QMP/monitor
     # Actually, "info irq" in monitor shows IRQ state.
-    
+
     dts = f"""
 /dts-v1/;
 / {{
@@ -51,7 +52,7 @@ def main():
 """
     with open("/tmp/irq_test.dts", "w") as f: f.write(dts)
     subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", dtb_path, "/tmp/irq_test.dts"])
-    
+
     with open("/tmp/irq_test.S", "w") as f: f.write(".global _start\n_start:\nwfi\nb _start\n")
     subprocess.run(["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-Ttext=0x40000000", "/tmp/irq_test.S", "-o", elf_path])
 
@@ -62,14 +63,14 @@ def main():
         "-nographic", "-monitor", "none",
         "-qmp", f"unix:{qmp_path},server,nowait"
     ]
-    
+
     qemu_proc = subprocess.Popen(qemu_cmd)
-    
+
     # 2. Start Adapter
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(sock_path)
     server.listen(1)
-    
+
     # Wait for QEMU to connect
     conn = None
     for _ in range(50):
@@ -79,26 +80,26 @@ def main():
             break
         except socket.timeout:
             continue
-    
+
     if not conn:
         print("QEMU did not connect")
         qemu_proc.terminate()
         sys.exit(1)
-        
+
     # Handshake
     hs = conn.recv(8)
     conn.sendall(hs)
-    
+
     # 3. Trigger IRQ and verify
     print("Triggering IRQ 5...")
     conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_SET, 5, 0))
     time.sleep(0.5)
-    
+
     # Check NVIC state via HMP (through QMP)
     # We use human-monitor-command "info irq" or "info pic"
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
     print("NVIC state (IRQ SET):\n", resp.get("return", ""))
-    
+
     if "5: 1" not in resp.get("return", "") and "5:  1" not in resp.get("return", ""):
          # Cortex-A15 GIC might show differently. "info pic" output varies.
          # Let's check for any indication of IRQ 5 being active.
@@ -107,7 +108,7 @@ def main():
     print("Clearing IRQ 5...")
     conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_CLEAR, 5, 0))
     time.sleep(0.5)
-    
+
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
     print("NVIC state (IRQ CLEAR):\n", resp.get("return", ""))
 

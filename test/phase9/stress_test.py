@@ -1,9 +1,9 @@
-import subprocess
-import time
 import os
-import socket
 import struct
+import subprocess
 import threading
+import time
+
 import zenoh
 from mmio_client import MMIOClient
 
@@ -53,7 +53,7 @@ def test_rapid_mmio():
             if val != i:
                 print(f"Mismatch at {i}: {val} != {i}")
                 break
-        
+
         end_time = time.time()
         print(f"Finished {count} MMIO R/W cycles in {end_time - start_time:.2f}s")
         client.close()
@@ -71,14 +71,14 @@ def test_rapid_can():
         print("Adapter failed to create socket")
         adapter.terminate()
         return False
-    
+
     try:
         z_session = zenoh.open(zenoh.Config())
         z_pub = z_session.declare_publisher("sim/systemc/frame/stress-node/rx")
-        
+
         count = 100
         received_count = 0
-        
+
         def injector():
             for i in range(count):
                 payload = struct.pack("<QIII", (i+1)*1000000, 8, 0x100 + i, 0x1000 + i)
@@ -99,12 +99,12 @@ def test_rapid_can():
             while status & 1 and received_count < count:
                 rx_id = client.read(0x10, vtime_ns=current_vtime)
                 rx_data = client.read(0x14, vtime_ns=current_vtime)
-                client.write(0x18, 1, vtime_ns=current_vtime) 
+                client.write(0x18, 1, vtime_ns=current_vtime)
                 received_count += 1
                 last_found_time = time.time()
                 if received_count % 10 == 0: print(f"  CAN RX {received_count}/{count} at vtime={current_vtime}...")
                 status = client.read(0x0C, vtime_ns=current_vtime)
-            
+
             if received_count < count:
                 # If we haven't found a frame for a bit, advance vtime
                 if time.time() - last_found_time > 0.1:
@@ -112,9 +112,9 @@ def test_rapid_can():
                      last_found_time = time.time()
                 time.sleep(0.02)
 
-                
+
         print(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
-        
+
         t.join()
         z_session.close()
         client.close()
@@ -123,7 +123,7 @@ def test_rapid_can():
         adapter.wait()
         out.close()
         err.close()
-    
+
     if received_count != count:
         print("CAN Stress test FAILED")
         return False
@@ -137,15 +137,15 @@ def test_can_tx():
         print("Adapter failed to create socket")
         adapter.terminate()
         return False
-    
+
     try:
         z_session = zenoh.open(zenoh.Config())
         z_sub_data = []
         def on_frame(sample):
             z_sub_data.append(sample.payload)
-            
+
         z_sub = z_session.declare_subscriber("sim/systemc/frame/tx-node/tx", on_frame)
-        
+
         count = 10
         for i in range(count):
             can_id = 0x200 + i
@@ -155,12 +155,12 @@ def test_can_tx():
             client.write(0x04, can_data, vtime_ns=vtime + 100)
             client.write(0x08, 1, vtime_ns=vtime + 200)
             time.sleep(0.1)
-            
+
         print(f"Waiting for {count} TX frames via Zenoh...")
         start_time = time.time()
         while len(z_sub_data) < count and time.time() - start_time < 5:
             time.sleep(0.1)
-            
+
         print(f"Received {len(z_sub_data)}/{count} TX frames")
         z_session.close()
         client.close()
@@ -169,7 +169,7 @@ def test_can_tx():
         adapter.wait()
         out.close()
         err.close()
-        
+
     if len(z_sub_data) != count:
         print("CAN TX test FAILED")
         return False
@@ -188,10 +188,10 @@ def test_causality_regression():
         client.write(0, 0x1234, vtime_ns=1000)
         print("Attempting write with regressed vtime...")
         client.write(4, 0x5678, vtime_ns=500)
-        
+
         val1 = client.read(0, vtime_ns=1100)
         val2 = client.read(4, vtime_ns=1200)
-        
+
         print(f"Vals: {hex(val1)}, {hex(val2)}")
         client.close()
     finally:
@@ -205,6 +205,6 @@ if __name__ == "__main__":
     can_ok = test_rapid_can()
     tx_ok = test_can_tx()
     test_causality_regression()
-    
+
     if not (can_ok and tx_ok):
         exit(1)

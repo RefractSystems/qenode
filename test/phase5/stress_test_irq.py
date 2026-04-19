@@ -1,10 +1,10 @@
+import json
 import os
 import socket
 import struct
 import subprocess
-import time
 import sys
-import json
+import time
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -64,7 +64,7 @@ def main():
 """
     with open("/tmp/stress_irq.dts", "w") as f: f.write(dts)
     subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", dtb_path, "/tmp/stress_irq.dts"])
-    
+
     # Firmware that just spins
     with open("/tmp/stress_irq.S", "w") as f: f.write(".global _start\n_start:\nb _start\n")
     subprocess.run(["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-Ttext=0x40000000", "/tmp/stress_irq.S", "-o", elf_path])
@@ -76,13 +76,13 @@ def main():
         "-nographic", "-monitor", "none",
         "-qmp", f"unix:{qmp_path},server,nowait"
     ]
-    
+
     qemu_proc = subprocess.Popen(qemu_cmd)
-    
+
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(sock_path)
     server.listen(1)
-    
+
     conn = None
     for _ in range(100):
         try:
@@ -91,15 +91,15 @@ def main():
             break
         except socket.timeout:
             continue
-    
+
     if not conn:
         print("QEMU did not connect")
         qemu_proc.terminate()
         sys.exit(1)
-        
+
     hs = conn.recv(8)
     conn.sendall(hs)
-    
+
     print("Starting IRQ stress test...", flush=True)
     NUM_IRQS = 1000
     start_time = time.time()
@@ -117,7 +117,7 @@ def main():
 
     end_time = time.time()
     print(f"Finished {NUM_IRQS} IRQ pairs in {end_time - start_time:.2f}s")
-    
+
     # Verify final state
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
     print("Final PIC state:\n", resp.get("return", ""))

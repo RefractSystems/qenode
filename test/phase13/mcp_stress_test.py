@@ -36,11 +36,11 @@ async def main():
     firmware_path = os.path.join(WORKSPACE_DIR, "test", "phase1", "hello.elf")
 
     node_id = "stress_node"
-    
+
     print(f"Provisioning {node_id}...")
     await send_json({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "provision_board", "arguments": {"node_id": node_id, "board_config": board_config}}})
     await recv_json()
-    
+
     await send_json({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "flash_firmware", "arguments": {"node_id": node_id, "firmware_path": firmware_path}}})
     await recv_json()
 
@@ -51,17 +51,17 @@ async def main():
         if "error" in res:
             print(f"Start error: {res['error']}")
             break
-        
+
         await asyncio.sleep(1)
-        
+
         print(f"Iteration {i+1}: Reading PC...")
         await send_json({"jsonrpc": "2.0", "id": 200+i, "method": "tools/call", "params": {"name": "read_cpu_state", "arguments": {"node_id": node_id}}})
         res = await recv_json()
-        
+
         print(f"Iteration {i+1}: Stopping...")
         await send_json({"jsonrpc": "2.0", "id": 300+i, "method": "tools/call", "params": {"name": "stop_node", "arguments": {"node_id": node_id}}})
         await recv_json()
-        
+
         await asyncio.sleep(0.5)
 
     proc.terminate()

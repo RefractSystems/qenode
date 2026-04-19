@@ -119,7 +119,12 @@ rust_zenoh_chardev_lib = custom_target(
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
+#include "qapi/qapi-types-char.h"
 module_obj("chardev-zenoh");
+int get_chardev_backend_kind_zenoh(void);
+int get_chardev_backend_kind_zenoh(void) {
+    return CHARDEV_BACKEND_KIND_ZENOH;
+}
 EOF
 ''',
     'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c', meson.project_source_root(), meson.project_build_root()

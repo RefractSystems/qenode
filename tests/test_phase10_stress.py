@@ -70,7 +70,7 @@ async def test_multi_node_stress():
             node_vtimes[node_id] += delta_ns
 
             # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
-            reply_payload = struct.pack("<QI", node_vtimes[node_id], 1)
+            reply_payload = struct.pack("<QII", node_vtimes[node_id], 1, 0)
             query.reply(query.key_expr, reply_payload)
         except Exception as e:
             print(f"DEBUG ERROR in on_query: {e}")

@@ -27,24 +27,22 @@ python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$POR
 ROUTER_PID=$!
 sleep 2
 
-# Start QEMU in slaved-suspend mode
+# Start QEMU in slaved-icount mode
 # Using minimal.dtb from phase1
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$WORKSPACE_DIR/test/phase1/minimal.dtb" \
     -kernel "$WORKSPACE_DIR/test/phase8/echo.elf" \
-    -device zenoh-clock,node=0,mode=slaved-suspend,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
+    -icount shift=0,align=off,sleep=off \
+    -device zenoh-clock,node=0,mode=slaved-icount,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
     -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:$PORT \
     -serial chardev:uart0 \
+    -d in_asm \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
 sleep 2
 
-# Start Mock Time Authority in background
-python3 "$WORKSPACE_DIR/test/phase8/mock_time_authority.py" tcp/127.0.0.1:$PORT &
-TIME_AUTH_PID=$!
-
 # Run Stress Test
-if python3 "$WORKSPACE_DIR/test/phase8/uart_stress_test.py" tcp/127.0.0.1:$PORT; then
+if python3 "$WORKSPACE_DIR/test/phase8/uart_stress_test.py" "tcp/127.0.0.1:$PORT"; then
     echo "=== Phase 8 UART Stress Test PASSED ==="
 else
     echo "=== Phase 8 UART Stress Test FAILED ==="

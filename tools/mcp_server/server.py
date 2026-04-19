@@ -296,8 +296,7 @@ def create_mcp_server() -> Server:
                 raise ValueError(f"Unknown tool: {name}")
         except (Exception, BaseException) as e:
             logger.error(f"Error executing tool {name}: {e}")
-            from mcp.types import CallToolResult
-            return CallToolResult(content=[TextContent(type="text", text=f"Error: {str(e)}")], isError=True)
+            return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
     @server.list_resources()

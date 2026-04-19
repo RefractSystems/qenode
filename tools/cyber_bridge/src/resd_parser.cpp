@@ -18,10 +18,29 @@ std::vector<double> ResdSensor::get_reading(uint64_t vtime_ns) {
         current_idx_++;
     }
 
-    // Basic zero-order hold interpolation
+    if (current_idx_ + 1 >= samples_.size() || vtime_ns < samples_[current_idx_].timestamp_ns) {
+        // Zero-order hold if we are past the end, or before the beginning
+        std::vector<double> ret;
+        for (int32_t val : samples_[current_idx_].data) {
+            ret.push_back(static_cast<double>(val));
+        }
+        return ret;
+    }
+
+    // Linear interpolation between current_idx_ and current_idx_ + 1
+    const auto& s0 = samples_[current_idx_];
+    const auto& s1 = samples_[current_idx_ + 1];
+    
+    double t0 = static_cast<double>(s0.timestamp_ns);
+    double t1 = static_cast<double>(s1.timestamp_ns);
+    double t = static_cast<double>(vtime_ns);
+    double factor = (t - t0) / (t1 - t0);
+
     std::vector<double> ret;
-    for (int32_t val : samples_[current_idx_].data) {
-        ret.push_back(static_cast<double>(val));
+    for (size_t i = 0; i < s0.data.size(); ++i) {
+        double v0 = static_cast<double>(s0.data[i]);
+        double v1 = static_cast<double>(s1.data[i]);
+        ret.push_back(v0 + factor * (v1 - v0));
     }
     return ret;
 }
@@ -75,8 +94,9 @@ bool ResdParser::parse() {
     }
 
     uint8_t version;
-    file.read(reinterpret_cast<char*>(&version), 1);
-    file.seekg(3, std::ios::cur); // padding
+    if (!file.read(reinterpret_cast<char*>(&version), 1)) return false;
+    char padding[3];
+    if (!file.read(padding, 3)) return false;
 
     while (file.peek() != EOF) {
         uint8_t block_type;
@@ -119,6 +139,7 @@ bool ResdParser::parse() {
         uint64_t current_time = start_time;
 
         while (bytes_read < samples_size) {
+            if (!file.good()) return false; // Fail on truncated data
             uint64_t timestamp = current_time;
             if (block_type == 0x01) {
                 file.read(reinterpret_cast<char*>(&timestamp), 8);
@@ -127,6 +148,7 @@ bool ResdParser::parse() {
 
             std::vector<int32_t> data;
             // Parse based on sample_type
+            if (!file.good()) return false;
             if (sample_type == 0x0001) { // TEMPERATURE
                 int32_t temp;
                 file.read(reinterpret_cast<char*>(&temp), 4);

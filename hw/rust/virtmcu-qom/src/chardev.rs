@@ -27,7 +27,6 @@ pub struct ChardevClass {
         unsafe extern "C" fn(
             chr: *mut Chardev,
             backend: *mut c_void,
-            be_opened: *mut bool,
             errp: *mut *mut c_void,
         ) -> bool,
     >, // 112
