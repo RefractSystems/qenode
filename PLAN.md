@@ -961,7 +961,97 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-## Risks and Open Questions
+## Phase 21 — High-Throughput WiFi Simulation (802.11 over Zenoh)
+
+**Goal**: Support WiFi (802.11) as a high-throughput, deterministic communication channel, enabling complex mobile and infrastructure-based simulation scenarios.
+
+**Tasks**:
+- [ ] **21.1** **Zenoh-WiFi Header & Protocol**: Define a `ZenohWiFiHeader` in `virtmcu-api` containing `delivery_vtime_ns`, `size`, `channel`, `rssi`, `snr`, and `frame_type` (Management, Control, Data).
+- [ ] **21.2** **Native Zenoh-WiFi QOM Device**: Implement `hw/rust/zenoh-wifi/` as a pure Rust device. 
+  - Follows the `zenoh-netdev` pattern for Zenoh RX/TX.
+  - Implements a generic 802.11 radio register interface compatible with standard drivers (e.g., `mac80211_hwsim` or simplified vendor-specific).
+- [ ] **21.3** **Simplified 802.11 MAC State Machine**: 
+  - TX: Appends PLCP header and serializes to Zenoh.
+  - RX: Filters frames based on BSSID and MAC address.
+  - Management: Supports basic beaconing and scanning logic to enable firmware-level association.
+- [ ] **21.4** **High-Throughput Buffer Management**: Optimized RX/TX rings in Rust to handle standard 802.11 MTU (2304 bytes MSDU) without impacting simulation quantum latency.
+
+### Phase 21 Outcomes, Testing, and Hardening
+- **Outcome**: A deterministic, high-throughput 802.11 virtual radio capable of AP/Client association and >50Mbps data transfer over Zenoh.
+- **Assumptions**: 802.11 Beacon intervals and SIFS/DIFS timings can be accurately mapped to QEMU's virtual clock without host OS jitter. `QemuTimer` granularity is sufficient for microsecond-level MAC events.
+- **What can go wrong (Risks)**: High MTU (2304 bytes) combined with high packet rates could overflow the QEMU RX priority queue, stalling the TCG thread if dynamic memory allocation (`Box::new`) is used in the hot path. QEMU event loop starvation due to processing large batches of WiFi packets.
+- **Asserts**: Assert `bql_held()` during all MAC state transitions and RX injections. Assert packet `delivery_vtime_ns >= current_vtime` to prevent causality violations.
+- **Unit Tests**: BSSID filtering logic (frames with non-matching BSSIDs are dropped early without interrupting the guest).
+- **Stress Tests**: `test_wifi_saturation.sh`: Sustain 100Mbps virtual throughput between an AP and Client. Verify 0 dropped frames and no BQL deadlocks over a 1-minute virtual time span.
+
+---
+
+## Phase 22 — Thread Protocol Support & 802.15.4 Reuse
+
+**Goal**: Enable Thread mesh networking by optimizing the existing 802.15.4 implementation for multi-hop, low-power mesh scenarios.
+
+**Tasks**:
+- [ ] **22.1** **802.15.4 Indirect Transmission**: Implement MAC-level Data Request (Polling) support. 
+  - Leader/Router nodes buffer frames for "Sleepy End Devices" (SEDs).
+  - SEDs poll for data; the peripheral injects the buffered frame with precise SIFS/LIFS timing.
+- [ ] **22.2** **Enhanced Extended Address Filtering**: Ensure the hardware filtering logic in `zenoh-802154` correctly handles Thread's heavy reliance on 64-bit IEEE Extended Addresses for IPv6 neighbor discovery.
+- [ ] **22.3** **OpenThread Stack Validation**: Integrate the OpenThread stack into a test firmware.
+  - Verify Successful Attachment to a Thread Leader.
+  - Verify Commissioning (Joiner/Commissioner) process over the virtual radio.
+
+### Phase 22 Outcomes, Testing, and Hardening
+- **Outcome**: OpenThread stack runs unmodified on virtmcu, successfully forming a multi-hop mesh with Sleepy End Devices relying on deterministic indirect transmissions.
+- **Assumptions**: Existing `zenoh-802154` queue depths are sufficient for Thread MLE/MAC packets. SEDs poll frequently enough to prevent buffer overflows on the Router node.
+- **What can go wrong (Risks)**: Memory leaks in the Border Router's indirect transmission buffer if an SED permanently drops offline. Strict 192us turnaround time for 802.15.4 ACKs might be missed if Zenoh latency exceeds the simulation quantum, causing infinite retransmissions and mesh collapse.
+- **Asserts**: Assert indirect transmission buffer size `< MAX_SED_PACKETS` to prevent OOM. Assert MAC ACK generation is strictly scheduled at exactly `vtime + 192us`.
+- **Unit Tests**: SED Polling unit test (verify a buffered frame is injected only after a Data Request MAC command is received from the correct extended address).
+- **Stress Tests**: `test_thread_mesh_storm.sh`: 50-node mesh initialization storm. All nodes attempt to attach simultaneously. Verify deterministic leader election and zero simulation stalls.
+
+---
+
+## Phase 23 — Multi-Protocol Network Integration (Ethernet, Thread, WiFi)
+
+**Goal**: Simulate a complete, heterogeneous IoT ecosystem where multiple communication protocols coexist and interact deterministically.
+
+**Tasks**:
+- [ ] **23.1** **Thread Border Router Implementation**: Configure a "Gateway" node in YAML with both Ethernet and 802.15.4 interfaces.
+  - Firmware routes traffic between the Thread mesh and an Ethernet-based cloud backend.
+- [ ] **23.2** **Mixed-Medium Zenoh Coordinator**: Update `zenoh_coordinator` to handle multiple medium types (WiFi, 802.15.4, Ethernet) with protocol-specific propagation models (e.g., higher attenuation for 2.4GHz vs. Sub-GHz).
+- [ ] **23.3** **Complex Topology Benchmarking**: Define a 10-node "Smart Home" world in YAML.
+
+### Phase 23 Outcomes, Testing, and Hardening
+- **Outcome**: Seamless, jitter-free co-simulation of multiple transport layers (Ethernet, Thread, WiFi) in a single virtual environment with a functional Border Router.
+- **Assumptions**: `zenoh_coordinator` can efficiently multiplex low-latency/low-bandwidth (Thread) and high-bandwidth (Ethernet/WiFi) streams without priority inversion.
+- **What can go wrong (Risks)**: Head-of-line blocking in the Zenoh coordinator. A burst of heavy Ethernet traffic could delay the routing of a Thread MAC ACK, causing unintended timeouts in the 802.15.4 stack.
+- **Asserts**: Assert strict chronological ordering of injected packets across all virtual network interfaces within a single QEMU instance.
+- **Unit Tests**: Protocol-specific attenuation validation (verify 2.4GHz WiFi packets drop off faster than Sub-GHz 802.15.4 packets over the same distance).
+- **Stress Tests**: `test_cross_protocol_flood.sh`: Flood the Border Router's Ethernet interface with UDP traffic while concurrently pinging a Thread SED. Verify the Thread ping RTT remains constant in virtual time.
+
+---
+
+## Phase 24 — Heterogeneous Wired Bus Coordination (UART, CAN, Ethernet)
+
+**Goal**: Integrate various wired communication buses into the deterministic simulation environment, providing a unified "Vehicle-to-Everything" (V2X) or "Industrial IoT" testbed.
+
+**Tasks**:
+- [ ] **24.1** **Native Rust CAN-over-Zenoh**: Migrate the Phase 9 SystemC CAN bus logic into a native Rust `zenoh-can` peripheral.
+  - Supports standard CAN 2.0B frames and deterministic arbitration.
+- [ ] **24.2** **Deterministic Multi-Node Serial (RS-485)**: Expand `zenoh-chardev` to support half-duplex, multi-drop serial buses.
+  - Implements collision detection if two nodes write to the same Zenoh UART topic simultaneously.
+- [ ] **24.3** **Mixed Wired YAML Platform**: Define a "Vehicle Control Unit" (VCU) node with CAN, Ethernet, and UART interfaces.
+
+### Phase 24 Outcomes, Testing, and Hardening
+- **Outcome**: Deterministic emulation of industrial/automotive wired buses (CAN 2.0B, RS-485), fully synchronized with Ethernet for V2X systems.
+- **Assumptions**: CAN bus bit-level arbitration can be accurately abstracted into packet-level priority sorting at the virtual clock boundary by the coordinator.
+- **What can go wrong (Risks)**: Two nodes transmitting on the CAN bus in the identical virtual quantum might not be ordered correctly by CAN ID priority, violating CSMA/CR. UART collision detection on RS-485 could spuriously trigger if timestamps are not strictly aligned.
+- **Asserts**: Assert CAN RX queues strictly order incoming frames by lowest CAN ID (highest priority) if timestamps match. Assert `bql_held()` when raising CAN/UART RX interrupts.
+- **Unit Tests**: CAN arbitration test (Node A and Node B transmit simultaneously; verify the node with the lower ID wins arbitration and Node B re-queues its TX).
+- **Stress Tests**: `test_v2x_interrupt_storm.sh`: Saturate CAN, RS-485, and Ethernet simultaneously. Ensure QEMU accurately delivers >100k IRQs per virtual second without deadlocking the BQL or dropping interrupts.
+
+---
+
+## Deferred / Won't Do
+
 
 | # | Risk | Mitigation |
 |---|------|-----------|
