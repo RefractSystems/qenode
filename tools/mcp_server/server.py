@@ -227,6 +227,9 @@ def create_mcp_server() -> Server:
                 node = server.node_manager.get_node(arguments["node_id"])
                 addr = arguments["address"]
                 size = arguments["size"]
+                if size > 1024 * 1024:  # 1MB limit for safety
+                     return [TextContent(type="text", text="Error: Memory read size too large (max 1MB)")]
+
                 # pmemsave saves to a file, so we do it via QMP then read it
                 import tempfile
 
@@ -274,9 +277,7 @@ def create_mcp_server() -> Server:
             elif name == "set_network_latency":
                 import json
 
-                import zenoh
-
-                session = zenoh.open(zenoh.Config())
+                session = server.node_manager.get_zenoh_session()
                 topic = "sim/network/control"
                 data = {
                     "node_a": arguments["node_a"],
@@ -284,7 +285,6 @@ def create_mcp_server() -> Server:
                     "latency_ns": arguments["latency_ns"],
                 }
                 session.put(topic, json.dumps(data).encode("utf-8"))
-                session.close()
                 return [
                     TextContent(
                         type="text",
@@ -297,6 +297,7 @@ def create_mcp_server() -> Server:
         except Exception as e:
             logger.error(f"Error executing tool {name}: {e}")
             from mcp.types import CallToolResult
+
             return CallToolResult(content=[TextContent(type="text", text=f"Error: {str(e)}")], isError=True)
 
     @server.list_resources()

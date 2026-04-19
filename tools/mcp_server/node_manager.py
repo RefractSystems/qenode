@@ -81,7 +81,7 @@ class NodeManager:
                             raise ValueError(f"repl2qemu failed with code {e.code}")
                     finally:
                         sys.argv = old_argv
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             if os.path.exists(path):
                 os.remove(path)
             if os.path.exists(dtb_path):
