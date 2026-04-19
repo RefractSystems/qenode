@@ -37,7 +37,8 @@ def create_resd(filename, duration_ms):
 
 @pytest.mark.asyncio
 async def test_multi_node_stress():
-    manager = multiprocessing.Manager()
+    ctx = multiprocessing.get_context("spawn")
+    manager = ctx.Manager()
 
     num_nodes = 5
     duration_ms = 100
