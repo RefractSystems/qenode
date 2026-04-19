@@ -504,7 +504,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
     - TX: Publishes bytes to Zenoh with `QEMU_CLOCK_VIRTUAL` timestamps.
     - RX: Buffers bytes in a priority queue and injects them via `QEMUTimer` to guarantee multi-node UART determinism.
 - [x] **8.4** **Multi-Node UART Test**: Integration test where Node 1 sends a string over UART to Node 2 via the `zenoh_coordinator`, asserting byte-perfect virtual-time delivery.
-- [ ] **8.6 High-Baud UART Stress Test**
+- [x] **8.6 High-Baud UART Stress Test**
   Saturate `zenoh-chardev` with 10Mbps equivalent serial traffic. Assert no dropped bytes and perfect deterministic delivery via the virtual-time priority queue.
 
 ### Phase 8 Technical Debt & Future Risks
