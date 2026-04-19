@@ -976,6 +976,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
 | R11 | Deadlock in `zenoh-clock.c` shutdown | `z_session_drop` in the main thread can deadlock with Zenoh callbacks waiting for the BQL. Needs a non-blocking shutdown sequence. |
+| R12 | macOS Native Compilation | Native `cargo build/clippy` on macOS fails due to cross-platform pollution in headers and missing Linux-specific files. Needs a dedicated CI job to verify macOS compatibility. |
 
 ---
 

@@ -104,6 +104,14 @@ def main():
     print(f"{'Function Name':<30} {'Executed?':<10} {'Coverage':<10}")
     print("-" * 60)
 
+    # Create a set of all executed addresses for O(1) lookup
+    executed_addresses = set()
+    for bb_start, bb_size in bbs:
+        # We only care about addresses that are within the range of our symbols
+        # to keep the set size reasonable.
+        for addr in range(bb_start, bb_start + bb_size):
+            executed_addresses.add(addr)
+
     total_func_size = 0
     total_exec_size = 0
 
@@ -116,23 +124,20 @@ def main():
         if size == 0:
             continue
 
-        exec_bytes = set()
-        for bb_start, bb_size in bbs:
-            overlap_start = max(bb_start, addr)
-            overlap_end = min(bb_start + bb_size, addr + size)
+        # Count how many bytes in this symbol range were executed
+        exec_count = 0
+        for i in range(addr, addr + size):
+            if i in executed_addresses:
+                exec_count += 1
 
-            if overlap_start < overlap_end:
-                for b in range(overlap_start, overlap_end):
-                    exec_bytes.add(b)
-
-        coverage = (len(exec_bytes) / size) * 100 if size > 0 else 0
-        executed = "Yes" if len(exec_bytes) > 0 else "No"
+        coverage = (exec_count / size) * 100 if size > 0 else 0
+        executed = "Yes" if exec_count > 0 else "No"
 
         if args.verbose or executed == "Yes" or coverage < 100:
             results.append((name, executed, coverage))
 
         total_func_size += size
-        total_exec_size += len(exec_bytes)
+        total_exec_size += exec_count
 
     # Print top functions or all if verbose
     for name, exec_status, cov in results:

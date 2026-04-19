@@ -312,6 +312,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e GCOV_PREFIX=/workspace/coverage-data \
+            -e GCOV_PREFIX_STRIP=3 \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash -c "${{ matrix.cmd }}"
 
@@ -447,6 +448,7 @@ jobs:
               # and where the object files/gcda files are (/workspace/all-coverage)
               gcovr -r /build/qemu/hw/virtmcu \
                 --gcov-executable gcov \
+                --object-directory /build/qemu/build-virtmcu \
                 --object-directory /workspace/all-coverage \
                 --xml /workspace/test-results/peripheral-coverage.xml \
                 --html-details /workspace/test-results/peripheral-coverage.html \

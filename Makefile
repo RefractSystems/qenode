@@ -114,13 +114,18 @@ test-robot: venv
 	  tests/test_interactive_echo.robot
 
 # Run guest firmware coverage analysis (Phase 1)
-test-coverage-guest: build-test-artifacts
-	@echo "==> Running guest firmware coverage (drcov)..."
-	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
-	@DRCOV_SO=$$(find third_party/qemu -name "libdrcov.so" 2>/dev/null | head -n 1); \
-	timeout 5s ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
-	  -display none -plugin "$$DRCOV_SO",filename=hello.drcov -d plugin || true
-	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
+test-coverage-guest:
+	@echo "==> Running guest firmware coverage (drcov) inside builder..."
+	@docker run --rm \
+		-v "$(CURDIR):/workspace" -w /workspace \
+		-e PYTHONPATH=/workspace \
+		virtmcu-builder:dev \
+		bash -c "make -C test/phase1 && \
+		         DRCOV_SO=\$$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
+		         qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
+		           -kernel test/phase1/hello.elf -nographic -m 128M -display none \
+		           -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin && \
+		         python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80"
 	@echo "✓ Guest coverage check passed."
 
 # Generate host-side C/Rust coverage report (requires lcov)
@@ -259,6 +264,20 @@ ci-local: venv check-versions
 	@echo "✓ ci-local passed."
 	@echo "  To run the full pipeline (builder ~40 min + integration tests): make ci-full"
 
+# Run host-side C coverage for peripheral plugins (inside builder)
+test-coverage-peripheral:
+	@echo "==> Running peripheral C coverage (gcovr)..."
+	@mkdir -p test-results
+	@docker run --rm \
+		-v "$(CURDIR):/workspace" -w /workspace \
+		virtmcu-builder:dev \
+		bash -c "gcovr -r /build/qemu/hw/virtmcu \
+			--gcov-executable gcov \
+			--object-directory /build/qemu/build-virtmcu \
+			--object-directory /workspace/coverage-data \
+			--xml /workspace/test-results/peripheral-coverage.xml \
+			--print-summary"
+
 ci-full: ci-local
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
@@ -275,6 +294,8 @@ ci-full: ci-local
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
 		-e VIRTMCU_STALL_TIMEOUT_MS=60000 \
+		-e GCOV_PREFIX=/workspace/coverage-data \
+		-e GCOV_PREFIX_STRIP=3 \
 		virtmcu-builder:dev \
 		bash -c "make -C test/phase1 && bash test/phase1/smoke_test.sh"
 	@echo "  Running pytest unit tests inside builder..."
@@ -286,6 +307,12 @@ ci-full: ci-local
 		         python3 -m pytest tests/repl2qemu/ tests/test_yaml2qemu.py \
 		                        tests/test_cli_generator.py tests/test_fdt_emitter.py \
 		                        -v --tb=short"
+	@echo ""
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI Full — Coverage Checks"
+	@echo "════════════════════════════════════════════════════"
+	$(MAKE) test-coverage-guest
+	$(MAKE) test-coverage-peripheral
 	@echo ""
 	@echo "✓ ci-full passed."
 	@echo "  NOTE: Phase 4-16 smoke tests, pytest-qmp, and Robot Framework"
