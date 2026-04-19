@@ -1,14 +1,17 @@
-import os
-import struct
 import subprocess
-import threading
 import time
-
+import os
+import socket
+import struct
+import threading
 import zenoh
 from mmio_client import MMIOClient
 
 ADAPTER_PATH = "./tools/systemc_adapter/build/adapter"
 SOCKET_PATH = "/tmp/stress_test.sock"
+
+VIRTMCU_PROTO_MAGIC = 0x564D4355
+VIRTMCU_PROTO_VERSION = 1
 
 def run_adapter(test_name, node_id=""):
     cmd = [ADAPTER_PATH, SOCKET_PATH]
@@ -18,26 +21,29 @@ def run_adapter(test_name, node_id=""):
     err = open(f"/tmp/adapter_{test_name}_stderr.log", "w")
     return subprocess.Popen(cmd, stdout=out, stderr=err), out, err
 
-def wait_for_socket(path, timeout=5):
+def connect_to_adapter(path, timeout=10):
     start = time.time()
     while time.time() - start < timeout:
         if os.path.exists(path):
-            return True
-        time.sleep(0.1)
-    return False
+            try:
+                client = MMIOClient(path)
+                client.connect()
+                return client
+            except:
+                pass
+        time.sleep(0.5)
+    return None
 
 def test_rapid_mmio():
     print("--- Testing Rapid MMIO ---")
     adapter, out, err = run_adapter("mmio")
-    if not wait_for_socket(SOCKET_PATH):
-        print("Adapter failed to create socket")
+    client = connect_to_adapter(SOCKET_PATH)
+    if not client:
+        print("Adapter failed to create socket or handshake failed")
         adapter.terminate()
         return
 
     try:
-        client = MMIOClient(SOCKET_PATH)
-        client.connect()
-
         start_time = time.time()
         count = 100
         for i in range(count):
@@ -47,7 +53,7 @@ def test_rapid_mmio():
             if val != i:
                 print(f"Mismatch at {i}: {val} != {i}")
                 break
-
+        
         end_time = time.time()
         print(f"Finished {count} MMIO R/W cycles in {end_time - start_time:.2f}s")
         client.close()
@@ -60,49 +66,43 @@ def test_rapid_mmio():
 def test_rapid_can():
     print("--- Testing Rapid CAN ---")
     adapter, out, err = run_adapter("can", "stress-node")
-    if not wait_for_socket(SOCKET_PATH):
+    client = connect_to_adapter(SOCKET_PATH)
+    if not client:
         print("Adapter failed to create socket")
         adapter.terminate()
         return False
-
+    
     try:
-        client = MMIOClient(SOCKET_PATH)
-        client.connect()
-
         z_session = zenoh.open(zenoh.Config())
         z_pub = z_session.declare_publisher("sim/systemc/frame/stress-node/rx")
-
+        
         count = 100
         received_count = 0
-
+        
         def injector():
             for i in range(count):
-                # CanWireFrame: vtime(8), size(4), id(4), data(4)
-                # Inject with some delay between frames
                 payload = struct.pack("<QIII", (i+1)*1000000, 8, 0x100 + i, 0x1000 + i)
                 z_pub.put(payload)
                 time.sleep(0.01)
 
         t = threading.Thread(target=injector)
         t.start()
-
+        
         start_time = time.time()
-        timeout = 10
+        timeout = 15
         while received_count < count and time.time() - start_time < timeout:
-            # Poll status register (0x0C) for bit 0 (rx_pending)
-            # Advance time slowly to allow Zenoh to deliver
             status = client.read(0x0C, vtime_ns=(received_count+1)*2000000)
             if status & 1:
-                rx_id = client.read(0x10)
-                rx_data = client.read(0x14)
-                client.write(0x18, 1) # Clear IRQ
+                rx_id = client.read(0x10, vtime_ns=(received_count+1)*2000000 + 100)
+                rx_data = client.read(0x14, vtime_ns=(received_count+1)*2000000 + 200)
+                client.write(0x18, 1, vtime_ns=(received_count+1)*2000000 + 300) 
                 received_count += 1
-                if received_count % 10 == 0: print(f"  CAN {received_count}/{count}...")
+                if received_count % 10 == 0: print(f"  CAN RX {received_count}/{count}...")
             else:
                 time.sleep(0.05)
-
+                
         print(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
-
+        
         t.join()
         z_session.close()
         client.close()
@@ -111,31 +111,75 @@ def test_rapid_can():
         adapter.wait()
         out.close()
         err.close()
-
+    
     if received_count != count:
-        print("CAN Stress test FAILED (timeout or missed frames)")
+        print("CAN Stress test FAILED")
+        return False
+    return True
+
+def test_can_tx():
+    print("--- Testing CAN TX ---")
+    adapter, out, err = run_adapter("can_tx", "tx-node")
+    client = connect_to_adapter(SOCKET_PATH)
+    if not client:
+        print("Adapter failed to create socket")
+        adapter.terminate()
+        return False
+    
+    try:
+        z_session = zenoh.open(zenoh.Config())
+        z_sub_data = []
+        def on_frame(sample):
+            z_sub_data.append(sample.payload)
+            
+        z_sub = z_session.declare_subscriber("sim/systemc/frame/tx-node/tx", on_frame)
+        
+        count = 10
+        for i in range(count):
+            can_id = 0x200 + i
+            can_data = 0x2000 + i
+            vtime = (i + 1) * 1000000
+            client.write(0x00, can_id, vtime_ns=vtime)
+            client.write(0x04, can_data, vtime_ns=vtime + 100)
+            client.write(0x08, 1, vtime_ns=vtime + 200)
+            time.sleep(0.1)
+            
+        print(f"Waiting for {count} TX frames via Zenoh...")
+        start_time = time.time()
+        while len(z_sub_data) < count and time.time() - start_time < 5:
+            time.sleep(0.1)
+            
+        print(f"Received {len(z_sub_data)}/{count} TX frames")
+        z_session.close()
+        client.close()
+    finally:
+        adapter.terminate()
+        adapter.wait()
+        out.close()
+        err.close()
+        
+    if len(z_sub_data) != count:
+        print("CAN TX test FAILED")
         return False
     return True
 
 def test_causality_regression():
     print("--- Testing Causality Regression ---")
     adapter, out, err = run_adapter("causality")
-    if not wait_for_socket(SOCKET_PATH):
+    client = connect_to_adapter(SOCKET_PATH)
+    if not client:
         print("Adapter failed to create socket")
         adapter.terminate()
         return
 
     try:
-        client = MMIOClient(SOCKET_PATH)
-        client.connect()
-
         client.write(0, 0x1234, vtime_ns=1000)
         print("Attempting write with regressed vtime...")
         client.write(4, 0x5678, vtime_ns=500)
-
+        
         val1 = client.read(0, vtime_ns=1100)
         val2 = client.read(4, vtime_ns=1200)
-
+        
         print(f"Vals: {hex(val1)}, {hex(val2)}")
         client.close()
     finally:
@@ -147,7 +191,8 @@ def test_causality_regression():
 if __name__ == "__main__":
     test_rapid_mmio()
     can_ok = test_rapid_can()
+    tx_ok = test_can_tx()
     test_causality_regression()
-
-    if not can_ok:
+    
+    if not (can_ok and tx_ok):
         exit(1)
