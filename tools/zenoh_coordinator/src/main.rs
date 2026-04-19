@@ -12,10 +12,6 @@
  *    and rewrites the timestamp.
  * 3. Link Modeling: It applies distance-based attenuation or drop probabilities
  *    defined via the Dynamic Network Topology API.
- *
- * Because the receiving nodes use `hw/zenoh/zenoh-netdev.c` (or equivalent),
- * they will buffer the message and deliver it into the guest firmware *only*
- * when their virtual clocks catch up to the rewritten delivery timestamp.
  */
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use clap::Parser;
@@ -60,6 +56,7 @@ struct LinkState {
 }
 
 struct NodeInfo {
+    #[allow(dead_code)]
     id: String,
     x: f64,
     y: f64,
@@ -128,22 +125,21 @@ async fn main() {
     loop {
         tokio::select! {
             Ok(sample) = eth_sub.recv_async() => {
-                handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns, &mut rng).await;
+                let _ = handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns, &mut rng).await;
             }
             Ok(sample) = uart_sub.recv_async() => {
-                handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns, &mut rng).await;
+                let _ = handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns, &mut rng).await;
             }
             Ok(sample) = sysc_sub.recv_async() => {
-                handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns).await;
+                let _ = handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns).await;
             }
             Ok(sample) = rf_802154_sub.recv_async() => {
-                handle_rf_msg(&session, sample, &mut known_rf_nodes, "sim/rf/802154", &node_positions, &args, true).await;
+                let _ = handle_rf_msg(&session, sample, &mut known_rf_nodes, "sim/rf/802154", &node_positions, &args, true).await;
             }
             Ok(sample) = rf_hci_sub.recv_async() => {
-                handle_rf_msg(&session, sample, &mut known_rf_nodes, "sim/rf/hci", &node_positions, &args, false).await;
+                let _ = handle_rf_msg(&session, sample, &mut known_rf_nodes, "sim/rf/hci", &node_positions, &args, false).await;
             }
             Ok(sample) = ctrl_sub.recv_async() => {
-
                 let payload_bytes = sample.payload().to_bytes();
                 if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
                     if let Ok(update) = serde_json::from_str::<LinkUpdate>(payload_str) {
@@ -169,23 +165,30 @@ async fn handle_eth_msg(
     topology: &HashMap<(String, String), LinkState>,
     default_delay_ns: u64,
     rng: &mut ChaCha8Rng,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() != 5 {
-        return;
+        return Ok(());
     }
     let sender_id = parts[3].to_string();
     known_nodes.insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     if payload.len() < 12 {
-        return;
+        return Ok(());
     }
 
     let mut cursor = Cursor::new(&payload);
-    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
-    let size = cursor.read_u32::<LittleEndian>().unwrap();
+    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>()?;
+    let size = cursor.read_u32::<LittleEndian>()?;
+
+    // Validation: ensure payload actually contains 'size' bytes after header
+    if payload.len() < (12 + size as usize) {
+        eprintln!("ETH: Packet from {} has mismatched size (expected {}, got {})", 
+                  sender_id, size, payload.len() - 12);
+        return Ok(());
+    }
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
@@ -202,24 +205,20 @@ async fn handle_eth_msg(
 
         // Apply deterministic packet drop
         if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
-            println!("ETH: DROPPED packet from {} to {}", sender_id, node);
             continue;
         }
 
-        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+        let new_delivery_vtime_ns = delivery_vtime_ns.saturating_add(delay_ns);
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload
-            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
-            .unwrap();
-        new_payload.write_u32::<LittleEndian>(size).unwrap();
-        new_payload.write_all(&payload[12..]).unwrap();
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns)?;
+        new_payload.write_u32::<LittleEndian>(size)?;
+        new_payload.write_all(&payload[12..])?;
 
         let rx_topic = format!("sim/eth/frame/{}/rx", node);
-        if let Err(e) = session.put(&rx_topic, new_payload).await {
-            eprintln!("Failed to forward to {}: {}", node, e);
-        }
+        let _ = session.put(&rx_topic, new_payload).await;
     }
+    Ok(())
 }
 
 async fn handle_uart_msg(
@@ -229,23 +228,27 @@ async fn handle_uart_msg(
     topology: &HashMap<(String, String), LinkState>,
     default_delay_ns: u64,
     rng: &mut ChaCha8Rng,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() != 4 {
-        return;
+        return Ok(());
     }
     let sender_id = parts[2].to_string();
     known_nodes.insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     if payload.len() < 12 {
-        return;
+        return Ok(());
     }
 
     let mut cursor = Cursor::new(&payload);
-    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
-    let size = cursor.read_u32::<LittleEndian>().unwrap();
+    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>()?;
+    let size = cursor.read_u32::<LittleEndian>()?;
+
+    if payload.len() < (12 + size as usize) {
+        return Ok(());
+    }
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
@@ -262,24 +265,20 @@ async fn handle_uart_msg(
 
         // Apply deterministic packet drop
         if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
-            println!("UART: DROPPED packet from {} to {}", sender_id, node);
             continue;
         }
 
-        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+        let new_delivery_vtime_ns = delivery_vtime_ns.saturating_add(delay_ns);
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload
-            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
-            .unwrap();
-        new_payload.write_u32::<LittleEndian>(size).unwrap();
-        new_payload.write_all(&payload[12..]).unwrap();
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns)?;
+        new_payload.write_u32::<LittleEndian>(size)?;
+        new_payload.write_all(&payload[12..])?;
 
         let rx_topic = format!("virtmcu/uart/{}/rx", node);
-        if let Err(e) = session.put(&rx_topic, new_payload).await {
-            eprintln!("Failed to forward to {}: {}", node, e);
-        }
+        let _ = session.put(&rx_topic, new_payload).await;
     }
+    Ok(())
 }
 
 async fn handle_sysc_msg(
@@ -288,23 +287,27 @@ async fn handle_sysc_msg(
     known_nodes: &mut HashSet<String>,
     topology: &HashMap<(String, String), LinkState>,
     default_delay_ns: u64,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() != 5 {
-        return;
+        return Ok(());
     }
     let sender_id = parts[3].to_string();
     known_nodes.insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     if payload.len() < 12 {
-        return;
+        return Ok(());
     }
 
     let mut cursor = Cursor::new(&payload);
-    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
-    let size = cursor.read_u32::<LittleEndian>().unwrap();
+    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>()?;
+    let size = cursor.read_u32::<LittleEndian>()?;
+
+    if payload.len() < (12 + size as usize) {
+        return Ok(());
+    }
 
     // Broadcast to all known nodes except the sender
     for node in known_nodes.iter() {
@@ -318,24 +321,17 @@ async fn handle_sysc_msg(
             default_delay_ns
         };
 
-        // CRITICAL FIX: Do NOT drop SystemC frames (like CAN bus) silently.
-        // Physical layer buses rely on arbitration. Dropping them here breaks
-        // the hardware ACKs in the SystemC controller models.
-
-        let new_delivery_vtime_ns = delivery_vtime_ns + delay_ns;
+        let new_delivery_vtime_ns = delivery_vtime_ns.saturating_add(delay_ns);
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload
-            .write_u64::<LittleEndian>(new_delivery_vtime_ns)
-            .unwrap();
-        new_payload.write_u32::<LittleEndian>(size).unwrap();
-        new_payload.write_all(&payload[12..]).unwrap();
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns)?;
+        new_payload.write_u32::<LittleEndian>(size)?;
+        new_payload.write_all(&payload[12..])?;
 
         let rx_topic = format!("sim/systemc/frame/{}/rx", node);
-        if let Err(e) = session.put(&rx_topic, new_payload).await {
-            eprintln!("Failed to forward to {}: {}", node, e);
-        }
+        let _ = session.put(&rx_topic, new_payload).await;
     }
+    Ok(())
 }
 
 async fn handle_rf_msg(
@@ -346,7 +342,7 @@ async fn handle_rf_msg(
     positions: &HashMap<String, NodeInfo>,
     args: &Args,
     has_rf_header: bool,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let parts: Vec<&str> = topic.split('/').collect();
     let sender_id = parts[parts.len() - 2].to_string();
@@ -355,12 +351,16 @@ async fn handle_rf_msg(
     let payload = sample.payload().to_bytes();
     let header_size = if has_rf_header { 14 } else { 12 };
     if payload.len() < header_size {
-        return;
+        return Ok(());
     }
 
     let mut cursor = Cursor::new(&payload);
-    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>().unwrap();
-    let size = cursor.read_u32::<LittleEndian>().unwrap();
+    let delivery_vtime_ns = cursor.read_u64::<LittleEndian>()?;
+    let size = cursor.read_u32::<LittleEndian>()?;
+
+    if payload.len() < (header_size + size as usize) {
+        return Ok(());
+    }
 
     let sender_pos = positions.get(&sender_id);
 
@@ -387,32 +387,29 @@ async fn handle_rf_msg(
         }
 
         if rssi < args.sensitivity {
-            println!("RF: Drop packet from {} to {} (RSSI: {:.1} dBm < {:.1} dBm)", 
-                     sender_id, receiver_id, rssi, args.sensitivity);
             continue;
         }
 
         let new_delivery_vtime_ns = delivery_vtime_ns.saturating_add(extra_delay_ns);
-        assert!(new_delivery_vtime_ns >= delivery_vtime_ns, "Virtual time must not move backwards (overflow detected)");
 
         let mut new_payload = Vec::with_capacity(payload.len());
-        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns).unwrap();
-        new_payload.write_u32::<LittleEndian>(size).unwrap();
+        new_payload.write_u64::<LittleEndian>(new_delivery_vtime_ns)?;
+        new_payload.write_u32::<LittleEndian>(size)?;
         
         if has_rf_header {
-            new_payload.write_i8(rssi as i8).unwrap();
-            new_payload.write_u8(255).unwrap(); // LQI
-            new_payload.write_all(&payload[14..]).unwrap();
+            // Clamp RSSI to i8 range
+            let clamped_rssi = rssi.clamp(-128.0, 127.0) as i8;
+            new_payload.write_i8(clamped_rssi)?;
+            new_payload.write_u8(255)?; // LQI
+            new_payload.write_all(&payload[14..])?;
         } else {
-            new_payload.write_all(&payload[12..]).unwrap();
+            new_payload.write_all(&payload[12..])?;
         }
 
         let rx_topic = format!("{}/{}/rx", topic_prefix, receiver_id);
         let _ = session.put(&rx_topic, new_payload).await;
-        
-        println!("RF: Forwarded from {} to {} (vtime+{}ns, RSSI: {:.1} dBm)", 
-                 sender_id, receiver_id, extra_delay_ns, rssi);
     }
+    Ok(())
 }
 
 fn calculate_fspl(dist_m: f64, freq_hz: f64) -> f64 {
