@@ -1,3 +1,7 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+
 #include "qemu/osdep.h"
 #include "qom/object.h"
 #include "hw/core/qdev.h"
@@ -7,3 +11,5 @@
 #include "system/memory.h"
 #include "hw/core/cpu.h"
 #include "qemu/thread.h"
+
+#pragma GCC diagnostic pop

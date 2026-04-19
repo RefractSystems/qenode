@@ -36,6 +36,9 @@ fn main() {
         .include("/usr/include/glib-2.0")
         .include("/usr/lib/aarch64-linux-gnu/glib-2.0/include")
         .include("/usr/lib/x86_64-linux-gnu/glib-2.0/include")
+        .warnings(false)
+        .flag_if_supported("-Wno-unused-parameter")
+        .flag_if_supported("-Wno-sign-compare")
         .compile("virtmcu_ffi");
 
     let bindings = bindgen::Builder::default()

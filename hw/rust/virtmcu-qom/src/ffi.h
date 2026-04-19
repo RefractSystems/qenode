@@ -7,11 +7,18 @@
 #ifndef VIRTMCU_RUST_FFI_H
 #define VIRTMCU_RUST_FFI_H
 
+/* Suppress noisy warnings from QEMU system headers */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "hw/core/cpu.h"
 #include "qapi/error.h"
 #include "system/cpu-timers.h"
+
+#pragma GCC diagnostic pop
 
 /* icount */
 bool virtmcu_icount_enabled(void);
