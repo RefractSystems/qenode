@@ -201,6 +201,10 @@ declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
+    debug_assert!(
+        unsafe { virtmcu_qom::sync::virtmcu_bql_locked() },
+        "BQL must be held during timer callbacks"
+    );
     let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 

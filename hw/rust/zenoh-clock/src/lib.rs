@@ -176,6 +176,12 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
 }
 
 fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64) -> u64 {
+    // Phase 7.10 runtime assertion: BQL must NOT be held here.
+    debug_assert!(
+        !unsafe { virtmcu_qom::sync::virtmcu_bql_locked() },
+        "BQL must not be held during clock sync wait"
+    );
+
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
     backend.quantum_done.store(true, Ordering::SeqCst);
 

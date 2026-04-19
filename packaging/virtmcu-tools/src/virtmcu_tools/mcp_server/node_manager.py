@@ -2,10 +2,9 @@ import asyncio
 import logging
 import os
 import tempfile
-import sys
 from typing import Dict, Optional
 
-from ..qmp_bridge import QmpBridge
+from tools.testing.qmp_bridge import QmpBridge
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ class NodeManager:
 
     async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml"):
         node = self.get_node(node_id)
-        
+
         # Save to temporary file for validation
         fd, path = tempfile.mkstemp(suffix=f".{config_type}", prefix=f"virtmcu-{node_id}-")
         os.write(fd, board_config.encode("utf-8"))
@@ -56,30 +55,33 @@ class NodeManager:
         dtb_fd, dtb_path = tempfile.mkstemp(suffix=".dtb")
         os.close(dtb_fd)
         try:
-            if config_type == "yaml":
-                from ..yaml2qemu import main as yaml2qemu_main
-                old_argv = sys.argv
-                sys.argv = ["yaml2qemu", "--out-dtb", dtb_path, path]
-                try:
-                    yaml2qemu_main()
-                except SystemExit as e:
-                    if e.code != 0:
-                        raise ValueError(f"yaml2qemu failed with code {e.code}")
-                finally:
-                    sys.argv = old_argv
-            else:
-                # REPL validation
-                from ..repl2qemu.__main__ import main as repl2qemu_main
-                old_argv = sys.argv
-                sys.argv = ["repl2qemu", path, "--out-dtb", dtb_path]
-                try:
-                    repl2qemu_main()
-                except SystemExit as e:
-                    if e.code != 0:
-                        raise ValueError(f"repl2qemu failed with code {e.code}")
-                finally:
-                    sys.argv = old_argv
-        except Exception as e:
+            import contextlib
+            import sys
+            with contextlib.redirect_stdout(sys.stderr):
+                if config_type == "yaml":
+                    from tools.yaml2qemu import main as yaml2qemu_main
+                    old_argv = sys.argv
+                    sys.argv = ["yaml2qemu", "--out-dtb", dtb_path, path]
+                    try:
+                        yaml2qemu_main()
+                    except SystemExit as e:
+                        if e.code != 0:
+                            raise ValueError(f"yaml2qemu failed with code {e.code}")
+                    finally:
+                        sys.argv = old_argv
+                else:
+                    # REPL validation
+                    from tools.repl2qemu.__main__ import main as repl2qemu_main
+                    old_argv = sys.argv
+                    sys.argv = ["repl2qemu", path, "--out-dtb", dtb_path]
+                    try:
+                        repl2qemu_main()
+                    except SystemExit as e:
+                        if e.code != 0:
+                            raise ValueError(f"repl2qemu failed with code {e.code}")
+                    finally:
+                        sys.argv = old_argv
+        except (Exception, SystemExit) as e:
             if os.path.exists(path):
                 os.remove(path)
             if os.path.exists(dtb_path):

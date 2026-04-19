@@ -266,7 +266,10 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
         let mut retry_later = false;
 
         unsafe {
-            virtmcu_qom::sync::virtmcu_bql_lock();
+            debug_assert!(
+                virtmcu_qom::sync::virtmcu_bql_locked(),
+                "BQL must be held during chardev timer callbacks"
+            );
             let can_write = qemu_chr_be_can_write(state.chr) as usize;
 
             if can_write > 0 {
@@ -285,7 +288,6 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
                 // Buffer is full. We can't write right now.
                 retry_later = true;
             }
-            virtmcu_qom::sync::virtmcu_bql_unlock();
         }
 
         if retry_later {
