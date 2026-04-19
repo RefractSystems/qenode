@@ -19,7 +19,7 @@ use std::ptr;
 use virtmcu_qom::chardev::{qemu_chr_be_can_write, qemu_chr_be_write, Chardev, ChardevClass};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::{declare_device_type, device_class, error_setg};
+use virtmcu_qom::{declare_device_type, device_class, error_setg, vlog};
 use zenoh::pubsub::Subscriber;
 use zenoh::Session;
 use zenoh::Wait;
@@ -116,9 +116,10 @@ extern "C" {
 }
 
 unsafe extern "C" fn zenoh_chr_write(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int {
-    unsafe {
-        libc::write(1, b"zenoh_chr_write\n".as_ptr() as *const c_void, 16);
-    }
+    vlog!(
+        "[zenoh-chardev] zenoh_chr_write called with {} bytes\n",
+        len
+    );
     let s = &mut *(chr as *mut ChardevZenoh);
     if s.rust_state.is_null() {
         return 0;
@@ -288,8 +289,10 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
             if can_write > 0 {
                 let mut packet = heap.pop().unwrap();
                 let to_write = std::cmp::min(can_write, packet.data.len());
-                let msg = format!("rx_timer_cb: writing {} bytes to chr\n", to_write);
-                libc::write(1, msg.as_ptr() as *const c_void, msg.len());
+                vlog!(
+                    "[zenoh-chardev] rx_timer_cb: writing {} bytes to chr\n",
+                    to_write
+                );
 
                 qemu_chr_be_write(state.chr, packet.data.as_ptr(), to_write);
 
@@ -301,8 +304,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
                 }
             } else {
                 // Buffer is full. We can't write right now.
-                let msg = format!("rx_timer_cb: buffer full\n");
-                libc::write(1, msg.as_ptr() as *const c_void, msg.len());
+                vlog!("[zenoh-chardev] rx_timer_cb: buffer full\n");
                 retry_later = true;
             }
         }
