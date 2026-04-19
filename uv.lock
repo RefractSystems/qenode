@@ -455,6 +455,7 @@ dependencies = [
     { name = "eclipse-zenoh" },
     { name = "flatbuffers" },
     { name = "mcp" },
+    { name = "pyelftools" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -464,16 +465,12 @@ dependencies = [
     { name = "ruff" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pyelftools" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "eclipse-zenoh", specifier = "==1.9.0" },
     { name = "flatbuffers", specifier = "==25.12.19" },
     { name = "mcp", specifier = "==1.0.0" },
+    { name = "pyelftools", specifier = "==0.32" },
     { name = "pytest", specifier = "==8.0.0" },
     { name = "pytest-asyncio", specifier = "==0.23.5" },
     { name = "pytest-cov", specifier = "==4.1.0" },
@@ -482,6 +479,3 @@ requires-dist = [
     { name = "robotframework", specifier = "==7.0.0" },
     { name = "ruff", specifier = "==0.3.4" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pyelftools", specifier = ">=0.32" }]
