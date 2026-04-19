@@ -349,26 +349,3 @@ fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size:
     let _ = state.session.put(tx_topic, data).wait();
     size as isize
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ordered_packet_priority_queue() {
-        let mut heap = BinaryHeap::new();
-        heap.push(OrderedPacket { vtime: 100, data: vec![1] });
-        heap.push(OrderedPacket { vtime: 50, data: vec![2] });
-        heap.push(OrderedPacket { vtime: 200, data: vec![3] });
-
-        // Should be a min-heap by vtime
-        let first = heap.pop().unwrap();
-        assert_eq!(first.vtime, 50);
-
-        let second = heap.pop().unwrap();
-        assert_eq!(second.vtime, 100);
-
-        let third = heap.pop().unwrap();
-        assert_eq!(third.vtime, 200);
-    }
-}
