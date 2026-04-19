@@ -31,7 +31,7 @@ sleep 2
 # Using minimal.dtb from phase1
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$WORKSPACE_DIR/test/phase1/minimal.dtb" \
     -kernel "$WORKSPACE_DIR/test/phase8/echo.elf" \
-    -device zenoh-clock,node=0,mode=slaved-suspend,router=tcp/127.0.0.1:$PORT \
+    -device zenoh-clock,node=0,mode=slaved-suspend,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
     -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:$PORT \
     -serial chardev:uart0 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &

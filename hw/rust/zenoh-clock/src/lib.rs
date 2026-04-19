@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use virtmcu_api::{ClockAdvanceReq, ClockReadyResp};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -224,8 +225,9 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     }
 
     let payload_bytes = payload.to_bytes();
-    let delta = u64::from_le_bytes(payload_bytes[0..8].try_into().unwrap());
-    let mujoco = u64::from_le_bytes(payload_bytes[8..16].try_into().unwrap());
+    let req = unsafe { std::ptr::read_unaligned(payload_bytes.as_ptr() as *const ClockAdvanceReq) };
+    let delta = req.delta_ns;
+    let mujoco = req.mujoco_time_ns;
 
     let start = Instant::now();
     let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
@@ -264,15 +266,8 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
         backend.cond.notify_all();
     }
 
-    #[repr(C)]
-    struct ClockReadyResp {
-        vtime_ns: u64,
-        n_frames: u32,
-        error_code: u32,
-    }
-
     let resp = ClockReadyResp {
-        vtime_ns: reached_vtime,
+        current_vtime_ns: reached_vtime,
         n_frames: 0,
         error_code: 0,
     };

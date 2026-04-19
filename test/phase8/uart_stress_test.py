@@ -37,8 +37,10 @@ sub = session.declare_subscriber(f"{TOPIC_BASE}/{NODE_ID}/tx", on_tx_sample)
 def run_test():
     pub = session.declare_publisher(f"{TOPIC_BASE}/{NODE_ID}/rx")
 
-    print(f"[UART Stress] Sending {TOTAL_BYTES} bytes at 10Mbps equivalent...")
+    # Wait for QEMU to initialize fully
+    time.sleep(2)
 
+    print(f"[UART Stress] Sending {TOTAL_BYTES} bytes at 10Mbps equivalent...")
     start_vtime = 1_000_000_000 # Start at 1s virtual time to avoid startup noise
 
     # We send in chunks to not overwhelm Zenoh's internal buffers
