@@ -186,7 +186,8 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
                 .unwrap();
             guard = new_guard;
             if result.timed_out() && start.elapsed() > timeout {
-                break;
+                virtmcu_qom::vlog!("\n[virtmcu-clock] ERROR: Timeout waiting for clock quantum boundary after {} ms! Stalling.\n", backend.stall_timeout_ms);
+                unsafe { libc::abort() };
             }
         }
     }
