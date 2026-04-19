@@ -176,6 +176,128 @@ pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
 mod tests {
     use super::*;
 
+    // ── Delivery queue ordering (mirrors zenoh-chardev/zenoh-netdev OrderedPacket)
+    // zenoh-chardev uses BinaryHeap<OrderedPacket> as a min-heap by vtime.
+    // The Ord impl inverts comparison so the heap pops the lowest vtime first.
+    // These tests validate the invariant without needing QEMU FFI.
+
+    use std::cmp::Ordering as CmpOrd;
+    use std::collections::BinaryHeap;
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct TestPacket {
+        vtime: u64,
+    }
+    impl Ord for TestPacket {
+        fn cmp(&self, other: &Self) -> CmpOrd {
+            other.vtime.cmp(&self.vtime) // inverted for min-heap
+        }
+    }
+    impl PartialOrd for TestPacket {
+        fn partial_cmp(&self, other: &Self) -> Option<CmpOrd> {
+            Some(self.cmp(other))
+        }
+    }
+
+    #[test]
+    fn test_delivery_queue_min_heap_ordering() {
+        let mut heap = BinaryHeap::new();
+        heap.push(TestPacket { vtime: 3_000 });
+        heap.push(TestPacket { vtime: 1_000 });
+        heap.push(TestPacket { vtime: 2_000 });
+        assert_eq!(heap.pop().unwrap().vtime, 1_000);
+        assert_eq!(heap.pop().unwrap().vtime, 2_000);
+        assert_eq!(heap.pop().unwrap().vtime, 3_000);
+    }
+
+    #[test]
+    fn test_delivery_queue_vtime_zero_first() {
+        let mut heap = BinaryHeap::new();
+        heap.push(TestPacket { vtime: 1_000_000 });
+        heap.push(TestPacket { vtime: 0 });
+        assert_eq!(heap.pop().unwrap().vtime, 0);
+    }
+
+    #[test]
+    fn test_delivery_queue_vtime_max_last() {
+        let mut heap = BinaryHeap::new();
+        heap.push(TestPacket { vtime: u64::MAX });
+        heap.push(TestPacket { vtime: 1 });
+        assert_eq!(heap.pop().unwrap().vtime, 1);
+        assert_eq!(heap.pop().unwrap().vtime, u64::MAX);
+    }
+
+    #[test]
+    fn test_delivery_queue_equal_vtimes_both_dequeued() {
+        let mut heap = BinaryHeap::new();
+        heap.push(TestPacket { vtime: 500 });
+        heap.push(TestPacket { vtime: 500 });
+        assert_eq!(heap.len(), 2);
+        heap.pop().unwrap();
+        heap.pop().unwrap();
+        assert!(heap.is_empty());
+    }
+
+    #[test]
+    fn test_delivery_queue_large_sequence_monotonic() {
+        const N: usize = 10_000;
+        let mut heap = BinaryHeap::new();
+        for i in (0..N).rev() {
+            heap.push(TestPacket { vtime: i as u64 });
+        }
+        let mut prev = 0u64;
+        for _ in 0..N {
+            let p = heap.pop().unwrap();
+            assert!(p.vtime >= prev, "out-of-order: {} < {}", p.vtime, prev);
+            prev = p.vtime;
+        }
+    }
+
+    #[test]
+    fn test_delivery_queue_inverted_cmp() {
+        let a = TestPacket { vtime: 1 };
+        let b = TestPacket { vtime: 2 };
+        assert_eq!(a.cmp(&b), CmpOrd::Greater); // lower vtime → "greater" priority
+        assert_eq!(b.cmp(&a), CmpOrd::Less);
+    }
+
+    // ── Zenoh topic naming conventions ────────────────────────────────────────
+
+    #[test]
+    fn test_chardev_rx_topic() {
+        let base = "sim/chardev";
+        assert_eq!(format!("{}/0/rx", base), "sim/chardev/0/rx");
+        assert_eq!(format!("{}/1/rx", base), "sim/chardev/1/rx");
+    }
+
+    #[test]
+    fn test_chardev_tx_topic() {
+        let base = "sim/chardev";
+        assert_eq!(format!("{}/0/tx", base), "sim/chardev/0/tx");
+    }
+
+    #[test]
+    fn test_chardev_rx_tx_topics_distinct() {
+        let base = "sim/chardev";
+        let rx = format!("{}/0/rx", base);
+        let tx = format!("{}/0/tx", base);
+        assert_ne!(rx, tx);
+    }
+
+    #[test]
+    fn test_clock_topic_format() {
+        assert_eq!(format!("sim/clock/advance/{}", 0), "sim/clock/advance/0");
+        assert_eq!(format!("sim/clock/advance/{}", 3), "sim/clock/advance/3");
+    }
+
+    #[test]
+    fn test_multi_node_chardev_isolation() {
+        let base = "sim/chardev";
+        let rx0 = format!("{}/0/rx", base);
+        let rx1 = format!("{}/1/rx", base);
+        assert_ne!(rx0, rx1, "node 0 and node 1 must use different topics");
+    }
+
     // ── Struct size assertions ────────────────────────────────────────────────
 
     #[test]
