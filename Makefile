@@ -164,6 +164,10 @@ lint-cargo:
 	@cd hw/rust && cargo metadata --no-deps --format-version 1 | \
 		python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"
 	@echo "✓ Cargo workspace versions aligned."
+	@echo "==> Running cargo fmt --check..."
+	@cd hw/rust && cargo fmt --all --check
+	@echo "==> Running cargo clippy..."
+	@cd hw/rust && cargo clippy --workspace -- -D warnings -D clippy::all
 
 # Auto-fix formatting and fixable lint errors.
 fmt: venv

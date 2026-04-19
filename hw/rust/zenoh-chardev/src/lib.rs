@@ -212,7 +212,9 @@ fn zenoh_chardev_init_internal(
             let chr = chr_ptr as *mut Chardev;
             let data = sample.payload().to_bytes();
             unsafe {
+                virtmcu_qom::sync::virtmcu_bql_lock();
                 qemu_chr_be_write(chr, data.as_ptr(), data.len());
+                virtmcu_qom::sync::virtmcu_bql_unlock();
             }
         })
         .wait()

@@ -235,12 +235,32 @@ fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: qemu_irq) {
     }
 
     let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
+    let irq_ptr = irq as usize;
+
+    let subscriber = state
+        .session
+        .declare_subscriber(&topic)
+        .callback(move |sample| {
+            let payload = sample.payload();
+            if payload.len() < 1 {
+                return;
+            }
+            let val = payload.to_bytes()[0] != 0;
+
+            unsafe {
+                virtmcu_qom::sync::virtmcu_bql_lock();
+                qemu_set_irq(irq_ptr as qemu_irq, if val { 1 } else { 0 });
+                virtmcu_qom::sync::virtmcu_bql_unlock();
+            }
+        })
+        .wait()
+        .ok();
 
     btns.insert(
         btn_id,
         ButtonState {
             irq,
-            subscriber: None,
+            subscriber,
             pressed: false,
         },
     );
