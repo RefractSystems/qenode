@@ -49,7 +49,19 @@ fn main() {
         .expect("Unable to generate bindings");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let bindings_file = out_path.join("bindings.rs");
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file(&bindings_file)
         .expect("Couldn't write bindings!");
+
+    // Create a self-contained wrapper module to isolate lints
+    let wrapper_path = out_path.join("qemu_bindings.rs");
+    let wrapper_content = format!(
+        "#[allow(dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all, unnecessary_transmutes)]\n\
+         pub mod qemu {{\n\
+             include!({:?});\n\
+         }}",
+        bindings_file.to_str().unwrap()
+    );
+    std::fs::write(&wrapper_path, wrapper_content).unwrap();
 }

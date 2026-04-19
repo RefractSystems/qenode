@@ -1,14 +1,4 @@
-#[allow(
-    non_camel_case_types,
-    non_snake_case,
-    dead_code,
-    non_upper_case_globals,
-    clippy::all,
-    unnecessary_transmutes
-)]
-mod qemu {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
+include!(concat!(env!("OUT_DIR"), "/qemu_bindings.rs"));
 
 use virtmcu_qom::chardev::{Chardev, ChardevClass};
 use virtmcu_qom::cpu::CPUState;
