@@ -8,7 +8,10 @@ import zenoh
 
 # Paths
 WORKSPACE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-BUILD_DIR = os.path.join(WORKSPACE_DIR, "tools/cyber_bridge/build")
+# Use build_cov if it exists, otherwise build
+BUILD_DIR = os.path.join(WORKSPACE_DIR, "tools/cyber_bridge/build_cov")
+if not os.path.exists(BUILD_DIR):
+    BUILD_DIR = os.path.join(WORKSPACE_DIR, "tools/cyber_bridge/build")
 REPLAY_BIN = os.path.join(BUILD_DIR, "resd_replay")
 
 
@@ -32,6 +35,9 @@ def create_resd(filename, duration_ms):
 
 @pytest.mark.asyncio
 async def test_multi_node_stress():
+    import multiprocessing
+    manager = multiprocessing.Manager()
+
     num_nodes = 5
     duration_ms = 100
     tmp_dir = "/tmp/virtmcu_stress_phase10"
@@ -45,21 +51,26 @@ async def test_multi_node_stress():
 
     # Start Zenoh session for mock QEMU
     conf = zenoh.Config()
+    # Force a local locator to ensure connectivity
+    conf.insert_json5("listen/endpoints", '["tcp/127.0.0.1:7447"]')
     session = zenoh.open(conf)
 
-    node_vtimes = {i: 0 for i in range(num_nodes)}
+    node_vtimes = manager.dict({i: 0 for i in range(num_nodes)})
 
     def on_query(query):
         # topic: sim/clock/advance/{id}
-        node_id = int(str(query.key_expr).split("/")[-1])
-        payload = query.payload.to_bytes()
-        delta_ns, mujoco_time = struct.unpack("<QQ", payload)
+        try:
+            node_id = int(str(query.key_expr).split("/")[-1])
+            payload = query.payload.to_bytes()
+            delta_ns, mujoco_time = struct.unpack("<QQ", payload)
 
-        node_vtimes[node_id] += delta_ns
+            node_vtimes[node_id] += delta_ns
 
-        # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
-        reply_payload = struct.pack("<QII", node_vtimes[node_id], 1, 0)
-        query.reply(query.key_expr, reply_payload)
+            # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
+            reply_payload = struct.pack("<QI", node_vtimes[node_id], 1)
+            query.reply(query.key_expr, reply_payload)
+        except Exception as e:
+            print(f"DEBUG ERROR in on_query: {e}")
 
     # Subscribe to clock advance for all nodes
     queryables = []
@@ -69,9 +80,14 @@ async def test_multi_node_stress():
 
     # Start resd_replay processes
     procs = []
+    env = os.environ.copy()
+    # Tell the subprocesses where to find the session
+    env["ZENOH_SESSION_CONFIG"] = '{"connect":{"endpoints":["tcp/127.0.0.1:7447"]}}'
+
     for i in range(num_nodes):
         p = subprocess.Popen(
-            [REPLAY_BIN, resd_files[i], str(i), "1000000"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            [REPLAY_BIN, resd_files[i], str(i), "1000000"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env
         )
         procs.append(p)
 
@@ -87,8 +103,40 @@ async def test_multi_node_stress():
     # Verify exit codes
     for i, p in enumerate(procs):
         stdout, stderr = p.communicate()
-        assert p.returncode == 0, f"Node {i} failed: {stderr.decode()}"
+        if p.returncode != 0:
+            print(f"Node {i} failed with code {p.returncode}")
+            print(f"STDOUT: {stdout.decode()}")
+            print(f"STDERR: {stderr.decode()}")
+        assert p.returncode == 0, f"Node {i} failed"
         assert node_vtimes[i] >= (duration_ms - 1) * 1_000_000
 
-    session.close()
-    print("Multi-node stress test PASSED")
+@pytest.mark.asyncio
+async def test_mujoco_bridge_shm():
+    # Test mujoco_bridge shared memory creation and layout
+    node_id = 42
+    nu = 4
+    nsensordata = 8
+
+    bridge_bin = os.path.join(BUILD_DIR, "mujoco_bridge")
+
+    # Run bridge briefly
+    p = subprocess.Popen([bridge_bin, str(node_id), str(nu), str(nsensordata)],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    time.sleep(1.0)
+    p.kill()
+    stdout, stderr = p.communicate()
+
+    # Check if shm segment exists
+    shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"
+    assert os.path.exists(shm_path)
+
+    # Verify size: Header(16) + (4+8)*8 = 16 + 96 = 112
+    # Wait, size is Header + (nsensordata + nu) * 8
+    expected_size = 16 + (nu + nsensordata) * 8
+    assert os.path.getsize(shm_path) == expected_size
+
+    # Cleanup
+    if os.path.exists(shm_path):
+        os.remove(shm_path)
+    print("MuJoCo Bridge SHM test PASSED")

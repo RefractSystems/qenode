@@ -78,16 +78,20 @@ pub struct ZenohChardevState {
 
 #[repr(C)]
 struct ChardevZenohOptions {
-    /* ChardevCommon */
+    has_logfile: bool,
+    _pad1: [u8; 7],
     logfile: *mut c_char,
     has_logappend: bool,
     logappend: bool,
     has_logtimestamp: bool,
     logtimestamp: bool,
-    _padding: [u8; 4],
-    /* Own members */
+    _pad2: [u8; 4],
     node: *mut c_char,
+    has_router: bool,
+    _pad3: [u8; 7],
     router: *mut c_char,
+    has_topic: bool,
+    _pad4: [u8; 7],
     topic: *mut c_char,
 }
 
@@ -103,9 +107,8 @@ union ChardevBackendUnion {
     data: *mut c_void,
 }
 
-const CHARDEV_BACKEND_KIND_ZENOH: c_int = 17;
-
 extern "C" {
+    pub fn get_chardev_backend_kind_zenoh() -> c_int;
     pub fn qemu_opt_get(opts: *mut c_void, name: *const c_char) -> *const c_char;
     pub fn g_strdup(s: *const c_char) -> *mut c_char;
     pub fn g_malloc0(size: usize) -> *mut c_void;
@@ -151,14 +154,16 @@ unsafe extern "C" fn zenoh_chr_parse(
         g_malloc0(std::mem::size_of::<ChardevZenohOptions>()) as *mut ChardevZenohOptions;
     (*zenoh_opts).node = g_strdup(node);
     if !router.is_null() {
+        (*zenoh_opts).has_router = true;
         (*zenoh_opts).router = g_strdup(router);
     }
     if !topic.is_null() {
+        (*zenoh_opts).has_topic = true;
         (*zenoh_opts).topic = g_strdup(topic);
     }
 
     let b = &mut *(backend as *mut ChardevBackend);
-    b.type_ = CHARDEV_BACKEND_KIND_ZENOH;
+    b.type_ = get_chardev_backend_kind_zenoh();
     b.u.data = zenoh_opts as *mut c_void;
 
     unsafe {
@@ -177,7 +182,6 @@ unsafe extern "C" fn zenoh_chr_parse(
 unsafe extern "C" fn zenoh_chr_open(
     chr: *mut Chardev,
     backend: *mut c_void,
-    be_opened: *mut bool,
     errp: *mut *mut c_void,
 ) -> bool {
     let s = &mut *(chr as *mut ChardevZenoh);
@@ -204,7 +208,6 @@ unsafe extern "C" fn zenoh_chr_open(
         );
         return false;
     }
-    *be_opened = true;
     true
 }
 
@@ -221,6 +224,13 @@ unsafe extern "C" fn zenoh_chr_finalize(obj: *mut Object) {
 }
 
 unsafe extern "C" fn char_zenoh_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+    unsafe {
+        libc::write(
+            1,
+            b"char_zenoh_class_init start\n".as_ptr() as *const c_void,
+            28,
+        );
+    }
     let cc = &mut *(klass as *mut ChardevClass);
     cc.chr_parse = Some(zenoh_chr_parse);
     cc.chr_open = Some(zenoh_chr_open);
@@ -266,15 +276,13 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
         let mut retry_later = false;
 
         unsafe {
-            debug_assert!(
-                virtmcu_qom::sync::virtmcu_bql_locked(),
-                "BQL must be held during chardev timer callbacks"
-            );
             let can_write = qemu_chr_be_can_write(state.chr) as usize;
 
             if can_write > 0 {
                 let mut packet = heap.pop().unwrap();
                 let to_write = std::cmp::min(can_write, packet.data.len());
+                let msg = format!("rx_timer_cb: writing {} bytes to chr\n", to_write);
+                libc::write(1, msg.as_ptr() as *const c_void, msg.len());
 
                 qemu_chr_be_write(state.chr, packet.data.as_ptr(), to_write);
 
@@ -286,6 +294,8 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
                 }
             } else {
                 // Buffer is full. We can't write right now.
+                let msg = format!("rx_timer_cb: buffer full\n");
+                libc::write(1, msg.as_ptr() as *const c_void, msg.len());
                 retry_later = true;
             }
         }

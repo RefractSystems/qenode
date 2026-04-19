@@ -18,6 +18,7 @@ class MMIOClient:
         self.irqs = {}
 
     def connect(self):
+        self.sock.settimeout(2.0)
         self.sock.connect(self.socket_path)
         # Handshake
         hs_out = struct.pack("<II", VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION)

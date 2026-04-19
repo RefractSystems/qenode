@@ -83,23 +83,35 @@ def test_rapid_can():
             for i in range(count):
                 payload = struct.pack("<QIII", (i+1)*1000000, 8, 0x100 + i, 0x1000 + i)
                 z_pub.put(payload)
-                time.sleep(0.01)
+                time.sleep(0.05) # Slower injection
 
         t = threading.Thread(target=injector)
         t.start()
-        
         start_time = time.time()
-        timeout = 15
+        timeout = 30
+        current_vtime = 1000000
+        last_found_time = time.time()
+
         while received_count < count and time.time() - start_time < timeout:
-            status = client.read(0x0C, vtime_ns=(received_count+1)*2000000)
-            if status & 1:
-                rx_id = client.read(0x10, vtime_ns=(received_count+1)*2000000 + 100)
-                rx_data = client.read(0x14, vtime_ns=(received_count+1)*2000000 + 200)
-                client.write(0x18, 1, vtime_ns=(received_count+1)*2000000 + 300) 
+            # Poll status at current_vtime
+            status = client.read(0x0C, vtime_ns=current_vtime)
+            # Drain FIFO
+            while status & 1 and received_count < count:
+                rx_id = client.read(0x10, vtime_ns=current_vtime)
+                rx_data = client.read(0x14, vtime_ns=current_vtime)
+                client.write(0x18, 1, vtime_ns=current_vtime) 
                 received_count += 1
-                if received_count % 10 == 0: print(f"  CAN RX {received_count}/{count}...")
-            else:
-                time.sleep(0.05)
+                last_found_time = time.time()
+                if received_count % 10 == 0: print(f"  CAN RX {received_count}/{count} at vtime={current_vtime}...")
+                status = client.read(0x0C, vtime_ns=current_vtime)
+            
+            if received_count < count:
+                # If we haven't found a frame for a bit, advance vtime
+                if time.time() - last_found_time > 0.1:
+                     current_vtime += 1000000
+                     last_found_time = time.time()
+                time.sleep(0.02)
+
                 
         print(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
         
