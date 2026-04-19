@@ -2,14 +2,8 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let (qemu_dir, build_dir) = if std::path::Path::new("../../../third_party/qemu/include/qemu/osdep.h").exists() {
-        ("../../../third_party/qemu", "../../../third_party/qemu/build-virtmcu")
-    } else if std::path::Path::new("/build/qemu/include/qemu/osdep.h").exists() {
-        ("/build/qemu", "/build/qemu/build-virtmcu")
-    } else {
-        // Fallback for CI or other environments, will trigger warning later if missing
-        ("../../../third_party/qemu", "../../../third_party/qemu/build-virtmcu")
-    };
+    let qemu_dir = std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
+    let build_dir = std::env::var("QEMU_BUILD_DIR").unwrap_or_else(|_| "../../../third_party/qemu/build-virtmcu".to_string());
 
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=src/ffi.c");
@@ -18,7 +12,7 @@ fn main() {
     cc::Build::new()
         .file("src/ffi.c")
         .include(format!("{}/include", qemu_dir))
-        .include(build_dir)
+        .include(&build_dir)
         .include(format!("{}/qapi", build_dir))
         .include(format!("{}/linux-headers", qemu_dir))
         .include("/usr/include/glib-2.0")
@@ -27,7 +21,7 @@ fn main() {
         .compile("virtmcu_ffi");
 
     // Check if QEMU headers are present
-    let osdep_h = std::path::Path::new(qemu_dir).join("include/qemu/osdep.h");
+    let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
     if !osdep_h.exists() {
         println!(
             "cargo:warning=QEMU headers not found at {:?}. Skipping binding generation.",
