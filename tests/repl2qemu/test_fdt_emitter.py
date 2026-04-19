@@ -302,17 +302,22 @@ def test_emitter_invalid_address():
     dts = emitter.generate_dts()
     assert "uart@0" in dts
 
+
 def test_emitter_gic_interrupts():
-    plat = ReplPlatform(devices=[
-        ReplDevice(name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"),
-        ReplDevice(
-            name="dev1", type_name="UART.PL011", address_str="0x09000000",
-            interrupts=[
-                ReplInterrupt("0", "gic", "5"),    # < 32 -> should become 37
-                ReplInterrupt("1", "gic", "40")    # >= 32 -> should stay 40
-            ]
-        )
-    ])
+    plat = ReplPlatform(
+        devices=[
+            ReplDevice(name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"),
+            ReplDevice(
+                name="dev1",
+                type_name="UART.PL011",
+                address_str="0x09000000",
+                interrupts=[
+                    ReplInterrupt("0", "gic", "5"),  # < 32 -> should become 37
+                    ReplInterrupt("1", "gic", "40"),  # >= 32 -> should stay 40
+                ],
+            ),
+        ]
+    )
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
     assert "interrupt-controller;" in dts
@@ -320,21 +325,25 @@ def test_emitter_gic_interrupts():
     assert "<0 37 4>" in dts
     assert "<0 40 4>" in dts
 
+
 def test_emitter_invalid_hex_address():
-    plat = ReplPlatform(devices=[
-        ReplDevice(name="uart", type_name="UART.PL011", address_str="0x12G4")
-    ])
+    plat = ReplPlatform(devices=[ReplDevice(name="uart", type_name="UART.PL011", address_str="0x12G4")])
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
     assert "uart@0" in dts
 
+
 def test_emitter_int_and_string_props():
-    plat = ReplPlatform(devices=[
-        ReplDevice(
-            name="dev", type_name="UART.PL011", address_str="0x40011000",
-            properties={"int_prop": 123, "str_prop": "hello"}
-        )
-    ])
+    plat = ReplPlatform(
+        devices=[
+            ReplDevice(
+                name="dev",
+                type_name="UART.PL011",
+                address_str="0x40011000",
+                properties={"int_prop": 123, "str_prop": "hello"},
+            )
+        ]
+    )
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
     assert "int_prop = <123>;" in dts

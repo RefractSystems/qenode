@@ -34,7 +34,9 @@ class QemuLibrary:
             asyncio.set_event_loop(self.loop)
         return self.loop.run_until_complete(coro)
 
-    def launch_qemu(self, dtb_path: str, kernel_path: Optional[str] = None, extra_args: Optional[Union[str, List[str]]] = None) -> Tuple[str, str]:
+    def launch_qemu(
+        self, dtb_path: str, kernel_path: Optional[str] = None, extra_args: Optional[Union[str, List[str]]] = None
+    ) -> Tuple[str, str]:
         """
         Launches QEMU using the run.sh script and returns the QMP and UART socket paths.
         """
@@ -171,7 +173,6 @@ class QemuLibrary:
             self.tmpdir = None
 
         if self.loop.is_running():
-             # Should not be running if _run finished
-             pass
+            # Should not be running if _run finished
+            pass
         self.loop.close()
-

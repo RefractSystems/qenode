@@ -108,19 +108,21 @@ def test_parse_using_statement(tmp_path):
     assert len(platform.devices) == 1
     assert platform.devices[0].name == "usart1"
 
+
 def test_parse_recursive_using(tmp_path):
     a_repl = tmp_path / "a.repl"
     b_repl = tmp_path / "b.repl"
     c_repl = tmp_path / "c.repl"
 
-    a_repl.write_text(f'using "b.repl"\ndevA: CPU.CortexM\n')
-    b_repl.write_text(f'using "c.repl"\ndevB: CPU.CortexM\n')
-    c_repl.write_text(f'devC: CPU.CortexM\n')
+    a_repl.write_text('using "b.repl"\ndevA: CPU.CortexM\n')
+    b_repl.write_text('using "c.repl"\ndevB: CPU.CortexM\n')
+    c_repl.write_text("devC: CPU.CortexM\n")
 
     platform = parse_repl(a_repl.read_text(), str(tmp_path))
     assert len(platform.devices) == 3
     names = [d.name for d in platform.devices]
     assert set(names) == {"devA", "devB", "devC"}
+
 
 def test_stress_test_parser():
     lines = []
@@ -128,18 +130,25 @@ def test_stress_test_parser():
         lines.append(f"dev{i}: CPU.CortexM @ sysbus {hex(0x1000 * i)}")
         lines.append(f"    prop: {i}")
         lines.append(f"    -> nvic@{i % 100}")
-    
+
     repl = "\n".join(lines)
     platform = parse_repl(repl)
     assert len(platform.devices) == 1000
     assert platform.devices[999].name == "dev999"
 
+
 def test_parser_main(tmp_path):
     import subprocess
+
     repl_file = tmp_path / "test.repl"
     repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n")
-    
-    result = subprocess.run([sys.executable, "-m", "tools.repl2qemu.parser", str(repl_file)], capture_output=True, text=True, cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.repl2qemu.parser", str(repl_file)],
+        capture_output=True,
+        text=True,
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")),
+    )
     assert result.returncode == 0
     assert "sram" in result.stdout
 

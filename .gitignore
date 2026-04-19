@@ -34,6 +34,11 @@ log.html
 report.html
 *.log
 .coverage
+coverage.info
+coverage_report/
+*.drcov
+filtered.info
+host.info
 *_output.txt
 *.cli
 *.arch

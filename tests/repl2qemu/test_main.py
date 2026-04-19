@@ -33,6 +33,7 @@ def test_main_file_not_found(capsys):
     captured = capsys.readouterr()
     assert "Error: File 'does_not_exist.repl' not found" in captured.err
 
+
 def test_main_compile_fails(tmp_path, capsys):
     repl_file = tmp_path / "test.repl"
     dtb_file = tmp_path / "test.dtb"
@@ -47,6 +48,7 @@ def test_main_compile_fails(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "FAILED." in captured.out
 
+
 def test_main_out_arch(tmp_path):
     repl_file = tmp_path / "test.repl"
     dtb_file = tmp_path / "test.dtb"
@@ -60,7 +62,13 @@ def test_main_out_arch(tmp_path):
 
     assert arch_file.read_text() == "arm"  # default arch
 
+
 def test_main_module():
-    result = subprocess.run([sys.executable, "-m", "tools.repl2qemu", "--help"], capture_output=True, text=True, cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.repl2qemu", "--help"],
+        capture_output=True,
+        text=True,
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")),
+    )
     assert result.returncode == 0
     assert "Convert Renode .repl to QEMU Device Tree" in result.stdout

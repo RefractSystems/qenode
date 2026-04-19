@@ -6,6 +6,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.mark.asyncio
 async def test_qmp_rapid_commands(qmp_bridge):
     """
@@ -18,11 +19,13 @@ async def test_qmp_rapid_commands(qmp_bridge):
     duration = time.time() - start_time
     logger.info(f"100 query-status commands took {duration:.2f}s ({(100/duration):.2f} cmd/s)")
 
+
 @pytest.mark.asyncio
 async def test_qmp_concurrent_commands(qmp_bridge):
     """
     Stress test: Send multiple QMP commands concurrently.
     """
+
     async def task(id):
         res = await qmp_bridge.execute("query-version")
         assert "qemu" in res
@@ -32,6 +35,7 @@ async def test_qmp_concurrent_commands(qmp_bridge):
     results = await asyncio.gather(*tasks)
     assert len(results) == 50
     assert set(results) == set(range(50))
+
 
 @pytest.mark.asyncio
 async def test_uart_throughput(qmp_bridge):
@@ -46,6 +50,7 @@ async def test_uart_throughput(qmp_bridge):
         # So we just verify we can still talk to it.
         res = await qmp_bridge.execute("query-status")
         assert res["running"] is True
+
 
 @pytest.mark.asyncio
 async def test_pc_polling_stress(qmp_bridge):

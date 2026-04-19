@@ -11,6 +11,7 @@ def test_qemu_library_init():
     assert lib.bridge is not None
     assert lib.loop is not None
 
+
 def test_qemu_library_launch_and_close():
     lib = QemuLibrary()
     try:
@@ -38,6 +39,7 @@ def test_qemu_library_launch_and_close():
     assert lib.proc is None
     assert lib.tmpdir is None
 
+
 def test_qemu_library_pc_assertion():
     lib = QemuLibrary()
     try:
@@ -63,6 +65,7 @@ def test_qemu_library_pc_assertion():
             lib.pc_should_be_equal(0x0)
     finally:
         lib.close_all_connections()
+
 
 def test_qemu_library_uart_wait_fail():
     lib = QemuLibrary()

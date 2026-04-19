@@ -65,7 +65,7 @@ class QmpBridge:
         Executes a QMP command and returns the result.
         """
         if not self.is_connected:
-             raise RuntimeError("QMP is not connected.")
+            raise RuntimeError("QMP is not connected.")
         # qemu.qmp.execute returns the 'return' object directly if successful
         return await self.qmp.execute(cmd, args)
 
@@ -247,4 +247,3 @@ class QmpBridge:
 
         if self.is_connected:
             await self.qmp.disconnect()
-

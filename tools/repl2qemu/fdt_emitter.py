@@ -33,6 +33,7 @@ INT_CONTROLLERS = {
     "IRQControllers.GIC",
 }
 
+
 class FdtEmitter:
     def __init__(self, platform: ReplPlatform):
         self.platform = platform
@@ -157,7 +158,10 @@ class FdtEmitter:
             else:
                 is_native = dev.type_name not in COMPAT_MAP and "." not in dev.type_name
                 if dev.type_name not in COMPAT_MAP and not is_native:
-                    print(f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)", file=sys.stderr)
+                    print(
+                        f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)",
+                        file=sys.stderr,
+                    )
                     continue
 
                 compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
@@ -191,10 +195,12 @@ class FdtEmitter:
                         if "-" not in target_irq:
                             # TODO: Detect if parent is GIC or NVIC
                             # GIC expects <type id flags>, NVIC expects <id>
-                            is_gic = any(ic in target_name.upper() or
-                                         (i_dev.name == target_name and "GIC" in i_dev.type_name.upper())
-                                         for ic in ["GIC", "DISTRIBUTOR"]
-                                         for i_dev in self.platform.devices)
+                            is_gic = any(
+                                ic in target_name.upper()
+                                or (i_dev.name == target_name and "GIC" in i_dev.type_name.upper())
+                                for ic in ["GIC", "DISTRIBUTOR"]
+                                for i_dev in self.platform.devices
+                            )
 
                             if is_gic:
                                 # Renode often uses SPI index (0+) for GIC interrupts.
