@@ -191,6 +191,7 @@ unsafe extern "C" fn zenoh_chr_open(
     backend: *mut c_void,
     errp: *mut *mut c_void,
 ) -> bool {
+    vlog!("[zenoh-chardev] zenoh_chr_open called\n");
     let s = &mut *(chr as *mut ChardevZenoh);
     let b = &*(backend as *mut ChardevBackend);
     let wrapper = b.u.data as *mut *mut ChardevZenohOptions;
@@ -208,14 +209,17 @@ unsafe extern "C" fn zenoh_chr_open(
         CStr::from_ptr((*opts).topic).to_string_lossy().into_owned()
     };
 
+    vlog!("[zenoh-chardev] Calling zenoh_chardev_init_internal\n");
     s.rust_state = zenoh_chardev_init_internal(chr, node, router, topic);
     if s.rust_state.is_null() {
+        vlog!("[zenoh-chardev] zenoh_chardev_init_internal returned NULL\n");
         error_setg!(
             errp as *mut *mut Error,
             c"zenoh-chardev: failed to initialize Rust backend".as_ptr()
         );
         return false;
     }
+    vlog!("[zenoh-chardev] zenoh_chr_open success\n");
     true
 }
 
@@ -232,17 +236,15 @@ unsafe extern "C" fn zenoh_chr_finalize(obj: *mut Object) {
 }
 
 unsafe extern "C" fn char_zenoh_class_init(klass: *mut ObjectClass, _data: *const c_void) {
-    unsafe {
-        libc::write(
-            1,
-            b"char_zenoh_class_init start\n".as_ptr() as *const c_void,
-            28,
-        );
-    }
+    vlog!("[zenoh-chardev] char_zenoh_class_init called\n");
     let cc = &mut *(klass as *mut ChardevClass);
     cc.chr_parse = Some(zenoh_chr_parse);
     cc.chr_open = Some(zenoh_chr_open);
     cc.chr_write = Some(zenoh_chr_write);
+    vlog!(
+        "[zenoh-chardev] chr_open is now set to {:p}\n",
+        zenoh_chr_open as *const ()
+    );
 }
 
 static CHAR_ZENOH_TYPE_INFO: TypeInfo = TypeInfo {
