@@ -7,6 +7,19 @@ fn main() {
 
     println!("cargo:rerun-if-changed=wrapper.h");
 
+    // Check if QEMU headers are present
+    let osdep_h = std::path::Path::new(qemu_dir).join("include/qemu/osdep.h");
+    if !osdep_h.exists() {
+        println!(
+            "cargo:warning=QEMU headers not found at {:?}. Skipping binding generation.",
+            osdep_h
+        );
+        // Create an empty bindings file so the build doesn't fail
+        let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        std::fs::write(out_path.join("bindings.rs"), "").expect("Couldn't write dummy bindings!");
+        return;
+    }
+
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}/include", qemu_dir))

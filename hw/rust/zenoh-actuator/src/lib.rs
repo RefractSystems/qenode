@@ -130,8 +130,8 @@ static ZENOH_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
         accepts: ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 0,
-        max_access_size: 0,
+        min_access_size: 1,
+        max_access_size: 8,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -254,11 +254,21 @@ fn zenoh_actuator_publish(
     data_size: u32,
     data: &[f64; 8],
 ) {
+    let vtime_ns =
+        unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) }
+            as u64;
+
     let topic = format!("{}/{}/{}", state.topic_prefix, state.node_id, actuator_id);
-    let mut payload = Vec::with_capacity((data_size as usize) * 8);
+    let mut payload = Vec::with_capacity(8 + (data_size as usize) * 8);
+    payload.extend_from_slice(&vtime_ns.to_le_bytes());
     for i in 0..(data_size as usize) {
         payload.extend_from_slice(&data[i].to_le_bytes());
     }
 
+    virtmcu_qom::vlog!(
+        "[zenoh-actuator] Publishing to {} (size={})\n",
+        topic,
+        payload.len()
+    );
     let _ = state.session.put(topic, payload).wait();
 }

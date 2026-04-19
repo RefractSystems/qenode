@@ -23,6 +23,7 @@ cleanup() {
     # Use the global cleanup script to be sure
     bash "$WORKSPACE_DIR/scripts/cleanup-sim.sh" --quiet
 }
+#trap cleanup EXIT
 trap cleanup EXIT
 
 # Minimal firmware
@@ -71,7 +72,7 @@ wait_for_queryable() {
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
 ROUTER_PID=$!
 sleep 1
-"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
 sleep 1

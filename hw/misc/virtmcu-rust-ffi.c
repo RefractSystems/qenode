@@ -23,8 +23,12 @@ bool virtmcu_icount_enabled(void)
 
 void virtmcu_icount_advance(int64_t delta)
 {
-    qatomic_set(&timers_state.qemu_icount_bias,
-                qatomic_read(&timers_state.qemu_icount_bias) + delta);
+    if (icount_enabled()) {
+        qatomic_set(&timers_state.qemu_icount_bias,
+                    qatomic_read(&timers_state.qemu_icount_bias) + delta);
+    } else {
+        timers_state.cpu_clock_offset += delta;
+    }
 }
 
 /* ── BQL ─────────────────────────────────────────────────────────────────── */
@@ -101,6 +105,10 @@ void virtmcu_timer_free(QEMUTimer *ts) {
 
 /* ── CPU ─────────────────────────────────────────────────────────────────── */
 
+/* These pointers are injected into QEMU via apply_zenoh_hook.py */
+extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
+extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
+
 void virtmcu_cpu_exit_all(void) {
     CPUState *cpu;
     CPU_FOREACH(cpu) {
@@ -108,9 +116,23 @@ void virtmcu_cpu_exit_all(void) {
     }
 }
 
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *, bool)) {
+    virtmcu_cpu_halt_hook = cb;
+}
+
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *)) {
+    virtmcu_tcg_quantum_hook = cb;
+}
+
 /* ── Error ───────────────────────────────────────────────────────────────── */
 
 void virtmcu_error_setg(Error **errp, const char *fmt)
 {
     error_setg_internal(errp, "rust", 0, "rust", "%s", fmt);
+}
+
+void virtmcu_log(const char *fmt)
+{
+    fprintf(stderr, "%s", fmt);
+    fflush(stderr);
 }

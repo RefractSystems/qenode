@@ -21,3 +21,4 @@ peripherals:
     node: 0
     region-size: 256
     topic-prefix: "firmware/control"
+    router: "tcp/127.0.0.1:7450"

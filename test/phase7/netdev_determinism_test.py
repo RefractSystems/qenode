@@ -152,6 +152,7 @@ def main():
         while time.time() < deadline:
             replies = list(session.get(
                 clock_topic, payload=pack_clock_req(1_000_000), timeout=10.0))
+            print("REPLIES:", replies)
             if replies:
                 # replies is a list of zenoh.Reply
                 for reply in replies:

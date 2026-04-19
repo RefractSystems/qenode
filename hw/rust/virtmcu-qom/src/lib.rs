@@ -17,3 +17,45 @@ pub mod qdev;
 pub mod qom;
 pub mod sync;
 pub mod timer;
+
+use core::ffi::c_char;
+
+extern "C" {
+    pub fn virtmcu_log(fmt: *const c_char);
+}
+
+#[macro_export]
+macro_rules! vlog {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let mut buf = [0u8; 256];
+        let mut cursor = $crate::BufCursor::new(&mut buf);
+        let _ = write!(cursor, $($arg)*);
+        let _ = write!(cursor, "\0");
+        unsafe { $crate::virtmcu_log(buf.as_ptr() as *const _) };
+    }};
+}
+
+pub struct BufCursor<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> BufCursor<'a> {
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+}
+
+impl<'a> core::fmt::Write for BufCursor<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+        if self.pos + len > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
+        self.pos += len;
+        Ok(())
+    }
+}
