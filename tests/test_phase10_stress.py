@@ -92,10 +92,13 @@ async def test_multi_node_stress():
 
     for i in range(num_nodes):
         p = await asyncio.create_subprocess_exec(
-            REPLAY_BIN, resd_files[i], str(i), "1000000",
+            REPLAY_BIN,
+            resd_files[i],
+            str(i),
+            "1000000",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=env,
         )
         procs.append(p)
 
@@ -124,6 +127,7 @@ async def test_multi_node_stress():
     session.close()
     print("Multi-node stress test PASSED")
 
+
 @pytest.mark.asyncio
 async def test_mujoco_bridge_shm():
     # Test mujoco_bridge shared memory creation and layout
@@ -134,8 +138,9 @@ async def test_mujoco_bridge_shm():
     bridge_bin = os.path.join(BUILD_DIR, "mujoco_bridge")
 
     # Run bridge briefly
-    p = subprocess.Popen([bridge_bin, str(node_id), str(nu), str(nsensordata)],
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = subprocess.Popen(
+        [bridge_bin, str(node_id), str(nu), str(nsensordata)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
 
     time.sleep(1.0)
     p.kill()

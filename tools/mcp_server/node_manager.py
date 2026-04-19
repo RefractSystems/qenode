@@ -30,6 +30,7 @@ class NodeManager:
 
     def get_zenoh_session(self):
         import zenoh
+
         if self._zenoh_session is None:
             self._zenoh_session = zenoh.open(zenoh.Config())
         return self._zenoh_session
@@ -65,6 +66,7 @@ class NodeManager:
             with redirect_stdout(f_out), redirect_stderr(f_err):
                 if config_type == "yaml":
                     from tools.yaml2qemu import main as yaml2qemu_main
+
                     old_argv = sys.argv
                     sys.argv = ["yaml2qemu", "--out-dtb", dtb_path, path]
                     try:
@@ -77,6 +79,7 @@ class NodeManager:
                 else:
                     # REPL validation
                     from tools.repl2qemu.__main__ import main as repl2qemu_main
+
                     old_argv = sys.argv
                     sys.argv = ["repl2qemu", path, "--out-dtb", dtb_path]
                     try:

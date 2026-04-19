@@ -228,7 +228,7 @@ def create_mcp_server() -> Server:
                 addr = arguments["address"]
                 size = arguments["size"]
                 if size > 1024 * 1024:  # 1MB limit for safety
-                     return [TextContent(type="text", text="Error: Memory read size too large (max 1MB)")]
+                    return [TextContent(type="text", text="Error: Memory read size too large (max 1MB)")]
 
                 # pmemsave saves to a file, so we do it via QMP then read it
                 import tempfile
@@ -297,7 +297,6 @@ def create_mcp_server() -> Server:
         except (Exception, BaseException) as e:
             logger.error(f"Error executing tool {name}: {e}")
             return [TextContent(type="text", text=f"Error: {str(e)}")]
-
 
     @server.list_resources()
     async def handle_list_resources() -> list[Resource]:

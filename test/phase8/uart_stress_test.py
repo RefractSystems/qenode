@@ -51,7 +51,9 @@ time.sleep(2)
 
 print(f"[UART Stress] Pre-publishing {TOTAL_BYTES} bytes at 10Mbps equivalent...")
 
-start_vtime = 1_000_000_000 # Start at 1s virtual time
+# Start at 10ms virtual time — avoids burning 1 billion tight-loop icount instructions
+# before first byte arrives (50k bytes at 800ns each = 40ms, so all delivered by ~50ms)
+start_vtime = 10_000_000
 
 # We send in chunks to not overwhelm Zenoh's internal buffers
 CHUNK_SIZE = 1000
@@ -69,9 +71,9 @@ print("[UART Stress] Pre-publish complete. Starting Time Authority to advance cl
 
 def time_authority_loop():
     current_vtime = 0
-    QUANTA_NS = 10_000_000 # 10ms
-    # Advance to 2 seconds
-    TOTAL_NS = 2_000_000_000
+    QUANTA_NS = 10_000_000  # 10ms
+    # 50k bytes at 800ns spacing = 40ms; start_vtime = 10ms → all bytes by ~50ms
+    TOTAL_NS = 200_000_000  # 200ms — ample margin
 
     while current_vtime < TOTAL_NS and not received_all_event.is_set():
         replies = session.get("sim/clock/advance/0", payload=pack_clock_advance(QUANTA_NS))
@@ -83,8 +85,8 @@ def time_authority_loop():
 t1 = threading.Thread(target=time_authority_loop)
 t1.start()
 
-# Wait for all bytes to be echoed back (with 20s timeout)
-if received_all_event.wait(timeout=20):
+# Wait for all bytes to be echoed back (with 60s timeout for 50k Zenoh put round-trips)
+if received_all_event.wait(timeout=60):
     print(f"[UART Stress] Received all {len(received_bytes)} bytes back!")
     if all(b == ord('A') for b in received_bytes[:TOTAL_BYTES]):
         print("[UART Stress] Data integrity verified.")

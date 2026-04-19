@@ -35,7 +35,6 @@ sleep 2
     -device zenoh-clock,node=0,mode=slaved-icount,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
     -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:$PORT \
     -serial chardev:uart0 \
-    -d in_asm \
     -display none -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
