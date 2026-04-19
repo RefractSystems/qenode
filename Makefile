@@ -149,6 +149,17 @@ build-test-artifacts:
 test-all: test test-integration test-robot test-coverage-guest
 
 # ------------------------------------------------------------------------------
+# Continuous Integration (CI) - Parity with GitHub Actions
+# ------------------------------------------------------------------------------
+# This target guarantees that local CI passes only if the GitHub Actions CI
+# and the GHCR Docker Publish workflows will also pass.
+ci-local: lint test-all
+	@echo "==> Verifying Docker Publish (GitHub Actions parity)..."
+	@bash scripts/docker-build.sh devenv
+	@bash scripts/docker-build.sh runtime
+	@echo "✓ Local CI complete! Code and Docker artifacts are ready for GitHub."
+
+# ------------------------------------------------------------------------------
 # Lint & Format
 # ------------------------------------------------------------------------------
 

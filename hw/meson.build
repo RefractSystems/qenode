@@ -42,8 +42,8 @@ rust_dummy_lib = custom_target(
   output: ['librust_dummy.a', 'rust_dummy_trigger.c'],
   command: [
     'sh', '-c',
-    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p rust_dummy && cp target/release/librust_dummy.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'librust_dummy.a', meson.current_build_dir() / 'rust_dummy_trigger.c'
+    'RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p rust_dummy && cp target/release/librust_dummy.a "$OUT_A" && echo "/* generated */" > "$OUT_TRIG"',
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'librust_dummy.a', meson.current_build_dir() / 'rust_dummy_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 rust_dummy_ss = ss.source_set()
@@ -63,14 +63,14 @@ rust_zenoh_clock_lib = custom_target(
   output: ['libzenoh_clock.a', 'rust_zenoh_clock_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-clock && cp target/release/libzenoh_clock.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-clock && cp target/release/libzenoh_clock.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-clock");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_clock.a', meson.current_build_dir() / 'rust_zenoh_clock_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_clock.a', meson.current_build_dir() / 'rust_zenoh_clock_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_clock_ss = ss.source_set()
@@ -89,14 +89,14 @@ rust_zenoh_netdev_lib = custom_target(
   output: ['libzenoh_netdev.a', 'rust_zenoh_netdev_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-netdev && cp target/release/libzenoh_netdev.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-netdev && cp target/release/libzenoh_netdev.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-netdev");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_netdev.a', meson.current_build_dir() / 'rust_zenoh_netdev_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_netdev.a', meson.current_build_dir() / 'rust_zenoh_netdev_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_netdev_ss = ss.source_set()
@@ -115,14 +115,14 @@ rust_zenoh_chardev_lib = custom_target(
   output: ['libzenoh_chardev.a', 'rust_zenoh_chardev_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-chardev && cp target/release/libzenoh_chardev.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-chardev && cp target/release/libzenoh_chardev.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("chardev-zenoh");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_chardev.a', meson.current_build_dir() / 'rust_zenoh_chardev_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_chardev_ss = ss.source_set()
@@ -142,14 +142,14 @@ rust_zenoh_telemetry_lib = custom_target(
   output: ['libzenoh_telemetry.a', 'rust_zenoh_telemetry_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-telemetry && cp target/release/libzenoh_telemetry.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-telemetry && cp target/release/libzenoh_telemetry.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-telemetry");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_telemetry.a', meson.current_build_dir() / 'rust_zenoh_telemetry_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_telemetry.a', meson.current_build_dir() / 'rust_zenoh_telemetry_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_telemetry_ss = ss.source_set()
@@ -169,14 +169,14 @@ rust_zenoh_actuator_lib = custom_target(
   output: ['libzenoh_actuator.a', 'rust_zenoh_actuator_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-actuator && cp target/release/libzenoh_actuator.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-actuator && cp target/release/libzenoh_actuator.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-actuator");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_actuator.a', meson.current_build_dir() / 'rust_zenoh_actuator_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_actuator.a', meson.current_build_dir() / 'rust_zenoh_actuator_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_actuator_ss = ss.source_set()
@@ -196,14 +196,14 @@ rust_zenoh_802154_lib = custom_target(
   output: ['libzenoh_802154.a', 'rust_zenoh_802154_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-802154 && cp target/release/libzenoh_802154.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-802154 && cp target/release/libzenoh_802154.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-802154");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_802154.a', meson.current_build_dir() / 'rust_zenoh_802154_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_802154.a', meson.current_build_dir() / 'rust_zenoh_802154_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_802154_ss = ss.source_set()
@@ -223,14 +223,14 @@ rust_zenoh_ui_lib = custom_target(
   output: ['libzenoh_ui.a', 'rust_zenoh_ui_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-ui && cp target/release/libzenoh_ui.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p zenoh-ui && cp target/release/libzenoh_ui.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("zenoh-ui");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_ui.a', meson.current_build_dir() / 'rust_zenoh_ui_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libzenoh_ui.a', meson.current_build_dir() / 'rust_zenoh_ui_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 zenoh_ui_ss = ss.source_set()
@@ -260,14 +260,14 @@ rust_test_qom_device_lib = custom_target(
   output: ['libtest_qom_device.a', 'rust_test_qom_device_trigger.c'],
   command: [
     'sh', '-c',
-    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && cargo build --release --target-dir "$RUST_DIR/target" -p test-qom-device && cp target/release/libtest_qom_device.a "$OUT_A"
+    '''RUST_DIR="$1"; OUT_A="$2"; OUT_TRIG="$3"; cd "$RUST_DIR" && QEMU_SRC_DIR="$4" QEMU_BUILD_DIR="$5" cargo build --release --target-dir "$RUST_DIR/target" -p test-qom-device && cp target/release/libtest_qom_device.a "$OUT_A"
 cat <<EOF > "$OUT_TRIG"
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 module_obj("test-rust-device");
 EOF
 ''',
-    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libtest_qom_device.a', meson.current_build_dir() / 'rust_test_qom_device_trigger.c'
+    'sh', meson.current_source_dir() / 'rust', meson.current_build_dir() / 'libtest_qom_device.a', meson.current_build_dir() / 'rust_test_qom_device_trigger.c', meson.project_source_root(), meson.project_build_root()
   ]
 )
 test_qom_device_ss = ss.source_set()

@@ -829,7 +829,7 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
 
 ---
 
-## Phase 19 — Native Rust QOM API Migration
+## Phase 19 — Native Rust QOM API Migration ✅
 
 **Goal**: Eliminate all C shim files in `hw/zenoh/` and `hw/misc/virtmcu-rust-ffi.c`, leaving the Zenoh device logic fully in Rust.
 
@@ -856,7 +856,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-- [ ] **19.1 Expand `virtmcu-qom` for QOM type registration**
+- [x] **19.1 Expand `virtmcu-qom` for QOM type registration**
 
   Add `TypeInfo`, `DeviceClass`, and `Property` FFI bindings to `virtmcu-qom`. Implement a `declare_device_type!` macro that emits a `#[no_mangle] extern "C" fn dso_${name}_init()` calling `type_register_static()` with a statically-initialized `TypeInfo`. This replaces the C `DEFINE_TYPES` + `module_obj` + `class_init` pattern entirely from Rust.
 
@@ -873,7 +873,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-- [ ] **19.2 Eliminate C shims — non-netdev devices (one at a time)**
+- [x] **19.2 Eliminate C shims — non-netdev devices (one at a time)**
 
   Rewrite the 6 C shim files in pure Rust using the `virtmcu-qom` type registration from 19.1. Migrate in order of increasing complexity — each device provides a concrete test of the macro before the next, harder device is attempted.
 
@@ -897,7 +897,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-- [ ] **19.3 Eliminate C shim — `zenoh-netdev.c` (upstream-gated)**
+- [x] **19.3 Eliminate C shim — `zenoh-netdev.c` (upstream-gated)**
 
   Once QEMU upstream ships Netdev Rust bindings (`NetClientInfo`, `NetClientState`, `Netdev`), rewrite `zenoh-netdev.c` in Rust and delete the last C file in `hw/zenoh/`.
 
@@ -911,7 +911,7 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
 
 ---
 
-- [ ] **19.4 Delete `virtmcu-rust-ffi.c/h`**
+- [x] **19.4 Delete `virtmcu-rust-ffi.c/h`**
 
   Remove `hw/misc/virtmcu-rust-ffi.c` and `virtmcu-rust-ffi.h` once 19.2 and 19.3 are complete.
 
