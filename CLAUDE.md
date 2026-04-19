@@ -188,6 +188,18 @@ If a fix passes locally but fails in CI, it's often due to manual edits in `thir
 
 ---
 
+## Before Every Commit — Mandatory Lint Gate
+
+To ensure CI remains green and Rust code follows project standards, you MUST run the linting suite before every commit:
+
+```bash
+make lint     # Runs ruff, version checks, and cargo clippy (fails loudly)
+```
+
+**Pre-commit Hook**: A git `pre-commit` hook is installed that runs `make lint` automatically. If it fails, the commit will be blocked. Fix all lint/clippy errors before attempting to commit again.
+
+---
+
 ## CI/CD Troubleshooting & "Make CI Green" Workflow
 
 When instructed to "fix CI", "make CI green", or address pipeline failures, you MUST follow this autonomous loop until success:
