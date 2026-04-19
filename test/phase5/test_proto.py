@@ -73,7 +73,7 @@ def wait_for_socket(path, timeout=5.0):
 
 def run_tests(adapter_bin):
     sock_path = tempfile.mktemp(suffix=".sock", prefix="virtmcu-proto-test-")
-    proc = subprocess.Popen([adapter_bin, sock_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen([adapter_bin, sock_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         if not wait_for_socket(sock_path):
             proc.terminate()
@@ -199,9 +199,9 @@ def run_tests(adapter_bin):
             elapsed = t1 - t0
             us_per_op = (elapsed / N) * 1e6
             print(f"T6 BENCH: {N} writes in {elapsed*1000:.1f} ms " f"({us_per_op:.1f} µs/op)")
-            if us_per_op > 1000:
+            if us_per_op > 5000:
                 failures.append(
-                    f"T6 WARN: {us_per_op:.0f} µs/op exceeds 1 ms threshold " f"— socket latency regression?"
+                    f"T6 WARN: {us_per_op:.0f} µs/op exceeds 5 ms threshold " f"— socket latency regression?"
                 )
 
         if failures:

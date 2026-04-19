@@ -46,6 +46,7 @@ struct MmioSocketBridgeState {
     QemuMutex sock_mutex;
     QemuCond resp_cond;
     bool has_resp;
+    bool resp_valid;
     union {
         struct sysc_msg msg;
         uint64_t align;
@@ -108,7 +109,8 @@ static void bridge_sock_handler(void *opaque)
             close(s->sock_fd); s->sock_fd = -1;
             
             qemu_mutex_lock(&s->sock_mutex);
-            s->has_resp = true; qemu_cond_broadcast(&s->resp_cond);
+            s->has_resp = true; s->resp_valid = false;
+            qemu_cond_broadcast(&s->resp_cond);
             qemu_mutex_unlock(&s->sock_mutex);
 
             if (s->reconnect_ms > 0) {
@@ -129,7 +131,7 @@ static void bridge_sock_handler(void *opaque)
             } else if (msg->type == SYSC_MSG_RESP) {
                 qemu_mutex_lock(&s->sock_mutex);
                 memcpy(&s->current_resp.msg, msg, sizeof(struct sysc_msg));
-                s->has_resp = true;
+                s->has_resp = true; s->resp_valid = true;
                 qemu_cond_broadcast(&s->resp_cond);
                 qemu_mutex_unlock(&s->sock_mutex);
             }
@@ -197,7 +199,9 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
             close(fd);
             return;
         }
-        memcpy(resp, &s->current_resp.msg, sizeof(struct sysc_msg));
+        if (s->resp_valid) {
+            memcpy(resp, &s->current_resp.msg, sizeof(struct sysc_msg));
+        }
     }
     qemu_mutex_unlock(&s->sock_mutex);
     bql_lock();

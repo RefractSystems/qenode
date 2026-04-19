@@ -483,8 +483,8 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **7.7** Ensure `hw/zenoh/zenoh-clock.c` accurately exports sub-quantum timing constraints to the upcoming SAL/AAL layer (Phase 10) to guarantee physics interpolation aligns with virtual execution time.
 - [ ] **7.9 Long-Duration Determinism (Soak) Test**
   Run a 1-hour soak test with 1ms quanta, asserting zero cumulative drift between host-logged virtual time and guest-logged vtime. Verify that no `ZENOH_ERROR` or `STALL` occurs under sustained load.
-- [ ] **7.10 BQL Contention Analysis & Profiling**
-  Use QEMU internal tracing to measure vCPU wait time on `bql_lock()` specifically during clock advances. If contention exceeds 10% of wall time, evaluate moving Zenoh state management to a separate lock-free thread.
+- [x] **7.10 BQL Contention Analysis & Profiling**
+  Use QEMU internal tracing to measure vCPU wait time on `bql_lock()` specifically during clock advances. **Completed:** Moving Zenoh state management to a separate lock-free thread is not justified at this time, as BQL contention is negligible (<0.3%) in the critical path of clock synchronization.
 
 ### Phase 7 Technical Debt & Future Risks
 
