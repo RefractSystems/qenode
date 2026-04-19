@@ -42,6 +42,7 @@ pub struct ChardevZenoh {
     pub rust_state: *mut ZenohChardevState,
 }
 
+#[derive(Debug)]
 pub struct OrderedPacket {
     pub vtime: u64,
     pub data: Vec<u8>,
@@ -74,6 +75,8 @@ pub struct ZenohChardevState {
     rx_receiver: Receiver<OrderedPacket>,
     local_heap: Mutex<BinaryHeap<OrderedPacket>>,
     earliest_vtime: Arc<AtomicU64>,
+    /// Counts packets dropped because the heap reached MAX_HEAP_PACKETS.
+    rx_overflow: Arc<AtomicUsize>,
     // Fire-and-forget TX channel: zenoh_chr_write sends here (no BQL hold);
     // a background thread drains and publishes to Zenoh outside BQL.
     tx_sender: Sender<Vec<u8>>,
@@ -239,14 +242,22 @@ declare_device_type!(char_zenoh_type_init, CHAR_ZENOH_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
+/// Maximum number of packets held in the local delivery heap.
+/// Exceeding this causes the oldest-by-insertion to be dropped (logged).
+const MAX_HEAP_PACKETS: usize = 65_536;
+
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*(opaque as *mut ZenohChardevState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    let mut heap = state.local_heap.lock().unwrap();
+    let mut heap = state.local_heap.lock().unwrap_or_else(|p| p.into_inner());
 
-    // Drain MPSC channel into the priority queue
+    // Drain MPSC channel into the priority queue (bounded by MAX_HEAP_PACKETS).
     while let Ok(packet) = state.rx_receiver.try_recv() {
+        if heap.len() >= MAX_HEAP_PACKETS {
+            state.rx_overflow.fetch_add(1, AtomicOrdering::Relaxed);
+            break;
+        }
         heap.push(packet);
     }
 
@@ -318,6 +329,7 @@ fn zenoh_chardev_init_internal(
     let local_heap = Mutex::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = earliest_vtime.clone();
+    let rx_overflow = Arc::new(AtomicUsize::new(0));
 
     let timer_ptr_clone = Arc::new(AtomicUsize::new(0));
     let timer_ptr = timer_ptr_clone.clone();
@@ -349,16 +361,12 @@ fn zenoh_chardev_init_internal(
 
             let data = sample.payload().to_bytes();
             if data.len() < 12 {
-                // Compatibility with legacy flood tests that don't send headers
-                let packet = OrderedPacket {
-                    vtime: 0, // Deliver immediately
-                    data: data.to_vec(),
-                };
-                let _ = tx.send(packet);
-                let _bql = Bql::lock();
-                unsafe {
-                    virtmcu_timer_mod(rx_timer, 0);
-                }
+                // Malformed: payload is shorter than ZenohFrameHeader (12 bytes).
+                // Discard and log; do not silently deliver at vtime=0.
+                vlog!(
+                    "[zenoh-chardev] discarding malformed RX packet: len={} < 12\n",
+                    data.len()
+                );
                 return;
             }
 
@@ -398,6 +406,7 @@ fn zenoh_chardev_init_internal(
         rx_receiver: rx,
         local_heap,
         earliest_vtime,
+        rx_overflow,
         tx_sender: tx_pub_send,
     });
 
@@ -410,6 +419,12 @@ fn zenoh_chardev_init_internal(
 
     Box::into_raw(state)
 }
+
+// NOTE: Unit tests for pure-Rust logic (OrderedPacket ordering, topic naming,
+// frame header parsing) live in virtmcu-api and tests/test_core_protocols.py.
+// zenoh-chardev is a staticlib that links against QEMU FFI symbols at runtime
+// (via dlopen); cargo test cannot resolve those symbols without a QEMU binary,
+// so #[cfg(test)] modules here cannot compile to a runnable test binary.
 
 fn zenoh_chardev_write_internal(state: &ZenohChardevState, buf: *const u8, len: usize) -> usize {
     let payload = unsafe { std::slice::from_raw_parts(buf, len) };
