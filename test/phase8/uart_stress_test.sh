@@ -16,7 +16,7 @@ cleanup() {
     echo "Cleaning up..."
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
-    # rm -rf "$TMPDIR_LOCAL"
+    rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 

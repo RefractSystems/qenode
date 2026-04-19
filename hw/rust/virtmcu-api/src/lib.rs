@@ -60,6 +60,13 @@ pub struct ZenohFrameHeader {
     pub size: u32,
 }
 
+// Both Rust (zenoh-chardev) and Python (uart_stress_test.py) assume this is
+// exactly 12 bytes with no padding.  Enforce it at compile time.
+const _: () = assert!(
+    core::mem::size_of::<ZenohFrameHeader>() == 12,
+    "ZenohFrameHeader must be exactly 12 bytes (u64 + u32, packed)"
+);
+
 // Minimal manual generation of FlatBuffer bindings for TraceEvent
 #[allow(dead_code, non_snake_case)]
 pub mod telemetry_fb {
