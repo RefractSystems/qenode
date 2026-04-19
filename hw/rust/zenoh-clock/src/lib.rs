@@ -193,9 +193,14 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
     // Runtime assertion (not just debug_assert): BQL must NOT be held here.
     // Violating this causes a deadlock when on_clock_query tries to reply.
     if unsafe { virtmcu_qom::sync::virtmcu_bql_locked() } {
-        virtmcu_qom::vlog!(
-            "[virtmcu-clock] FATAL: BQL held entering quantum_wait — would deadlock. Skipping sync.\n"
-        );
+        // We only warn if the VM is actually running. During initialization or
+        // teardown (teardown_cpus), hooks might be called with BQL held from
+        // the main thread; since sync is bypassed anyway, logging is just noise.
+        if virtmcu_qom::sysemu::runstate_is_running() {
+            virtmcu_qom::vlog!(
+                "[zenoh-clock] WARNING: BQL held entering quantum_wait — would deadlock. Skipping sync.\n"
+            );
+        }
         return QUANTUM_WAIT_STALL_SENTINEL;
     }
 

@@ -223,12 +223,28 @@ class FdtEmitter:
 
                 for k, v in dev.properties.items():
                     if k in ["size", "cpuType", "isa", "mmu-type"]:
+                        if k == "size" and compat_str == "mmio-socket-bridge":
+                            # Backward compatibility: map 'size' to 'region-size'
+                            if "region-size" not in dev.properties:
+                                val = v if isinstance(v, int) else int(v, 16)
+                                lines.append(f"        region-size = <0x{val:x}>;")
                         continue
-                    if isinstance(v, bool):
+                    if k == "address" and compat_str == "mmio-socket-bridge":
+                         # Backward compatibility: map 'address' to 'base-addr'
+                         if "base-addr" not in dev.properties:
+                             v_hi, v_lo = (v >> 32) & 0xFFFFFFFF, v & 0xFFFFFFFF
+                             lines.append(f"        base-addr = <0x{v_hi:x} 0x{v_lo:x}>;")
+                         continue
+
+                    # Special handling for known 64-bit properties
+                    if k == "base-addr" and isinstance(v, int):
+                        v_hi, v_lo = (v >> 32) & 0xFFFFFFFF, v & 0xFFFFFFFF
+                        lines.append(f"        {k} = <0x{v_hi:x} 0x{v_lo:x}>;")
+                    elif isinstance(v, bool):
                         if v:
                             lines.append(f"        {k};")
                     elif isinstance(v, int):
-                        lines.append(f"        {k} = <{v}>;")
+                        lines.append(f"        {k} = <0x{v:x}>;")
                     else:
                         lines.append(f'        {k} = "{v}";')
 

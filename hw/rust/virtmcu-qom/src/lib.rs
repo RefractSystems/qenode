@@ -16,6 +16,7 @@ pub mod net;
 pub mod qdev;
 pub mod qom;
 pub mod sync;
+pub mod sysemu;
 pub mod timer;
 
 use core::ffi::c_char;

@@ -12,6 +12,7 @@
 #include "qapi/error.h"
 #include "system/cpu-timers.h"
 #include "system/cpu-timers-internal.h"
+#include "system/runstate.h"
 #include "exec/icount.h"
 
 /* ── icount ──────────────────────────────────────────────────────────────── */
@@ -125,6 +126,11 @@ void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *)) {
 }
 
 /* ── Error ───────────────────────────────────────────────────────────────── */
+
+bool virtmcu_runstate_is_running(void)
+{
+    return runstate_is_running();
+}
 
 void virtmcu_error_setg(Error **errp, const char *fmt)
 {

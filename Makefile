@@ -89,7 +89,7 @@ test-integration: venv
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
-		bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
+		uv run bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
 		bash scripts/cleanup-sim.sh --quiet; \
 	done
 	@echo "✓ All integration tests passed."
@@ -98,7 +98,7 @@ test-integration: venv
 smoke-tests: test-integration
 
 # Run all Python unit tests (no QEMU required).
-test: venv
+test: venv build-test-artifacts
 	PYTHONPATH=$(CURDIR) uv run pytest tests/ -v
 
 # Alias: same as test — explicit name for CI scripts.
