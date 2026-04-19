@@ -1,3 +1,5 @@
+import asyncio
+import multiprocessing
 import os
 import struct
 import subprocess
@@ -35,7 +37,6 @@ def create_resd(filename, duration_ms):
 
 @pytest.mark.asyncio
 async def test_multi_node_stress():
-    import multiprocessing
     manager = multiprocessing.Manager()
 
     num_nodes = 5
@@ -52,7 +53,8 @@ async def test_multi_node_stress():
     # Start Zenoh session for mock QEMU
     conf = zenoh.Config()
     # Force a local locator to ensure connectivity
-    conf.insert_json5("listen/endpoints", '["tcp/127.0.0.1:7447"]')
+    locator = "tcp/127.0.0.1:7447"
+    conf.insert_json5("listen/endpoints", f'["{locator}"]')
     session = zenoh.open(conf)
 
     node_vtimes = manager.dict({i: 0 for i in range(num_nodes)})
@@ -64,6 +66,7 @@ async def test_multi_node_stress():
             payload = query.payload.to_bytes()
             delta_ns, mujoco_time = struct.unpack("<QQ", payload)
 
+            # Atomically update vtime
             node_vtimes[node_id] += delta_ns
 
             # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
@@ -78,37 +81,48 @@ async def test_multi_node_stress():
         q = session.declare_queryable(f"sim/clock/advance/{i}", on_query)
         queryables.append(q)
 
+    # Give Zenoh time to propagate queryables
+    await asyncio.sleep(2.0)
+
     # Start resd_replay processes
     procs = []
     env = os.environ.copy()
-    # Tell the subprocesses where to find the session
-    env["ZENOH_SESSION_CONFIG"] = '{"connect":{"endpoints":["tcp/127.0.0.1:7447"]}}'
+    # Use the new robust connector env var
+    env["ZENOH_CONNECT"] = f'["{locator}"]'
 
     for i in range(num_nodes):
-        p = subprocess.Popen(
-            [REPLAY_BIN, resd_files[i], str(i), "1000000"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        p = await asyncio.create_subprocess_exec(
+            REPLAY_BIN, resd_files[i], str(i), "1000000",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             env=env
         )
         procs.append(p)
 
     # Wait for completion or timeout
-    start_t = time.time()
-    while any(p.poll() is None for p in procs):
-        if time.time() - start_t > 30:
-            for p in procs:
+    try:
+        await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs)), timeout=30.0)
+    except asyncio.TimeoutError:
+        print("DEBUG: Stress test timed out!")
+        for p in procs:
+            try:
                 p.kill()
-            pytest.fail("Timeout in multi-node stress test")
-        time.sleep(0.1)
+            except Exception:
+                pass
+        pytest.fail("Timeout in multi-node stress test")
 
-    # Verify exit codes
+    # Verify exit codes and print logs
     for i, p in enumerate(procs):
-        stdout, stderr = p.communicate()
+        stdout, stderr = await p.communicate()
         if p.returncode != 0:
             print(f"Node {i} failed with code {p.returncode}")
             print(f"STDOUT: {stdout.decode()}")
             print(f"STDERR: {stderr.decode()}")
         assert p.returncode == 0, f"Node {i} failed"
         assert node_vtimes[i] >= (duration_ms - 1) * 1_000_000
+
+    session.close()
+    print("Multi-node stress test PASSED")
 
 @pytest.mark.asyncio
 async def test_mujoco_bridge_shm():
