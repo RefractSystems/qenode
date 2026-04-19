@@ -169,15 +169,25 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
     let start = Instant::now();
     let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
 
-    let mut guard = backend.mutex.lock().unwrap();
+    // Spin briefly to avoid context switch latency for very fast quantums
     while !backend.quantum_ready.load(Ordering::SeqCst) {
-        let (new_guard, result) = backend
-            .cond
-            .wait_timeout(guard, Duration::from_millis(100))
-            .unwrap();
-        guard = new_guard;
-        if result.timed_out() && start.elapsed() > timeout {
+        if start.elapsed() > Duration::from_millis(1) {
             break;
+        }
+        std::hint::spin_loop();
+    }
+
+    if !backend.quantum_ready.load(Ordering::SeqCst) {
+        let mut guard = backend.mutex.lock().unwrap();
+        while !backend.quantum_ready.load(Ordering::SeqCst) {
+            let (new_guard, result) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(100))
+                .unwrap();
+            guard = new_guard;
+            if result.timed_out() && start.elapsed() > timeout {
+                break;
+            }
         }
     }
 
@@ -202,15 +212,25 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     let start = Instant::now();
     let timeout = Duration::from_millis(backend.stall_timeout_ms as u64);
 
-    let mut guard = backend.mutex.lock().unwrap();
+    // Spin briefly to avoid context switch latency
     while !backend.quantum_done.load(Ordering::SeqCst) {
-        let (new_guard, result) = backend
-            .cond
-            .wait_timeout(guard, Duration::from_millis(100))
-            .unwrap();
-        guard = new_guard;
-        if result.timed_out() && start.elapsed() > timeout {
-            return;
+        if start.elapsed() > Duration::from_millis(1) {
+            break;
+        }
+        std::hint::spin_loop();
+    }
+
+    if !backend.quantum_done.load(Ordering::SeqCst) {
+        let mut guard = backend.mutex.lock().unwrap();
+        while !backend.quantum_done.load(Ordering::SeqCst) {
+            let (new_guard, result) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(100))
+                .unwrap();
+            guard = new_guard;
+            if result.timed_out() && start.elapsed() > timeout {
+                return;
+            }
         }
     }
 
@@ -220,9 +240,11 @@ fn on_clock_query(backend: &ZenohClockBackend, query: Query) {
     backend.delta_ns.store(delta, Ordering::SeqCst);
     backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
     backend.quantum_ready.store(true, Ordering::SeqCst);
-    backend.cond.notify_all();
 
-    drop(guard);
+    {
+        let _guard = backend.mutex.lock().unwrap();
+        backend.cond.notify_all();
+    }
 
     #[repr(C)]
     struct ClockReadyResp {

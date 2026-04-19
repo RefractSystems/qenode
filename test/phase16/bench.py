@@ -166,6 +166,7 @@ class BenchmarkRunner:
                 # Using slaved-suspend for benchmark as it's more stable
                 # and still provides virtual-time slaving.
                 cmd += [
+                    "-icount", "shift=0,align=off,sleep=off",
                     "-device",
                     f"zenoh-clock,mode=slaved-suspend,node=0,router={self.router}",
                 ]
@@ -262,9 +263,9 @@ def main():
         sys.exit(1)
 
     # Determinism: firmware CNTVCT delta must be nearly identical across runs.
-    # In slaved-suspend mode, we allow a larger drift (e.g. 10M cycles = 160ms) due to host load variations in CI.
-    drift_threshold = 10000000 
-    if abs(r_ic.exit_cycles - r_ic2.exit_cycles) < drift_threshold:
+    # In slaved-suspend mode with icount, we expect perfect cycle determinism.
+    drift_threshold = 0
+    if abs(r_ic.exit_cycles - r_ic2.exit_cycles) <= drift_threshold:
         print(f"Determinism          : PASSED  ({r_ic.exit_cycles:,} vs {r_ic2.exit_cycles:,} cycles)")
     else:
         diff = abs(r_ic.exit_cycles - r_ic2.exit_cycles)

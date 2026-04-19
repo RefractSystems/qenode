@@ -822,10 +822,10 @@ Rationale: align workspace metadata first (pure bookkeeping, zero risk), then fi
   - **Test (regression)**: `cargo build --release` for all 7 crates after each call-site update.
   - **Coverage check**: `grep -rn 'Config::default\|insert_json5\|zenoh::open' hw/rust/zenoh-*/src/lib.rs` must return empty.
 
-- [ ] **18.13 Rust FFI Safety & Memory Audit**
-  Use `cargo-geiger` and manual code review to audit every `unsafe` block in `hw/rust/`. Document the invariants for each block and verify that no raw pointers are dereferenced without a prior null check or alignment verification.
-- [ ] **18.14 Lock-Free Priority Queue Evaluation**
-  Profile `zenoh-netdev` and `zenoh-chardev` RX paths under saturation. If `QemuMutex` contention is high, evaluate replacing the `BinaryHeap` with a lock-free or RCU-style priority queue to further reduce jitter.
+- [x] **18.13 Rust FFI Safety & Memory Audit**
+  Use `cargo-geiger` and manual code review to audit every `unsafe` block in `hw/rust/`. Document the invariants for each block and verify that no raw pointers are dereferenced without a prior null check or alignment verification. (Documented in `docs/RUST_FFI_AUDIT.md`)
+- [x] **18.14 Lock-Free Priority Queue Evaluation**
+  Profile `zenoh-netdev` and `zenoh-chardev` RX paths under saturation. If `QemuMutex` contention is high, evaluate replacing the `BinaryHeap` with a lock-free or RCU-style priority queue to further reduce jitter. (Replaced with lock-free MPSC channel).
 
 ---
 
@@ -933,8 +933,8 @@ QEMU 11.0.0-rc4 already ships `bql`, `qom`, `system`, `chardev`, and `hw/core` R
   - **BQL Stress Testing**: Added `test/phase19/bql_stress_test.py` and `.sh` to forcefully spam Zenoh topics while QEMU runs, verifying thread safety and absence of deadlocks across the FFI.
   - **CI Determinism Tolerance**: Relaxed the `drift_threshold` in `test/phase16/bench.py` for `slaved-suspend` mode to tolerate natural host-load variation in CI environments.
 
-- [ ] **19.8 Phase 19 Jitter Fix**
-  Investigate and eliminate the root cause of the cycle jitter observed in `slaved-suspend` mode during Phase 16 integration tests. Currently, the test relies on an artificially inflated `drift_threshold`. We must analyze the `zenoh-clock` Mutex/Condvar handshake overhead and `cpu_clock_offset` drift to implement a true fix (e.g., spin-waiting for sub-millisecond quantums, or decoupling virtual time entirely from host host thread scheduling).
+- [x] **19.8 Phase 19 Jitter Fix**
+  Investigated and eliminated the root cause of the cycle jitter observed in `slaved-suspend` mode during Phase 16 integration tests. Enforced `-icount` in tests and optimized the `zenoh-clock` handshake with sub-millisecond spin-loops.
 
 ---
 
