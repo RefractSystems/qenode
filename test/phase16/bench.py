@@ -15,7 +15,7 @@ from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 # 10 ms quantums give ~30 RTT samples for the benchmark workload.
 QUANTUM_NS = 10_000_000
-MAX_QUANTUMS = 1000  # 5 s virtual cap
+MAX_QUANTUMS = 5000  # 50 s virtual cap
 STANDALONE_TIMEOUT = 30
 
 

@@ -1,5 +1,5 @@
-import sys
 import time
+
 import zenoh
 
 router = "tcp/127.0.0.1:7447"
@@ -14,7 +14,7 @@ def handle_advance(query):
     print(f"[Stall Test] Received clock advance request: {query.selector}")
     print("[Stall Test] Purposely sleeping for 6 seconds to trigger QEMU stall_timeout_ms=5000...")
     time.sleep(6.0)
-    
+
     # Reply after timeout just to see if QEMU crashed or exited cleanly
     query.reply(query.selector, b"\x00" * 16)
     print("[Stall Test] Sent late reply.")

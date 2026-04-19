@@ -1,8 +1,9 @@
-import zenoh
-import struct
-import time
-import sys
 import os
+import struct
+import sys
+import time
+
+import zenoh
 
 # Protocol: 8 bytes vtime, 4 bytes size, 1 byte RSSI, 1 byte LQI
 RF_HEADER_FORMAT = "<QIBB"
@@ -17,11 +18,11 @@ def on_sample(sample):
     payload = sample.payload.to_bytes()
     if len(payload) < RF_HEADER_SIZE:
         return
-    
+
     header = struct.unpack(RF_HEADER_FORMAT, payload[:RF_HEADER_SIZE])
     vtime, size, rssi, lqi = header
     data = payload[RF_HEADER_SIZE:]
-    
+
     # 802.15.4 FCF: bits 0-2 are frame type. Type 2 is ACK.
     if size >= 2:
         fcf = struct.unpack("<H", data[:2])[0]
@@ -33,7 +34,7 @@ def on_sample(sample):
     ping_responded = True
 
     print(f"[{vtime}] Received RF packet: size={size} RSSI={rssi} LQI={lqi}")
-    
+
     # 1. Respond with WRONG address after 1ms virtual time
     resp1_vtime = vtime + 1000000
     resp1_data = struct.pack("<HBH HH H", 0x8841, 0x02, 0xABCD, 0x5678, 0x1234, 0) + b"MISMATCHED ACK"
@@ -52,11 +53,11 @@ def on_tx_sample(sample):
     payload = sample.payload.to_bytes()
     if len(payload) < RF_HEADER_SIZE:
         return
-    
+
     header = struct.unpack(RF_HEADER_FORMAT, payload[:RF_HEADER_SIZE])
     vtime, size, rssi, lqi = header
     data = payload[RF_HEADER_SIZE:]
-    
+
     if size == 3 and (data[0] & 0x07) == 0x02:
         print(f"[{vtime}] RECEIVED AUTO-ACK for seq {data[2]}")
         with open(os.path.join(script_dir, "ack_received.tmp"), "w") as f:
@@ -66,16 +67,16 @@ def main():
     global session
     node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
     router = sys.argv[2] if len(sys.argv) > 2 else "tcp/127.0.0.1:7448"
-    
+
     conf = zenoh.Config()
     conf.insert_json5("connect/endpoints", f'["{router}"]')
     session = zenoh.open(conf)
-    
+
     sub_topic = f"sim/rf/802154/{node_id}/tx"
     print(f"Listening on {sub_topic}...")
-    sub = session.declare_subscriber(sub_topic, on_sample)
-    sub_tx = session.declare_subscriber(sub_topic, on_tx_sample)
-    
+    session.declare_subscriber(sub_topic, on_sample)
+    session.declare_subscriber(sub_topic, on_tx_sample)
+
     try:
         while True:
             time.sleep(1)

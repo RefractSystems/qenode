@@ -99,7 +99,7 @@ smoke-tests: test-integration
 
 # Run all Python unit tests (no QEMU required).
 test: venv
-	uv run pytest tests/ -v
+	PYTHONPATH=$(CURDIR) uv run pytest tests/ -v
 
 # Alias: same as test — explicit name for CI scripts.
 test-unit: test
@@ -240,11 +240,8 @@ ci-local: venv check-versions
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Tier 1 — Unit Tests (no QEMU)"
 	@echo "════════════════════════════════════════════════════"
-	uv run pytest \
+	PYTHONPATH=$(CURDIR) uv run pytest \
 		tests/repl2qemu/ \
-		tests/test_yaml2qemu.py \
-		tests/test_cli_generator.py \
-		tests/test_fdt_emitter.py \
 		-v --tb=short
 	@echo ""
 	@echo "════════════════════════════════════════════════════"

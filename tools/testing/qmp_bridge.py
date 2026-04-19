@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, Optional
 
 from qemu.qmp import QMPClient
+from qemu.qmp.protocol import Runstate
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ class QmpBridge:
         self.uart_buffer = ""
         self._read_task: Optional[asyncio.Task] = None
 
+    @property
+    def is_connected(self) -> bool:
+        return self.qmp.runstate == Runstate.RUNNING
+
     async def connect(self, qmp_socket_path: str, uart_socket_path: Optional[str] = None):
         """
         Connects to the QMP socket and optionally the UART socket.
@@ -41,10 +46,15 @@ class QmpBridge:
         """
         try:
             while self.uart_reader and not self.uart_reader.at_eof():
-                data = await self.uart_reader.read(4096)
-                if not data:
+                try:
+                    data = await self.uart_reader.read(4096)
+                    if not data:
+                        logger.debug("UART socket reached EOF.")
+                        break
+                    self.uart_buffer += data.decode("utf-8", errors="replace")
+                except (asyncio.IncompleteReadError, ConnectionResetError) as e:
+                    logger.debug(f"UART connection closed: {e}")
                     break
-                self.uart_buffer += data.decode("utf-8", errors="replace")
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -54,6 +64,8 @@ class QmpBridge:
         """
         Executes a QMP command and returns the result.
         """
+        if not self.is_connected:
+             raise RuntimeError("QMP is not connected.")
         # qemu.qmp.execute returns the 'return' object directly if successful
         return await self.qmp.execute(cmd, args)
 
@@ -222,9 +234,17 @@ class QmpBridge:
                 await self._read_task
             except asyncio.CancelledError:
                 pass
+            self._read_task = None
 
         if self.uart_writer:
             self.uart_writer.close()
-            await self.uart_writer.wait_closed()
+            try:
+                await asyncio.wait_for(self.uart_writer.wait_closed(), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            self.uart_writer = None
+            self.uart_reader = None
 
-        await self.qmp.disconnect()
+        if self.is_connected:
+            await self.qmp.disconnect()
+

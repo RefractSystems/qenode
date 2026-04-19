@@ -14,7 +14,7 @@ def main():
 
     workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
     router_script = os.path.join(workspace_dir, "tests", "zenoh_router_persistent.py")
-    
+
     # 1. Start Zenoh router
     print("[Test] Starting Zenoh router...")
     router_proc = subprocess.Popen([sys.executable, router_script, "tcp/127.0.0.1:7450"])
@@ -42,7 +42,7 @@ def main():
         received_msgs.append({"topic": topic, "vtime": vtime_ns, "vals": vals})
 
     # Subscribe to firmware/control/0/**
-    sub = session.declare_subscriber("firmware/control/0/**", on_sample)
+    session.declare_subscriber("firmware/control/0/**", on_sample)
 
     # 2. Run QEMU
     script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -97,7 +97,7 @@ def main():
         # Kill QEMU
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait()
-        
+
         # Kill router
         router_proc.terminate()
         router_proc.wait()

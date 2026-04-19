@@ -81,6 +81,12 @@ pub struct ZenohClockBackend {
     delta_ns: AtomicU64,
     vtime_ns: AtomicU64,
     mujoco_time_ns: AtomicU64,
+
+    /* Profiling state */
+    total_bql_wait_ns: AtomicU64,
+    total_iterations: AtomicU64,
+    last_report_time: Mutex<Instant>,
+    start_time: Instant,
 }
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
@@ -124,7 +130,13 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
         let delta = zenoh_clock_quantum_wait_internal(backend, now as u64);
 
         if was_locked {
+            let bql_start = Instant::now();
             let _bql = virtmcu_qom::sync::Bql::lock();
+            let bql_wait = bql_start.elapsed().as_nanos() as u64;
+            backend
+                .total_bql_wait_ns
+                .fetch_add(bql_wait, Ordering::Relaxed);
+            backend.total_iterations.fetch_add(1, Ordering::Relaxed);
             std::mem::forget(_bql);
         }
 
@@ -338,6 +350,21 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohClock);
     if !s.rust_state.is_null() {
+        let backend = unsafe { &*s.rust_state };
+        let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
+        let iterations = backend.total_iterations.load(Ordering::Relaxed);
+        if iterations > 0 {
+            let elapsed = backend.start_time.elapsed().as_secs_f64();
+            let avg_wait_us = (total_wait as f64 / iterations as f64) / 1000.0;
+            let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
+            vlog!(
+                "[zenoh-clock] FINAL BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {})\n",
+                contention,
+                avg_wait_us,
+                iterations
+            );
+        }
+
         unsafe {
             drop(Box::from_raw(s.rust_state));
         }
@@ -427,6 +454,10 @@ fn zenoh_clock_init_internal(
         delta_ns: AtomicU64::new(0),
         vtime_ns: AtomicU64::new(0),
         mujoco_time_ns: AtomicU64::new(0),
+        total_bql_wait_ns: AtomicU64::new(0),
+        total_iterations: AtomicU64::new(0),
+        last_report_time: Mutex::new(Instant::now()),
+        start_time: Instant::now(),
     });
 
     let backend_ptr = Box::into_raw(backend) as usize;
@@ -452,9 +483,35 @@ fn zenoh_clock_init_internal(
     // Heartbeat thread
     let hb_session = session.clone();
     let node_id_hb = node_id;
+    let backend_ptr_hb = backend_ptr;
     std::thread::spawn(move || loop {
+        let backend = unsafe { &*(backend_ptr_hb as *const ZenohClockBackend) };
         let topic = format!("sim/clock/heartbeat/{}", node_id_hb);
         let _ = hb_session.put(topic, vec![1]).wait();
+
+        let iterations = backend.total_iterations.load(Ordering::Relaxed);
+        if iterations > 0 {
+            let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
+            let mut last_report = backend.last_report_time.lock().unwrap();
+            let elapsed = last_report.elapsed().as_secs_f64();
+
+            if elapsed >= 1.0 {
+                let avg_wait_us = (total_wait as f64 / iterations as f64) / 1000.0;
+                let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
+
+                vlog!(
+                    "[zenoh-clock] BQL Contention: {:.2}% (avg wait: {:.2} us, samples: {})\n",
+                    contention,
+                    avg_wait_us,
+                    iterations
+                );
+
+                backend.total_bql_wait_ns.store(0, Ordering::Relaxed);
+                backend.total_iterations.store(0, Ordering::Relaxed);
+                *last_report = Instant::now();
+            }
+        }
+
         std::thread::sleep(Duration::from_millis(1000));
     });
 

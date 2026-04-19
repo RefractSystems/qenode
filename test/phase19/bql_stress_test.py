@@ -1,6 +1,6 @@
-import sys
-import time
 import threading
+import time
+
 import zenoh
 
 router = "tcp/127.0.0.1:7447"

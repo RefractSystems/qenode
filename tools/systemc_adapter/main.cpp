@@ -88,13 +88,6 @@ SC_MODULE(QemuAdapter) {
         client_fd(-1), running(true), has_resp(false) 
     {
         SC_THREAD(systemc_thread);
-        SC_THREAD(keep_alive_thread);
-    }
-
-    void keep_alive_thread() {
-        while (running) {
-            wait(1000000, SC_SEC);
-        }
     }
 
     void trigger_irq(uint32_t irq_num, bool level) {
@@ -157,6 +150,8 @@ SC_MODULE(QemuAdapter) {
                 sc_time target_time = sc_time(req.vtime_ns, SC_NS);
                 if (target_time > sc_time_stamp()) {
                     wait(target_time - sc_time_stamp());
+                } else if (target_time < sc_time_stamp()) {
+                    cerr << "[QemuAdapter] WARNING: Time regression! target=" << req.vtime_ns << " ns, current=" << sc_time_stamp().to_double() << " ns" << endl;
                 }
 
                 tlm::tlm_generic_payload trans;
@@ -432,13 +427,18 @@ public:
                 std::lock_guard<std::mutex> lock(self->rx_mtx);
                 self->rx_queue.push(internal);
             }
+            cout << "[SharedMedium] Zenoh RX: ID=" << hex << wire.can_id << " vtime=" << dec << wire.delivery_vtime_ns << " ns" << endl;
             self->rx_async_event.notify_from_os_thread();
         }
     }
 
     void process_rx() {
-        while (true) {
-            wait(rx_async_event.default_event());
+        while (running) {
+            if (rx_queue.empty()) {
+                wait(rx_async_event.default_event());
+            }
+            if (!running) break;
+
             while (true) {
                 CanInternalFrame internal;
                 {
@@ -451,7 +451,10 @@ public:
                 // Deterministic wait: wait until delivery time
                 sc_time delivery_time = sc_time(internal.delivery_vtime_ns, SC_NS);
                 if (delivery_time > sc_time_stamp()) {
+                    cout << "[SharedMedium] Waiting for delivery at " << internal.delivery_vtime_ns << " ns (current: " << sc_time_stamp().to_double() << " ns)" << endl;
                     wait(delivery_time - sc_time_stamp());
+                } else if (delivery_time < sc_time_stamp()) {
+                    cerr << "[SharedMedium] LATE FRAME! delivery=" << internal.delivery_vtime_ns << " ns, current=" << sc_time_stamp().to_double() << " ns" << endl;
                 }
 
                 self_deliver(internal.frame);
@@ -463,7 +466,7 @@ public:
 
     void transmit(CanFrame frame) {
         CanWireFrame wire = {
-            .delivery_vtime_ns = (uint64_t)sc_time_stamp().to_double(), // SystemC time in NS
+            .delivery_vtime_ns = (uint64_t)sc_time_stamp().to_double(),
             .size = 8,
             .can_id = frame.id,
             .can_data = frame.data
@@ -617,7 +620,10 @@ int sc_main(int argc, char* argv[]) {
     }
 
     while (adapter.running) {
-        sc_start(100, SC_MS);
+        sc_start();
+        if (adapter.running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     
     if (regfile) delete regfile;

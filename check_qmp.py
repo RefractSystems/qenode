@@ -1,6 +1,6 @@
 import socket
 import sys
-import json
+
 
 def check(sock_path):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -8,11 +8,12 @@ def check(sock_path):
     try:
         s.connect(sock_path)
         greeting = s.recv(4096)
-        if not greeting: return False
+        if not greeting:
+            return False
         s.sendall(b'{"execute": "qmp_capabilities"}\n')
-        resp = s.recv(4096)
+        s.recv(4096)
         s.sendall(b'{"execute": "query-status"}\n')
-        resp = s.recv(4096)
+        s.recv(4096)
         return True
     except Exception as e:
         print(e)

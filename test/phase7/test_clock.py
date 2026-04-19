@@ -63,7 +63,7 @@ def main():
 
     vtime3 = send_query(session, 1_000_000, "Q3")
     print(f"Q3 vtime = {vtime3} ns  (target approx {vtime2 + DELTA2_NS})")
-    
+
     if vtime3 < vtime2 + DELTA2_NS:
         print(f"FAIL: Q3 vtime {vtime3} < Q2 vtime {vtime2} + DELTA2 {DELTA2_NS}", file=sys.stderr)
         sys.exit(1)

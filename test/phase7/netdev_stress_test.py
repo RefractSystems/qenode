@@ -1,10 +1,10 @@
-import subprocess
-import time
-import struct
-import sys
-import zenoh
-import threading
 import os
+import struct
+import subprocess
+import sys
+import time
+
+import zenoh
 
 WORKSPACE_DIR = "/workspace"
 
@@ -26,9 +26,9 @@ def main():
         "-netdev", "zenoh,id=net0,node=0,router=tcp/127.0.0.1:7448",
         "-nographic", "-monitor", "none"
     ]
-    
+
     qemu_proc = subprocess.Popen(qemu_cmd, stderr=subprocess.PIPE, text=True)
-    
+
     # Wait for QEMU to boot and subscribe to the topic
     time.sleep(3)
 
@@ -38,12 +38,12 @@ def main():
     session = zenoh.open(conf)
 
     rx_topic = "sim/eth/frame/0/rx"
-    
+
     print("Injecting 1000 packets out of order...")
     base_time = 1_000_000_000 # 1 second in ns
     for i in range(1000):
         # Reverse order: first packet sent has the largest vtime
-        vtime = base_time + (1000 - i) * 1000 
+        vtime = base_time + (1000 - i) * 1000
         data = f"PACKET_{i}".encode("utf-8")
         session.put(rx_topic, pack_zenoh_frame(vtime, data))
 

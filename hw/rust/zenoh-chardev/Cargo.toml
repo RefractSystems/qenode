@@ -13,4 +13,5 @@ zenoh.workspace = true
 virtmcu-qom.workspace = true
 virtmcu-zenoh.workspace = true
 byteorder.workspace = true
+crossbeam-channel.workspace = true
 libc.workspace = true

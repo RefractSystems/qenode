@@ -38,6 +38,7 @@ pub struct ChardevClass {
 
 extern "C" {
     pub fn qemu_chr_be_write(s: *mut Chardev, buf: *const u8, len: usize);
+    pub fn qemu_chr_be_can_write(s: *mut Chardev) -> core::ffi::c_int;
 }
 
 const _: () = assert!(core::mem::size_of::<Chardev>() == 160);
