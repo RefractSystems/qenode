@@ -2,8 +2,14 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let qemu_dir = "../../../third_party/qemu";
-    let build_dir = "../../../third_party/qemu/build-virtmcu";
+    let (qemu_dir, build_dir) = if std::path::Path::new("../../../third_party/qemu/include/qemu/osdep.h").exists() {
+        ("../../../third_party/qemu", "../../../third_party/qemu/build-virtmcu")
+    } else if std::path::Path::new("/build/qemu/include/qemu/osdep.h").exists() {
+        ("/build/qemu", "/build/qemu/build-virtmcu")
+    } else {
+        // Fallback for CI or other environments, will trigger warning later if missing
+        ("../../../third_party/qemu", "../../../third_party/qemu/build-virtmcu")
+    };
 
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=src/ffi.c");
