@@ -6,6 +6,20 @@ fn main() {
     let build_dir = "../../../third_party/qemu/build-virtmcu";
 
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=src/ffi.c");
+    println!("cargo:rerun-if-changed=src/ffi.h");
+
+    cc::Build::new()
+        .file("src/ffi.c")
+        .include(format!("{}/include", qemu_dir))
+        .include(build_dir)
+        .include(format!("{}/qapi", build_dir))
+        .include(format!("{}/linux-headers", qemu_dir))
+        .include("/usr/include/glib-2.0")
+        .include("/usr/lib/aarch64-linux-gnu/glib-2.0/include")
+        .include("/usr/lib/x86_64-linux-gnu/glib-2.0/include")
+        .compile("virtmcu_ffi");
+
 
     // Check if QEMU headers are present
     let osdep_h = std::path::Path::new(qemu_dir).join("include/qemu/osdep.h");

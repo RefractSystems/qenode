@@ -17,8 +17,6 @@ hw_virtmcu_modules = {}
 
 # Common FFI helpers for Rust-backed modules
 hw_virtmcu_inc = include_directories('.', 'misc')
-virtmcu_rust_ffi_file = files('misc/virtmcu-rust-ffi.c')
-virtmcu_ffi_dep = declare_dependency(include_directories: hw_virtmcu_inc)
 
 # ── dummy ─────────────────────────────────────────────────────────────────────
 # Minimal QOM SysBusDevice.  Always included — it is the smoke-test for the
@@ -50,7 +48,6 @@ rust_dummy_lib = custom_target(
 )
 rust_dummy_ss = ss.source_set()
 rust_dummy_ss.add(files('rust/rust-dummy/rust-dummy.c'))
-rust_dummy_ss.add(virtmcu_rust_ffi_file, virtmcu_ffi_dep)
 rust_dummy_ss.add(rust_dummy_lib[1])
 rust_dummy_ss.add(declare_dependency(
   link_args: [meson.current_build_dir() / 'librust_dummy.a']
@@ -77,8 +74,6 @@ EOF
   ]
 )
 zenoh_clock_ss = ss.source_set()
-zenoh_clock_ss.add(virtmcu_ffi_dep)
-zenoh_clock_ss.add(virtmcu_rust_ffi_file)
 zenoh_clock_ss.add(rust_zenoh_clock_lib[1])
 zenoh_clock_ss.add(rust_zenoh_clock_lib[0])
 zenoh_clock_ss.add(declare_dependency(
@@ -105,8 +100,6 @@ EOF
   ]
 )
 zenoh_netdev_ss = ss.source_set()
-zenoh_netdev_ss.add(virtmcu_ffi_dep)
-zenoh_netdev_ss.add(virtmcu_rust_ffi_file)
 zenoh_netdev_ss.add(rust_zenoh_netdev_lib[1])
 zenoh_netdev_ss.add(rust_zenoh_netdev_lib[0])
 zenoh_netdev_ss.add(declare_dependency(
@@ -133,8 +126,6 @@ EOF
   ]
 )
 zenoh_chardev_ss = ss.source_set()
-zenoh_chardev_ss.add(virtmcu_ffi_dep)
-zenoh_chardev_ss.add(virtmcu_rust_ffi_file)
 zenoh_chardev_ss.add(rust_zenoh_chardev_lib[1])
 zenoh_chardev_ss.add(rust_zenoh_chardev_lib[0])
 zenoh_chardev_ss.add(declare_dependency(
@@ -162,8 +153,6 @@ EOF
   ]
 )
 zenoh_telemetry_ss = ss.source_set()
-zenoh_telemetry_ss.add(virtmcu_ffi_dep)
-zenoh_telemetry_ss.add(virtmcu_rust_ffi_file)
 zenoh_telemetry_ss.add(rust_zenoh_telemetry_lib[1])
 zenoh_telemetry_ss.add(rust_zenoh_telemetry_lib[0])
 zenoh_telemetry_ss.add(declare_dependency(
@@ -191,8 +180,6 @@ EOF
   ]
 )
 zenoh_actuator_ss = ss.source_set()
-zenoh_actuator_ss.add(virtmcu_ffi_dep)
-zenoh_actuator_ss.add(virtmcu_rust_ffi_file)
 zenoh_actuator_ss.add(rust_zenoh_actuator_lib[1])
 zenoh_actuator_ss.add(rust_zenoh_actuator_lib[0])
 zenoh_actuator_ss.add(declare_dependency(
@@ -220,8 +207,6 @@ EOF
   ]
 )
 zenoh_802154_ss = ss.source_set()
-zenoh_802154_ss.add(virtmcu_ffi_dep)
-zenoh_802154_ss.add(virtmcu_rust_ffi_file)
 zenoh_802154_ss.add(rust_zenoh_802154_lib[1])
 zenoh_802154_ss.add(rust_zenoh_802154_lib[0])
 zenoh_802154_ss.add(declare_dependency(
@@ -249,8 +234,6 @@ EOF
   ]
 )
 zenoh_ui_ss = ss.source_set()
-zenoh_ui_ss.add(virtmcu_ffi_dep)
-zenoh_ui_ss.add(virtmcu_rust_ffi_file)
 zenoh_ui_ss.add(rust_zenoh_ui_lib[1])
 zenoh_ui_ss.add(rust_zenoh_ui_lib[0])
 zenoh_ui_ss.add(declare_dependency(
@@ -288,8 +271,6 @@ EOF
   ]
 )
 test_qom_device_ss = ss.source_set()
-test_qom_device_ss.add(virtmcu_ffi_dep)
-test_qom_device_ss.add(virtmcu_rust_ffi_file)
 test_qom_device_ss.add(rust_test_qom_device_lib[1])
 test_qom_device_ss.add(rust_test_qom_device_lib[0])
 test_qom_device_ss.add(declare_dependency(

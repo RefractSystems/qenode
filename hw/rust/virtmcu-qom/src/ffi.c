@@ -5,7 +5,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "virtmcu-rust-ffi.h"
+#include "ffi.h"
 #include "qemu/main-loop.h"
 #include "qemu/seqlock.h"
 #include "hw/core/cpu.h"
