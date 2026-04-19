@@ -2,8 +2,10 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let qemu_dir = std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
-    let build_dir = std::env::var("QEMU_BUILD_DIR").unwrap_or_else(|_| "../../../third_party/qemu/build-virtmcu".to_string());
+    let qemu_dir =
+        std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
+    let build_dir = std::env::var("QEMU_BUILD_DIR")
+        .unwrap_or_else(|_| "../../../third_party/qemu/build-virtmcu".to_string());
 
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=src/ffi.c");
