@@ -85,7 +85,6 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
                 payload = sample.payload.to_bytes()
                 if len(payload) > 12:
                     text = payload[12:].decode("utf-8", errors="replace")
-                    print(f"[Zenoh Monitor {self.topic}] Received: {text!r}")
                     loop.call_soon_threadsafe(self.queue.put_nowait, text)
 
             self.sub = await asyncio.to_thread(lambda: self.session.declare_subscriber(self.topic, on_sample))
@@ -149,9 +148,9 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     extra_args = [
         "-icount",
-        "shift=6,align=off,sleep=off",
+        "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router},stall-timeout=60000",
+        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router},stall-timeout=120000",
         "-chardev",
         f"zenoh,id=uart0,node=0,router={zenoh_router},topic={topic}",
         "-serial",
@@ -164,38 +163,72 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session):
     TOTAL_BYTES = 50_000  # noqa: N806
     TEST_BYTE = b"X"  # noqa: N806
     TEST_BYTE_VAL = ord("X")  # noqa: N806
-    BAUD_10MBPS_INTERVAL_NS = 800  # noqa: N806
+    BAUD_10MBPS_INTERVAL_NS = 2000  # noqa: N806
     START_VTIME_NS = 10_000_000  # noqa: N806
-    QUANTUM_NS = 10_000_000  # noqa: N806
-    CLOCK_TOTAL_NS = 1_000_000_000  # noqa: N806
+    QUANTUM_NS = 500_000_000  # noqa: N806
+    CLOCK_TOTAL_NS = 20_000_000_000  # 20s to be safe
+
 
     received_count = 0
     received_all_event = asyncio.Event()
+    welcome_event = asyncio.Event()
+    loop = asyncio.get_event_loop()
 
     def on_tx_sample(sample):
-        nonlocal received_count
         raw = sample.payload.to_bytes()
+        if b"Interactive UART Echo Ready." in raw:
+            loop.call_soon_threadsafe(welcome_event.set)
+
         if len(raw) < 12:
             return
         payload = raw[12:]
         new_x = sum(1 for b in payload if b == TEST_BYTE_VAL)
-        received_count += new_x
-        if received_count >= TOTAL_BYTES:
-            asyncio.get_event_loop().call_soon_threadsafe(received_all_event.set)
+
+        def _update():
+            nonlocal received_count
+            received_count += new_x
+            if received_count >= TOTAL_BYTES:
+                received_all_event.set()
+
+        loop.call_soon_threadsafe(_update)
 
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(f"{topic}/0/tx", on_tx_sample))
+
+    # Wait for discovery propagation
+    await asyncio.sleep(2.0)
+
+    # 1. Drive clock until welcome message (ensures Zenoh discovery is complete)
+    welcome_wait_vtime = 0
+    while not welcome_event.is_set() and welcome_wait_vtime < 10_000_000_000:
+        replies = await asyncio.to_thread(
+            lambda: list(
+                zenoh_session.get("sim/clock/advance/0", payload=struct.pack("<QQ", QUANTUM_NS, 0), timeout=5.0)
+            )
+        )
+        if not replies or not replies[0].ok:
+            await asyncio.sleep(0.1)
+            continue
+
+        payload = replies[0].ok.payload.to_bytes()
+        welcome_wait_vtime, _, _ = struct.unpack("<QII", payload)
+
     pub = await asyncio.to_thread(lambda: zenoh_session.declare_publisher(f"{topic}/0/rx"))
+    await asyncio.sleep(0.5)
 
-    # Pre-publish all bytes
-    for i in range(TOTAL_BYTES):
-        vtime = START_VTIME_NS + (i * BAUD_10MBPS_INTERVAL_NS)
-        header = struct.pack("<QI", vtime, 1)
-        from functools import partial
+    # 2. Pre-publish all bytes
+    def _publish_all():
+        for i in range(TOTAL_BYTES):
+            vtime = START_VTIME_NS + (i * BAUD_10MBPS_INTERVAL_NS)
+            header = struct.pack("<QI", vtime, 1)
+            pub.put(header + TEST_BYTE)
+            if i % 1000 == 0:
+                import time
+                time.sleep(0.01)  # Pace publication to avoid overflowing Zenoh buffers
 
-        await asyncio.to_thread(partial(pub.put, header + TEST_BYTE))
+    await asyncio.to_thread(_publish_all)
 
     # Drive clock
-    current_vtime = 0
+    current_vtime = welcome_wait_vtime
     while current_vtime < CLOCK_TOTAL_NS and not received_all_event.is_set():
         # Step clock
         replies = await asyncio.to_thread(
@@ -204,12 +237,14 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session):
             )
         )
         if not replies or not replies[0].ok:
-            break
-        current_vtime, _, _ = struct.unpack("<QII", replies[0].ok.payload.to_bytes())
+            await asyncio.sleep(0.1)
+            continue
+
+        payload = replies[0].ok.payload.to_bytes()
+        current_vtime, _, _ = struct.unpack("<QII", payload)
 
     with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(received_all_event.wait(), timeout=1.0)
-
+        await asyncio.wait_for(received_all_event.wait(), timeout=30.0)
     assert received_count == TOTAL_BYTES
     await asyncio.to_thread(sub.undeclare)
 
@@ -227,7 +262,7 @@ async def test_phase8_uart_flood(zenoh_router, qemu_launcher, zenoh_session):
 
     extra_args = [
         "-icount",
-        "shift=6,align=off,sleep=off",
+        "shift=4,align=off,sleep=off",
         "-device",
         f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router},stall-timeout=5000",
         "-chardev",

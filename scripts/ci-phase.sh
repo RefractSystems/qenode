@@ -34,6 +34,12 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
         uv pip install --link-mode=copy --system --break-system-packages -r pyproject.toml >/dev/null
         touch /tmp/.uv_synced
     fi
+
+    if [ ! -f /tmp/.artifacts_built ]; then
+        echo "==> Building test artifacts..."
+        make build-test-artifacts >/dev/null
+        touch /tmp/.artifacts_built
+    fi
 fi
 
 run_phase() {

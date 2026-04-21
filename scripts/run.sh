@@ -133,10 +133,10 @@ elif [ "$ARCH" = "riscv32" ]; then
     QEMU_ARCH_NAME="riscv32"
 fi
 
-# Prioritize the build directory for developers
-if [ -f "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
+# Prioritize the build directory for developers, unless skipped
+if [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]] && [ -f "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
     QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME"
-elif [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
+elif [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]] && [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
     QEMU_BIN="$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME"
     chmod +x "$QEMU_BIN"
 else
@@ -164,13 +164,18 @@ fi
 
 # Set the QEMU module directory. 
 # Prioritize the build directory for developers, fallback to installed location.
-FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
-if [ -z "$FOUND_SO" ]; then
-    FOUND_SO=$(find "$QEMU_DIR/build-virtmcu" -maxdepth 1 -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
+FOUND_SO=""
+if [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]]; then
+    FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
+    if [ -z "$FOUND_SO" ]; then
+        FOUND_SO=$(find "$QEMU_DIR/build-virtmcu" -maxdepth 1 -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
+    fi
 fi
 
 if [ -n "$FOUND_SO" ]; then
     QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
+elif [ -d "$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu" ] && ls "$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"/hw-virtmcu-*.so >/dev/null 2>&1; then
+    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"
 elif [ -d "$QEMU_DIR/build-virtmcu/install/lib/qemu" ] && ls "$QEMU_DIR/build-virtmcu/install/lib/qemu"/hw-virtmcu-*.so >/dev/null 2>&1; then
     QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
 elif [ -d "/opt/virtmcu/lib/aarch64-linux-gnu/qemu" ] && ls /opt/virtmcu/lib/aarch64-linux-gnu/qemu/hw-virtmcu-*.so >/dev/null 2>&1; then

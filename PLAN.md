@@ -50,30 +50,30 @@ For every completed phase, an automated integration test MUST be added to `tests
 ## 3. Active Roadmap (Dependency Order)
 
 ### [Core] Phase 3.5 — YAML Platform Description & OpenUSD 🚧
-*Depends on: Phase 3 (Parser)*
+*Depends on: Phase 3 (Parser) ✅*
 - [ ] Complete YAML schema validation for all current peripherals.
 - [ ] Ensure `yaml2qemu.py` supports new `zenoh-chardev` and `mmio-socket-bridge` mappings.
 
 ### [Core] Phase 4 — Robot Framework & QMP Hardening 🚧
-*Depends on: Phase 1 (QEMU)*
+*Depends on: Phase 1 (QEMU) ✅*
 - [ ] Harden `QmpBridge` for high-latency or high-load scenarios.
 - [ ] Ensure virtual-time-aware timeouts are used in all integration tests.
 
 ### [Core] Phase 6 & 7 — Deterministic Multi-Node Loop 🚧
-*Depends on: Phase 1 (QEMU), Phase 18 (Rust Zenoh)*
+*Depends on: Phase 1 (QEMU) ✅, Phase 18 (Rust Zenoh) ✅*
 - [ ] **6.5** Multi-Node Ethernet Verification (Zephyr echo samples).
 - [ ] **6.6** Industry-Standard Ethernet MAC Emulation (ADR-006).
 - [ ] **7.8** Finalize `zenoh-netdev` RX determinism with priority queues.
 
 ### [Hardware] Phase 20.5 — SPI Bus & Peripherals 🚧
-*Depends on: Phase 19 (Rust QOM)*
+*Depends on: Phase 19 (Rust QOM) ✅*
 - [ ] **20.5.1** SSI/SPI Safe Rust Bindings in `virtmcu-qom`.
 - [ ] **20.5.2** Verify PL022 (PrimeCell) SPI controller in `arm-generic-fdt`.
 - [ ] **20.5.3** Implement `hw/rust/zenoh-spi` bridge.
 - [ ] **20.5.4** SPI Loopback/Echo Firmware verification.
 
 ### [Hardware] Phase 27 — FlexRay (Automotive) 🚧
-*Depends on: Phase 5 (Bridge), Phase 19 (Rust QOM)*
+*Depends on: Phase 5 (Bridge) ✅, Phase 19 (Rust QOM) ✅*
 - [ ] **27.1.1** Add FlexRay Interrupts (IRQ lines).
 - [ ] **27.1.2** Implement Bosch E-Ray Message RAM Partitioning.
 - [ ] **27.2.1** Fix SystemC build regression (CMake 4.3.1 compatibility).
@@ -91,7 +91,7 @@ For every completed phase, an automated integration test MUST be added to `tests
 
 ### [Infrastructure] Phase 30 — Deep Oxidization & Testing Overhaul 🚧
 *Ongoing*
-- [ ] **30.6** Migrate `remote-port` to Rust.
+- [x] **30.6** Migrate `remote-port` to Rust.
 - [ ] **30.8** Comprehensive Firmware Coverage (drcov integration).
 - [ ] **30.10** Unified Coverage Reporting (Host + Guest).
 

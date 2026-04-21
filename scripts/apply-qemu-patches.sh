@@ -20,13 +20,20 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 
+if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
+    # shellcheck source=../VERSIONS
+    source "$WORKSPACE_DIR/VERSIONS"
+fi
+
 echo "==> Applying virtmcu patches to QEMU at $QEMU_DIR"
 
 cd "$QEMU_DIR"
 
-# Git requires an identity to apply patches via 'am' or 'apply'
-git config user.email "virtmcu-build@example.com"
-git config user.name "virtmcu"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Git requires an identity to apply patches via 'am' or 'apply'
+    git config user.email "virtmcu-build@example.com"
+    git config user.name "virtmcu"
+fi
 
 # 1. Apply the arm-generic-fdt patch series
 apply_patch_series() {
@@ -55,7 +62,7 @@ apply_patch_series() {
     return 1
 }
 
-if ! git log | grep -q "arm-generic-fdt"; then
+if ! git log >/dev/null 2>&1 || ! git log | grep -q "arm-generic-fdt"; then
     echo "  -> Applying arm-generic-fdt-v3.mbx..."
     apply_patch_series "$WORKSPACE_DIR/patches/arm-generic-fdt-v3.mbx"
 else
@@ -65,10 +72,17 @@ fi
 # 2. Allow dynamic loading of SysBus devices via `-device`
 if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" hw/arm/arm_generic_fdt.c; then
     echo "  -> Enabling dynamic sysbus devices..."
-    sed -i 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c
+    sed 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c > hw/arm/arm_generic_fdt.c.tmp && mv hw/arm/arm_generic_fdt.c.tmp hw/arm/arm_generic_fdt.c
 fi
 
-# 3. Apply custom Python-based AST-injection patches (Zenoh hooks, etc.)
+# 3. Update Meson version to support objects in Rust targets
+if grep -q "meson_version: '>=1.5.0'" meson.build; then
+    TARGET_MESON_VERSION="${MESON_VERSION:-1.8.0}"
+    echo "  -> Updating Meson requirement to ${TARGET_MESON_VERSION} (required for Rust)..."
+    sed "s/meson_version: '>=1.5.0'/meson_version: '>=${TARGET_MESON_VERSION}'/" meson.build > meson.build.tmp && mv meson.build.tmp meson.build
+fi
+
+# 4. Apply custom Python-based AST-injection patches (Zenoh hooks, etc.)
 cd "$WORKSPACE_DIR"
 echo "  -> Injecting Zenoh hooks and QAPI extensions..."
 python3 patches/apply_zenoh_hook.py "$QEMU_DIR"
@@ -76,6 +90,7 @@ python3 patches/apply_zenoh_qapi.py "$QEMU_DIR"
 python3 patches/apply_zenoh_netdev.py "$QEMU_DIR"
 python3 patches/apply_zenoh_chardev.py "$QEMU_DIR"
 python3 patches/apply_fdt_generic_util_fix.py "$QEMU_DIR"
+python3 patches/apply_sysbus_asan_fix.py "$QEMU_DIR"
 python3 patches/apply_rust_asan_fix.py "$QEMU_DIR"
 
 echo "✓ All patches applied successfully."

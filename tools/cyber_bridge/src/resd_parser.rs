@@ -159,7 +159,11 @@ impl ResdParser {
                 (file.read_u64::<LittleEndian>()?, 0, 8)
             } else if block_type[0] == 0x02 {
                 // CONSTANT_TIMESTAMP
-                (file.read_u64::<LittleEndian>()?, file.read_u64::<LittleEndian>()?, 16)
+                (
+                    file.read_u64::<LittleEndian>()?,
+                    file.read_u64::<LittleEndian>()?,
+                    16,
+                )
             } else {
                 file.seek(SeekFrom::Current(data_size as i64))?;
                 continue;

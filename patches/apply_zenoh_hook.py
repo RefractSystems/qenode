@@ -9,10 +9,10 @@
 # (like the zenoh clock sync from FirmwareStudio) to cooperatively halt QEMU
 # at translation block boundaries, we must inject a global function pointer.
 #
-# This script is idempotent: it parses `accel/tcg/cpu-exec.c`, finds the
-# execution loop, and safely AST-injects a call to `virtmcu_tcg_quantum_hook`.
+# This pointer is then set by the `zenoh-clock` QOM device in FirmWareStudio.
 # ==============================================================================
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -34,53 +34,27 @@ def write_if_changed(path, content):
 def patch_file(path, marker, insertion, after=True):
     with Path(path).open() as f:
         content = f.read()
+
+    marker_hash = hashlib.md5(marker.encode()).hexdigest()[:8]
+    guard = f"/* virtmcu-patch-{marker_hash} */"
+
+    if guard in content:
+        # Already patched
+        return True
+
     if marker not in content:
         print(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
         return False
 
-    # If the exact insertion is already there, we are done.
-    if insertion.strip() in content:
-        return False
-
-    # If a DIFFERENT version of the virtmcu hook is there, remove it first.
-    # We identify our hooks by the "virtmcu_" prefix in the function/variable names.
-    # This is a bit hacky but works for our specific hooks.
-    # Try to find if we already patched this file near the marker.
-    # For simplicity, if we find "virtmcu_" followed by the hook name in the file,
-    # and it's NOT the exact insertion, we might want to replace it.
-    # But replacing is hard with regex if it's multi-line.
-    # Use a unique tag for each patch based on the marker.
-    import hashlib
-    import re
-
-    marker_hash = hashlib.md5(marker.encode()).hexdigest()[:8]
-    tag = f"/* VIRTMCU_PATCH_{marker_hash} */"
-    tagged_insertion = f"\n{tag}{insertion}{tag}\n"
-
-    if tagged_insertion.strip() in content:
-        return False
-
-    # Remove old tagged insertions if they exist
-    pattern = re.escape(tag) + r".*?" + re.escape(tag)
-    if re.search(pattern, content, re.DOTALL):
-        new_content = re.sub(pattern, tagged_insertion.strip(), content, flags=re.DOTALL)
-        if new_content == content:
-            return False
-        content = new_content
-        print(f"  updated patch in {os.path.relpath(path)} (marker={marker_hash})")
+    if after:
+        new_content = content.replace(marker, marker + guard + insertion)
     else:
-        if after:
-            new_content = content.replace(marker, marker + tagged_insertion, 1)
-        else:
-            new_content = content.replace(marker, tagged_insertion + marker, 1)
-
-        if new_content == content:
-            return False
-        content = new_content
-        print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
+        new_content = content.replace(marker, guard + insertion + marker)
 
     with Path(path).open("w") as f:
-        f.write(content)
+        f.write(new_content)
+
+    print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
     return True
 
 
@@ -111,10 +85,15 @@ typedef struct {
     int64_t mujoco_time_ns;
 } VirtmcuQuantumTiming;
 
+/* Global function pointers used for guest synchronization */
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
 extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
 extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
 extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
+
+/* Hook setters used by external QOM plugins (DSOs) */
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
 extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
@@ -126,22 +105,32 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
     cpu_exec_c = Path(qemu) / "accel" / "tcg" / "cpu-exec.c"
 
-    # 2. Add include to cpu-exec.c
+    # 2. Add include and definitions to cpu-exec.c
     marker0 = '#include "internal-common.h"'
-    insertion0 = '\n#include "virtmcu/hooks.h"'
+    insertion0 = """
+#include "virtmcu/hooks.h"
+
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
+    virtmcu_tcg_quantum_hook = cb;
+}
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
+    virtmcu_cpu_halt_hook = cb;
+}
+"""
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Patch hw/core/irq.c
-    irq_c = Path(qemu) / "hw" / "core" / "irq.c"
-    patch_file(irq_c, '#include "hw/core/irq.h"', '\n#include "virtmcu/hooks.h"', after=True)
+    # 3. Patch hw/core/irq.c to define the global pointers
+    irq_c = Path(qemu) / "hw/core/irq.c"
+    irq_patch = """
+#include "virtmcu/hooks.h"
 
-    # Add the function pointer definitions separately for idempotency
-    patch_file(
-        irq_c,
-        '#include "virtmcu/hooks.h"',
-        "\nvoid (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;\nvoid (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;\nvoid (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;\nvoid (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;\n",
-        after=True,
-    )
+/* Define the global function pointers used for guest synchronization */
+void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;
+void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;
+void (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;
+void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
+"""
+    patch_file(irq_c, '#include "hw/core/irq.h"', irq_patch, after=True)
 
     irq_marker = "void qemu_set_irq(qemu_irq irq, int level)\n{"
     irq_insertion = """
@@ -152,38 +141,44 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
     patch_file(irq_c, irq_marker, irq_insertion, after=True)
 
     # 4. Add the hook invocation in cpu_exec_loop
-    loop_marker = "while (!cpu_handle_exception(cpu, &ret)) {"
+    # Patch the inner execution loop (interrupt check) for frequent enough quantum boundaries
+    loop_marker = "while (!cpu_handle_interrupt(cpu, &last_tb)) {"
     loop_insertion = "\n        if (virtmcu_tcg_quantum_hook) { virtmcu_tcg_quantum_hook(cpu); }\n"
-    patch_file(cpu_exec_c, loop_marker, loop_insertion, after=True)
+    if not patch_file(cpu_exec_c, loop_marker, loop_insertion, after=True):
+        # Fallback to exception loop if interrupt loop not found (older QEMU)
+        loop_marker = "while (!cpu_handle_exception(cpu, &ret)) {"
+        patch_file(cpu_exec_c, loop_marker, loop_insertion, after=True)
 
-    # 6. Patch cpu_handle_halt in cpu-exec.c
+    # 5. Patch cpu_handle_halt in cpu-exec.c
     halt_marker = "cpu->halted = 0;"
     halt_insertion = "\n        if (virtmcu_cpu_halt_hook) { virtmcu_cpu_halt_hook(cpu, false); }\n"
     patch_file(cpu_exec_c, halt_marker, halt_insertion, after=True)
 
-    # 7. Inject BQL helper implementations into system/cpus.c
+    # 6. Inject BQL helper definitions into system/cpus.c
     # bql_locked() uses a file-static TLS variable in cpus.c; DSOs read a separate
     # copy and always see false. These wrappers live inside the main binary and
     # return the authoritative value.
     cpus_c = Path(qemu) / "system" / "cpus.c"
-    patch_file(
-        cpus_c,
-        "void bql_unlock(void)\n{\n    g_assert(bql_locked());\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
-        "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n",
-        after=True,
-    )
+    if Path(cpus_c).exists():
+        patch_file(
+            cpus_c,
+            "void bql_unlock(void)\n{\n    g_assert(bql_locked());\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
+            "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_safe_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_safe_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n",
+            after=True,
+        )
 
-    # 8. Inject BQL helper declarations into include/qemu/main-loop.h
+    # 7. Inject BQL helper declarations into include/qemu/main-loop.h
     main_loop_h = Path(qemu) / "include" / "qemu" / "main-loop.h"
-    patch_file(
-        main_loop_h,
-        "bool bql_locked(void);",
-        "\nbool virtmcu_is_bql_locked(void);\nvoid virtmcu_safe_bql_unlock(void);\nvoid virtmcu_safe_bql_lock(void);\nvoid virtmcu_bql_force_unlock(void);\nvoid virtmcu_bql_force_lock(void);\n",
-        after=True,
-    )
+    if Path(main_loop_h).exists():
+        patch_file(
+            main_loop_h,
+            "bool bql_locked(void);",
+            "\nbool virtmcu_is_bql_locked(void);\nvoid virtmcu_safe_bql_unlock(void);\nvoid virtmcu_safe_bql_lock(void);\nvoid virtmcu_safe_bql_force_unlock(void);\nvoid virtmcu_safe_bql_force_lock(void);\n",
+            after=True,
+        )
 
+    # 8. Inject halt hook into target/arm/tcg/op_helper.c
     # We also need to hook where halted is set to 1.
-    # This is target-specific, but let's try to find a generic place or common targets.
     # In ARM:
     arm_op_helper = Path(qemu) / "target" / "arm" / "tcg" / "op_helper.c"
     if Path(arm_op_helper).exists():

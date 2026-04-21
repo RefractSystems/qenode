@@ -44,8 +44,8 @@ void virtmcu_icount_advance(int64_t delta)
 bool virtmcu_bql_locked(void) { return virtmcu_is_bql_locked(); }
 void virtmcu_bql_lock(void) { virtmcu_safe_bql_lock(); }
 void virtmcu_bql_unlock(void) { virtmcu_safe_bql_unlock(); }
-void virtmcu_bql_force_unlock(void) { virtmcu_bql_force_unlock(); }
-void virtmcu_bql_force_lock(void) { virtmcu_bql_force_lock(); }
+void virtmcu_bql_force_unlock(void) { virtmcu_safe_bql_unlock(); }
+void virtmcu_bql_force_lock(void) { virtmcu_safe_bql_force_lock(); }
 
 /* ── Mutex ───────────────────────────────────────────────────────────────── */
 
@@ -123,13 +123,7 @@ void virtmcu_cpu_exit_all(void) {
     }
 }
 
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *, bool)) {
-    virtmcu_cpu_halt_hook = cb;
-}
-
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *)) {
-    virtmcu_tcg_quantum_hook = cb;
-}
+/* Setters are now implemented in QEMU (cpu-exec.c) */
 
 /* ── Error ───────────────────────────────────────────────────────────────── */
 

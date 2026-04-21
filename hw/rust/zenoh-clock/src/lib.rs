@@ -7,7 +7,7 @@ use core::ffi::{c_char, c_void};
 use std::ffi::CStr;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, CLOCK_ERROR_OK};
 use virtmcu_qom::qdev::SysBusDevice;
@@ -20,24 +20,14 @@ use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     vlog,
 };
-use zenoh::query::Query;
+use zenoh::query::{Query, Queryable};
 use zenoh::Session;
 use zenoh::Wait;
 
 /* ── FFI Types ────────────────────────────────────────────────────────────── */
 
 /// Opaque handle to a QEMU CPUState.
-#[repr(C)]
-pub struct CPUState {
-    _opaque: [u8; 0],
-}
-
-extern "C" {
-    /// Sets the hook for CPU halt events.
-    pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(*mut CPUState, bool)>);
-    /// Sets the hook for TCG instruction execution.
-    pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(*mut CPUState)>);
-}
+use virtmcu_qom::cpu::CPUState;
 
 /* ── QOM Object ───────────────────────────────────────────────────────────── */
 
@@ -98,6 +88,9 @@ pub struct ZenohClockBackend {
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,
 
+    /// Zenoh queryable for clock advance requests.
+    pub queryable: Option<Queryable<()>>,
+
     /* Profiling state */
     /// Total time spent waiting for the Big QEMU Lock (BQL).
     pub total_bql_wait_ns: AtomicU64,
@@ -112,7 +105,7 @@ pub struct ZenohClockBackend {
 
     /* Lifecycle */
     /// Whether the backend is shutting down.
-    pub shutdown: AtomicBool,
+    pub shutdown: Arc<AtomicBool>,
 }
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
@@ -249,12 +242,12 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
             if result.timed_out() && start.elapsed() > timeout {
                 backend.stall_count.fetch_add(1, Ordering::Relaxed);
                 virtmcu_qom::vlog!(
-                    "[virtmcu-clock] FATAL STALL: no clock-advance reply after {} ms (stall #{}). \
-                     Terminating simulation to maintain determinism.\n",
+                    "[virtmcu-clock] STALL DETECTED: no clock-advance reply after {} ms (stall #{}). \
+                     Reporting to TimeAuthority.\n",
                     backend.stall_timeout_ms,
                     backend.stall_count.load(Ordering::Relaxed)
                 );
-                unsafe { libc::exit(1) };
+                return QUANTUM_WAIT_STALL_SENTINEL;
             }
         }
     }
@@ -263,111 +256,140 @@ fn zenoh_clock_quantum_wait_internal(backend: &ZenohClockBackend, _vtime_ns: u64
     backend.delta_ns.load(Ordering::SeqCst)
 }
 
-fn on_clock_query(backend_addr: usize, query: Query) {
-    let backend = unsafe { &*(backend_addr as *const ZenohClockBackend) };
-    let payload = match query.payload() {
-        Some(p) => p,
-        None => return,
-    };
+#[allow(clippy::too_many_lines)]
+fn on_clock_query(backend_weak: Weak<ZenohClockBackend>, query: Query) {
+    // Task 4.2b: Move clock processing to a background thread to avoid executor deadlock.
+    // Zenoh 1.x query handlers should not block the executor pool.
+    if let Some(backend) = backend_weak.upgrade() {
+        std::thread::spawn(move || {
+            // backend is an Arc here, moved into the thread.
+            // Safe to use!
+            virtmcu_qom::vlog!(
+                "[zenoh-clock] on_clock_query received for node {}\n",
+                backend.node_id
+            );
 
-    if payload.len() < 16 {
-        return;
-    }
-
-    let payload_bytes = payload.to_bytes();
-    let req = unsafe { std::ptr::read_unaligned(payload_bytes.as_ptr() as *const ClockAdvanceReq) };
-    let delta = req.delta_ns;
-    let mujoco = req.mujoco_time_ns;
-
-    let start = Instant::now();
-    let timeout = Duration::from_millis(u64::from(backend.stall_timeout_ms));
-
-    let start_vtime = backend.vtime_ns.load(Ordering::SeqCst);
-    let target_vtime = start_vtime + delta;
-
-    // 1. Prepare for the next quantum
-    backend.delta_ns.store(delta, Ordering::SeqCst);
-    backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
-
-    if delta > 0 {
-        backend.quantum_done.store(false, Ordering::SeqCst);
-        backend.quantum_ready.store(true, Ordering::SeqCst);
-
-        // 2. Wake up the vCPU thread to run the quantum
-        {
-            let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            backend.cond.notify_all();
-        }
-
-        // 3. Wait for completion (synchronously in this Zenoh thread)
-        // We wait until quantum_done is true AND vtime_ns has reached at least target_vtime.
-        // This prevents returning early if QEMU was already in wait_internal with an older time.
-        while !backend.quantum_done.load(Ordering::SeqCst)
-            || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-        {
-            if start.elapsed() > Duration::from_millis(1) {
-                // Check if we already reached target even if quantum_done is not yet set (unlikely but safe)
-                if backend.vtime_ns.load(Ordering::SeqCst) >= target_vtime {
-                    break;
+            let payload = match query.payload() {
+                Some(p) => p,
+                None => {
+                    virtmcu_qom::vlog!("[zenoh-clock] on_clock_query: no payload received!\n");
+                    return;
                 }
-                break; // Fall through to condvar wait
-            }
-            std::hint::spin_loop();
-        }
+            };
 
-        if !backend.quantum_done.load(Ordering::SeqCst)
-            || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-        {
-            let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            while !backend.quantum_done.load(Ordering::SeqCst)
-                || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-            {
-                let (new_guard, result) = backend
-                    .cond
-                    .wait_timeout(guard, Duration::from_millis(100))
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard = new_guard;
-                if result.timed_out() && start.elapsed() > timeout {
-                    virtmcu_qom::vlog!(
-                        "[virtmcu-clock] FATAL TA-side stall: QEMU did not reach quantum boundary (target={}) in time (now={}).\n",
-                        target_vtime,
-                        backend.vtime_ns.load(Ordering::SeqCst)
-                    );
-                    unsafe { libc::exit(1) };
+            if payload.len() < 16 {
+                virtmcu_qom::vlog!(
+                    "[zenoh-clock] on_clock_query: payload too short ({} bytes)\n",
+                    payload.len()
+                );
+                return;
+            }
+
+            let payload_bytes = payload.to_bytes();
+            let req = unsafe {
+                std::ptr::read_unaligned(payload_bytes.as_ptr() as *const ClockAdvanceReq)
+            };
+            let delta = req.delta_ns;
+            let mujoco = req.mujoco_time_ns;
+
+            virtmcu_qom::vlog!(
+                "[zenoh-clock] on_clock_query: delta={}, mujoco={}\n",
+                delta,
+                mujoco
+            );
+
+            let start = Instant::now();
+            let timeout = Duration::from_millis(u64::from(backend.stall_timeout_ms));
+
+            let start_vtime = backend.vtime_ns.load(Ordering::SeqCst);
+            let target_vtime = start_vtime + delta;
+
+            // 1. Prepare for the next quantum
+            backend.delta_ns.store(delta, Ordering::SeqCst);
+            backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
+
+            let mut error_code = CLOCK_ERROR_OK;
+
+            if delta > 0 {
+                backend.quantum_done.store(false, Ordering::SeqCst);
+                backend.quantum_ready.store(true, Ordering::SeqCst);
+
+                // 2. Wake up the vCPU thread to run the quantum
+                {
+                    let _guard =
+                        backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    backend.cond.notify_all();
+                }
+
+                // 3. Wait for completion (synchronously in this background thread)
+                while !backend.quantum_done.load(Ordering::SeqCst)
+                    || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
+                {
+                    if start.elapsed() > Duration::from_millis(1) {
+                        if backend.vtime_ns.load(Ordering::SeqCst) >= target_vtime {
+                            break;
+                        }
+                        break; // Fall through to condvar wait
+                    }
+                    std::hint::spin_loop();
+                }
+
+                if !backend.quantum_done.load(Ordering::SeqCst)
+                    || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
+                {
+                    let mut guard =
+                        backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    while !backend.quantum_done.load(Ordering::SeqCst)
+                        || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
+                    {
+                        let (new_guard, result) = backend
+                            .cond
+                            .wait_timeout(guard, Duration::from_millis(100))
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard = new_guard;
+                        if result.timed_out() && start.elapsed() > timeout {
+                            virtmcu_qom::vlog!(
+                                "[virtmcu-clock] STALL: QEMU did not reach quantum boundary (target={}) in time (now={}).\n",
+                                target_vtime,
+                                backend.vtime_ns.load(Ordering::SeqCst)
+                            );
+                            error_code = 1; // CLOCK_ERROR_STALL
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Delta = 0: Initial sync or heartbeat.
+                if !backend.quantum_done.load(Ordering::SeqCst) {
+                    let mut guard =
+                        backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    while !backend.quantum_done.load(Ordering::SeqCst) {
+                        let (new_guard, result) = backend
+                            .cond
+                            .wait_timeout(guard, Duration::from_millis(100))
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard = new_guard;
+                        if result.timed_out() && start.elapsed() > timeout {
+                            virtmcu_qom::vlog!(
+                                "[virtmcu-clock] STALL: QEMU did not signal readiness in time.\n"
+                            );
+                            error_code = 1; // CLOCK_ERROR_STALL
+                            break;
+                        }
+                    }
                 }
             }
-        }
-    } else {
-        // Delta = 0: Initial sync or heartbeat.
-        // We still wait for QEMU to be in wait_internal (quantum_done=true) to ensure
-        // it's actually initialized and ready for the first real quantum.
-        if !backend.quantum_done.load(Ordering::SeqCst) {
-            let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            while !backend.quantum_done.load(Ordering::SeqCst) {
-                let (new_guard, result) = backend
-                    .cond
-                    .wait_timeout(guard, Duration::from_millis(100))
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard = new_guard;
-                if result.timed_out() && start.elapsed() > timeout {
-                    virtmcu_qom::vlog!(
-                        "[virtmcu-clock] FATAL initial sync stall: QEMU did not signal readiness in time.\n"
-                    );
-                    unsafe { libc::exit(1) };
-                }
-            }
-        }
-    }
 
-    // 4. Load the virtual time reached and reply
-    let reached_vtime = backend.vtime_ns.load(Ordering::SeqCst);
-    let resp =
-        ClockReadyResp { current_vtime_ns: reached_vtime, n_frames: 0, error_code: CLOCK_ERROR_OK };
-    let mut resp_bytes = [0u8; 16];
-    unsafe {
-        ptr::copy_nonoverlapping(&raw const resp as *const u8, resp_bytes.as_mut_ptr(), 16);
+            // 4. Load the virtual time reached and reply
+            let reached_vtime = backend.vtime_ns.load(Ordering::SeqCst);
+            let resp = ClockReadyResp { current_vtime_ns: reached_vtime, n_frames: 0, error_code };
+            let mut resp_bytes = [0u8; 16];
+            unsafe {
+                ptr::copy_nonoverlapping(&raw const resp as *const u8, resp_bytes.as_mut_ptr(), 16);
+            }
+            let _ = query.reply(query.key_expr(), resp_bytes.as_slice()).wait();
+        });
     }
-    let _ = query.reply(query.key_expr(), resp_bytes.as_slice()).wait();
 }
 
 /* ── Boilerplate ──────────────────────────────────────────────────────────── */
@@ -391,7 +413,17 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 
     let router_str = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
 
-    let stall_ms = if s.stall_timeout == 0 { 5000 } else { s.stall_timeout };
+    let mut stall_ms = s.stall_timeout;
+    if stall_ms == 0 {
+        if let Ok(val) = std::env::var("VIRTMCU_STALL_TIMEOUT_MS") {
+            if let Ok(parsed) = val.parse::<u32>() {
+                stall_ms = parsed;
+            }
+        }
+    }
+    if stall_ms == 0 {
+        stall_ms = 5000;
+    }
 
     s.rust_state = zenoh_clock_init_internal(s.node_id, router_str, stall_ms);
 
@@ -407,8 +439,14 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 
     unsafe {
         GLOBAL_CLOCK = s;
-        virtmcu_cpu_set_halt_hook(Some(zenoh_clock_cpu_halt_cb));
-        virtmcu_cpu_set_tcg_hook(Some(zenoh_clock_cpu_tcg_hook));
+        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = Some(zenoh_clock_cpu_halt_cb);
+        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = Some(zenoh_clock_cpu_tcg_hook);
+    }
+
+    // Task 27.2: Ensure the timer is scheduled initially so we reach the first hook
+    // even if the guest is idling or slow to boot.
+    unsafe {
+        virtmcu_timer_mod(s.quantum_timer, s.next_quantum_ns);
     }
 
     vlog!(
@@ -453,8 +491,8 @@ unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
         s.quantum_timer = ptr::null_mut();
     }
     unsafe {
-        virtmcu_cpu_set_halt_hook(None);
-        virtmcu_cpu_set_tcg_hook(None);
+        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = None;
+        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = None;
         GLOBAL_CLOCK = ptr::null_mut();
     }
 }
@@ -471,7 +509,7 @@ define_properties!(
         define_prop_uint32!(c"node".as_ptr(), ZenohClock, node_id, 0),
         define_prop_string!(c"mode".as_ptr(), ZenohClock, mode),
         define_prop_string!(c"router".as_ptr(), ZenohClock, router),
-        define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout, 5000),
+        define_prop_uint32!(c"stall-timeout".as_ptr(), ZenohClock, stall_timeout, 0),
     ]
 );
 
@@ -504,21 +542,25 @@ declare_device_type!(zenoh_clock_type_init, ZENOH_CLOCK_TYPE_INFO);
 
 /* ── Internal Rust State ─────────────────────────────────────────────────── */
 
+#[allow(clippy::too_many_lines)]
 fn zenoh_clock_init_internal(
     node_id: u32,
     router: *const c_char,
     stall_timeout_ms: u32,
 ) -> *mut ZenohClockBackend {
+    vlog!("[zenoh-clock] Opening session for node {}...\n", node_id);
     let session = unsafe {
         match virtmcu_zenoh::open_session(router) {
             Ok(s) => s,
             Err(e) => {
-                vlog!("[zenoh-clock] failed to open Zenoh session: {:?}\n", e);
+                vlog!("[zenoh-clock] failed to open Zenoh session for node {}: {:?}\n", node_id, e);
                 return ptr::null_mut();
             }
         }
     };
+    vlog!("[zenoh-clock] Session opened for node {}. ID: {}\n", node_id, session.zid());
 
+    let shutdown = Arc::new(AtomicBool::new(false));
     let backend = Arc::new(ZenohClockBackend {
         session: session.clone(),
         node_id,
@@ -531,49 +573,59 @@ fn zenoh_clock_init_internal(
         vtime_ns: AtomicU64::new(0),
         mujoco_time_ns: AtomicU64::new(0),
         stall_count: AtomicU64::new(0),
+        queryable: None,
         total_bql_wait_ns: AtomicU64::new(0),
         total_iterations: AtomicU64::new(0),
         total_no_bql_iterations: AtomicU64::new(0),
         last_report_time: Mutex::new(Instant::now()),
         start_time: Instant::now(),
-        shutdown: AtomicBool::new(false),
+        shutdown: Arc::clone(&shutdown),
     });
 
-    let backend_ptr = Arc::into_raw(backend).cast_mut();
-    let backend_addr = backend_ptr as usize;
+    let backend_ptr = Arc::into_raw(Arc::clone(&backend)).cast_mut();
+    let backend_weak = Arc::downgrade(&backend);
     let topic = format!("sim/clock/advance/{node_id}");
 
+    vlog!("[zenoh-clock] Declaring queryable on {}...\n", topic);
     let queryable = match session
-        .declare_queryable(topic)
+        .declare_queryable(topic.clone())
         .callback(move |query| {
-            on_clock_query(backend_addr, query);
+            on_clock_query(Weak::clone(&backend_weak), query);
         })
         .wait()
     {
         Ok(q) => q,
         Err(e) => {
-            eprintln!("zenoh-clock: failed to declare queryable: {e:?}");
+            vlog!("[zenoh-clock] failed to declare queryable on {}: {:?}\n", topic, e);
+            unsafe { Arc::from_raw(backend_ptr) };
             return ptr::null_mut();
         }
     };
+    vlog!("[zenoh-clock] Queryable declared on {}.\n", topic);
 
-    std::mem::forget(queryable);
+    // Safety: we just created the backend, we can safely get a mutable reference
+    // to it before it is shared.
+    unsafe {
+        let mut_backend = &mut *backend_ptr;
+        mut_backend.queryable = Some(queryable);
+    }
 
     // Heartbeat thread — exits when backend.shutdown is set by instance_finalize.
     let hb_session = session.clone();
     let node_id_hb = node_id;
-    let backend_ptr_hb = backend_ptr as usize;
+    let hb_backend = Arc::clone(&backend);
+    let hb_shutdown = Arc::clone(&shutdown);
     std::thread::Builder::new()
         .name(format!("zenoh-clock-hb-{node_id_hb}"))
         .spawn(move || loop {
-            let backend = unsafe { &*(backend_ptr_hb as *const ZenohClockBackend) };
-            if backend.shutdown.load(Ordering::Acquire) {
+            if hb_shutdown.load(Ordering::Acquire) {
                 break;
             }
 
             let topic = format!("sim/clock/heartbeat/{node_id_hb}");
             let _ = hb_session.put(topic, vec![1]).wait();
 
+            let backend = hb_backend.as_ref();
             let iterations = backend.total_iterations.load(Ordering::Relaxed);
             let no_bql = backend.total_no_bql_iterations.load(Ordering::Relaxed);
             if iterations > 0 || no_bql > 0 {

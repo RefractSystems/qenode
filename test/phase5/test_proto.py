@@ -24,8 +24,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
 TOOLS_DIR = Path(Path(Path(SCRIPT_DIR).parent.parent)) / "tools"
-if TOOLS_DIR not in sys.path:
-    sys.path.append(TOOLS_DIR)
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.append(str(TOOLS_DIR))
 
 import contextlib  # noqa: E402
 

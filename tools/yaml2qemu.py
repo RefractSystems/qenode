@@ -131,15 +131,15 @@ def validate_dtb(dtb_path, devices):
             except (ValueError, TypeError):
                 dts_node = dev.name  # fallback for non-numeric address strings
 
-            if dts_node not in dts:
+            if dts_node not in dts and dev.name not in dts:
                 missing.append(dev.name)
-            elif dev.type_name == "Memory.MappedMemory" and "size" in dev.properties:
+            elif (dts_node in dts or dev.name in dts) and dev.type_name == "Memory.MappedMemory" and "size" in dev.properties:
                 # Task: Verify memory size matches
                 try:
+                    target_node = dts_node if dts_node in dts else dev.name
                     expected_size = int(dev.properties["size"], 0)
                     # Simple heuristic: find the node block and check reg property
-                    # DTS format: reg = <base_hi base_lo size_hi size_lo>;
-                    node_start = dts.find(dts_node)
+                    node_start = dts.find(target_node)
                     node_end = dts.find("};", node_start)
                     node_content = dts[node_start:node_end]
 
@@ -242,11 +242,13 @@ def main():
         elif dev.type_name == "zenoh-telemetry":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
-            device_arg = f"zenoh-telemetry,node={node}"
+            # Force module load early via -device with id matching DTB node name
+            device_arg = f"zenoh-telemetry,id={dev.name},node={node}"
             if router:
                 device_arg += f",router={router}"
             cli_args.append("-device")
             cli_args.append(device_arg)
+            filtered_devices.append(dev)  # Keep in DTB for machine awareness
         elif dev.type_name == "zenoh-802154":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
@@ -259,6 +261,19 @@ def main():
             cli_args.append("-device")
             cli_args.append(device_arg)
             filtered_devices.append(dev)  # Keep in DTB
+        elif dev.type_name == "mmio-socket-bridge":
+            socket_path = dev.properties.get("socket-path", "/tmp/mmio.sock")
+            region_size = dev.properties.get("region-size", 0x1000)
+            reconnect_ms = dev.properties.get("reconnect-ms", 0)
+            # Map via base-addr property to ensure it's mapped even if DTB init fails to load module
+            base_addr = int(dev.address_str, 16) if dev.address_str and dev.address_str != "none" else 0
+            device_arg = (
+                f"mmio-socket-bridge,id={dev.name},socket-path={socket_path},region-size={region_size},"
+                f"reconnect-ms={reconnect_ms},base-addr={base_addr}"
+            )
+            cli_args.append("-device")
+            cli_args.append(device_arg)
+            filtered_devices.append(dev)  # Handled via DTB (memory map)
         else:
             if dev.type_name == "zenoh-wifi":
                 dev.type_name = "virtmcu-wifi"

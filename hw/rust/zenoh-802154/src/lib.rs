@@ -16,6 +16,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_uint, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use virtmcu_api::rf_generated::rf_header;
 use virtmcu_qom::error::Error;
 use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
@@ -112,6 +114,7 @@ pub struct Zenoh802154State {
     // Auto-ACK state
     ack_pending: bool,
     ack_seq: u8,
+    is_valid: Arc<AtomicBool>,
 }
 
 unsafe extern "C" fn zenoh_802154_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
@@ -269,11 +272,15 @@ fn zenoh_802154_init_internal(
         Box::into_raw(Box::<std::mem::MaybeUninit<Zenoh802154State>>::new_uninit()).cast();
     let state_ptr_usize = state_ptr_raw as usize;
 
+    let is_valid = Arc::new(AtomicBool::new(true));
+    let is_valid_clone = Arc::clone(&is_valid);
     let subscriber = session
         .declare_subscriber(topic_rx)
         .callback(move |sample| {
-            let state = unsafe { &mut *(state_ptr_usize as *mut Zenoh802154State) };
-            on_rx_frame(state, sample);
+            if is_valid_clone.load(Ordering::Acquire) {
+                let state = unsafe { &mut *(state_ptr_usize as *mut Zenoh802154State) };
+                on_rx_frame(state, sample);
+            }
         })
         .wait()
         .unwrap_or_else(|_| std::process::abort());
@@ -317,6 +324,7 @@ fn zenoh_802154_init_internal(
         be: 3,
         ack_pending: false,
         ack_seq: 0,
+        is_valid,
     };
 
     unsafe { ptr::write(state_ptr_raw, state) };
@@ -406,6 +414,7 @@ fn zenoh_802154_cleanup_internal(state: *mut Zenoh802154State) {
         return;
     }
     let s = unsafe { Box::from_raw(state) };
+    s.is_valid.store(false, Ordering::Release);
     unsafe {
         if !s.rx_timer.is_null() {
             virtmcu_timer_free(s.rx_timer);

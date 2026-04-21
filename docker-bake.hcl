@@ -35,8 +35,16 @@ variable "CI" {
   default = "false"
 }
 
-variable "USE_REGISTRY_CACHE" {
+variable "PUSH_CACHE" {
   default = "false"
+}
+
+variable "USE_CCACHE" {
+  default = "false"
+}
+
+variable "VIRTMCU_USE_ASAN" {
+  default = "0"
 }
 
 # ── Groups ────────────────────────────────────────────────────────────────────
@@ -67,6 +75,8 @@ target "_common" {
     RUST_VERSION          = RUST_VERSION
     FLATBUFFERS_VERSION   = FLATBUFFERS_VERSION
     FLATCC_VERSION        = FLATCC_VERSION
+    USE_CCACHE            = USE_CCACHE
+    VIRTMCU_USE_ASAN      = "${VIRTMCU_USE_ASAN}"
   }
 }
 
@@ -78,12 +88,16 @@ target "base" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/base:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/base:latest-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }
 
 target "toolchain" {
@@ -92,13 +106,17 @@ target "toolchain" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:latest-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }
 
 target "devenv-base" {
@@ -107,13 +125,16 @@ target "devenv-base" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }
 
 target "builder" {
@@ -122,13 +143,17 @@ target "builder" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/builder:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/builder:latest-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }
 
 target "devenv" {
@@ -137,14 +162,18 @@ target "devenv" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:latest-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }
 
 target "runtime" {
@@ -153,12 +182,16 @@ target "runtime" {
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:${IMAGE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:runtime-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:latest-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
     "type=gha,scope=virtmcu-${ARCH}"
   ]
-  cache-to = CI == "true" && USE_REGISTRY_CACHE == "true" ? [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:runtime-${ARCH},mode=max",
-    "type=gha,scope=virtmcu-${ARCH},mode=max"
-  ] : (CI == "true" ? ["type=gha,scope=virtmcu-${ARCH},mode=max"] : [])
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:runtime-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-${ARCH}"
+    ]
+  ) : []
 }

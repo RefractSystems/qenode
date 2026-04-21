@@ -166,7 +166,7 @@ class FdtEmitter:
 
             lines.append(f"{indent}memory@{base:x} {{")
             lines.append(f'{indent}    compatible = "qemu-memory-region";')
-            lines.append(f"{indent}    qemu,ram = <{self._get_phandle('qemu_sysmem')}>;")
+            lines.append(f"{indent}    qemu,ram = <0x01>;")
             lines.append(f"{indent}    container = <{self._get_phandle('qemu_sysmem')}>;")
             base_hi, base_lo = (base >> 32) & 0xFFFFFFFF, base & 0xFFFFFFFF
             size_hi, size_lo = (size >> 32) & 0xFFFFFFFF, size & 0xFFFFFFFF
@@ -184,8 +184,12 @@ class FdtEmitter:
 
         compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
 
-        # If it's a child, base might be small (reg index)
-        lines.append(f"{indent}{dev.name}@{base:x} {{")
+        # Node name: Use simple name for top-level devices to support QEMU instance binding.
+        # Standard FDT uses name@address, but QEMU IDs (used for binding) do not support '@'.
+        if dev.parent:
+            lines.append(f"{indent}{dev.name}@{base:x} {{")
+        else:
+            lines.append(f"{indent}{dev.name} {{")
         lines.append(f'{indent}    compatible = "{compat_str}";')
         lines.append(f"{indent}    phandle = <{self._get_phandle(dev.name)}>;")
 
@@ -278,7 +282,8 @@ class FdtEmitter:
                 lines.append(f'{indent}    {k} = "{v}";')
 
         # Only add container for memory regions, or if explicitly requested (not for standard SysBus devices)
-        if not dev.parent and dev.type_name == "Memory.MappedMemory":
+        if not dev.parent and (dev.type_name == "Memory.MappedMemory" or compat_str == "mmio-socket-bridge"):
+            print(f"DEBUG: Adding container for {dev.name} (type={dev.type_name}, compat={compat_str})")
             lines.append(f"{indent}    container = <{self._get_phandle('qemu_sysmem')}>;")
 
         # Emit children

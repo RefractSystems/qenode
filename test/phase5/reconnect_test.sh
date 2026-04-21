@@ -30,7 +30,7 @@ EOF
 cat > /tmp/reconnect.S <<'EOF'
 .global _start
 _start:
-    ldr r0, =0x50000000
+    ldr r0, =0x70000000
 loop:
     ldr r1, [r0]            /* This will fail initially, then succeed after reconnect */
     cmp r1, #0x42
@@ -81,7 +81,7 @@ cat > "$DTS_PATH" <<EOF
     };
     bridge@50000000 {
         compatible = "mmio-socket-bridge";
-        reg = <0x0 0x50000000 0x0 0x1000>;
+        reg = <0x0 0x70000000 0x0 0x1000>;
         socket-path = "$SOCK_PATH";
         region-size = <0x1000>;
         reconnect-ms = <500>;

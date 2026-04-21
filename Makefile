@@ -2,6 +2,9 @@ ARCH ?= $(shell uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
 IMAGE_TAG ?= dev
 DEVENV_BASE_IMG ?= ghcr.io/refractsystems/virtmcu/devenv-base:$(IMAGE_TAG)-$(ARCH)
 BUILDER_IMG ?= ghcr.io/refractsystems/virtmcu/builder:$(IMAGE_TAG)-$(ARCH)
+CARGO_CACHE_DIR ?= $(CURDIR)/.cargo-cache
+VIRTMCU_USE_CCACHE ?= 0
+export VIRTMCU_USE_CCACHE
 
 # ==============================================================================
 # Top-level Makefile for virtmcu
@@ -12,7 +15,7 @@ BUILDER_IMG ?= ghcr.io/refractsystems/virtmcu/builder:$(IMAGE_TAG)-$(ARCH)
 #
 # Most developers will only need:
 #   make setup-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
-#   make build	 — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
+#   make build   — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
 #   make run      — Launch QEMU using the minimal Phase 1 test DTB.
 # ==============================================================================
 
@@ -78,17 +81,28 @@ venv:
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 		export PATH="$$HOME/.local/bin:$$PATH"; \
 	fi
-	uv sync --link-mode=copy
+	uv sync --active --link-mode=copy
 	@echo "✓ Virtual environment synchronized with uv."
 	@echo "✓ Activate with: source .venv/bin/activate"
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
 test-integration: venv build-test-artifacts
 	@bash scripts/cleanup-sim.sh --quiet
-	@echo "==> Running integration tests..."
-	@for test_script in test/*/smoke_test.sh; do \
+	@echo "==> Running Modernized Integration Tests (via pytest)..."
+	PYTHONPATH=$(CURDIR) uv run pytest \
+		tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py \
+		tools/testing/test_qmp.py tests/test_qmp_bridge.py tests/test_qemu_library_pytest.py \
+		tests/test_phase6.py tests/test_phase7.py \
+		tests/test_phase8.py tests/test_phase10.py tests/test_phase12.py \
+		-v -n auto --tb=short
+	@echo "==> Running Legacy Integration Tests (Bash scripts)..."
+
+	@for test_script in test/phase11_3/smoke_test.sh test/phase11/smoke_test.sh \
+		test/phase13/smoke_test.sh test/phase14/smoke_test.sh test/phase15/smoke_test.sh \
+		test/phase16/smoke_test.sh test/phase3.5/smoke_test.sh test/phase5/smoke_test.sh \
+		test/phase9/smoke_test.sh test/actuator/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
-		uv run bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
+		uv run --active bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
 		bash scripts/cleanup-sim.sh --quiet; \
 	done
 	@echo "✓ All integration tests passed."
@@ -111,15 +125,15 @@ test-miri:
 		echo "Installing Rust nightly toolchain and Miri..."; \
 		rustup toolchain install nightly --profile minimal --component miri; \
 	fi
-	@cd hw/rust && cargo +nightly miri setup
-	@cd hw/rust && MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
+	@cargo +nightly miri setup
+	@MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
 	@echo "✓ Miri tests passed."
 
 
 # Run all Python unit tests (no QEMU required).
 test-unit: venv
 	@echo "==> Running Tier 1 Unit Tests (no QEMU)..."
-	PYTHONPATH=$(CURDIR) uv run pytest \
+	PYTHONPATH=$(CURDIR) uv run --active pytest \
 		tests/repl2qemu/ tests/test_yaml2qemu.py tests/test_cli_generator.py \
 		tests/test_fdt_emitter.py tests/test_qmp_bridge.py tests/test_vproto.py \
 		tests/test_telemetry_listener.py tests/test_telemetry_fbs.py tests/test_fake_adapter.py \
@@ -131,7 +145,7 @@ test: test-unit
 # Run Robot Framework integration tests (requires QEMU built via make setup-initial).
 test-robot: venv
 	export PYTHONPATH=$(CURDIR) && \
-	uv run robot \
+	uv run --active robot \
 	  --outputdir test-results/robot \
 	  --loglevel INFO \
 	  tests/test_qmp_keywords.robot \
@@ -140,6 +154,7 @@ test-robot: venv
 # Run guest firmware coverage analysis (Phase 1)
 test-coverage-guest:
 	@echo "==> Running guest firmware coverage (drcov) inside builder..."
+	@bash scripts/docker-build.sh builder
 	@docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
@@ -176,16 +191,14 @@ coverage-report:
 	@echo "✓ Report generated: test-results/coverage/html/index.html"
 
 build-test-artifacts:
-	@$(MAKE) -C test/phase1
-	@$(MAKE) -C test/phase8
-	@$(MAKE) -C test/phase12
-	@$(MAKE) -C test/actuator
-	@$(MAKE) -C test/riscv
-	@$(MAKE) -C test/phase27
-	@echo "==> Building zenoh_coordinator..."
-	@cargo build --manifest-path tools/zenoh_coordinator/Cargo.toml --release
-	@echo "==> Building cyber_bridge..."
-	@cargo build --manifest-path tools/cyber_bridge/Cargo.toml --release
+	@$(MAKE) -C test/phase1 -j$(JOBS)
+	@$(MAKE) -C test/phase8 -j$(JOBS)
+	@$(MAKE) -C test/phase12 -j$(JOBS)
+	@$(MAKE) -C test/actuator -j$(JOBS)
+	@$(MAKE) -C test/riscv -j$(JOBS)
+	@$(MAKE) -C test/phase27 -j$(JOBS)
+	@echo "==> Building test tools (zenoh_coordinator, cyber_bridge)..."
+	@cargo build --release -p zenoh_coordinator -p cyber_bridge
 
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
 test-all: test test-integration test-robot test-coverage-guest
@@ -193,14 +206,21 @@ test-all: test test-integration test-robot test-coverage-guest
 # Run integration smoke tests inside the builder container (Safe for macOS hosts).
 test-integration-docker:
 	@echo "==> Running integration tests inside builder container..."
+	@bash scripts/docker-build.sh builder
+	@mkdir -p $(CARGO_CACHE_DIR)
 	docker run --rm \
+		--user $$(id -u):$$(id -g) \
+		-e HOME=/tmp \
+		-e USER=vscode \
+		-e CARGO_HOME=/workspace/.cargo-cache \
+		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
 		-e VIRTMUC_SKIP_QEMU_HEADERS_WARNING=1 \
+		-e VIRTMCU_SKIP_BUILD_DIR=1 \
 		$(BUILDER_IMG) \
-		bash -c "make venv build-test-artifacts && for test_script in test/*/smoke_test.sh; do echo '--> Running \$$test_script'; bash \"\$$test_script\" || exit 1; done"
+		bash -c "make test-integration"
 	@echo "✓ All integration tests passed inside container."
-
 # ------------------------------------------------------------------------------
 # Lint & Format
 # ------------------------------------------------------------------------------
@@ -210,14 +230,13 @@ lint: venv check-versions lint-python lint-python-types lint-rust lint-c lint-sh
 
 lint-docs:
 	@echo "==> Checking Rust documentation..."
-	@cd hw/rust && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 	@echo "✓ Rust documentation check passed."
 
 lint-audit:
 	@echo "==> Security Audit (Rust)..."
 	@if command -v cargo-audit >/dev/null 2>&1; then \
-		cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 -f Cargo.lock && \
-		cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 -f hw/rust/Cargo.lock; \
+		cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 -f Cargo.lock; \
 	else \
 		echo "⚠️  cargo-audit not installed. Skipping Rust security audit. (Run 'cargo install cargo-audit' to enable)"; \
 	fi
@@ -231,7 +250,7 @@ lint-audit:
 	@echo "✓ Audit checks completed."
 lint-python:
 	@echo "==> ruff check..."
-	uv run ruff check .
+	uv run --active ruff check .
 	@echo "✓ ruff passed."
 
 lint-spelling:
@@ -268,7 +287,7 @@ lint-yaml:
 
 lint-python-types:
 	@echo "==> mypy..."
-	@uv run mypy tools/ tests/ patches/
+	@uv run --active mypy tools/ tests/ patches/
 	@echo "✓ mypy passed."
 lint-c:
 	@echo "==> clang-format (dry-run)..."
@@ -296,24 +315,22 @@ lint-c:
 		--suppress=redundantAssignment --suppress=noExplicitConstructor \
 		--suppress=constParameterCallback --suppress=unusedVariable \
 		-i tools/systemc_adapter/build/ \
-		-DDEFINE_TYPES= \
-		hw/misc/ hw/remote-port/ tools/systemc_adapter/
+		-DDEFINE_TYPES= -DHWADDR_PRIx=\"lx\" -DPRIx64=\"llx\" \
+		hw/misc/ tools/systemc_adapter/
 	@echo "✓ cppcheck passed."
 
 
 lint-rust:
 	@echo "==> Checking Cargo workspace version synchronization..."
-	@cd hw/rust && cargo metadata --no-deps --format-version 1 | \
+	@cargo metadata --no-deps --format-version 1 | \
 		python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"
 	@echo "✓ Cargo workspace versions aligned."
 	@echo "==> Running cargo fmt --check..."
-	@cd hw/rust && cargo fmt --all --check
+	@cargo fmt --all --check
 	@echo "==> Running cargo machete..."
-	@cd hw/rust && cargo machete
-	@cd tools/zenoh_coordinator && cargo machete
-	@cd tools/cyber_bridge && cargo machete
+	@cargo machete
 	@echo "==> Running cargo clippy..."
-	@cd hw/rust && cargo clippy --workspace
+	@cargo clippy --workspace
 
 lint-meson:
 	@echo "==> Running meson format..."
@@ -333,12 +350,12 @@ fmt: fmt-python fmt-rust fmt-meson fmt-c fmt-yaml
 
 fmt-python: venv
 	@echo "==> ruff format + fix..."
-	uv run ruff format .
-	uv run ruff check . --fix
+	uv run --active ruff format .
+	uv run --active ruff check . --fix
 
 fmt-rust:
 	@echo "==> cargo fmt..."
-	@cd hw/rust && cargo fmt --all
+	@cargo fmt --all
 
 fmt-meson:
 	@echo "==> meson format..."
@@ -346,7 +363,7 @@ fmt-meson:
 
 fmt-c:
 	@echo "==> clang-format..."
-	@find hw -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/rust/*" -not -path "*/remote-port/*" -not -path "*/third_party/*" -print0 | xargs -0 clang-format -i && echo "✓ clang-format passed." || { echo "❌ clang-format failed"; exit 1; }
+	@find hw -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/rust/*" -not -path "*/third_party/*" -print0 | xargs -0 clang-format -i && echo "✓ clang-format passed." || { echo "❌ clang-format failed"; exit 1; }
 
 fmt-yaml:
 	@echo "==> stripping trailing whitespace from YAMLs..."
@@ -367,49 +384,51 @@ install-hooks:
 # Run the full performance benchmark and save results to test/phase16/last_results.json.
 perf-bench: venv
 	@$(MAKE) -C test/phase16 bench.elf
-	PYTHONPATH=$(CURDIR) uv run python3 test/phase16/bench.py
+	PYTHONPATH=$(CURDIR) uv run --active python3 test/phase16/bench.py
 
 # Save the current benchmark results as the performance baseline.
 perf-baseline: perf-bench
-	uv run python3 scripts/perf_trend.py --save-baseline
+	uv run --active python3 scripts/perf_trend.py --save-baseline
 	@echo "✓ Performance baseline updated."
 
 # Check current benchmark results against the saved baseline; exit 1 on regression.
 perf-check: venv
 	@if [ ! -f test/phase16/last_results.json ]; then \
-		$(MAKE) -C test/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run python3 test/phase16/bench.py; \
+		$(MAKE) -C test/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 test/phase16/bench.py; \
 	fi
-	uv run python3 scripts/perf_trend.py --check
+	uv run --active python3 scripts/perf_trend.py --check
 
 # ------------------------------------------------------------------------------
 # Local CI Simulation
 # Mirrors the GitHub CI tier structure so you can validate locally before push.
 #
 #   make ci-local   — Fast path for git commit hooks. Runs lints and unit tests
-#		     inside the devenv-base container. Does NOT build the container.
-#		     (Run 'make docker-dev' manually if the image is missing or stale).
+#                    inside the devenv-base container. Does NOT build the container.
+#                    (Run 'make docker-dev' manually if the image is missing or stale).
 #
 #   make ci-full    — ci-local + ci-asan + ci-miri + builder stage (QEMU compile) +
-#		     runtime image + representative phase smoke tests inside container.
-#		     This is the closest local equivalent to the full GitHub CI run.
+#                    runtime image + representative phase smoke tests inside container.
+#                    This is the closest local equivalent to the full GitHub CI run.
 #
 # All linting tools are mandatory for 1:1 parity with GitHub CI.
 # ------------------------------------------------------------------------------
 
-ci-local: 
+ci-local:
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Tier 1 — Running Lints & Unit Tests inside container"
 	@echo "════════════════════════════════════════════════════"
+	@bash scripts/docker-build.sh devenv-base
+	@echo ""
 	# Run lints and unit tests strictly inside the devenv-base container.
 	# We map the current host user's UID/GID into the container to ensure that 
 	# any generated files (like .venv) are owned by YOU, not root.
+	@mkdir -p $(CARGO_CACHE_DIR)
 	docker run --rm \
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
-		-e CARGO_HOME=/tmp/.cargo \
+		-e CARGO_HOME=/workspace/.cargo-cache \
 		-e VIRTMUC_SKIP_QEMU_HEADERS_WARNING=1 \
-		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
 		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		$(DEVENV_BASE_IMG) bash -c "make lint && make test-unit"
@@ -420,6 +439,7 @@ ci-local:
 # Run host-side C coverage for peripheral plugins (inside builder)
 test-coverage-peripheral:
 	@echo "==> Running peripheral C coverage (gcovr)..."
+	@bash scripts/docker-build.sh builder
 	@mkdir -p test-results
 	@docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
@@ -471,13 +491,15 @@ ci-asan:
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI ASan — Building and testing under ASan"
 	@echo "════════════════════════════════════════════════════"
+	@mkdir -p $(CARGO_CACHE_DIR)
 	docker run --rm \
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
-		-e CARGO_HOME=/tmp/.cargo \
+		-e CARGO_HOME=/workspace/.cargo-cache \
 		-e VIRTMUC_SKIP_QEMU_HEADERS_WARNING=1 \
 		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
+		-e VIRTMCU_STALL_TIMEOUT_MS=300000 \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		$(DEVENV_BASE_IMG) make test-asan
 	@echo ""

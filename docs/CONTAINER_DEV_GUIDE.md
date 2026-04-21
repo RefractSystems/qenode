@@ -215,7 +215,7 @@ make docker-dev
 | `pyproject.toml` | `eclipse-zenoh`, `flatbuffers` |
 | `requirements.txt` | `eclipse-zenoh`, `flatbuffers` |
 | `tools/zenoh_coordinator/Cargo.toml` | `zenoh` crate version |
-| `hw/rust/Cargo.toml` | `zenoh`, `flatbuffers` |
+| `Cargo.toml` | `zenoh`, `flatbuffers` |
 | `worlds/pendulum.yml` | inline `uv pip install eclipse-zenoh==` |
 
 `check-versions` is a read-only enforcer run in the CI lint tier. It fails if any of the above are out of sync with `VERSIONS`, with a message pointing to `make sync-versions`.

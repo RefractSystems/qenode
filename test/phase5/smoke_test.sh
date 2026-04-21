@@ -12,7 +12,7 @@
 #   2. Start the adapter (it listens on a Unix socket).
 #   3. Compile a minimal ARM firmware that writes 0xdeadbeef to offset 0 of the
 #      bridge MMIO region, then reads it back.
-#   4. Start QEMU with the bridge device mapped at 0x50000000.
+#   4. Start QEMU with the bridge device mapped at 0x70000000.
 #   5. Assert that the adapter's log shows the expected write and read.
 #
 # Dependencies:
@@ -89,7 +89,7 @@ EOF
 cat > "$ASM_PATH" <<'EOF'
 .global _start
 _start:
-    ldr r0, =0x50000000     /* bridge base address */
+    ldr r0, =0x60000000     /* bridge base address */
     ldr r1, =0xdeadbeef
     str r1, [r0]            /* write to offset 0 (reg 0) */
     ldr r2, [r0]            /* read back from offset 0   */
@@ -137,7 +137,7 @@ cat > "$DTS_PATH" <<EOF
 
     bridge@50000000 {
         compatible = "mmio-socket-bridge";
-        reg = <0x0 0x50000000 0x0 0x1000>;
+        reg = <0x0 0x60000000 0x0 0x1000>;
         socket-path = "$SOCK_PATH";
         region-size = <0x1000>;
     };

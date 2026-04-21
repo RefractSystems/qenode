@@ -12,7 +12,16 @@ members = [
     "hw/rust/zenoh-802154",
     "hw/rust/zenoh-ui",
     "hw/rust/zenoh-flexray",
-    "hw/rust/test-qom-device", "tools/cyber_bridge",
+    "hw/rust/test-qom-device",
+    "hw/rust/virtmcu-test-devices",
+    "hw/rust/mmio-socket-bridge",
+    "hw/rust/remote-port",
+    "hw/rust/zenoh-canfd",
+    "hw/rust/s32k144-lpuart",
+    "hw/rust/virtmcu-wifi",
+    "hw/rust/zenoh-spi",
+    "tools/cyber_bridge",
+    "tools/zenoh_coordinator",
 ]
 resolver = "2"
 
@@ -38,9 +47,36 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+[workspace.lints.rust]
+unsafe_code = "allow" # We need unsafe for QOM/FFI
+
 [workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 clone_on_ref_ptr = "deny"
-pedantic = "warn"
+# Specific pedantic lints to allow (too noisy or not applicable)
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow" # Common in FFI
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+ptr_as_ptr = "allow"
+doc_markdown = "allow" # Generated code has bad markdown
+unreadable_literal = "allow" # Magic numbers often look like this
+pub_underscore_fields = "allow" # Generated code uses this
+used_underscore_binding = "allow" # Generated code uses this
+borrow_as_ptr = "allow" # Common in FFI
+cast_ptr_alignment = "allow" # QEMU object casting
+cast_possible_wrap = "allow" # Common in timers and math
+needless_pass_by_value = "allow" # Callbacks often need value semantic
+single_match_else = "allow" # Sometimes clearer
+bool_to_int_with_if = "allow"
+manual_let_else = "allow"
+cast_lossless = "allow"
+ignored_unit_patterns = "allow"

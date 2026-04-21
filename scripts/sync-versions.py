@@ -31,8 +31,8 @@ def sync():
             with Path(cargo_path).open("w") as f:
                 f.write(new_content)
 
-    # 1.5 Update hw/rust/Cargo.toml
-    hw_cargo_path = "hw/rust/Cargo.toml"
+    # 1.5 Update root Cargo.toml (workspace)
+    hw_cargo_path = "Cargo.toml"
     if Path(hw_cargo_path).exists():
         with Path(hw_cargo_path).open() as f:
             content = f.read()
@@ -170,8 +170,8 @@ def sync():
                 with Path(dockerfile_path).open("w") as f:
                     f.write(new_df)
 
-        # Update Rust Cargo.toml
-        cargo_path = "hw/rust/Cargo.toml"
+        # Update root Cargo.toml (workspace)
+        cargo_path = "Cargo.toml"
         if Path(cargo_path).exists():
             with Path(cargo_path).open() as f:
                 cargo_content = f.read()

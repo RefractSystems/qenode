@@ -43,16 +43,32 @@ async def test_phase12_yaml2qemu_validation():
 
 
 @pytest.mark.asyncio
-async def test_phase12_mmio_bridge_offsets(qemu_launcher):
+async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
     """
     2. MMIO Bridge Protocol: Offsets vs. Absolute Addresses [P1]
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    yaml_file = Path(workspace_root) / "test/phase12/test_bridge.yaml"
-    dtb_file = Path(workspace_root) / "test/phase12/test_bridge.dtb"
-    cli_file = Path(workspace_root) / "test/phase12/test_bridge.cli"
-    kernel = Path(workspace_root) / "test/phase12/test_mmio.elf"
 
+    # Use unique paths for this test run
+    yaml_file = tmp_path / "test_bridge.yaml"
+    dtb_file = tmp_path / "test_bridge.dtb"
+    cli_file = tmp_path / "test_bridge.cli"
+    mmio_sock = str(tmp_path / "mmio.sock")
+
+    # Read the original yaml and update the socket path
+    import yaml
+
+    orig_yaml = Path(workspace_root) / "test/phase12/test_bridge.yaml"
+    with orig_yaml.open() as f:
+        yaml_data = yaml.safe_load(f)
+    for p in yaml_data.get("peripherals", []):
+        if p["type"] == "mmio-socket-bridge":
+            p["properties"]["socket-path"] = mmio_sock
+
+    with Path(yaml_file).open("w") as f:
+        yaml.dump(yaml_data, f)
+
+    kernel = Path(workspace_root) / "test/phase12/test_mmio.elf"
     # Generate DTB and CLI
     subprocess.run(
         ["python3", "-m", "tools.yaml2qemu", yaml_file, "--out-dtb", dtb_file, "--out-cli", cli_file],
@@ -63,36 +79,37 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher):
     with Path(cli_file).open() as f:
         cli_args = f.read().split()
 
-    # Fake MMIO Adapter - MATCH YAML PATH
-    mmio_sock = "/tmp/mmio.sock"
-    if Path(mmio_sock).exists():
-        Path(mmio_sock).unlink()
-
     received_reqs = []
 
     async def handle_mmio(reader, writer):
         try:
+            print("MMIO Server: Connection accepted!")
             # Handshake
             await reader.readexactly(SIZE_VIRTMCU_HANDSHAKE)
+            print("MMIO Server: Handshake read!")
             hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
             writer.write(hs_out.pack())
             await writer.drain()
+            print("MMIO Server: Handshake written!")
 
             while True:
                 try:
                     data = await reader.readexactly(SIZE_MMIO_REQ)
                     req = MmioReq.unpack(data)
+                    print(f"MMIO Server: Received req: {req}")
                     received_reqs.append(req)
                     resp = SyscMsg(type=0, irq_num=0, data=0)
                     writer.write(resp.pack())
                     await writer.drain()
-                except (asyncio.IncompleteReadError, ConnectionResetError):
+                except (asyncio.IncompleteReadError, ConnectionResetError) as e:
+                    print(f"MMIO Server: Read loop exited: {e}")
                     break
         except Exception as e:
             print(f"MMIO Server Error: {e}")
         finally:
             writer.close()
             await writer.wait_closed()
+            print("MMIO Server: Connection closed.")
 
     server = await asyncio.start_unix_server(handle_mmio, mmio_sock)
 
@@ -104,7 +121,9 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher):
     await asyncio.sleep(0.5)
 
     try:
-        await qemu_launcher(dtb_file, kernel, extra_args=[*cli_args, "-serial", "null", "-monitor", "null"])
+        await qemu_launcher(
+            dtb_file, kernel, extra_args=[*cli_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
+        )
         # Wait for QEMU to finish or timeout
         await asyncio.sleep(2.0)
     finally:
@@ -145,7 +164,7 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session):
     # Update cli_args to include our router
     new_args = []
     for arg in cli_args:
-        if "zenoh-telemetry,node=0" in arg:
+        if "zenoh-telemetry" in arg and "node=0" in arg:
             new_args.append(arg + f",router={zenoh_router}")
         else:
             new_args.append(arg)
@@ -159,8 +178,9 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session):
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/telemetry/**", on_telemetry))
 
     # Run QEMU
-    await qemu_launcher(dtb_file, kernel, extra_args=[*new_args, "-serial", "null", "-monitor", "null"])
-
+    await qemu_launcher(
+        dtb_file, kernel, extra_args=[*new_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
+    )
     await asyncio.sleep(3.0)
 
     await asyncio.to_thread(sub.undeclare)

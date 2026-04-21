@@ -94,6 +94,7 @@ pub struct ZenohFlexRayState {
     topic: String,
     subscriber: Option<Subscriber<()>>,
     rx_timer: *mut QemuTimer,
+    timer_ptr: Arc<AtomicUsize>,
     cycle_timer: *mut QemuTimer,
     rx_receiver: Receiver<OrderedFlexRayPacket>,
     local_heap: Mutex<std::collections::BinaryHeap<OrderedFlexRayPacket>>,
@@ -452,6 +453,7 @@ unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohFlexRay);
     if !s.rust_state.is_null() {
         let state = Box::from_raw(s.rust_state);
+        state.timer_ptr.store(0, AtomicOrdering::Release);
         if !state.rx_timer.is_null() {
             virtmcu_qom::timer::virtmcu_timer_del(state.rx_timer);
             virtmcu_qom::timer::virtmcu_timer_free(state.rx_timer);
@@ -641,6 +643,7 @@ fn zenoh_flexray_init_internal(
         topic,
         subscriber,
         rx_timer: ptr::null_mut(),
+        timer_ptr,
         cycle_timer: ptr::null_mut(),
         rx_receiver: rx,
         local_heap,
@@ -658,7 +661,7 @@ fn zenoh_flexray_init_internal(
 
     state.rx_timer = rx_timer;
     state.cycle_timer = cycle_timer;
-    timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
+    state.timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
 
     Box::into_raw(state)
 }

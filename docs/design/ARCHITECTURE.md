@@ -65,10 +65,10 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 │                                          │                           │
 │              ┌───────────────────────────┼────────────────────┐      │
 │              │  QEMU node 0              │  QEMU node 1       │      │
-│              │  + hw/zenoh/              │  + hw/zenoh/       │      │
-│              │    zenoh-clock.c  ◄───────┘    zenoh-clock.c   │      │
-│              │    zenoh-netdev.c ◄────────────zenoh-netdev.c  │      │
-│              │    zenoh-chardev.c◄────────────zenoh-chardev.c │      │
+│              │  + hw/rust/               │  + hw/rust/        │      │
+│              │    zenoh-clock    ◄───────┘    zenoh-clock    │      │
+│              │    zenoh-netdev   ◄────────────zenoh-netdev   │      │
+│              │    zenoh-chardev  ◄────────────zenoh-chardev  │      │
 │              │  + QOM peripherals        │  + QOM peripherals │      │
 │              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)  │      │
 │              │                           │                    │      │
@@ -96,7 +96,7 @@ instruction. This requires QEMU to be a **time slave**: it runs at full TCG spee
 each quantum but blocks at every quantum boundary until the external TimeAuthority grants
 the next advance.
 
-**Implementation**: `hw/zenoh/zenoh-clock.c` is a native QOM device that:
+**Implementation**: `hw/rust/zenoh-clock` is a native QOM device that:
 1. Hooks into the TCG execution loop via the `virtmcu_tcg_quantum_hook` function pointer
    injected into `cpu-exec.c` by `patches/apply_zenoh_hook.py`.
 2. At each quantum boundary, calls `cpu_exit()` to request a clean translation-block exit,
@@ -130,14 +130,14 @@ timestamp. The receiving node's delivery machinery must not inject the message i
 guest until its virtual clock reaches the stamped time. This is the only way to make
 inter-node behavior reproducible across runs, regardless of host scheduling.
 
-**Ethernet** (`hw/zenoh/zenoh-netdev.c`): A custom `-netdev` backend that:
+**Ethernet** (`hw/rust/zenoh-netdev`): A custom `-netdev` backend that:
 - On TX: reads the current `QEMU_CLOCK_VIRTUAL` value, attaches it as a header, publishes
   the frame to `sim/eth/frame/{src_node}/tx` on Zenoh.
 - On RX: a Zenoh subscriber receives frames into a priority queue keyed by delivery
   virtual time. A `QEMUTimer` on `QEMU_CLOCK_VIRTUAL` fires when the earliest queued
   frame's timestamp is reached, injecting it into the guest NIC via `qemu_send_packet`.
 
-**UART** (`hw/zenoh/zenoh-chardev.c`): The same virtual-timestamp model applied to serial
+**UART** (`hw/rust/zenoh-chardev`): The same virtual-timestamp model applied to serial
 bytes, using QEMU's chardev backend API. Enables multi-node UART communication (e.g.,
 firmware on MCU-A sends a command string to MCU-B's UART) with correct virtual ordering.
 Also supports human-in-the-loop interactivity — terminal input is delivered at the correct
@@ -242,21 +242,12 @@ modules += {'hw-virtmcu': hw_virtmcu_modules}
 With `--enable-modules`, this produces `hw-virtmcu-zenoh.so`, `hw-virtmcu-dummy.so`, etc.,
 installed in `QEMU_MODDIR`. `QEMU_MODULE_DIR` is set by `scripts/run.sh`.
 
-### zenoh-c dependency
+### Rust and Zenoh Dependencies
 
-`hw/zenoh/` links `zenoh-c` directly. In development: `third_party/zenoh-c/` (pre-built,
-not in git). In Docker: built from source at `ZENOH_C_REF` (default `1.8.0`).
-`hw/zenoh/meson.build` resolves `meson.project_source_root()/../zenoh-c`, which is
-correct for both `third_party/qemu` (local) and `/build/qemu` (Docker).
+Core plugins are now written in native Rust (located in `hw/rust/`). 
+Rust dependencies, including the `zenoh` crate, are managed by `cargo` and statically linked into the resulting QEMU modules (`.so` files). 
 
-**Runtime Linking Requirement (`LD_LIBRARY_PATH`)**: Because `libzenohc.so` is compiled
-and stored in non-standard project-local paths (e.g., `third_party/zenoh-c/lib` or
-`/opt/virtmcu/lib`) rather than system-wide directories like `/usr/lib`, QEMU cannot
-resolve the dependency when it `dlopen()`s the `hw-virtmcu-zenoh.so` plugin. 
-Therefore, `scripts/run.sh` explicitly prepends the appropriate `zenoh-c/lib` path to
-the `LD_LIBRARY_PATH` environment variable before invoking QEMU. If this path is lost
-(e.g., during refactoring), QEMU will silently fail to load the Zenoh networking and
-clock plugins.
+This eliminates the previous dependency on the external `zenoh-c` shared library and removes the need for complex `LD_LIBRARY_PATH` configurations to load the plugins.
 
 ---
 
@@ -448,7 +439,7 @@ As virtmcu evolves from a foundational emulator into a robust digital twin envir
 
 ### Advanced Observability (COOJA-Inspired)
 FirmwareStudio needs rich, interactive observability (visual timelines, network topologies, interactive virtual boards). virtmcu provides this without embedding a GUI into QEMU by:
-1. Tracing CPU sleep states and peripheral events via `hw/zenoh/zenoh-telemetry.c` and publishing deterministic timelines over Zenoh.
+1. Tracing CPU sleep states and peripheral events via `hw/rust/zenoh-telemetry` and publishing deterministic timelines over Zenoh.
 2. Enabling dynamic manipulation of network latency and drop rates via RPC endpoints on the `zenoh_coordinator`.
 3. Emitting UI state (LEDs, Buttons) via SAL/AAL abstraction topics.
 

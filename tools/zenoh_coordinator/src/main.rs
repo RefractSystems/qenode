@@ -71,7 +71,6 @@ struct LinkState {
     enable_collisions: bool,
 }
 
-
 /// Node position sourced from physics engine via sim/telemetry/position.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct NodeInfo {
@@ -122,7 +121,15 @@ struct ObstaclesConfig {
 
 /// Slab method: returns true iff the segment from (ox,oy,oz) to (tx,ty,tz)
 /// intersects the given AABB.  Uses parametric t ∈ [0, 1] for the segment.
-fn ray_intersects_aabb(ox: f64, oy: f64, oz: f64, tx: f64, ty: f64, tz: f64, obs: &ObstacleBox) -> bool {
+fn ray_intersects_aabb(
+    ox: f64,
+    oy: f64,
+    oz: f64,
+    tx: f64,
+    ty: f64,
+    tz: f64,
+    obs: &ObstacleBox,
+) -> bool {
     let (dx, dy, dz) = (tx - ox, ty - oy, tz - oz);
     let mut t_min = 0.0_f64;
     let mut t_max = 1.0_f64;
@@ -183,7 +190,7 @@ fn world_to_cell(x: f64, y: f64, z: f64) -> CellKey {
 /// World prefix is everything before "sim/..." or "virtmcu/...".
 fn parse_topic_with_prefix(topic: &str) -> Option<(String, String, String)> {
     let parts: Vec<&str> = topic.split('/').collect();
-    
+
     // Explicitly ignore FlexRay topics to avoid interference
     if topic.contains("sim/flexray") {
         return None;
@@ -270,7 +277,11 @@ async fn main() {
             .unwrap_or_else(|e| panic!("Cannot open obstacles file '{}': {}", path, e));
         let config: ObstaclesConfig = serde_yaml::from_reader(file)
             .unwrap_or_else(|e| panic!("Failed to parse obstacles YAML '{}': {}", path, e));
-        println!("  Obstacles: {} box(es) loaded from '{}'", config.obstacles.len(), path);
+        println!(
+            "  Obstacles: {} box(es) loaded from '{}'",
+            config.obstacles.len(),
+            path
+        );
         config.obstacles
     } else {
         Vec::new()
@@ -278,7 +289,9 @@ async fn main() {
 
     let mut config = Config::default();
     if let Some(ref connect) = args.connect {
-        config.insert_json5("connect/endpoints", &format!("[\"{}\"]", connect)).unwrap();
+        config
+            .insert_json5("connect/endpoints", &format!("[\"{}\"]", connect))
+            .unwrap();
     }
     let session = zenoh::open(config).await.unwrap();
 
@@ -335,9 +348,33 @@ async fn main() {
     let node_positions: Arc<RwLock<HashMap<(String, String), NodeInfo>>> = {
         let mut m = HashMap::new();
         // Default positions for prefix-less nodes (backward compatibility)
-        m.insert(("".to_string(), "0".to_string()), NodeInfo { id: "0".to_string(), x: 0.0, y: 0.0, z: 0.0 });
-        m.insert(("".to_string(), "1".to_string()), NodeInfo { id: "1".to_string(), x: 10.0, y: 0.0, z: 0.0 });
-        m.insert(("".to_string(), "2".to_string()), NodeInfo { id: "2".to_string(), x: 100.0, y: 0.0, z: 0.0 });
+        m.insert(
+            ("".to_string(), "0".to_string()),
+            NodeInfo {
+                id: "0".to_string(),
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
+        m.insert(
+            ("".to_string(), "1".to_string()),
+            NodeInfo {
+                id: "1".to_string(),
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
+        m.insert(
+            ("".to_string(), "2".to_string()),
+            NodeInfo {
+                id: "2".to_string(),
+                x: 100.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
         Arc::new(RwLock::new(m))
     };
 
@@ -429,8 +466,11 @@ async fn handle_eth_msg(
         Some(res) => res,
         None => return Ok(()),
     };
-    
-    known_nodes.entry(base_topic.clone()).or_default().insert(sender_id.clone());
+
+    known_nodes
+        .entry(base_topic.clone())
+        .or_default()
+        .insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     if payload.len() < 12 {
@@ -443,8 +483,12 @@ async fn handle_eth_msg(
 
     // Validation: ensure payload actually contains 'size' bytes after header
     if payload.len() < (12 + size as usize) {
-        eprintln!("ETH: Packet from {} has mismatched size (expected {}, got {})", 
-                  sender_id, size, payload.len() - 12);
+        eprintln!(
+            "ETH: Packet from {} has mismatched size (expected {}, got {})",
+            sender_id,
+            size,
+            payload.len() - 12
+        );
         return Ok(());
     }
 
@@ -455,12 +499,18 @@ async fn handle_eth_msg(
                 continue;
             }
 
-            let (delay_ns, drop_prob, jitter_ns, _enable_collisions) =
-                if let Some(state) = topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone())) {
-                    (state.delay_ns, state.drop_probability, state.jitter_ns, state.enable_collisions)
-                } else {
-                    (default_delay_ns, 0.0, 0, false)
-                };
+            let (delay_ns, drop_prob, jitter_ns, _enable_collisions) = if let Some(state) =
+                topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone()))
+            {
+                (
+                    state.delay_ns,
+                    state.drop_probability,
+                    state.jitter_ns,
+                    state.enable_collisions,
+                )
+            } else {
+                (default_delay_ns, 0.0, 0, false)
+            };
 
             // Apply deterministic packet drop
             if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
@@ -500,8 +550,11 @@ async fn handle_uart_msg(
         Some(res) => res,
         None => return Ok(()),
     };
-    
-    known_nodes.entry(base_topic.clone()).or_default().insert(sender_id.clone());
+
+    known_nodes
+        .entry(base_topic.clone())
+        .or_default()
+        .insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
 
@@ -524,12 +577,18 @@ async fn handle_uart_msg(
                 continue;
             }
 
-            let (delay_ns, drop_prob, jitter_ns, _enable_collisions) =
-                if let Some(state) = topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone())) {
-                    (state.delay_ns, state.drop_probability, state.jitter_ns, state.enable_collisions)
-                } else {
-                    (default_delay_ns, 0.0, 0, false)
-                };
+            let (delay_ns, drop_prob, jitter_ns, _enable_collisions) = if let Some(state) =
+                topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone()))
+            {
+                (
+                    state.delay_ns,
+                    state.drop_probability,
+                    state.jitter_ns,
+                    state.enable_collisions,
+                )
+            } else {
+                (default_delay_ns, 0.0, 0, false)
+            };
 
             // Apply deterministic packet drop
             if drop_prob > 0.0 && rng.gen::<f64>() < drop_prob {
@@ -568,8 +627,11 @@ async fn handle_lin_msg(
         Some(res) => res,
         None => return Ok(()),
     };
-    
-    known_nodes.entry(base_topic.clone()).or_default().insert(sender_id.clone());
+
+    known_nodes
+        .entry(base_topic.clone())
+        .or_default()
+        .insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&payload) {
@@ -585,7 +647,9 @@ async fn handle_lin_msg(
                 continue;
             }
 
-            let delay_ns = if let Some(state) = topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone())) {
+            let delay_ns = if let Some(state) =
+                topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone()))
+            {
                 state.delay_ns
             } else {
                 default_delay_ns
@@ -595,14 +659,15 @@ async fn handle_lin_msg(
 
             let mut fbb = flatbuffers::FlatBufferBuilder::new();
             let data_offset = frame.data().map(|d| fbb.create_vector(d.bytes()));
-            
+
             let args = virtmcu_api::lin_generated::virtmcu::lin::LinFrameArgs {
                 delivery_vtime_ns: new_vtime,
                 type_: frame.type_(),
                 data: data_offset,
             };
-            
-            let new_frame = virtmcu_api::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
+
+            let new_frame =
+                virtmcu_api::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
             fbb.finish(new_frame, None);
             let finished_data = fbb.finished_data().to_vec();
 
@@ -625,8 +690,11 @@ async fn handle_sysc_msg(
         Some(res) => res,
         None => return Ok(()),
     };
-    
-    known_nodes.entry(base_topic.clone()).or_default().insert(sender_id.clone());
+
+    known_nodes
+        .entry(base_topic.clone())
+        .or_default()
+        .insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
     if payload.len() < 12 {
@@ -648,7 +716,9 @@ async fn handle_sysc_msg(
                 continue;
             }
 
-            let delay_ns = if let Some(state) = topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone())) {
+            let delay_ns = if let Some(state) =
+                topology.get(&(world_prefix.clone(), sender_id.clone(), node.clone()))
+            {
                 state.delay_ns
             } else {
                 default_delay_ns
@@ -683,14 +753,23 @@ async fn handle_rf_msg(
     known_nodes: &mut HashMap<String, HashSet<String>>,
     ctx: RfCtx<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let RfCtx { _topic_prefix: _, positions, args, has_rf_header, obstacles } = ctx;
+    let RfCtx {
+        _topic_prefix: _,
+        positions,
+        args,
+        has_rf_header,
+        obstacles,
+    } = ctx;
     let topic = sample.key_expr().as_str();
     let (world_prefix, base_topic, sender_id) = match parse_topic_with_prefix(topic) {
         Some(res) => res,
         None => return Ok(()),
     };
-    
-    known_nodes.entry(base_topic.clone()).or_default().insert(sender_id.clone());
+
+    known_nodes
+        .entry(base_topic.clone())
+        .or_default()
+        .insert(sender_id.clone());
 
     let payload = sample.payload().to_bytes();
 
@@ -734,7 +813,11 @@ async fn handle_rf_msg(
         grid.candidates(spos.x, spos.y, spos.z, &sender_id)
     } else {
         match known_nodes.get(&base_topic) {
-            Some(nodes) => nodes.iter().filter(|id| *id != &sender_id).cloned().collect(),
+            Some(nodes) => nodes
+                .iter()
+                .filter(|id| *id != &sender_id)
+                .cloned()
+                .collect(),
             None => Vec::new(),
         }
     };
@@ -791,7 +874,9 @@ async fn handle_rf_msg(
 }
 
 fn calculate_fspl(dist_m: f64, freq_hz: f64) -> f64 {
-    if dist_m < 0.1 { return 0.0; }
+    if dist_m < 0.1 {
+        return 0.0;
+    }
     let c = 299_792_458.0;
     // FSPL (dB) = 20 log10(d) + 20 log10(f) + 20 log10(4π/c)
     20.0 * dist_m.log10() + 20.0 * freq_hz.log10() + 20.0 * (4.0 * std::f64::consts::PI / c).log10()
@@ -803,9 +888,12 @@ mod tests {
 
     fn wall_20db() -> ObstacleBox {
         ObstacleBox {
-            x_min: 4.9, x_max: 5.1,
-            y_min: -100.0, y_max: 100.0,
-            z_min: -100.0, z_max: 100.0,
+            x_min: 4.9,
+            x_max: 5.1,
+            y_min: -100.0,
+            y_max: 100.0,
+            z_min: -100.0,
+            z_max: 100.0,
             attenuation_db: 20.0,
         }
     }
@@ -813,31 +901,71 @@ mod tests {
     #[test]
     fn test_ray_passes_through_wall() {
         // Sender (0,0,0) → Receiver (10,0,0) crosses wall at x=5
-        assert!(ray_intersects_aabb(0.0, 0.0, 0.0, 10.0, 0.0, 0.0, &wall_20db()));
+        assert!(ray_intersects_aabb(
+            0.0,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            0.0,
+            &wall_20db()
+        ));
     }
 
     #[test]
     fn test_ray_misses_wall_parallel() {
         // Ray parallel to the wall plane (x is constant at -1, never enters wall)
-        assert!(!ray_intersects_aabb(-1.0, -10.0, 0.0, -1.0, 10.0, 0.0, &wall_20db()));
+        assert!(!ray_intersects_aabb(
+            -1.0,
+            -10.0,
+            0.0,
+            -1.0,
+            10.0,
+            0.0,
+            &wall_20db()
+        ));
     }
 
     #[test]
     fn test_ray_misses_wall_same_side() {
         // Both endpoints on the same side of the wall
-        assert!(!ray_intersects_aabb(0.0, 0.0, 0.0, 4.0, 0.0, 0.0, &wall_20db()));
+        assert!(!ray_intersects_aabb(
+            0.0,
+            0.0,
+            0.0,
+            4.0,
+            0.0,
+            0.0,
+            &wall_20db()
+        ));
     }
 
     #[test]
     fn test_ray_diagonal_through_wall() {
         // Diagonal ray from (0,0,0) to (10,3,0) — still crosses x=5 plane within y bounds
-        assert!(ray_intersects_aabb(0.0, 0.0, 0.0, 10.0, 3.0, 0.0, &wall_20db()));
+        assert!(ray_intersects_aabb(
+            0.0,
+            0.0,
+            0.0,
+            10.0,
+            3.0,
+            0.0,
+            &wall_20db()
+        ));
     }
 
     #[test]
     fn test_ray_diagonal_misses_wall_y() {
         // Ray goes from (0,0,0) to (10, 200, 0) — crosses x=5 at y=100, just outside y_max
-        assert!(!ray_intersects_aabb(0.0, 0.0, 0.0, 10.0, 210.0, 0.0, &wall_20db()));
+        assert!(!ray_intersects_aabb(
+            0.0,
+            0.0,
+            0.0,
+            10.0,
+            210.0,
+            0.0,
+            &wall_20db()
+        ));
     }
 
     #[test]
@@ -866,20 +994,50 @@ mod tests {
     #[test]
     fn test_multiple_obstacles_sum() {
         // Two walls in line-of-sight: each 10 dB → total 20 dB
-        let wall_a = ObstacleBox { x_min: 2.9, x_max: 3.1, y_min: -100.0, y_max: 100.0, z_min: -100.0, z_max: 100.0, attenuation_db: 10.0 };
-        let wall_b = ObstacleBox { x_min: 6.9, x_max: 7.1, y_min: -100.0, y_max: 100.0, z_min: -100.0, z_max: 100.0, attenuation_db: 10.0 };
+        let wall_a = ObstacleBox {
+            x_min: 2.9,
+            x_max: 3.1,
+            y_min: -100.0,
+            y_max: 100.0,
+            z_min: -100.0,
+            z_max: 100.0,
+            attenuation_db: 10.0,
+        };
+        let wall_b = ObstacleBox {
+            x_min: 6.9,
+            x_max: 7.1,
+            y_min: -100.0,
+            y_max: 100.0,
+            z_min: -100.0,
+            z_max: 100.0,
+            attenuation_db: 10.0,
+        };
         let obstacles = [wall_a, wall_b];
-        let total: f64 = obstacles.iter()
+        let total: f64 = obstacles
+            .iter()
             .filter(|obs| ray_intersects_aabb(0.0, 0.0, 0.0, 10.0, 0.0, 0.0, obs))
             .map(|obs| obs.attenuation_db)
             .sum();
-        assert!((total - 20.0).abs() < 0.01, "Expected 20 dB total, got {total:.2} dB");
+        assert!(
+            (total - 20.0).abs() < 0.01,
+            "Expected 20 dB total, got {total:.2} dB"
+        );
     }
 
     #[test]
     fn test_obstacle_not_in_path_no_attenuation() {
         // Wall is beside the path, not crossing it
-        let side_wall = ObstacleBox { x_min: 4.9, x_max: 5.1, y_min: 50.0, y_max: 100.0, z_min: -100.0, z_max: 100.0, attenuation_db: 30.0 };
-        assert!(!ray_intersects_aabb(0.0, 0.0, 0.0, 10.0, 0.0, 0.0, &side_wall));
+        let side_wall = ObstacleBox {
+            x_min: 4.9,
+            x_max: 5.1,
+            y_min: 50.0,
+            y_max: 100.0,
+            z_min: -100.0,
+            z_max: 100.0,
+            attenuation_db: 30.0,
+        };
+        assert!(!ray_intersects_aabb(
+            0.0, 0.0, 0.0, 10.0, 0.0, 0.0, &side_wall
+        ));
     }
 }

@@ -97,14 +97,17 @@ pub struct DeviceClass {
     /// A struct field
     pub props_count_: u16,
     /// A struct field
+    /// Whether the device is user-creatable
     pub user_creatable: bool,
-    /// A struct field
+    /// Whether the device is hotpluggable
     pub hotpluggable: bool,
-    /// A struct field
+    /// Padding for alignment
     pub _padding: [u8; 4],
-    /// A struct field
+    /// A legacy reset method
+    pub legacy_reset: Option<unsafe extern "C" fn(dev: *mut c_void)>,
+    /// Realize method
     pub realize: Option<unsafe extern "C" fn(dev: *mut c_void, errp: *mut *mut c_void)>,
-    /// A struct field
+    /// Unrealize method
     pub unrealize: Option<unsafe extern "C" fn(dev: *mut c_void)>,
     /// A struct field
     pub sync_config: Option<unsafe extern "C" fn(dev: *mut c_void, errp: *mut *mut c_void)>,
@@ -198,6 +201,8 @@ extern "C" {
     /// A function
     pub fn sysbus_init_mmio(sbd: *mut SysBusDevice, mr: *mut crate::memory::MemoryRegion);
     /// A function
+    pub fn sysbus_mmio_map(sbd: *mut SysBusDevice, n: c_int, addr: u64);
+    /// A function
     pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::qemu_irq);
     /// A function
     pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::qemu_irq;
@@ -240,6 +245,8 @@ mod miri_statics {
         pub fn device_class_set_props_n(dc: *mut DeviceClass, props: *const Property, n: usize);
         /// A function
         pub fn sysbus_init_mmio(sbd: *mut SysBusDevice, mr: *mut crate::memory::MemoryRegion);
+        /// A function
+        pub fn sysbus_mmio_map(sbd: *mut SysBusDevice, n: c_int, addr: u64);
         /// A function
         pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::qemu_irq);
         /// A function
@@ -376,5 +383,5 @@ macro_rules! define_prop_chr {
 
 const _: () = assert!(core::mem::size_of::<DeviceState>() == 152);
 const _: () = assert!(core::mem::size_of::<SysBusDevice>() == 808);
-const _: () = assert!(core::mem::size_of::<DeviceClass>() == 184);
-const _: () = assert!(core::mem::size_of::<SysBusDeviceClass>() == 200);
+const _: () = assert!(core::mem::size_of::<DeviceClass>() == 192);
+const _: () = assert!(core::mem::size_of::<SysBusDeviceClass>() == 208);

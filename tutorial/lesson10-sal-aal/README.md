@@ -24,7 +24,7 @@ MuJoCo / RESD replay
         │  shared memory (mjData) or file I/O
         ▼
 tools/cyber_bridge/
-    mujoco_bridge  ─── Zenoh sim/clock/advance/{id}  ──► hw/zenoh/zenoh-clock.c
+    mujoco_bridge  ─── Zenoh sim/clock/advance/{id}  ──► hw/rust/zenoh-clock
     resd_replay                                            (TimeAuthority role)
         │  Zenoh sim/sensor/{id}/{name}
         ▼

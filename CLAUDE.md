@@ -29,7 +29,7 @@ Any feature that requires firmware modification to work in VirtMCU is a bug in V
 Specifically, it provides:
 1. **Dynamic QOM device plugins** (.so shared libraries).
 2. **arm-generic-fdt machine** — ARM machines defined by Device Tree.
-3. **Native Zenoh QOM plugin** (\`hw/zenoh/\`) — deterministic clock and I/O.
+3. **Native Zenoh QOM plugin** (`hw/rust/`) — deterministic clock and I/O.
 4. **yaml2qemu** — Parses OpenUSD-aligned YAML and emits \`.dtb\` + CLI.
 
 ---
@@ -88,11 +88,10 @@ When using \`mmio-socket-bridge\`, every MMIO read/write blocks the QEMU TCG thr
 
 ```
 virtmcu/
-├── hw/                         # C/Rust QOM peripheral models
-│   ├── misc/
-│   │   └── mmio-socket-bridge.c # Offset-based Unix socket bridge
-│   └── zenoh/
-│       └── zenoh-clock.c       # Clock sync with error reporting (Migrating to Rust)
+├── hw/                         # Rust QOM peripheral models
+│   └── rust/
+│       ├── mmio-socket-bridge/ # Offset-based Unix socket bridge
+│       └── zenoh-clock/       # Clock sync with error reporting (Native Rust)
 ├── tools/
 │   └── yaml2qemu.py            # YAML -> DTB transpiler with validation
 └── docs/                       # Human-readable documentation
@@ -110,13 +109,13 @@ virtmcu/
 
 | Component | Language | Rule |
 | :--- | :--- | :--- |
-| **Sim Loop** | **Rust** (Pref) / **C** | **NATIVE ONLY.** No Python bridges. |
+| **Sim Loop** | **Rust** | **NATIVE ONLY.** All core plugins migrated to Rust. |
 | **Physics/SystemC** | **C++** | Standard for TLM-2.0 / MuJoCo. |
 | **Tooling/Parsing** | **Python** | Out-of-band only. |
 | **Telemetry** | **Rust** | Direct FlatBuffers/Zenoh integration. |
 
 **Banned:** Python in the hot simulation loop (MMIO/Clock/Netdev).
-**Recommended:** Migrate `hw/zenoh/*.c` to native Rust (Phase 18) to eliminate `zenoh-c` FFI.
+**Completed:** Core migration of `hw/zenoh/*.c` to native Rust (Phase 18 & 19).
 
 ---
 
@@ -187,6 +186,11 @@ To ensure the highest level of professional software engineering, all agents MUS
 - **Mandate:** Agents are NEVER allowed to lower the quality, strictness, or coverage of lints, static analyzers, type-checkers, or security gates without explicit human written consent.
 - **YOLO Mode Constraint:** Even when running in `--yolo` mode, agents can only *increase* software quality and enterprise-readiness on their own (e.g., by enabling stricter rules or fixing technical debt). They must never suppress warnings, disable lints (`#[allow(...)]`, `noqa`, etc.), or bypass the type system to resolve errors unless specifically instructed to do so for a verified edge case.
 
+### 9. New Peripherals and the Educational C Model
+- **Rust First**: All new peripheral models MUST be written in Rust using the `hw/rust/rust-dummy` template, unless they are specifically being ported from SystemC/C++.
+- **Educational C Model**: We maintain one legacy C peripheral model (`hw/misc/educational-dummy.c`, instantiated as `dummy-device`) strictly for educational purposes and backward compatibility testing. It is automatically tested in Phase 2 integration tests to ensure we don't lose the ability to load traditional C plugins.
+
+
 ---
 
 ## Common Pitfalls & Troubleshooting
@@ -252,16 +256,18 @@ The project uses Git hooks to automatically run \`make lint\` on both \`commit\`
 
 ---
 
-## CI/CD Troubleshooting & "Make CI Green" Workflow
+## CI/CD Troubleshooting & "Make CI Green" Workflow (Enterprise CI Fixer Loop)
 
-When instructed to "fix CI", "make CI green", or address pipeline failures, you MUST follow this autonomous loop until success:
+When instructed to **"fix CI"**, **"make CI green"**, or address pipeline failures, you MUST enter the **Enterprise CI Fixer Loop**. This is not just about pushing a fix; it is about absolute empirical certainty.
 
-1. **Diagnose Remotely:** Use the GitHub CLI (`gh run list`, `gh run view --log`) to identify the exact failure. Always use `gh` to avoid GitHub API rate limits.
-2. **Reproduce Locally:** BEFORE making code changes, run the corresponding test locally to reproduce the error.
-3. **Align Local with Remote (Crucial):** If the step fails in CI but passes locally, DO NOT fix the code yet. First, modify the local test scripts, `Makefile`, or environment to ensure the failure reproduces locally. **Our local tests must catch what CI catches.**
-4. **Fix & Verify:** Implement the fix and verify it passes the newly aligned local test suite.
-5. **Push:** Commit and push the changes.
-6. **Monitor & Loop:** Autonomously monitor the new CI run (e.g., using `gh run watch`). If it fails, immediately restart this loop. Do not stop or prompt the user until all checks are officially green.
+1. **Diagnose Remotely:** Use the GitHub CLI (`gh run list`, `gh run view --log`) to identify the exact failure.
+2. **Local Reproduction (The `ci-full` Gate):** You MUST reproduce the failure locally using `make ci-full` or the corresponding containerized smoke test. If it passes locally but fails in CI, **STOP.** You have not reproduced it. Align local scripts, timeouts (`VIRTMCU_STALL_TIMEOUT_MS`), or environment until the failure is caught locally.
+3. **Stress Test the Bug:** Once reproduced, "stress test the hell out of the bug." Run the failing test 100+ times (or use a dedicated stress test if one exists, or create a new one). Quantify the failure rate.
+4. **Exhaustive Implementation:** Implement the fix.
+5. **Verified Recovery:** Prove the fix works by running the same stress test again. It must reach a 100% success rate over a significant number of runs.
+6. **Final Lint Gate:** Run `make ci-local` to ensure that lints, unit tests, and the lightweight environment are perfectly clean.
+7. **Commit & Push:** Commit the fix and the new/updated stress tests.
+8. **Monitor & Loop:** Autonomously monitor the new CI run (`gh run watch`). If it fails, restart this loop immediately. Do not stop until the pipeline is officially green.
 
 ---
 
@@ -294,6 +300,7 @@ When asked to **"Increase coverage"** or **"Improve test coverage"**, you MUST e
 ## Note to Developers: Invoking Autonomous Loops
 
 To trigger these workflows, use direct commands:
+- *"Fix CI"* (Invokes the full Enterprise CI Fixer Loop: Reproduce -> Stress -> Fix -> Verify -> Push)
 - *"Fix CI locally and commit."*
 - *"Run the local CI loop until everything passes."*
 - *"Increase code coverage for the physics module."*

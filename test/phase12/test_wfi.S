@@ -12,9 +12,10 @@ vector_table:
     b .                /* FIQ */
 
 _start:
-    /* Set VBAR to our vector table */
+    /* Set VBAR and MVBAR to our vector table */
     ldr r0, =vector_table
-    mcr p15, 0, r0, c12, c0, 0
+    mcr p15, 0, r0, c12, c0, 0  /* VBAR */
+    mcr p15, 0, r0, c12, c0, 1  /* MVBAR */
 
     /* Enable UART: UARTCR = TXE | RXE | UARTEN */
     ldr r0, =0x09000000

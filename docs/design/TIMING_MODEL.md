@@ -128,5 +128,5 @@ QMP monitor and UART both unresponsive.
 - [TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — tutorial, sequence diagrams, rationale
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system context, Five Pillars, prior art
 - [ADR-001](ARCHITECTURE.md#adr-001-three-clock-modes-standalone--slaved-suspend--slaved-icount) — rationale for three modes
-- `hw/zenoh/zenoh-clock.c` — implementation
+- `hw/rust/zenoh-clock` — implementation
 - `patches/apply_zenoh_hook.py` — TCG hook injection

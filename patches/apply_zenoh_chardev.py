@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
+import re
 import sys
 from pathlib import Path
 
 
-def patch_file(filepath, marker, insertion, after=False):
+def patch_file(filepath, marker_pattern, insertion, after=False):
     with Path(filepath).open() as f:
         content = f.read()
     if insertion in content:
         return False
-    idx = content.find(marker)
-    if idx == -1:
-        print(f"Error: Could not find marker '{marker}' in {filepath}")
+
+    match = re.search(marker_pattern, content)
+    if not match:
+        print(f"Error: Could not find marker pattern '{marker_pattern}' in {filepath}")
         sys.exit(1)
+
+    idx = match.start()
     if after:
-        idx += len(marker)
+        idx = match.end()
+
     new_content = content[:idx] + insertion + content[idx:]
     with Path(filepath).open("w") as f:
         f.write(new_content)
@@ -29,17 +34,19 @@ def main():
     char_c = Path(qemu) / "chardev" / "char.c"
 
     # 1. Patch qemu_chardev_opts in chardev/char.c
-    marker4 = '.name = "size",'
-    insertion4 = """        },{
-            .name = "node",
+    # Use regex to match .name = "size" with any whitespace/tabs
+    marker_pattern = r'\.name\s*=\s*"size",'
+    insertion4 = """.name = "node",
             .type = QEMU_OPT_STRING,
         },{
             .name = "router",
             .type = QEMU_OPT_STRING,
         },{
             .name = "topic",
-            .type = QEMU_OPT_STRING,"""
-    if patch_file(char_c, marker4, insertion4, after=False):
+            .type = QEMU_OPT_STRING,
+        },{
+            """
+    if patch_file(char_c, marker_pattern, insertion4, after=False):
         print(f"  patched {char_c}")
 
 

@@ -58,7 +58,7 @@ def main():
     }};
     bridge@50000000 {{
         compatible = "mmio-socket-bridge";
-        reg = <0x0 0x50000000 0x0 0x1000>;
+        reg = <0x0 0x70000000 0x0 0x1000>;
         socket-path = "{sock_path}";
         region-size = <0x1000>;
         interrupt-parent = <&gic>;
