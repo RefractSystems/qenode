@@ -19,7 +19,7 @@ QEMU's virtual time does not advance on its own. It only advances when the exter
 ```mermaid
 sequenceDiagram
     participant TA as TimeAuthority (Physics)
-    participant ZC as hw/zenoh/zenoh-clock.c (QEMU)
+    participant ZC as hw/rust/zenoh-clock (QEMU)
     participant TCG as QEMU CPU Loop (TCG)
     participant FW as Guest Firmware
 
@@ -67,7 +67,7 @@ QEMU is notoriously heavily threaded, yet relies on a single massive mutex calle
 
 If our `zenoh-clock` receives a network packet and tries to pause the CPU while holding the BQL, the entire QEMU process deadlocks. The QMP monitor, GDB stub, and UART output all freeze because they are waiting for the BQL to process I/O.
 
-Here is how `hw/zenoh/zenoh-clock.c` safely handles the suspend/resume cycle:
+Here is how `hw/rust/zenoh-clock` safely handles the suspend/resume cycle:
 
 ```mermaid
 flowchart TD
@@ -124,7 +124,7 @@ Frameworks like MINRES `libqemu-cxx` compile QEMU as a C++ library and wrap it i
 ### Why not just use `-icount` with a Python script adjusting `qemu_icount_bias`?
 Earlier prototypes of FirmwareStudio tried to run a Python agent that paused QEMU, adjusted the icount bias via QMP, and resumed it.
 * **The Problem:** Python in the hot simulation loop is disastrous for performance. Pausing QEMU via QMP took ~2 milliseconds per quantum. If the quantum is 1ms, the simulation runs at 0.5x real-time purely due to IPC overhead.
-* **Our Solution:** `hw/zenoh/zenoh-clock.c` is compiled natively into QEMU. The Zenoh Rust/C backend handles the network synchronization in microseconds.
+* **Our Solution:** `hw/rust/zenoh-clock` is compiled natively into QEMU. The Zenoh Rust backend handles the network synchronization in microseconds.
 
 ### Why have `slaved-suspend` if `slaved-icount` is more accurate?
 * **The Problem:** `-icount` forces QEMU to count every single instruction, disabling many of TCG's speed optimizations. It cuts performance by ~80%.
@@ -146,14 +146,14 @@ To run a simulation in cycle-accurate slaved-icount mode:
 
 ## 7. Project Structure
 
-- `hw/zenoh/zenoh-clock.c`: The native QEMU module handling the Zenoh network protocol and QEMU BQL locking.
-- `patches/apply_zenoh_hook.py`: The injection script allowing `zenoh-clock.c` to hook into `accel/tcg/cpu-exec.c`.
+- `hw/rust/zenoh-clock`: The native QEMU module handling the Zenoh network protocol and QEMU BQL locking.
+- `patches/apply_zenoh_hook.py`: The injection script allowing `zenoh-clock` to hook into `accel/tcg/cpu-exec.c`.
 - `tools/testing/qmp_bridge.py`: Testing utility tracking virtual time.
 - `test/phase7/`: Shell scripts verifying determinism across runs using these clock modes.
 
 ## 8. Code Style
 
-- C Code (`zenoh-clock.c`): Must strictly adhere to QEMU's C11 style. `#include "qemu/osdep.h"` must be the first line. Uses `OBJECT_DECLARE_SIMPLE_TYPE` and `DEFINE_TYPES`.
+- Rust Code (`hw/rust/zenoh-clock`): Follow standard Rust idioms. Run `cargo clippy` and `cargo fmt`.
 - Concurrency: All Zenoh network callbacks happen on a background thread. Interaction with QEMU state MUST be synchronized using `qemu_mutex_lock_iothread()` / `bql_lock()`.
 
 ## 9. Testing Strategy
@@ -193,5 +193,5 @@ Because virtual time only advances when instructions run (or timers fire), a QEM
 - This is a **host performance issue**, not a simulation determinism issue. The simulation remains deterministic, but it is running slower than the requester's timeout threshold.
 
 - **Always do**: Unlock the BQL (`bql_unlock()`) before blocking on a Zenoh network reply. If the BQL is held during a block, QEMU will permanently deadlock.
-- **Ask first**: Before proposing any Python-based synchronization scripts inside the simulation loop. Native C plugins are a hard requirement for performance.
+- **Ask first**: Before proposing any Python-based synchronization scripts inside the simulation loop. Native Rust plugins are a hard requirement for performance.
 - **Never do**: Use `-accel kvm` when `zenoh-clock` is attached. KVM bypasses the TCG event loop entirely, making the quantum hooks unreachable.

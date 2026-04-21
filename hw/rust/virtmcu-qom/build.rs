@@ -5,8 +5,19 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(qemu_headers_present)");
-    println!("cargo::rustc-check-cfg=cfg(qemu_headers_missing)");
+    println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)");
+    println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)");
+
+    // Skip everything if running under Miri as it cannot handle FFI/C
+    if std::env::var("CARGO_CFG_MIRI").is_ok() || std::env::var("MIRI_SYSROOT").is_ok() {
+        let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        std::fs::write(out_path.join("bindings.rs"), "").unwrap();
+        let wrapper_path = out_path.join("qemu_bindings.rs");
+        std::fs::write(&wrapper_path, "pub mod qemu {}").unwrap();
+        println!("cargo:rustc-cfg=qemu_headers_missing");
+        return;
+    }
+
     let qemu_dir =
         std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
     let build_dir = std::env::var("QEMU_BUILD_DIR")
@@ -38,6 +49,7 @@ fn main() {
 
     let mut builder = cc::Build::new();
     builder
+        .define("_GNU_SOURCE", None)
         .file("src/ffi.c")
         .include(format!("{qemu_dir}/include"))
         .include(&build_dir)

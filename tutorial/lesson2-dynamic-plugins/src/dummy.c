@@ -1,1 +1,1 @@
-../../../hw/dummy/dummy.c
+../../../hw/misc/educational-dummy.c

@@ -3,8 +3,15 @@ set -e
 
 echo "==> Configuring Git..."
 git config --global credential.https://github.com.helper ''
-git config --global credential.helper '!gh auth git-credential'
+git config --global --unset-all credential.helper || true
+git config --global --add credential.helper ''
+git config --global --add credential.helper '!gh auth git-credential'
 git config --global --add safe.directory /workspace
+
+# Fix stale Docker credsStore injected by VS Code if it exists
+if [ -f ~/.docker/config.json ]; then
+    sed -i '/"credsStore":/d' ~/.docker/config.json
+fi
 
 # Set Git identity if missing globally
 if [ -z "$(git config --global user.email)" ]; then

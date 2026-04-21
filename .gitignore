@@ -67,3 +67,4 @@ hw/rust-dummy/Cargo.lock
 test-results/
 \n# Compiled test binaries\nprint_rust_sizes\nprint_sizes
 .venv-docker/
+build.lock

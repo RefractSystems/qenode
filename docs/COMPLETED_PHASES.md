@@ -36,7 +36,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 **Goal**: Compile a minimal out-of-tree QOM peripheral as a `.so` and load it into QEMU.
 
 ### Tasks
-- [x] **2.1** Write `hw/dummy/dummy.c`
+- [x] **2.1** Write `hw/rust/rust-dummy` (Migrated from C)
 - [x] **2.2** Update QEMU module build configuration
 - [x] **2.3** Verify the native module loading
 - [x] **2.4** Add a Rust template
@@ -65,7 +65,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 **Goal**: Enable SystemC peripheral models to connect to QEMU via MMIO socket bridge.
 
 ### Tasks
-- [x] **5.1** Implement `hw/misc/mmio-socket-bridge.c` and `tools/systemc_adapter/`
+- [x] **5.1** Implement `hw/rust/mmio-socket-bridge` (Migrated from C) and `tools/systemc_adapter/`
 - [x] **5.4** Document Path A vs B vs C decision guide.
 - [x] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
 - [x] **5.6** mmio-socket-bridge: add per-operation timeout and disconnection handling.
@@ -81,7 +81,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 ### Tasks
 - [x] **8.1** Interactive Echo Firmware.
 - [x] **8.2** Tutorial Lesson 8.
-- [x] **8.3** Deterministic Zenoh Chardev (`hw/zenoh/zenoh-chardev.c`).
+- [x] **8.3** Deterministic Zenoh Chardev (Migrated to Rust: `hw/rust/zenoh-chardev`).
 - [x] **8.4** Multi-Node UART Test.
 - [x] **8.5** Fix `libc::malloc` without null-check in `zenoh-chardev` and `zenoh-802154`.
 - [x] **8.6** High-Baud UART Stress Test.
@@ -217,7 +217,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 - [x] **18.4** Native Zenoh-Telemetry (Rust).
 - [x] **18.5** Native Zenoh-Chardev, Actuator, 802154, UI (Rust).
 - [x] **18.6** Verification & CI Integration.
-- [x] **18.7** Fix BQL in `zenoh-clock.c`.
+- [x] **18.7** Fix BQL in `zenoh-clock` (Rust).
 - [x] **18.8** Fix `zenoh-telemetry` wrong return type.
 - [x] **18.9** Adopt `virtmcu-qom` in `zenoh-clock`.
 - [x] **18.10** Adopt `virtmcu-qom` in `zenoh-netdev`.
@@ -235,8 +235,8 @@ This file serves as a historical record of completed phases and tasks in the vir
 ### Tasks
 - [x] **19.1** Expand `virtmcu-qom` for QOM type registration.
 - [x] **19.2** Eliminate C shims — non-netdev devices.
-- [x] **19.3** Eliminate C shim — `zenoh-netdev.c`.
-- [x] **19.4** Delete `virtmcu-rust-ffi.c/h`.
+- [x] **19.3** Eliminate C shim — `zenoh-netdev` (Migrated to full Rust).
+- [x] **19.4** Delete `virtmcu-rust-ffi.c/h` (Done).
 - [x] **19.5** Memory Layout Verification Suite.
 - [x] **19.6** Refactor `virtmcu-qom` bindgen lint suppression.
 - [x] **19.7** Phase 19 Critique and Stabilization.

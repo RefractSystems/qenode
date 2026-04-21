@@ -84,6 +84,22 @@ text = text.replace(old_realize_logic, new_realize_logic)
 # Fix 5: Fix void pointer arithmetic in fdt_init_qdev_array_prop
 text = text.replace("        prop_value += elem_len;", "        prop_value = (const uint8_t *)prop_value + elem_len;")
 
+# Fix 6: Fix memory leak in fdt_init_parent_node (strdup not freed)
+old_parenting_logic = """    } else if (parent) {
+        fdt_debug_np("parenting node\\n");
+        object_property_add_child(OBJECT(parent),
+                              strdup(strrchr(node_path, '/') + 1),
+                              OBJECT(dev));"""
+
+new_parenting_logic = """    } else if (parent) {
+        char *name;
+        fdt_debug_np("parenting node\\n");
+        name = g_strdup(strrchr(node_path, '/') + 1);
+        object_property_add_child(OBJECT(parent), name, OBJECT(dev));
+        g_free(name);"""
+
+text = text.replace(old_parenting_logic, new_parenting_logic)
+
 with Path(filepath).open("w") as f:
     f.write(text)
 print("Finished applying fdt_generic_util fixes.")

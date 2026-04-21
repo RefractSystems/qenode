@@ -48,7 +48,7 @@ def main():
     chosen {{}};
     memory@40000000 {{ compatible = "qemu-memory-region"; qemu,ram = <0x01>; container = <0x01>; reg = <0x0 0x40000000 0x0 0x1000>; }};
     cpus {{ #address-cells = <1>; #size-cells = <0>; cpu@0 {{ device_type = "cpu"; compatible = "cortex-a15-arm-cpu"; reg = <0>; memory = <0x01>; }}; }};
-    bridge@50000000 {{ compatible = "mmio-socket-bridge"; reg = <0x0 0x50000000 0x0 0x1000>; socket-path = "{sock_path}"; region-size = <0x1000>; }};
+    bridge@50000000 {{ compatible = "mmio-socket-bridge"; reg = <0x0 0x70000000 0x0 0x1000>; socket-path = "{sock_path}"; region-size = <0x1000>; }};
 }};
 """
     with Path("/tmp/irq_test.dts").open("w") as f:

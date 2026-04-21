@@ -81,6 +81,7 @@ pub struct ZenohNetdevState {
     topic: String,
     subscriber: Option<Subscriber<()>>,
     rx_timer: *mut QemuTimer,
+    timer_ptr: Arc<AtomicUsize>,
     rx_receiver: Receiver<OrderedPacket>,
     local_heap: Mutex<BinaryHeap<OrderedPacket>>,
     earliest_vtime: Arc<AtomicU64>,
@@ -107,6 +108,7 @@ unsafe extern "C" fn zenoh_netdev_cleanup(nc: *mut NetClientState) {
     let s = &mut *(nc as *mut ZenohNetClient);
     if !s.rust_state.is_null() {
         let state = Box::from_raw(s.rust_state);
+        state.timer_ptr.store(0, AtomicOrdering::Release);
         if !state.rx_timer.is_null() {
             unsafe {
                 virtmcu_timer_del(state.rx_timer);
@@ -292,9 +294,10 @@ fn zenoh_netdev_init_internal(
         session,
         nc,
         node_id,
-        topic: topic.clone(),
+        topic,
         subscriber,
         rx_timer: ptr::null_mut(),
+        timer_ptr: Arc::clone(&timer_ptr),
         rx_receiver: rx,
         local_heap,
         earliest_vtime,

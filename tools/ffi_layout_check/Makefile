@@ -4,7 +4,7 @@ WORKSPACE_ROOT ?= ../..
 QEMU_SRC ?= $(WORKSPACE_ROOT)/third_party/qemu
 QEMU_BUILD ?= $(QEMU_SRC)/build-virtmcu
 
-CFLAGS = -I$(QEMU_SRC)/include -I$(QEMU_SRC) -I$(WORKSPACE_ROOT)
+CFLAGS = -I$(QEMU_SRC)/include -I$(QEMU_SRC) -I$(WORKSPACE_ROOT) -I$(QEMU_BUILD) $(shell pkg-config --cflags glib-2.0)
 
 .PHONY: all clean run-c run-rust
 

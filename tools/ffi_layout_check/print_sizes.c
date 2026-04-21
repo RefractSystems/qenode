@@ -1,29 +1,33 @@
-// ==============================================================================
-// print_sizes.c
-//
-// C template for printing the sizes and alignments of C structures.
-// Used for debugging FFI layout mismatches with Rust.
-// ==============================================================================
-
+#include "chardev/char-fe.h"
+#include "chardev/char.h"
+#include "hw/core/qdev.h"
+#include "hw/core/sysbus.h"
+#include "hw/ssi/ssi.h"
 #include "qemu/osdep.h"
+#include "qom/object.h"
+#include "system/memory.h"
 #include <stddef.h>
 #include <stdio.h>
 
-// Example: Include the header containing the structs you want to check
-// #include "hw/remote-port/remote-port-proto.h"
-// #include "net/can_emu.h"
-
 int main() {
-  printf("Add the structures you want to measure to "
-         "tools/ffi_layout_check/print_sizes.c\n");
-
-  /* Example usage:
-  printf("CanBusClientState size: %zu, align: %zu\n", sizeof(CanBusClientState),
-  _Alignof(CanBusClientState)); printf("CanBusClientInfo size: %zu, align:
-  %zu\n", sizeof(CanBusClientInfo), _Alignof(CanBusClientInfo));
-  printf("qemu_can_frame size: %zu, align: %zu\n", sizeof(qemu_can_frame),
-  _Alignof(qemu_can_frame));
-  */
+  printf("Object size: %zu, align: %zu\n", sizeof(Object), _Alignof(Object));
+  printf("ObjectClass size: %zu, align: %zu\n", sizeof(ObjectClass),
+         _Alignof(ObjectClass));
+  printf("DeviceState size: %zu, align: %zu\n", sizeof(DeviceState),
+         _Alignof(DeviceState));
+  printf("SysBusDevice size: %zu, align: %zu\n", sizeof(SysBusDevice),
+         _Alignof(SysBusDevice));
+  printf("MemoryRegion size: %zu, align: %zu\n", sizeof(MemoryRegion),
+         _Alignof(MemoryRegion));
+  printf("Chardev size: %zu, align: %zu\n", sizeof(Chardev), _Alignof(Chardev));
+  printf("ChardevClass size: %zu, align: %zu\n", sizeof(ChardevClass),
+         _Alignof(ChardevClass));
+  printf("CharFrontend size: %zu, align: %zu\n", sizeof(CharFrontend),
+         _Alignof(CharFrontend));
+  printf("SSIPeripheral size: %zu, align: %zu\n", sizeof(SSIPeripheral),
+         _Alignof(SSIPeripheral));
+  printf("SSIPeripheralClass size: %zu, align: %zu\n",
+         sizeof(SSIPeripheralClass), _Alignof(SSIPeripheralClass));
 
   return 0;
 }

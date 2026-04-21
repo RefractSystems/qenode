@@ -69,7 +69,10 @@ async def main():
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {"name": "flash_firmware", "arguments": {"node_id": node_id, "firmware_path": firmware_path}},
+            "params": {
+                "name": "flash_firmware",
+                "arguments": {"node_id": "stress_node", "firmware_path": str(firmware_path)},
+            },
         }
     )
     await recv_json()

@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use virtmcu_api::can_generated::virtmcu::can::{CanFdFrame, CanFdFrameArgs};
 use virtmcu_qom::declare_device_type;
@@ -18,7 +18,7 @@ use virtmcu_qom::net::{
     can_bus_client_send, can_bus_insert_client, can_bus_remove_client, CanBusClientInfo,
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
-use virtmcu_qom::qom::{type_register_static, ObjectClass, Property, TypeInfo};
+use virtmcu_qom::qom::{type_register_static, Object, ObjectClass, Property, TypeInfo};
 use virtmcu_qom::sync::{virtmcu_bql_lock, virtmcu_bql_unlock};
 use virtmcu_qom::timer::{
     qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
@@ -71,6 +71,7 @@ pub struct State {
     local_heap: Mutex<BinaryHeap<OrderedCanFrame>>,
     earliest_vtime: Arc<AtomicU64>,
     rx_timer: *mut QemuTimer,
+    timer_ptr: Arc<AtomicUsize>,
     client_ptr: *mut CanBusClientState,
 }
 
@@ -199,6 +200,7 @@ unsafe extern "C" fn zenoh_can_host_connect(ch: *mut CanHostState, _errp: *mut *
         local_heap: Mutex::new(BinaryHeap::new()),
         earliest_vtime: std::sync::Arc::clone(&earliest_vtime),
         rx_timer: timer,
+        timer_ptr: std::sync::Arc::clone(&timer_ptr),
         client_ptr: &raw mut (*zch).parent_obj.bus_client,
     });
 
@@ -276,6 +278,7 @@ unsafe extern "C" fn zenoh_can_host_disconnect(ch: *mut CanHostState) {
 
     if !(*zch).rust_state.is_null() {
         let state = Box::from_raw((*zch).rust_state);
+        state.timer_ptr.store(0, AtomicOrdering::Release);
         virtmcu_timer_del(state.rx_timer);
         virtmcu_timer_free(state.rx_timer);
         (*zch).rust_state = ptr::null_mut();
@@ -374,14 +377,41 @@ unsafe extern "C" fn zenoh_can_host_class_init(klass: *mut ObjectClass, _data: *
     object_class_property_add_str(klass, c"topic".as_ptr(), Some(get_topic), Some(set_topic));
 }
 
+unsafe extern "C" fn zenoh_can_host_instance_init(obj: *mut Object) {
+    let zch = obj as *mut ZenohCanHostState;
+    (*zch).node = ptr::null_mut();
+    (*zch).router = ptr::null_mut();
+    (*zch).topic = ptr::null_mut();
+    (*zch).rust_state = ptr::null_mut();
+}
+
+unsafe extern "C" fn zenoh_can_host_instance_finalize(obj: *mut Object) {
+    let zch = obj as *mut ZenohCanHostState;
+    if !(*zch).node.is_null() {
+        g_free((*zch).node as *mut c_void);
+    }
+    if !(*zch).router.is_null() {
+        g_free((*zch).router as *mut c_void);
+    }
+    if !(*zch).topic.is_null() {
+        g_free((*zch).topic as *mut c_void);
+    }
+    if !(*zch).rust_state.is_null() {
+        let state = Box::from_raw((*zch).rust_state);
+        state.timer_ptr.store(0, AtomicOrdering::Release);
+        virtmcu_timer_del(state.rx_timer);
+        virtmcu_timer_free(state.rx_timer);
+    }
+}
+
 static ZENOH_CAN_HOST_TYPE_INFO: TypeInfo = TypeInfo {
     name: TYPE_CAN_HOST_ZENOH,
     parent: c"can-host".as_ptr(),
     instance_size: std::mem::size_of::<ZenohCanHostState>(),
     instance_align: std::mem::align_of::<ZenohCanHostState>(),
-    instance_init: None,
+    instance_init: Some(zenoh_can_host_instance_init),
     instance_post_init: None,
-    instance_finalize: None,
+    instance_finalize: Some(zenoh_can_host_instance_finalize),
     abstract_: false,
     class_size: std::mem::size_of::<CanHostClass>(),
     class_init: Some(zenoh_can_host_class_init),

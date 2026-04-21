@@ -21,6 +21,7 @@ async fn main() {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .mode(0o666)
         .open(&shm_name)
         .expect("failed to open shared memory");

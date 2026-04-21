@@ -84,10 +84,17 @@ FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
 if command -v flatcc >/dev/null 2>&1; then
     echo "==> flatcc already installed in system, skipping local build."
 elif [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
-    echo "==> Fetching and compiling flatcc..."
+    echo "==> Fetching and compiling flatcc (v${FLATCC_VERSION})..."
     mkdir -p "$WORKSPACE_DIR/third_party"
-    git clone https://github.com/dvidelabs/flatcc.git "$FLATCC_DIR"
+    git clone --depth=1 --branch "v${FLATCC_VERSION}" https://github.com/dvidelabs/flatcc.git "$FLATCC_DIR"
     cd "$FLATCC_DIR"
+    # Patch CMakeLists.txt to require CMake 3.5+ for compatibility with modern CMake (4.x)
+    # Modern CMake removes support for very old (2.8) versions.
+    if [ "$(uname)" = "Darwin" ]; then
+        sed -i '' 's/cmake_minimum_required (VERSION 2.8)/cmake_minimum_required (VERSION 3.5)/' CMakeLists.txt
+    else
+        sed -i 's/cmake_minimum_required (VERSION 2.8)/cmake_minimum_required (VERSION 3.5)/' CMakeLists.txt
+    fi
     FLATCC_BUILD_FLAGS="-DFLATCC_TEST=OFF -DFLATCC_CXX_TEST=OFF -Wno-dev" CFLAGS="-fPIC" ./scripts/build.sh
     cd "$WORKSPACE_DIR"
 fi
@@ -95,6 +102,8 @@ fi
 # Symlink our custom hw/ directory into QEMU's hw/virtmcu directory
 # This allows QEMU's Meson build system to compile our custom peripherals
 ln -sfn "$WORKSPACE_DIR/hw" "$QEMU_DIR/hw/virtmcu"
+ln -sfn "$WORKSPACE_DIR/Cargo.toml" "$QEMU_DIR/hw/Cargo.toml"
+ln -sfn "$WORKSPACE_DIR/Cargo.lock" "$QEMU_DIR/hw/Cargo.lock"
 # Inject 'subdir('virtmcu')' into QEMU's hw/meson.build if not already there
 if ! grep -q "subdir('virtmcu')" "$QEMU_DIR/hw/meson.build"; then
     echo "subdir('virtmcu')" >> "$QEMU_DIR/hw/meson.build"
@@ -114,9 +123,19 @@ CONFIGURE_ARGS=(
     --enable-fdt
     --enable-debug
     --enable-gcov
-    "--target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user"
+    "--target-list=arm-softmmu,riscv32-softmmu,riscv64-softmmu"
     --prefix="$(pwd)/install"
 )
+
+if [ "$VIRTMCU_USE_CCACHE" = "1" ]; then
+    if command -v ccache >/dev/null 2>&1; then
+        echo "ccache enabled: adding --enable-ccache to QEMU build"
+        CONFIGURE_ARGS+=(--enable-ccache)
+        export CCACHE_SLOPPINESS=time_macros,include_file_mtime
+    else
+        echo "WARNING: VIRTMCU_USE_CCACHE=1 but 'ccache' command not found. Ignoring."
+    fi
+fi
 
 if [ "$VIRTMCU_USE_ASAN" = "1" ]; then
     echo "ASAN/UBSAN enabled: adding --enable-asan --enable-ubsan to QEMU build"
@@ -128,15 +147,16 @@ fi
 
 if [ "$(uname)" = "Darwin" ]; then
     echo "macOS detected: disabling --enable-plugins to avoid GLib module conflicts"
-    ../configure "${CONFIGURE_ARGS[@]}"
 else
+    CONFIGURE_ARGS+=(--enable-plugins)
     # Check if lld is available
     if command -v lld >/dev/null 2>&1; then
         echo "lld detected: enabling fast linking"
         CONFIGURE_ARGS+=(--extra-ldflags="-fuse-ld=lld")
     fi
-    ../configure --enable-plugins "${CONFIGURE_ARGS[@]}"
 fi
+
+../configure "${CONFIGURE_ARGS[@]}"
 
 # Compile QEMU using all available CPU cores
 make -j"$(nproc)"

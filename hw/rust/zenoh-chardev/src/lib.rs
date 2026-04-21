@@ -72,6 +72,7 @@ pub struct ZenohChardevState {
     topic: String,
     subscriber: Option<Subscriber<()>>,
     rx_timer: *mut QemuTimer,
+    timer_ptr: Arc<AtomicUsize>,
     rx_receiver: Receiver<OrderedPacket>,
     local_heap: Mutex<BinaryHeap<OrderedPacket>>,
     earliest_vtime: Arc<AtomicU64>,
@@ -191,6 +192,7 @@ unsafe extern "C" fn zenoh_chr_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ChardevZenoh);
     if !s.rust_state.is_null() {
         let state = Box::from_raw(s.rust_state);
+        state.timer_ptr.store(0, AtomicOrdering::Release);
         if !state.rx_timer.is_null() {
             virtmcu_timer_del(state.rx_timer);
             virtmcu_timer_free(state.rx_timer);
@@ -230,7 +232,7 @@ declare_device_type!(char_zenoh_type_init, CHAR_ZENOH_TYPE_INFO);
 
 /// Maximum number of packets held in the local delivery heap.
 /// Exceeding this causes the oldest-by-insertion to be dropped (logged).
-const MAX_HEAP_PACKETS: usize = 65_536;
+const MAX_HEAP_PACKETS: usize = 1_000_000;
 
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*(opaque as *mut ZenohChardevState) };
@@ -241,7 +243,10 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     // Drain MPSC channel into the priority queue (bounded by MAX_HEAP_PACKETS).
     while let Ok(packet) = state.rx_receiver.try_recv() {
         if heap.len() >= MAX_HEAP_PACKETS {
-            state.rx_overflow.fetch_add(1, AtomicOrdering::Relaxed);
+            let dropped = state.rx_overflow.fetch_add(1, AtomicOrdering::Relaxed);
+            if dropped % 1000 == 0 {
+                vlog!("[zenoh-chardev] RX heap overflow! dropped={} packets\n", dropped + 1);
+            }
             break;
         }
         heap.push(packet);
@@ -377,6 +382,7 @@ fn zenoh_chardev_init_internal(
         topic,
         subscriber,
         rx_timer: ptr::null_mut(),
+        timer_ptr: Arc::clone(&timer_ptr),
         rx_receiver: rx,
         local_heap,
         earliest_vtime,

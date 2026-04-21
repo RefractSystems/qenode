@@ -25,7 +25,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # ── 2. cyber-node (QEMU + hw/zenoh) ───────────────────────────────────────
+  # ── 2. cyber-node (QEMU + hw/rust) ───────────────────────────────────────
   cyber-node:
     build:
       context: ..

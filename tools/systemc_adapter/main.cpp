@@ -144,7 +144,7 @@ SC_MODULE(QemuAdapter) {
         if (!found)
           break;
 
-        sc_time target_time = sc_time(req.vtime_ns, SC_NS);
+        sc_time target_time = sc_time(static_cast<double>(req.vtime_ns), SC_NS);
         if (target_time > sc_time_stamp()) {
           wait(target_time - sc_time_stamp());
         } else if (target_time < sc_time_stamp()) {
@@ -208,8 +208,8 @@ SC_MODULE(QemuAdapter) {
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
     unlink(socket_path.c_str());
-    if (bind(server_fd, reinterpret_cast<struct sockaddr *>(&addr),
-             sizeof(addr)) < 0) {
+    if (::bind(server_fd, reinterpret_cast<struct sockaddr *>(&addr),
+               sizeof(addr)) < 0) {
       close(server_fd);
       return;
     }
@@ -454,7 +454,8 @@ public:
           rx_queue.pop();
         }
 
-        sc_time delivery_time = sc_time(internal.delivery_vtime_ns, SC_NS);
+        sc_time delivery_time =
+            sc_time(static_cast<double>(internal.delivery_vtime_ns), SC_NS);
         if (delivery_time > sc_time_stamp()) {
           wait(delivery_time - sc_time_stamp());
         } else if (delivery_time < sc_time_stamp()) {

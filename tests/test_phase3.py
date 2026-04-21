@@ -15,7 +15,11 @@ async def test_phase3_repl2qemu(qemu_launcher):
     out_dtb = Path(workspace_root) / "test/phase3/test_board_out.dtb"
     kernel = Path(workspace_root) / "test/phase1/hello.elf"
 
-    # 1. Run parser
+    # 1. Build kernel if missing
+    if not Path(kernel).exists():
+        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+
+    # 2. Run parser
     subprocess.run(
         ["python3", "-m", "tools.repl2qemu", repl_file, "--out-dtb", out_dtb], check=True, cwd=workspace_root
     )

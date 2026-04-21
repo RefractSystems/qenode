@@ -18,7 +18,8 @@ use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::Bql;
 use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
+    qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
+    virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
 };
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties,
@@ -334,13 +335,22 @@ unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 unsafe extern "C" fn lpuart_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut S32K144LpuartQemu);
     if !s.rust_state.is_null() {
-        let _ = Box::from_raw(s.rust_state);
+        let state = Box::from_raw(s.rust_state);
+        if !state.rx_timer.is_null() {
+            unsafe {
+                virtmcu_timer_del(state.rx_timer);
+                virtmcu_timer_free(state.rx_timer);
+            }
+        }
         s.rust_state = ptr::null_mut();
     }
 }
 
 unsafe extern "C" fn lpuart_instance_init(obj: *mut Object) {
     let s = &mut *(obj as *mut S32K144LpuartQemu);
+    s.rust_state = ptr::null_mut();
+    s.router = ptr::null_mut();
+    s.topic = ptr::null_mut();
 
     memory_region_init_io(
         &raw mut s.iomem,

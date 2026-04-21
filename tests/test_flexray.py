@@ -9,7 +9,7 @@ from conftest import TimeAuthority
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
 
-def build_flexray_artifacts():
+def build_flexray_artifacts(router_endpoint="tcp/127.0.0.1:7447"):
     phase27_dir = Path(WORKSPACE_DIR) / "test/phase27"
     import subprocess
 
@@ -86,11 +86,20 @@ loop:
 
     subprocess.run(["make", "-C", tmpdir, "clean", "all"], check=True)
     dtb_path = str(Path(tmpdir) / "platform.dtb")
+    yaml_path = Path(tmpdir) / "platform.yaml"
+
+    # Update router in YAML
+    with yaml_path.open("r") as yaml_file:
+        content = yaml_file.read()
+    content = content.replace("tcp/127.0.0.1:7447", router_endpoint)
+    with yaml_path.open("w") as yaml_file:
+        yaml_file.write(content)
+
     # Always regenerate DTB for safety
     env = os.environ.copy()
     env["PYTHONPATH"] = str(WORKSPACE_DIR)
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", str(Path(tmpdir) / "platform.yaml"), "--out-dtb", dtb_path],
+        ["python3", "-m", "tools.yaml2qemu", str(yaml_path), "--out-dtb", dtb_path],
         check=True,
         env=env,
     )
@@ -103,7 +112,7 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     """
     Phase 27: Verify FlexRay data transmission over Zenoh.
     """
-    phase27_dir = build_flexray_artifacts()
+    phase27_dir = build_flexray_artifacts(router_endpoint=zenoh_router)
     dtb_path = Path(phase27_dir) / "platform.dtb"
     kernel_path = Path(phase27_dir) / "firmware.elf"
 
@@ -118,11 +127,12 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         "shift=0,align=off,sleep=off",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
-        "-device",
-        f"zenoh-flexray,node=0,router={zenoh_router},topic={topic}",
+        "-global",
+        f"zenoh-flexray.topic={topic}",
     ]
 
     await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+
     ta = TimeAuthority(zenoh_session, node_id=0)
 
     # Subscribe to FlexRay TX topic
@@ -138,7 +148,8 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     # Wait for discovery (crucial for parallel runs)
     await asyncio.sleep(3.0)
 
-    # Initial sync
+    # Initial sync (Wait for discovery)
+    await asyncio.sleep(2.0)
     await ta.step(0)
 
     # Advance time to trigger first cycle (5ms)
@@ -177,7 +188,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     """
     Phase 27: Verify FlexRay data reception over Zenoh.
     """
-    phase27_dir = build_flexray_artifacts()
+    phase27_dir = build_flexray_artifacts(router_endpoint=zenoh_router)
     dtb_path = Path(phase27_dir) / "platform.dtb"
     kernel_path = Path(phase27_dir) / "firmware.elf"
 
@@ -192,14 +203,15 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
         "shift=0,align=off,sleep=off",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
-        "-device",
-        f"zenoh-flexray,node=0,router={zenoh_router},topic={topic}",
+        "-global",
+        f"zenoh-flexray.topic={topic}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
     ta = TimeAuthority(zenoh_session, node_id=0)
 
-    # Initial sync
+    # Initial sync (Wait for discovery)
+    await asyncio.sleep(2.0)
     await ta.step(0)
 
     # Prepare Zenoh frame to send
@@ -257,7 +269,7 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     Phase 27: Verify FlexRay controller under heavy load to prevent deadlocks
     or BQL starvation.
     """
-    phase27_dir = build_flexray_artifacts()
+    phase27_dir = build_flexray_artifacts(router_endpoint=zenoh_router)
     dtb_path = Path(phase27_dir) / "platform.dtb"
     kernel_path = Path(phase27_dir) / "firmware.elf"
 
@@ -272,15 +284,17 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         "shift=0,align=off,sleep=off",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
-        "-device",
-        f"zenoh-flexray,node=0,router={zenoh_router},topic={topic}",
+        "-global",
+        f"zenoh-flexray.topic={topic}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
     ta = TimeAuthority(zenoh_session, node_id=0)
 
-    # Initial sync
+    # Initial sync (Wait for discovery)
+    await asyncio.sleep(2.0)
     await ta.step(0)
+
 
     import sys
 

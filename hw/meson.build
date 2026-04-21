@@ -49,6 +49,11 @@ rust_modules = [
         'obj': 'mmio-socket-bridge',
     },
     {
+        'pkg': 'remote-port',
+        'lib': 'libremote_port.a',
+        'obj': 'remote-port-bridge',
+    },
+    {
         'pkg': 'zenoh-flexray',
         'lib': 'libzenoh_flexray.a',
         'obj': 'zenoh-flexray',
@@ -96,7 +101,10 @@ message(
 )
 rust_libs = custom_target(
     'rust_virtmcu_libs',
-    input: rust_sources + [files('rust/Cargo.lock', 'rust/Cargo.toml')],
+    input: rust_sources + [
+        meson.current_source_dir() / '../Cargo.lock',
+        meson.current_source_dir() / '../Cargo.toml',
+    ],
     output: rust_libs_outputs,
     build_by_default: true,
     env: {
@@ -148,13 +156,11 @@ foreach m : rust_modules
     hw_virtmcu_modules += {m['pkg']: ss_name}
 endforeach
 
-# ── remote-port-bridge ────────────────────────────────────────────────────────
-remote_port_ss = ss.source_set()
-remote_port_ss.add(
-    files('remote-port/remote-port-bridge.c', 'remote-port/remote-port-proto.c'),
-)
-message('Registering C module: remote-port-bridge')
-hw_virtmcu_modules += {'remote-port-bridge': remote_port_ss}
+
+# Educational C dummy module (must be added before we update modules dict)
+ss_educational_dummy = ss.source_set()
+ss_educational_dummy.add(files('misc/educational-dummy.c'))
+hw_virtmcu_modules += {'educational-dummy': ss_educational_dummy}
 
 message('Adding hw-virtmcu group to modules dictionary')
 modules += {'hw-virtmcu': hw_virtmcu_modules}

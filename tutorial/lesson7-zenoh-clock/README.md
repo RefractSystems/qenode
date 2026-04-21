@@ -1,6 +1,6 @@
 # Lesson 7 — Zenoh Clock: Deterministic Co-simulation Time Synchronization
 
-This lesson explains the `zenoh-clock` QOM device (`hw/zenoh/zenoh-clock.c`), which
+This lesson explains the `zenoh-clock` QOM device (`hw/rust/zenoh-clock`), which
 makes QEMU run as a **time slave** to an external physics simulation (MuJoCo/FirmwareStudio).
 
 ---
@@ -26,7 +26,7 @@ loop.  It links `zenoh-c` directly into QEMU and hooks into the TCG execution lo
 TimeAuthority (Python, MuJoCo container)
       │  Zenoh: sim/clock/advance/0  (query with delta_ns payload)
       ▼
-hw/zenoh/zenoh-clock.c  ──  on_query()
+hw/rust/zenoh-clock  ──  on_query()
       │  wakes vCPU, waits for quantum completion
       ▼
 zclock_quantum_hook()  (called at every TCG translation-block boundary)

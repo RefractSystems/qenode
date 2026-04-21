@@ -32,12 +32,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+    && rustup toolchain install nightly --profile minimal --component miri \
     && rustup component add rustfmt clippy rust-analyzer \
-    && cargo binstall -y --install-path /usr/local/bin bindgen-cli@${BINDGEN_VERSION} \
-    && cargo binstall -y --install-path /usr/local/bin cargo-audit \
-    && cargo binstall -y --install-path /usr/local/bin cargo-deny \
-    && cargo binstall -y --install-path /usr/local/bin cargo-machete \
-    && rm -rf /var/lib/apt/lists/*
+    && cargo binstall -y bindgen-cli@${BINDGEN_VERSION} \
+    && cargo binstall -y cargo-audit \
+    && cargo binstall -y cargo-deny \
+    && cargo binstall -y cargo-machete \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/rustup/toolchains/*1.93.0*
 
 # ── Stage 1: base ─────────────────────────────────────────────────────────────
 ARG DEBIAN_CODENAME
@@ -113,8 +115,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential meson ninja-build python3 python3-venv pkg-config \
     libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
-    libslirp-dev libclang-dev libstdc++6 b4 gdb gdb-multiarch strace \
-    lcov gcovr patchelf clang-format ccache \
+    libslirp-dev libclang-dev libssl-dev libstdc++6 b4 gdb gdb-multiarch strace \
+    lcov gcovr patchelf clang-format clang ccache \
     gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     lld cppcheck codespell \
     && rm -rf /var/lib/apt/lists/*
@@ -167,6 +169,7 @@ WORKDIR /build/flatcc
 RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs/flatcc.git . \
     && cmake -B build -G Ninja -Wno-dev \
        -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DFLATCC_TEST=OFF \
        -DFLATCC_CXX_TEST=OFF \
        -DFLATCC_INSTALL=ON \
@@ -183,10 +186,10 @@ COPY --from=flatcc-builder /usr/local/include/flatcc /usr/local/include/flatcc
 COPY --from=flatcc-builder /usr/local/lib/libflatcc* /usr/local/lib/
 
 ARG ZENOH_C_REF
-COPY --from=rust-builder /usr/local/bin/bindgen /usr/local/bin/bindgen
-COPY --from=rust-builder /usr/local/bin/cargo-audit /usr/local/bin/cargo-audit
-COPY --from=rust-builder /usr/local/bin/cargo-deny /usr/local/bin/cargo-deny
-COPY --from=rust-builder /usr/local/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
 RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
@@ -227,19 +230,28 @@ RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu
 
 # Pre-configure with a dummy virtmcu directory to cache the core build.
 # This ensures that changing files in hw/ only triggers a module rebuild.
-RUN mkdir -p hw/virtmcu \
-    && echo "hw_virtmcu_modules = {}" > hw/virtmcu/meson.build \
-    && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> hw/virtmcu/meson.build \
-    && grep -q "subdir('virtmcu')" hw/meson.build || echo "subdir('virtmcu')" >> hw/meson.build
+RUN mkdir -p qemu/hw/virtmcu \
+    && echo "hw_virtmcu_modules = {}" > qemu/hw/virtmcu/meson.build \
+    && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build \
+    && grep -q "subdir('virtmcu')" qemu/hw/meson.build || echo "subdir('virtmcu')" >> qemu/hw/meson.build
 
-ENV CCACHE_DIR=/var/cache/ccache
+# Opt-in ccache support for local builds
+ARG USE_CCACHE=false
+ENV CCACHE_DIR=/var/cache/ccache \
+    CCACHE_MAXSIZE=2G \
+    CCACHE_SLOPPINESS=time_macros,include_file_mtime
+
 WORKDIR /build/qemu/build-virtmcu
-RUN ../configure \
+RUN if [ "${USE_CCACHE}" = "true" ]; then CCACHE_FLAG="--enable-ccache"; else CCACHE_FLAG=""; fi && \
+    ../configure \
     --prefix=/opt/virtmcu \
     --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+    ${CCACHE_FLAG} \
+    --enable-rust \
     --enable-modules \
     --enable-fdt \
     --enable-plugins \
+    --enable-debug \
     --enable-gcov \
     --disable-werror \
     --disable-docs \
@@ -249,17 +261,22 @@ RUN --mount=type=cache,target=/var/cache/ccache make -j"$(nproc)"
 # ── Stage 6: builder ──────────────────────────────────────────────────────────
 FROM qemu-builder AS builder
 
-COPY hw/ /build/virtmcu-hw/
-RUN rm -rf /build/qemu/hw/virtmcu && ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
+COPY Cargo.toml Cargo.lock /build/virtmcu/
+COPY hw/ /build/virtmcu/hw/
+COPY tools/ /build/virtmcu/tools/
+RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build || echo "subdir('virtmcu')" >> /build/qemu/hw/meson.build \
-    && touch /build/qemu/meson.build
+    && touch /build/qemu/meson.build \
+    && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
 
 WORKDIR /build/qemu/build-virtmcu
+ARG VIRTMCU_USE_ASAN=0
 # hadolint ignore=SC2016
 RUN --mount=type=cache,target=/var/cache/ccache \
-    --mount=type=cache,target=/build/qemu/build-virtmcu/hw/rust/target \
+    --mount=type=cache,target=/build/qemu/build-virtmcu/hw/virtmcu/target-v2 \
     --mount=type=cache,target=/usr/local/cargo/registry \
-    make -j"$(nproc)" \
+    VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
     && make install \
     && mkdir -p /opt/virtmcu/lib/qemu/plugins \
     && find /opt/virtmcu/lib -name "hw-virtmcu-*.so" -exec mv {} /opt/virtmcu/lib/qemu/ \; \
@@ -267,6 +284,7 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
     && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} + \
+    && find /build/qemu/build-virtmcu -maxdepth 1 -name "qemu-system-*" -type f -delete \
     && ls -l /opt/virtmcu/lib/qemu/hw-virtmcu-rust-dummy.so
 
 ENV PATH="/opt/virtmcu/bin:${PATH}"
@@ -303,10 +321,10 @@ RUN case "${TARGETARCH}" in \
     && tar -xJ -f "/tmp/${_FULLFILE}" -C /usr/local --strip-components=1 \
     && rm "/tmp/${_FULLFILE}" /tmp/shasum
 
-COPY --from=rust-builder /usr/local/bin/bindgen /usr/local/bin/bindgen
-COPY --from=rust-builder /usr/local/bin/cargo-audit /usr/local/bin/cargo-audit
-COPY --from=rust-builder /usr/local/bin/cargo-deny /usr/local/bin/cargo-deny
-COPY --from=rust-builder /usr/local/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
 
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo

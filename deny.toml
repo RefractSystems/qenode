@@ -93,6 +93,7 @@ allow = []
 allow-workspace = false
 deny = []
 skip = [
+    { name = "strsim" },
     { name = "foldhash" },
     { name = "getrandom" },
     { name = "hashbrown" },

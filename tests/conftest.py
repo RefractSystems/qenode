@@ -2,7 +2,9 @@ import asyncio
 import logging
 import os
 import shutil
+import socket
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -22,12 +24,12 @@ class TimeAuthority:
     Helper to drive QEMU virtual clock via Zenoh.
     """
 
-    def __init__(self, session, node_id=0):
+    def __init__(self, session: zenoh.Session, node_id: int = 0):
         self.session = session
         self.topic = f"sim/clock/advance/{node_id}"
         self.current_vtime_ns = 0
 
-    async def step(self, delta_ns, timeout=10.0, delay=0):
+    async def step(self, delta_ns: int, timeout: float = 60.0, delay: float = 0, retries: int = 50) -> int:
         target_vtime = self.current_vtime_ns + delta_ns
         req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
         logger.info(f"TimeAuthority: stepping {delta_ns}ns (target={target_vtime}) on {self.topic}")
@@ -35,16 +37,35 @@ class TimeAuthority:
         if delay > 0:
             await asyncio.sleep(delay)
 
-        # zenoh-python get() is blocking, but we want async.
-        replies = await asyncio.to_thread(
-            lambda: list(self.session.get(self.topic, payload=req.pack(), timeout=timeout))
-        )
+        # We retry because discovery can take time in parallel CI runs.
+        # Use an async iterator to avoid blocking for the full timeout.
+        reply = None
 
-        if not replies:
-            logger.error(f"TimeAuthority: NO REPLIES from {self.topic}")
+        def _get_first_reply():
+            # In Zenoh 1.0, get() returns an iterable.
+            # We want to break as soon as we get ONE valid reply.
+            try:
+                for r in self.session.get(self.topic, payload=req.pack(), timeout=timeout):
+                    return r
+            except Exception as e:
+                logger.warning(f"TimeAuthority: Zenoh get error: {e}")
+            return None
+
+        for i in range(retries):
+            reply = await asyncio.to_thread(_get_first_reply)
+            if reply:
+                break
+            if i < retries - 1:
+                wait_time = min(2.0, 0.5 * (i + 1))  # Cap wait at 2 seconds
+                logger.warning(
+                    f"TimeAuthority: no reply from {self.topic}, retrying in {wait_time}s... ({i + 1}/{retries})"
+                )
+                await asyncio.sleep(wait_time)
+
+        if not reply:
+            logger.error(f"TimeAuthority: NO REPLIES from {self.topic} after {retries} attempts")
             raise TimeoutError(f"TimeAuthority: no reply from {self.topic}")
 
-        reply = replies[0]
         if reply.ok:
             resp = ClockReadyResp.unpack(reply.ok.payload.to_bytes())
             logger.info(
@@ -57,28 +78,14 @@ class TimeAuthority:
 
             # Update current vtime with actual time reached by QEMU
             self.current_vtime_ns = resp.current_vtime_ns
-            return self.current_vtime_ns
-        logger.error(f"TimeAuthority: ERROR REPLY from {self.topic}: {reply.err}")
-        raise RuntimeError(f"TimeAuthority: error reply: {reply.err}")
+            return int(self.current_vtime_ns)
 
-    async def step_vtime(self, delta_ns, timeout=10.0, delay=0):
+        logger.error(f"TimeAuthority: ERROR REPLY from {self.topic}")
+        raise RuntimeError(f"TimeAuthority: error reply from {self.topic}")
+
+    async def step_vtime(self, delta_ns: int, timeout: float = 60.0, delay: float = 0) -> int:
         """Same as step but returns the vtime returned by QEMU."""
         return await self.step(delta_ns, timeout, delay)
-
-
-@pytest_asyncio.fixture
-async def zenoh_session(zenoh_router):
-    config = zenoh.Config()
-    config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
-    config.insert_json5("scouting/multicast/enabled", "false")
-    session = await asyncio.to_thread(lambda: zenoh.open(config))
-    yield session
-    await asyncio.to_thread(session.close)
-
-
-@pytest_asyncio.fixture
-async def time_authority(zenoh_session):
-    return TimeAuthority(zenoh_session)
 
 
 @pytest_asyncio.fixture
@@ -87,7 +94,6 @@ async def zenoh_router(worker_id):  # noqa: ARG001
     Fixture that starts a persistent Zenoh router for the duration of the test.
     Supports pytest-xdist parallelization by dynamically binding to a free port.
     """
-    import socket
 
     tests_dir = Path(Path(__file__).resolve().parent)
     router_script = Path(tests_dir) / "zenoh_router_persistent.py"
@@ -106,8 +112,20 @@ async def zenoh_router(worker_id):  # noqa: ARG001
     # We MUST NOT run global cleanup like 'make clean-sim' here as it would kill other parallel tests!
 
     proc = await asyncio.create_subprocess_exec(
-        "python3", "-u", router_script, endpoint, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        sys.executable, "-u", str(router_script), endpoint, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
+
+    async def _stream_router_output(stream, name):
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            logger.info(f"Zenoh Router {name}: {line.decode().strip()}")
+
+    _router_tasks = [
+        asyncio.create_task(_stream_router_output(proc.stdout, "STDOUT")),
+        asyncio.create_task(_stream_router_output(proc.stderr, "STDERR"))
+    ]
 
     # Wait for router to be ready
     await asyncio.sleep(1.0)
@@ -124,6 +142,36 @@ async def zenoh_router(worker_id):  # noqa: ARG001
 
 
 @pytest_asyncio.fixture
+async def zenoh_session(zenoh_router):
+    config = zenoh.Config()
+    config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
+    config.insert_json5("scouting/multicast/enabled", "false")
+    config.insert_json5("mode", '"client"')
+    session = await asyncio.to_thread(lambda: zenoh.open(config))
+
+    # Wait for session to connect to the router (either as a router or a peer)
+    connected = False
+    for _ in range(100):
+        info = session.info
+        if list(info.routers_zid()) or list(info.peers_zid()):
+            connected = True
+            break
+        await asyncio.sleep(0.1)
+
+    if not connected:
+        await asyncio.to_thread(session.close)
+        raise RuntimeError(f"Failed to connect Zenoh session to {zenoh_router}")
+
+    yield session
+    await asyncio.to_thread(session.close)
+
+
+@pytest_asyncio.fixture
+async def time_authority(zenoh_session):
+    return TimeAuthority(zenoh_session)
+
+
+@pytest_asyncio.fixture
 async def zenoh_coordinator(zenoh_router):
     """
     Fixture that starts the zenoh_coordinator.
@@ -132,28 +180,46 @@ async def zenoh_coordinator(zenoh_router):
     while str(curr) != "/" and not (curr / "tools").exists():
         curr = Path(curr).parent
     workspace_root = curr
-    coord_bin = Path(workspace_root) / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
 
-    if not Path(coord_bin).exists():
-        # Fallback to debug if release doesn't exist
-        coord_bin = Path(workspace_root) / "tools/zenoh_coordinator/target/debug/zenoh_coordinator"
+    # Try standard Cargo target directory at workspace root
+    coord_bin = workspace_root / "target/release/zenoh_coordinator"
 
-    if not Path(coord_bin).exists():
-        # Try to build it
-        logger.info("Building zenoh_coordinator...")
-        proc = await asyncio.create_subprocess_exec(
-            "cargo", "build", "--release", cwd=(Path(workspace_root) / "tools/zenoh_coordinator")
-        )
-        await proc.wait()
-        coord_bin = Path(workspace_root) / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
+    # Also check the tool-local target dir
+    if not coord_bin.exists():
+        coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
+
+    # Use a lock to build once in parallel runs
+    if not coord_bin.exists():
+        lock_file = workspace_root / "tools/zenoh_coordinator/build.lock"
+        import fcntl
+        with lock_file.open("w") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if not coord_bin.exists():
+                    logger.info("Building zenoh_coordinator...")
+                    proc = await asyncio.create_subprocess_exec(
+                        "cargo", "build", "--release", cwd=(workspace_root / "tools/zenoh_coordinator")
+                    )
+                    await proc.wait()
+            except BlockingIOError:
+                logger.info("Waiting for zenoh_coordinator build...")
+                for _ in range(60):
+                    if coord_bin.exists():
+                        break
+                    await asyncio.sleep(1.0)
+
+        # Refresh location after build
+        coord_bin = workspace_root / "target/release/zenoh_coordinator"
+        if not coord_bin.exists():
+            coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
 
     logger.info(f"Starting Zenoh Coordinator connecting to {zenoh_router}...")
 
-    cmd = [coord_bin, "--connect", zenoh_router]
+    cmd = [str(coord_bin), "--connect", zenoh_router]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        stdout=None,  # Inherit from parent (pytest -s will show it)
+        stdout=None,
         stderr=None,
         env=os.environ.copy(),
     )
@@ -186,7 +252,6 @@ async def qemu_launcher():
         uart_sock = Path(tmpdir) / "uart.sock"
 
         # Build the command using run.sh
-        # We use absolute paths to ensure it works from any directory
         curr = Path(Path(__file__).resolve().parent)
         while str(curr) != "/" and not (curr / "scripts").exists():
             curr = Path(curr).parent
@@ -198,7 +263,6 @@ async def qemu_launcher():
             cmd.extend(["--kernel", str(Path(kernel_path).resolve())])
 
         # Add QMP and UART sockets
-        # Note: we use 'server,nowait' because QEMU should start and wait for us
         cmd.extend(
             [
                 "-qmp",
@@ -239,12 +303,24 @@ async def qemu_launcher():
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=os.environ.copy()
         )
 
+        async def _stream_output(stream, name):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                logger.info(f"QEMU {name}: {line.decode().strip()}")
+
+        # Task 4.2d: Stream QEMU output in background for better debuggability.
+        # We store task references to prevent them from being garbage collected.
+        output_tasks = [
+            asyncio.create_task(_stream_output(proc.stdout, "STDOUT")),
+            asyncio.create_task(_stream_output(proc.stderr, "STDERR")),
+        ]
+
         # Wait for sockets to be created by QEMU.
-        # Poll every 100 ms (up to 10 s). Also check for premature exit.
         retries = 100
         while retries > 0:
             if proc.returncode is not None:
-                # QEMU exited before sockets appeared — capture output and fail fast.
                 stdout, stderr = await proc.communicate()
                 raise RuntimeError(
                     f"QEMU exited unexpectedly (rc={proc.returncode}) before sockets appeared.\n"
@@ -255,16 +331,23 @@ async def qemu_launcher():
             await asyncio.sleep(0.1)
             retries -= 1
         else:
-            # 10 s elapsed — kill the process and drain its output.
             proc.terminate()
             stdout, stderr = await proc.communicate()
             logger.error(f"QEMU failed to start. STDOUT: {stdout.decode()} STDERR: {stderr.decode()}")
             raise TimeoutError("QEMU QMP/UART sockets did not appear in time")
 
         bridge = QmpBridge()
-        await bridge.connect(str(qmp_sock), None if has_serial else str(uart_sock))
+        try:
+            await bridge.connect(str(qmp_sock), None if has_serial else str(uart_sock))
+        except Exception as e:
+            stdout, stderr = await proc.communicate()
+            logger.error(
+                f"QEMU failed to establish connection. rc={proc.returncode}\n"
+                f"STDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            )
+            raise e
 
-        instance = {"proc": proc, "bridge": bridge, "tmpdir": tmpdir}
+        instance = {"proc": proc, "bridge": bridge, "tmpdir": tmpdir, "cmd": cmd, "output_tasks": output_tasks}
         instances.append(instance)
         return bridge
 
@@ -286,26 +369,25 @@ async def qemu_launcher():
                 proc.kill()
                 await proc.wait()
 
+        # Always capture and print output if the test failed
+        stdout, stderr = await proc.communicate()
+        if stdout or stderr:
+            print(f"\n--- QEMU Output for {' '.join(inst['cmd'])} ---")
+            if stdout:
+                print(f"STDOUT:\n{stdout.decode()}")
+            if stderr:
+                print(f"STDERR:\n{stderr.decode()}")
+            print("------------------------------------------")
+
         shutil.rmtree(inst["tmpdir"], ignore_errors=True)
 
 
 @pytest_asyncio.fixture
 async def qmp_bridge(qemu_launcher):
-    """
-    A convenience fixture that launches a default QEMU instance with
-    the phase1 minimal DTB and hello.elf firmware.
-
-    Uses -S to start paused, connects, and then resumes to ensure
-    that early firmware output is captured.
-    """
     dtb = "test/phase1/minimal.dtb"
     kernel = "test/phase1/hello.elf"
-
-    # Ensure DTB exists
     if not Path(dtb).exists():
-        # Try to build it if missing
         subprocess.run(["make", "-C", "test/phase1", "minimal.dtb"], check=True)
-
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
     return bridge

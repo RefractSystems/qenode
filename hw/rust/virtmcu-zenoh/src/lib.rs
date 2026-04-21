@@ -45,16 +45,17 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         // We check for any active connections to routers/peers.
         // We wait a bit for the connection to be established.
         let mut connected = false;
-        for i in 0..40 {
-            // Increased from 10 to 40 (2 seconds)
+        let max_attempts = 100; // 10 seconds total
+        for i in 0..max_attempts {
             let info = session.info();
             let routers: Vec<_> = info.routers_zid().wait().collect();
             let peers: Vec<_> = info.peers_zid().wait().collect();
 
             if !routers.is_empty() || !peers.is_empty() {
                 virtmcu_qom::vlog!(
-                    "[virtmcu-zenoh] Connected after {} attempts. Routers={:?}, Peers={:?}",
+                    "[virtmcu-zenoh] Connected after {} attempts ({} ms). Routers={:?}, Peers={:?}\n",
                     i,
+                    i * 100,
                     routers,
                     peers
                 );
@@ -66,7 +67,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
         if !connected {
             virtmcu_qom::vlog!(
-                "[virtmcu-zenoh] Failed to connect to explicit router after 2 seconds."
+                "[virtmcu-zenoh] FATAL: Failed to connect to explicit router after 10 seconds.\n"
             );
             let _ = session.close().wait();
             return Err(zenoh::Error::from("Failed to connect to explicit router".to_string()));

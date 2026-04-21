@@ -90,6 +90,20 @@ graph TD
 
 Instead of just populating a local GHA layer cache, it builds the final `builder` Docker target and **pushes it directly to GHCR** as an intermediate image (`virtmcu-builder:sha-<hash>-<arch>`). This acts as an ultra-fast binary cache for the rest of the pipeline.
 
+### Dual-Layer Caching Strategy
+
+To overcome the 10 GB GitHub Actions cache limit, we use a bifurcated caching model:
+
+1.  **Registry Cache (GHCR):** The `main` branch exports a full `mode=max` cache to `ghcr.io/refractsystems/virtmcu/build-cache`. This stores every intermediate C/C++ compilation layer (including the heavy 40-minute QEMU core build). PRs pull from this cache but never overwrite it.
+2.  **Local GHA Cache:** PRs write a lightweight `mode=min` cache to GitHub Actions. This ensures that subsequent commits on a PR are fast, without consuming the 10 GB repository quota with redundant QEMU compilation trees.
+
+**Monitoring Cache Usage:**
+- **UI:** Go to **Actions > Management > Caches** in the GitHub repository to see the current 10 GB quota usage.
+- **CLI:** Use the GitHub CLI to list and manage caches:
+  ```bash
+  gh cache list --limit 100
+  ```
+
 ### Tier 3: Integration Smoke Tests (`smoke-tests`)
 **Purpose:** End-to-end testing across all architectures.
 **Optimization:** A massive matrix fans out across 20 test phases (Phase 1-27, QMP, Robot) × 2 architectures (40 parallel runners). Each runner instantly `docker pull`s the intermediate `builder` image pushed in Tier 2, completely bypassing redundant Docker layer resolution or compilation.
@@ -149,12 +163,12 @@ make ci-full
 | Ruff | `uv run ruff check tools/ tests/ patches/` | `make fmt` |
 | ShellCheck | `shellcheck scripts/*.sh` | Review code, e.g., quote variables |
 | Hadolint | `hadolint docker/Dockerfile` | Add `# hadolint ignore=SCxxxx` if strictly necessary |
-| Rust Lint | `cargo clippy` in `hw/rust` | `make lint` or `cargo clippy` |
+| Rust Lint | `cargo clippy` at project root | `make lint` or `cargo clippy` |
 | Meson Lint | `meson fmt hw/meson.build` | `make fmt` |
 | Action Lint | `actionlint` | Review GitHub Actions workflow syntax |
 | Yaml Lint | `yamllint` | `make fmt` (or fix YAML trailing spaces/indent) |
 | Python Types | `mypy tools/ tests/` | Add missing types or `# type: ignore` |
-| Cargo Audit | `cargo audit` in `hw/rust` | Upgrade vulnerable crate or allow |
+| Cargo Audit | `cargo audit` at project root | Upgrade vulnerable crate or allow |
 | C Format | `clang-format` on `hw/` | `make fmt` or `clang-format -i` |
 | Cppcheck | `cppcheck` on `hw/` | Fix logic error or add suppression |
 | Codespell | `codespell` | `make fmt` (some cases) or fix typo |

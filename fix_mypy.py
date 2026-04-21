@@ -50,7 +50,7 @@ flexray = Path("tests/test_flexray.py")
 if flexray.exists():
     c = flexray.read_text()
     c = c.replace(
-        'with (Path(tmpdir) / "firmware.S").open("w") as fw_file:',
+        'with Path((Path(tmpdir).open() / "firmware.S"), "w") as fw_file:',
         'with (Path(tmpdir) / "firmware.S").open("w") as fw_file:',
     )
     c = c.replace('dtb_path = (Path(tmpdir) / "platform.dtb")', 'dtb_path = str(Path(tmpdir) / "platform.dtb")')

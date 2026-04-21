@@ -18,11 +18,11 @@ For Phase 4+ (TCG plugins), use Docker — macOS has a conflict between
 `--enable-modules` and `--enable-plugins` (QEMU GitLab #516).
 Windows is not supported (QEMU module loading is unavailable on Windows).
 
-### macOS (Homebrew)
+### macOS & Windows
 
-```bash
-brew install ninja meson dtc pkg-config glib pixman b4
-```
+> **⚠️ Mandatory Devcontainer:** virtmcu requires a Linux environment. macOS and Windows developers **MUST** use the provided Devcontainer. Bare-metal development on these platforms is not supported.
+>
+> **macOS Tip:** For the best performance (near-native I/O and speed), we strongly recommend using [OrbStack](https://orbstack.dev/) as your container engine instead of Docker Desktop.
 
 ### Linux (Debian / Ubuntu)
 
@@ -102,15 +102,14 @@ the right QEMU binary.
 
 ### Adding a New Peripheral
 
-**For C Models:**
-1. Copy `hw/dummy/dummy.c` to `hw/<name>/<name>.c`.
-2. Rename all `DUMMY`/`dummy` occurrences to your device name.
-3. Add an entry to `hw/meson.build` following the existing pattern.
-
-**For Rust Models (Hybrid FFI):**
-1. Copy the `hw/rust-dummy/` template.
+**For Rust Models (Preferred):**
+1. Copy the `hw/rust/rust-dummy/` template to `hw/rust/<name>`.
 2. Edit `src/lib.rs` for your `#[no_std]` Rust implementation.
-3. Update `hw/meson.build` to compile and link your `.a` staticlib.
+3. Update `hw/meson.build` to compile and link your module.
+
+**For C Models (Legacy/Bridge only):**
+1. Copy `hw/rust/virtmcu-test-devices/dummy.c` (as a template) or use existing C models.
+2. Add an entry to `hw/meson.build` following the existing pattern.
 
 **For all models:**
 4. Run `make build` — only changed files recompile.
@@ -278,6 +277,12 @@ If you are using an AI agent (Claude Code, Gemini CLI), you can automate the pro
 ---
 
 ## Code Style
+
+**Rust (Preferred)**:
+- Follow standard Rust idioms.
+- Run `cargo clippy` and `cargo fmt`.
+- All `unsafe` blocks must have a `// SAFETY:` comment explaining why it is safe.
+- Avoid external crates in the simulation hot-path unless they are `no_std` compatible or specifically approved.
 
 **C**: Follow QEMU's coding style (largely Linux kernel style).
 - `qemu/osdep.h` must be the first include in every `.c` file.

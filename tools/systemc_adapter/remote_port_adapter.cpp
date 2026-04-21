@@ -8,9 +8,11 @@ using namespace sc_core;
 using namespace tlm;
 using namespace tlm_utils;
 
+// clang-format off
+#include "libremote-port/remote-port-tlm.h"
 #include "libremote-port/remote-port-tlm-memory-master.h"
 #include "libremote-port/remote-port-tlm-wires.h"
-#include "libremote-port/remote-port-tlm.h"
+// clang-format on
 
 class RegisterFile : public sc_module {
 public:

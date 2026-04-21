@@ -58,9 +58,17 @@ build_stage() {
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
 
+    local USE_CCACHE="${VIRTMCU_USE_CCACHE:-false}"
+    if [ "$USE_CCACHE" = "1" ]; then USE_CCACHE="true"; fi
+
+    # Warm up local cache if the image already exists in the registry.
+    # This provides a secondary cache layer in case the registry-cache manifests are missing.
+    echo "  --> Attempting to pull ${img} to warm up local cache..."
+    docker pull "${img}" || echo "      (Pull failed or image not found, proceeding with build)"
+
     # Use Docker Bake for consistent builds (reads docker-bake.hcl)
     # --load: loads the built image into the local Docker daemon
-    ARCH="${ARCH}" IMAGE_TAG="${IMAGE_TAG}" \
+    ARCH="${ARCH}" IMAGE_TAG="${IMAGE_TAG}" USE_CCACHE="${USE_CCACHE}" \
     docker buildx bake "${stage}" --load
     
     ok "Built ${img}"
@@ -121,9 +129,9 @@ smoke_devenv_base() {
         node --version
         npm --version
         echo '  --- Claude Code ---'
-        claude --version || echo \"claude not installed (expected, handled by post-create.sh)\"
+        claude --version || echo 'claude not installed (expected, handled by post-create.sh)'
         echo '  --- Gemini CLI ---'
-        (gemini --version 2>/dev/null || gemini --help 2>&1 | head -1) || echo \"gemini not installed (expected, handled by post-create.sh)\"
+        (gemini --version 2>/dev/null || gemini --help 2>&1 | head -1) || echo 'gemini not installed (expected, handled by post-create.sh)'
         echo '  --- Rust ---'
         cargo --version
         rustc --version

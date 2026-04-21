@@ -24,10 +24,19 @@
 bool virtmcu_icount_enabled(void);
 void virtmcu_icount_advance(int64_t delta);
 
-/* BQL */
+/* BQL helpers injected into QEMU */
+extern bool virtmcu_is_bql_locked(void);
+extern void virtmcu_safe_bql_unlock(void);
+extern void virtmcu_safe_bql_lock(void);
+extern void virtmcu_safe_bql_force_unlock(void);
+extern void virtmcu_safe_bql_force_lock(void);
+
+/* BQL wrappers for Rust */
 bool virtmcu_bql_locked(void);
 void virtmcu_bql_lock(void);
 void virtmcu_bql_unlock(void);
+void virtmcu_bql_force_unlock(void);
+void virtmcu_bql_force_lock(void);
 
 /* Mutex */
 void virtmcu_mutex_lock(QemuMutex *mutex);

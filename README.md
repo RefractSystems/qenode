@@ -41,8 +41,8 @@ in inter-node timing.
 **QEMU 11.0.0-rc4**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
 ARM and RISC-V hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
 as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
-no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/zenoh/`) links
-`zenoh-c` directly into QEMU: it hooks the TCG execution loop at translation-block
+no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/rust/`) links
+the official `zenoh` Rust crate directly into QEMU: it hooks the TCG execution loop at translation-block
 boundaries to implement cooperative suspend/resume, acts as a deterministic Ethernet and
 UART backend for multi-node communication, and synchronizes virtual time with the external
 physics engine. A **Sensor/Actuator Abstraction Layer (SAL/AAL)** translates raw MMIO
@@ -64,16 +64,16 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-d
   `-device` — no QEMU recompilation required. Discovered automatically via QEMU's module
   system (`--enable-modules`).
 
-- **Deterministic Multi-Node Networking**: `hw/zenoh/zenoh-netdev.c` delivers Ethernet
+- **Deterministic Multi-Node Networking**: `hw/rust/zenoh-netdev` delivers Ethernet
   frames between QEMU instances with embedded virtual timestamps. Frames are buffered and
   injected into the guest NIC only when virtual time reaches the stamped arrival time.
   No UDP multicast jitter.
 
-- **Deterministic Multi-Node UART**: `hw/zenoh/zenoh-chardev.c` extends the same
+- **Deterministic Multi-Node UART**: `hw/rust/zenoh-chardev` extends the same
   virtual-timestamp model to serial ports, enabling multi-node UART communication and
   human-in-the-loop interactivity with correct virtual ordering.
 
-- **Cooperative Time Slaving**: `hw/zenoh/zenoh-clock.c` blocks QEMU's TCG loop at each
+- **Cooperative Time Slaving**: `hw/rust/zenoh-clock` blocks QEMU's TCG loop at each
   quantum boundary, waiting for a Zenoh `GET` reply from the external TimeAuthority.
   Two modes: `slaved-suspend` (full TCG speed, ~95% throughput — default) and
   `slaved-icount` (exact nanosecond virtual time — for firmware measuring sub-quantum
@@ -107,8 +107,7 @@ virtmcu/
 ├── CLAUDE.md                   # AI agent context: constraints and architecture decisions
 ├── CONTRIBUTING.md             # Dev workflow, code style, setup
 │
-├── hw/                         # C/Rust QOM peripheral models (no Python in sim loop)
-│   ├── misc/                   # Legacy C models (like mmio-socket-bridge.c)
+├── hw/                         # Rust QOM peripheral models (no Python in sim loop)
 │   ├── remote-port/            # AMD/Xilinx Remote Port QOM bridge for SystemC/Verilator
 │   ├── rust/                   # All native Rust plugins and bridges
 │   │   ├── rust-dummy/         # Minimal Rust QOM SysBusDevice — start here
@@ -197,12 +196,11 @@ docker compose -f docker/docker-compose.yml up
 
 Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically.
 
-### Manual
+### Manual (Native Linux Only)
+
+> **⚠️ macOS & Windows Support:** virtmcu requires a Linux environment. macOS and Windows developers **MUST** use the provided Devcontainer. Bare-metal development on macOS/Windows is not supported. For macOS developers, we highly recommend using [OrbStack](https://orbstack.dev/) instead of Docker Desktop for a significantly faster and more native Devcontainer experience.
 
 ```bash
-# macOS (Homebrew)
-brew install ninja meson dtc pkg-config glib pixman b4
-
 # Linux (Debian/Ubuntu)
 sudo apt install build-essential libglib2.0-dev ninja-build \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config b4
@@ -243,7 +241,7 @@ The core framework development is complete. All architectural pillars and capabi
   frames, UART bytes, and sensor data. Language-agnostic, works across containers.
 - **Three clock modes.** `standalone` (free-run, full speed), `slaved-suspend` (~95%
   throughput — recommended default for FirmwareStudio), `slaved-icount` (exact nanosecond
-  virtual time — for sub-quantum hardware timers). Implemented in `hw/zenoh/zenoh-clock.c`.
+  virtual time — for sub-quantum hardware timers). Implemented in `hw/rust/zenoh-clock`.
 - **Meson integration, not LD_PRELOAD.** `hw/` is symlinked into QEMU's source tree so
   devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
 - **arm-generic-fdt is not upstream.** 33-patch patchew series on QEMU 11.0.0-rc4.
@@ -256,7 +254,7 @@ The core framework development is complete. All architectural pillars and capabi
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<phase>-<short-desc>`.
-Commit style: `scope: imperative description` (e.g., `hw/zenoh: add chardev backend`).
+Commit style: `scope: imperative description` (e.g., `hw/rust/zenoh-chardev: add buffering`).
 
 ---
 

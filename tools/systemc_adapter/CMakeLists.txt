@@ -5,20 +5,28 @@ project(systemc_adapter CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set default values if not provided via command line
+if(NOT SYSTEMC_VERSION)
+  set(SYSTEMC_VERSION "2.3.3")
+endif()
+if(NOT LIBSYSTEMCTLM_SOC_COMMIT)
+  set(LIBSYSTEMCTLM_SOC_COMMIT "7aba4f60e382581060c982976010674c33bdc442")
+endif()
+
 include(FetchContent)
 
 # Fetch SystemC
 FetchContent_Declare(
   systemc
   GIT_REPOSITORY https://github.com/accellera-official/systemc.git
-  GIT_TAG        2.3.3
+  GIT_TAG        ${SYSTEMC_VERSION}
 )
 
 # Fetch Xilinx libsystemctlm-soc for Remote Port
 FetchContent_Declare(
   systemctlm_soc
   GIT_REPOSITORY https://github.com/Xilinx/libsystemctlm-soc.git
-  GIT_TAG        master
+  GIT_TAG        ${LIBSYSTEMCTLM_SOC_COMMIT}
   GIT_SUBMODULES ""
 )
 

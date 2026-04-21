@@ -7,21 +7,30 @@ import pytest
 async def test_phase2_dynamic_plugin(qemu_launcher):
     """
     Phase 2 smoke test: Dynamic plugin loading.
-    Verify that dummy-device is correctly registered in QOM.
+    Verify that rust-dummy and educational-dummy are correctly registered in QOM.
     """
+    import subprocess
+
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
     dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "test/phase1/hello.elf"
 
-    # Note: dummy-device was replaced with rust-dummy in Phase 30
-    bridge = await qemu_launcher(dtb, extra_args=["-device", "rust-dummy"])
+    # 1. Build if missing (crucial for CI robustness)
+    if not Path(dtb).exists() or not Path(kernel).exists():
+        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
 
-    # Check QOM tree for the device
+    bridge = await qemu_launcher(dtb, extra_args=["-device", "rust-dummy", "-device", "dummy-device"])
+
+    # Check QOM tree for the devices
     res = await bridge.qmp.execute("qom-list", {"path": "/machine/peripheral-anon"})
 
-    found = False
+    found_rust = False
+    found_c = False
     for item in res:
         if item.get("type") == "child<rust-dummy>":
-            found = True
-            break
+            found_rust = True
+        elif item.get("type") == "child<dummy-device>":
+            found_c = True
 
-    assert found, f"rust-dummy not found in QOM tree: {res}"
+    assert found_rust, f"rust-dummy not found in QOM tree: {res}"
+    assert found_c, f"dummy-device (educational C module) not found in QOM tree: {res}"

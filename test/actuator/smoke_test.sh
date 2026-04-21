@@ -15,6 +15,6 @@ export PYTHONPATH=${PYTHONPATH:-}:$WORKSPACE_DIR
 uv run python3 -m tools.yaml2qemu "$SCRIPT_DIR/board.yaml" --out-dtb "$SCRIPT_DIR/board.dtb" > /dev/null
 
 echo "[actuator] Running verification script..."
-uv run python3 "$SCRIPT_DIR/verify_control.py"
+pytest tests/test_actuator.py
 
 echo "[actuator] PASSED"

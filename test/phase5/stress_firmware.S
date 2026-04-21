@@ -1,6 +1,6 @@
 .global _start
 _start:
-    ldr r0, =0x50000000     /* bridge base address */
+    ldr r0, =0x60000000     /* bridge base address */
     ldr r1, =0x3E8      /* 16 million iterations */
 loop:
     str r1, [r0]            /* write to bridge */
