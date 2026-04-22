@@ -26,7 +26,7 @@ _start:
     ldr r1, =0x000800FF
     str r1, [r0]
     ldr r0, =0x09003410
-    ldr r1, =0xDEADC0DE
+    ldr r1, =0xDEC0ADDE
     str r1, [r0]
     ldr r0, =0x09003500
     mov r1, #0
@@ -106,7 +106,7 @@ loop:
     return tmpdir
 
 
-@pytest.mark.xfail(reason="Unstable in CI environment, timing regression needs investigation")
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -182,7 +182,7 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         await asyncio.to_thread(sub.undeclare)
 
 
-@pytest.mark.xfail(reason="Unstable in CI environment, timing regression needs investigation")
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -248,7 +248,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     await asyncio.sleep(3.0)
 
     # Advance time and poll for success signal
-    qom_path = "/flexray@9003000"
+    qom_path = "/flexray"
     success = False
     target_vtime = 50_000_000
     while ta.current_vtime_ns < target_vtime:
@@ -263,6 +263,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     assert success, f"Failed to detect success signal. Last WRHS3: 0x{wrhs3:08x}, vtime: {ta.current_vtime_ns}"
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -294,7 +295,6 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     # Initial sync (Wait for discovery)
     await asyncio.sleep(2.0)
     await ta.step(0)
-
 
     import sys
 
@@ -332,6 +332,6 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         await ta.step(1_000_000)
 
     # If QEMU didn't crash or deadlock, the test passes
-    qom_path = "/flexray@9003000"
+    qom_path = "/flexray"
     wrhs3 = await bridge.qmp.execute("qom-get", {"path": qom_path, "property": "wrhs3"})
     assert isinstance(wrhs3, int)

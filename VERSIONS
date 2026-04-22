@@ -2,8 +2,8 @@
 # Centralized version definitions for build scripts, Docker, and documentation.
 
 # QEMU emulator base
-# Tag v11.0.0-rc4 in https://gitlab.com/qemu-project/qemu.git
-QEMU_VERSION=11.0.0-rc4
+# Tag v11.0.0 in https://gitlab.com/qemu-project/qemu.git
+QEMU_VERSION=11.0.0
 
 # Zenoh federation bus (Zenoh-C and Python eclipse-zenoh)
 # Used for deterministic multi-node networking and clock synchronization.

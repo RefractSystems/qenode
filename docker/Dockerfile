@@ -9,7 +9,7 @@
 #   runtime   — FROM base (lean): only runtime libs + Python + the installed QEMU binaries
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
-ARG QEMU_REF=v11.0.0-rc4
+ARG QEMU_REF=v11.0.0
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG RUST_VERSION=1.95.0
@@ -116,7 +116,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential meson ninja-build python3 python3-venv pkg-config \
     libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
     libslirp-dev libclang-dev libssl-dev libstdc++6 b4 gdb gdb-multiarch strace \
-    lcov gcovr patchelf clang-format clang ccache \
+    lcov gcovr patchelf clang-format clang ccache dwarves \
     gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     lld cppcheck codespell \
     && rm -rf /var/lib/apt/lists/*
@@ -279,6 +279,9 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
     && make install \
     && mkdir -p /opt/virtmcu/lib/qemu/plugins \
+    && mkdir -p /opt/virtmcu/include \
+    && cp -R /build/zenoh-c/include/* /opt/virtmcu/include/ \
+    && cp -R /usr/local/include/flatcc /opt/virtmcu/include/ \
     && find /opt/virtmcu/lib -name "hw-virtmcu-*.so" -exec mv {} /opt/virtmcu/lib/qemu/ \; \
     && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; 2>/dev/null || true \
     && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \

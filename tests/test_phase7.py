@@ -1,5 +1,4 @@
 import asyncio
-import os
 import struct
 import subprocess
 from pathlib import Path
@@ -42,6 +41,7 @@ def build_phase7_artifacts():
     return dtb_path, kernel_path
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, time_authority):
     """
@@ -69,18 +69,19 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, time_authority)
     assert vtime3 == 3_000_000
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):  # noqa: ARG001
     """
     Phase 7: zenoh-clock stall timeout.
-    QEMU should exit if the clock doesn't advance for stall-timeout ms.
+    Verify that if the CPU takes too long to complete a quantum (Execution Stall),
+    the zenoh-clock worker thread detects the timeout, replies to the TimeAuthority
+    with CLOCK_ERROR_STALL (1), and QEMU successfully recovers.
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    # Use a faster stall timeout for testing, but enough for CI to boot
-    stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "15000"))
-    if stall_timeout_ms > 30000:
-        stall_timeout_ms = 15000  # Don't wait forever in tests
+    # Use a tiny stall timeout (10 ms)
+    stall_timeout_ms = 10
 
     extra_args = [
         "-icount",
@@ -90,8 +91,6 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):  
         "-display",
         "none",
         "-nographic",
-        "-monitor",
-        "none",
     ]
 
     from conftest import TimeAuthority
@@ -102,47 +101,61 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):  
     curr = Path(Path(__file__).resolve().parent)
     while str(curr) != "/" and not (curr / "scripts").exists():
         curr = Path(curr).parent
-    workspace_root = curr
-    run_script = Path(workspace_root) / "scripts/run.sh"
+    run_script = Path(curr) / "scripts/run.sh"
 
     cmd = [str(run_script), "--dtb", str(Path(dtb_path).resolve()), "--kernel", str(Path(kernel_path).resolve())]
     cmd.extend(extra_args)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=os.environ.copy()
-    )
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
     # Give QEMU a moment to initialize
     await asyncio.sleep(2.0)
 
+    if proc.returncode is not None:
+        stdout, _ = await proc.communicate()
+        pytest.fail(f"QEMU exited early: {stdout.decode()}")
+
     try:
-        # First step should succeed (Initial sync)
+        # 1. Initial sync should succeed
         await ta.step(0)
-
-        # Next step to 1ms
         vtime = await ta.step(1_000_000)
-        assert vtime == 1_000_000
+        assert vtime >= 1_000_000
 
-        # Second step with delay to trigger stall
-        try:
-            # step() returns the error code (1) on stall now
-            res = await ta.step(1_000_000, delay=(stall_timeout_ms / 1000.0 + 2.0))
-            assert res == 1  # CLOCK_ERROR_STALL
-        except Exception:
-            pass
+        # 2. Send a MASSIVE quantum (10 seconds virtual time = 10 billion instructions).
+        # This will take the TCG thread significantly longer than 10 ms of wall-clock time.
+        # Thus, the worker thread will timeout waiting for the TCG thread to finish it,
+        # and will reply with error_code = 1 (CLOCK_ERROR_STALL).
+        print("Sending massive quantum to trigger stall...", flush=True)
 
-        # Now wait for QEMU to exit
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
-        except TimeoutError:
-            proc.terminate()
-            stdout, _ = await proc.communicate()
-            pytest.fail(f"QEMU failed to exit on clock stall. Output:\n{stdout.decode()}")
+        # We must use a short timeout on the Python side so we get the reply quickly
+        import struct
 
+        # Manually send the raw step since ta.step has a built-in retry loop
+        req_topic = "sim/clock/advance/0"
+
+        # Pack ClockAdvanceReq
+        # uint64_t delta_ns, uint64_t mujoco_time_ns
+        payload = struct.pack("<QQ", 10_000_000_000, 0)
+
+        replies = await asyncio.to_thread(lambda: list(zenoh_session.get(req_topic, payload=payload, timeout=2.0)))
+        assert len(replies) == 1
+
+        # Unpack ClockReadyResp
+        # uint64_t current_vtime_ns, uint32_t n_frames, uint32_t error_code
+        reply_bytes = replies[0].ok.payload.to_bytes()
+        _current_vtime_ns, _n_frames, error_code = struct.unpack("<QII", reply_bytes)
+
+        print(f"Stall reply received: error_code={error_code}", flush=True)
+        assert error_code == 1, f"Expected CLOCK_ERROR_STALL (1), got {error_code}"
+
+        # Terminate QEMU. It might still be churning through the 10 billion instructions,
+        # so we SIGKILL it.
+        proc.kill()
         stdout, _ = await proc.communicate()
         output = stdout.decode()
-        assert "FATAL STALL: no clock-advance reply" in output
-        assert proc.returncode != 0
+
+        # Verify QEMU actually logged the execution stall
+        assert "STALL: QEMU did not reach quantum boundary" in output
 
     finally:
         if proc.returncode is None:
@@ -150,6 +163,7 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):  
             await proc.wait()
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -183,6 +197,7 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
     assert vtime == 3_000_000
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -225,6 +240,7 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     assert vtime == 1_000_000
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
     """

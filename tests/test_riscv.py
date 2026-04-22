@@ -16,6 +16,7 @@ async def test_riscv_boot(qemu_launcher):
 
     if not dts.exists() or not kernel.exists():
         import subprocess
+
         subprocess.run(["make", "-C", "test/riscv"], check=True, cwd=workspace_root)
 
     bridge = await qemu_launcher(dts, kernel)

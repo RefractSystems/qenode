@@ -12,6 +12,10 @@ def main():
     config.insert_json5("mode", '"router"')
     config.insert_json5("listen/endpoints", f'["{endpoint}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        config.insert_json5("transport/shared/task_workers", "16")
     print(f"Starting persistent Zenoh mock router on {endpoint}...")
     session = zenoh.open(config)
     try:

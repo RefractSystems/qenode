@@ -8,9 +8,25 @@ git config --global --add credential.helper ''
 git config --global --add credential.helper '!gh auth git-credential'
 git config --global --add safe.directory /workspace
 
-# Fix stale Docker credsStore injected by VS Code if it exists
+# Self-healing: Switch SSH remote to HTTPS if needed.
+# SSH agent forwarding frequently breaks on macOS/Windows during sleep or Docker restarts.
+# HTTPS + Git Credential Helper is the officially recommended, bulletproof way for DevContainers.
+CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
+if [[ "$CURRENT_REMOTE" == git@github.com:RefractSystems/virtmcu.git ]]; then
+    echo "    Detecting SSH remote. Switching to HTTPS for reliable DevContainer authentication..."
+    git remote set-url origin https://github.com/RefractSystems/virtmcu.git
+fi
+
+# Fix stale Docker credsStore/credHelpers injected by VS Code if it exists
 if [ -f ~/.docker/config.json ]; then
+    echo "    Cleaning up Docker config.json to prevent credential helper errors..."
+    # Remove credsStore and credHelpers which often point to host-only binaries
     sed -i '/"credsStore":/d' ~/.docker/config.json
+    sed -i '/"credHelpers":/d' ~/.docker/config.json
+    # Clean up empty lines or dangling commas that might break JSON (basic cleanup)
+    sed -i 's/,,/,/g' ~/.docker/config.json
+    sed -i 's/{,/{/g' ~/.docker/config.json
+    sed -i 's/,}/}/g' ~/.docker/config.json
 fi
 
 # Set Git identity if missing globally
@@ -48,5 +64,9 @@ echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.zshrc
 
 echo "==> Installing Git Hooks..."
 make install-hooks
+
+echo "==> Initializing Workspace Dependencies..."
+# This is fast if QEMU is pre-installed in the container
+make setup-initial
 
 echo "✓ DevContainer initialization complete."

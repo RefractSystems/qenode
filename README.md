@@ -38,7 +38,7 @@ in inter-node timing.
 
 ## Architecture in One Paragraph
 
-**QEMU 11.0.0-rc4**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
+**QEMU 11.0.0**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
 ARM and RISC-V hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
 as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
 no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/rust/`) links
@@ -194,7 +194,7 @@ docker compose -f docker/docker-compose.yml up
 
 ### Dev Container (recommended)
 
-Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically.
+Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically. For detailed instructions on setting up SSH/Git credentials inside the container, see [**docs/CONTAINER_DEV_GUIDE.md**](docs/CONTAINER_DEV_GUIDE.md).
 
 ### Manual (Native Linux Only)
 
@@ -244,7 +244,7 @@ The core framework development is complete. All architectural pillars and capabi
   virtual time — for sub-quantum hardware timers). Implemented in `hw/rust/zenoh-clock`.
 - **Meson integration, not LD_PRELOAD.** `hw/` is symlinked into QEMU's source tree so
   devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
-- **arm-generic-fdt is not upstream.** 33-patch patchew series on QEMU 11.0.0-rc4.
+- **arm-generic-fdt is not upstream.** 33-patch patchew series on QEMU 11.0.0.
 - **Virtual-timestamped delivery.** Multi-node packets and UART bytes carry virtual
   timestamps and are delivered to the guest NIC or chardev only when virtual time catches
   up. Deterministic by construction, not by coordination.

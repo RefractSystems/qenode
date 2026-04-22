@@ -12,9 +12,8 @@ crate-type = ["staticlib"]
 workspace = true 
 
 [dependencies]
-virtmcu-api.workspace = true
-zenoh.workspace = true
 virtmcu-qom.workspace = true
 virtmcu-zenoh.workspace = true
+zenoh.workspace = true
 crossbeam-channel.workspace = true
-libc.workspace = true
+byteorder.workspace = true

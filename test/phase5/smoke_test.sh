@@ -182,7 +182,14 @@ fi
 
 # Kill the functional test QEMU gracefully
 kill "$QEMU_PID" 2>/dev/null || true
-wait "$QEMU_PID" 2>/dev/null || true
+# Wait for it to exit with timeout
+for _ in $(seq 1 50); do
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+if kill -0 "$QEMU_PID" 2>/dev/null; then
+    kill -9 "$QEMU_PID" 2>/dev/null || true
+fi
 
 # ── 7. Timeout and Crash Tests (Phase 5.6) ───────────────────────────────────
 
@@ -244,8 +251,7 @@ except Exception as e:
 sys.exit(0)
 ' "$QMP_SOCK"; then
         echo "[phase5.6]   FAILED: QEMU is unresponsive (likely hung)"
-        kill "$QEMU_PID" 2>/dev/null || true
-        wait "$QEMU_PID" 2>/dev/null || true
+        kill -9 "$QEMU_PID" 2>/dev/null || true
         echo "--- QEMU LOG ---"
         cat "$QEMU_LOG"
         return 1
@@ -254,7 +260,13 @@ sys.exit(0)
     # ── Check for expected error in QEMU log ──
     echo "[phase5.6]   Killing QEMU (PID $QEMU_PID) gracefully..."
     kill "$QEMU_PID" 2>/dev/null || true
-    wait "$QEMU_PID" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+        if ! kill -0 "$QEMU_PID" 2>/dev/null; then break; fi
+        sleep 0.1
+    done
+    if kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill -9 "$QEMU_PID" 2>/dev/null || true
+    fi
     
     echo "[phase5.6]   Checking for expected error in log..."
     if grep -q "$expected_msg" "$QEMU_LOG"; then
@@ -269,7 +281,10 @@ sys.exit(0)
     fi
 
     kill "$ADAPTER_PID" 2>/dev/null || true
-    wait "$ADAPTER_PID" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+        if ! kill -0 "$ADAPTER_PID" 2>/dev/null; then break; fi
+        sleep 0.1
+    done
     return 0
 }
 

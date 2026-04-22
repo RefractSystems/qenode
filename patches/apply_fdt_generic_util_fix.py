@@ -100,6 +100,11 @@ new_parenting_logic = """    } else if (parent) {
 
 text = text.replace(old_parenting_logic, new_parenting_logic)
 
+# Fix 7: Fix memory leak in fdt_init_set_opaque (strdup not freed if overwritten)
+# Actually the logic there was adding new ones if not found.
+# But it was using strdup.
+text = text.replace("dp->node_path = strdup(node_path);", "dp->node_path = g_strdup(node_path);")
+
 with Path(filepath).open("w") as f:
     f.write(text)
 print("Finished applying fdt_generic_util fixes.")

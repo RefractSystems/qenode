@@ -45,9 +45,10 @@ All clock behaviour is controlled by \`zenoh-clock\`:
 | \`slaved-icount\` | Same + \`-icount shift=0,align=off,sleep=off\` | Sub-quantum timing precision (PWM, µs). |
 
 ### Error Codes (sim/clock/advance/{id} Reply)
-- \`0\` (OK): Quantum completed successfully.
-- \`1\` (STALL): QEMU failed to reach TB boundary within the stall timeout (default **5 s**; set `stall-timeout=<ms>` on the device — CI uses 60 000 ms via `VIRTMCU_STALL_TIMEOUT_MS`).
-- \`2\` (ZENOH_ERROR): Transport layer failure.
+- `0` (OK): Quantum completed successfully.
+- `1` (STALL): QEMU failed to reach TB boundary within the stall timeout (default **5 s**; set `stall-timeout=<ms>` on the device — CI uses 60 000 ms via `VIRTMCU_STALL_TIMEOUT_MS`).
+  - **CRITICAL NOTE:** QEMU **does not exit** on a stall. It logs "STALL DETECTED", replies with error code 1, and stays alive. The Python orchestrator is fully responsible for terminating the QEMU process if recovery is not desired.
+- `2` (ZENOH_ERROR): Transport layer failure.
 
 ---
 
@@ -59,7 +60,24 @@ When using \`mmio-socket-bridge\`, every MMIO read/write blocks the QEMU TCG thr
 - **icount Advancement**: Virtual time does NOT advance while blocked in a bridge call.
 - **Latency Impact**: High bridge latency can cause clock stalls. Ensure the socket server is performant.
 
-### 2. WFI (Wait For Interrupt) behavior
+### 2. FFI Layout Verification (The "FFI Gate")
+To prevent segmentation faults caused by layout drift between C and Rust:
+- **Mandate**: All core QOM structs in Rust MUST have corresponding \`assert!\` checks for both \`size_of\` and \`offset_of\`.
+- **Mandate**: Before modifying or implementing a Rust FFI struct, you MUST verify the ground truth from the QEMU binary using \`./scripts/check-ffi.py\`.
+- **Mandate**: If the QEMU binary is unavailable or stale, run \`make build\` before running \`make check-ffi\`.
+- **Mandate**: Use \`./scripts/check-ffi.py --fix\` to automatically synchronize Rust assertions with the binary ground truth.
+
+### 3. Plugin Staleness Prevention
+- **Mandate**: Always prioritize build artifacts over installed binaries during development.
+- **Mandate**: \`scripts/run.sh\` is configured to find the freshest \`.so\` plugins in the build tree. Do NOT manually override \`QEMU_MODULE_DIR\` unless strictly necessary.
+
+### 4. Simulation Hygiene & Parallel Safety
+To ensure tests are deterministic and do not interfere with each other:
+- **Mandate**: NEVER use hardcoded ports (e.g., 7447) or fixed socket paths in tests. Always use \`scripts/get-free-port.py\` or \`tempfile.mkdtemp()\`.
+- **Mandate**: Parallel test execution (\`pytest -n auto\`) is the standard. All fixtures must be isolated.
+- **Mandate**: Multiple agents/developers CAN run native tests concurrently on the same machine, provided they work in **separate cloned workspace directories**. \`scripts/cleanup-sim.sh\` is heavily optimized to be **Workspace-Scoped**—it inspects \`/proc/<pid>/cwd\` and \`/proc/<pid>/cmdline\` to ONLY kill orphaned processes originating from the active workspace, leaving other agents' simulations completely untouched.
+
+### 5. WFI (Wait For Interrupt) behavior
 - In \`slaved-suspend\`, virtual time advances while the CPU is in WFI.
 - The next quantum boundary will still trigger a clock-halt even if the CPU is idling.
 - **Best Practice**: Use ARM Generic Timer interrupts at 100Hz rather than tight polling loops for control.
@@ -145,6 +163,7 @@ To ensure the highest level of professional software engineering, all agents MUS
 - Use **relative paths** based on the project root or the current file's location.
 - Use platform-appropriate path joining (e.g., `os.path.join` in Python, `path::PathBuf` in Rust, `std::filesystem` in C++).
 - Leverage environment variables for system-specific configuration.
+- **Environment Context:** All agents operate within a **devcontainer**. `localhost` ALWAYS refers to the container environment, where all tools, dependencies (like QEMU), and services (like Zenoh) are managed. Never assume access to the physical host machine's toolchain.
 
 ### 2. Explicit Constants (NEVER Use Magic Numbers!)
 - **BANNED:** Inline literal numbers or "magic numbers" in the code.
@@ -219,11 +238,13 @@ If a node hangs or fails to boot, run it interactively to see the firmware's con
 In the `arm-generic-fdt` machine, a device added via `-device` is NOT automatically mapped into guest memory. 
 - **The Cause**: Mapping only occurs if a corresponding node exists in the Device Tree (DTB) with a `reg` property.
 - **The Fix**: Always declare peripherals in the board YAML files. The `yaml2qemu.py` tool handles the mapping.
+- **QOM Naming Convention**: Top-level peripherals defined in YAML are mapped to the QOM tree purely by their name, *without* the `@<address>` suffix (e.g., `/flexray` instead of `/flexray@9003000`). Use `qom-list /` to verify paths.
 
-### MMIO Offset Contract
+### MMIO Offset Contract & Endianness
 The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute physical addresses. 
 - **Example**: If a bridge is at `0x10000000` and the guest reads `0x10000004`, the bridge receives `0x04`.
 - **Requirement**: Your MMIO adapter/model must handle these offsets directly without adding the base address.
+- **Endianness**: All ARM-based virtual machines in this project operate in **Little Endian**. When verifying raw Zenoh payloads or memory dumps, a 32-bit register write of `0xDEADC0DE` by the firmware will be serialized over the wire as `DE C0 AD DE`.
 
 ### "Works on My Machine" (Local vs. CI Drift)
 If a fix passes locally but fails in CI, it's often due to manual edits in `third_party/qemu` or untracked files that aren't part of the automated patch mechanism.

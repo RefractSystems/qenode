@@ -2,6 +2,33 @@
 
 Practical reference for building, testing, and debugging the virtmcu Docker images.
 
+## Quick Setup (The Happy Path)
+
+To get started with zero friction:
+1. **Clone via HTTPS:** `git clone https://github.com/RefractSystems/virtmcu.git`
+2. **Open in VS Code:** Open the cloned folder in VS Code and click "Reopen in Container".
+3. **Verify:** Once loaded, run `make test-unit` in the terminal. Everything should pass.
+
+> **Note:** If you accidentally cloned via SSH, the DevContainer will automatically detect this and switch your remote to HTTPS on startup to ensure a stable git experience.
+
+## FAQ: DevContainer "Magic Tricks" & Assumptions
+
+We employ several automated tricks to make local development fast, parallel-safe, and identical to CI. Here is what is happening under the hood:
+
+### Q: Why did my git remote change from SSH to HTTPS?
+**A:** Docker for Mac/Windows frequently breaks SSH agent socket forwarding when the host machine goes to sleep or Docker Desktop restarts. By switching you to HTTPS, we leverage VS Code's built-in Git Credential Helper, which is rock-solid and survives sleep cycles. (See `.devcontainer/post-create.sh`).
+
+### Q: How does parallel testing (`pytest -n auto`) work without port collisions?
+**A:** Tests requiring a Zenoh router don't use fixed ports. Instead, `tests/conftest.py` invokes `scripts/get-free-port.py` to dynamically assign an available, ephemeral port for each test worker, preventing "Address already in use" errors.
+
+### Q: Is `make clean-sim` safe to run if another developer/agent is testing concurrently?
+**A:** Yes. `scripts/cleanup-sim.sh` is heavily optimized to be **Workspace-Scoped**. It inspects `/proc/<pid>/cwd` and `/proc/<pid>/cmdline` to ensure it *only* kills orphaned processes that originated from your specific cloned directory, leaving other workspaces entirely untouched.
+
+### Q: What is the "FFI Gate" and why do I need to run `make check-ffi`?
+**A:** To prevent cryptic segmentation faults, our Rust models and QEMU's C code must perfectly agree on memory layouts. The FFI Gate (`scripts/check-ffi.py`) uses `pahole` via `scripts/probe-qemu.py` to extract the *exact* byte offsets from the compiled QEMU binary and validates them against the Rust `assert!` statements.
+
+---
+
 > **CI failing?** See [CI_GUIDE.md](CI_GUIDE.md) — it maps every CI job to its local
 > equivalent command and lists common failure patterns and fixes.
 
@@ -25,6 +52,33 @@ debian:trixie-slim
 ```
 
 `builder` and `runtime` are not required for local development. `devenv` is the daily driver for VS Code, while `devenv-base` is used for ultra-fast local and CI lints without requiring a QEMU build. The `simulation-toolchain` decouples heavy C-level simulation dependencies (like `flatcc`) from the fast linting track.
+
+---
+
+## Why `/opt/virtmcu`? (Pre-baked vs. Local Builds)
+
+A common point of confusion is why the container uses pre-built QEMU and Zenoh binaries located in `/opt/virtmcu` instead of compiling them directly inside the `/workspace` folder.
+
+There are three main architectural reasons for this design:
+
+1. **The Bind Mount Problem:** In a DevContainer, your host machine's directory is **bind-mounted** over the `/workspace` directory inside the container. If the `devenv` Docker image baked the compiled QEMU and Zenoh binaries into `/workspace`, the moment the container started, your host machine's folder would completely overwrite and hide them. To survive the bind mount, pre-baked dependencies *must* live outside the workspace (like in `/opt/`).
+2. **Build Time & Velocity:** Compiling QEMU from scratch takes 15–40 minutes. By pre-compiling the emulator core and core dependencies (Zenoh-C, flatcc) during the Docker image build process, the DevContainer boots in seconds. The virtmcu project uses dynamic shared libraries (`.so` plugins); since the heavy emulator core is already built at `/opt/virtmcu/bin/qemu-system-arm`, you only need to incrementally compile your custom Rust/C peripherals in the `hw/` directory (which takes 2–3 seconds).
+3. **Environment Parity:** `/opt/virtmcu` represents the immutable, known-good baseline provided by the CI environment. It guarantees that if a test passes locally against `/opt/virtmcu`, it will pass on GitHub Actions.
+
+### The Escape Hatch: Modifying Core Dependencies
+
+You are never locked out of modifying the core. If you decide you need to fix a header, edit QEMU's C code, or rebuild a core dependency, you can use the "escape hatch":
+
+```bash
+make setup-initial --force
+```
+
+**Here is what that does:**
+1. It downloads the raw source code into `/workspace/third_party/` (inside your repo).
+2. It compiles everything locally right there in your workspace.
+3. The project's run scripts (`scripts/run.sh`) and CMake/Meson files are hardcoded to **look in your `third_party/` folder FIRST.**
+
+If you have a local build in `third_party/`, the system completely ignores `/opt/virtmcu`. You get the fast, read-only baseline by default, but you can "eject" into a fully mutable local build the moment you need to hack on the core.
 
 ---
 
@@ -148,18 +202,26 @@ docker run --rm -it <last-good-sha> bash
 ---
 
 
-## Git Authentication inside Devcontainer
+## Git Authentication and "Self-Healing" Remotes
 
-If `git push` or `git pull` fail inside the Devcontainer with errors like `connect ENOENT /tmp/vscode-git-...` or `No anonymous write access`, it means the VS Code credential forwarding has failed or been overridden.
+To ensure a stable and "bulletproof" development environment, we prefer **HTTPS with the Git Credential Helper** over SSH. This avoids common issues with broken SSH agent sockets on macOS/Windows after sleep cycles.
 
-To fix this and use your forwarded GitHub CLI credentials:
+### The Recommended Path: HTTPS
+When using DevContainers, always clone using the HTTPS URL:
+\`\`\`bash
+git clone https://github.com/RefractSystems/virtmcu.git
+\`\`\`
+VS Code automatically bridges its internal **Git Credential Helper** into the container. This provides a "zero-setup" experience that is immune to host network drops or sleep/wake cycles.
 
-```bash
-# Re-initialize the GitHub CLI as the git credential helper
-gh auth setup-git
-```
+### Automated Self-Healing
+If you previously cloned via SSH (\`git@github.com:...\`), the devcontainer will **automatically detect this** and switch your remote to HTTPS on the first launch. This ensures that features like \`git push\` work out of the box without manual SSH agent troubleshooting.
 
-*Note: Ensure you have already authenticated `gh` on your host machine or run `gh auth login` inside the container if needed.*
+### Troubleshooting: GitHub CLI (gh)
+The GitHub CLI (\`gh\`) is pre-installed. If it asks for authentication, it is best to run:
+\`\`\`bash
+gh auth login
+\`\`\`
+Inside the container, this will use a web-based flow. VS Code's built-in "Terminal Authentication" can sometimes interfere; if you see persistent errors, you can disable it in VS Code Settings: \`git.terminalAuthentication: false\`.
 
 
 ## Inspecting a running devcontainer

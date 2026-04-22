@@ -7,21 +7,29 @@ pub struct Chardev {
     /// A struct field
     pub parent_obj: Object,
     /// A struct field
-    pub label: *mut c_char,
+    pub chr_write_lock: [u8; 64], // QemuMutex at offset 40
     /// A struct field
-    pub filename: *mut c_char,
+    pub fe: *mut c_void, // CharFrontend * at offset 104
     /// A struct field
-    pub log_append: bool,
-    _padding: [u8; 7],
+    pub label: *mut c_char, // at offset 112
     /// A struct field
-    pub log_chan: *mut c_void, // QIOChannel *
+    pub logfd: c_int, // at offset 120
     /// A struct field
-    pub be: *mut c_void, // CharFrontend *
+    pub logtimestamp: bool, // at offset 124
     /// A struct field
-    pub gcontext: *mut c_void, // GMainContext *
+    pub log_line_start: bool, // at offset 125
+    _pad0: [u8; 2],
     /// A struct field
-    pub chr_write_lock: [u8; 64], // QemuMutex
-    _opaque: [u8; 160 - 40 - 8 - 8 - 1 - 7 - 8 - 8 - 8 - 64],
+    pub be_open: c_int, // at offset 128
+    /// A struct field
+    pub handover_yank_instance: bool, // at offset 132
+    _pad1: [u8; 3],
+    /// A struct field
+    pub gsource: *mut c_void, // at offset 136
+    /// A struct field
+    pub gcontext: *mut c_void, // at offset 144
+    /// A struct field
+    pub features: [u8; 8], // DECLARE_BITMAP at offset 152
 }
 
 #[repr(C)]
@@ -50,10 +58,12 @@ pub struct CharFrontend {
 /// A struct
 pub struct ChardevClass {
     /// A struct field
-    pub parent_class: ObjectClass, // 96
+    pub parent_class: ObjectClass, // 0
     /// A struct field
     pub internal: bool, // 96
-    _padding: [u8; 7], // 97
+    /// A struct field
+    pub supports_yank: bool, // 97
+    _padding: [u8; 6], // to offset 104
     /// A struct field
     pub chr_parse: Option<
         unsafe extern "C" fn(opts: *mut c_void, backend: *mut c_void, errp: *mut *mut c_void),
@@ -108,3 +118,5 @@ const _: () = assert!(core::mem::size_of::<Chardev>() == 160);
 const _: () = assert!(core::mem::size_of::<ChardevClass>() == 256);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_write) == 120);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_parse) == 104);
+const _: () = assert!(core::mem::offset_of!(Chardev, chr_write_lock) == 40);
+const _: () = assert!(core::mem::offset_of!(Chardev, label) == 112);

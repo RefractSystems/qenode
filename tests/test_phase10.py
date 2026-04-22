@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,9 +30,6 @@ async def test_phase10_resd_replay_startup():
     TEST 3: resd_replay startup + empty-file rejection
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    # Build Rust cyber_bridge
-    subprocess.run(["cargo", "build", "--release", "-p", "cyber_bridge"], check=True, cwd=workspace_root)
-
     replay_bin = Path(workspace_root) / "target/release/resd_replay"
 
     # Missing file should fail

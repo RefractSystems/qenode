@@ -4125,9 +4125,8 @@ dependencies = [
 name = "zenoh-chardev"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "crossbeam-channel",
- "libc",
- "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh",
  "zenoh",
@@ -4137,6 +4136,7 @@ dependencies = [
 name = "zenoh-clock"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh",

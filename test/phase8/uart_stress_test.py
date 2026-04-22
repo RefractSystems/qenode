@@ -10,7 +10,7 @@ import zenoh
 BAUD_10MBPS_INTERVAL_NS = 800
 TOTAL_BYTES = 50_000
 NODE_ID = "0"
-TOPIC_BASE = "sim/chardev"
+TOPIC_BASE = "virtmcu/uart"
 
 # Test byte: 0x58 ('X') does not appear in the firmware welcome message
 # ("Interactive UART Echo Ready.\r\nType something: "), so we can safely

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -97,13 +96,18 @@ async def zenoh_router(worker_id):  # noqa: ARG001
 
     tests_dir = Path(Path(__file__).resolve().parent)
     router_script = Path(tests_dir) / "zenoh_router_persistent.py"
+    workspace_root = tests_dir.parent
+    get_port_script = workspace_root / "scripts/get-free-port.py"
 
-    # Find a dynamically free port
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))
-    s.listen(1)
-    port = s.getsockname()[1]
-    s.close()
+    # Find a dynamically free port using our utility
+    proc_port = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(get_port_script),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc_port.communicate()
+    port = int(stdout.decode().strip())
 
     endpoint = f"tcp/127.0.0.1:{port}"
 
@@ -112,7 +116,12 @@ async def zenoh_router(worker_id):  # noqa: ARG001
     # We MUST NOT run global cleanup like 'make clean-sim' here as it would kill other parallel tests!
 
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-u", str(router_script), endpoint, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        sys.executable,
+        "-u",
+        str(router_script),
+        endpoint,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
 
     async def _stream_router_output(stream, name):
@@ -124,7 +133,7 @@ async def zenoh_router(worker_id):  # noqa: ARG001
 
     _router_tasks = [
         asyncio.create_task(_stream_router_output(proc.stdout, "STDOUT")),
-        asyncio.create_task(_stream_router_output(proc.stderr, "STDERR"))
+        asyncio.create_task(_stream_router_output(proc.stderr, "STDERR")),
     ]
 
     # Wait for router to be ready
@@ -147,6 +156,11 @@ async def zenoh_session(zenoh_router):
     config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     config.insert_json5("mode", '"client"')
+    # Task 27.3: Increase task workers to prevent deadlocks when blocking in query handlers.
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        config.insert_json5("transport/shared/task_workers", "16")
     session = await asyncio.to_thread(lambda: zenoh.open(config))
 
     # Wait for session to connect to the router (either as a router or a peer)
@@ -192,6 +206,7 @@ async def zenoh_coordinator(zenoh_router):
     if not coord_bin.exists():
         lock_file = workspace_root / "tools/zenoh_coordinator/build.lock"
         import fcntl
+
         with lock_file.open("w") as f:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -25,10 +25,19 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling test test-unit test-python test-integration test-robot test-all build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full perf-bench perf-check perf-baseline
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi test test-unit test-python test-integration test-robot test-all build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full perf-bench perf-check perf-baseline
 
 # By default, perform an incremental build
 all: build
+
+# ------------------------------------------------------------------------------
+# FFI Layout Verification
+# ------------------------------------------------------------------------------
+
+# Verify that Rust struct layouts match the QEMU binary ground truth.
+check-ffi:
+	@echo "==> Verifying FFI layouts..."
+	@./scripts/check-ffi.py
 
 # ------------------------------------------------------------------------------
 # Version Management
@@ -86,11 +95,11 @@ venv:
 	@echo "✓ Activate with: source .venv/bin/activate"
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
-test-integration: venv build-test-artifacts
+test-integration: venv
+	uv run --active $(MAKE) build-test-artifacts
 	@bash scripts/cleanup-sim.sh --quiet
 	@echo "==> Running Modernized Integration Tests (via pytest)..."
-	PYTHONPATH=$(CURDIR) uv run pytest \
-		tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py \
+	uv run --active pytest tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py \
 		tools/testing/test_qmp.py tests/test_qmp_bridge.py tests/test_qemu_library_pytest.py \
 		tests/test_phase6.py tests/test_phase7.py \
 		tests/test_phase8.py tests/test_phase10.py tests/test_phase12.py \
@@ -108,7 +117,8 @@ test-integration: venv build-test-artifacts
 	@echo "✓ All integration tests passed."
 
 # Run integration tests compiled with C/C++ memory sanitizers (ASan/UBSan)
-test-asan: venv build-test-artifacts
+test-asan: venv
+	uv run --active $(MAKE) build-test-artifacts
 	@echo "==> Building QEMU with ASan/UBSan enabled..."
 	VIRTMCU_USE_ASAN=1 bash scripts/setup-qemu.sh --force
 	@bash scripts/cleanup-sim.sh --quiet
@@ -133,6 +143,7 @@ test-miri:
 # Run all Python unit tests (no QEMU required).
 test-unit: venv
 	@echo "==> Running Tier 1 Unit Tests (no QEMU)..."
+	@./scripts/cleanup-sim.sh --quiet
 	PYTHONPATH=$(CURDIR) uv run --active pytest \
 		tests/repl2qemu/ tests/test_yaml2qemu.py tests/test_cli_generator.py \
 		tests/test_fdt_emitter.py tests/test_qmp_bridge.py tests/test_vproto.py \
@@ -225,7 +236,7 @@ test-integration-docker:
 # Lint & Format
 # ------------------------------------------------------------------------------
 
-lint: venv check-versions lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
+lint: venv check-versions check-ffi lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
 	@echo "All linting and static analysis checks passed!"
 
 lint-docs:

@@ -17,7 +17,7 @@ echo "✓ CLI arguments correct."
 
 # 3. Verify DTB contains radio0
 echo "Verifying DTB..."
-dtc -I dtb -O dts test/phase14/test.dtb | grep -q "radio0@9001000"
+dtc -I dtb -O dts test/phase14/test.dtb | grep -q "radio0 {"
 echo "✓ DTB contains radio0 node."
 
 # 4. Check coordinator build

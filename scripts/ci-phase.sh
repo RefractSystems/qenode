@@ -48,6 +48,9 @@ run_phase() {
     echo "  Running CI Phase: $p"
     echo "════════════════════════════════════════════════════"
 
+    # Ensure a clean slate before each phase
+    bash scripts/cleanup-sim.sh --quiet
+
     case "$p" in
         1)
             make -C test/phase1 && bash test/phase1/smoke_test.sh

@@ -66,8 +66,8 @@ def main():
     patch_file(
         net_json,
         marker="# @vhost-vdpa: since 5.1",
-        insertion="\n#\n# @zenoh: since 10.0",
-        guard="# @zenoh: since 10.0",
+        insertion="\n#\n# @zenoh: since 11.0",
+        guard="# @zenoh: since 11.0",
         after=True,
     )
 
@@ -91,7 +91,7 @@ def main():
 # @router: The zenoh router address (optional)
 # @topic: The zenoh topic to publish/subscribe to (optional)
 #
-# Since: 10.0
+# Since: 11.0
 ##
 { 'struct': 'NetdevZenohOptions',
   'data': {
@@ -123,8 +123,8 @@ def main():
     patch_file(
         char_json,
         marker="# @ringbuf: memory ring buffer (since 1.6)",
-        insertion="\n#\n# @zenoh: zenoh virtual clock backend (since 10.0)",
-        guard="# @zenoh: zenoh virtual clock backend (since 10.0)",
+        insertion="\n#\n# @zenoh: zenoh virtual clock backend (since 11.0)",
+        guard="# @zenoh: zenoh virtual clock backend (since 11.0)",
         after=True,
     )
 
@@ -149,7 +149,7 @@ def main():
 # @router: The zenoh router address (optional)
 # @topic: The zenoh topic to publish/subscribe to (optional)
 #
-# Since: 10.0
+# Since: 11.0
 ##
 { 'struct': 'ChardevZenohOptions',
   'base': 'ChardevCommon',
@@ -163,7 +163,7 @@ def main():
 #
 # @data: Configuration info for zenoh chardevs
 #
-# Since: 10.0
+# Since: 11.0
 ##
 { 'struct': 'ChardevZenohWrapper',
   'data': { 'data': 'ChardevZenohOptions' } }
@@ -204,7 +204,7 @@ def main():
 # @canbus: object ID of the can-bus object to connect to the host
 #     interface
 #
-# Since: 10.0
+# Since: 11.0
 ##
 { 'struct': 'CanHostZenohProperties',
   'data': { 'canbus': 'str',

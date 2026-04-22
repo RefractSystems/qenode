@@ -29,11 +29,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[phase9] Starting Zenoh Router..."
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+ZENOH_PORT=$(( 7447 + (RANDOM % 1000) ))
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$ZENOH_PORT" &
 ROUTER_PID=$!
 sleep 1
 
-export ZENOH_CONNECT="tcp/127.0.0.1:7447"
+export ZENOH_CONNECT="tcp/127.0.0.1:$ZENOH_PORT"
 export ZENOH_MULTICAST_SCOUTING="false"
 
 echo "[phase9] Building SystemC adapter..."
@@ -155,8 +156,11 @@ echo "[phase9] Waiting for TEST 1 results..."
 for _ in $(seq 1 100); do
     if grep -q "REG-OK" "$QEMU_LOG" 2>/dev/null; then
         echo "[phase9] TEST 1 SUCCESS!"
-        kill "$QEMU_PID" "$ADAPTER_PID"
-        wait "$QEMU_PID" "$ADAPTER_PID" 2>/dev/null || true
+        kill "$QEMU_PID" "$ADAPTER_PID" 2>/dev/null || true
+        for _ in $(seq 1 50); do
+            if ! kill -0 "$QEMU_PID" 2>/dev/null && ! kill -0 "$ADAPTER_PID" 2>/dev/null; then break; fi
+            sleep 0.1
+        done
         break
     fi
     sleep 0.1

@@ -215,6 +215,15 @@ struct ConnectionState {
 
 const BRIDGE_TIMEOUT_MS: u32 = 5000;
 
+impl Drop for SharedState {
+    fn drop(&mut self) {
+        unsafe {
+            virtmcu_qom::sync::virtmcu_mutex_free(self.conn.0);
+            virtmcu_qom::sync::virtmcu_cond_free(self.resp_cond.0);
+        }
+    }
+}
+
 impl SharedState {
     fn run_background_thread(self: Arc<Self>) {
         let mut rx_buf = Vec::with_capacity(4096);

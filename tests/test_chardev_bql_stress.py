@@ -16,7 +16,7 @@ import zenoh
 # path under *standalone* icount — the scenario where UART traffic is the only
 # source of BQL contention.
 
-TOPIC_BASE = "sim/chardev"  # must match zenoh-chardev subscription
+TOPIC_BASE = "virtmcu/uart"  # must match zenoh-chardev subscription
 NODE_ID = "0"
 PORT = 7449
 # 10k packets at 1 µs spacing → timers fire rapidly, stressing BQL from timer callbacks

@@ -133,7 +133,11 @@ def validate_dtb(dtb_path, devices):
 
             if dts_node not in dts and dev.name not in dts:
                 missing.append(dev.name)
-            elif (dts_node in dts or dev.name in dts) and dev.type_name == "Memory.MappedMemory" and "size" in dev.properties:
+            elif (
+                (dts_node in dts or dev.name in dts)
+                and dev.type_name == "Memory.MappedMemory"
+                and "size" in dev.properties
+            ):
                 # Task: Verify memory size matches
                 try:
                     target_node = dts_node if dts_node in dts else dev.name

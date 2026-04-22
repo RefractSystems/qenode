@@ -4,7 +4,12 @@
 #
 # This is a wrapper script to launch the locally built QEMU emulator.
 # It automatically handles multiple hardware description formats and sets up
-# the environment (like QEMU_MODULE_DIR) for dynamic loading.
+# the environment (like QEMU_MODULE_DIR) for dynamic plugin loading.
+#
+# PLUGIN STALENESS PREVENTION:
+# This script is designed to recursively search the `build-virtmcu` directory
+# to prioritize the freshest compiled `.so` artifacts over globally installed
+# ones, ensuring developers and agents are always testing their latest code.
 #
 # Usage:
 #   ./scripts/run.sh [--repl|--yaml|--dts|--dtb <path>] [--kernel <path>] [args]
@@ -166,10 +171,8 @@ fi
 # Prioritize the build directory for developers, fallback to installed location.
 FOUND_SO=""
 if [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]]; then
-    FOUND_SO=$(find "$QEMU_DIR/build-virtmcu/install" -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
-    if [ -z "$FOUND_SO" ]; then
-        FOUND_SO=$(find "$QEMU_DIR/build-virtmcu" -maxdepth 1 -name "hw-virtmcu-*.so" -type f 2>/dev/null | head -n1)
-    fi
+    # Search for the freshest plugin in the entire build tree
+    FOUND_SO=$(find "$QEMU_DIR/build-virtmcu" -name "hw-virtmcu-*.so" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" ")
 fi
 
 if [ -n "$FOUND_SO" ]; then

@@ -19,7 +19,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
-# Check if QEMU is already pre-installed in the container image
+if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
+    # shellcheck source=/dev/null
+    source "$WORKSPACE_DIR/VERSIONS"
+fi
+
+# Function to download pre-built QEMU SDK from GitHub Releases
+download_prebuilt_qemu() {
+    local ARCH
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64"; fi
+    
+    local TAG="v${QEMU_VERSION}"
+    local TARBALL="virtmcu-qemu-${QEMU_VERSION}-${ARCH}.tar.gz"
+    local URL="https://github.com/refractsystems/virtmcu/releases/download/${TAG}/${TARBALL}"
+    
+    echo "==> Attempting to download pre-built QEMU ${TAG} for ${ARCH}..."
+    if curl -L --head --silent --fail "$URL" > /dev/null; then
+        mkdir -p "/tmp/virtmcu-download"
+        curl -L "$URL" -o "/tmp/virtmcu-download/${TARBALL}"
+        sudo mkdir -p /opt/virtmcu
+        sudo tar -xzf "/tmp/virtmcu-download/${TARBALL}" -C /opt/virtmcu
+        rm -rf "/tmp/virtmcu-download"
+        echo "✓ Pre-built QEMU installed to /opt/virtmcu"
+        return 0
+    else
+        echo "    (No pre-built binary found for ${TAG} at ${URL}, falling back to source build)"
+        return 1
+    fi
+}
+
+# Check if QEMU is already pre-installed in the container image or download it
 if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ]; then
     echo "==> QEMU is already pre-installed in this environment (/opt/virtmcu/bin)."
     echo "    'make run' and integration tests will work immediately."
@@ -27,42 +57,47 @@ if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d 
     echo "    If you want to modify QEMU C code or add new peripherals in hw/,"
     echo "    run: ./scripts/setup-qemu.sh --force"
     echo ""
-    exit 0
+    FORCE_SYMLINKS=1
+elif [ ! -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ] && download_prebuilt_qemu; then
+    FORCE_SYMLINKS=1
 fi
 
-if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
-    # shellcheck source=/dev/null
-    source "$WORKSPACE_DIR/VERSIONS"
+if [ "${FORCE_SYMLINKS:-0}" != "1" ] || [ -d "$QEMU_DIR" ]; then
+    # Clone QEMU if not already present
+    QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
+    QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0}}"
+
+    if [ ! -d "$QEMU_DIR/.git" ]; then
+        echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
+        mkdir -p "$WORKSPACE_DIR/third_party"
+        git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" "$QEMU_DIR"
+    fi
+
+    cd "$QEMU_DIR"
+
+    # Ensure we are on the expected QEMU version (11.0.0)
+    VERSION=$(cat VERSION || echo "")
+    if [[ "$VERSION" != "11.0.0" ]]; then
+        echo "Unexpected QEMU version: $VERSION"
+        exit 1
+    fi
+
+    # Apply all virtmcu patches (arm-generic-fdt, SysBus, Zenoh hooks)
+    # We use a centralized script to ensure the Dockerfile and local dev stay 1:1 consistent.
+    bash "$WORKSPACE_DIR/scripts/apply-qemu-patches.sh" "$QEMU_DIR"
 fi
-
-
-# Clone QEMU if not already present
-QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
-QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0-rc4}}"
-
-if [ ! -d "$QEMU_DIR/.git" ]; then
-    echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
-    mkdir -p "$WORKSPACE_DIR/third_party"
-    git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" "$QEMU_DIR"
-fi
-
-cd "$QEMU_DIR"
-
-# Ensure we are on the expected QEMU version (11.0.0-rc4)
-VERSION=$(cat VERSION || echo "")
-if [[ "$VERSION" != *"10.2.9"* ]] && [[ "$VERSION" != *"11.0.0-rc"* ]]; then
-    echo "Unexpected QEMU version: $VERSION"
-    exit 1
-fi
-
-# Apply all virtmcu patches (arm-generic-fdt, SysBus, Zenoh hooks)
-# We use a centralized script to ensure the Dockerfile and local dev stay 1:1 consistent.
-bash "$WORKSPACE_DIR/scripts/apply-qemu-patches.sh" "$QEMU_DIR"
 
 # Phase 7: Fetch Zenoh-C prebuilt library for native QOM plugins
 ZENOHC_VER="${ZENOH_VERSION:-1.9.0}"
 ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
-if [ ! -d "$ZENOHC_DIR/include" ]; then
+
+# Try to find pre-installed Zenoh-C headers first
+if [ ! -d "$ZENOHC_DIR/include" ] && [ -f "/opt/virtmcu/include/zenoh.h" ]; then
+    echo "==> Found pre-installed Zenoh-C headers in /opt/virtmcu, creating symlinks..."
+    mkdir -p "$ZENOHC_DIR"
+    ln -sfn /opt/virtmcu/include "$ZENOHC_DIR/include"
+    ln -sfn /opt/virtmcu/lib "$ZENOHC_DIR/lib"
+elif [ ! -d "$ZENOHC_DIR/include" ]; then
     echo "==> Fetching Zenoh-C $ZENOHC_VER for native QEMU plugins..."
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then
@@ -81,8 +116,23 @@ fi
 
 # Phase 12: Fetch and compile flatcc for Telemetry
 FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
-if command -v flatcc >/dev/null 2>&1; then
-    echo "==> flatcc already installed in system, skipping local build."
+# Try to find pre-installed flatcc headers first
+if [ ! -x "$FLATCC_DIR/bin/flatcc" ] && [ -f "/usr/local/bin/flatcc" ] && [ -d "/usr/local/include/flatcc" ]; then
+    echo "==> Found pre-installed flatcc in /usr/local, creating symlinks..."
+    mkdir -p "$FLATCC_DIR"
+    mkdir -p "$FLATCC_DIR/bin"
+    ln -sfn /usr/local/bin/flatcc "$FLATCC_DIR/bin/flatcc"
+    ln -sfn /usr/local/include/flatcc "$FLATCC_DIR/include"
+    ln -sfn /usr/local/lib "$FLATCC_DIR/lib"
+elif [ ! -x "$FLATCC_DIR/bin/flatcc" ] && [ -f "/opt/virtmcu/bin/flatcc" ] && [ -d "/opt/virtmcu/include/flatcc" ]; then
+    echo "==> Found pre-installed flatcc in /opt/virtmcu, creating symlinks..."
+    mkdir -p "$FLATCC_DIR"
+    mkdir -p "$FLATCC_DIR/bin"
+    ln -sfn /opt/virtmcu/bin/flatcc "$FLATCC_DIR/bin/flatcc"
+    ln -sfn /opt/virtmcu/include/flatcc "$FLATCC_DIR/include"
+    ln -sfn /opt/virtmcu/lib "$FLATCC_DIR/lib"
+elif command -v flatcc >/dev/null 2>&1 && [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
+    echo "==> flatcc already installed in system PATH, skipping local build."
 elif [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
     echo "==> Fetching and compiling flatcc (v${FLATCC_VERSION})..."
     mkdir -p "$WORKSPACE_DIR/third_party"
@@ -97,6 +147,11 @@ elif [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
     fi
     FLATCC_BUILD_FLAGS="-DFLATCC_TEST=OFF -DFLATCC_CXX_TEST=OFF -Wno-dev" CFLAGS="-fPIC" ./scripts/build.sh
     cd "$WORKSPACE_DIR"
+fi
+
+if [ "${FORCE_SYMLINKS:-0}" = "1" ] && [ ! -d "$QEMU_DIR" ]; then
+    echo "==> Environment ready (using /opt/virtmcu). Skipping QEMU build."
+    exit 0
 fi
 
 # Symlink our custom hw/ directory into QEMU's hw/virtmcu directory

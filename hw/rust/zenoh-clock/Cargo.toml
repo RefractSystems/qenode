@@ -16,3 +16,4 @@ virtmcu-api.workspace = true
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 virtmcu-zenoh.workspace = true
+crossbeam-channel.workspace = true

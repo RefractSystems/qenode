@@ -15,11 +15,17 @@ async def test_yaml_platform_boot(qemu_launcher):
 
     if not kernel.exists():
         import subprocess
+
         subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
 
     dtb = workspace_root / "test/phase3/test_board.dtb"
     import subprocess
-    subprocess.run(["uv", "run", "python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb)], check=True, cwd=workspace_root)
+
+    subprocess.run(
+        ["uv", "run", "python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb)],
+        check=True,
+        cwd=workspace_root,
+    )
 
     bridge = await qemu_launcher(dtb, kernel)
     await bridge.start_emulation()

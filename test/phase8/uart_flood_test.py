@@ -13,7 +13,7 @@ print("[UART Flood] Connected to Zenoh.")
 
 
 def publish_chardev():
-    pub = session.declare_publisher("sim/chardev/0/rx")
+    pub = session.declare_publisher("virtmcu/uart/0/rx")
 
     # 50,000 bytes blasted at once (far exceeding 32-byte PL011 FIFO)
     # The expected result is hardware-accurate byte dropping, but NO CRASH in QEMU.

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session):
     """
@@ -17,6 +18,7 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     # 1. Build if missing
     if not dtb.exists() or not kernel.exists():
         import subprocess
+
         subprocess.run(["make", "-C", "test/actuator"], check=True, cwd=workspace_root)
 
     received_msgs = []
@@ -26,6 +28,7 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
         payload = sample.payload.to_bytes()
         # Use print to stderr to be sure it's seen
         import sys
+
         print(f"DEBUG: Received Zenoh msg on topic: {topic}, len={len(payload)}", file=sys.stderr)
         if len(payload) < 8:
             return
@@ -38,12 +41,7 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     zenoh_session.declare_subscriber("firmware/control/**", on_sample)
 
     bridge = await qemu_launcher(
-        dtb,
-        kernel,
-        extra_args=[
-            "-global", f"zenoh-actuator.router={zenoh_router}"
-        ],
-        ignore_clock_check=True
+        dtb, kernel, extra_args=["-global", f"zenoh-actuator.router={zenoh_router}"], ignore_clock_check=True
     )
 
     await bridge.start_emulation()
