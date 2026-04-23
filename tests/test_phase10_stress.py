@@ -12,11 +12,10 @@ import zenoh
 
 # Paths
 WORKSPACE_DIR = Path(Path(Path(__file__).resolve().parent) / "..")
-# Use build_cov if it exists, otherwise build
-BUILD_DIR = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release"
-if not Path(BUILD_DIR).exists():
-    BUILD_DIR = Path(WORKSPACE_DIR) / "tools/cyber_bridge/build"
+BUILD_DIR = Path(WORKSPACE_DIR) / "target/release"
 REPLAY_BIN = Path(BUILD_DIR) / "resd_replay"
+if not REPLAY_BIN.exists():
+    REPLAY_BIN = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
 print(f"DEBUG: REPLAY_BIN = {REPLAY_BIN}")
 
 
@@ -91,8 +90,9 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
         q = session.declare_queryable(f"{unique_prefix}/advance/{i}", on_query)
         queryables.append(q)
 
-    # Give Zenoh time to propagate queryables
-    await asyncio.sleep(2.0)
+    from tests.conftest import wait_for_zenoh_discovery
+    for i in range(num_nodes):
+        await wait_for_zenoh_discovery(session, f"{unique_prefix}/advance/{i}")
 
     # Start resd_replay processes
     procs = []
@@ -140,15 +140,23 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
 @pytest.mark.asyncio
 async def test_mujoco_bridge_shm(zenoh_router):  # noqa: ARG001
     # Test mujoco_bridge shared memory creation and layout
-    node_id = 42
+
+    # Use worker_id logic if needed, but since it's a simple test, a fixed ID like 42 is fine
+    # as long as we clean it up and tests are isolated. Or derive it from the test name/PID.
+    # To be completely safe in parallel without random, we can use the current process PID.
+    import os
+
+    node_id = 42 + (os.getpid() % 1000)
     nu = 4
     nsensordata = 8
 
     bridge_bin = Path(BUILD_DIR) / "mujoco_bridge"
+    if not bridge_bin.exists():
+        bridge_bin = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
 
     # Run bridge briefly
     p = subprocess.Popen(
-        [bridge_bin, str(node_id), str(nu), str(nsensordata)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [str(bridge_bin), str(node_id), str(nu), str(nsensordata)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
     time.sleep(1.0)

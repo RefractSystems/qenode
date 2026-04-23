@@ -5,16 +5,14 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_phase21_macaddr_parsing(qemu_launcher):
+async def test_phase21_macaddr_parsing(qemu_launcher, tmp_path):
     """
     Task 21.2: Validate MACAddress property passing from YAML through yaml2qemu to QEMU.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    (Path(workspace_root) / "test/phase21_prereq/platform_minimal.yml")
-    (Path(workspace_root) / "test/phase21_prereq/platform_minimal.dtb")
 
     # We will temporarily inject a zenoh-wifi node to test macaddr parsing
-    test_yaml = Path(workspace_root) / "test/phase21_prereq/test_mac.yml"
+    test_yaml = tmp_path / "test_mac.yml"
     with Path(test_yaml).open("w") as f:
         f.write(
             "machine:\n"
@@ -33,7 +31,7 @@ async def test_phase21_macaddr_parsing(qemu_launcher):
             "    properties:\n"
             '      MACAddress: "00:11:22:33:44:55"\n'
         )
-    test_dtb = Path(workspace_root) / "test/phase21_prereq/test_mac.dtb"
+    test_dtb = tmp_path / "test_mac.dtb"
 
     subprocess.run(
         ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root

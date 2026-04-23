@@ -14,6 +14,7 @@ ROUTER_PID=""
 cleanup() {
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
+    rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 
@@ -40,18 +41,23 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+PORT=${1:-0}
+if [ "$PORT" -eq 0 ]; then
+    PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
+fi
+
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
 ROUTER_PID=$!
 sleep 1
 
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -netdev zenoh,id=n0,node=0,router=tcp/127.0.0.1:7447 \
+    -netdev zenoh,id=n0,node=0,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
-sleep 2
+sleep 1
 
-python3 "$WORKSPACE_DIR/test/phase19/netdev_flood_test.py"
+python3 "$WORKSPACE_DIR/test/phase19/netdev_flood_test.py" "tcp/127.0.0.1:$PORT"
 
 if ! kill -0 $QEMU_PID 2>/dev/null; then
     echo "QEMU crashed during network flood test! (OOM or Thread Panic)"

@@ -178,6 +178,7 @@ pub struct RemotePortBridgeQEMU {
 
 pub struct RemotePortBridgeState {
     shared: Arc<SharedState>,
+    bg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 pub struct SharedState {
@@ -449,21 +450,13 @@ impl SharedState {
                 }
             }
             // Sleep and retry
-            let _bql_unlock = if unsafe { virtmcu_qom::sync::virtmcu_bql_locked() } {
-                Some(Bql::temporary_unlock())
-            } else {
-                None
-            };
+            let _bql_unlock = Bql::temporary_unlock();
             std::thread::sleep(Duration::from_millis(10));
         }
 
         unsafe {
             virtmcu_qom::sync::virtmcu_mutex_lock(self.conn.0);
-            let _bql_unlock = if virtmcu_qom::sync::virtmcu_bql_locked() {
-                Some(Bql::temporary_unlock())
-            } else {
-                None
-            };
+            let _bql_unlock = Bql::temporary_unlock();
 
             while !self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).has_resp {
                 if !(*self.resp_cond.0).wait_timeout(&mut *self.conn.0, BRIDGE_TIMEOUT_MS) {
@@ -567,12 +560,14 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         }),
     });
 
-    let state = Box::new(RemotePortBridgeState { shared: Arc::clone(&shared) });
-    qemu.rust_state = Box::into_raw(state);
-
-    std::thread::spawn(move || {
-        shared.run_background_thread();
+    let shared_clone = Arc::clone(&shared);
+    let bg_thread = std::thread::spawn(move || {
+        shared_clone.run_background_thread();
     });
+
+    let state =
+        Box::new(RemotePortBridgeState { shared: Arc::clone(&shared), bg_thread: Some(bg_thread) });
+    qemu.rust_state = Box::into_raw(state);
 
     memory_region_init_io(
         &raw mut qemu.mmio,
@@ -595,7 +590,7 @@ unsafe extern "C" fn bridge_instance_init(_obj: *mut Object) {}
 unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
     let qemu = &mut *(obj as *mut RemotePortBridgeQEMU);
     if !qemu.rust_state.is_null() {
-        let state = Box::from_raw(qemu.rust_state);
+        let mut state = Box::from_raw(qemu.rust_state);
         {
             let mut lock = state.shared.state.lock().unwrap();
             lock.running = false;
@@ -605,6 +600,9 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
         }
         unsafe {
             (*state.shared.resp_cond.0).broadcast();
+        }
+        if let Some(handle) = state.bg_thread.take() {
+            let _ = handle.join();
         }
         qemu.rust_state = ptr::null_mut();
     }

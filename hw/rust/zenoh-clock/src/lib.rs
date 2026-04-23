@@ -7,8 +7,10 @@ use core::ffi::{c_char, c_void};
 use crossbeam_channel::{Receiver, Sender};
 use std::ffi::CStr;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
+
+static ACTIVE_HOOKS: AtomicUsize = AtomicUsize::new(0);
 use std::time::{Duration, Instant};
 use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, CLOCK_ERROR_OK};
 use virtmcu_qom::qdev::SysBusDevice;
@@ -114,7 +116,7 @@ pub struct ZenohClockBackend {
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
-static mut GLOBAL_CLOCK: *mut ZenohClock = ptr::null_mut();
+static GLOBAL_CLOCK: AtomicPtr<ZenohClock> = AtomicPtr::new(ptr::null_mut());
 
 extern "C" fn zenoh_clock_quantum_timer_cb(_opaque: *mut c_void) {
     zenoh_clock_cpu_halt_cb(ptr::null_mut(), false);
@@ -125,15 +127,23 @@ extern "C" fn zenoh_clock_cpu_tcg_hook(_cpu: *mut CPUState) {
 }
 
 extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
-    let s_ptr = unsafe { GLOBAL_CLOCK };
-    if s_ptr.is_null() {
-        return;
-    }
-    let s = unsafe { &mut *s_ptr };
-    if s.rust_state.is_null() {
-        return;
+    // 1. Signal that we are entering a hook
+    ACTIVE_HOOKS.fetch_add(1, Ordering::SeqCst);
+
+    // 2. Check if the clock device is still alive.
+    let s_ptr = GLOBAL_CLOCK.load(Ordering::Acquire);
+    if !s_ptr.is_null() {
+        let s = unsafe { &mut *s_ptr };
+        if !s.rust_state.is_null() {
+            zenoh_clock_cpu_halt_cb_internal(s, _cpu, halted);
+        }
     }
 
+    // 3. Signal that we have finished.
+    ACTIVE_HOOKS.fetch_sub(1, Ordering::SeqCst);
+}
+
+fn zenoh_clock_cpu_halt_cb_internal(s: &mut ZenohClock, _cpu: *mut CPUState, halted: bool) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
 
     // In slaved mode, we ONLY block when we reach the virtual time boundary.
@@ -156,11 +166,10 @@ extern "C" fn zenoh_clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
 
         if was_locked {
             let bql_start = Instant::now();
-            let _bql = virtmcu_qom::sync::Bql::lock();
+            virtmcu_qom::sync::Bql::lock_forget();
             let bql_wait = bql_start.elapsed().as_nanos() as u64;
             backend.total_bql_wait_ns.fetch_add(bql_wait, Ordering::Relaxed);
             backend.total_iterations.fetch_add(1, Ordering::Relaxed);
-            std::mem::forget(_bql);
         } else {
             backend.total_no_bql_iterations.fetch_add(1, Ordering::Relaxed);
         }
@@ -445,16 +454,22 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
     s.quantum_timer =
         unsafe { virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, zenoh_clock_quantum_timer_cb, dev) };
 
-    unsafe {
-        GLOBAL_CLOCK = s;
-        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = Some(zenoh_clock_cpu_halt_cb);
-        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = Some(zenoh_clock_cpu_tcg_hook);
-    }
-
     // Task 27.2: Ensure the timer is scheduled initially so we reach the first hook
     // even if the guest is idling or slow to boot.
     unsafe {
         virtmcu_timer_mod(s.quantum_timer, s.next_quantum_ns);
+    }
+
+    // Fail loudly if multiple clock devices are instantiated
+    let prev = GLOBAL_CLOCK.swap(s, Ordering::AcqRel);
+    if !prev.is_null() {
+        vlog!("[zenoh-clock] FATAL: Multiple ZenohClock instances realized! VirtMCU supports only one clock authority.\n");
+        std::process::abort();
+    }
+
+    unsafe {
+        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = Some(zenoh_clock_cpu_halt_cb);
+        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = Some(zenoh_clock_cpu_tcg_hook);
     }
 
     vlog!(
@@ -467,9 +482,26 @@ unsafe extern "C" fn zenoh_clock_realize(dev: *mut c_void, errp: *mut *mut c_voi
 
 unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohClock);
+
+    // 1. Immediately disable hooks globally and clear the pointer.
+    GLOBAL_CLOCK.store(ptr::null_mut(), Ordering::Release);
+    unsafe {
+        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = None;
+        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = None;
+    }
+
+    // 2. Wait for any active hook executions to finish their logic.
+    //    Since we set GLOBAL_CLOCK to NULL, any NEW hook entries will return immediately.
+    //    This loop waits for those that were already inside.
+    let mut attempts = 0;
+    while ACTIVE_HOOKS.load(Ordering::SeqCst) > 0 && attempts < 1000 {
+        std::thread::yield_now();
+        attempts += 1;
+    }
+
     if !s.rust_state.is_null() {
         let backend = unsafe { Arc::from_raw(s.rust_state) };
-        // Signal heartbeat thread to exit before we free the backend.
+        // Signal heartbeat thread and worker thread to exit before we free the backend.
         backend.shutdown.store(true, Ordering::Release);
 
         let total_wait = backend.total_bql_wait_ns.load(Ordering::Relaxed);
@@ -497,11 +529,6 @@ unsafe extern "C" fn zenoh_clock_instance_finalize(obj: *mut Object) {
             virtmcu_timer_free(s.quantum_timer);
         }
         s.quantum_timer = ptr::null_mut();
-    }
-    unsafe {
-        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = None;
-        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = None;
-        GLOBAL_CLOCK = ptr::null_mut();
     }
 }
 

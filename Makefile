@@ -131,7 +131,7 @@ test-asan: venv
 # Run Miri to detect Undefined Behavior in pure-Rust logic and safe FFI wrappers
 test-miri:
 	@echo "==> Running cargo miri test..."
-	@if ! rustup component list --toolchain nightly 2>/dev/null | grep -q "miri (installed)"; then \
+	@if ! rustup component list --toolchain nightly 2>/dev/null | grep -q "miri.*(installed)"; then \
 		echo "Installing Rust nightly toolchain and Miri..."; \
 		rustup toolchain install nightly --profile minimal --component miri; \
 	fi

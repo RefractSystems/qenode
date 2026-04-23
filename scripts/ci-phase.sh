@@ -29,16 +29,17 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
     esac
     
     # Ensure Python dependencies are synced in the container
-    if [ ! -f /tmp/.uv_synced ]; then
+    mkdir -p target
+    if [ ! -f target/.ci_marker_uv_synced ]; then
         echo "==> Syncing Python dependencies inside container..."
         uv pip install --link-mode=copy --system --break-system-packages -r pyproject.toml >/dev/null
-        touch /tmp/.uv_synced
+        touch target/.ci_marker_uv_synced
     fi
 
-    if [ ! -f /tmp/.artifacts_built ]; then
+    if [ ! -f target/.ci_marker_artifacts_built ]; then
         echo "==> Building test artifacts..."
         make build-test-artifacts >/dev/null
-        touch /tmp/.artifacts_built
+        touch target/.ci_marker_artifacts_built
     fi
 fi
 

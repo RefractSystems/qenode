@@ -23,21 +23,17 @@ use virtmcu_qom::net::{
 use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
-use zenoh::pubsub::Subscriber;
+use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use virtmcu_api::ZenohFrameHeader;
-use virtmcu_qom::sync::Bql;
-use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
-    virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
-};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
 #[repr(C)]
 pub struct ZenohNetdevQEMU {
@@ -79,11 +75,11 @@ pub struct ZenohNetdevState {
     nc: *mut NetClientState,
     node_id: u32,
     topic: String,
-    subscriber: Option<Subscriber<()>>,
-    rx_timer: *mut QemuTimer,
-    timer_ptr: Arc<AtomicUsize>,
+    subscriber: Option<SafeSubscriber>,
+    rx_timer: Option<Arc<QomTimer>>,
     rx_receiver: Receiver<OrderedPacket>,
     local_heap: Mutex<BinaryHeap<OrderedPacket>>,
+    backlog: Mutex<VecDeque<Vec<u8>>>,
     earliest_vtime: Arc<AtomicU64>,
 }
 
@@ -100,21 +96,22 @@ unsafe extern "C" fn zenoh_netdev_receive(
     zenoh_netdev_receive_internal(&*s.rust_state, buf, size)
 }
 
-unsafe extern "C" fn zenoh_netdev_can_receive(_nc: *mut NetClientState) -> bool {
-    true
+unsafe extern "C" fn zenoh_netdev_can_receive(nc: *mut NetClientState) -> bool {
+    let s = &mut *(nc as *mut ZenohNetClient);
+    if s.rust_state.is_null() {
+        return true;
+    }
+    let backlog = (*s.rust_state).backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    backlog.is_empty()
 }
 
 unsafe extern "C" fn zenoh_netdev_cleanup(nc: *mut NetClientState) {
     let s = &mut *(nc as *mut ZenohNetClient);
     if !s.rust_state.is_null() {
-        let state = Box::from_raw(s.rust_state);
-        state.timer_ptr.store(0, AtomicOrdering::Release);
-        if !state.rx_timer.is_null() {
-            unsafe {
-                virtmcu_timer_del(state.rx_timer);
-                virtmcu_timer_free(state.rx_timer);
-            }
-        }
+        let mut state = Box::from_raw(s.rust_state);
+        // Explicitly drop subscriber first to wait for callbacks
+        state.subscriber.take();
+        state.rx_timer.take();
         s.rust_state = ptr::null_mut();
     }
 }
@@ -192,6 +189,20 @@ declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
+fn drain_net_backlog(state: &ZenohNetdevState) -> bool {
+    let mut backlog = state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    while let Some(packet) = backlog.front() {
+        if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
+            return false;
+        }
+        let data = backlog.pop_front().unwrap_or_else(|| std::process::abort());
+        unsafe {
+            virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len());
+        }
+    }
+    true
+}
+
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     debug_assert!(
         unsafe { virtmcu_qom::sync::virtmcu_bql_locked() },
@@ -199,6 +210,14 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     );
     let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+
+    // 1. Drain backlog
+    if !drain_net_backlog(state) {
+        if let Some(rx_timer) = &state.rx_timer {
+            rx_timer.mod_ns(now as i64 + 1_000_000); // 1ms
+        }
+        return;
+    }
 
     let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
@@ -209,25 +228,28 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
 
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
-            let packet = heap.pop().unwrap_or_else(|| std::process::abort());
+            if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
+                let mut backlog =
+                    state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let p = heap.pop().unwrap_or_else(|| std::process::abort());
+                backlog.push_back(p.data);
+                break;
+            }
+
+            let p = heap.pop().unwrap_or_else(|| std::process::abort());
             unsafe {
-                virtmcu_qom::net::qemu_send_packet(
-                    state.nc,
-                    packet.data.as_ptr(),
-                    packet.data.len(),
-                );
+                virtmcu_qom::net::qemu_send_packet(state.nc, p.data.as_ptr(), p.data.len());
             }
         } else {
+            // Re-arm timer
+            if let Some(rx_timer) = &state.rx_timer {
+                rx_timer.mod_ns(packet.vtime as i64);
+            }
             break;
         }
     }
 
-    if let Some(next_packet) = heap.peek() {
-        state.earliest_vtime.store(next_packet.vtime, AtomicOrdering::Release);
-        unsafe {
-            virtmcu_timer_mod(state.rx_timer, next_packet.vtime as i64);
-        }
-    } else {
+    if heap.is_empty() {
         state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
     }
 }
@@ -245,70 +267,63 @@ fn zenoh_netdev_init_internal(
         }
     };
 
-    let (tx, rx) = bounded(1024);
+    let (tx, rx) = bounded(65536);
     let local_heap = Mutex::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
 
-    let timer_ptr_clone = Arc::new(AtomicUsize::new(0));
-    let timer_ptr = std::sync::Arc::clone(&timer_ptr_clone);
-
-    let subscriber = session
-        .declare_subscriber(&topic)
-        .callback(move |sample| {
-            let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
-            if tp == 0 {
-                return;
-            }
-            let rx_timer = tp as *mut QemuTimer;
-
-            let data = sample.payload().to_bytes();
-            if data.len() < 12 {
-                return;
-            }
-
-            let mut header = ZenohFrameHeader::default();
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), &raw mut header as *mut u8, 12);
-            }
-
-            let payload = data[12..].to_vec();
-
-            let packet = OrderedPacket { vtime: header.delivery_vtime_ns, data: payload };
-
-            let _ = tx.send(packet);
-
-            let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
-            if header.delivery_vtime_ns < current_earliest {
-                earliest_clone.fetch_min(header.delivery_vtime_ns, AtomicOrdering::Release);
-                let _bql = Bql::lock();
-                unsafe {
-                    virtmcu_timer_mod(rx_timer, header.delivery_vtime_ns as i64);
-                }
-            }
-        })
-        .wait()
-        .ok();
-
     let mut state = Box::new(ZenohNetdevState {
-        session,
+        session: session.clone(),
         nc,
         node_id,
-        topic,
-        subscriber,
-        rx_timer: ptr::null_mut(),
-        timer_ptr: Arc::clone(&timer_ptr),
+        topic: topic.clone(),
+        subscriber: None,
+        rx_timer: None,
         rx_receiver: rx,
         local_heap,
+        backlog: Mutex::new(VecDeque::new()),
         earliest_vtime,
     });
 
     let state_ptr = &raw mut *state;
-    let rx_timer =
-        unsafe { virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void) };
+    let rx_timer = Arc::new(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void)
+    });
+    let rx_timer_clone = Arc::clone(&rx_timer);
 
-    state.rx_timer = rx_timer;
-    timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
+    let subscriber = SafeSubscriber::new(&session, &topic, move |sample| {
+        let data = sample.payload().to_bytes();
+        if data.len() < 12 {
+            virtmcu_qom::vlog!(
+                "[zenoh-netdev] Warning: Dropping malformed packet (too short: {} bytes)\n",
+                data.len()
+            );
+            return;
+        }
+
+        let mut header = ZenohFrameHeader::default();
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), &raw mut header as *mut u8, 12);
+        }
+
+        let payload = data[12..].to_vec();
+
+        let packet = OrderedPacket { vtime: header.delivery_vtime_ns, data: payload };
+
+        if tx.send(packet).is_ok() {
+            let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
+            if header.delivery_vtime_ns < current_earliest {
+                earliest_clone.fetch_min(header.delivery_vtime_ns, AtomicOrdering::Release);
+                rx_timer_clone.mod_ns(header.delivery_vtime_ns as i64);
+            }
+        } else {
+            virtmcu_qom::vlog!("[zenoh-netdev] Warning: RX channel full, dropping packet\n");
+        }
+    })
+    .ok();
+
+    state.rx_timer = Some(rx_timer);
+    state.subscriber = subscriber;
 
     Box::into_raw(state)
 }

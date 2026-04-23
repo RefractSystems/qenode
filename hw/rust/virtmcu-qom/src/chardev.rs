@@ -79,7 +79,32 @@ pub struct ChardevClass {
     /// A struct field
     pub chr_write:
         Option<unsafe extern "C" fn(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int>, // 120
-    _opaque: [u8; 256 - 128],
+    /// A struct field
+    pub chr_sync_read:
+        Option<unsafe extern "C" fn(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int>, // 128
+    /// A struct field
+    pub chr_add_watch: Option<unsafe extern "C" fn(chr: *mut Chardev, cond: c_int) -> *mut c_void>, // 136
+    /// A struct field
+    pub chr_update_read_handler: Option<unsafe extern "C" fn(chr: *mut Chardev)>, // 144
+    /// A struct field
+    pub chr_ioctl:
+        Option<unsafe extern "C" fn(chr: *mut Chardev, cmd: c_int, arg: *mut c_void) -> c_int>, // 152
+    /// A struct field
+    pub chr_get_msgfds:
+        Option<unsafe extern "C" fn(chr: *mut Chardev, fds: *mut c_int, num: c_int) -> c_int>, // 160
+    /// A struct field
+    pub chr_set_msgfds:
+        Option<unsafe extern "C" fn(chr: *mut Chardev, fds: *mut c_int, num: c_int) -> c_int>, // 168
+    /// A struct field
+    pub chr_add_client: Option<unsafe extern "C" fn(chr: *mut Chardev, fd: c_int) -> c_int>, // 176
+    /// A struct field
+    pub chr_wait_connected:
+        Option<unsafe extern "C" fn(chr: *mut Chardev, errp: *mut *mut c_void) -> c_int>, // 184
+    /// A struct field
+    pub chr_disconnect: Option<unsafe extern "C" fn(chr: *mut Chardev)>, // 192
+    /// A struct field
+    pub chr_accept_input: Option<unsafe extern "C" fn(chr: *mut Chardev)>, // 200
+    _opaque: [u8; 256 - 208],
 }
 
 extern "C" {
@@ -117,6 +142,7 @@ const _: () = assert!(core::mem::size_of::<CharFrontend>() == 56);
 const _: () = assert!(core::mem::size_of::<Chardev>() == 160);
 const _: () = assert!(core::mem::size_of::<ChardevClass>() == 256);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_write) == 120);
+const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_accept_input) == 200);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_parse) == 104);
 const _: () = assert!(core::mem::offset_of!(Chardev, chr_write_lock) == 40);
 const _: () = assert!(core::mem::offset_of!(Chardev, label) == 112);

@@ -6,7 +6,7 @@ use core::ffi::{c_char, c_int, c_void};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flatbuffers::root;
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
@@ -19,12 +19,8 @@ use virtmcu_qom::net::{
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
 use virtmcu_qom::qom::{type_register_static, Object, ObjectClass, Property, TypeInfo};
-use virtmcu_qom::sync::{virtmcu_bql_lock, virtmcu_bql_unlock};
-use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
-    virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
-};
-use virtmcu_zenoh::open_session;
+use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
+use virtmcu_zenoh::{open_session, SafeSubscriber};
 use zenoh::Session;
 use zenoh::Wait;
 
@@ -64,19 +60,25 @@ impl Ord for OrderedCanFrame {
 
 pub struct State {
     session: Session,
-    subscriber: Option<zenoh::pubsub::Subscriber<()>>,
+    subscriber: Option<SafeSubscriber>,
     tx_sender: Sender<Vec<u8>>,
     rx_sender: Sender<OrderedCanFrame>,
     rx_receiver: Receiver<OrderedCanFrame>,
     local_heap: Mutex<BinaryHeap<OrderedCanFrame>>,
+    backlog: Mutex<VecDeque<QemuCanFrame>>,
     earliest_vtime: Arc<AtomicU64>,
-    rx_timer: *mut QemuTimer,
-    timer_ptr: Arc<AtomicUsize>,
+    rx_timer: Option<Arc<QomTimer>>,
     client_ptr: *mut CanBusClientState,
 }
 
-unsafe extern "C" fn zenoh_can_receive(_client: *mut CanBusClientState) -> bool {
-    true
+unsafe extern "C" fn zenoh_can_receive(client: *mut CanBusClientState) -> bool {
+    let ch = (*client).peer as *mut ZenohCanHostState;
+    let state = (*ch).rust_state;
+    if state.is_null() {
+        return true;
+    }
+    let backlog = (*state).backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    backlog.is_empty()
 }
 
 unsafe extern "C" fn zenoh_can_receive_frames(
@@ -112,7 +114,6 @@ unsafe extern "C" fn zenoh_can_receive_frames(
         builder.finish(fbs_frame, None);
         let payload = builder.finished_data().to_vec();
 
-        // Non-blocking send to background TX thread to avoid stalling BQL
         let _ = (*state).tx_sender.send(payload);
     }
 
@@ -124,29 +125,73 @@ static mut ZENOH_CAN_CLIENT_INFO: CanBusClientInfo = CanBusClientInfo {
     receive: Some(zenoh_can_receive_frames),
 };
 
+fn drain_can_backlog(state: &State) -> bool {
+    let mut backlog = state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    while let Some(frame) = backlog.front() {
+        if unsafe {
+            match (*(*state.client_ptr).info).can_receive {
+                Some(can_receive) => !can_receive(state.client_ptr),
+                None => false,
+            }
+        } {
+            return false;
+        }
+
+        let f = backlog.pop_front().unwrap_or_else(|| std::process::abort());
+        unsafe {
+            can_bus_client_send(state.client_ptr, &raw const f, 1);
+        }
+    }
+    true
+}
+
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*(opaque as *mut State) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+
+    if !drain_can_backlog(state) {
+        if let Some(rx_timer) = &state.rx_timer {
+            rx_timer.mod_ns(now as i64 + 1_000_000);
+        }
+        return;
+    }
 
     let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     while let Ok(packet) = state.rx_receiver.try_recv() {
         heap.push(packet);
     }
-
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
-            let packet = heap.pop().unwrap_or_else(|| std::process::abort());
+            // Check if guest can receive
+            if unsafe {
+                match (*(*state.client_ptr).info).can_receive {
+                    Some(can_receive) => !can_receive(state.client_ptr),
+                    None => false,
+                }
+            } {
+                // Buffer to backlog
+                let mut backlog =
+                    state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let p = heap.pop().unwrap_or_else(|| std::process::abort());
+                backlog.push_back(p.frame);
+                break;
+            }
+
+            let p = heap.pop().unwrap_or_else(|| std::process::abort());
             unsafe {
-                can_bus_client_send(state.client_ptr, &raw const packet.frame, 1);
+                can_bus_client_send(state.client_ptr, &raw const p.frame, 1);
             }
         } else {
-            // Re-arm timer
-            unsafe {
-                virtmcu_timer_mod(state.rx_timer, packet.vtime as i64);
+            if let Some(rx_timer) = &state.rx_timer {
+                rx_timer.mod_ns(packet.vtime as i64);
             }
             break;
         }
+    }
+
+    if heap.is_empty() {
+        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
     }
 }
 
@@ -182,91 +227,80 @@ unsafe extern "C" fn zenoh_can_host_connect(ch: *mut CanHostState, _errp: *mut *
     let (tx, rx) = unbounded();
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
 
-    let timer =
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, zch as *mut core::ffi::c_void);
-    let timer_ptr = Arc::new(std::sync::atomic::AtomicUsize::new(timer as usize));
-    let timer_ptr_clone = std::sync::Arc::clone(&timer_ptr);
-
     // Prepare QEMU client struct
     (*zch).parent_obj.bus_client.info = &raw mut ZENOH_CAN_CLIENT_INFO;
     (*zch).parent_obj.bus_client.peer = zch as *mut CanBusClientState;
 
     let mut state = Box::new(State {
-        session,
+        session: session.clone(),
         subscriber: None, // Filled below to prevent partial move issues
         tx_sender: tx_rx,
         rx_sender: tx,
         rx_receiver: rx,
         local_heap: Mutex::new(BinaryHeap::new()),
+        backlog: Mutex::new(VecDeque::new()),
         earliest_vtime: std::sync::Arc::clone(&earliest_vtime),
-        rx_timer: timer,
-        timer_ptr: std::sync::Arc::clone(&timer_ptr),
+        rx_timer: None,
         client_ptr: &raw mut (*zch).parent_obj.bus_client,
     });
 
+    let state_ptr = &raw mut *state;
+    let rx_timer = Arc::new(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut core::ffi::c_void)
+    });
+    let rx_timer_clone = Arc::clone(&rx_timer);
+
     let tx_clone = state.rx_sender.clone();
-    let subscriber = match state
-        .session
-        .declare_subscriber(&topic_str)
-        .callback(move |sample| {
-            let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
-            if tp == 0 {
-                return;
-            }
-            let rx_timer = tp as *mut QemuTimer;
+    let subscriber = match SafeSubscriber::new(&session, &topic_str, move |sample| {
+        let data = sample.payload().to_bytes();
+        if let Ok(fbs) = root::<CanFdFrame>(&data) {
+            let mut data_arr = [0u8; 64];
+            let dlc = if let Some(d) = fbs.data() {
+                let len = std::cmp::min(d.len(), 64);
+                data_arr[..len].copy_from_slice(&d.bytes()[..len]);
+                len as u8
+            } else {
+                0
+            };
 
-            let data = sample.payload().to_bytes();
-            if let Ok(fbs) = root::<CanFdFrame>(&data) {
-                let mut data_arr = [0u8; 64];
-                let dlc = if let Some(d) = fbs.data() {
-                    let len = std::cmp::min(d.len(), 64);
-                    data_arr[..len].copy_from_slice(&d.bytes()[..len]);
-                    len as u8
-                } else {
-                    0
-                };
+            let frame = QemuCanFrame {
+                can_id: fbs.can_id(),
+                can_dlc: dlc,
+                flags: fbs.flags() as u8,
+                _padding: [0; 2],
+                data: data_arr,
+            };
 
-                let frame = QemuCanFrame {
-                    can_id: fbs.can_id(),
-                    can_dlc: dlc,
-                    flags: fbs.flags() as u8,
-                    _padding: [0; 2],
-                    data: data_arr,
-                };
+            let vtime = fbs.delivery_vtime_ns();
+            let packet = OrderedCanFrame { vtime, frame };
 
-                let vtime = fbs.delivery_vtime_ns();
-                let packet = OrderedCanFrame { vtime, frame };
-
-                if tx_clone.send(packet).is_ok() {
-                    // Update earliest vtime and wake BQL thread via timer_mod if it's sooner
-                    let mut current = earliest_vtime.load(AtomicOrdering::Relaxed);
-                    while vtime < current {
-                        if earliest_vtime
-                            .compare_exchange_weak(
-                                current,
-                                vtime,
-                                AtomicOrdering::Release,
-                                AtomicOrdering::Relaxed,
-                            )
-                            .is_ok()
-                        {
-                            virtmcu_bql_lock();
-                            virtmcu_timer_mod(rx_timer, vtime as i64);
-                            virtmcu_bql_unlock();
-                            break;
-                        }
-                        current = earliest_vtime.load(AtomicOrdering::Relaxed);
+            if tx_clone.send(packet).is_ok() {
+                // Update earliest vtime and wake BQL thread via timer_mod if it's sooner
+                let mut current = earliest_vtime.load(AtomicOrdering::Relaxed);
+                while vtime < current {
+                    if earliest_vtime
+                        .compare_exchange_weak(
+                            current,
+                            vtime,
+                            AtomicOrdering::Release,
+                            AtomicOrdering::Relaxed,
+                        )
+                        .is_ok()
+                    {
+                        rx_timer_clone.mod_ns(vtime as i64);
+                        break;
                     }
+                    current = earliest_vtime.load(AtomicOrdering::Relaxed);
                 }
             }
-        })
-        .wait()
-    {
+        }
+    }) {
         Ok(s) => s,
         Err(_) => return,
     };
 
     state.subscriber = Some(subscriber);
+    state.rx_timer = Some(rx_timer);
     (*zch).rust_state = Box::into_raw(state);
 
     can_bus_insert_client((*zch).parent_obj.bus, &raw mut (*zch).parent_obj.bus_client);
@@ -277,10 +311,10 @@ unsafe extern "C" fn zenoh_can_host_disconnect(ch: *mut CanHostState) {
     can_bus_remove_client(&raw mut (*zch).parent_obj.bus_client);
 
     if !(*zch).rust_state.is_null() {
-        let state = Box::from_raw((*zch).rust_state);
-        state.timer_ptr.store(0, AtomicOrdering::Release);
-        virtmcu_timer_del(state.rx_timer);
-        virtmcu_timer_free(state.rx_timer);
+        let mut state = Box::from_raw((*zch).rust_state);
+        // Explicitly stop the subscriber first to wait for callbacks
+        state.subscriber.take();
+        state.rx_timer.take();
         (*zch).rust_state = ptr::null_mut();
     }
 }
@@ -397,10 +431,10 @@ unsafe extern "C" fn zenoh_can_host_instance_finalize(obj: *mut Object) {
         g_free((*zch).topic as *mut c_void);
     }
     if !(*zch).rust_state.is_null() {
-        let state = Box::from_raw((*zch).rust_state);
-        state.timer_ptr.store(0, AtomicOrdering::Release);
-        virtmcu_timer_del(state.rx_timer);
-        virtmcu_timer_free(state.rx_timer);
+        let mut state = Box::from_raw((*zch).rust_state);
+        // Explicitly drop the subscriber first
+        state.subscriber.take();
+        state.rx_timer.take();
     }
 }
 

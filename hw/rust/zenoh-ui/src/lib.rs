@@ -28,7 +28,7 @@ use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     device_class_set_props, error_setg,
 };
-use zenoh::pubsub::Subscriber;
+use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
@@ -57,7 +57,7 @@ pub struct ZenohUiState {
 
 struct ButtonState {
     irq: qemu_irq,
-    subscriber: Option<Subscriber<()>>,
+    subscriber: Option<SafeSubscriber>,
     pressed: bool,
 }
 
@@ -147,9 +147,13 @@ unsafe extern "C" fn zenoh_ui_realize(dev: *mut c_void, errp: *mut *mut c_void) 
 unsafe extern "C" fn zenoh_ui_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohUiQEMU);
     if !s.rust_state.is_null() {
-        unsafe {
-            drop(Box::from_raw(s.rust_state));
+        let state = Box::from_raw(s.rust_state);
+        let mut btns = state.buttons.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (_, btn) in btns.iter_mut() {
+            btn.subscriber.take();
         }
+        drop(btns);
+        drop(state);
         s.rust_state = ptr::null_mut();
     }
 }
@@ -222,24 +226,18 @@ fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: qemu_irq) {
     let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
     let irq_ptr = irq as usize;
 
-    let subscriber = state
-        .session
-        .declare_subscriber(&topic)
-        .callback(move |sample| {
-            let payload = sample.payload();
-            if payload.len() < 1 {
-                return;
-            }
-            let val = payload.to_bytes()[0] != 0;
+    let subscriber = SafeSubscriber::new(&state.session, &topic, move |sample| {
+        let payload = sample.payload();
+        if payload.len() < 1 {
+            return;
+        }
+        let val = payload.to_bytes()[0] != 0;
 
-            unsafe {
-                virtmcu_qom::sync::virtmcu_bql_lock();
-                qemu_set_irq(irq_ptr as qemu_irq, i32::from(val));
-                virtmcu_qom::sync::virtmcu_bql_unlock();
-            }
-        })
-        .wait()
-        .ok();
+        unsafe {
+            qemu_set_irq(irq_ptr as qemu_irq, i32::from(val));
+        }
+    })
+    .ok();
 
     btns.insert(btn_id, ButtonState { irq, subscriber, pressed: false });
 }

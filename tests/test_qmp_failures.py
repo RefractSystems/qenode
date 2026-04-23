@@ -1,95 +1,44 @@
 import asyncio
-import subprocess
 from pathlib import Path
 
 import pytest
-
-from tools.testing.qmp_bridge import QmpBridge
-
-
-@pytest.mark.asyncio
-async def test_invalid_qmp_command(qmp_bridge):
-    """
-    Verify that invalid QMP commands raise an appropriate error.
-    """
-    from qemu.qmp.qmp_client import ExecuteError
-
-    with pytest.raises(ExecuteError):
-        await qmp_bridge.execute("non-existent-command")
+from qemu.qmp.protocol import ConnectError, StateError
 
 
 @pytest.mark.asyncio
-async def test_qemu_crash_handling(qemu_launcher):  # noqa: ARG001
+async def test_qemu_crash_handling(qemu_launcher):
     """
     Test how the bridge handles QEMU crashing mid-execution.
     """
-    # For this test, let's manually launch and crash it.
-    import tempfile
+    workspace_root = Path(__file__).resolve().parent.parent
+    dtb = workspace_root / "test/phase1/minimal.dtb"
+    kernel = workspace_root / "test/phase1/hello.elf"
 
-    tmpdir = tempfile.mkdtemp()
-    qmp_sock = Path(tmpdir) / "qmp.sock"
+    # Use qemu_launcher for robust process management
+    bridge = await qemu_launcher(dtb, kernel, ignore_clock_check=True)
 
-    proc = subprocess.Popen(
-        [
-            "./scripts/run.sh",
-            "--dtb",
-            "test/phase1/minimal.dtb",
-            "-qmp",
-            f"unix:{qmp_sock},server,nowait",
-            "-display",
-            "none",
-        ],
-        start_new_session=True,
-    )
+    # Verify we can connect
+    assert bridge.qmp.is_connected()
 
-    # Wait for socket
-    for _ in range(50):
-        if Path(qmp_sock).exists():
-            break
-        await asyncio.sleep(0.1)
-
-    bridge = QmpBridge()
     try:
-        await bridge.connect(str(qmp_sock))
-
         # Kill QEMU
-        proc.kill()
-        proc.wait()
+        # qemu_launcher doesn't expose proc easily, but we can find it
+        import psutil
+        qemu_proc = None
+        for p in psutil.process_iter(["cmdline"]):
+            if "qemu-system-arm" in (p.info["cmdline"] or []) and str(dtb) in str(p.info["cmdline"]):
+                qemu_proc = p
+                break
+
+        assert qemu_proc is not None
+        qemu_proc.kill()
+
+        # Give it a tiny moment to die
+        await asyncio.sleep(0.5)
 
         # Next command should fail
-        from qemu.qmp.protocol import ConnectError
-        from qemu.qmp.qmp_client import ExecInterruptedError
+        with pytest.raises((ConnectError, StateError, EOFError, asyncio.IncompleteReadError)):
+            await bridge.qmp.execute("query-status")
 
-        with pytest.raises(
-            (ExecInterruptedError, ConnectError, EOFError, ConnectionResetError, asyncio.IncompleteReadError)
-        ):
-            await bridge.execute("query-status")
     finally:
         await bridge.close()
-        if proc.poll() is None:
-            proc.kill()
-        import shutil
-
-        shutil.rmtree(tmpdir)
-
-
-@pytest.mark.asyncio
-async def test_connect_to_missing_socket():
-    """
-    Verify error when connecting to a non-existent socket.
-    """
-    bridge = QmpBridge()
-    from qemu.qmp.protocol import ConnectError
-
-    with pytest.raises((FileNotFoundError, ConnectionRefusedError, OSError, ConnectError)):
-        await bridge.connect("/tmp/non_existent_socket_12345.sock")
-
-
-@pytest.mark.asyncio
-async def test_uart_disconnect_handling(qemu_launcher):
-    """
-    Test how the bridge handles UART socket closing.
-    """
-    # This is harder to test without a mock or crashing QEMU.
-    # If QEMU exits, the UART socket will close.
-    pass

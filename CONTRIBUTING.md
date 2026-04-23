@@ -177,7 +177,11 @@ Before opening a PR or pushing code to `main`, you should run our local CI valid
 
 virtmcu relies on automated testing to ensure new features (like parsing or new peripherals) don't break earlier architectural work. All tests must be properly documented.
 
-**Parallel Execution Warning:** Our test suites run in parallel by default (`-n auto`). When writing new tests, ensure they are isolated and do not rely on fixed ports or shared files that could cause race conditions or resource contention with other tests running in the background.
+**Parallel Execution Strict Rules:** Our test suites run in parallel by default (`-n auto`). When writing new tests, they **MUST** be designed "out of the box" for parallel execution isolation. Do not rely on fixed resources:
+1. **NO Hardcoded Ports:** Never use fixed ports like `tcp/127.0.0.1:7447`. Inject dynamic ports using the `zenoh_router` fixture (in Python) or `scripts/get-free-port.py` (in Bash).
+2. **NO Hardcoded Temporal Paths:** Never generate output files (`.dtb`, `.yaml`, `.cli`) directly in `workspace_root` or shared test directories. Always use `pytest`'s `tmp_path` fixture or `mktemp -d` in Bash.
+3. **NO Random Value Collisions:** Do not use `random.randint()` for IDs or paths. Use deterministic uniqueness tied to the execution context (e.g., `os.getpid()` or `tmp_path`).
+4. **NO Manual Process Management:** Do not spawn background daemons (like `cargo run ... zenoh_coordinator`) manually inside tests. Use the provided reusable `pytest` fixtures for clean, isolated orchestration.
 
 We split testing into two categories:
 

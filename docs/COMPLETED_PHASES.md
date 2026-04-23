@@ -4,6 +4,17 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
+## Architectural Hardening — ASan & UAF Prevention ✅
+
+**Status**: Done
+
+### Tasks
+- [x] **Milestone 1**: `SafeSubscriber` RAII wrapper implemented in `virtmcu-zenoh` to automatically manage BQL and teardown races.
+- [x] **Milestone 2**: `QomTimer` RAII wrapper implemented in `virtmcu-qom` for automated timer destruction.
+- [x] **Milestone 3**: All Rust peripherals (`zenoh-chardev`, `s32k144-lpuart`, `zenoh-netdev`, `zenoh-canfd`, `zenoh-flexray`, `zenoh-802154`, `zenoh-ui`) refactored to use the safe wrappers.
+
+---
+
 ## Phase 0 — Repository Setup ✅
 
 **Status**: Done

@@ -15,6 +15,25 @@
 set -u
 
 QUIET=${1:-""}
+FILTER=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quiet)
+            QUIET="--quiet"
+            shift
+            ;;
+        --filter)
+            FILTER="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 WORKSPACE_DIR=$(pwd)
 
 log() {
@@ -56,7 +75,14 @@ get_workspace_pids() {
         
         # If the process is running from our workspace, or its command line references our workspace
         if [[ "$cwd" == "$WORKSPACE_DIR"* ]] || [[ "$cmdline" == *"$WORKSPACE_DIR"* ]]; then
-            pids="$pids $pid"
+            # If a filter is specified, only include if cmdline matches filter
+            if [ -n "$FILTER" ]; then
+                if [[ "$cmdline" == *"$FILTER"* ]]; then
+                    pids="$pids $pid"
+                fi
+            else
+                pids="$pids $pid"
+            fi
         fi
     done
     echo "$pids"
@@ -80,15 +106,17 @@ for proc in "${PROCESSES[@]}"; do
     fi
 done
 
-log "Cleaning up temporary files..."
-# We leave /tmp/virtmcu-test-* alone because pytest handles its own tempdir cleanup safely.
-# We only clean up legacy hardcoded /tmp files if they exist.
-rm -rf /tmp/phase[0-9]* 2>/dev/null || true
-rm -f /tmp/virtmcu-*.dtb 2>/dev/null || true
-rm -f /tmp/virtmcu-*.cli 2>/dev/null || true
-rm -f /tmp/virtmcu-*.arch 2>/dev/null || true
+if [ -z "$FILTER" ]; then
+    log "Cleaning up temporary files..."
+    # We leave /tmp/virtmcu-test-* alone because pytest handles its own tempdir cleanup safely.
+    # We only clean up legacy hardcoded /tmp files if they exist.
+    rm -rf /tmp/phase[0-9]* 2>/dev/null || true
+    rm -f /tmp/virtmcu-*.dtb 2>/dev/null || true
+    rm -f /tmp/virtmcu-*.cli 2>/dev/null || true
+    rm -f /tmp/virtmcu-*.arch 2>/dev/null || true
 
-# Clean up stale lock files
-rm -f "$WORKSPACE_DIR/tools/zenoh_coordinator/build.lock" 2>/dev/null || true
+    # Clean up stale lock files
+    rm -f "$WORKSPACE_DIR/tools/zenoh_coordinator/build.lock" 2>/dev/null || true
+fi
 
 log "✓ Cleanup complete."

@@ -40,19 +40,24 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+PORT=${1:-0}
+if [ "$PORT" -eq 0 ]; then
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+fi
+
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
 ROUTER_PID=$!
 sleep 1
 
 # Start test queryable
-python3 -u "$WORKSPACE_DIR/test/phase7/clock_stall_test.py" &
+python3 -u "$WORKSPACE_DIR/test/phase7/clock_stall_test.py" "tcp/127.0.0.1:$PORT" &
 PYTHON_PID=$!
 sleep 1
 
 echo "Starting QEMU..."
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:7447,stall-timeout=2000 \
+    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT,stall-timeout=2000 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 

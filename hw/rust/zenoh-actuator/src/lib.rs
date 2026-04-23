@@ -226,7 +226,10 @@ fn zenoh_actuator_init_internal(
     let session = unsafe {
         match virtmcu_zenoh::open_session(router) {
             Ok(s) => s,
-            Err(_) => return ptr::null_mut(),
+            Err(e) => {
+                virtmcu_qom::vlog!("zenoh-actuator: failed to open session: {}\n", e);
+                return ptr::null_mut();
+            }
         }
     };
 

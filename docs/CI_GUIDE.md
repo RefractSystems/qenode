@@ -41,19 +41,23 @@ To prevent cryptic `SIGSEGV` (Segmentation Faults) caused by layout drift betwee
 - **Mandate:** If the layouts don't match, the build **fails loudly** before the simulation starts.
 
 #### C. Dynamic Port Allocation (`get-free-port.py`)
-To enable massive parallelism (`pytest -n auto`) without "Address already in use" errors.
-- **Mechanism:** Tests never use hardcoded ports (like 7447). They invoke a utility that finds an available ephemeral port on the host.
-- **Result:** Every parallel test worker gets its own isolated Zenoh router and communication bus.
+To enable massive parallelism (`pytest -n auto`) without "Address already in use" errors or file collisions.
+- **Ports:** Tests never use hardcoded ports (like 7447). They invoke a utility (`scripts/get-free-port.py` or the `zenoh_router` fixture) that finds an available ephemeral port.
+- **Paths:** Tests never write generated artifacts (`.dtb`, `.yaml`) to shared directories. They strictly use isolated temporary directories (e.g., `tmp_path` fixture in pytest or `mktemp` in bash).
+- **Result:** Every parallel test worker gets its own isolated Zenoh router, communication bus, and artifact directory.
 
 ---
 
 ## 2. Test Script Assumptions (Do's and Don'ts)
 
-When writing new tests or smoke scripts, adhere to these architectural assumptions:
+When writing new tests or smoke scripts, adhere to these strict architectural assumptions for out-of-the-box parallel readiness:
 
 | Assumption | Safe / Recommended | Dangerous / BANNED |
 | :--- | :--- | :--- |
-| **Ports** | Use `scripts/get-free-port.py` | Hardcoded numbers (7447, 1234) |
+| **Ports** | `scripts/get-free-port.py`, `zenoh_router` fixture | Hardcoded numbers (7447, 1234) |
+| **File Generation** | `tmp_path` fixture, `mktemp -d` | Writing to `workspace_root` or `test/phaseX/` |
+| **Uniqueness** | Deterministic ID (e.g., `os.getpid()`, `worker_id`) | Non-deterministic `random.randint()` |
+| **Daemons** | Reusable `pytest` fixtures | `subprocess.Popen("cargo run...")` |
 | **Temp Dirs** | Use `tempfile.mkdtemp()` or `/tmp/virtmcu-test-*` | `/tmp/my_test_data` (Fixed path) |
 | **Process Ownership** | Trust the Workspace Scoping | `pkill qemu` (Global kill) |
 | **QEMU Path** | Use `scripts/run.sh` (Auto-prioritizes build dir) | `/opt/virtmcu/bin/...` (Absolute path) |

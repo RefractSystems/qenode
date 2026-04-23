@@ -34,8 +34,10 @@ of time, that inter-node communication is deterministically ordered by virtual t
 wall-clock scheduling), and that the boundary between firmware registers and physical
 quantities is explicitly modeled.
 
-virtmcu addresses these requirements at the QEMU layer, using native C/Rust QOM modules
-linked directly into the emulator. No Python daemons run in the simulation loop.
+virtmcu addresses these requirements at the QEMU layer, using native Rust QOM modules
+(and legacy C modules) linked directly into the emulator. No Python daemons run in the 
+simulation loop. All new core development is **Rust-first** to leverage the language's 
+memory safety and strong concurrency primitives.
 
 ### What This Is Not
 
@@ -61,7 +63,7 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 │  └──────────────┘  sensor data  └────────┬─────────┘                 │
 │                                          │                           │
 │                     Zenoh GET sim/clock/advance/{node_id}            │
-│                     (no Python middleman — native C plugin)          │
+│                     (no Python middleman — native Rust plugin)       │
 │                                          │                           │
 │              ┌───────────────────────────┼────────────────────┐      │
 │              │  QEMU node 0              │  QEMU node 1       │      │
@@ -114,13 +116,17 @@ the next advance.
 
 **BQL constraint**: The Zenoh `GET` call must always be made with the BQL released.
 Blocking while holding the BQL deadlocks the QEMU process — the main event loop (QMP,
-GDB stub, chardev I/O) cannot acquire the lock. The correct pattern:
+GDB stub, chardev I/O) cannot acquire the lock. 
 
-```c
-bql_unlock();
-zenoh_reply = zenoh_get(queryable);  /* blocks here */
-bql_lock();
-/* now safe to update timers_state */
+In Rust, this is managed via RAII guards in `virtmcu-qom/src/sync.rs`:
+
+```rust
+{
+    // Temporarily release BQL to block on Zenoh
+    let _bql_unlock = Bql::temporary_unlock(); 
+    zenoh_reply = zenoh_session.get(queryable).wait();
+    // BQL is automatically re-acquired when _bql_unlock goes out of scope
+}
 ```
 
 ### Pillar 2 — Deterministic Multi-Node Communication
@@ -183,12 +189,9 @@ instantiate CPUs, memory, and peripherals entirely from a Device Tree blob at ru
 
 **Dynamic QOM plugins**: `hw/` is symlinked into QEMU's source tree and compiled as proper
 QEMU modules (`--enable-modules`). The resulting `.so` files are auto-discovered via
-QEMU's `module_info` table. `-device my-peripheral` loads the `.so` without `LD_PRELOAD`.
-All peripherals are native C or Rust (via FFI) — no Python daemons, no vhost-user proxies.
-
-**Platform description tools** (`tools/repl2qemu/`): Compile legacy Renode `.repl` files
-or OpenUSD-aligned `.yaml` board descriptions into Device Tree blobs and QEMU CLI strings.
-This is the reverse of Antmicro's `dts2repl`.
+QEMU's `module_info` table. All peripherals are native C or Rust (via FFI).
+Core infrastructure and all new peripherals are written in **Rust** using the `virtmcu-qom` 
+safe wrapper library.
 
 ### Pillar 5 — Co-Simulation with External Hardware Models
 
@@ -208,7 +211,92 @@ EtherBone packets, and sends them over UDP — mirroring Renode's `EtherBoneBrid
 
 ---
 
-## 4. QEMU Build Details
+## 4. The MMIO Lifecycle: Firmware to Physics
+
+Understanding how an instruction in the guest firmware ultimately results in a physical action in the simulation (or a SystemC transaction) is critical to understanding virtmcu.
+
+Here is the exact lifecycle of a single Memory-Mapped I/O (MMIO) write:
+
+### 1. The Guest Instruction (Firmware)
+The firmware executes a standard store instruction to a hardware register:
+```assembly
+LDR R0, =0x40013000  // Base address of a PWM peripheral
+LDR R1, =0x0000007F  // Target duty cycle value
+STR R1, [R0, #0x04]  // Write to the PWM_DUTY register (offset 0x04)
+```
+The firmware has no knowledge of the simulator. It expects this write to change physical voltage.
+
+### 2. The QEMU TCG Intercept (Emulator)
+Because `0x40013000` is mapped as an MMIO region rather than standard RAM, QEMU's software memory management unit (`softmmu`) intercepts the write during TCG execution.
+
+### 3. The MemoryRegion Routing (QOM)
+QEMU looks up `0x40013000` in its memory tree and finds the `MemoryRegionOps` struct associated with our custom peripheral. It invokes the C-level `write` callback defined in that struct, passing the **relative offset** (`0x04`) and the data (`0x7F`).
+
+### 4. The Language Boundary (C to Rust/SystemC)
+Execution now branches depending on the peripheral's implementation:
+
+*   **Native Rust Peripherals (`virtmcu-qom`)**: QEMU calls an `extern "C"` trampoline. The trampoline safely casts the raw C `opaque` pointer to the Rust peripheral struct (e.g., `&mut PwmDevice`) and invokes its `.write(offset, data, size)` trait method.
+*   **SystemC/Verilator Models (`mmio-socket-bridge`)**: The write lands in the Rust `mmio-socket-bridge`. The bridge serializes the offset and data into a binary packet and sends it over a UNIX socket to the `systemc_adapter` process. The QEMU vCPU thread **blocks** (safely yielding the BQL via `Bql::temporary_unlock()`) until the SystemC TLM-2.0 transaction completes and an ACK is returned over the socket, ensuring perfect temporal synchronization.
+
+### 5. Zenoh Serialization & Dispatch (SAL/AAL)
+Inside the Rust peripheral's `.write()` method, the device updates its internal state. Because this state change affects the physical world (an Actuator), it must notify the physics engine:
+1. It retrieves the current exact virtual time via `qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)`.
+2. It serializes the new duty cycle and the virtual timestamp into a binary payload (e.g., FlatBuffers).
+3. It dispatches the payload via Zenoh: `self.publisher.put(payload).wait();`
+
+The message is routed to `sim/actuator/pwm/0`, where the physics engine (MuJoCo) applies the torque at the exact virtual microsecond it was commanded.
+
+---
+
+## 5. Concurrency, Safety, and the BQL
+
+The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator. 
+VirtMCU enforces strict safety rules to prevent deadlocks and race conditions.
+
+### RAII BQL Management
+Direct FFI calls to `virtmcu_bql_lock/unlock` are discouraged. Instead, Rust plugins use 
+RAII guards from `virtmcu-qom`:
+- `Bql::lock()`: Acquires the BQL and returns a `BqlGuard`.
+- `Bql::temporary_unlock()`: If the BQL is held, releases it and returns a `BqlUnlockGuard` 
+  that re-acquires it on drop.
+
+### Threading Model
+- **VCPU Threads**: Execute guest instructions. Hold BQL most of the time. Must release BQL 
+  before blocking on external I/O (Zenoh, sockets).
+- **Background Threads**: (e.g., Zenoh subscribers). Must NEVER block waiting for the BQL. 
+  Instead, they push data to lock-free queues and notify the guest via `QEMUTimer` or 
+  `virtmcu_cond_signal`.
+
+### Planned: `wait_yielding_bql`
+To simplify the common pattern of a VCPU thread blocking on a condition while holding a 
+peripheral-specific mutex, we are implementing `wait_yielding_bql`. This pattern ensures 
+the BQL is released while waiting and re-acquired before returning, maintaining the 
+required lock order: `BQL -> Peripheral Mutex`.
+
+---
+
+## 6. Development Standards & Determinism
+
+VirtMCU adheres to enterprise-grade engineering standards to ensure 100% reproducible 
+simulations.
+
+### The "Zero-Sleep" Mandate
+Usage of `std::thread::sleep` or `time.sleep` is strictly prohibited in simulation hot 
+paths and integration tests. Deterministic synchronization is achieved via:
+- **Zenoh Liveliness**: `wait_for_zenoh_discovery` ensures peers are ready.
+- **Virtual Time**: `VirtualTimeAuthority` drives the simulation clock.
+- **UART Signaling**: `wait_for_line_on_uart` confirms guest readiness.
+
+### Bifurcated Testing Strategy
+We employ a two-layer testing approach:
+1. **White-Box (Rust)**: Native `cargo test` suites in `hw/rust/` validate internal state 
+   machines, FFI boundaries, and protocol parsing without booting QEMU.
+2. **Black-Box (Python)**: `pytest` suites in `tests/` orchestrate full QEMU nodes, 
+   Zenoh routers, and physics engines to verify end-to-end system behavior.
+
+---
+
+## 7. QEMU Build Details
 
 ### Version and Patches
 
@@ -251,7 +339,7 @@ This eliminates the previous dependency on the external `zenoh-c` shared library
 
 ---
 
-## 5. Timing Design and Performance
+## 8. Timing Design and Performance
 
 > **See also:** [docs/TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
 
@@ -320,7 +408,7 @@ and for all Cortex-M targets (hypervisors do not support M-profile).
 
 ---
 
-## 6. Prior Art
+## 9. Prior Art
 
 ### Qualcomm qbox (github.com/quic/qbox)
 
@@ -351,7 +439,7 @@ equivalent of TLM-2.0 transaction semantics across a network without the SystemC
 
 ---
 
-## 7. Build Environments
+## 10. Build Environments
 
 ### `--enable-plugins` and the macOS conflict
 
@@ -373,7 +461,7 @@ Building with both `--enable-modules` and `--enable-plugins` on macOS causes a G
 
 ---
 
-## 8. Architectural Decision Records
+## 11. Architectural Decision Records
 
 ### ADR-001: Three clock modes (standalone / slaved-suspend / slaved-icount)
 
@@ -433,7 +521,7 @@ falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile target
 
 ---
 
-## 9. AI and Advanced Observability (Phase 12 & 13)
+## 12. AI and Advanced Observability (Phase 12 & 13)
 
 As virtmcu evolves from a foundational emulator into a robust digital twin environment, observability and AI accessibility become first-class concerns.
 
@@ -452,7 +540,7 @@ To support LLM-driven debugging and lifecycle management, virtmcu includes a sta
 
 ---
 
-## 11. Common Pitfalls & Troubleshooting
+## 13. Common Pitfalls & Troubleshooting
 
 ### SysBus Mapping vs. `-device` (The arm-generic-fdt Trap)
 A frequent point of confusion for developers migrating from standard QEMU machines is why a device added via the `-device` command line option is not accessible to the guest firmware (resulting in Data Aborts).
@@ -494,6 +582,6 @@ Because Python's Global Interpreter Lock (GIL) and garbage collector introduce m
 ### 4. Where to Ask for Help
 If a QEMU macro like `OBJECT_DECLARE_SIMPLE_TYPE` confuses you, look at `hw/dummy/dummy.c`. We intentionally keep a heavily commented "dummy" peripheral in the tree as a learning template. Never copy-paste complex QEMU upstream code without understanding it; start from the dummy device and build up.
 
-## Related Reference Documents
+## 14. Related Reference Documents
 * [Zenoh Topic Map](ZENOH_TOPIC_MAP.md) - A definitive map of all Zenoh channels/topics in the federation.
 * [Timing Model](TIMING_MODEL.md) - How virtual time is synchronized.

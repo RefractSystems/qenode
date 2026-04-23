@@ -60,3 +60,6 @@ Standard hardware emulators like QEMU are incredibly fast but relatively rigid: 
 
 *   **[Lesson 17: Securing the Digital Twin Boundary](./lesson17-security-boundary/README.md)**
     Explore the security implications of hardware-in-the-loop simulation, including memory isolation, input validation for MMIO bridges, and protecting the Zenoh federation from spoofing.
+
+*   **[Lesson 18: The MMIO Lifecycle — From Firmware to Physics](./lesson18-rust-mmio-lifecycle/README.md)**
+    A story-like deep dive into the exact path a byte of data takes when firmware writes to a hardware register. Understand how QEMU's TCG traps memory access, transitions through the Rust FFI boundary, manages the Big QEMU Lock (BQL), and dispatches deterministic payloads over Zenoh to the physics engine.

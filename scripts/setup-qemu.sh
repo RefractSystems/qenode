@@ -51,13 +51,27 @@ download_prebuilt_qemu() {
 
 # Check if QEMU is already pre-installed in the container image or download it
 if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ]; then
-    echo "==> QEMU is already pre-installed in this environment (/opt/virtmcu/bin)."
-    echo "    'make run' and integration tests will work immediately."
-    echo ""
-    echo "    If you want to modify QEMU C code or add new peripherals in hw/,"
-    echo "    run: ./scripts/setup-qemu.sh --force"
-    echo ""
-    FORCE_SYMLINKS=1
+    INSTALLED_VER=$(/opt/virtmcu/bin/qemu-system-arm --version 2>/dev/null | awk 'NR==1{print $NF}' || echo "unknown")
+    TARGET_VER="${QEMU_VERSION:-11.0.0}"
+    if [ "$INSTALLED_VER" = "$TARGET_VER" ]; then
+        echo "==> QEMU ${INSTALLED_VER} is pre-installed (/opt/virtmcu/bin). Ready to use."
+        echo "    If you want to modify QEMU C code or add new peripherals in hw/,"
+        echo "    run: ./scripts/setup-qemu.sh --force"
+        echo ""
+        FORCE_SYMLINKS=1
+    else
+        echo "==> WARNING: Pre-installed QEMU ${INSTALLED_VER} differs from target ${TARGET_VER}."
+        echo "    This container image was built before the upgrade. Attempting auto-upgrade..."
+        if download_prebuilt_qemu; then
+            echo "    ✓ Upgraded to QEMU ${TARGET_VER}."
+            FORCE_SYMLINKS=1
+        else
+            echo "    Could not auto-upgrade. Continuing with QEMU ${INSTALLED_VER}."
+            echo "    Simulation may behave differently. To rebuild from source:"
+            echo "      ./scripts/setup-qemu.sh --force"
+            FORCE_SYMLINKS=1
+        fi
+    fi
 elif [ ! -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ] && download_prebuilt_qemu; then
     FORCE_SYMLINKS=1
 fi
@@ -75,10 +89,10 @@ if [ "${FORCE_SYMLINKS:-0}" != "1" ] || [ -d "$QEMU_DIR" ]; then
 
     cd "$QEMU_DIR"
 
-    # Ensure we are on the expected QEMU version (11.0.0)
+    # Ensure we are on the expected QEMU version
     VERSION=$(cat VERSION || echo "")
-    if [[ "$VERSION" != "11.0.0" ]]; then
-        echo "Unexpected QEMU version: $VERSION"
+    if [[ "$VERSION" != "${QEMU_VERSION:-11.0.0}" ]]; then
+        echo "Unexpected QEMU version: $VERSION (expected ${QEMU_VERSION:-11.0.0})"
         exit 1
     fi
 

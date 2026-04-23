@@ -43,7 +43,10 @@ use virtmcu_qom::sync::{Bql, QemuCond, QemuMutex};
 
 pub struct MmioSocketBridgeState {
     shared: Arc<SharedState>,
+    bg_thread: Option<std::thread::JoinHandle<()>>,
 }
+
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct SharedState {
     socket_path: String,
@@ -52,6 +55,7 @@ pub struct SharedState {
     conn: RawQemuMutex,
     resp_cond: RawQemuCond,
     state: Mutex<ConnectionState>,
+    active_vcpu_count: AtomicUsize,
 }
 
 unsafe impl Send for SharedState {}
@@ -184,6 +188,13 @@ impl SharedState {
 
 impl SharedState {
     fn send_req_and_wait(&self, req: MmioReq) -> Option<SyscMsg> {
+        self.active_vcpu_count.fetch_add(1, Ordering::SeqCst);
+        let res = self.send_req_and_wait_internal(req);
+        self.active_vcpu_count.fetch_sub(1, Ordering::SeqCst);
+        res
+    }
+
+    fn send_req_and_wait_internal(&self, req: MmioReq) -> Option<SyscMsg> {
         let req_bytes: [u8; 32] = unsafe { core::mem::transmute(req) };
 
         // Wait for connection if not ready
@@ -212,11 +223,7 @@ impl SharedState {
             }
 
             // Not connected yet. Drop lock, unlock BQL, and sleep briefly.
-            let _bql_unlock = if unsafe { virtmcu_qom::sync::virtmcu_bql_locked() } {
-                Some(Bql::temporary_unlock())
-            } else {
-                None
-            };
+            let _bql_unlock = Bql::temporary_unlock();
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -227,11 +234,7 @@ impl SharedState {
             // Temporarily unlock BQL if we hold it, so other threads (like QMP) can run.
             // We use our shim virtmcu_bql_locked() because the native bql_locked()
             // might return False in a DSO due to TLS issues.
-            let _bql_unlock = if virtmcu_qom::sync::virtmcu_bql_locked() {
-                Some(Bql::temporary_unlock())
-            } else {
-                None
-            };
+            let _bql_unlock = Bql::temporary_unlock();
 
             while !self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).has_resp {
                 if !(*self.resp_cond.0).wait_timeout(&mut *self.conn.0, BRIDGE_TIMEOUT_MS) {
@@ -346,14 +349,17 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             current_resp: None,
             running: true,
         }),
+        active_vcpu_count: AtomicUsize::new(0),
     });
 
-    let state = Box::new(MmioSocketBridgeState { shared: Arc::clone(&shared) });
+    let shared_clone = Arc::clone(&shared);
+    let bg_thread = std::thread::spawn(move || {
+        shared_clone.run_background_thread();
+    });
+
+    let state =
+        Box::new(MmioSocketBridgeState { shared: Arc::clone(&shared), bg_thread: Some(bg_thread) });
     qemu.rust_state = Box::into_raw(state);
-
-    std::thread::spawn(move || {
-        shared.run_background_thread();
-    });
 
     memory_region_init_io(
         &raw mut qemu.mmio,
@@ -378,7 +384,7 @@ unsafe extern "C" fn bridge_instance_init(_obj: *mut Object) {}
 unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
     let qemu = &mut *(obj as *mut MmioSocketBridgeQEMU);
     if !qemu.rust_state.is_null() {
-        let state = Box::from_raw(qemu.rust_state);
+        let mut state = Box::from_raw(qemu.rust_state);
         // Stop background thread
         {
             let mut lock =
@@ -393,10 +399,18 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
             (*state.shared.resp_cond.0).broadcast();
         }
 
-        // We don't explicitly free the mutex/cond here because SharedState is Arc'd
-        // and might still be used by the background thread for a short while.
-        // In a real implementation we would wait for the thread to join.
-        // But QOM objects in this simulation usually last for the whole run.
+        if let Some(handle) = state.bg_thread.take() {
+            let _ = handle.join();
+        }
+
+        // Wait for any active vCPU threads to exit send_req_and_wait.
+        // This ensures they are no longer using the mutex/condvar before we free them.
+        let mut attempts = 0;
+        while state.shared.active_vcpu_count.load(Ordering::SeqCst) > 0 && attempts < 1000 {
+            std::thread::yield_now();
+            attempts += 1;
+        }
+
         qemu.rust_state = ptr::null_mut();
     }
 }

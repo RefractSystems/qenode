@@ -48,8 +48,13 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi.h");
 
     let mut builder = cc::Build::new();
+    builder.define("_GNU_SOURCE", None);
+
+    if std::env::var("VIRTMUC_UNIT_TEST").is_ok() {
+        builder.define("UNIT_TEST", None);
+    }
+
     builder
-        .define("_GNU_SOURCE", None)
         .file("src/ffi.c")
         .include(format!("{qemu_dir}/include"))
         .include(&build_dir)

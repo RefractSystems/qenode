@@ -67,7 +67,7 @@ def main():
         net_json,
         marker="# @vhost-vdpa: since 5.1",
         insertion="\n#\n# @zenoh: since 11.0",
-        guard="# @zenoh: since 11.0",
+        guard="# @zenoh: since",
         after=True,
     )
 
@@ -76,7 +76,7 @@ def main():
         net_json,
         marker="'vhost-vdpa',",
         insertion="\n            'zenoh',",
-        guard="'zenoh',",
+        guard="\n            'zenoh',",
         after=True,
     )
 
@@ -104,7 +104,7 @@ def main():
         net_json,
         marker="##\n# @NetdevVmnetHostOptions:",
         insertion=netdev_struct,
-        guard="NetdevZenohOptions",
+        guard="{ 'struct': 'NetdevZenohOptions',",
         after=False,
     )
 
@@ -113,7 +113,7 @@ def main():
         net_json,
         marker="    'vhost-vdpa': 'NetdevVhostVDPAOptions',",
         insertion="\n    'zenoh':    'NetdevZenohOptions',",
-        guard="'zenoh':    'NetdevZenohOptions'",
+        guard="'zenoh':    'NetdevZenohOptions',",
         after=True,
     )
 
@@ -124,7 +124,7 @@ def main():
         char_json,
         marker="# @ringbuf: memory ring buffer (since 1.6)",
         insertion="\n#\n# @zenoh: zenoh virtual clock backend (since 11.0)",
-        guard="# @zenoh: zenoh virtual clock backend (since 11.0)",
+        guard="# @zenoh: zenoh virtual clock backend (since",
         after=True,
     )
 
@@ -133,7 +133,7 @@ def main():
         char_json,
         marker="            'ringbuf',",
         insertion="\n            'zenoh',",
-        guard="'zenoh',",
+        guard="\n            'zenoh',",
         after=True,
     )
 
@@ -174,7 +174,7 @@ def main():
         char_json,
         marker="##\n# @ChardevFileWrapper:",
         insertion=chardev_structs,
-        guard="ChardevZenohOptions",
+        guard="{ 'struct': 'ChardevZenohOptions',",
         after=False,
     )
 

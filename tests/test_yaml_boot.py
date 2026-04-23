@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_yaml_platform_boot(qemu_launcher):
+async def test_yaml_platform_boot(qemu_launcher, tmp_path):
     """
     Phase 3.5: YAML platform boot test.
     Verify that a platform defined in YAML can boot and print "HI".
@@ -18,7 +18,7 @@ async def test_yaml_platform_boot(qemu_launcher):
 
         subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
 
-    dtb = workspace_root / "test/phase3/test_board.dtb"
+    dtb = tmp_path / "test_board.dtb"
     import subprocess
 
     subprocess.run(
@@ -27,7 +27,7 @@ async def test_yaml_platform_boot(qemu_launcher):
         cwd=workspace_root,
     )
 
-    bridge = await qemu_launcher(dtb, kernel)
+    bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
 
     assert await bridge.wait_for_line_on_uart("HI", timeout=5.0)

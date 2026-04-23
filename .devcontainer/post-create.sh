@@ -66,7 +66,18 @@ echo "==> Installing Git Hooks..."
 make install-hooks
 
 echo "==> Initializing Workspace Dependencies..."
-# This is fast if QEMU is pre-installed in the container
-make setup-initial
+# This is fast if QEMU is pre-installed in the container.
+# In transition periods, an old container image may carry a stale QEMU version.
+# We allow setup to proceed with a warning so downstream init steps (git hooks,
+# Python env, etc.) are never blocked by a version mismatch.
+if ! make setup-initial; then
+    REQUIRED_VER=$(grep '^QEMU_VERSION=' VERSIONS 2>/dev/null | cut -d= -f2 || echo "unknown")
+    echo ""
+    echo "⚠️  WARNING: QEMU setup did not fully complete."
+    echo "    The container image may pre-date the QEMU ${REQUIRED_VER} upgrade."
+    echo "    Simulation features may be limited with the installed version."
+    echo "    To rebuild QEMU from source: ./scripts/setup-qemu.sh --force"
+    echo ""
+fi
 
 echo "✓ DevContainer initialization complete."

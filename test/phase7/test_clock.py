@@ -47,8 +47,9 @@ def send_query(session, delta_ns, label):
 
 
 def main():
+    router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
     config = zenoh.Config()
-    config.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+    config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     session = zenoh.open(config)
 

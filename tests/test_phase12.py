@@ -17,13 +17,13 @@ from tools.vproto import (
 
 
 @pytest.mark.asyncio
-async def test_phase12_yaml2qemu_validation():
+async def test_phase12_yaml2qemu_validation(tmp_path):
     """
     1. yaml2qemu Output Validation [P0]
     """
     workspace_root = Path(__file__).resolve().parent.parent
     yaml_file = Path(workspace_root) / "test/phase12/test_malformed.yaml"
-    out_dtb = Path(workspace_root) / "test/phase12/test_malformed.dtb"
+    out_dtb = tmp_path / "test_malformed.dtb"
 
     proc = await asyncio.create_subprocess_exec(
         "python3",
@@ -118,13 +118,26 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
             await server.serve_forever()
 
     server_task = asyncio.create_task(run_server())
-    await asyncio.sleep(0.5)
+
+    # Deterministic socket check
+    for _ in range(50):
+        if Path(mmio_sock).exists():
+            break
+        await asyncio.sleep(0.01)
 
     try:
         await qemu_launcher(
-            dtb_file, kernel, extra_args=[*cli_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
+            dtb_file,
+            kernel,
+            extra_args=[
+                *cli_args,
+                "-serial", "null",
+                "-monitor", "null",
+            ]
         )
-        # Wait for QEMU to finish or timeout
+
+        # In standalone mode, QEMU runs at wall-clock speed.
+        # We just wait for a moment for the guest to perform MMIO.
         await asyncio.sleep(2.0)
     finally:
         server_task.cancel()
@@ -141,14 +154,14 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session):
+async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp_path):
     """
-    3. Telemetry Test
+    3. Telemetry Test: Verify Zenoh telemetry events are emitted.
     """
     workspace_root = Path(__file__).resolve().parent.parent
     yaml_file = Path(workspace_root) / "test/phase12/test_telemetry.yaml"
-    dtb_file = Path(workspace_root) / "test/phase12/test_telemetry.dtb"
-    cli_file = Path(workspace_root) / "test/phase12/test_telemetry.cli"
+    dtb_file = tmp_path / "test_telemetry.dtb"
+    cli_file = tmp_path / "test_telemetry.cli"
     kernel = Path(workspace_root) / "test/phase12/test_wfi.elf"
 
     # Generate DTB and CLI
@@ -161,14 +174,6 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session):
     with Path(cli_file).open() as f:
         cli_args = f.read().split()
 
-    # Update cli_args to include our router
-    new_args = []
-    for arg in cli_args:
-        if "zenoh-telemetry" in arg and "node=0" in arg:
-            new_args.append(arg + f",router={zenoh_router}")
-        else:
-            new_args.append(arg)
-
     # Listener for telemetry
     received_events = []
 
@@ -179,23 +184,40 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session):
 
     # Run QEMU
     await qemu_launcher(
-        dtb_file, kernel, extra_args=[*new_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
+        dtb_file,
+        kernel,
+        extra_args=[
+            *cli_args,
+            "-global", f"zenoh-telemetry.router={zenoh_router}",
+            "-serial", "null",
+            "-monitor", "null",
+        ],
     )
+
+    # Wait for telemetry to be emitted in standalone mode
     await asyncio.sleep(3.0)
 
     await asyncio.to_thread(sub.undeclare)
 
-    assert len(received_events) > 0
+    assert len(received_events) > 0, "No telemetry events received"
     assert any("sim/telemetry" in e for e in received_events)
 
 
 @pytest.mark.asyncio
-async def test_phase12_zenoh_clock_error(qemu_launcher):
+async def test_phase12_zenoh_clock_error(qemu_launcher, tmp_path):
     """
     4. zenoh-clock Connection Error Reporting [P0]
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb_file = Path(workspace_root) / "test/phase12/test_telemetry.dtb"
+    yaml_file = Path(workspace_root) / "test/phase12/test_telemetry.yaml"
+    dtb_file = tmp_path / "test_telemetry.dtb"
+
+    # Generate DTB
+    subprocess.run(
+        ["python3", "-m", "tools.yaml2qemu", yaml_file, "--out-dtb", dtb_file],
+        check=True,
+        cwd=workspace_root,
+    )
 
     # Invalid router
     extra_args = ["-device", "zenoh-clock,node=1,router=tcp/127.0.0.1:1,mode=slaved-suspend"]

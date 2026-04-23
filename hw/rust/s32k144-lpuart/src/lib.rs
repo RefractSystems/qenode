@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::ffi::CStr;
 use std::ptr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use virtmcu_api::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
 use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
@@ -16,16 +16,13 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::Bql;
-use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod,
-    virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
-};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties,
     device_class_set_props, error_setg,
 };
-use zenoh::pubsub::{Publisher, Subscriber};
+use virtmcu_zenoh::SafeSubscriber;
+use zenoh::pubsub::Publisher;
 use zenoh::Session;
 use zenoh::Wait;
 
@@ -74,7 +71,7 @@ pub struct LpuartState {
     irq: qemu_irq,
     session: Session,
     publisher: Publisher<'static>,
-    subscriber: Option<Subscriber<()>>,
+    subscriber: Option<SafeSubscriber>,
 
     // Registers
     baud: u32,
@@ -93,7 +90,7 @@ pub struct LpuartState {
     rx_sender: Sender<OrderedLinFrame>,
     rx_receiver: Receiver<OrderedLinFrame>,
     local_heap: Mutex<BinaryHeap<OrderedLinFrame>>,
-    rx_timer: *mut QemuTimer,
+    rx_timer: Option<Arc<QomTimer>>,
     earliest_vtime: Arc<AtomicU64>,
 }
 
@@ -285,8 +282,8 @@ extern "C" fn lpuart_rx_timer_cb(opaque: *mut c_void) {
 
     if let Some(vtime) = next_vtime {
         state.earliest_vtime.store(vtime, AtomicOrdering::Release);
-        unsafe {
-            virtmcu_timer_mod(state.rx_timer, vtime as i64);
+        if let Some(rx_timer) = &state.rx_timer {
+            rx_timer.mod_ns(vtime as i64);
         }
     } else {
         state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
@@ -335,13 +332,10 @@ unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 unsafe extern "C" fn lpuart_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut S32K144LpuartQemu);
     if !s.rust_state.is_null() {
-        let state = Box::from_raw(s.rust_state);
-        if !state.rx_timer.is_null() {
-            unsafe {
-                virtmcu_timer_del(state.rx_timer);
-                virtmcu_timer_free(state.rx_timer);
-            }
-        }
+        let mut state = Box::from_raw(s.rust_state);
+        // Explicitly stop the subscriber first to wait for callbacks
+        state.subscriber.take();
+        state.rx_timer.take();
         s.rust_state = ptr::null_mut();
     }
 }
@@ -423,64 +417,49 @@ fn lpuart_init_internal(
     let (tx, rx) = bounded(1024);
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = Arc::clone(&earliest_vtime);
-    let timer_ptr_clone = Arc::new(AtomicUsize::new(0));
-    let timer_ptr_clone2 = std::sync::Arc::clone(&timer_ptr_clone);
-
-    let tx_clone = tx.clone();
-
-    let subscriber = session
-        .declare_subscriber(rx_topic)
-        .callback(move |sample| {
-            let tp = timer_ptr_clone2.load(AtomicOrdering::Acquire);
-            if tp == 0 {
-                return;
-            }
-            let rx_timer = tp as *mut QemuTimer;
-
-            let payload = sample.payload().to_bytes();
-            let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&payload)
-            {
-                Ok(f) => f,
-                Err(_) => return,
-            };
-
-            let vtime = frame.delivery_vtime_ns();
-            let msg_type = frame.type_();
-            let data = frame.data().map(|d| d.iter().collect()).unwrap_or_default();
-
-            let packet = OrderedLinFrame { vtime, msg_type, data };
-
-            if tx_clone.send(packet).is_ok() {
-                let mut current = earliest_clone.load(AtomicOrdering::Relaxed);
-                while vtime < current {
-                    if earliest_clone
-                        .compare_exchange_weak(
-                            current,
-                            vtime,
-                            AtomicOrdering::Release,
-                            AtomicOrdering::Relaxed,
-                        )
-                        .is_ok()
-                    {
-                        let _bql = Bql::lock();
-                        unsafe {
-                            virtmcu_timer_mod(rx_timer, vtime as i64);
-                        }
-                        break;
-                    }
-                    current = earliest_clone.load(AtomicOrdering::Relaxed);
-                }
-            }
-        })
-        .wait()
-        .ok();
 
     let state_ptr_raw: *mut LpuartState =
         Box::into_raw(Box::<std::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
 
-    let rx_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
-    };
+    let rx_timer = Arc::new(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
+    });
+    let rx_timer_clone = Arc::clone(&rx_timer);
+
+    let tx_clone = tx.clone();
+    let subscriber = SafeSubscriber::new(&session, &rx_topic, move |sample| {
+        let payload = sample.payload().to_bytes();
+        let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&payload) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        let vtime = frame.delivery_vtime_ns();
+        let msg_type = frame.type_();
+        let data = frame.data().map(|d| d.iter().collect()).unwrap_or_default();
+
+        let packet = OrderedLinFrame { vtime, msg_type, data };
+
+        if tx_clone.send(packet).is_ok() {
+            let mut current = earliest_clone.load(AtomicOrdering::Relaxed);
+            while vtime < current {
+                if earliest_clone
+                    .compare_exchange_weak(
+                        current,
+                        vtime,
+                        AtomicOrdering::Release,
+                        AtomicOrdering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    rx_timer_clone.mod_ns(vtime as i64);
+                    break;
+                }
+                current = earliest_clone.load(AtomicOrdering::Relaxed);
+            }
+        }
+    })
+    .ok();
 
     let state = LpuartState {
         irq,
@@ -499,12 +478,11 @@ fn lpuart_init_internal(
         rx_sender: tx,
         rx_receiver: rx,
         local_heap: Mutex::new(BinaryHeap::new()),
-        rx_timer,
+        rx_timer: Some(rx_timer),
         earliest_vtime,
     };
 
     unsafe { ptr::write(state_ptr_raw, state) };
-    timer_ptr_clone.store(rx_timer as usize, AtomicOrdering::Release);
 
     state_ptr_raw
 }

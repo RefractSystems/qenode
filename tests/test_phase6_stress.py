@@ -1,30 +1,12 @@
 import struct
-import subprocess
 import threading
 import time
 
 import pytest
 
 
-@pytest.mark.xdist_group(name="serial")
 @pytest.mark.asyncio
-async def test_coordinator_scalability(zenoh_router, zenoh_session):
-    coord = subprocess.Popen(
-        [
-            "cargo",
-            "run",
-            "--manifest-path",
-            "tools/zenoh_coordinator/Cargo.toml",
-            "--release",
-            "--",
-            "--connect",
-            zenoh_router,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    time.sleep(2)
-
+async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordinator):  # noqa: ARG001
     num_nodes = 50
     msgs_per_node = 50
 
@@ -73,9 +55,6 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session):
     done_event.wait(timeout=15.0)
     end_time = time.time()
     duration = end_time - start_time
-
-    coord.kill()
-    coord.wait()
 
     assert received_count[0] >= int(expected * 0.5), f"Dropped too many: {received_count[0]} / {expected}"
     print(f"Routed {received_count[0]} messages in {duration:.2f} seconds")

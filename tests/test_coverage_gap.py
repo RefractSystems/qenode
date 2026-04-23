@@ -94,7 +94,7 @@ def test_repl2yaml_main(tmp_path):
     test_args = ["repl2yaml.py", str(repl_file)]
     with patch("sys.argv", test_args), patch("tools.repl2yaml.migrate") as mock_migrate:
         repl2yaml_main()
-        mock_migrate.assert_called_with(str(repl_file), str(tmp_path / "test_main.yaml"))
+        mock_migrate.assert_called_with(str(repl_file), "test_main.yaml")
 
 
 def test_usd_to_virtmcu(tmp_path, capsys):

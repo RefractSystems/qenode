@@ -29,7 +29,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[phase9] Starting Zenoh Router..."
-ZENOH_PORT=$(( 7447 + (RANDOM % 1000) ))
+ZENOH_PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$ZENOH_PORT" &
 ROUTER_PID=$!
 sleep 1

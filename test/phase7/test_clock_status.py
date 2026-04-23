@@ -25,8 +25,15 @@ def unpack_rep(data):
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vtime", type=int, help="Wait for specific virtual time")
+    parser.add_argument("router", nargs="?", default="tcp/127.0.0.1:7447", help="Zenoh router")
+    args = parser.parse_args()
+
     config = zenoh.Config()
-    config.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+    config.insert_json5("connect/endpoints", f'["{args.router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     session = zenoh.open(config)
 

@@ -161,6 +161,9 @@ extern "C" {
     /// A function
     pub fn qemu_send_packet(nc: *mut NetClientState, buf: *const u8, size: usize);
 
+    /// A function
+    pub fn qemu_can_receive_packet(nc: *mut NetClientState) -> bool;
+
     /// A static
     pub static mut virtmcu_zenoh_netdev_hook: Option<
         unsafe extern "C" fn(

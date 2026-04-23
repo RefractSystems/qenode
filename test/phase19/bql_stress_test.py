@@ -1,14 +1,14 @@
+import sys
 import threading
 import time
 
 import zenoh
 
-router = "tcp/127.0.0.1:7447"
-conf = zenoh.Config()
-conf.insert_json5("mode", '"client"')
-conf.insert_json5("connect/endpoints", f'["{router}"]')
-session = zenoh.open(conf)
-
+router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
+config = zenoh.Config()
+config.insert_json5("mode", '"client"')
+config.insert_json5("connect/endpoints", f'["{router}"]')
+session = zenoh.open(config)
 print("[Stress] Connected to Zenoh.")
 
 

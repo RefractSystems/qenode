@@ -31,8 +31,13 @@ unsafe extern "C" fn spi_echo_transfer(_dev: *mut SSIPeripheral, val: u32) -> u3
     val
 }
 
+unsafe extern "C" fn spi_echo_realize(_dev: *mut SSIPeripheral, _errp: *mut *mut c_void) {
+    // Dummy realize to prevent QEMU from calling a NULL pointer
+}
+
 unsafe extern "C" fn spi_echo_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let spc = ssi_peripheral_class!(klass);
+    (*spc).realize = Some(spi_echo_realize);
     (*spc).transfer = Some(spi_echo_transfer);
 }
 

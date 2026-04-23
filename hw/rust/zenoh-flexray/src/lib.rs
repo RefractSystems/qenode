@@ -10,7 +10,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use virtmcu_api::flexray_generated::virtmcu::flexray::{FlexRayFrame, FlexRayFrameArgs};
-use zenoh::pubsub::Subscriber;
+use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
@@ -19,9 +19,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer, QEMU_CLOCK_VIRTUAL,
-};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, device_class};
 
 #[repr(C)]
@@ -92,10 +90,9 @@ pub struct ZenohFlexRayState {
     session: Session,
     node_id: u32,
     topic: String,
-    subscriber: Option<Subscriber<()>>,
-    rx_timer: *mut QemuTimer,
-    timer_ptr: Arc<AtomicUsize>,
-    cycle_timer: *mut QemuTimer,
+    subscriber: Option<SafeSubscriber>,
+    rx_timer: Option<Arc<QomTimer>>,
+    cycle_timer: Option<QomTimer>,
     rx_receiver: Receiver<OrderedFlexRayPacket>,
     local_heap: Mutex<std::collections::BinaryHeap<OrderedFlexRayPacket>>,
     earliest_vtime: Arc<AtomicU64>,
@@ -309,8 +306,8 @@ fn handle_command(s: &mut ZenohFlexRay, cmd: u32) {
             if !s.rust_state.is_null() {
                 let state = unsafe { &*s.rust_state };
                 let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-                unsafe {
-                    virtmcu_timer_mod(state.cycle_timer, now + 5_000_000);
+                if let Some(cycle_timer) = &state.cycle_timer {
+                    cycle_timer.mod_ns(now + 5_000_000);
                 }
             }
         }
@@ -385,8 +382,8 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
     }
 
     // Schedule next cycle
-    unsafe {
-        virtmcu_timer_mod(state.cycle_timer, now + 5_000_000);
+    if let Some(cycle_timer) = &state.cycle_timer {
+        cycle_timer.mod_ns(now + 5_000_000);
     }
 }
 
@@ -452,16 +449,12 @@ unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c
 unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohFlexRay);
     if !s.rust_state.is_null() {
-        let state = Box::from_raw(s.rust_state);
-        state.timer_ptr.store(0, AtomicOrdering::Release);
-        if !state.rx_timer.is_null() {
-            virtmcu_qom::timer::virtmcu_timer_del(state.rx_timer);
-            virtmcu_qom::timer::virtmcu_timer_free(state.rx_timer);
-        }
-        if !state.cycle_timer.is_null() {
-            virtmcu_qom::timer::virtmcu_timer_del(state.cycle_timer);
-            virtmcu_qom::timer::virtmcu_timer_free(state.cycle_timer);
-        }
+        let mut state = Box::from_raw(s.rust_state);
+
+        // Explicitly stop the subscriber and wait for it to finish
+        state.subscriber.take();
+        state.rx_timer.take();
+        state.cycle_timer.take();
     }
 }
 
@@ -562,11 +555,9 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
         }
     }
 
-    if let Some(next_packet) = heap.peek() {
+    if let (Some(next_packet), Some(rx_timer)) = (heap.peek(), &state.rx_timer) {
         state.earliest_vtime.store(next_packet.vtime, AtomicOrdering::Release);
-        unsafe {
-            virtmcu_timer_mod(state.rx_timer, next_packet.vtime as i64);
-        }
+        rx_timer.mod_ns(next_packet.vtime as i64);
     } else {
         state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
     }
@@ -590,61 +581,14 @@ fn zenoh_flexray_init_internal(
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
 
-    let timer_ptr_clone = Arc::new(AtomicUsize::new(0));
-    let timer_ptr = std::sync::Arc::clone(&timer_ptr_clone);
-
-    let subscriber = session
-        .declare_subscriber(&topic)
-        .callback(move |sample| {
-            eprintln!("[zenoh-flexray] Received message on topic: {}", sample.key_expr());
-            let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
-            if tp == 0 {
-                return;
-            }
-            let rx_timer = tp as *mut QemuTimer;
-
-            let buf = sample.payload().to_bytes();
-            let frame =
-                match virtmcu_api::flexray_generated::virtmcu::flexray::root_as_flex_ray_frame(&buf)
-                {
-                    Ok(f) => f,
-                    Err(_) => return,
-                };
-
-            let packet = OrderedFlexRayPacket {
-                vtime: frame.delivery_vtime_ns(),
-                frame_id: frame.frame_id(),
-                cycle_count: frame.cycle_count(),
-                channel: frame.channel(),
-                flags: frame.flags(),
-                data: frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
-            };
-
-            let _ = tx.send(packet);
-
-            let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
-            if frame.delivery_vtime_ns() < current_earliest {
-                earliest_clone.fetch_min(frame.delivery_vtime_ns(), AtomicOrdering::Release);
-                // Important: QEMU timer_mod is thread-safe. We MUST NOT take the BQL here
-                // as it could block the Zenoh executor thread while the vCPU is running,
-                // causing a deadlock with the clock synchronization.
-                unsafe {
-                    virtmcu_timer_mod(rx_timer, frame.delivery_vtime_ns() as i64);
-                }
-            }
-        })
-        .wait()
-        .ok();
-
     let mut state = Box::new(ZenohFlexRayState {
         parent,
-        session,
+        session: session.clone(),
         node_id,
-        topic,
-        subscriber,
-        rx_timer: ptr::null_mut(),
-        timer_ptr,
-        cycle_timer: ptr::null_mut(),
+        topic: topic.clone(),
+        subscriber: None,
+        rx_timer: None,
+        cycle_timer: None,
         rx_receiver: rx,
         local_heap,
         earliest_vtime,
@@ -652,16 +596,46 @@ fn zenoh_flexray_init_internal(
     });
 
     let state_ptr = &raw mut *state;
-    let rx_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, state_ptr as *mut c_void)
-    };
+    let rx_timer = Arc::new(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, state_ptr as *mut c_void)
+    });
+    let rx_timer_clone = Arc::clone(&rx_timer);
     let cycle_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, state_ptr as *mut c_void)
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, state_ptr as *mut c_void)
     };
 
-    state.rx_timer = rx_timer;
-    state.cycle_timer = cycle_timer;
-    state.timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
+    let subscriber = SafeSubscriber::new(&session, &topic, move |sample| {
+        eprintln!("[zenoh-flexray] Received message on topic: {}", sample.key_expr());
+
+        let buf = sample.payload().to_bytes();
+        let frame =
+            match virtmcu_api::flexray_generated::virtmcu::flexray::root_as_flex_ray_frame(&buf) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+
+        let packet = OrderedFlexRayPacket {
+            vtime: frame.delivery_vtime_ns(),
+            frame_id: frame.frame_id(),
+            cycle_count: frame.cycle_count(),
+            channel: frame.channel(),
+            flags: frame.flags(),
+            data: frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
+        };
+
+        let _ = tx.send(packet);
+
+        let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
+        if frame.delivery_vtime_ns() < current_earliest {
+            earliest_clone.fetch_min(frame.delivery_vtime_ns(), AtomicOrdering::Release);
+            rx_timer_clone.mod_ns(frame.delivery_vtime_ns() as i64);
+        }
+    })
+    .ok();
+
+    state.rx_timer = Some(rx_timer);
+    state.cycle_timer = Some(cycle_timer);
+    state.subscriber = subscriber;
 
     Box::into_raw(state)
 }

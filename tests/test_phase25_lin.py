@@ -54,11 +54,10 @@ async def test_lin_lpuart(zenoh_router, qemu_launcher, zenoh_session):
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
     subprocess.run(
-        f"sed 's|tcp/127.0.0.1:7447|{router_endpoint}|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {dtb}",
+        f"sed -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {dtb}",
         shell=True,
         check=True,
     )
-
     extra_args = [
         "-cpu",
         "cortex-a15",
@@ -99,44 +98,46 @@ async def test_lin_lpuart(zenoh_router, qemu_launcher, zenoh_session):
     tx_topic = f"{lin_topic}/0/tx"
     rx_topic = f"{lin_topic}/0/rx"
 
-    # We use TimeAuthority from conftest for cleaner clock driving
-    from conftest import TimeAuthority
+    # We use VirtualTimeAuthority from conftest for cleaner clock driving
+    from tests.conftest import VirtualTimeAuthority
 
-    ta = TimeAuthority(session, node_id=0)
+    vta = VirtualTimeAuthority(session, [0])
 
     sub = await asyncio.to_thread(lambda: session.declare_subscriber(tx_topic, on_msg))
     pub = await asyncio.to_thread(lambda: session.declare_publisher(rx_topic))
 
     try:
         # Initial clock sync
-        await ta.step(0)
+        await vta.step(0)
 
         print("Sending 'X' to QEMU RX...")
         frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
         await asyncio.to_thread(lambda: pub.put(frame))
 
         # Advance clock to process 'X'
-        await ta.step(5_000_000)
+        await vta.step(5_000_000)
 
         print("Sending Break to QEMU RX...")
         frame = create_lin_frame(6_000_000, LinMessageType.LinMessageType.Break, None)
         await asyncio.to_thread(lambda: pub.put(frame))
 
         # Advance clock to process Break
-        await ta.step(5_000_000)
+        await vta.step(5_000_000)
 
-        # Give a small wall-clock time for async messages to arrive
-        await asyncio.sleep(1.0)
-
+        # Deterministic check for responses
         print("Checking responses...")
         found_x = False
         found_b = False
-        for msg_type, data in received:
-            if msg_type == LinMessageType.LinMessageType.Data:
-                if data == b"X":
-                    found_x = True
-                if data == b"B":
-                    found_b = True
+        for _ in range(10):
+            for msg_type, data in received:
+                if msg_type == LinMessageType.LinMessageType.Data:
+                    if data == b"X":
+                        found_x = True
+                    if data == b"B":
+                        found_b = True
+            if found_x and found_b:
+                break
+            await vta.step(5_000_000)
 
         assert found_x, f"Failed to receive Echo for 'X', received: {received}"
         assert found_b, f"Failed to receive Echo for Break, received: {received}"

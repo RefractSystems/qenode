@@ -19,7 +19,7 @@ async def test_riscv_boot(qemu_launcher):
 
         subprocess.run(["make", "-C", "test/riscv"], check=True, cwd=workspace_root)
 
-    bridge = await qemu_launcher(dts, kernel)
+    bridge = await qemu_launcher(dts, kernel, extra_args=["-S"])
     await bridge.start_emulation()
 
     assert await bridge.wait_for_line_on_uart("HI RV", timeout=10.0)

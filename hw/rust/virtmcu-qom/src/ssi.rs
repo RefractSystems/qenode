@@ -39,7 +39,7 @@ pub struct SSIPeripheralClass {
 }
 
 const _: () = assert!(core::mem::size_of::<SSIPeripheral>() == 168);
-const _: () = assert!(core::mem::size_of::<SSIPeripheralClass>() == 232);
+const _: () = assert!(core::mem::size_of::<SSIPeripheralClass>() == 224);
 
 impl SSIPeripheral {
     /// A method

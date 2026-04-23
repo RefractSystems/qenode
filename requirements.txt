@@ -27,3 +27,7 @@ mcp==1.0.0
 
 # FlatBuffers - schema-driven zero-copy serialization
 flatbuffers==25.12.19
+
+# Test timeout enforcement — prevents infinite hangs in CI
+pytest-timeout==2.4.0
+psutil

@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 class NodeContext:
-    def __init__(self, node_id: str):
+    def __init__(self, node_id: str, base_tmpdir: Path):
         self.node_id = node_id
         self.process: asyncio.subprocess.Process | None = None
         self.qmp_bridge = QmpBridge()
-        self.qmp_socket_path = f"/tmp/virtmcu-{node_id}.qmp"
-        self.uart_socket_path = f"/tmp/virtmcu-{node_id}.uart"
+        self.qmp_socket_path = str(base_tmpdir / f"virtmcu-{node_id}.qmp")
+        self.uart_socket_path = str(base_tmpdir / f"virtmcu-{node_id}.uart")
         self.yaml_path: str | None = None
         self.firmware_path: str | None = None
 
@@ -27,6 +27,7 @@ class NodeManager:
     def __init__(self):
         self.nodes: dict[str, NodeContext] = {}
         self._zenoh_session = None
+        self.base_tmpdir = Path(tempfile.mkdtemp(prefix="virtmcu-mcp-"))
 
     def get_zenoh_session(self):
         import zenoh
@@ -42,9 +43,14 @@ class NodeManager:
             self._zenoh_session.close()
             self._zenoh_session = None
 
+        # Cleanup base tmpdir
+        import shutil
+
+        shutil.rmtree(self.base_tmpdir, ignore_errors=True)
+
     def get_node(self, node_id: str) -> NodeContext:
         if node_id not in self.nodes:
-            self.nodes[node_id] = NodeContext(node_id)
+            self.nodes[node_id] = NodeContext(node_id, self.base_tmpdir)
         return self.nodes[node_id]
 
     async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml"):

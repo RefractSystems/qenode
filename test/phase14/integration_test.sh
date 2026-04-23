@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PORT=7448
+PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
 ROUTER_ENDPOINT="tcp/127.0.0.1:$PORT"
 
 # Cleanup on exit
@@ -17,7 +17,7 @@ cleanup() {
         # shellcheck disable=SC2086
         kill $pids 2>/dev/null || true
     fi
-    rm -f "$SCRIPT_DIR/output.log" "$SCRIPT_DIR/test.dtb" "$SCRIPT_DIR/test.cli" "$SCRIPT_DIR/ack_received.tmp"
+    rm -f "$SCRIPT_DIR/output.log" "$SCRIPT_DIR/test.dtb" "$SCRIPT_DIR/test.cli" "$SCRIPT_DIR/ack_received.tmp" "$SCRIPT_DIR/board_local.yaml"
 }
 trap cleanup EXIT
 
@@ -35,7 +35,8 @@ sleep 2
 
 # 3. Generate DTB and CLI args
 echo "==> Generating DTB"
-python3 -m tools.yaml2qemu "$SCRIPT_DIR/board.yaml" --out-dtb "$SCRIPT_DIR/test.dtb" --out-cli "$SCRIPT_DIR/test.cli"
+sed "s|tcp/127.0.0.1:7448|$ROUTER_ENDPOINT|g" "$SCRIPT_DIR/board.yaml" > "$SCRIPT_DIR/board_local.yaml"
+python3 -m tools.yaml2qemu "$SCRIPT_DIR/board_local.yaml" --out-dtb "$SCRIPT_DIR/test.dtb" --out-cli "$SCRIPT_DIR/test.cli"
 
 # 4. Start Radio Responder
 echo "==> Starting Radio Responder"

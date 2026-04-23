@@ -16,7 +16,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_uint, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use virtmcu_api::rf_generated::rf_header;
 use virtmcu_qom::error::Error;
@@ -27,15 +27,13 @@ use virtmcu_qom::memory::{
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::{virtmcu_mutex_free, virtmcu_mutex_new, Bql, QemuMutex};
-use virtmcu_qom::timer::{
-    qemu_clock_get_ns, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer,
-    QEMU_CLOCK_VIRTUAL,
-};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     device_class_set_props, error_setg,
 };
-use zenoh::pubsub::{Publisher, Subscriber};
+use virtmcu_zenoh::SafeSubscriber;
+use zenoh::pubsub::Publisher;
 use zenoh::Session;
 use zenoh::Wait;
 
@@ -85,8 +83,7 @@ pub struct Zenoh802154State {
     // Safety: same as zenoh-chardev — publisher holds Arc back to session; both live in
     // this struct; drop order (top-to-bottom) ensures session outlives publisher.
     publisher: Publisher<'static>,
-    #[allow(dead_code)]
-    subscriber: Subscriber<()>,
+    subscriber: Option<SafeSubscriber>,
 
     tx_fifo: [u8; 128],
     tx_len: u32,
@@ -101,9 +98,9 @@ pub struct Zenoh802154State {
     short_addr: u16,
     ext_addr: u64,
 
-    rx_timer: *mut QemuTimer,
-    backoff_timer: *mut QemuTimer,
-    ack_timer: *mut QemuTimer,
+    rx_timer: Option<QomTimer>,
+    backoff_timer: Option<QomTimer>,
+    ack_timer: Option<QomTimer>,
     rx_queue: Vec<RxFrame>,
     mutex: *mut QemuMutex,
 
@@ -114,7 +111,6 @@ pub struct Zenoh802154State {
     // Auto-ACK state
     ack_pending: bool,
     ack_seq: u8,
-    is_valid: Arc<AtomicBool>,
 }
 
 unsafe extern "C" fn zenoh_802154_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
@@ -272,30 +268,22 @@ fn zenoh_802154_init_internal(
         Box::into_raw(Box::<std::mem::MaybeUninit<Zenoh802154State>>::new_uninit()).cast();
     let state_ptr_usize = state_ptr_raw as usize;
 
-    let is_valid = Arc::new(AtomicBool::new(true));
-    let is_valid_clone = Arc::clone(&is_valid);
-    let subscriber = session
-        .declare_subscriber(topic_rx)
-        .callback(move |sample| {
-            if is_valid_clone.load(Ordering::Acquire) {
-                let state = unsafe { &mut *(state_ptr_usize as *mut Zenoh802154State) };
-                on_rx_frame(state, sample);
-            }
-        })
-        .wait()
-        .unwrap_or_else(|_| std::process::abort());
+    let subscriber = SafeSubscriber::new(&session, &topic_rx, move |sample| {
+        // SafeSubscriber holds the BQL and prevents execution if dropped
+        let state = unsafe { &mut *(state_ptr_usize as *mut Zenoh802154State) };
+        on_rx_frame(state, sample);
+    })
+    .ok();
 
-    let rx_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr_raw as *mut c_void)
-    };
+    let rx_timer =
+        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr_raw as *mut c_void) };
 
     let backoff_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, backoff_timer_cb, state_ptr_raw as *mut c_void)
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, backoff_timer_cb, state_ptr_raw as *mut c_void)
     };
 
-    let ack_timer = unsafe {
-        virtmcu_timer_new_ns(QEMU_CLOCK_VIRTUAL, ack_timer_cb, state_ptr_raw as *mut c_void)
-    };
+    let ack_timer =
+        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, ack_timer_cb, state_ptr_raw as *mut c_void) };
 
     let mutex = unsafe { virtmcu_mutex_new() };
 
@@ -315,16 +303,15 @@ fn zenoh_802154_init_internal(
         pan_id: 0xFFFF,
         short_addr: 0xFFFF,
         ext_addr: 0,
-        rx_timer,
-        backoff_timer,
-        ack_timer,
+        rx_timer: Some(rx_timer),
+        backoff_timer: Some(backoff_timer),
+        ack_timer: Some(ack_timer),
         rx_queue: Vec::with_capacity(16),
         mutex,
         nb: 0,
         be: 3,
         ack_pending: false,
         ack_seq: 0,
-        is_valid,
     };
 
     unsafe { ptr::write(state_ptr_raw, state) };
@@ -413,18 +400,15 @@ fn zenoh_802154_cleanup_internal(state: *mut Zenoh802154State) {
     if state.is_null() {
         return;
     }
-    let s = unsafe { Box::from_raw(state) };
-    s.is_valid.store(false, Ordering::Release);
+    let mut s = unsafe { Box::from_raw(state) };
+
+    // Explicitly drop the subscriber first to wait for callbacks
+    s.subscriber.take();
+    s.rx_timer.take();
+    s.backoff_timer.take();
+    s.ack_timer.take();
+
     unsafe {
-        if !s.rx_timer.is_null() {
-            virtmcu_timer_free(s.rx_timer);
-        }
-        if !s.backoff_timer.is_null() {
-            virtmcu_timer_free(s.backoff_timer);
-        }
-        if !s.ack_timer.is_null() {
-            virtmcu_timer_free(s.ack_timer);
-        }
         virtmcu_mutex_free(s.mutex);
     }
 }
@@ -448,8 +432,8 @@ fn schedule_backoff(s: &mut Zenoh802154State) {
     let delay_ns = u64::from(backoff_count) * UNIT_BACKOFF_PERIOD_NS;
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    unsafe {
-        virtmcu_timer_mod(s.backoff_timer, (now + delay_ns) as i64);
+    if let Some(backoff_timer) = &s.backoff_timer {
+        backoff_timer.mod_ns((now + delay_ns) as i64);
     }
 }
 
@@ -558,8 +542,8 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
         if (fcf & (1 << 5)) != 0 {
             state.ack_pending = true;
             state.ack_seq = frame_data[2];
-            unsafe {
-                virtmcu_timer_mod(state.ack_timer, (vtime + SIFS_NS) as i64);
+            if let Some(ack_timer) = &state.ack_timer {
+                ack_timer.mod_ns((vtime + SIFS_NS) as i64);
             }
         }
     }
@@ -567,7 +551,6 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     let mut stored_data = [0u8; 128];
     stored_data[..size].copy_from_slice(frame_data);
 
-    let _bql_guard = Bql::lock();
     let _mutex_guard = unsafe { (*state.mutex).lock() };
 
     if state.rx_queue.len() < 16 {
@@ -579,8 +562,8 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
             .rx_queue
             .insert(pos, RxFrame { delivery_vtime: vtime, data: stored_data, size, rssi });
 
-        unsafe {
-            virtmcu_timer_mod(state.rx_timer, state.rx_queue[0].delivery_vtime as i64);
+        if let Some(rx_timer) = &state.rx_timer {
+            rx_timer.mod_ns(state.rx_queue[0].delivery_vtime as i64);
         }
     }
 }
@@ -634,11 +617,13 @@ unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
                 qemu_set_irq(s.irq, 1);
 
                 if !s.rx_queue.is_empty() {
-                    virtmcu_timer_mod(s.rx_timer, s.rx_queue[0].delivery_vtime as i64);
+                    if let Some(rx_timer) = &s.rx_timer {
+                        rx_timer.mod_ns(s.rx_queue[0].delivery_vtime as i64);
+                    }
                 }
             }
-        } else {
-            virtmcu_timer_mod(s.rx_timer, s.rx_queue[0].delivery_vtime as i64);
+        } else if let Some(rx_timer) = &s.rx_timer {
+            rx_timer.mod_ns(s.rx_queue[0].delivery_vtime as i64);
         }
     }
 }

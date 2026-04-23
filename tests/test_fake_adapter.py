@@ -19,7 +19,7 @@ def test_recvall():
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_fail(mock_socket_cls, capsys):
+def test_start_server_hs_fail(mock_socket_cls, capsys, tmp_path):
     mock_server = MagicMock()
     mock_socket_cls.return_value = mock_server
     mock_conn = MagicMock()
@@ -28,14 +28,15 @@ def test_start_server_hs_fail(mock_socket_cls, capsys):
     # Simulate connection closed before full handshake
     mock_conn.recv.return_value = b""
 
-    start_server("/tmp/fake_mmio.sock")
+    sock_path = str(tmp_path / "fake_mmio.sock")
+    start_server(sock_path)
 
     out, _ = capsys.readouterr()
     assert "Failed to receive handshake" in out
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_mismatch(mock_socket_cls, capsys):
+def test_start_server_hs_mismatch(mock_socket_cls, capsys, tmp_path):
     mock_server = MagicMock()
     mock_socket_cls.return_value = mock_server
     mock_conn = MagicMock()
@@ -44,7 +45,8 @@ def test_start_server_hs_mismatch(mock_socket_cls, capsys):
     bad_hs = VirtmcuHandshake(magic=0, version=0).pack()
     mock_conn.recv.side_effect = [bad_hs]
 
-    start_server("/tmp/fake_mmio.sock")
+    sock_path = str(tmp_path / "fake_mmio.sock")
+    start_server(sock_path)
 
     out, _ = capsys.readouterr()
     assert "Handshake mismatch" in out
@@ -53,7 +55,7 @@ def test_start_server_hs_mismatch(mock_socket_cls, capsys):
 @patch("tools.fake_adapter.socket.socket")
 @patch("pathlib.Path.unlink")
 @patch("pathlib.Path.exists")
-def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, capsys):
+def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, capsys, tmp_path):
     mock_exists.return_value = True
 
     mock_server = MagicMock()
@@ -72,11 +74,12 @@ def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, capsys)
     # 3. recvall gets b"" indicating connection closed
     mock_conn.recv.side_effect = [valid_hs, valid_req, b""]
 
-    start_server("/tmp/fake_mmio.sock")
+    sock_path = str(tmp_path / "fake_mmio.sock")
+    start_server(sock_path)
 
     mock_exists.assert_called_with()
     mock_unlink.assert_called_with()
-    mock_server.bind.assert_called_with("/tmp/fake_mmio.sock")
+    mock_server.bind.assert_called_with(sock_path)
     mock_server.listen.assert_called_with(1)
 
     # Check that it sent a handshake and then a response to the MMIO req

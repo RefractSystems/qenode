@@ -113,6 +113,10 @@ DTS_EOF
 
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
+# Find a free port
+ROUTER_PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
+export ROUTER_PORT
+
 # ── TCP listener + clock-advance handshake ───────────────────────────────────
 #
 # The listener uses TCP only (multicast disabled).  QEMU must connect via the
@@ -121,7 +125,7 @@ dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
 cat > "$TMPDIR_LOCAL/tcp_clock_test.py" <<'PY_EOF'
 """
-Listen on tcp/127.0.0.1:7448 with multicast disabled.
+Listen on tcp/127.0.0.1 with dynamic port.
 Send one clock-advance GET to QEMU and verify the reply vtime > 0.
 """
 import sys
@@ -136,7 +140,7 @@ if TOOLS_DIR not in sys.path:
 
 from vproto import ClockAdvanceReq, ClockReadyResp
 
-ROUTER_PORT = 7448
+ROUTER_PORT = int(os.environ.get("ROUTER_PORT", 7448))
 TOPIC       = "sim/clock/advance/0"
 DELTA_NS    = 1_000_000   # 1 ms
 TIMEOUT_S   = 15.0
@@ -193,17 +197,18 @@ echo "=== TCP router test: starting listener on port ${ROUTER_PORT:-7448} ==="
 python3 "$TMPDIR_LOCAL/tcp_clock_test.py" &
 LISTENER_PID=$!
 
-sleep 2   # Let the listener bind before QEMU tries to connect
+# Wait for the listener to bind (deterministic polling)
+timeout 5 bash -c 'until ss -tln | grep -q ":${ROUTER_PORT} "; do sleep 0.1; done' || (echo "Router failed to bind to ${ROUTER_PORT}" && exit 1)
 
 # ── Start QEMU ───────────────────────────────────────────────────────────────
 #
-# router=tcp/127.0.0.1:7448 sets connect/endpoints in zenoh-c config and
+# router=tcp/127.0.0.1:$ROUTER_PORT sets connect/endpoints in zenoh-c config and
 # disables multicast scouting — both sides must agree on TCP-only mode.
 
 "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -device "zenoh-clock,mode=suspend,router=tcp/127.0.0.1:7448,node=0" \
+    -device "zenoh-clock,mode=suspend,router=tcp/127.0.0.1:$ROUTER_PORT,node=0" \
     -nographic \
     -monitor none \
     > "$TMPDIR_LOCAL/qemu_tcp.log" 2>&1 &

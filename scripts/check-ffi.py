@@ -20,6 +20,9 @@ from pathlib import Path
 # List of structs to verify
 STRUCTS_TO_CHECK = [
     "ObjectClass",
+    "DeviceClass",
+    "SysBusDeviceClass",
+    "SSIPeripheralClass",
     "ChardevClass",
     "Chardev",
     "ChardevZenohOptions",
@@ -143,6 +146,8 @@ def main():
 
     rust_files = [
         "hw/rust/virtmcu-qom/src/qom.rs",
+        "hw/rust/virtmcu-qom/src/qdev.rs",
+        "hw/rust/virtmcu-qom/src/ssi.rs",
         "hw/rust/virtmcu-qom/src/chardev.rs",
         "hw/rust/virtmcu-qom/src/net.rs",
         "hw/rust/zenoh-chardev/src/lib.rs",

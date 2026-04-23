@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 import zenoh
-from conftest import TimeAuthority
+
+from tests.conftest import TimeAuthority, wait_for_zenoh_discovery
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
@@ -106,7 +107,6 @@ loop:
     return tmpdir
 
 
-@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -133,8 +133,6 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
 
     await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
-    ta = TimeAuthority(zenoh_session, node_id=0)
-
     # Subscribe to FlexRay TX topic
     tx_topic = f"{topic}/0/tx"
     queue: asyncio.Queue[zenoh.Sample] = asyncio.Queue()
@@ -146,17 +144,14 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(tx_topic, on_msg))
 
     # Wait for discovery (crucial for parallel runs)
-    await asyncio.sleep(3.0)
+    await wait_for_zenoh_discovery(zenoh_session, tx_topic)
 
-    # Initial sync (Wait for discovery)
-    await asyncio.sleep(2.0)
-    await ta.step(0)
+    from tests.conftest import VirtualTimeAuthority
+
+    vta = VirtualTimeAuthority(zenoh_session, [0])
 
     # Advance time to trigger first cycle (5ms)
-    target_vtime = 15_000_000
-    while ta.current_vtime_ns < target_vtime:
-        delta = target_vtime - ta.current_vtime_ns
-        await ta.step(delta)
+    await vta.run_for(15_000_000)
 
     # Check if we received the message
     try:
@@ -182,7 +177,6 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         await asyncio.to_thread(sub.undeclare)
 
 
-@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -208,11 +202,13 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
-    ta = TimeAuthority(zenoh_session, node_id=0)
+    from tests.conftest import VirtualTimeAuthority
+
+    vta = VirtualTimeAuthority(zenoh_session, [0])
 
     # Initial sync (Wait for discovery)
-    await asyncio.sleep(2.0)
-    await ta.step(0)
+    await wait_for_zenoh_discovery(zenoh_session, topic)
+    await vta.step(0)
 
     # Prepare Zenoh frame to send
     import sys
@@ -244,26 +240,23 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
 
     # Put message on the Zenoh topic
     await asyncio.to_thread(lambda: zenoh_session.put(topic, payload))
-    # Wait for discovery/delivery (crucial for parallel runs)
-    await asyncio.sleep(3.0)
 
     # Advance time and poll for success signal
     qom_path = "/flexray"
     success = False
     target_vtime = 50_000_000
-    while ta.current_vtime_ns < target_vtime:
-        await ta.step(1_000_000)
+    while vta.current_vtimes[0] < target_vtime:
+        await vta.step(1_000_000)
         # Check wrhs3 property for success signal
         wrhs3 = await bridge.qmp.execute("qom-get", {"path": qom_path, "property": "wrhs3"})
         if wrhs3 == 0x12345678:
-            print(f"[flexray] Success signal detected at {ta.current_vtime_ns}ns: 0x{wrhs3:08x}")
+            print(f"[flexray] Success signal detected at {vta.current_vtimes[0]}ns: 0x{wrhs3:08x}")
             success = True
             break
 
-    assert success, f"Failed to detect success signal. Last WRHS3: 0x{wrhs3:08x}, vtime: {ta.current_vtime_ns}"
+    assert success, f"Failed to detect success signal. Last WRHS3: 0x{wrhs3:08x}, vtime: {vta.current_vtimes[0]}"
 
 
-@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
 async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -290,11 +283,13 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
-    ta = TimeAuthority(zenoh_session, node_id=0)
+    from tests.conftest import VirtualTimeAuthority
+
+    vta = VirtualTimeAuthority(zenoh_session, [0])
 
     # Initial sync (Wait for discovery)
-    await asyncio.sleep(2.0)
-    await ta.step(0)
+    await wait_for_zenoh_discovery(zenoh_session, topic)
+    await vta.step(0)
 
     import sys
 
@@ -327,6 +322,7 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         await asyncio.to_thread(partial(zenoh_session.put, topic, payload))
 
     # Advance time sequentially to process all packets
+    ta = TimeAuthority(zenoh_session, node_id=0)
     target_vtime = 15_000_000
     while ta.current_vtime_ns < target_vtime:
         await ta.step(1_000_000)

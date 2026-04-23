@@ -1,15 +1,15 @@
 # ADR-013: Language Selection Policy and Native Zenoh Migration
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-04-16
 
 ## Context
 
-The `virtmcu` project utilizes a mix of C, C++, Rust, and Python. As the project matures and integrates more deeply with high-performance simulation requirements (FirmwareStudio), the overhead of inter-process communication and the fragility of FFI bindings have become critical bottlenecks. Specifically, the current C implementation of Zenoh plugins (`hw/zenoh/`) relies on `zenoh-c` bindings, which complicates the build process and introduces potential safety risks in multi-threaded contexts.
+The `virtmcu` project utilizes a mix of C, C++, Rust, and Python. As the project matures and integrates more deeply with high-performance simulation requirements (FirmwareStudio), the overhead of inter-process communication and the fragility of FFI bindings have become critical bottlenecks. Specifically, the previous C implementation of Zenoh plugins (`hw/zenoh/`) relied on `zenoh-c` bindings, which complicated the build process and introduced potential safety risks in multi-threaded contexts.
 
 ## Decision
 
-We establish a strict **Language Selection Policy** and initiate a **Native Rust Migration** for core Zenoh components.
+We established a strict **Language Selection Policy** and initiated a **Native Rust Migration** for core Zenoh components.
 
 ### 1. Language Selection Policy
 
@@ -25,24 +25,27 @@ We establish a strict **Language Selection Policy** and initiate a **Native Rust
 *   **NO Python** in the simulation loop (managing MMIO, virtual time, or packet delivery).
 *   **NO heavy FFI** for components that are natively available in another project-supported language (e.g., use Rust for Zenoh).
 
-### 2. Phase 18: Native Rust Zenoh Migration (The "Oxidization" Phase)
+### 2. Phase 18 & 19: Native Rust Migration (The "Oxidization")
 
-We will migrate the `hw/zenoh/` subsystem from C to native Rust.
+We migrated the core `hw/` subsystem and infrastructure to native Rust.
 
-#### Tasks:
-*   **18.1: Rust-QEMU Plugin Infrastructure [P0]**
-    *   Stabilize the `hw/rust-dummy/` pattern into a reusable crate for QOM device registration in Rust.
-    *   Ensure `meson` can compile and link Rust plugins into the QEMU binary as `.so` modules.
-*   **18.2: Native Zenoh-Clock in Rust [P0]**
-    *   Rewrite `zenoh-clock.c` in Rust using the `zenoh` crate.
-    *   Implement BQL (`Big QEMU Lock`) management using Rust's safety patterns.
-*   **18.3: Native Zenoh-Netdev in Rust [P1]**
-    *   Migrate `zenoh-netdev.c` to Rust.
-    *   Replace the C priority queue with a native Rust `BinaryHeap` for virtual-time delivery.
-*   **18.4: Native Zenoh-Chardev in Rust [P1]**
-    *   Migrate `zenoh-chardev.c` to Rust.
-*   **18.5: Native Zenoh-Telemetry in Rust [P2]**
-    *   Migrate `zenoh-telemetry.c` to Rust and integrate directly with the FlatBuffers schema.
+#### Tasks (Completed):
+*   **18.1: Rust-QEMU Plugin Infrastructure**
+    *   Stabilized the `hw/rust-dummy/` pattern into a reusable crate for QOM device registration in Rust.
+    *   Enabled `meson` to compile and link Rust plugins into the QEMU binary as `.so` modules.
+*   **18.2: Native Zenoh-Clock in Rust**
+    *   Rewrote `zenoh-clock.c` in Rust using the `zenoh` crate.
+    *   Implemented BQL (`Big QEMU Lock`) management using Rust's safety patterns.
+*   **18.3: Native Zenoh-Netdev in Rust**
+    *   Migrated `zenoh-netdev.c` to Rust.
+    *   Replaced the C priority queue with a native Rust `BinaryHeap` for virtual-time delivery.
+*   **18.4: Native Zenoh-Chardev in Rust**
+    *   Migrated `zenoh-chardev.c` to Rust.
+*   **18.5: Native Zenoh-Telemetry in Rust**
+    *   Migrated `zenoh-telemetry.c` to Rust and integrated directly with the FlatBuffers schema.
+
+## Status Update (2026-04-24)
+Phase 18 and 19 have been successfully completed. All core plugins are now native Rust QOM modules, leveraging the `virtmcu-qom` abstraction layer.
 
 ## Consequences
 
@@ -53,6 +56,6 @@ We will migrate the `hw/zenoh/` subsystem from C to native Rust.
 
 ## Implementation Guidance
 
-*   All new hardware models that require external networking should be written in **Rust**.
+*   All new hardware models that require external networking MUST be written in **Rust**.
 *   Existing C models should only be modified for bug fixes; new features should trigger a migration to Rust.
 *   Python scripts must remain strictly "out-of-band" (pre-boot or post-mortem).

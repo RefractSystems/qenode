@@ -41,19 +41,23 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+# Find a free port
+PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
+ENDPOINT="tcp/127.0.0.1:$PORT"
+
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "$ENDPOINT" &
 ROUTER_PID=$!
 sleep 1
 
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:7447 \
+    -chardev "zenoh,id=uart0,node=0,router=$ENDPOINT" \
     -serial chardev:uart0 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
 sleep 2
 
-python3 "$WORKSPACE_DIR/test/phase8/uart_flood_test.py"
+python3 "$WORKSPACE_DIR/test/phase8/uart_flood_test.py" "$ENDPOINT"
 
 if ! kill -0 $QEMU_PID 2>/dev/null; then
     echo "QEMU crashed during UART flood test!"

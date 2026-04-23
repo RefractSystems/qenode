@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -12,87 +13,116 @@ import pytest_asyncio
 import zenoh
 
 from tools.testing.qmp_bridge import QmpBridge
-from tools.vproto import ClockAdvanceReq, ClockReadyResp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class TimeAuthority:
+def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0) -> bytes:
+    return struct.pack("<QQ", delta_ns, mujoco_time_ns)
+
+
+def unpack_clock_ready(data: bytes) -> tuple[int, int, int]:
+    return struct.unpack("<QII", data)
+
+
+async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_count: int = 1, timeout: float = 30.0):
     """
-    Helper to drive QEMU virtual clock via Zenoh.
+    Blocks until Zenoh discovery confirms the network mesh is established.
+    Empirically verifies router connectivity.
+    """
+    logger.info(f"Zenoh: verifying connectivity for {topic} (expected={expected_count})...")
+    start = asyncio.get_running_loop().time()
+
+    while asyncio.get_running_loop().time() - start < timeout:
+        # Check if we see at least one router or peer.
+        # In our test topology, there is usually 1 persistent router.
+        try:
+            routers = list(session.info.routers_zid())
+            if len(routers) >= 1:
+                logger.info(f"Zenoh: mesh established (routers={len(routers)})")
+                # Even if routers are seen, we add a tiny grace period for pub/sub matching
+                await asyncio.sleep(0.1)
+                return
+        except Exception:
+            pass
+
+        await asyncio.sleep(0.1)
+
+    raise TimeoutError(f"Zenoh discovery timeout for {topic} after {timeout}s")
+
+
+class VirtualTimeAuthority:
+    """
+    Enterprise-grade controller for driving multiple QEMU virtual clocks via Zenoh.
     """
 
-    def __init__(self, session: zenoh.Session, node_id: int = 0):
+    def __init__(self, session: zenoh.Session, node_ids: list[int]):
         self.session = session
-        self.topic = f"sim/clock/advance/{node_id}"
-        self.current_vtime_ns = 0
+        self.node_ids = node_ids
+        self.current_vtimes = dict.fromkeys(node_ids, 0)
 
-    async def step(self, delta_ns: int, timeout: float = 60.0, delay: float = 0, retries: int = 50) -> int:
-        target_vtime = self.current_vtime_ns + delta_ns
-        req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
-        logger.info(f"TimeAuthority: stepping {delta_ns}ns (target={target_vtime}) on {self.topic}")
+    async def step(self, delta_ns: int, timeout: float = 60.0) -> Any:
+        """
+        Advances the clock of all managed nodes.
+        Uses a long timeout for CI stability.
+        """
+        tasks = []
+        for nid in self.node_ids:
+            topic = f"sim/clock/advance/{nid}"
+            payload = pack_clock_advance(delta_ns)
+            tasks.append(self._get_reply(nid, topic, payload, timeout))
 
-        if delay > 0:
-            await asyncio.sleep(delay)
+        replies = await asyncio.gather(*tasks)
 
-        # We retry because discovery can take time in parallel CI runs.
-        # Use an async iterator to avoid blocking for the full timeout.
-        reply = None
+        for nid, reply in zip(self.node_ids, replies, strict=True):
+            if not reply:
+                raise TimeoutError(f"Node {nid} failed to respond to clock advance within {timeout}s")
+            if not reply.ok:
+                raise RuntimeError(f"Node {nid} returned Zenoh error: {reply.err}")
 
-        def _get_first_reply():
-            # In Zenoh 1.0, get() returns an iterable.
-            # We want to break as soon as we get ONE valid reply.
+            vtime, _mujoco_vtime, error_code = unpack_clock_ready(reply.ok.payload.to_bytes())
+            if error_code != 0:
+                # 1 = STALL
+                raise RuntimeError(
+                    f"Node {nid} reported CLOCK STALL (error={error_code}) at vtime={vtime}. "
+                    f"QEMU failed to reach TB boundary within its stall-timeout."
+                )
+
+            self.current_vtimes[nid] = vtime
+
+        return self.current_vtimes
+
+    async def run_for(self, duration_ns: int, step_ns: int = 10_000_000) -> int:
+        """
+        Advances all clocks by duration_ns.
+        """
+        target = min(self.current_vtimes.values()) + duration_ns
+        while min(self.current_vtimes.values()) < target:
+            to_step = min(step_ns, target - min(self.current_vtimes.values()))
+            await self.step(to_step)
+        return min(self.current_vtimes.values())
+
+    async def _get_reply(self, nid, topic, payload, timeout):
+        def _sync_get():
             try:
-                for r in self.session.get(self.topic, payload=req.pack(), timeout=timeout):
+                for r in self.session.get(topic, payload=payload, timeout=timeout):
                     return r
             except Exception as e:
-                logger.warning(f"TimeAuthority: Zenoh get error: {e}")
+                logger.warning(f"Node {nid} GET error: {e}")
             return None
 
-        for i in range(retries):
-            reply = await asyncio.to_thread(_get_first_reply)
-            if reply:
-                break
-            if i < retries - 1:
-                wait_time = min(2.0, 0.5 * (i + 1))  # Cap wait at 2 seconds
-                logger.warning(
-                    f"TimeAuthority: no reply from {self.topic}, retrying in {wait_time}s... ({i + 1}/{retries})"
-                )
-                await asyncio.sleep(wait_time)
-
-        if not reply:
-            logger.error(f"TimeAuthority: NO REPLIES from {self.topic} after {retries} attempts")
-            raise TimeoutError(f"TimeAuthority: no reply from {self.topic}")
-
-        if reply.ok:
-            resp = ClockReadyResp.unpack(reply.ok.payload.to_bytes())
-            logger.info(
-                f"TimeAuthority: received reply: current_vtime={resp.current_vtime_ns}, error={resp.error_code}"
-            )
-            if resp.error_code != 0:
-                logger.warning(f"TimeAuthority: error_code={resp.error_code}")
-                # For stall tests, return the error code if it's not OK
-                return resp.error_code
-
-            # Update current vtime with actual time reached by QEMU
-            self.current_vtime_ns = resp.current_vtime_ns
-            return int(self.current_vtime_ns)
-
-        logger.error(f"TimeAuthority: ERROR REPLY from {self.topic}")
-        raise RuntimeError(f"TimeAuthority: error reply from {self.topic}")
-
-    async def step_vtime(self, delta_ns: int, timeout: float = 60.0, delay: float = 0) -> int:
-        """Same as step but returns the vtime returned by QEMU."""
-        return await self.step(delta_ns, timeout, delay)
+        return await asyncio.to_thread(_sync_get)
 
 
 @pytest_asyncio.fixture
-async def zenoh_router(worker_id):  # noqa: ARG001
+async def zenoh_router():
     """
     Fixture that starts a persistent Zenoh router for the duration of the test.
     Supports pytest-xdist parallelization by dynamically binding to a free port.
     """
+    # worker_id is provided by pytest-xdist. Fallback to 'master' if not running in parallel.
+    # worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
 
     tests_dir = Path(Path(__file__).resolve().parent)
     router_script = Path(tests_dir) / "zenoh_router_persistent.py"
@@ -136,8 +166,29 @@ async def zenoh_router(worker_id):  # noqa: ARG001
         asyncio.create_task(_stream_router_output(proc.stderr, "STDERR")),
     ]
 
-    # Wait for router to be ready
-    await asyncio.sleep(1.0)
+    # Wait for router to bind the socket
+    import socket
+
+    host = "127.0.0.1"
+    for _ in range(50):
+        try:
+            with socket.create_connection((host, port), timeout=0.1):
+                break
+        except (TimeoutError, ConnectionRefusedError):
+            await asyncio.sleep(0.1)
+    else:
+        raise RuntimeError(f"Zenoh Router failed to bind to {endpoint}")
+
+    # Wait for router to be ready internally
+    config = zenoh.Config()
+    config.insert_json5("connect/endpoints", f'["{endpoint}"]')
+    config.insert_json5("mode", '"client"')
+
+    check_session = await asyncio.to_thread(lambda: zenoh.open(config))
+    try:
+        await wait_for_zenoh_discovery(check_session, "sim/router/check")
+    finally:
+        await asyncio.to_thread(check_session.close)
 
     yield endpoint
 
@@ -182,7 +233,7 @@ async def zenoh_session(zenoh_router):
 
 @pytest_asyncio.fixture
 async def time_authority(zenoh_session):
-    return TimeAuthority(zenoh_session)
+    return VirtualTimeAuthority(zenoh_session, [0])
 
 
 @pytest_asyncio.fixture
@@ -406,3 +457,20 @@ async def qmp_bridge(qemu_launcher):
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
     return bridge
+
+
+class TimeAuthority(VirtualTimeAuthority):
+    """
+    Legacy wrapper for VirtualTimeAuthority that drives a single node.
+    """
+
+    def __init__(self, session: zenoh.Session, node_id: int):
+        super().__init__(session, [node_id])
+
+    @property
+    def current_vtime_ns(self) -> int:
+        return self.current_vtimes[self.node_ids[0]]
+
+    async def step(self, delta_ns: int, timeout: float = 60.0) -> Any:
+        res = await super().step(delta_ns, timeout)
+        return res[self.node_ids[0]]

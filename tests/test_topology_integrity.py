@@ -5,13 +5,13 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_spi_topology_integrity(qemu_launcher):
+async def test_spi_topology_integrity(qemu_launcher, tmp_path):
     """
     Task 21.7.3: Verify via QMP that child peripherals are correctly linked to their parent buses.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
 
-    test_yaml = Path(workspace_root) / "test/phase21_prereq/test_spi_topology.yml"
+    test_yaml = tmp_path / "test_spi_topology.yml"
     with Path(test_yaml).open("w") as f:
         f.write("""
 machine:
@@ -34,7 +34,7 @@ peripherals:
     parent: spi0
     address: 0
 """)
-    test_dtb = Path(workspace_root) / "test/phase21_prereq/test_spi_topology.dtb"
+    test_dtb = tmp_path / "test_spi_topology.dtb"
 
     subprocess.run(
         ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root
@@ -44,9 +44,9 @@ peripherals:
     bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
 
     # Find my_spi_echo. In arm-generic-fdt it's likely a child of its parent node.
-    # Root nodes are named <name>@<addr>.
+    # Root nodes are named <name>.
     # spi0 is at root.
-    spi0_path = "/spi0@10000000"
+    spi0_path = "/spi0"
     echo_path = f"{spi0_path}/my_spi_echo@0"
 
     # Verify paths exist

@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router):
+async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router, tmp_path):
     """
     Task 20.5.4: SPI Loopback/Echo Firmware.
     Verify that the ARM bare-metal firmware can perform full-duplex SPI
@@ -14,7 +14,7 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router):
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
     yaml_path = Path(workspace_root) / "test/phase20_5/spi_test.yaml"
-    dtb_path = Path(workspace_root) / "test/phase20_5/spi_test.dtb"
+    dtb_path = tmp_path / "spi_test.dtb"
     kernel_path = Path(workspace_root) / "test/phase20_5/spi_echo.elf"
 
     # Get the actual router endpoint from the fixture
@@ -41,12 +41,12 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router):
             "type: spi-echo", f"type: SPI.ZenohBridge\n    properties:\n      router: {router_endpoint}"
         )
 
-    temp_yaml = Path(workspace_root) / "test/phase20_5/spi_test_zenoh.yaml"
+    temp_yaml = tmp_path / "spi_test_zenoh.yaml"
     with Path(temp_yaml).open("w") as f:
         f.write(config)
 
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", temp_yaml, "--out-dtb", dtb_path], check=True, cwd=workspace_root
+        ["python3", "-m", "tools.yaml2qemu", str(temp_yaml), "--out-dtb", str(dtb_path)], check=True, cwd=workspace_root
     )
 
     # 3. Setup Zenoh Echo

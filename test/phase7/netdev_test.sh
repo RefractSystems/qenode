@@ -47,8 +47,13 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
+PORT=${1:-0}
+if [ "$PORT" -eq 0 ]; then
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+fi
+
 # Launch Router & QEMU
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
 ROUTER_PID=$!
 sleep 1
 
@@ -56,8 +61,8 @@ sleep 1
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=icount,node=1,router=tcp/127.0.0.1:7447 \
-    -device zenoh-netdev -device zenoh-netdev -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:7447 \
+    -device zenoh-clock,mode=icount,node=1,router=tcp/127.0.0.1:$PORT \
+    -device zenoh-netdev -device zenoh-netdev -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
@@ -65,22 +70,23 @@ QEMU_PID=$!
 CLOCK_TOPIC="sim/clock/advance/1"
 deadline=$(( $(date +%s) + 15 ))
 while (( $(date +%s) < deadline )); do
-    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:7447\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         break
     fi
     sleep 0.25
 done
 
 # Functional test
-python3 - "$CLOCK_TOPIC" <<'PY_EOF'
+python3 - "$CLOCK_TOPIC" "tcp/127.0.0.1:$PORT" <<'PY_EOF'
 import sys, struct, time, zenoh
 CLOCK_TOPIC = sys.argv[1]
+ROUTER = sys.argv[2]
 NETDEV_TOPIC = "sim/eth/frame/1/rx"
 DELIVERY_VTIME_NS = 500_000
 FRAME = b'\xff' * 14
 packet = struct.pack("<QI", DELIVERY_VTIME_NS, len(FRAME)) + FRAME
 c = zenoh.Config()
-c.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+c.insert_json5("connect/endpoints", f'["{ROUTER}"]')
 c.insert_json5("scouting/multicast/enabled", "false")
 session = zenoh.open(c)
 pub = session.declare_publisher(NETDEV_TOPIC)

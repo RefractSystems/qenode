@@ -45,19 +45,19 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         check=True,
     )
 
-    # Generate DTB
-    dtb = Path(tmpdir) / "lin_test.dtb"
-    subprocess.run(
-        f"sed 's|tcp/127.0.0.1:7447|{router_endpoint}|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {dtb}",
-        shell=True,
-        check=True,
-    )
-
     # Use unique topic to avoid interference
     import uuid
 
     unique_id = str(uuid.uuid4())[:8]
     lin_topic = f"sim/lin/{unique_id}"
+
+    # Generate DTB
+    dtb = Path(tmpdir) / "lin_test.dtb"
+    subprocess.run(
+        f"sed -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {dtb}",
+        shell=True,
+        check=True,
+    )
 
     extra_args = [
         "-cpu",
@@ -72,8 +72,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         "none",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint},stall-timeout=30000",
-        "-device",
-        f"s32k144-lpuart,node=0,router={router_endpoint},topic={lin_topic}",
+        # The s32k144-lpuart device is instantiated by the DTB, no need for -device
     ]
 
     print(f"Starting QEMU with topic {lin_topic}...")

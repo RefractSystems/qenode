@@ -15,7 +15,7 @@ ROUTER_PID=""
 cleanup() {
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
-    # rm -rf "$TMPDIR_LOCAL"
+    rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 
@@ -42,12 +42,17 @@ cat > "$TMPDIR_LOCAL/dummy.dts" <<'DTS_EOF'
 DTS_EOF
 dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
+PORT=${1:-0}
+if [ "$PORT" -eq 0 ]; then
+    PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
+fi
+
 wait_for_queryable() {
     local topic="$1"
     local deadline=$(( $(date +%s) + 30 ))
     echo "Waiting for $topic to become queryable..."
     while (( $(date +%s) < deadline )); do
-        if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:7447\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+        if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
             echo "$topic is queryable!"
             return 0
         fi
@@ -59,7 +64,7 @@ wait_for_queryable() {
 }
 
 # Run: router
-python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
+python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
 ROUTER_PID=$!
 sleep 1
 
@@ -67,7 +72,7 @@ QMP_SOCK="$TMPDIR_LOCAL/qmp.sock"
 
 # Run: QEMU in slaved-suspend mode, with QMP
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:7447 \
+    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none -qmp "unix:$QMP_SOCK,server,nowait" > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
@@ -80,6 +85,6 @@ while [ ! -S "$QMP_SOCK" ]; do
 done
 
 # Run deadlock test Python script
-python3 "$WORKSPACE_DIR/test/phase18/bql_deadlock_test.py" "$QMP_SOCK"
+python3 "$WORKSPACE_DIR/test/phase18/bql_deadlock_test.py" "$QMP_SOCK" "tcp/127.0.0.1:$PORT"
 
 echo "=== Phase 18 BQL deadlock test PASSED ==="

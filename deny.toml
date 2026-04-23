@@ -91,7 +91,12 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 allow-workspace = false
-deny = []
+deny = [
+    { name = "lz4_flex", wrappers = ["zenoh-transport"] },
+    { name = "rsa", wrappers = ["zenoh-transport"] },
+    { name = "paste", wrappers = ["token-cell"] },
+    { name = "rustls-pemfile", wrappers = ["zenoh-link-commons", "zenoh-link-tls"] }
+]
 skip = [
     { name = "strsim" },
     { name = "foldhash" },

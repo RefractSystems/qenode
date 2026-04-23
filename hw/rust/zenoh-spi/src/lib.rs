@@ -65,7 +65,7 @@ unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u3
     let topic = format!("sim/spi/{}/{}", backend.id, (*dev).cs_index);
 
     // Release BQL before blocking for Zenoh query
-    let _bql = if was_locked { Some(virtmcu_qom::sync::Bql::temporary_unlock()) } else { None };
+    let _bql = virtmcu_qom::sync::Bql::temporary_unlock();
 
     // In a real implementation, we might want to use a subscriber for async,
     // but for bit-perfect multi-node SPI, a query is more deterministic.

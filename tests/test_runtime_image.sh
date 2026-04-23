@@ -73,7 +73,9 @@ docker run -i --rm \
 
     echo "4. Testing Full-System Zenoh Federation Contract..."
     # Create a minimal board for a boot test
-    cat << YML > /tmp/test.yaml
+    TMP_YAML=$(mktemp /tmp/test-XXXXXX.yaml)
+    TMP_DTB=$(mktemp /tmp/test-XXXXXX.dtb)
+    cat << YML > "$TMP_YAML"
 machine:
   name: test
   type: arm-generic-fdt
@@ -84,27 +86,31 @@ peripherals:
     address: 0x00000000
     properties: { size: "0x01000000" }
 YML
-    python3 -m tools.yaml2qemu /tmp/test.yaml --out-dtb /tmp/test.dtb > /dev/null
+    python3 -m tools.yaml2qemu "$TMP_YAML" --out-dtb "$TMP_DTB" > /dev/null
 
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    
     # Start the mock router (TCP-only, no multicast)
-    python3 -u /app/tests/zenoh_router_persistent.py &
+    python3 -u /app/tests/zenoh_router_persistent.py "tcp/127.0.0.1:$PORT" &
     ROUTER_PID=$!
     sleep 2
 
     # Launch QEMU with all FirmwareStudio plugins active
     # This proves they all cooperate on the same Zenoh session and respect the router endpoint.
     qemu-system-arm \
-        -M arm-generic-fdt,hw-dtb=/tmp/test.dtb \
-        -device zenoh-clock,node=0,router=tcp/127.0.0.1:7447 \
-        -netdev zenoh,node=0,id=n0,router=tcp/127.0.0.1:7447 \
-        -chardev zenoh,node=0,id=c0,router=tcp/127.0.0.1:7447 \
+        -M arm-generic-fdt,hw-dtb="$TMP_DTB" \
+        -device zenoh-clock,node=0,router=tcp/127.0.0.1:$PORT \
+        -netdev zenoh,node=0,id=n0,router=tcp/127.0.0.1:$PORT \
+        -chardev zenoh,node=0,id=c0,router=tcp/127.0.0.1:$PORT \
         -display none -daemonize
 
     # Verify the clock queryable is reachable via the TCP router
-    if python3 -c "import zenoh, sys, struct; s=zenoh.open(); r=list(s.get('sim/clock/advance/0', payload=struct.pack('<QQ', 0, 0), timeout=5.0)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('sim/clock/advance/0', payload=struct.pack('<QQ', 0, 0), timeout=5.0)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         echo "   ✅ Full-System Federation Contract verified (Clock + Net + UART)."
+        rm -f "$TMP_YAML" "$TMP_DTB"
     else
         echo "❌ Error: QEMU failed to expose federated queryables over TCP."
+        rm -f "$TMP_YAML" "$TMP_DTB"
         kill -9 "$ROUTER_PID" || true
         pkill -9 qemu-system || true
         exit 1

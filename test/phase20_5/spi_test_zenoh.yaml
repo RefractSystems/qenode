@@ -20,6 +20,6 @@ peripherals:
   - name: spi_echo
     type: SPI.ZenohBridge
     properties:
-      router: tcp/127.0.0.1:39813
+      router: tcp/127.0.0.1:51929
     parent: spi0
     address: 0

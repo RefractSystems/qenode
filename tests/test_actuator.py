@@ -1,25 +1,37 @@
-import asyncio
 import struct
 from pathlib import Path
 
 import pytest
 
 
-@pytest.mark.xdist_group(name="serial-clock")
 @pytest.mark.asyncio
-async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session):
+async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session, tmp_path):
     """
     Test that the zenoh-actuator device correctly publishes to Zenoh.
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb = workspace_root / "test/actuator/board.dtb"
+
+    yaml_file = workspace_root / "test/actuator/board.yaml"
+    tmp_yaml = tmp_path / "board.yaml"
+    dtb = tmp_path / "board.dtb"
     kernel = workspace_root / "test/actuator/actuator.elf"
 
-    # 1. Build if missing
-    if not dtb.exists() or not kernel.exists():
+    if not kernel.exists():
         import subprocess
 
         subprocess.run(["make", "-C", "test/actuator"], check=True, cwd=workspace_root)
+
+    import subprocess
+
+    # Copy and substitute the router endpoint in the YAML
+    yaml_content = yaml_file.read_text().replace("tcp/127.0.0.1:7450", zenoh_router)
+    tmp_yaml.write_text(yaml_content)
+
+    subprocess.run(
+        ["uv", "run", "python3", "-m", "tools.yaml2qemu", str(tmp_yaml), "--out-dtb", str(dtb)],
+        check=True,
+        cwd=workspace_root,
+    )
 
     received_msgs = []
 
@@ -40,31 +52,36 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
 
     zenoh_session.declare_subscriber("firmware/control/**", on_sample)
 
-    bridge = await qemu_launcher(
-        dtb, kernel, extra_args=["-global", f"zenoh-actuator.router={zenoh_router}"], ignore_clock_check=True
-    )
+    extra_args = [
+        "-icount", "shift=4,align=off,sleep=off",
+        "-device", f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+    ]
+    bridge = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
+
+    from tests.conftest import wait_for_zenoh_discovery
+    await wait_for_zenoh_discovery(zenoh_session, "firmware/control/**")
 
     await bridge.start_emulation()
 
-    # Wait for messages
-    timeout = 15.0
-    start_time = asyncio.get_event_loop().time()
+    from tests.conftest import VirtualTimeAuthority
+    vta = VirtualTimeAuthority(zenoh_session, [0])
 
     success_1 = False
     success_2 = False
 
-    while asyncio.get_event_loop().time() - start_time < timeout:
+    # Advance until we get messages
+    for _ in range(50):
+        await vta.step(10_000_000)
         for msg in received_msgs:
-            # Topic should be firmware/control/42 and firmware/control/99
-            if msg["topic"] == "firmware/control/42" and abs(msg["vals"][0] - 3.14) < 0.001:
+            # Topic should be firmware/control/0/42 and firmware/control/0/99
+            if msg["topic"] == "firmware/control/0/42" and abs(msg["vals"][0] - 3.14) < 0.001:
                 success_1 = True
-            elif msg["topic"] == "firmware/control/99" and len(msg["vals"]) == 3 and msg["vals"] == (1.0, 2.0, 3.0):
+            elif msg["topic"] == "firmware/control/0/99" and len(msg["vals"]) == 3 and msg["vals"] == (1.0, 2.0, 3.0):
                 success_2 = True
-
         if success_1 and success_2:
             break
-
-        await asyncio.sleep(0.5)
+    else:
+        pytest.fail(f"Did not receive all control signals (s1={success_1}, s2={success_2}) at vtime={vta.current_vtimes[0]}")
 
     assert success_1, "Did not receive first control signal (ID=42)"
     assert success_2, "Did not receive second control signal (ID=99)"

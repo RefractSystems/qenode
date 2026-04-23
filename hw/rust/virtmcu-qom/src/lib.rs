@@ -2,6 +2,9 @@
 #![doc = "VirtMCU QEMU Object Model (QOM) and System Emulation bindings."]
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 /// Character device (Chardev) bindings.
 pub mod chardev;
 /// CPU-related bindings and hooks.
@@ -58,7 +61,7 @@ extern "C" {
 macro_rules! vlog {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; 1024];
         let mut cursor = $crate::BufCursor::new(&mut buf);
         let _ = write!(cursor, $($arg)*);
         let _ = write!(cursor, "\0");

@@ -9,7 +9,7 @@ from pathlib import Path
 import zenoh
 
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
-TOOLS_DIR = Path(Path(Path(SCRIPT_DIR).parent.parent)) / "tools"
+TOOLS_DIR = str(Path(Path(SCRIPT_DIR).parent.parent) / "tools")
 if TOOLS_DIR not in sys.path:
     sys.path.append(TOOLS_DIR)
 
@@ -91,8 +91,10 @@ def main():
     qmp_thread = QmpThread(QMP_SOCK)
     qmp_thread.start()
 
+    router = sys.argv[2] if len(sys.argv) > 2 else "tcp/127.0.0.1:7447"
+
     config = zenoh.Config()
-    config.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+    config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     session = zenoh.open(config)
 

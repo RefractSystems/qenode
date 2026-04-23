@@ -147,10 +147,45 @@ We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, s
 | **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration (QEMU + Zenoh + TimeAuthority), QMP integration, UART verification, topology setup, and end-to-end regression testing. |
 | **Thin CI Wrappers** | **Bash** | `make test` / `.sh` | Entry points *only*. Bash scripts must never manage multi-process orchestration. They should merely be 2-3 line scripts that invoke `pytest` or `cargo test`. |
 
+### Strict Rules for Parallel Execution (Out-of-the-Box Ready)
+
+Our test suites run in massive parallel (using `pytest -n auto`). All future tests (developed by humans or agents) **MUST** be designed "out of the box" for parallel execution isolation. Violating these rules will cause flaky builds and port collisions.
+
+1. **NO Hardcoded Ports/Endpoints:**
+   - **BANNED:** Hardcoding `tcp/127.0.0.1:7447`, `7450`, or any fixed port in Python scripts, YAML, or bash files.
+   - **REQUIRED:** Use dynamic port allocation. In Python `pytest`, request the `zenoh_router` fixture (or use `scripts/get-free-port.py` in bash) and inject the port dynamically via `sed`, string formatting, or command-line arguments.
+2. **NO Hardcoded Temporal Paths:**
+   - **BANNED:** Generating output files (e.g., `.dtb`, `.yaml`, `.cli`) directly into the `workspace_root` or shared test directories (e.g., `/tmp/phase3/out.dtb`). This causes workers to overwrite or delete each other's files.
+   - **REQUIRED:** Always use the `tmp_path` fixture in `pytest` (or `mktemp -d` with cleanup in bash) to create a highly isolated directory for all generated test artifacts.
+3. **NO Random Value Collisions:**
+   - **BANNED:** Using `random.randint()` or generic UUIDs to generate supposedly "unique" node IDs or shared memory paths inside tests.
+   - **REQUIRED:** Use deterministic uniqueness tied to the isolated execution environment (e.g., `os.getpid()`, the pytest `worker_id`, or `tmp_path` strings) to guarantee absolute isolation between parallel runners without relying on PRNG chance.
+4. **NO Manual Process Management:**
+   - **BANNED:** Spawning complex background daemons (like `cargo run ... zenoh_coordinator`) manually inside test bodies. This causes severe build-lock contention in Rust and port leakage.
+   - **REQUIRED:** Use centralized, reusable `pytest` fixtures (e.g., `zenoh_coordinator`, `qemu_launcher`) that guarantee clean provisioning, deterministic routing, and automated teardown.
+5. **Test Scope Restriction:**
+   - **Mandate:** `pytest` is strictly scoped to the `tests/` directory via `pyproject.toml`. Do NOT place `.py` test files in `test/phase*/` directories as they will not be discovered.
+6. **Robust Binary Resolution:**
+   - **Mandate:** When calling Rust tool binaries from Python tests (e.g., `zenoh_coordinator`, `resd_replay`), always check both the workspace target directory (`target/release/`) and the tool-specific target directory (`tools/<tool_name>/target/release/`) to handle variations in how `cargo build` vs `cargo build -p` outputs artifacts.
+
 **Mandates:**
-- **Parallel Test Execution:** Our test suites run in parallel (using `pytest -n auto`). All tests MUST be designed to be isolated and idempotent. Avoid hardcoded ports, fixed UNIX socket paths, or shared global state that could cause interference between concurrent test runs.
 - Never write complex setup/teardown loops in Bash. If a test requires booting QEMU alongside a background process (e.g., `zenoh_coordinator`), it **must** be written in Python using `pytest` fixtures to ensure safe teardown and prevent zombie processes.
 - Internal logic (like CSMA/CA backoffs, flatbuffer serialization, struct alignment) **must** be tested natively in Rust using `#[test]`, bypassing QEMU boot entirely where possible.
+
+### Pro-Tips for Test Construction (Parallel & Flake-Free)
+- **The `-S` Boot Freeze:** When expecting immediate UART output, always pass `-S` to QEMU via `extra_args` and call `await bridge.start_emulation()` ONLY AFTER setting up your UART subscribers or `wait_for_line` calls. This prevents the firmware from executing before the test runner is fully attached.
+- **Dynamic Configuration Injection:** Never commit temporary test configuration files. Use Python's `shutil.copy` to copy baseline files to `tmp_path`, then use `sed` (via `subprocess.run`) or Python `replace()` to dynamically inject the `zenoh_router` endpoint into the `.yaml` or `.dts` file before compiling it.
+- **Bash Script Port Fallbacks:** All `test/*/*.sh` smoke tests MUST accept a port as `$1` and fallback to a dynamic port if not provided:
+  ```bash
+  PORT=${1:-0}
+  if [ "$PORT" -eq 0 ]; then
+      PORT=$(python3 "$WORKSPACE_DIR/scripts/get-free-port.py")
+  fi
+  ```
+- **Time Authorities:**
+  - Use `VirtualTimeAuthority` for multi-node tests that require driving multiple clock queryables simultaneously.
+  - Use the legacy `TimeAuthority` for older single-node tests to maintain backward compatibility.
+- **Selective Cleanup:** Use `scripts/cleanup-sim.sh --filter <pattern>` if you need to cleanly kill processes specific to a test run without nuking other parallel workers operating in the same workspace.
 
 ---
 
@@ -205,9 +240,51 @@ To ensure the highest level of professional software engineering, all agents MUS
 - **Mandate:** Agents are NEVER allowed to lower the quality, strictness, or coverage of lints, static analyzers, type-checkers, or security gates without explicit human written consent.
 - **YOLO Mode Constraint:** Even when running in `--yolo` mode, agents can only *increase* software quality and enterprise-readiness on their own (e.g., by enabling stricter rules or fixing technical debt). They must never suppress warnings, disable lints (`#[allow(...)]`, `noqa`, etc.), or bypass the type system to resolve errors unless specifically instructed to do so for a verified edge case.
 
-### 9. New Peripherals and the Educational C Model
+### 9. No Polling / Sleep Avoidance (Determinism)
+- **BANNED:** Using `std::thread::sleep` or `time.sleep()` in simulation hot paths, MMIO handling, network callbacks, or testing scripts (unless testing specific wall-clock boundaries).
+- **CI Enforcement:** `make lint-rust` includes a grep gate: `grep -r "thread::sleep" hw/rust/ --include="*.rs"` must find zero matches. Any exception requires an explicit `// SLEEP_EXCEPTION: <reason>` comment and grep allowlist update.
+- **REQUIRED (Rust):** Use event-driven synchronization (Condition Variables or `crossbeam_channel`) instead of polling loops. For background threads that must wait on a shutdown signal, use `condvar.wait_timeout()` keyed on a `shutdown: Arc<AtomicBool>` — this wakes immediately when shutdown is set rather than waiting the full sleep interval.
+- **REQUIRED (Python Tests):** Use the `TimeAuthority` to advance virtual time deterministically, or rely on Zenoh Pub/Sub events for signaling, instead of arbitrary `time.sleep()` delays. Flaky tests are often caused by wall-clock assumptions in a virtual-time environment.
+
+### 10. Safe Big QEMU Lock (BQL) Usage
+The BQL is the most critical bottleneck and deadlock risk in the emulator.
+- **Async Threads (Network, UART):** Background threads (like Zenoh subscribers) MUST NEVER block waiting to acquire the BQL. Instead, they must push data to lock-free queues (e.g., `crossbeam_channel::unbounded`) and let a QEMU timer (which already holds the BQL) process the queue.
+- **Sync Threads (MMIO):** When a vCPU thread MUST block (e.g., waiting for an external bridge response), it must safely yield the BQL to prevent starving QEMU.
+- **Bql API (Rust):**
+  - Use `virtmcu_qom::sync::Bql::lock()` for most cases (returns RAII guard).
+  - Use `Bql::lock_forget()` for explicit ownership transfer to C.
+  - Use `Bql::temporary_unlock()` (returns `Option<BqlUnlockGuard>`) to safely yield the lock when blocking. It is safe to call even if the lock is not held.
+  - Use `QemuCond::wait_yielding_bql(&mut mutex_guard, timeout_ms)` when a vCPU thread must wait on a CondVar — this is the only approved pattern for blocking an MMIO thread. Do not hand-roll the BQL-release / condvar-wait / BQL-reacquire sequence manually.
+- **BANNED:** Manually calling `virtmcu_bql_unlock()`, `virtmcu_bql_lock()`, `virtmcu_mutex_lock()`, or `virtmcu_mutex_unlock()` from peripheral code without a guard or `lock_forget()`. All direct FFI calls to these functions are banned outside of `virtmcu-qom/src/sync.rs`.
+- **BANNED:** Using `std::mem::forget(Bql::lock())` — use `Bql::lock_forget()` instead.
+- **BANNED:** Mixing `std::sync::Mutex` and raw `*mut QemuMutex` for the same conceptual state in one device. Pick one locking scheme per device and document it.
+- **REQUIRED:** Use safe, encapsulated abstractions provided in `virtmcu-qom/src/sync.rs` (like yielding CondVar wrappers) to ensure the BQL is always dropped and re-acquired in the exact correct order, even in the event of thread panics.
+- **Lock Ordering (canonical):** BQL → peripheral mutex → (condvar wait releases peripheral mutex temporarily). Document this order in a module-level comment in every new peripheral that uses locking.
+
+### 11. New Peripherals and the Educational C Model
 - **Rust First**: All new peripheral models MUST be written in Rust using the `hw/rust/rust-dummy` template, unless they are specifically being ported from SystemC/C++.
 - **Educational C Model**: We maintain one legacy C peripheral model (`hw/misc/educational-dummy.c`, instantiated as `dummy-device`) strictly for educational purposes and backward compatibility testing. It is automatically tested in Phase 2 integration tests to ensure we don't lose the ability to load traditional C plugins.
+
+### 12. Safe Peripheral Teardown
+Every peripheral that spawns background threads or blocks vCPU threads MUST implement a clean shutdown sequence:
+1. Set `running = false` in shared state (holding the state lock).
+2. Signal all condvars (`resp_cond.broadcast()`, `connected_cond.broadcast()`) so blocked threads wake up and check the running flag.
+3. Wait for all active vCPU threads to exit (via `drain_cond` signaled when `active_vcpu_count` reaches zero) — **never use a bounded spinloop**.
+4. Join the background thread.
+5. Only then drop `Arc<SharedState>` (which frees QEMU mutex/condvar memory).
+- **BANNED:** Bounded spinloops (`while count > 0 && attempts < N { yield_now() }`) as teardown drain mechanisms. They create a time-bomb UAF when the bound is exhausted.
+- **Verification:** Every new peripheral must have a shutdown integration test that triggers teardown while a vCPU thread is blocked in an MMIO operation and asserts clean exit with no sanitizer errors.
+
+### 13. Unsafe Rust — Precise Rules
+- **Packed struct fields**: Never dereference a `*const T` where `T` is `#[repr(packed)]` directly. Always use `ptr::read_unaligned`. Packed structs read from byte buffers (`&[u8]`) must always go through `read_unaligned` to avoid UB on architectures that require alignment.
+- **`transmute` for serialization**: Prefer explicit byte-order field serialization (e.g., `byteorder` crate or manual `to_le_bytes()`/`from_le_bytes()`) over `mem::transmute` on structs. `transmute` silently breaks if struct layout has padding.
+- **`unsafe impl Send/Sync`**: Every `unsafe impl Send` or `unsafe impl Sync` must have a comment immediately above it explaining the invariant that makes it safe (e.g., "Safe: raw pointer is only accessed while BQL is held").
+- **Minimize `unsafe` scope**: Keep `unsafe` blocks as small as possible — ideally one FFI call per block. Do not aggregate multiple unsafe operations in a single block.
+
+### 14. Test Quality Mandates
+- **Mock fidelity**: Test mocks in `sync.rs` (and elsewhere) must accurately simulate the invariant they replace. A mock that always returns "success" makes timeout and error paths invisible to the test suite — this provides false confidence. Mocks must support configurable return values and state.
+- **Concurrency tests**: For any code that involves two or more threads with shared state (CondVar patterns, atomic state machines), write a `loom`-based test OR at minimum a stress test that runs the concurrent path 10 000+ times under `cargo test --release`. Use `loom` when the state space is small enough (2-3 threads, few operations); use stress tests otherwise.
+- **Teardown tests**: Any peripheral that spawns threads must have a test that verifies clean shutdown. Run under Miri (`cargo miri test`) for the Rust unit test suite to catch UB in teardown paths.
 
 
 ---
@@ -258,8 +335,13 @@ If a fix passes locally but fails in CI, it's often due to manual edits in `thir
 To ensure CI remains green and Rust code follows project standards, you MUST run the linting suite before every commit:
 
 ```bash
-make lint     # Runs ruff, version checks, and cargo clippy (fails loudly)
+make lint     # Runs ruff, version checks, cargo clippy -D warnings, sleep-ban grep, and more
 ```
+
+**`cargo clippy` is run with `-D warnings`** — every warning is a build failure. This means:
+- `#[allow(clippy::...)]` suppressors in production code are banned (they would need to suppress a warning that is now an error).
+- `#[allow(static_mut_refs)]` is banned — fix the underlying `static mut` pattern instead.
+- `#[allow(clippy::too_many_lines)]` is banned — split the function instead.
 
 ### Git Hooks (Automation)
 The project uses Git hooks to automatically run \`make lint\` on both \`commit\` and \`push\`.

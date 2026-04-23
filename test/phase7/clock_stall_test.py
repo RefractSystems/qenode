@@ -1,8 +1,9 @@
+import sys
 import time
 
 import zenoh
 
-router = "tcp/127.0.0.1:7447"
+router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
 conf = zenoh.Config()
 conf.insert_json5("mode", '"client"')
 conf.insert_json5("connect/endpoints", f'["{router}"]')

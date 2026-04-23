@@ -115,8 +115,6 @@ pub struct DeviceClass {
     pub vmsd: *const c_void,
     /// A struct field
     pub bus_type: *const c_char,
-    /// A struct field
-    pub _padding2: [u8; 8], // Remainder to 184
 }
 
 #[repr(C)]
@@ -382,6 +380,10 @@ macro_rules! define_prop_chr {
 }
 
 const _: () = assert!(core::mem::size_of::<DeviceState>() == 152);
+const _: () = assert!(core::mem::offset_of!(DeviceState, parent_obj) == 0);
 const _: () = assert!(core::mem::size_of::<SysBusDevice>() == 808);
-const _: () = assert!(core::mem::size_of::<DeviceClass>() == 192);
-const _: () = assert!(core::mem::size_of::<SysBusDeviceClass>() == 208);
+const _: () = assert!(core::mem::offset_of!(SysBusDevice, parent_obj) == 0);
+const _: () = assert!(core::mem::size_of::<DeviceClass>() == 184);
+const _: () = assert!(core::mem::offset_of!(DeviceClass, parent_class) == 0);
+const _: () = assert!(core::mem::size_of::<SysBusDeviceClass>() == 200);
+const _: () = assert!(core::mem::offset_of!(SysBusDeviceClass, parent_class) == 0);

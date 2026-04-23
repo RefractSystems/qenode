@@ -36,11 +36,16 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         check=True,
     )
 
+    # Use unique topic to avoid interference
+    import uuid
+
+    unique_id = str(uuid.uuid4())[:8]
+    lin_topic = f"sim/lin/{unique_id}"
+
     # Generate Master DTB in tmpdir
-    master_dtb = Path(tmpdir) / "lin_master.dtb"
-    # Replace router and compile
+    master_dtb = Path(tmpdir) / "lin_master.dtb"  # Replace router and compile
     subprocess.run(
-        f"sed 's|tcp/127.0.0.1:7447|{router_endpoint}|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {master_dtb}",
+        f"sed -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {master_dtb}",
         shell=True,
         check=True,
     )
@@ -59,18 +64,15 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "none",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint},stall-timeout=30000",
-        "-device",
-        f"s32k144-lpuart,node=0,router={router_endpoint},topic=sim/lin/multi",
     ]
 
-    # Slave node (Node 1)
+    # Generate Slave DTB
     slave_dtb = Path(tmpdir) / "lin_slave.dtb"
     subprocess.run(
-        f"sed 's/node = <0>/node = <1>/' test/phase25/lin_test.dts | sed 's|tcp/127.0.0.1:7447|{router_endpoint}|' | dtc -I dts -O dtb -o {slave_dtb}",
+        f"sed -e 's/node = <0>;/node = <1>;/' -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {slave_dtb}",
         shell=True,
         check=True,
     )
-
     slave_args = [
         "-cpu",
         "cortex-a15",
@@ -84,8 +86,6 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "none",
         "-device",
         f"zenoh-clock,mode=slaved-icount,node=1,router={router_endpoint},stall-timeout=30000",
-        "-device",
-        f"s32k144-lpuart,node=1,router={router_endpoint},topic=sim/lin/multi",
     ]
 
     print("Launching Master...")
@@ -112,12 +112,13 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
             print(f"Error: {e}")
 
     # Listen to both nodes' TX
-    sub0 = await asyncio.to_thread(lambda: session.declare_subscriber("sim/lin/0/tx", on_bus_msg))
-    sub1 = await asyncio.to_thread(lambda: session.declare_subscriber("sim/lin/1/tx", on_bus_msg))
+    sub0 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/0/tx", on_bus_msg))
+    sub1 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/1/tx", on_bus_msg))
 
     from conftest import TimeAuthority
 
-    ta = TimeAuthority(session, node_id=0)
+    ta0 = TimeAuthority(session, node_id=0)
+    ta1 = TimeAuthority(session, node_id=1)
 
     try:
         # Wait for interaction
@@ -132,13 +133,13 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
 
         while time.time() - start_time < timeout:
             # Advance both nodes
-            await ta.step(step_ns)
+            await asyncio.gather(ta0.step(step_ns), ta1.step(step_ns))
             current_vtime += step_ns
 
             for topic, msg_type, data in bus_messages:
-                if topic == "sim/lin/0/tx" and msg_type == LinMessageType.LinMessageType.Break:
+                if topic == f"{lin_topic}/0/tx" and msg_type == LinMessageType.LinMessageType.Break:
                     found_master_header = True
-                if topic == "sim/lin/1/tx" and msg_type == LinMessageType.LinMessageType.Data and b"S" in data:
+                if topic == f"{lin_topic}/1/tx" and msg_type == LinMessageType.LinMessageType.Data and b"S" in data:
                     found_slave_response = True
 
             if found_master_header and found_slave_response:

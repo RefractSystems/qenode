@@ -41,11 +41,37 @@ void virtmcu_icount_advance(int64_t delta)
 /* Use the reliable helpers patched into QEMU's system/cpus.c to avoid 
  * TLS/symbol resolution issues when called from a DSO. */
 
-bool virtmcu_bql_locked(void) { return virtmcu_is_bql_locked(); }
-void virtmcu_bql_lock(void) { virtmcu_safe_bql_lock(); }
-void virtmcu_bql_unlock(void) { virtmcu_safe_bql_unlock(); }
-void virtmcu_bql_force_unlock(void) { virtmcu_safe_bql_unlock(); }
-void virtmcu_bql_force_lock(void) { virtmcu_safe_bql_force_lock(); }
+bool virtmcu_bql_locked(void) {
+#ifndef UNIT_TEST
+    return virtmcu_is_bql_locked();
+#else
+    return false;
+#endif
+}
+
+void virtmcu_bql_lock(void) {
+#ifndef UNIT_TEST
+    virtmcu_safe_bql_lock();
+#endif
+}
+
+void virtmcu_bql_unlock(void) {
+#ifndef UNIT_TEST
+    virtmcu_safe_bql_unlock();
+#endif
+}
+
+void virtmcu_bql_force_unlock(void) {
+#ifndef UNIT_TEST
+    virtmcu_safe_bql_unlock();
+#endif
+}
+
+void virtmcu_bql_force_lock(void) {
+#ifndef UNIT_TEST
+    virtmcu_safe_bql_force_lock();
+#endif
+}
 
 /* ── Mutex ───────────────────────────────────────────────────────────────── */
 

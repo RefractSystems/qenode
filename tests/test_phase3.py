@@ -5,14 +5,14 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_phase3_repl2qemu(qemu_launcher):
+async def test_phase3_repl2qemu(qemu_launcher, tmp_path):
     """
     Phase 3 smoke test: repl2qemu parser.
     Verify that a .repl file can be translated to DTB and booted.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
     repl_file = Path(workspace_root) / "test/phase3/test_board.repl"
-    out_dtb = Path(workspace_root) / "test/phase3/test_board_out.dtb"
+    out_dtb = tmp_path / "test_board_out.dtb"
     kernel = Path(workspace_root) / "test/phase1/hello.elf"
 
     # 1. Build kernel if missing

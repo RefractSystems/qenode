@@ -45,8 +45,7 @@ async def test_phase21_spi_bus_stress(qemu_launcher, tmp_path):
 
     # Verify all devices are parented correctly
     for b in range(num_buses):
-        addr = 0x10000000 + b * 0x1000
-        spi_path = f"/spi{b}@{addr:x}"
+        spi_path = f"/spi{b}"
         # We only added d=0
         echo_path = f"{spi_path}/echo_{b}_0@0"
         bus_path = await bridge.qmp.execute("qom-get", {"path": echo_path, "property": "parent_bus"})
@@ -83,7 +82,6 @@ async def test_phase21_mac_stress(qemu_launcher, tmp_path):
     bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
 
     for i in range(num_devs):
-        addr = 0x50000000 + i * 0x1000
-        path = f"/wifi{i}@{addr:x}"
+        path = f"/wifi{i}"
         status = await bridge.qmp.execute("qom-get", {"path": path, "property": "realized"})
         assert status is True
