@@ -7,6 +7,7 @@ git config --global --unset-all credential.helper || true
 git config --global --add credential.helper ''
 git config --global --add credential.helper '!gh auth git-credential'
 git config --global --add safe.directory /workspace
+git config --global core.pager less
 
 # Self-healing: Switch SSH remote to HTTPS if needed.
 # SSH agent forwarding frequently breaks on macOS/Windows during sleep or Docker restarts.
@@ -56,15 +57,13 @@ uv sync
 echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc
 echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc
 
-echo "==> Installing AI Developer Tools (Claude Code & Gemini CLI)..."
-sudo npm install -g @google/gemini-cli@latest
-curl -fsSL https://claude.ai/install.sh | bash
+echo "==> Configuring shell environment..."
 echo "alias gemini='gemini --yolo'" >> ~/.zshrc
 echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.zshrc
-
-# Add to .bashrc for compatibility
+echo "export PAGER=less" >> ~/.zshrc
 echo "alias gemini='gemini --yolo'" >> ~/.bashrc
 echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc
+echo "export PAGER=less" >> ~/.bashrc
 
 echo "==> Installing Git Hooks..."
 make install-hooks
@@ -75,7 +74,7 @@ echo "==> Initializing Workspace Dependencies..."
 # We allow setup to proceed with a warning so downstream init steps (git hooks,
 # Python env, etc.) are never blocked by a version mismatch.
 if ! make setup-initial; then
-    REQUIRED_VER=$(grep '^QEMU_VERSION=' VERSIONS 2>/dev/null | cut -d= -f2 || echo "unknown")
+    REQUIRED_VER=$(grep '^QEMU_VERSION=' BUILD_DEPS 2>/dev/null | cut -d= -f2 || echo "unknown")
     echo ""
     echo "⚠️  WARNING: QEMU setup did not fully complete."
     echo "    The container image may pre-date the QEMU ${REQUIRED_VER} upgrade."

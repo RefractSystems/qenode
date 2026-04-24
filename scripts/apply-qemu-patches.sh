@@ -20,9 +20,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 
-if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
-    # shellcheck source=../VERSIONS
-    source "$WORKSPACE_DIR/VERSIONS"
+if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
+    # shellcheck source=../BUILD_DEPS
+    source "$WORKSPACE_DIR/BUILD_DEPS"
 fi
 
 echo "==> Applying virtmcu patches to QEMU at $QEMU_DIR"
@@ -44,21 +44,23 @@ apply_patch_series() {
     fi
 
     local attempt
-    for attempt in $(seq 1 50); do
+    for attempt in $(seq 1 10); do
         if ! git status 2>/dev/null | grep -q "am session"; then
             return 0
         fi
         echo "  [am retry $attempt] applying current patch with git apply..."
-        if git am --show-current-patch=diff | git apply; then
+        if git am --show-current-patch=diff | git apply --3way; then
             git add -A
             git am --continue 2>&1 || true
         else
             echo "ERROR: git apply also failed — manual intervention needed."
             git am --show-current-patch=diff >&2
+            git am --abort
             return 1
         fi
     done
     echo "ERROR: patch series did not finish after $attempt retries."
+    git am --abort
     return 1
 }
 

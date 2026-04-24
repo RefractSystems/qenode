@@ -1,12 +1,12 @@
 .PHONY: all clean adapter
 
-# Source VERSIONS if it exists to get pinned commits
-ifneq (,$(wildcard ../../VERSIONS))
-    include ../../VERSIONS
-    export $(shell sed 's/=.*//' ../../VERSIONS)
+# Source BUILD_DEPS if it exists to get pinned commits
+ifneq (,$(wildcard ../../BUILD_DEPS))
+    include ../../BUILD_DEPS
+    export $(shell sed 's/=.*//' ../../BUILD_DEPS)
 endif
 
-# Fallbacks if VERSIONS is not found
+# Fallbacks if BUILD_DEPS is not found
 SYSTEMC_VERSION ?= 2.3.3
 LIBSYSTEMCTLM_SOC_COMMIT ?= 7aba4f60e382581060c982976010674c33bdc442
 

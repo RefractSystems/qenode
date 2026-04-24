@@ -46,8 +46,13 @@ All clock behaviour is controlled by \`zenoh-clock\`:
 
 ### Error Codes (sim/clock/advance/{id} Reply)
 - `0` (OK): Quantum completed successfully.
-- `1` (STALL): QEMU failed to reach TB boundary within the stall timeout (default **5 s**; set `stall-timeout=<ms>` on the device — CI uses 60 000 ms via `VIRTMCU_STALL_TIMEOUT_MS`).
+- `1` (STALL): QEMU failed to reach TB boundary within the stall timeout (default **5 s**; set `stall-timeout=<ms>` on the device — ASan CI uses 300 000 ms via `VIRTMCU_STALL_TIMEOUT_MS`).
   - **CRITICAL NOTE:** QEMU **does not exit** on a stall. It logs "STALL DETECTED", replies with error code 1, and stays alive. The Python orchestrator is fully responsible for terminating the QEMU process if recovery is not desired.
+  - **Stall-Timeout Contract (agents MUST follow):**
+    1. **Never hardcode `stall-timeout=<ms>` in test `extra_args`** unless the test is specifically validating stall detection behaviour (e.g., `test_phase7_clock_stall`). Hardcoding a short value causes ASan builds to spuriously report stalls.
+    2. **When no explicit `stall-timeout` is set**, `zenoh-clock` reads `VIRTMCU_STALL_TIMEOUT_MS` from the environment (CI: 120 000 ms; ASan CI: 300 000 ms; default: 5 000 ms).
+    3. **The Python VTA step timeout** (`VirtualTimeAuthority.step(timeout=...)`) must always be *greater* than the QEMU stall timeout to guarantee QEMU can reply with STALL before Python gives up. `conftest.py` computes this automatically from `VIRTMCU_STALL_TIMEOUT_MS`. Do not pass explicit timeouts shorter than `VIRTMCU_STALL_TIMEOUT_MS + 10 s` unless the test intentionally probes timeout behaviour.
+    4. **ASan overhead**: under ASan/UBSan, QEMU executes TCG blocks significantly slower. Tests that advance large virtual-time quanta (e.g., 100 ms) can legitimately take several minutes of wall-clock time. This is expected and correct — do NOT "fix" it by increasing `stall-timeout` inline or by swallowing `RuntimeError` with a bare `except RuntimeError: pass`.
 - `2` (ZENOH_ERROR): Transport layer failure.
 
 ---
@@ -117,8 +122,8 @@ virtmcu/
 
 ## Dependency & Version Control
 
-- **Centralized Versions**: Agents MUST adhere to the versions defined in the `VERSIONS` file for QEMU, Zenoh, and other core dependencies.
-- **Verification**: Before suggesting or implementing upgrades, verify the current pinned versions in `VERSIONS` and `requirements.txt`.
+- **Centralized Versions**: Agents MUST adhere to the versions defined in the `BUILD_DEPS` file for QEMU, Zenoh, and other core dependencies.
+- **Verification**: Before suggesting or implementing upgrades, verify the current pinned versions in `BUILD_DEPS` and `requirements.txt`.
 - **Package Management**: Prefer `uv` (e.g., `uv pip`, `uv run`) over standard `pip` or system package managers for all Python package management and tool installations (like CMake) due to its speed and conflict resolution.
 
 ---
@@ -228,8 +233,9 @@ To ensure the highest level of professional software engineering, all agents MUS
 - **Documentation:** Update READMEs, ADRs, and API docs as the architecture evolves.
 
 ### 6. Protected Files & Centralized Scripts
-- **DO NOT** automatically edit `.env` or `VERSIONS` files. These files contain specific version pins and local secrets (via symlinking) that should only be modified by the user or dedicated synchronization scripts (e.g., `make sync-versions`).
+- **DO NOT** automatically edit `.env` or `BUILD_DEPS` files. These files contain specific version pins and local secrets (via symlinking) that should only be modified by the user or dedicated synchronization scripts (e.g., `make sync-versions`).
 - **QEMU Patching:** All modifications to QEMU source files, C-level hooks, or SysBus definitions MUST be centralized in `scripts/apply-qemu-patches.sh`. Do not duplicate `sed` commands or `git am` calls across Dockerfiles or bare-metal setup scripts.
+- **Release Binary Portability (DEBIAN_CODENAME rule):** The `DEBIAN_CODENAME` in `BUILD_DEPS` is the single source of truth for the Debian base image used in **all** stages (devcontainer, CI, release builds). Do NOT hardcode a different codename in workflow `build-args` to paper over ABI incompatibilities. Instead, disable the problematic optional QEMU feature at configure time (e.g., `--disable-dbus-display`) so the binary remains compatible with the target platform without downgrading the entire build environment. Deviating DEBIAN_CODENAME between devcontainer and release violates environment parity (§7) and creates "works here, broken in release" bugs.
 
 ### 7. Environment Parity (1:1 Local-to-Remote Sync)
 
@@ -301,6 +307,15 @@ Every peripheral that spawns background threads or blocks vCPU threads MUST impl
 - **Mock fidelity**: Test mocks in `sync.rs` (and elsewhere) must accurately simulate the invariant they replace. A mock that always returns "success" makes timeout and error paths invisible to the test suite — this provides false confidence. Mocks must support configurable return values and state.
 - **Concurrency tests**: For any code that involves two or more threads with shared state (CondVar patterns, atomic state machines), write a `loom`-based test OR at minimum a stress test that runs the concurrent path 10 000+ times under `cargo test --release`. Use `loom` when the state space is small enough (2-3 threads, few operations); use stress tests otherwise.
 - **Teardown tests**: Any peripheral that spawns threads must have a test that verifies clean shutdown. Run under Miri (`cargo miri test`) for the Rust unit test suite to catch UB in teardown paths.
+
+### 15. Lessons Learned & Architectural Gotchas
+To prevent historical regressions, agents and developers must strictly avoid these known anti-patterns derived from past incident postmortems (e.g., Phase 7 & 18.9):
+- **The "DSO TLS Trap":** QEMU macros or functions relying on file-static or coroutine-local TLS (like `bql_locked()`) **cannot** be reliably called from a plugin/DSO. The linker resolves the symbol, but the DSO reads its own uninitialized local copy of the TLS slot. **Rule:** Always use main-binary wrapper functions (e.g., `virtmcu_is_bql_locked()`) exported from a proper header.
+- **Multi-Flag Protocol Hygiene:** In producer-consumer synchronization (e.g., `quantum_ready` / `quantum_done`), every signal flag **must be reset by the consumer** immediately after consumption. Never leave a "done" flag set, as it causes stale reads and deadlocks in the next cycle.
+- **Zenoh Executor Deadlocks:** Never block a Zenoh async executor thread with synchronous calls like `.wait()`, `.recv()`, or `thread::sleep()` inside a callback. **Rule:** Offload blocking work to a background thread and use non-blocking channels (`crossbeam_channel::unbounded` or `bounded`) to bridge Zenoh and QEMU.
+- **UART / Hardware FIFO Backpressure:** QEMU's UART models (like PL011) have fixed-size hardware FIFOs (e.g., 32 bytes). Shoving larger packets via Zenoh without checking capacity causes silent data drop. **Rule:** Peripherals must implement backpressure. Check `qemu_chr_be_can_write`, buffer leftovers in a backlog queue, and use the `chr_accept_input` hook to drain the backlog when the guest FIFO frees up.
+- **Testing Failure States:** Smoke tests verifying the "happy path" are insufficient. **Rule:** Implement "Hammer" (high frequency), "Flood" (high volume), and "Stall" (e.g., sending massive 10-billion-instruction quanta to trigger wall-clock timeouts) tests to explicitly verify error recovery and backpressure paths.
+- **Automated Patching Mandate:** Manual local edits to `third_party/qemu` cause "Works on my machine" bugs because CI clones a fresh QEMU tree. **Rule:** All modifications to untracked third-party code MUST be implemented via the automated injection scripts (`scripts/apply-qemu-patches.sh` or `apply_zenoh_hook.py`).
 
 
 ---

@@ -27,8 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Load VERSIONS
-        run: grep -E -v '^#|^$' VERSIONS >> "$GITHUB_ENV"
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -41,22 +41,25 @@ jobs:
           target: builder
           platforms: ${{ matrix.platform }}
           build-args: |
+            DEBIAN_CODENAME=${{ env.DEBIAN_CODENAME }}
             QEMU_REF=v${{ env.QEMU_VERSION }}
             ZENOH_C_REF=${{ env.ZENOH_VERSION }}
             CMAKE_VERSION=${{ env.CMAKE_VERSION }}
           load: true
           tags: virtmcu-builder:${{ matrix.arch }}
           cache-from: type=gha,scope=virtmcu-${{ matrix.arch }}
+          # Retry on network failures (transient GHCR/Registry issues)
+          provenance: false
 
       - name: Extract binaries from container
         run: |
-          docker create --name extract virtmcu-builder:${{ matrix.arch }}
+          docker create --name extract virtmcu-builder:"${{ matrix.arch }}"
           docker cp extract:/opt/virtmcu ./virtmcu-dist
           docker rm extract
 
           # Include basic project info
           cp LICENSE ./virtmcu-dist/
-          cat <<EOF > ./virtmcu-dist/README-BINARY.md
+          cat > ./virtmcu-dist/README-BINARY.md <<EOF
           # virtmcu QEMU Binaries
 
           This package contains a patched version of QEMU with support for:
@@ -67,27 +70,27 @@ jobs:
           ## System Requirements
           This is a dynamically linked QEMU build for Ubuntu 24.04 (or compatible glibc-based Linux).
           You will need the following runtime dependencies installed on your host:
-          \`\`\`bash
-          sudo apt-get update && sudo apt-get install -y libglib2.0-0 libpixman-1-0 libslirp0
-          \`\`\`
+          sudo apt-get update && sudo apt-get install -y libglib2.0-0t64 libpixman-1-0 libslirp0
 
           ## Architecture
           - Host: ${{ matrix.arch }}
           - Target Guest Support: ARM, RISC-V (32/64)
 
           ## Usage
-          The binaries in \`bin/\` have their RPATH set to find libraries in \`../lib/\`.
+          The binaries in bin/ have their RPATH set to find libraries in ../lib/.
           No LD_LIBRARY_PATH should be required.
 
           Example:
           ./bin/qemu-system-arm -M arm-generic-fdt -dtb your_board.dtb
           EOF
 
+
       - name: Portable Smoke Test
         run: |
           # Test the extracted binary in a clean ubuntu container
           docker run --rm -v "$(pwd)/virtmcu-dist":/virtmcu-dist ubuntu:24.04 bash -c "
-            apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libpixman-1-0 libslirp0
+            apt-get update && apt-get install -y --no-install-recommends libglib2.0-0t64 libpixman-1-0 libslirp0
+
             /virtmcu-dist/bin/qemu-system-arm --version
             /virtmcu-dist/bin/qemu-system-riscv64 --version
             # Verify that it can find the modules without LD_LIBRARY_PATH

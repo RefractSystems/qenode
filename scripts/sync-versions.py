@@ -5,7 +5,7 @@ from pathlib import Path
 
 def get_versions():
     versions = {}
-    with Path("VERSIONS").open() as f:
+    with Path("BUILD_DEPS").open() as f:
         for line in f:
             if "=" in line and not line.startswith("#"):
                 key, value = line.strip().split("=")
@@ -17,7 +17,7 @@ def sync():
     versions = get_versions()
     zenoh_ver = versions.get("ZENOH_VERSION")
     if not zenoh_ver:
-        print("Error: ZENOH_VERSION not found in VERSIONS")
+        print("Error: ZENOH_VERSION not found in BUILD_DEPS")
         return
 
     # 1. Update tools/zenoh_coordinator/Cargo.toml

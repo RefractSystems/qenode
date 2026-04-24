@@ -255,7 +255,8 @@ RUN if [ "${USE_CCACHE}" = "true" ]; then CCACHE_FLAG="--enable-ccache"; else CC
     --enable-gcov \
     --disable-werror \
     --disable-docs \
-    --extra-ldflags="-fuse-ld=lld"
+    --disable-dbus-display \
+    --extra-ldflags="-fuse-ld=lld -rdynamic"
 RUN --mount=type=cache,target=/var/cache/ccache make -j"$(nproc)"
 
 # ── Stage 6: builder ──────────────────────────────────────────────────────────
@@ -311,9 +312,10 @@ RUN mkdir -p /opt/virtmcu/lib/qemu/plugins \
     && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; 2>/dev/null || true \
     && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
-    && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} + \
+    && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN:$ORIGIN/..:$ORIGIN/../..:$ORIGIN/../../..' {} + \
+    && find /opt/virtmcu/lib -name "hw-uefi-vars.so" -delete 2>/dev/null || true \
     && find /build/qemu/build-virtmcu -maxdepth 1 -name "qemu-system-*" -type f -delete \
-    && ls -l /opt/virtmcu/lib/qemu/hw-virtmcu-rust-dummy.so
+    && ls -R /opt/virtmcu/lib
 
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"

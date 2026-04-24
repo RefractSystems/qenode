@@ -19,9 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
-if [ -f "$WORKSPACE_DIR/VERSIONS" ]; then
+if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
     # shellcheck source=/dev/null
-    source "$WORKSPACE_DIR/VERSIONS"
+    source "$WORKSPACE_DIR/BUILD_DEPS"
 fi
 
 # Function to download pre-built QEMU SDK from GitHub Releases
@@ -221,7 +221,7 @@ else
     # Check if lld is available
     if command -v lld >/dev/null 2>&1; then
         echo "lld detected: enabling fast linking"
-        CONFIGURE_ARGS+=(--extra-ldflags="-fuse-ld=lld")
+        CONFIGURE_ARGS+=(--extra-ldflags="-fuse-ld=lld -rdynamic")
     fi
 fi
 

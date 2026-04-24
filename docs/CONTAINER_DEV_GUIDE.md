@@ -98,7 +98,7 @@ IMAGE_TAG=my-branch make docker-dev
 docker run --rm -it --user vscode ghcr.io/refractsystems/virtmcu/devenv:dev-amd64 zsh
 ```
 
-All versions are read from the `VERSIONS` file automatically — no manual `--build-arg` needed.
+All versions are read from the `BUILD_DEPS` file automatically — no manual `--build-arg` needed.
 
 ---
 
@@ -192,11 +192,11 @@ docker run --rm -it <last-good-sha> bash
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `arm-none-eabi-gcc: not found` after build | ARM toolchain download URL changed | Check current URL format at [ARM releases](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads), update `ARM_TOOLCHAIN_VERSION` in `VERSIONS` |
+| `arm-none-eabi-gcc: not found` after build | ARM toolchain download URL changed | Check current URL format at [ARM releases](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads), update `ARM_TOOLCHAIN_VERSION` in `BUILD_DEPS` |
 | `flatc: error while loading shared libraries: libstdc++.so.6` | `libstdc++6` missing from image | It's explicitly listed in the `toolchain` apt block; verify it wasn't removed |
 | oh-my-zsh install hangs | GitHub connectivity issue at build time | `docker build` with `--network=host`; or add `--no-cache` to skip the cached layer |
 | `gemini --version` fails in smoke test | Gemini CLI not installed globally | Verify `npm install -g @google/gemini-cli@latest` is in Dockerfile |
-| `NodeSource setup_N.x` fails | NodeSource added codename support for the current Debian release after this was written | The Dockerfile uses a direct binary download from nodejs.org — no codename dependency. If failing, check `NODE_VERSION` in `VERSIONS` and verify the nodejs.org dist URL |
+| `NodeSource setup_N.x` fails | NodeSource added codename support for the current Debian release after this was written | The Dockerfile uses a direct binary download from nodejs.org — no codename dependency. If failing, check `NODE_VERSION` in `BUILD_DEPS` and verify the nodejs.org dist URL |
 | `uv python install` fails | Network issue fetching python-build-standalone | Retry; uv downloads OS-agnostic glibc binaries, not distro-specific packages |
 
 ---
@@ -234,7 +234,7 @@ id                          # uid=1000(vscode)
 echo $SHELL                 # /usr/bin/zsh
 echo $0                     # zsh
 
-# Confirm versions match VERSIONS file
+# Confirm versions match BUILD_DEPS file
 arm-none-eabi-gcc --version | head -1
 uv run python --version
 cmake --version | head -1
@@ -250,13 +250,13 @@ python -c "import zenoh; print(zenoh.__version__)"
 
 ## Version management
 
-All dependency versions live in one place: the `VERSIONS` file at the repo root.
+All dependency versions live in one place: the `BUILD_DEPS` file at the repo root.
 
 **To bump a version:**
 
 ```bash
-# 1. Edit VERSIONS
-vim VERSIONS
+# 1. Edit BUILD_DEPS
+vim BUILD_DEPS
 
 # 2. Propagate to Dockerfile, pyproject.toml, requirements.txt, ci.yml, Cargo.toml
 make sync-versions
@@ -280,7 +280,7 @@ make docker-dev
 | `Cargo.toml` | `zenoh`, `flatbuffers` |
 | `worlds/pendulum.yml` | inline `uv pip install eclipse-zenoh==` |
 
-`check-versions` is a read-only enforcer run in the CI lint tier. It fails if any of the above are out of sync with `VERSIONS`, with a message pointing to `make sync-versions`.
+`check-versions` is a read-only enforcer run in the CI lint tier. It fails if any of the above are out of sync with `BUILD_DEPS`, with a message pointing to `make sync-versions`.
 
 ---
 
@@ -289,7 +289,7 @@ make docker-dev
 The base image codename is the only thing needed to change:
 
 ```bash
-# VERSIONS
+# BUILD_DEPS
 DEBIAN_CODENAME=forky   # was: trixie
 
 make sync-versions

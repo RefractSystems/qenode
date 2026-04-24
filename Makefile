@@ -42,7 +42,7 @@ check-ffi:
 # Version Management
 # ------------------------------------------------------------------------------
 
-# Propagate versions from the VERSIONS file to all downstream configuration files.
+# Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
 	@python3 scripts/sync-versions.py
@@ -474,6 +474,11 @@ ci-local:
 	@echo "════════════════════════════════════════════════════"
 	@bash scripts/docker-build.sh devenv-base
 	@echo ""
+	# Ensure the cargo registry named volume is owned by the current user.
+	# Docker initialises new named volumes from the image layer (root-owned),
+	# so --user runs would fail on first crate download without this step.
+	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
+		sh -c "chown -R $$(id -u):$$(id -g) /vol"
 	# Mirrors the three 'docker run devenv-base' steps from .github/workflows/ci.yml.
 	# CARGO_HOME is NOT overridden — container uses its baked-in /usr/local/cargo,
 	# exactly as GitHub CI does.  See mount strategy comment above for full details.
@@ -547,6 +552,8 @@ ci-asan:
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI ASan — Building and testing under ASan"
 	@echo "════════════════════════════════════════════════════"
+	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
+		sh -c "chown -R $$(id -u):$$(id -g) /vol"
 	docker run --rm \
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
@@ -571,6 +578,8 @@ ci-miri:
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Miri — Running Miri tests"
 	@echo "════════════════════════════════════════════════════"
+	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
+		sh -c "chown -R $$(id -u):$$(id -g) /vol"
 	docker run --rm \
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
@@ -586,7 +595,7 @@ ci-miri:
 # ------------------------------------------------------------------------------
 # Docker Image Targets
 # ------------------------------------------------------------------------------
-# All versions are read from the VERSIONS file by scripts/docker-build.sh.
+# All versions are read from the BUILD_DEPS file by scripts/docker-build.sh.
 # Pass IMAGE_TAG=<tag> to override the local tag (default: dev).
 #
 #   make docker-dev    — base → toolchain → devenv with smoke tests (fast path)

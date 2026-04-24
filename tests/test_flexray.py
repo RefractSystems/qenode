@@ -126,7 +126,7 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
         f"zenoh-flexray.topic={topic}",
     ]
@@ -196,7 +196,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
         f"zenoh-flexray.topic={topic}",
     ]
@@ -277,7 +277,7 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
         f"zenoh-flexray.topic={topic}",
     ]

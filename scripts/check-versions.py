@@ -6,7 +6,7 @@ from pathlib import Path
 
 def get_versions():
     versions = {}
-    with Path("VERSIONS").open() as f:
+    with Path("BUILD_DEPS").open() as f:
         for line in f:
             if "=" in line and not line.startswith("#"):
                 key, value = line.strip().split("=")
@@ -93,7 +93,7 @@ def check():
             elif match.group(1) != fb_ver:
                 errors.append(f"{req_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
-    # 4. Check ci.yml hardcoded PYTHON_VERSION matches VERSIONS
+    # 4. Check ci.yml hardcoded PYTHON_VERSION matches BUILD_DEPS
     ci_path = ".github/workflows/ci.yml"
     if Path(ci_path).exists():
         with Path(ci_path).open() as f:

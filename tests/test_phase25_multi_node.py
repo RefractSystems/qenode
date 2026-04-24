@@ -63,7 +63,7 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "-net",
         "none",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint}",
     ]
 
     # Generate Slave DTB
@@ -85,7 +85,7 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "-net",
         "none",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=1,router={router_endpoint},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=1,router={router_endpoint}",
     ]
 
     print("Launching Master...")
