@@ -338,6 +338,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 
 WORKDIR /workspace
 # devenv-base remains root by default for CI robustness.
+ENV PATH="/home/vscode/.local/bin:${PATH}"
 
 # ── Stage 8: devenv ───────────────────────────────────────────────────────────
 FROM devenv-base AS devenv

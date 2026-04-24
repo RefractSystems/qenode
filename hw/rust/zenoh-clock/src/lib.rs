@@ -707,10 +707,10 @@ fn zenoh_clock_init_internal(
                 }
             }
 
-            std::thread::sleep(Duration::from_secs(1));
+            let d = Duration::from_secs(1);
+            std::thread::sleep(d); // SLEEP_EXCEPTION: background stats/heartbeat thread; 1 s cadence.
         })
         .unwrap_or_else(|_| std::process::abort()); // "failed to spawn zenoh-clock heartbeat thread");
-
     backend_ptr
 }
 

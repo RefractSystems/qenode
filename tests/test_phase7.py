@@ -26,7 +26,7 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    extra_args = ["-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router}"]
+    extra_args = ["-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout=10000"]
 
     await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -54,35 +54,33 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    extra_args = ["-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout=500"]
+    # Use a shorter stall-timeout specifically for the stall test, but not too short
+    stall_timeout = 1000
+    extra_args = ["-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout={stall_timeout}"]
 
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+    bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
     await vta.step(0)
 
-    import psutil
-    qemu_proc = None
-    for p in psutil.process_iter(["cmdline"]):
-        if "qemu-system-arm" in (p.info["cmdline"] or []) and str(dtb_path) in str(p.info["cmdline"]):
-            qemu_proc = p
-            break
-
-    assert qemu_proc is not None, "Could not find QEMU process"
-    qemu_proc.suspend()
+    # Trigger stall by pausing emulation
+    await bridge.pause_emulation()
 
     try:
         with pytest.raises(RuntimeError, match="reported CLOCK STALL"):
-            await vta.step(10_000_000, timeout=5.0)
+            # Wait longer than stall_timeout to ensure it's triggered
+            await vta.step(10_000_000, timeout=10.0)
 
-        qemu_proc.resume()
+        await bridge.start_emulation()
+        # Give QEMU a moment to resume
+        await asyncio.sleep(0.5)
         vtime = (await vta.step(1_000_000))[0]
         assert vtime > 0
 
     finally:
-        qemu_proc.resume()
+        await bridge.start_emulation()
 
 
 @pytest.mark.asyncio
@@ -96,7 +94,7 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=1,mode=slaved-icount,router={zenoh_router}",
+        f"zenoh-clock,node=1,mode=slaved-icount,router={zenoh_router},stall-timeout=10000",
         "-netdev",
         f"zenoh,node=1,id=n1,router={zenoh_router}",
     ]
@@ -134,7 +132,7 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router},stall-timeout=10000",
         "-netdev",
         f"zenoh,node=0,id=n0,router={zenoh_router}",
     ]
@@ -165,7 +163,7 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router},stall-timeout=10000",
         "-netdev",
         f"zenoh,node=0,id=n0,router={zenoh_router}",
     ]

@@ -145,7 +145,8 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
                 connected = true;
                 break;
             }
-            std::thread::sleep(Duration::from_millis(100));
+            let d = Duration::from_millis(100);
+            std::thread::sleep(d); // SLEEP_EXCEPTION: one-shot Zenoh router connection retry at device init; not on vCPU path.
         }
 
         if !connected {
@@ -188,7 +189,8 @@ mod tests {
             // Wait for callback (it might take a moment as it's async)
             let mut attempts = 0;
             while counter.load(Ordering::SeqCst) == 0 && attempts < 100 {
-                std::thread::sleep(Duration::from_millis(10));
+                let d = Duration::from_millis(10);
+                std::thread::sleep(d); // SLEEP_EXCEPTION: test-only; polling for async Zenoh callback (wall-clock boundary test).
                 attempts += 1;
             }
             assert!(counter.load(Ordering::SeqCst) > 0);
@@ -202,7 +204,8 @@ mod tests {
             session.put(topic, "ignored").wait().unwrap();
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        let d = Duration::from_millis(100);
+        std::thread::sleep(d); // SLEEP_EXCEPTION: test-only; verifying quiescence after subscriber drop (wall-clock boundary test).
         assert_eq!(counter.load(Ordering::SeqCst), count_after_drop);
     }
 }

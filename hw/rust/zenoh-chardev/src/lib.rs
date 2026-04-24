@@ -251,6 +251,90 @@ fn send_packet(session: &Session, topic: &str, data: &[u8]) {
     }
 }
 
+fn start_tx_thread(
+    session: zenoh::Session,
+    tx_topic: String,
+    rx_out: Receiver<Vec<u8>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::with_capacity(8192);
+        let mut last_send = std::time::Instant::now();
+
+        loop {
+            match rx_out.recv_timeout(std::time::Duration::from_millis(10)) {
+                Ok(data) => {
+                    buffer.extend_from_slice(&data);
+                    if buffer.len() >= 4096 || last_send.elapsed().as_millis() >= 20 {
+                        send_packet(&session, &tx_topic, &buffer);
+                        buffer.clear();
+                        last_send = std::time::Instant::now();
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if !buffer.is_empty() {
+                        send_packet(&session, &tx_topic, &buffer);
+                        buffer.clear();
+                        last_send = std::time::Instant::now();
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    })
+}
+
+fn create_subscriber(
+    session: &zenoh::Session,
+    rx_topic: &str,
+    timer_ptr: Arc<AtomicUsize>,
+    tx: Sender<OrderedPacket>,
+    earliest_vtime: Arc<AtomicU64>,
+) -> Result<SafeSubscriber, zenoh::Error> {
+    SafeSubscriber::new(session, rx_topic, move |sample| {
+        let tp = timer_ptr.load(AtomicOrdering::Acquire);
+        if tp == 0 {
+            return;
+        }
+        let rx_timer = tp as *mut QemuTimer;
+
+        let data = sample.payload().to_bytes();
+        if data.len() < 12 {
+            vlog!(
+                "[zenoh-chardev] Warning: Dropping malformed packet (too short: {} bytes)\n",
+                data.len()
+            );
+            return;
+        }
+
+        let mut cursor = Cursor::new(&data);
+        let vtime = cursor.read_u64::<LittleEndian>().unwrap_or(0);
+        let sz = cursor.read_u32::<LittleEndian>().unwrap_or(0);
+        let p = &data[12..];
+        let actual_len = std::cmp::min(sz as usize, p.len());
+        let payload = p[..actual_len].to_vec();
+
+        let adjusted_vtime = if vtime == 0 {
+            unsafe {
+                virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) as u64
+            }
+        } else {
+            vtime
+        };
+
+        if tx.send(OrderedPacket { vtime: adjusted_vtime, data: payload }).is_ok() {
+            let current_earliest = earliest_vtime.load(AtomicOrdering::Acquire);
+            if adjusted_vtime < current_earliest {
+                earliest_vtime.store(adjusted_vtime, AtomicOrdering::Release);
+                unsafe {
+                    virtmcu_timer_mod(rx_timer, adjusted_vtime as i64);
+                }
+            }
+        } else {
+            vlog!("[zenoh-chardev] Warning: RX channel full, dropping packet\n");
+        }
+    })
+}
+
 unsafe extern "C" fn zenoh_chr_open(
     chr: *mut Chardev,
     backend: *mut c_void,
@@ -280,39 +364,11 @@ unsafe extern "C" fn zenoh_chr_open(
             // Bounded channel provides hardware backpressure
             let (tx, rx) = bounded(65536);
             let timer_ptr = Arc::new(AtomicUsize::new(0));
-            let timer_ptr_clone = Arc::clone(&timer_ptr);
             let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-            let earliest_vtime_clone = Arc::clone(&earliest_vtime);
 
             let (tx_out, rx_out): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = bounded(65536);
 
-            let sess_clone = session.clone();
-            let topic_clone = tx_topic.clone();
-            let tx_thread = std::thread::spawn(move || {
-                let mut buffer = Vec::with_capacity(8192);
-                let mut last_send = std::time::Instant::now();
-
-                loop {
-                    match rx_out.recv_timeout(std::time::Duration::from_millis(10)) {
-                        Ok(data) => {
-                            buffer.extend_from_slice(&data);
-                            if buffer.len() >= 4096 || last_send.elapsed().as_millis() >= 20 {
-                                send_packet(&sess_clone, &topic_clone, &buffer);
-                                buffer.clear();
-                                last_send = std::time::Instant::now();
-                            }
-                        }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                            if !buffer.is_empty() {
-                                send_packet(&sess_clone, &topic_clone, &buffer);
-                                buffer.clear();
-                                last_send = std::time::Instant::now();
-                            }
-                        }
-                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            });
+            let tx_thread = start_tx_thread(session.clone(), tx_topic.clone(), rx_out);
 
             let mut state = Box::new(ZenohChardevState {
                 session: session.clone(),
@@ -321,57 +377,16 @@ unsafe extern "C" fn zenoh_chr_open(
                 subscriber: None,
                 chr,
                 rx_timer: ptr::null_mut(),
-                timer_ptr,
+                timer_ptr: Arc::clone(&timer_ptr),
                 rx_receiver: rx,
                 local_heap: Mutex::new(BinaryHeap::new()),
                 backlog: Mutex::new(VecDeque::new()),
-                earliest_vtime,
+                earliest_vtime: Arc::clone(&earliest_vtime),
                 tx_sender: Some(tx_out),
                 tx_thread: Some(tx_thread),
             });
 
-            let sub = SafeSubscriber::new(&session, &rx_topic, move |sample| {
-                let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
-                if tp == 0 {
-                    return;
-                }
-                let rx_timer = tp as *mut QemuTimer;
-
-                let data = sample.payload().to_bytes();
-                if data.len() < 12 {
-                    vlog!("[zenoh-chardev] Warning: Dropping malformed packet (too short: {} bytes)\n", data.len());
-                    return;
-                }
-
-                let mut cursor = Cursor::new(&data);
-                let vtime = cursor.read_u64::<LittleEndian>().unwrap_or(0);
-                let sz = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-                let p = &data[12..];
-                let actual_len = std::cmp::min(sz as usize, p.len());
-                let payload = p[..actual_len].to_vec();
-
-                let adjusted_vtime = if vtime == 0 {
-                    unsafe {
-                        virtmcu_qom::timer::qemu_clock_get_ns(
-                            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-                        ) as u64
-                    }
-                } else {
-                    vtime
-                };
-
-                if tx.send(OrderedPacket { vtime: adjusted_vtime, data: payload }).is_ok() {
-                    let current_earliest = earliest_vtime_clone.load(AtomicOrdering::Acquire);
-                    if adjusted_vtime < current_earliest {
-                        earliest_vtime_clone.store(adjusted_vtime, AtomicOrdering::Release);
-                        unsafe {
-                            virtmcu_timer_mod(rx_timer, adjusted_vtime as i64);
-                        }
-                    }
-                } else {
-                    vlog!("[zenoh-chardev] Warning: RX channel full, dropping packet\n");
-                }
-            });
+            let sub = create_subscriber(&session, &rx_topic, timer_ptr, tx, earliest_vtime);
 
             match sub {
                 Ok(subscriber) => {

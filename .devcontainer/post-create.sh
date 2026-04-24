@@ -62,6 +62,10 @@ curl -fsSL https://claude.ai/install.sh | bash
 echo "alias gemini='gemini --yolo'" >> ~/.zshrc
 echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.zshrc
 
+# Add to .bashrc for compatibility
+echo "alias gemini='gemini --yolo'" >> ~/.bashrc
+echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc
+
 echo "==> Installing Git Hooks..."
 make install-hooks
 

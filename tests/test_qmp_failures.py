@@ -18,7 +18,7 @@ async def test_qemu_crash_handling(qemu_launcher):
     bridge = await qemu_launcher(dtb, kernel, ignore_clock_check=True)
 
     # Verify we can connect
-    assert bridge.qmp.is_connected()
+    assert bridge.is_connected
 
     try:
         # Kill QEMU
@@ -26,10 +26,10 @@ async def test_qemu_crash_handling(qemu_launcher):
         import psutil
         qemu_proc = None
         for p in psutil.process_iter(["cmdline"]):
-            if "qemu-system-arm" in (p.info["cmdline"] or []) and str(dtb) in str(p.info["cmdline"]):
+            cmdline = str(p.info.get("cmdline") or [])
+            if "qemu-system-arm" in cmdline and str(dtb) in cmdline:
                 qemu_proc = p
                 break
-
         assert qemu_proc is not None
         qemu_proc.kill()
 
