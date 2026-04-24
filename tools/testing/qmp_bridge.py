@@ -21,6 +21,7 @@ class QmpBridge:
 
     def __init__(self):
         self.qmp = QMPClient("virtmcu-tester")
+        self.pid: int | None = None
         self.uart_reader: asyncio.StreamReader | None = None
         self.uart_writer: asyncio.StreamWriter | None = None
         self.uart_buffer = ""

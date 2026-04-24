@@ -11,8 +11,8 @@ Verifies the API contract of the final virtmcu runtime image.
 This test guarantees that:
 1. All required QEMU binaries (ARM/RISC-V) and tools (DTC, yaml2qemu) are present.
 2. All virtmcu QOM plugins (.so) are correctly linked and loadable by QEMU.
-3. The Zenoh Federation Contract (router= property) is honored by all plugins.
-4. The mmio-socket-bridge wire protocol handler is present and loadable.
+3. The mmio-socket-bridge wire protocol handler is present and loadable.
+4. The Zenoh Federation Contract (router= property) is honored by all plugins.
 TEST_DOC_BLOCK
 echo "=============================================================================="
 
@@ -61,15 +61,20 @@ docker run -i --rm \
     python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu failed to run" && exit 1)
 
     echo "2. Verifying QOM Plugin Existence..."
-    PLUGIN_PATH=$(find /opt /usr /build -name "hw-virtmcu-zenoh-clock.so" | head -n 1)
-    if [ -n "$PLUGIN_PATH" ]; then
-        echo "Found zenoh-clock plugin at: $PLUGIN_PATH"
-        MOD_DIR=$(dirname "$PLUGIN_PATH")
-    else
-        echo "DEBUG: find plugin state:"
-        find /opt /usr /build -name "*.so" -path "*virtmcu*" 2>/dev/null || true
-        echo "❌ zenoh-clock plugin missing" && exit 1
-    fi
+    for plugin in hw-virtmcu-zenoh-clock.so hw-virtmcu-mmio-socket-bridge.so hw-virtmcu-zenoh-netdev.so hw-virtmcu-zenoh-chardev.so; do
+        PLUGIN_PATH=$(find /opt /usr /build -name "$plugin" | head -n 1)
+        if [ -n "$PLUGIN_PATH" ]; then
+            echo "   ✅ Found $plugin at: $PLUGIN_PATH"
+        else
+            echo "   ❌ $plugin missing" && exit 1
+        fi
+    done
+
+    echo "3. Testing mmio-socket-bridge loadability..."
+    # We use -device ?,help to list all devices and grep for our bridge.
+    # This proves the .so was successfully dlopen()ed by QEMU.
+    qemu-system-arm -device help 2>&1 | grep "mmio-socket-bridge" > /dev/null || (echo "❌ mmio-socket-bridge failed to load" && exit 1)
+    echo "   ✅ mmio-socket-bridge is loadable."
 
     echo "4. Testing Full-System Zenoh Federation Contract..."
     # Create a minimal board for a boot test
@@ -91,7 +96,7 @@ YML
     PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
     
     # Start the mock router (TCP-only, no multicast)
-    python3 -u /app/tests/zenoh_router_persistent.py "tcp/127.0.0.1:$PORT" &
+    python3 -u "$WS/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
     ROUTER_PID=$!
     sleep 2
 

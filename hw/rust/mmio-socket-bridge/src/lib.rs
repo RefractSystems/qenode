@@ -113,7 +113,8 @@ impl SharedState {
                 if self.reconnect_ms == 0 {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(self.reconnect_ms as u64));
+                let d = Duration::from_millis(self.reconnect_ms as u64);
+                std::thread::sleep(d); // SLEEP_EXCEPTION: background connector thread; not on vCPU path.
                 continue;
             };
 
@@ -224,7 +225,8 @@ impl SharedState {
 
             // Not connected yet. Drop lock, unlock BQL, and sleep briefly.
             let _bql_unlock = Bql::temporary_unlock();
-            std::thread::sleep(Duration::from_millis(10));
+            let d = Duration::from_millis(10);
+            std::thread::sleep(d); // SLEEP_EXCEPTION: vCPU connection-wait; replace with QemuCond::wait_yielding_bql + connected_condvar in BQL rework.
         }
 
         // Wait for response using QEMU native primitives

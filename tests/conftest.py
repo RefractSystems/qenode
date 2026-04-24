@@ -403,6 +403,7 @@ async def qemu_launcher():
             raise TimeoutError("QEMU QMP/UART sockets did not appear in time")
 
         bridge = QmpBridge()
+        bridge.pid = proc.pid
         try:
             await bridge.connect(str(qmp_sock), None if has_serial else str(uart_sock))
         except Exception as e:

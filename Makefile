@@ -340,6 +340,19 @@ lint-rust:
 	@cargo fmt --all --check
 	@echo "==> Running cargo machete..."
 	@cargo machete
+	@echo "==> Checking for banned thread::sleep in hw/rust/..."
+	@# thread::sleep is banned in the simulation hot path (MMIO, clock, network callbacks)
+	@# because it introduces non-determinism and can starve QEMU of the BQL.
+	@# Approved exceptions must carry an inline // SLEEP_EXCEPTION: <reason> comment.
+	@# To add an exception: append the comment on the same line as the sleep call.
+	@violations=$$(grep -rn "thread::sleep" hw/rust/ --include="*.rs" | grep -v "SLEEP_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
+		echo "$$violations"; \
+		echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
+		exit 1; \
+	fi
+	@echo "✓ No banned thread::sleep found."
 	@echo "==> Running cargo clippy..."
 	@cargo clippy --workspace
 

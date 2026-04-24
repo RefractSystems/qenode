@@ -229,6 +229,15 @@ CMD+=("${EXTRA_ARGS[@]}")
 # Export QEMU_MODULE_DIR so the QEMU binary picks it up
 export QEMU_MODULE_DIR
 
+# Automatically handle ASan LD_PRELOAD if QEMU is instrumented.
+# AddressSanitizer requires that its runtime library be loaded first.
+if ldd "$QEMU_BIN" | grep -q "libasan"; then
+    LIBASAN=$(ldd "$QEMU_BIN" | grep "libasan" | awk '{print $3}')
+    if [ -n "$LIBASAN" ] && [ -f "$LIBASAN" ]; then
+        export LD_PRELOAD="$LIBASAN${LD_PRELOAD:+:$LD_PRELOAD}"
+    fi
+fi
+
 echo "Running: ${CMD[*]}"
 
 # If we have a temporary DTB, we must run QEMU as a child process and trap
