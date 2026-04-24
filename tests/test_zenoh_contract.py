@@ -24,11 +24,11 @@ def get_libzenohc_version(lib_path):  # noqa: ARG001
     """
     Extracts the expected zenoh-c version.
     Since the binary no longer reliably embeds its version, we read it
-    from the VERSIONS file in the workspace root.
+    from the BUILD_DEPS file in the workspace root.
     """
-    # Find VERSIONS file relative to this script
+    # Find BUILD_DEPS file relative to this script
     workspace_dir = Path(Path(Path(__file__).parent.resolve().parent))
-    versions_file = Path(workspace_dir) / "VERSIONS"
+    versions_file = Path(workspace_dir) / "BUILD_DEPS"
 
     if Path(versions_file).exists():
         with Path(versions_file).open() as f:
@@ -36,7 +36,7 @@ def get_libzenohc_version(lib_path):  # noqa: ARG001
                 if line.startswith("ZENOH_VERSION="):
                     return line.strip().split("=")[1]
 
-    # Fallback for runtime image where VERSIONS might not exist
+    # Fallback for runtime image where BUILD_DEPS might not exist
     # Check if there's an environment variable
     if "ZENOH_VERSION" in os.environ:
         return os.environ["ZENOH_VERSION"]

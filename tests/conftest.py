@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 import pytest_asyncio
 import zenoh
 
@@ -52,6 +53,39 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
     raise TimeoutError(f"Zenoh discovery timeout for {topic} after {timeout}s")
 
 
+# VTA step timeout: always longer than the QEMU stall-timeout so QEMU can reply
+# with STALL before Python gives up. VIRTMCU_STALL_TIMEOUT_MS drives both sides:
+# QEMU reads it directly; Python adds a 10-second buffer on top.
+_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_DEFAULT_VTA_STEP_TIMEOUT_S: float = max(60.0, _stall_timeout_ms / 1000.0 + 10.0)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Scale pytest-timeout's global threshold when VIRTMCU_STALL_TIMEOUT_MS is elevated.
+
+    The pyproject.toml default (120 s) suits non-ASan runs. Under ASan/UBSan
+    QEMU executes TCG blocks much more slowly; a 100 ms virtual-time step can
+    legitimately take several minutes of wall-clock time. We raise the per-test
+    limit to _DEFAULT_VTA_STEP_TIMEOUT_S + 60 s so pytest-timeout never kills a
+    test that is still making forward progress toward the QEMU stall boundary.
+
+    pytest-timeout caches the resolved timeout in config._env_timeout during its
+    own pytest_configure (which runs before conftest hooks).  Setting
+    config.option.timeout afterwards has no effect — we must update _env_timeout
+    directly.
+    """
+    computed = _DEFAULT_VTA_STEP_TIMEOUT_S + 60.0
+    # pytest-timeout caches its resolved timeout in config._env_timeout during its
+    # own pytest_configure (which runs before conftest hooks).  Modifying
+    # config.option.timeout afterwards has no effect on the cached value.  We update
+    # _env_timeout through __dict__ to avoid both the ruff B010 (setattr constant)
+    # and mypy attr-defined errors while remaining lint-clean.
+    config_dict = vars(config)
+    current_timeout = float(config_dict.get("_env_timeout") or 0.0)
+    if computed > current_timeout:
+        config_dict["_env_timeout"] = computed
+
+
 class VirtualTimeAuthority:
     """
     Enterprise-grade controller for driving multiple QEMU virtual clocks via Zenoh.
@@ -62,10 +96,10 @@ class VirtualTimeAuthority:
         self.node_ids = node_ids
         self.current_vtimes = dict.fromkeys(node_ids, 0)
 
-    async def step(self, delta_ns: int, timeout: float = 60.0) -> Any:
+    async def step(self, delta_ns: int, timeout: float = _DEFAULT_VTA_STEP_TIMEOUT_S) -> Any:
         """
         Advances the clock of all managed nodes.
-        Uses a long timeout for CI stability.
+        Timeout scales with VIRTMCU_STALL_TIMEOUT_MS so ASan builds get enough headroom.
         """
         tasks = []
         for nid in self.node_ids:

@@ -47,8 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Load VERSIONS
-        run: grep -E -v '^#|^$' VERSIONS >> "$GITHUB_ENV"
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -76,7 +76,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party
-          key: asan-${{ runner.os }}-${{ hashFiles('scripts/setup-qemu.sh', 'scripts/apply-qemu-patches.sh', 'patches/**', 'VERSIONS') }}
+          key: asan-${{ runner.os }}-${{ hashFiles('scripts/setup-qemu.sh', 'scripts/apply-qemu-patches.sh', 'patches/**', 'BUILD_DEPS') }}
           restore-keys: |
             asan-${{ runner.os }}-
 

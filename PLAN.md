@@ -55,6 +55,16 @@ For every completed phase, an automated integration test MUST be added to `tests
 
 ---
 
+### **[P00 — NEEDS P05] Re-enable Phase 7 Tests**
+**Goal**: Restore the Phase 7 integration tests to the CI pipeline once the BQL refactoring in P04/P05 has stabilized the simulation.
+- **Problem**: Phase 7 tests (clock and netdev determinism) are currently disabled due to severe BQL contention causing spurious stalls.
+- **Steps**:
+  1. Remove `@pytest.mark.skip` from `tests/test_phase7.py`.
+  2. Run Phase 7 tests under stress (`pytest tests/test_phase7.py -n auto --count=20`).
+  3. Verify that zero STALLs are reported under the new locking scheme.
+
+---
+
 ### **[P01 — UNBLOCKED] Fix Main Branch Test Failures**
 **Goal**: Restore the `main` branch to a fully green state before any refactoring.
 **Why first**: All subsequent P0 work will generate commits on `main`. A green baseline is required to detect regressions introduced by each change.

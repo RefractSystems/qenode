@@ -337,27 +337,29 @@ fn zenoh_clock_worker_loop(backend: Arc<ZenohClockBackend>, query_receiver: Rece
                 backend.cond.notify_all();
             }
 
-            // 3. Wait for completion (synchronously in this background thread)
-            while !backend.quantum_done.load(Ordering::SeqCst)
-                || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-            {
+            // 3. Wait for QEMU to signal quantum completion (quantum_done=true).
+            //
+            // We wait only on quantum_done, NOT on vtime_ns >= target_vtime.
+            // Requiring exact target achievement causes a deadlock: TB (Translation Block)
+            // granularity can make QEMU halt a few microseconds before target_vtime, setting
+            // quantum_done=true but vtime_ns < target_vtime.  QEMU then waits for quantum_ready
+            // (set by the worker for the NEXT query) while the worker waits for vtime_ns to
+            // catch up — but nobody advances the clock.
+            //
+            // Accepting any quantum boundary (quantum_done=true) is correct: the timer fires
+            // near target_vtime by design, and any small undershoot is within TB granularity.
+            // The stall path (quantum_done never becomes true) correctly detects QEMU not running.
+            while !backend.quantum_done.load(Ordering::SeqCst) {
                 if start.elapsed() > Duration::from_millis(1) {
-                    if backend.vtime_ns.load(Ordering::SeqCst) >= target_vtime {
-                        break;
-                    }
                     break; // Fall through to condvar wait
                 }
                 std::hint::spin_loop();
             }
 
-            if !backend.quantum_done.load(Ordering::SeqCst)
-                || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-            {
+            if !backend.quantum_done.load(Ordering::SeqCst) {
                 let mut guard =
                     backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                while !backend.quantum_done.load(Ordering::SeqCst)
-                    || backend.vtime_ns.load(Ordering::SeqCst) < target_vtime
-                {
+                while !backend.quantum_done.load(Ordering::SeqCst) {
                     let (new_guard, result) = backend
                         .cond
                         .wait_timeout(guard, Duration::from_millis(100))
@@ -365,19 +367,10 @@ fn zenoh_clock_worker_loop(backend: Arc<ZenohClockBackend>, query_receiver: Rece
                     guard = new_guard;
                     if result.timed_out() && start.elapsed() > timeout {
                         let now_vtime = backend.vtime_ns.load(Ordering::SeqCst);
-                        if now_vtime > target_vtime {
-                            virtmcu_qom::vlog!(
-                                "[virtmcu-clock] STALL: now ({}) > target ({}). Overshoot: {}ns.\n",
-                                now_vtime,
-                                target_vtime,
-                                now_vtime - target_vtime
-                            );
-                        } else {
-                            virtmcu_qom::vlog!(
-                                "[virtmcu-clock] STALL: QEMU did not reach quantum boundary (target={}) in time (now={}).\n",
-                                target_vtime, now_vtime
-                            );
-                        }
+                        virtmcu_qom::vlog!(
+                            "[virtmcu-clock] STALL: QEMU did not reach quantum boundary (target={}) in time (now={}).\n",
+                            target_vtime, now_vtime
+                        );
                         error_code = 1; // CLOCK_ERROR_STALL
                         break;
                     }

@@ -71,7 +71,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-net",
         "none",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint},stall-timeout=30000",
+        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint}",
         # The s32k144-lpuart device is instantiated by the DTB, no need for -device
     ]
 

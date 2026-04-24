@@ -13,7 +13,7 @@
 #   scripts/docker-build.sh toolchain   # build a single stage only, no smoke test
 #   IMAGE_TAG=ci scripts/docker-build.sh dev
 #
-# All versions are read from the VERSIONS file at the repo root.
+# All versions are read from the BUILD_DEPS file at the repo root.
 
 set -euo pipefail
 
@@ -24,16 +24,16 @@ TARGET="${1:-dev}"
 IMAGE_TAG="${IMAGE_TAG:-dev}"
 
 # ── Load versions ──────────────────────────────────────────────────────────────
-if [[ ! -f VERSIONS ]]; then
-    echo "error: VERSIONS file not found (run from repo root or via make)" >&2
+if [[ ! -f BUILD_DEPS ]]; then
+    echo "error: BUILD_DEPS file not found (run from repo root or via make)" >&2
     exit 1
 fi
-# shellcheck source=../VERSIONS
+# shellcheck source=../BUILD_DEPS
 set -a
-# grep strips comments and blank lines; eval-safe because VERSIONS is version strings only
+# grep strips comments and blank lines; eval-safe because BUILD_DEPS is version strings only
 while IFS='=' read -r key val; do
     export "${key}=${val}"
-done < <(grep -v '^#' VERSIONS | grep -v '^[[:space:]]*$')
+done < <(grep -v '^#' BUILD_DEPS | grep -v '^[[:space:]]*$')
 set +a
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
