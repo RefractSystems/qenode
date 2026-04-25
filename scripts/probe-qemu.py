@@ -26,9 +26,14 @@ def get_qemu_bin():
     if qemu_bin_env and Path(qemu_bin_env).exists():
         return qemu_bin_env
 
-    local_bin = Path("third_party/qemu/build-virtmcu/qemu-system-arm")
+    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    local_bin = Path("third_party/qemu") / build_dir / "qemu-system-arm"
     if local_bin.exists():
         return str(local_bin)
+
+    local_bin_install = Path("third_party/qemu") / build_dir / "install/bin/qemu-system-arm"
+    if local_bin_install.exists():
+        return str(local_bin_install)
 
     opt_bin = Path("/opt/virtmcu/bin/qemu-system-arm")
     if opt_bin.exists():

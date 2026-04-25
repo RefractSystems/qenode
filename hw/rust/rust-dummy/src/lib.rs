@@ -80,12 +80,11 @@ unsafe extern "C" fn rust_dummy_realize(dev: *mut c_void, _errp: *mut *mut c_voi
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.iomem);
 }
 
-static mut RUST_DUMMY_PROPERTIES: [Property; 2] =
+static RUST_DUMMY_PROPERTIES: [Property; 2] =
     [define_prop_uint64!(c"base-addr".as_ptr(), RustDummyQEMU, base_addr, u64::MAX), unsafe {
         core::mem::zeroed()
     }];
 
-#[allow(static_mut_refs)]
 unsafe extern "C" fn rust_dummy_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     (*dc).realize = Some(rust_dummy_realize as unsafe extern "C" fn(*mut c_void, *mut *mut c_void));

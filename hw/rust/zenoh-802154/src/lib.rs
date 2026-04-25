@@ -17,7 +17,7 @@ use core::ffi::{c_char, c_uint, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use virtmcu_api::rf_generated::rf_header;
 use virtmcu_qom::error::Error;
 use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
@@ -26,7 +26,8 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{virtmcu_mutex_free, virtmcu_mutex_new, Bql, QemuMutex};
+use virtmcu_qom::sync::Bql;
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
@@ -85,6 +86,15 @@ pub struct Zenoh802154State {
     publisher: Publisher<'static>,
     subscriber: Option<SafeSubscriber>,
 
+    rx_timer: Option<QomTimer>,
+    backoff_timer: Option<QomTimer>,
+    ack_timer: Option<QomTimer>,
+
+    // All state accessed exclusively under BQL; see BqlGuarded docs.
+    inner: BqlGuarded<Zenoh802154Inner>,
+}
+
+struct Zenoh802154Inner {
     tx_fifo: [u8; 128],
     tx_len: u32,
     rx_fifo: [u8; 128],
@@ -98,11 +108,7 @@ pub struct Zenoh802154State {
     short_addr: u16,
     ext_addr: u64,
 
-    rx_timer: Option<QomTimer>,
-    backoff_timer: Option<QomTimer>,
-    ack_timer: Option<QomTimer>,
     rx_queue: Vec<RxFrame>,
-    mutex: *mut QemuMutex,
 
     // CSMA/CA state
     nb: u8,
@@ -285,13 +291,7 @@ fn zenoh_802154_init_internal(
     let ack_timer =
         unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, ack_timer_cb, state_ptr_raw as *mut c_void) };
 
-    let mutex = unsafe { virtmcu_mutex_new() };
-
-    let state = Zenoh802154State {
-        irq,
-        session,
-        publisher,
-        subscriber,
+    let inner = Zenoh802154Inner {
         tx_fifo: [0; 128],
         tx_len: 0,
         rx_fifo: [0; 128],
@@ -303,15 +303,22 @@ fn zenoh_802154_init_internal(
         pan_id: 0xFFFF,
         short_addr: 0xFFFF,
         ext_addr: 0,
-        rx_timer: Some(rx_timer),
-        backoff_timer: Some(backoff_timer),
-        ack_timer: Some(ack_timer),
         rx_queue: Vec::with_capacity(16),
-        mutex,
         nb: 0,
         be: 3,
         ack_pending: false,
         ack_seq: 0,
+    };
+
+    let state = Zenoh802154State {
+        irq,
+        session,
+        publisher,
+        subscriber,
+        rx_timer: Some(rx_timer),
+        backoff_timer: Some(backoff_timer),
+        ack_timer: Some(ack_timer),
+        inner: BqlGuarded::new(inner),
     };
 
     unsafe { ptr::write(state_ptr_raw, state) };
@@ -320,50 +327,52 @@ fn zenoh_802154_init_internal(
 }
 
 fn zenoh_802154_read_internal(s: &mut Zenoh802154State, offset: u64) -> u64 {
+    let mut inner = s.inner.get_mut();
     match offset {
-        0x04 => u64::from(s.tx_len),
+        0x04 => u64::from(inner.tx_len),
         0x0C => {
-            if (s.status & 0x01 != 0) && (s.rx_read_pos < s.rx_len) {
-                let val = u64::from(s.rx_fifo[s.rx_read_pos as usize]);
-                s.rx_read_pos += 1;
+            if (inner.status & 0x01 != 0) && (inner.rx_read_pos < inner.rx_len) {
+                let val = u64::from(inner.rx_fifo[inner.rx_read_pos as usize]);
+                inner.rx_read_pos += 1;
                 val
             } else {
                 0
             }
         }
-        0x10 => u64::from(s.rx_len),
-        0x14 => u64::from(s.status | ((s.state as u32) << 8)),
-        0x18 => u64::from(s.rx_rssi as u8),
-        0x1C => s.state as u64,
-        0x20 => u64::from(s.pan_id),
-        0x24 => u64::from(s.short_addr),
-        0x28 => (s.ext_addr & 0xFFFFFFFF) as u64,
-        0x2C => (s.ext_addr >> 32) as u64,
+        0x10 => u64::from(inner.rx_len),
+        0x14 => u64::from(inner.status | ((inner.state as u32) << 8)),
+        0x18 => u64::from(inner.rx_rssi as u8),
+        0x1C => inner.state as u64,
+        0x20 => u64::from(inner.pan_id),
+        0x24 => u64::from(inner.short_addr),
+        0x28 => (inner.ext_addr & 0xFFFFFFFF) as u64,
+        0x2C => (inner.ext_addr >> 32) as u64,
         _ => 0,
     }
 }
 
 fn zenoh_802154_write_internal(s: &mut Zenoh802154State, offset: u64, value: u64) {
+    let mut inner = s.inner.get_mut();
     match offset {
         0x00 => {
-            if s.tx_len < 128 {
-                s.tx_fifo[s.tx_len as usize] = value as u8;
-                s.tx_len += 1;
+            if inner.tx_len < 128 {
+                let tx_pos = inner.tx_len as usize;
+                inner.tx_fifo[tx_pos] = value as u8;
+                inner.tx_len += 1;
             }
         }
         0x04 => {
-            s.tx_len = (value & 0x7F) as u32;
+            inner.tx_len = (value & 0x7F) as u32;
         }
         0x08 => {
             // TX GO (legacy)
-            tx_go(s);
+            tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
         }
         0x14 => {
-            s.status &= !(value as u32);
-            if s.status & 0x01 == 0 {
+            inner.status &= !(value as u32);
+            if inner.status & 0x01 == 0 {
                 unsafe { qemu_set_irq(s.irq, 0) };
-                let _guard = unsafe { (*s.mutex).lock() };
-                unsafe { check_rx_queue(s) };
+                check_rx_queue(s.irq, s.rx_timer.as_ref(), &mut inner);
             }
         }
         0x1C => {
@@ -372,25 +381,25 @@ fn zenoh_802154_write_internal(s: &mut Zenoh802154State, offset: u64, value: u64
                 1 => RadioState::Idle,
                 2 => RadioState::Rx,
                 3 => RadioState::Tx,
-                _ => s.state,
+                _ => inner.state,
             };
             if next_state == RadioState::Tx {
-                tx_go(s);
+                tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
             } else {
-                s.state = next_state;
+                inner.state = next_state;
             }
         }
         0x20 => {
-            s.pan_id = value as u16;
+            inner.pan_id = value as u16;
         }
         0x24 => {
-            s.short_addr = value as u16;
+            inner.short_addr = value as u16;
         }
         0x28 => {
-            s.ext_addr = (s.ext_addr & 0xFFFFFFFF00000000) | (value & 0xFFFFFFFF);
+            inner.ext_addr = (inner.ext_addr & 0xFFFFFFFF00000000) | (value & 0xFFFFFFFF);
         }
         0x2C => {
-            s.ext_addr = (s.ext_addr & 0x00000000FFFFFFFF) | ((value & 0xFFFFFFFF) << 32);
+            inner.ext_addr = (inner.ext_addr & 0x00000000FFFFFFFF) | ((value & 0xFFFFFFFF) << 32);
         }
         _ => {}
     }
@@ -407,10 +416,6 @@ fn zenoh_802154_cleanup_internal(state: *mut Zenoh802154State) {
     s.rx_timer.take();
     s.backoff_timer.take();
     s.ack_timer.take();
-
-    unsafe {
-        virtmcu_mutex_free(s.mutex);
-    }
 }
 
 const UNIT_BACKOFF_PERIOD_NS: u64 = 320_000;
@@ -419,71 +424,71 @@ const MAC_MIN_BE: u8 = 3;
 const MAC_MAX_BE: u8 = 5;
 const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
 
-fn tx_go(s: &mut Zenoh802154State) {
-    s.nb = 0;
-    s.be = MAC_MIN_BE;
-    s.state = RadioState::Tx;
-    schedule_backoff(s);
+fn tx_go(irq: qemu_irq, backoff_timer: Option<&QomTimer>, inner: &mut Zenoh802154Inner) {
+    inner.nb = 0;
+    inner.be = MAC_MIN_BE;
+    inner.state = RadioState::Tx;
+    schedule_backoff(backoff_timer, inner);
 }
 
-fn schedule_backoff(s: &mut Zenoh802154State) {
-    let max_backoff = (1u32 << s.be) - 1;
+fn schedule_backoff(backoff_timer: Option<&QomTimer>, inner: &mut Zenoh802154Inner) {
+    let max_backoff = (1u32 << inner.be) - 1;
     let backoff_count = rand::random::<u32>() % (max_backoff + 1);
     let delay_ns = u64::from(backoff_count) * UNIT_BACKOFF_PERIOD_NS;
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    if let Some(backoff_timer) = &s.backoff_timer {
-        backoff_timer.mod_ns((now + delay_ns) as i64);
+    if let Some(timer) = backoff_timer {
+        timer.mod_ns((now + delay_ns) as i64);
     }
 }
 
-fn tx_real(s: &mut Zenoh802154State) {
+fn tx_real(irq: qemu_irq, publisher: &Publisher<'static>, inner: &mut Zenoh802154Inner) {
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let hdr = rf_header::encode(vtime, s.tx_len, 0, 255);
-    let mut msg = Vec::with_capacity(hdr.len() + s.tx_len as usize);
+    let hdr = rf_header::encode(vtime, inner.tx_len, 0, 255);
+    let mut msg = Vec::with_capacity(hdr.len() + inner.tx_len as usize);
     msg.extend_from_slice(&hdr);
-    msg.extend_from_slice(&s.tx_fifo[..s.tx_len as usize]);
+    msg.extend_from_slice(&inner.tx_fifo[..inner.tx_len as usize]);
 
-    let _ = s.publisher.put(msg).wait();
+    let _ = publisher.put(msg).wait();
 
-    s.tx_len = 0;
-    s.status |= 0x02; // TX_DONE
-    s.state = RadioState::Idle;
+    inner.tx_len = 0;
+    inner.status |= 0x02; // TX_DONE
+    inner.state = RadioState::Idle;
     unsafe {
-        qemu_set_irq(s.irq, 1);
+        qemu_set_irq(irq, 1);
     }
 }
 
 extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
-    let _guard = unsafe { (*s.mutex).lock() };
+    let mut inner = s.inner.get_mut();
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let busy = !s.rx_queue.is_empty() && s.rx_queue[0].delivery_vtime <= now;
+    let busy = !inner.rx_queue.is_empty() && inner.rx_queue[0].delivery_vtime <= now;
 
     if busy {
-        s.nb += 1;
-        if s.nb > MAC_MAX_CSMA_BACKOFFS {
-            s.tx_len = 0;
-            s.state = RadioState::Idle;
-            s.status |= 0x02;
+        inner.nb += 1;
+        if inner.nb > MAC_MAX_CSMA_BACKOFFS {
+            inner.tx_len = 0;
+            inner.state = RadioState::Idle;
+            inner.status |= 0x02;
             unsafe {
                 qemu_set_irq(s.irq, 1);
             }
         } else {
-            s.be = std::cmp::min(s.be + 1, MAC_MAX_BE);
-            schedule_backoff(s);
+            inner.be = std::cmp::min(inner.be + 1, MAC_MAX_BE);
+            schedule_backoff(s.backoff_timer.as_ref(), &mut inner);
         }
     } else {
-        tx_real(s);
+        tx_real(s.irq, &s.publisher, &mut inner);
     }
 }
 
 extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Zenoh802154State) };
-    let _guard = unsafe { (*s.mutex).lock() };
+    let mut inner = s.inner.get_mut();
 
-    if !s.ack_pending {
+    if !inner.ack_pending {
         return;
     }
 
@@ -495,14 +500,15 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
 
     msg.push(0x02); // FCF LSB (Type: ACK)
     msg.push(0x00); // FCF MSB
-    msg.push(s.ack_seq);
+    msg.push(inner.ack_seq);
 
     let _ = s.publisher.put(msg).wait();
-    s.ack_pending = false;
+    inner.ack_pending = false;
 }
 
 fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
-    if state.state != RadioState::Rx {
+    let mut inner = state.inner.get_mut();
+    if inner.state != RadioState::Rx {
         return;
     }
 
@@ -533,15 +539,15 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
 
     let frame_data = &bytes[hdr_len..hdr_len + size];
 
-    if !frame_matches_address(state.pan_id, state.short_addr, state.ext_addr, frame_data) {
+    if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, frame_data) {
         return;
     }
 
     if frame_data.len() >= 3 {
         let fcf = LittleEndian::read_u16(&frame_data[0..2]);
         if (fcf & (1 << 5)) != 0 {
-            state.ack_pending = true;
-            state.ack_seq = frame_data[2];
+            inner.ack_pending = true;
+            inner.ack_seq = frame_data[2];
             if let Some(ack_timer) = &state.ack_timer {
                 ack_timer.mod_ns((vtime + SIFS_NS) as i64);
             }
@@ -551,19 +557,17 @@ fn on_rx_frame(state: &mut Zenoh802154State, sample: zenoh::sample::Sample) {
     let mut stored_data = [0u8; 128];
     stored_data[..size].copy_from_slice(frame_data);
 
-    let _mutex_guard = unsafe { (*state.mutex).lock() };
-
-    if state.rx_queue.len() < 16 {
-        let pos = state
+    if inner.rx_queue.len() < 16 {
+        let pos = inner
             .rx_queue
             .binary_search_by(|probe| probe.delivery_vtime.cmp(&vtime))
             .unwrap_or_else(|e| e);
-        state
+        inner
             .rx_queue
             .insert(pos, RxFrame { delivery_vtime: vtime, data: stored_data, size, rssi });
 
         if let Some(rx_timer) = &state.rx_timer {
-            rx_timer.mod_ns(state.rx_queue[0].delivery_vtime as i64);
+            rx_timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
         }
     }
 }
@@ -602,36 +606,36 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u
     }
 }
 
-unsafe fn check_rx_queue(s: &mut Zenoh802154State) {
-    let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    if !s.rx_queue.is_empty() {
-        if s.rx_queue[0].delivery_vtime <= now {
-            if s.status & 0x01 == 0 {
-                let frame = s.rx_queue.remove(0);
-                s.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
-                s.rx_len = frame.size as u32;
-                s.rx_rssi = frame.rssi;
-                s.rx_read_pos = 0;
+fn check_rx_queue(irq: qemu_irq, rx_timer: Option<&QomTimer>, inner: &mut Zenoh802154Inner) {
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    if !inner.rx_queue.is_empty() {
+        if inner.rx_queue[0].delivery_vtime <= now {
+            if inner.status & 0x01 == 0 {
+                let frame = inner.rx_queue.remove(0);
+                inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
+                inner.rx_len = frame.size as u32;
+                inner.rx_rssi = frame.rssi;
+                inner.rx_read_pos = 0;
 
-                s.status |= 0x01;
-                qemu_set_irq(s.irq, 1);
+                inner.status |= 0x01;
+                unsafe { qemu_set_irq(irq, 1) };
 
-                if !s.rx_queue.is_empty() {
-                    if let Some(rx_timer) = &s.rx_timer {
-                        rx_timer.mod_ns(s.rx_queue[0].delivery_vtime as i64);
+                if !inner.rx_queue.is_empty() {
+                    if let Some(timer) = rx_timer {
+                        timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
                     }
                 }
             }
-        } else if let Some(rx_timer) = &s.rx_timer {
-            rx_timer.mod_ns(s.rx_queue[0].delivery_vtime as i64);
+        } else if let Some(timer) = rx_timer {
+            timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
         }
     }
 }
 
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &mut *(opaque as *mut Zenoh802154State) };
-    let _guard = unsafe { (*state.mutex).lock() };
-    unsafe { check_rx_queue(state) };
+    let mut inner = state.inner.get_mut();
+    check_rx_queue(state.irq, state.rx_timer.as_ref(), &mut inner);
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 # a .yaml file, generates a DTB, and verifies that QEMU can boot and print "HI".
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 echo "=============================================================================="
 echo "🧪 RUNNING TEST: $(basename "$0")"
@@ -44,6 +44,7 @@ echo "Running Phase 3.5 smoke test (YAML platform parsing)..."
 # 1. Boot QEMU with the YAML platform directly
 echo "1. Booting QEMU via run.sh --yaml $YAML_FILE"
 OUTPUT_LOG=$(mktemp /tmp/smoke_test_3.5-XXXXXX.log)
+trap 'rm -f "$OUTPUT_LOG"' EXIT
 rm -f "$OUTPUT_LOG"
 
 timeout 3s "$RUN_SH" --yaml "$YAML_FILE" --kernel "$KERNEL" -nographic -monitor none -serial file:"$OUTPUT_LOG" || true
@@ -51,7 +52,6 @@ timeout 3s "$RUN_SH" --yaml "$YAML_FILE" --kernel "$KERNEL" -nographic -monitor 
 # 2. Verification
 if [ -f "$OUTPUT_LOG" ] && grep -q "HI" "$OUTPUT_LOG"; then
     echo "Phase 3.5 smoke test: PASSED (Kernel printed 'HI' via YAML description)"
-    rm "$OUTPUT_LOG"
     exit 0
 else
     echo "Phase 3.5 smoke test: FAILED (No 'HI' detected)"

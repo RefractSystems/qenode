@@ -253,50 +253,116 @@ The message is routed to `sim/actuator/pwm/0`, where the physics engine (MuJoCo)
 The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator. 
 VirtMCU enforces strict safety rules to prevent deadlocks and race conditions.
 
+### Threading Model
+- **VCPU Threads**: Execute guest instructions. Every vCPU has its own thread in QEMU. MMIO 
+  handlers (read/write callbacks) execute in the context of a VCPU thread.
+- **Main Loop Thread**: Manages QMP, GDB, and asynchronous I/O.
+- **Peripheral Threads**: Peripherals may spawn background threads (e.g., Zenoh 
+  subscribers, heartbeats).
+
+**Crucial Invariant**: Only ONE thread can hold the BQL at any time. MMIO handlers 
+and QEMUTimer callbacks are invoked by QEMU with the BQL **already held**.
+
+### `BqlGuarded<T>` vs. `Mutex<T>`
+In standard Rust, shared state is protected by `std::sync::Mutex<T>`. However, because 
+most peripheral code runs under the BQL, a `Mutex` is redundant and misleading — it 
+is permanently uncontended because the BQL already serializes access.
+
+VirtMCU mandates the use of `BqlGuarded<T>` for state accessed from MMIO handlers, 
+timers, and `SafeSubscriber` callbacks.
+- **Prohibited**: `std::sync::Mutex<T>` in peripheral state structs (unless marked 
+  with `// MUTEX_EXCEPTION` for cross-thread sync with non-BQL background threads).
+- **Required**: `BqlGuarded<T>` for all BQL-protected state. It uses `UnsafeCell<T>` 
+  internally and debug-asserts that the BQL is held at every access point.
+
 ### RAII BQL Management
 Direct FFI calls to `virtmcu_bql_lock/unlock` are discouraged. Instead, Rust plugins use 
 RAII guards from `virtmcu-qom`:
 - `Bql::lock()`: Acquires the BQL and returns a `BqlGuard`.
 - `Bql::temporary_unlock()`: If the BQL is held, releases it and returns a `BqlUnlockGuard` 
-  that re-acquires it on drop.
-
-### Threading Model
-- **VCPU Threads**: Execute guest instructions. Hold BQL most of the time. Must release BQL 
-  before blocking on external I/O (Zenoh, sockets).
-- **Background Threads**: (e.g., Zenoh subscribers). Must NEVER block waiting for the BQL. 
-  Instead, they push data to lock-free queues and notify the guest via `QEMUTimer` or 
-  `virtmcu_cond_signal`.
-
-### Planned: `wait_yielding_bql`
-To simplify the common pattern of a VCPU thread blocking on a condition while holding a 
-peripheral-specific mutex, we are implementing `wait_yielding_bql`. This pattern ensures 
-the BQL is released while waiting and re-acquired before returning, maintaining the 
-required lock order: `BQL -> Peripheral Mutex`.
+  that re-acquires it on drop. Use this before any blocking call (e.g., Zenoh `GET` or 
+  UNIX socket read).
 
 ---
 
-## 6. Development Standards & Determinism
+## 6. Multi-Node Communication: A Step-by-Step Example
 
-VirtMCU adheres to enterprise-grade engineering standards to ensure 100% reproducible 
-simulations.
+To understand how time, data, and threads interact, consider two VirtMCU nodes (A and B) 
+communicating over a virtual UART bus.
 
-### The "Zero-Sleep" Mandate
-Usage of `std::thread::sleep` or `time.sleep` is strictly prohibited in simulation hot 
-paths and integration tests. Deterministic synchronization is achieved via:
-- **Zenoh Liveliness**: `wait_for_zenoh_discovery` ensures peers are ready.
-- **Virtual Time**: `VirtualTimeAuthority` drives the simulation clock.
-- **UART Signaling**: `wait_for_line_on_uart` confirms guest readiness.
+### Scenario: Node A sends 'X' to Node B
 
-### Bifurcated Testing Strategy
-We employ a two-layer testing approach:
-1. **White-Box (Rust)**: Native `cargo test` suites in `hw/rust/` validate internal state 
-   machines, FFI boundaries, and protocol parsing without booting QEMU.
-2. **Black-Box (Python)**: `pytest` suites in `tests/` orchestrate full QEMU nodes, 
-   Zenoh routers, and physics engines to verify end-to-end system behavior.
+1.  **Firmware write (Node A)**: Node A's firmware writes 'X' to its UART TX register.
+2.  **MMIO Intercept**: Node A's VCPU thread enters the `zenoh-chardev` write handler 
+    (holding Node A's BQL).
+3.  **Timestamping**: `zenoh-chardev` reads Node A's virtual clock (e.g., T=100.0ms).
+4.  **Zenoh Dispatch**: Node A serializes the byte and timestamp into a 
+    `ZenohFrameHeader` + payload. It publishes to `sim/uart/A/tx`.
+5.  **Zenoh Federation**: The message travels over the Zenoh bus to Node B's subscriber.
+6.  **Reception (Node B)**: A Zenoh background thread in Node B receives the message. 
+    It **cannot** touch Node B's guest state because it does not hold Node B's BQL.
+7.  **Priority Queue**: Node B's subscriber pushes the message into its `local_heap` 
+    (protected by `BqlGuarded`). It updates a QEMUTimer to fire at T=100.0ms + 
+    propagation delay.
+8.  **Time Advancement**: Node B's VCPU thread executes until its virtual clock reaches 
+    the timer threshold.
+9.  **Timer Callback**: Node B's timer fires. QEMU invokes the `rx_timer_cb` (holding 
+    Node B's BQL).
+10. **Guest Injection**: `rx_timer_cb` pops 'X' from the heap and calls 
+    `qemu_chr_be_write`, which triggers a UART RX interrupt in Node B's firmware.
+
+This process ensures that even if Node A runs much faster than Node B on the host CPU, 
+Node B sees the data at the exact virtual moment Node A intended.
+
+### Peripheral Time and Concurrency (The Architecture Plan)
+
+When a peripheral like a UART or an 802.15.4 radio processes data, the CPU is not frozen; it continues to execute instructions concurrently. However, physical hardware takes time to shift bits over a wire or through the air.
+
+Currently, virtmcu employs a **simple immediate execution model**: if firmware writes to a UART, the MMIO writes are processed instantly in virtual time. This causes a "flooding" effect where bytes are sent with nearly identical virtual timestamps, violating physical baud rate constraints.
+
+**Critique of the Simple Model & Hazards to Mitigate**:
+Before moving to a realistic model, we must account for several edge cases that the simple model ignores:
+1.  **FIFO Drain Rates**: Real UARTs and radios have hardware FIFOs. Backpressure isn't just toggling a TX flag per byte; it requires modeling the continuous drain of the FIFO at the configured baud rate.
+2.  **RX Reception Delay**: When a Zenoh packet arrives from the network at $T_{arrival}$, it takes $T_{duration}$ for the bits to physically clock into the receiving peripheral before the RX interrupt should assert.
+3.  **Lifecycle and Reset Hazards**: If a transmission timer is pending and the firmware resets the peripheral or disables the TX block, the timer **must** be cancelled (`virtmcu_timer_del`). Failing to do so results in spurious interrupts triggering in the future.
+4.  **Baud Rate Volatility**: Firmware might change the baud rate register while bytes are in flight. The delay model must lock the duration at the start of a byte's transmission.
+5.  **Jitter in Slaved-Suspend**: In the default `slaved-suspend` mode, timers will fire at the exact virtual nanosecond, but the CPU's instruction execution catches up in blocks. For cycle-accurate bit-banging, the system relies on `slaved-icount` mode.
+
+**The Planned Path Forward (Phase 29: Fidelity & Backpressure)**:
+*(For an exhaustive evaluation of modeling options and industry comparisons, see [PERIPHERAL_TIMING_EVALUATION.md](PERIPHERAL_TIMING_EVALUATION.md))*
+
+Virtmcu prioritizes **Software-Observable Fidelity over Cycle-Accuracy**. We explicitly accept the loss of microscopic bus-contention accuracy to maintain the execution speed required for CI/CD workflows. To achieve this sweet spot, all time-sensitive peripherals will transition to a realistic backpressure model using native QEMU virtual timers:
+1.  **TX Backpressure**: When firmware writes to the TX FIFO, the peripheral calculates the transmission duration (e.g., `baud_delay = 10 bits / 115200 bps = 86.8 µs`). It schedules a `QEMUTimer` (tied to `QEMU_CLOCK_VIRTUAL`) to fire at `now + baud_delay`.
+2.  **No Zenoh Clock Subscription**: Individual peripherals **do not** subscribe to the Zenoh clock. The `zenoh-clock` device synchronizes the global `QEMU_CLOCK_VIRTUAL`. Peripherals rely purely on local QEMU timers.
+3.  **Timer Callbacks**: When the timer fires, the peripheral pops the byte from the TX FIFO, transmits it over Zenoh, updates the "FIFO Full/Empty" flags, and asserts the TX interrupt. If the FIFO is not empty, it re-arms the timer for the next byte.
+4.  **RX Modeling**: Incoming Zenoh frames are queued. A timer is scheduled to simulate the physical reception delay before drip-feeding the bytes into the guest's RX FIFO.
+
+This planned mechanism naturally throttles the guest firmware to the correct virtual baud rate without artificially freezing the CPU or adding complex network subscriptions to individual plugins.
 
 ---
 
-## 7. QEMU Build Details
+## 7. Data Formatting and Serialization
+
+All data sent over Zenoh must be deterministic and cross-platform.
+
+### Rules for Wire Protocols
+1.  **No `to_ne_bytes()`**: Always use `to_le_bytes()` or `to_be_bytes()` for explicit 
+    endianness.
+2.  **FlatBuffers**: Use FlatBuffers for complex structures (e.g., FlexRay frames, 
+    Telemetry) to ensure schema evolution safety and zero-copy performance.
+3.  **Fixed Headers**: Simple protocols (UART, SPI, Ethernet) use the `ZenohFrameHeader` 
+    defined in `virtmcu-api`.
+
+### Prohibited Patterns
+- **Direct Pointer Copies**: Never use `ptr::copy_nonoverlapping` to serialize Rust 
+    structs to the wire. Padding and layout differences between compilers can break 
+    determinism.
+- **Raw Transmutation**: `mem::transmute` of structs is banned for I/O. Use `.pack()` 
+    and `.unpack()` methods.
+
+---
+
+## 8. QEMU Build Details
 
 ### Version and Patches
 
@@ -339,7 +405,7 @@ This eliminates the previous dependency on the external `zenoh-c` shared library
 
 ---
 
-## 8. Timing Design and Performance
+## 9. Timing Design and Performance
 
 > **See also:** [docs/TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
 
@@ -408,7 +474,7 @@ and for all Cortex-M targets (hypervisors do not support M-profile).
 
 ---
 
-## 9. Prior Art
+## 10. Prior Art
 
 ### Qualcomm qbox (github.com/quic/qbox)
 
@@ -439,7 +505,7 @@ equivalent of TLM-2.0 transaction semantics across a network without the SystemC
 
 ---
 
-## 10. Build Environments
+## 11. Build Environments
 
 ### `--enable-plugins` and the macOS conflict
 
@@ -461,7 +527,7 @@ Building with both `--enable-modules` and `--enable-plugins` on macOS causes a G
 
 ---
 
-## 11. Architectural Decision Records
+## 12. Architectural Decision Records
 
 ### ADR-001: Three clock modes (standalone / slaved-suspend / slaved-icount)
 
@@ -521,7 +587,7 @@ falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile target
 
 ---
 
-## 12. AI and Advanced Observability (Phase 12 & 13)
+## 13. AI and Advanced Observability (Phase 12 & 13)
 
 As virtmcu evolves from a foundational emulator into a robust digital twin environment, observability and AI accessibility become first-class concerns.
 
@@ -540,7 +606,7 @@ To support LLM-driven debugging and lifecycle management, virtmcu includes a sta
 
 ---
 
-## 13. Common Pitfalls & Troubleshooting
+## 14. Common Pitfalls & Troubleshooting
 
 ### SysBus Mapping vs. `-device` (The arm-generic-fdt Trap)
 A frequent point of confusion for developers migrating from standard QEMU machines is why a device added via the `-device` command line option is not accessible to the guest firmware (resulting in Data Aborts).
@@ -582,6 +648,6 @@ Because Python's Global Interpreter Lock (GIL) and garbage collector introduce m
 ### 4. Where to Ask for Help
 If a QEMU macro like `OBJECT_DECLARE_SIMPLE_TYPE` confuses you, look at `hw/dummy/dummy.c`. We intentionally keep a heavily commented "dummy" peripheral in the tree as a learning template. Never copy-paste complex QEMU upstream code without understanding it; start from the dummy device and build up.
 
-## 14. Related Reference Documents
+## 15. Related Reference Documents
 * [Zenoh Topic Map](ZENOH_TOPIC_MAP.md) - A definitive map of all Zenoh channels/topics in the federation.
 * [Timing Model](TIMING_MODEL.md) - How virtual time is synchronized.

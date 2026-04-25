@@ -1,6 +1,6 @@
+import os
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 
@@ -51,20 +51,22 @@ conn.close()
         ]
     )
 
+    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    qemu_cmd = [
+        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
+        "-M",
+        "arm-generic-fdt,hw-dtb=/tmp/handshake.dtb",
+        "-kernel",
+        "/tmp/dummy.elf",
+        "-nographic",
+        "-monitor",
+        "none",
+    ]
     qemu_proc = subprocess.Popen(
-        [
-            "/workspace/third_party/qemu/build-virtmcu/install/bin/qemu-system-arm",
-            "-M",
-            "arm-generic-fdt,hw-dtb=/tmp/handshake.dtb",
-            "-kernel",
-            "/tmp/dummy.elf",
-            "-nographic",
-            "-monitor",
-            "none",
-        ]
+        qemu_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-
-    time.sleep(3)
     qemu_proc.terminate()
     adapter_proc.terminate()
     print("Handshake test finished.")

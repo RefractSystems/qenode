@@ -92,7 +92,7 @@ source .venv/bin/activate
 make run
 ```
 
-After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/`.
+After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/` (or `build-virtmcu-asan/install/` if `VIRTMCU_USE_ASAN=1` is used).
 `scripts/run.sh` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 

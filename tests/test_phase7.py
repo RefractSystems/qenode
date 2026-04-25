@@ -18,7 +18,6 @@ def build_phase7_artifacts():
     return dtb_path, kernel_path
 
 
-@pytest.mark.skip(reason="Failing due to BQL contention, re-enable after BQL refactor")
 @pytest.mark.asyncio
 async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -27,13 +26,14 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    extra_args = ["-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router}"]
+    extra_args = ["-S", "-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router}"]
 
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+    bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
+    await bridge.start_emulation()
     try:
         # 1. Initial sync should succeed
         await vta.step(0)
@@ -48,7 +48,6 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
         pass
 
 
-@pytest.mark.skip(reason="Failing due to BQL contention, re-enable after BQL refactor")
 @pytest.mark.asyncio
 async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -85,10 +84,12 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
         assert vtime > 0
 
     finally:
-        await bridge.start_emulation()
+        try:
+            await asyncio.wait_for(bridge.start_emulation(), timeout=2.0)
+        except Exception as e:
+            print(f"Failed to start emulation in finally: {e}")
 
 
-@pytest.mark.skip(reason="Failing due to BQL contention, re-enable after BQL refactor")
 @pytest.mark.asyncio
 async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -97,6 +98,7 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     dtb_path, kernel_path = build_phase7_artifacts()
 
     extra_args = [
+        "-S",
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
@@ -104,11 +106,12 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
         "-netdev",
         f"zenoh,node=1,id=n1,router={zenoh_router}",
     ]
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+    bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
     vta = VirtualTimeAuthority(zenoh_session, [1])
 
+    await bridge.start_emulation()
     await vta.step(0)
 
     NETDEV_TOPIC = "sim/eth/frame/1/rx"  # noqa: N806
@@ -127,7 +130,6 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     assert vta.current_vtimes[1] == 1_000_000
 
 
-@pytest.mark.skip(reason="Failing due to BQL contention, re-enable after BQL refactor")
 @pytest.mark.asyncio
 async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -136,6 +138,7 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
     dtb_path, kernel_path = build_phase7_artifacts()
 
     extra_args = [
+        "-S",
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
@@ -143,11 +146,12 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-netdev",
         f"zenoh,node=0,id=n0,router={zenoh_router}",
     ]
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+    bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
+    await bridge.start_emulation()
     await vta.step(0)
 
     for i in range(100, 0, -1):
@@ -159,7 +163,6 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
     assert vta.current_vtimes[0] >= 200_000_000
 
 
-@pytest.mark.skip(reason="Failing due to BQL contention, re-enable after BQL refactor")
 @pytest.mark.asyncio
 async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
     """
@@ -168,6 +171,7 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
     dtb_path, kernel_path = build_phase7_artifacts()
 
     extra_args = [
+        "-S",
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
@@ -175,11 +179,12 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
         "-netdev",
         f"zenoh,node=0,id=n0,router={zenoh_router}",
     ]
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+    bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
+    await bridge.start_emulation()
     await vta.step(0)
 
     packet = struct.pack("<QI", 5_000_000, 14) + b"\xdd" * 14
@@ -187,3 +192,4 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
 
     await vta.step(10_000_000)
     assert vta.current_vtimes[0] == 10_000_000
+

@@ -2,7 +2,7 @@
 # test/phase14/smoke_test.sh
 # Verifies that Phase 14 wireless devices are correctly parsed and emitted.
 
-set -e
+set -euo pipefail
 
 echo "Testing Phase 14: Wireless & IoT RF Simulation..."
 
@@ -22,13 +22,30 @@ echo "✓ DTB contains radio0 node."
 
 # 4. Check coordinator build
 echo "Verifying coordinator..."
-if [ -f "../../tools/zenoh_coordinator/target/release/zenoh_coordinator" ]; then
-    echo "Using pre-built release coordinator."
-elif [ -f "../../tools/zenoh_coordinator/target/debug/zenoh_coordinator" ]; then
-    echo "Using pre-built debug coordinator."
+COORDINATOR_BIN=""
+if command -v zenoh_coordinator >/dev/null 2>&1; then
+    COORDINATOR_BIN=$(command -v zenoh_coordinator)
+    echo "Using pre-built coordinator from PATH."
+elif [ -f "target/release/zenoh_coordinator" ]; then
+    COORDINATOR_BIN="target/release/zenoh_coordinator"
+    echo "Using workspace release coordinator."
+elif [ -f "target/debug/zenoh_coordinator" ]; then
+    COORDINATOR_BIN="target/debug/zenoh_coordinator"
+    echo "Using workspace debug coordinator."
+elif [ -f "tools/zenoh_coordinator/target/release/zenoh_coordinator" ]; then
+    COORDINATOR_BIN="tools/zenoh_coordinator/target/release/zenoh_coordinator"
+    echo "Using tool-specific release coordinator."
 else
-    cd tools/zenoh_coordinator && cargo build -q
+    # Subshell to avoid changing the CWD of this script.
+    ( cd tools/zenoh_coordinator && cargo build -q --release )
+    COORDINATOR_BIN="tools/zenoh_coordinator/target/release/zenoh_coordinator"
 fi
-echo "✓ Coordinator builds successfully."
+# Verify the binary is executable and responds to --help.
+"$COORDINATOR_BIN" --help >/dev/null 2>&1 || "$COORDINATOR_BIN" --version >/dev/null 2>&1 || {
+    echo "ERROR: zenoh_coordinator at $COORDINATOR_BIN failed to execute." >&2
+    exit 1
+}
+echo "✓ Coordinator is present and executable."
+
 
 echo "Phase 14 Smoke Test PASSED."

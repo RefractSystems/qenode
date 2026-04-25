@@ -12,7 +12,7 @@
 #   6. Compiles and installs the QEMU binaries to `third_party/qemu/build-virtmcu/install`.
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Determine absolute paths for the script, workspace, and QEMU directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,6 +23,11 @@ if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
     # shellcheck source=/dev/null
     source "$WORKSPACE_DIR/BUILD_DEPS"
 fi
+
+# Inherit optional env vars with safe defaults for -u compatibility
+CI="${CI:-}"
+VIRTMCU_USE_CCACHE="${VIRTMCU_USE_CCACHE:-}"
+VIRTMCU_USE_ASAN="${VIRTMCU_USE_ASAN:-}"
 
 # Function to download pre-built QEMU SDK from GitHub Releases
 download_prebuilt_qemu() {
@@ -50,7 +55,8 @@ download_prebuilt_qemu() {
 }
 
 # Check if QEMU is already pre-installed in the container image or download it
-if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ]; then
+# NOTE: We skip this shortcut if VIRTMCU_USE_ASAN=1 to ensure a dedicated ASan build.
+if [ "$VIRTMCU_USE_ASAN" != "1" ] && [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "${1:-}" != "--force" ] && [ ! -d "$QEMU_DIR" ]; then
     INSTALLED_VER=$(/opt/virtmcu/bin/qemu-system-arm --version 2>/dev/null | awk 'NR==1{print $NF}' || echo "unknown")
     TARGET_VER="${QEMU_VERSION:-11.0.0}"
     if [ "$INSTALLED_VER" = "$TARGET_VER" ]; then
@@ -72,7 +78,7 @@ if [ -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d 
             FORCE_SYMLINKS=1
         fi
     fi
-elif [ ! -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "$1" != "--force" ] && [ ! -d "$QEMU_DIR" ] && download_prebuilt_qemu; then
+elif [ ! -x "/opt/virtmcu/bin/qemu-system-arm" ] && [ "${1:-}" != "--force" ] && [ ! -d "$QEMU_DIR" ] && download_prebuilt_qemu; then
     FORCE_SYMLINKS=1
 fi
 
@@ -115,16 +121,30 @@ elif [ ! -d "$ZENOHC_DIR/include" ]; then
     echo "==> Fetching Zenoh-C $ZENOHC_VER for native QEMU plugins..."
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then
-        ZENOHC_URL="https://github.com/eclipse-zenoh/zenoh-c/releases/download/${ZENOHC_VER}/zenoh-c-${ZENOHC_VER}-x86_64-unknown-linux-gnu-standalone.zip"
+        ZENOHC_ASSET="zenoh-c-${ZENOHC_VER}-x86_64-unknown-linux-gnu-standalone.zip"
     elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        ZENOHC_URL="https://github.com/eclipse-zenoh/zenoh-c/releases/download/${ZENOHC_VER}/zenoh-c-${ZENOHC_VER}-aarch64-unknown-linux-gnu-standalone.zip"
+        ZENOHC_ASSET="zenoh-c-${ZENOHC_VER}-aarch64-unknown-linux-gnu-standalone.zip"
     else
         echo "Unsupported architecture for prebuilt Zenoh-C: $ARCH"
         exit 1
     fi
+    ZENOHC_URL="https://github.com/eclipse-zenoh/zenoh-c/releases/download/${ZENOHC_VER}/${ZENOHC_ASSET}"
+    rm -rf "$ZENOHC_DIR"
     mkdir -p "$ZENOHC_DIR"
-    curl -L "$ZENOHC_URL" -o /tmp/zenoh-c.zip
-    unzip -q /tmp/zenoh-c.zip -d "$ZENOHC_DIR"
+    # Prefer authenticated gh-CLI download (avoids CDN rate-limit / SAS-token races that
+    # cause anonymous curl to receive a 55 KB HTML error page instead of the real zip).
+    # Fall back to curl --fail so any non-2xx response aborts immediately instead of
+    # silently writing an HTML page that then fails unzip with a cryptic error.
+    if command -v gh >/dev/null 2>&1 && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+        GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN}}" \
+        gh release download "${ZENOHC_VER}" \
+            --repo eclipse-zenoh/zenoh-c \
+            --pattern "${ZENOHC_ASSET}" \
+            --output /tmp/zenoh-c.zip
+    else
+        curl -fL --retry 3 --retry-delay 5 "$ZENOHC_URL" -o /tmp/zenoh-c.zip
+    fi
+    unzip -q -o /tmp/zenoh-c.zip -d "$ZENOHC_DIR"
     rm /tmp/zenoh-c.zip
 fi
 
@@ -180,8 +200,10 @@ fi
 
 # Configure and build QEMU in a dedicated build directory
 cd "$QEMU_DIR"
-mkdir -p build-virtmcu
-cd build-virtmcu
+BUILD_DIR_NAME="build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" || echo "" )"
+echo "==> QEMU Build Directory: $QEMU_DIR/$BUILD_DIR_NAME"
+mkdir -p "$BUILD_DIR_NAME"
+cd "$BUILD_DIR_NAME"
 
 # Configure the build, handling macOS specific plugin bugs (GitLab #516)
 # Phase 18: Enable --enable-rust for native QOM plugins
@@ -227,8 +249,15 @@ fi
 
 ../configure "${CONFIGURE_ARGS[@]}"
 
-# Compile QEMU using all available CPU cores
-make -j"$(nproc)"
+# Compile QEMU. In CI environments, we limit parallelism to 1 to prevent OOM
+# during heavy compilation (debug + gcov) on standard 2-core runners.
+if [ "$CI" = "true" ]; then
+    JOBS=1
+else
+    JOBS=$(nproc)
+fi
+
+make -j"$JOBS"
 # Install QEMU binaries to the prefix directory (build-virtmcu/install)
 make install
 echo "QEMU build and install completed successfully."

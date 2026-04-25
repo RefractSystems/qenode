@@ -1,6 +1,6 @@
 # docker-bake-release.hcl — Per-arch version tags on git tag releases.
 #
-# Included by ci.yml only when github.ref starts with refs/tags/.
+# Included by ci-main.yml only when github.ref starts with refs/tags/.
 # RELEASE_TAG is set to github.ref_name (e.g. v1.2.3) by the publish steps.
 #
 # In docker bake, tag arrays from multiple files are merged, not replaced.

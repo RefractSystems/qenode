@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "==> Seeding Claude configuration..."
 HOST_CLAUDE_JSON="/home/vscode/.claude.json.host"
@@ -29,3 +29,14 @@ else
 fi
 
 echo "✓ Container start complete."
+
+# Self-healing: Fix stale Docker credsStore/credHelpers re-injected by VS Code on startup
+if [ -f ~/.docker/config.json ]; then
+    if command -v jq >/dev/null 2>&1; then
+        if jq -e '.credsStore or .credHelpers' ~/.docker/config.json >/dev/null 2>&1; then
+            echo "==> Cleaning up re-injected Docker credential helpers..."
+            TMP_DOCKER_CONFIG=$(mktemp)
+            jq 'del(.credsStore, .credHelpers)' ~/.docker/config.json > "$TMP_DOCKER_CONFIG" && mv "$TMP_DOCKER_CONFIG" ~/.docker/config.json || rm -f "$TMP_DOCKER_CONFIG"
+        fi
+    fi
+fi

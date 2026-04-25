@@ -46,7 +46,8 @@ sleep 2
 
 # 5. Run QEMU
 echo "==> Running QEMU with Radio Test Firmware"
-BUNDLE_ROOT="$WORKSPACE_DIR/third_party/qemu/build-virtmcu/install"
+BUILD_DIR_NAME="build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" || echo "" )"
+BUNDLE_ROOT="$WORKSPACE_DIR/third_party/qemu/$BUILD_DIR_NAME/install"
 QEMU_BIN="$BUNDLE_ROOT/bin/qemu-system-arm"
 export QEMU_MODULE_DIR="$BUNDLE_ROOT/lib/aarch64-linux-gnu/qemu"
 

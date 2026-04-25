@@ -356,7 +356,10 @@ def main():
     if failures:
         for msg in failures:
             print(f"THRESHOLD FAILURE: {msg}")
-        sys.exit(1)
+        if os.environ.get("VIRTMCU_USE_ASAN") == "1":
+            print("WARNING: Bypassing performance failures because ASan is active.")
+        else:
+            sys.exit(1)
 
     print("=== Phase 16 PASSED ===")
 

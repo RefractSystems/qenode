@@ -16,7 +16,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use virtmcu_qom::error::Error;
 use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
 use virtmcu_qom::memory::{
@@ -24,6 +24,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_get_connected_irq, sysbus_init_mmio, DeviceClass, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     device_class_set_props, error_setg,
@@ -52,7 +53,7 @@ pub struct ZenohUiQEMU {
 pub struct ZenohUiState {
     session: Session,
     node_id: u32,
-    buttons: Mutex<HashMap<u32, ButtonState>>,
+    buttons: BqlGuarded<HashMap<u32, ButtonState>>,
 }
 
 struct ButtonState {
@@ -148,11 +149,12 @@ unsafe extern "C" fn zenoh_ui_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut ZenohUiQEMU);
     if !s.rust_state.is_null() {
         let state = Box::from_raw(s.rust_state);
-        let mut btns = state.buttons.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (_, btn) in btns.iter_mut() {
-            btn.subscriber.take();
+        {
+            let mut btns = state.buttons.get_mut();
+            for (_, btn) in btns.iter_mut() {
+                btn.subscriber.take();
+            }
         }
-        drop(btns);
         drop(state);
         s.rust_state = ptr::null_mut();
     }
@@ -203,7 +205,11 @@ fn zenoh_ui_init_internal(node_id: u32, router: *const c_char) -> *mut ZenohUiSt
         }
     };
 
-    Box::into_raw(Box::new(ZenohUiState { session, node_id, buttons: Mutex::new(HashMap::new()) }))
+    Box::into_raw(Box::new(ZenohUiState {
+        session,
+        node_id,
+        buttons: BqlGuarded::new(HashMap::new()),
+    }))
 }
 
 fn zenoh_ui_set_led(state: &ZenohUiState, led_id: u32, on: bool) {
@@ -213,12 +219,12 @@ fn zenoh_ui_set_led(state: &ZenohUiState, led_id: u32, on: bool) {
 }
 
 fn zenoh_ui_get_button(state: &ZenohUiState, btn_id: u32) -> bool {
-    let btns = state.buttons.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let btns = state.buttons.get();
     btns.get(&btn_id).is_some_and(|b| b.pressed)
 }
 
 fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: qemu_irq) {
-    let mut btns = state.buttons.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut btns = state.buttons.get_mut();
     if btns.contains_key(&btn_id) {
         return;
     }

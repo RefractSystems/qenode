@@ -31,8 +31,9 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use virtmcu_api::ZenohFrameHeader;
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
 #[repr(C)]
@@ -78,8 +79,9 @@ pub struct ZenohNetdevState {
     subscriber: Option<SafeSubscriber>,
     rx_timer: Option<Arc<QomTimer>>,
     rx_receiver: Receiver<OrderedPacket>,
-    local_heap: Mutex<BinaryHeap<OrderedPacket>>,
-    backlog: Mutex<VecDeque<Vec<u8>>>,
+    // All state accessed exclusively under BQL; see BqlGuarded docs.
+    local_heap: BqlGuarded<BinaryHeap<OrderedPacket>>,
+    backlog: BqlGuarded<VecDeque<Vec<u8>>>,
     earliest_vtime: Arc<AtomicU64>,
 }
 
@@ -101,7 +103,7 @@ unsafe extern "C" fn zenoh_netdev_can_receive(nc: *mut NetClientState) -> bool {
     if s.rust_state.is_null() {
         return true;
     }
-    let backlog = (*s.rust_state).backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let backlog = (*s.rust_state).backlog.get();
     backlog.is_empty()
 }
 
@@ -190,7 +192,7 @@ declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 fn drain_net_backlog(state: &ZenohNetdevState) -> bool {
-    let mut backlog = state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut backlog = state.backlog.get_mut();
     while let Some(packet) = backlog.front() {
         if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
             return false;
@@ -204,10 +206,7 @@ fn drain_net_backlog(state: &ZenohNetdevState) -> bool {
 }
 
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
-    debug_assert!(
-        unsafe { virtmcu_qom::sync::virtmcu_bql_locked() },
-        "BQL must be held during timer callbacks"
-    );
+    debug_assert!(virtmcu_qom::sync::Bql::is_held(), "BQL must be held during timer callbacks");
     let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
@@ -219,7 +218,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
         return;
     }
 
-    let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut heap = state.local_heap.get_mut();
 
     // Drain MPSC channel into the priority queue (lock-free for Zenoh workers)
     while let Ok(packet) = state.rx_receiver.try_recv() {
@@ -229,8 +228,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
             if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
-                let mut backlog =
-                    state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut backlog = state.backlog.get_mut();
                 let p = heap.pop().unwrap_or_else(|| std::process::abort());
                 backlog.push_back(p.data);
                 break;
@@ -268,7 +266,7 @@ fn zenoh_netdev_init_internal(
     };
 
     let (tx, rx) = bounded(65536);
-    let local_heap = Mutex::new(BinaryHeap::new());
+    let local_heap = BqlGuarded::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
 
@@ -281,7 +279,7 @@ fn zenoh_netdev_init_internal(
         rx_timer: None,
         rx_receiver: rx,
         local_heap,
-        backlog: Mutex::new(VecDeque::new()),
+        backlog: BqlGuarded::new(VecDeque::new()),
         earliest_vtime,
     });
 
@@ -301,10 +299,10 @@ fn zenoh_netdev_init_internal(
             return;
         }
 
-        let mut header = ZenohFrameHeader::default();
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), &raw mut header as *mut u8, 12);
-        }
+        let header = match ZenohFrameHeader::unpack_slice(&data[..12]) {
+            Some(h) => h,
+            None => return,
+        };
 
         let payload = data[12..].to_vec();
 
@@ -337,15 +335,7 @@ fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size:
     let header = ZenohFrameHeader { delivery_vtime_ns: now, size: size as u32 };
 
     let mut data = Vec::with_capacity(12 + size);
-    let mut header_bytes = [0u8; 12];
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            &raw const header as *const u8,
-            header_bytes.as_mut_ptr(),
-            12,
-        );
-    }
-    data.extend_from_slice(&header_bytes);
+    data.extend_from_slice(&header.pack());
     data.extend_from_slice(payload);
 
     let _ = state.session.put(tx_topic, data).wait();

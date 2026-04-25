@@ -1,0 +1,5 @@
+# Project-wide shellcheck configuration.
+# Optional checks enabled beyond the default warning severity.
+enable=avoid-nullary-conditions
+enable=require-variable-braces
+enable=check-set-e-suppressed

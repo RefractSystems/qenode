@@ -1,4 +1,5 @@
 import asyncio
+import os
 import struct
 import uuid
 from pathlib import Path
@@ -142,7 +143,8 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
             mon.buffer += mon.queue.get_nowait()
 
     # 1. Boot both
-    for _ in range(500):
+    iters = 50 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 500
+    for _ in range(iters):
         await vta.step(10_000_000)
         _pump_monitor(monitor0)
         _pump_monitor(monitor1_tx)
@@ -234,7 +236,8 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
             mon.buffer += mon.queue.get_nowait()
 
     # 1. Start and wait for welcome
-    for _ in range(500):
+    iters = 50 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 500
+    for _ in range(iters):
         await vta.step(10_000_000)
         _pump_monitor(monitor)
         if "Interactive UART Echo Ready." in monitor.buffer:
@@ -343,7 +346,8 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
         while not mon.queue.empty():
             mon.buffer += mon.queue.get_nowait()
 
-    for _ in range(500):
+    iters = 50 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 500
+    for _ in range(iters):
         await vta.step(10_000_000)
         _pump_monitor(monitor)
         if "Interactive UART Echo Ready." in monitor.buffer:
@@ -364,7 +368,8 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
     await asyncio.to_thread(_do_burst)
 
     # Advance and verify full echo
-    for _ in range(500):
+    iters = 50 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 500
+    for _ in range(iters):
         await vta.step(10_000_000)
         _pump_monitor(monitor)
         if burst_data.decode() in monitor.buffer:

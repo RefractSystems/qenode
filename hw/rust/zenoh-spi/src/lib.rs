@@ -36,7 +36,7 @@ pub struct ZenohSPIBackend {
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
 unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
-    let was_locked = virtmcu_qom::sync::virtmcu_bql_locked();
+    let was_locked = virtmcu_qom::sync::Bql::is_held();
     if !was_locked {
         vlog!("[zenoh-spi] WARNING: zenoh_spi_transfer called without BQL!\n");
     }
@@ -57,9 +57,7 @@ unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u3
     };
 
     let mut data = Vec::with_capacity(16 + 4);
-    let mut header_bytes = [0u8; 16];
-    ptr::copy_nonoverlapping(&raw const header as *const u8, header_bytes.as_mut_ptr(), 16);
-    data.extend_from_slice(&header_bytes);
+    data.extend_from_slice(&header.pack());
     data.extend_from_slice(&val.to_le_bytes());
 
     let topic = format!("sim/spi/{}/{}", backend.id, (*dev).cs_index);
@@ -99,7 +97,7 @@ unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u3
 }
 
 unsafe extern "C" fn zenoh_spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
-    let _was_locked = virtmcu_qom::sync::virtmcu_bql_locked();
+    let _was_locked = virtmcu_qom::sync::Bql::is_held();
 
     let s = &mut *(dev as *mut ZenohSPI);
     if s.rust_state.is_null() {
@@ -116,8 +114,7 @@ unsafe extern "C" fn zenoh_spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> 
         _padding: [0; 2],
     };
 
-    let mut header_bytes = [0u8; 16];
-    ptr::copy_nonoverlapping(&raw const header as *const u8, header_bytes.as_mut_ptr(), 16);
+    let header_bytes = header.pack();
 
     let topic = format!("sim/spi/{}/{}/cs", backend.id, (*dev).cs_index);
 

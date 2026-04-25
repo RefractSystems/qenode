@@ -1,0 +1,11 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-m4
+peripherals:
+  - name: bridge0
+    type: mmio-socket-bridge
+    address: 0x10000000
+    size: 0x1000
+    properties:
+      region-size: 0x1000

@@ -1,10 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Generate trigger .c file for QEMU modules
-OUT="$1"
-OBJ="$2"
-EXTRA_INC="$3"
-EXTRA_C="$4"
-shift 4
+set -euo pipefail
+OUT="${1:-}"
+OBJ="${2:-}"
+EXTRA_INC="${3:-}"
+EXTRA_C="${4:-}"
+shift 4 || true
 
 mkdir -p "$(dirname "$OUT")"
 {

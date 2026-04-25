@@ -81,7 +81,7 @@ unsafe extern "C" fn wifi_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
 }
 
-static mut WIFI_PROPERTIES: [Property; 4] = [
+static WIFI_PROPERTIES: [Property; 4] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
     define_prop_string!(c"node".as_ptr(), VirtmcuWifiQEMU, node_id),
     define_prop_string!(c"router".as_ptr(), VirtmcuWifiQEMU, router),
@@ -89,7 +89,6 @@ static mut WIFI_PROPERTIES: [Property; 4] = [
 ];
 
 #[no_mangle]
-#[allow(static_mut_refs)]
 unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     (*dc).realize = Some(wifi_realize);

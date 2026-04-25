@@ -1,33 +1,34 @@
-name: CI
+name: CI (Main)
 
-# Runs on every push to main and on every PR targeting main.
-# Jobs are structured in three tiers:
-#   1. lint + unit-tests  — fast, no QEMU, always run in parallel
-#   2. build-qemu         — build the Docker builder image (QEMU compiled inside)
-#   3. integration        — smoke tests, pytest QMP suite, Robot Framework
+# Runs on every push to main and on version tags.
+# Performs the full validation pipeline and then publishes all images to GHCR.
 #
-# The expensive QEMU build is cached via GitHub Actions Docker layer cache
-# (type=gha). First run is slow (~40 min); subsequent runs with unchanged
-# patches/ and hw/ are fast (~3 min, fully from cache).
+# Jobs are structured in six tiers:
+#   1. lint + unit-tests       — fast, no QEMU
+#   2. build-qemu              — build the Docker builder image (both amd64 + arm64)
+#   3. publish-devenv-base     — parallel with build-qemu, after tier1
+#   4. smoke tests + coverage  — full matrix against the builder image
+#   5. publish-devenv          — after build-qemu + devenv-base
+#   6. publish-runtime         — after smoke tests pass
+#
+# The expensive QEMU build is cached via GitHub Actions Docker layer cache.
+# First run is slow (~40 min); subsequent runs with unchanged patches/ and hw/
+# are fast (~3 min, fully from cache).
 
 on:
   push:
     branches: [main]
     tags:
       - 'v*.*.*'
-  pull_request:
-    branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-main-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   BUILDER_IMAGE: virtmcu-builder
   PYTHON_VERSION: "3.13"
-  # CI runners can be slow; raise the zenoh-clock STALL timeout so the device
-  # doesn't fire on load spikes.  Local dev keeps the 5 s default for fast feedback.
   VIRTMCU_STALL_TIMEOUT_MS: "120000"
   CI: "true"
 
@@ -49,14 +50,14 @@ jobs:
               - '!(**/*.md)'
               - '!(docs/**)'
               - '!(.github/**)'
-              - '.github/workflows/ci.yml' # Expensive if CI itself changes
+              - '.github/workflows/ci-main.yml'
 
 # ── Tier 1: Lint ──────────────────────────────────────────────────────────────
 
   tier1-checks:
     name: Tier 1 (Lint & Unit Tests)
     needs: [changes]
-    if: needs.changes.outputs.expensive == 'true' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -68,7 +69,6 @@ jobs:
       - name: Load BUILD_DEPS
         run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
 
-      # Required for Devcontainer ownership parity
       - name: Set up Workspace Trust
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -90,7 +90,7 @@ jobs:
         uses: docker/bake-action@v7
         env:
           ARCH: amd64
-          PUSH_CACHE: ${{ github.ref == 'refs/heads/main' }}
+          PUSH_CACHE: "true"
         with:
           targets: devenv-base
           load: true
@@ -105,8 +105,6 @@ jobs:
 
       - name: Fix workspace and Cargo registry permissions
         run: |
-          # The GitHub runner uses UID 1001, but our container uses 1000 (vscode).
-          # Chown both the workspace and the registry cache so the container can write to them.
           sudo chown -R 1000:1000 .
           mkdir -p "$HOME/.cargo-ci-registry"
           sudo chown -R 1000:1000 "$HOME/.cargo-ci-registry"
@@ -117,6 +115,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
             ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
@@ -128,6 +127,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
             ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
@@ -139,6 +139,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
             ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
@@ -147,13 +148,11 @@ jobs:
       - name: Restore workspace permissions
         if: always()
         run: |
-          # Revert ownership so GHA cleanup/artifact upload works correctly
           sudo chown -R runner:docker .
           sudo chown -R runner:docker "$HOME/.cargo-ci-registry" || true
 
-  # Outputs the list of architectures to build. On pull_request events only
-  # amd64 is included — arm64 takes ~40 min and is redundant for PR validation.
-  # On push to main and tags both arches are included for full parity.
+# ── Tier 2: Build QEMU ────────────────────────────────────────────────────────
+
   setup:
     name: Configure build matrix
     runs-on: ubuntu-latest
@@ -162,17 +161,32 @@ jobs:
     steps:
       - name: Set target architectures
         id: arches
+        run: echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
+
+  generate-matrix:
+    name: Generate smoke test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build matrix from smoke-phases.json
+        id: gen
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo 'arches=["amd64"]' >> "$GITHUB_OUTPUT"
-          else
-            echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
-          fi
+          PHASES=$(cat .github/smoke-phases.json)
+          MATRIX=$(jq -nc \
+            --argjson phases "$PHASES" \
+            '{
+              arch: ["amd64","arm64"],
+              phase: [$phases[].phase],
+              include: ([{arch: "amd64", os: "ubuntu-latest"}, {arch: "arm64", os: "ubuntu-24.04-arm"}] + $phases)
+            }')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   build-qemu:
     name: Build QEMU — ${{ matrix.arch }}
     needs: [changes, setup]
-    if: needs.changes.outputs.expensive == 'true' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -187,10 +201,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      # GitHub's standard ubuntu-latest runners come pre-loaded with ~30GB of unused
-      # software (.NET, Android SDK, Haskell). Since our QEMU and Docker image builds
-      # are extremely large, we must aggressively reclaim disk space on the host
-      # before starting, otherwise we hit 'No space left on device' errors.
       - name: Free disk space
         if: matrix.arch == 'amd64'
         run: |
@@ -204,6 +214,15 @@ jobs:
 
       - name: Load BUILD_DEPS
         run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Compute QEMU cache tag
+        run: |
+          PATCHES_HASH=$(
+            { find patches/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null
+              sha256sum scripts/apply-qemu-patches.sh 2>/dev/null
+            } | sha256sum | cut -c1-12
+          )
+          echo "QEMU_CACHE_TAG=${QEMU_VERSION}-${PATCHES_HASH}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -219,23 +238,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Build and push the 'builder' stage to GHCR.
-      # This image is used as a cache for 'publish' and directly by 'smoke-tests'.
+      # qemu-base is built and pushed here on every main merge.
+      # Its content-addressed tag (QEMU_VERSION + patches hash) means
+      # Docker skips the 40-minute compile when nothing changed.
       - name: Build and push builder stage
         uses: docker/bake-action@v7
         env:
           ARCH: ${{ matrix.arch }}
           IMAGE_TAG: sha-${{ github.sha }}
-          PUSH_CACHE: ${{ github.ref == 'refs/heads/main' }}
+          PUSH_CACHE: "true"
+          QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
         with:
           targets: |
             base
             toolchain
+            qemu-base
             builder
           push: true
           files: |
             docker-bake.hcl
-            ${{ github.ref == 'refs/heads/main' && 'docker-bake-latest.hcl' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/') && 'docker-bake-latest.hcl' || '' }}
 
       - name: Verify QEMU binary
         run: |
@@ -247,7 +269,6 @@ jobs:
   publish-devenv-base:
     name: Publish Devenv Base — ${{ matrix.arch }}
     needs: [tier1-checks]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -262,10 +283,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      # GitHub's standard ubuntu-latest runners come pre-loaded with ~30GB of unused
-      # software (.NET, Android SDK, Haskell). Since our QEMU and Docker image builds
-      # are extremely large, we must aggressively reclaim disk space on the host
-      # before starting, otherwise we hit 'No space left on device' errors.
       - name: Free disk space
         if: matrix.arch == 'amd64'
         run: |
@@ -305,12 +322,11 @@ jobs:
           push: true
           files: |
             docker-bake.hcl
-            ${{ github.ref == 'refs/heads/main' && 'docker-bake-latest.hcl' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/') && 'docker-bake-latest.hcl' || '' }}
 
   publish-devenv:
     name: Publish Devenv — ${{ matrix.arch }}
     needs: [build-qemu, publish-devenv-base]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -325,10 +341,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      # GitHub's standard ubuntu-latest runners come pre-loaded with ~30GB of unused
-      # software (.NET, Android SDK, Haskell). Since our QEMU and Docker image builds
-      # are extremely large, we must aggressively reclaim disk space on the host
-      # before starting, otherwise we hit 'No space left on device' errors.
       - name: Free disk space
         if: matrix.arch == 'amd64'
         run: |
@@ -369,7 +381,7 @@ jobs:
           push: true
           files: |
             docker-bake.hcl
-            ${{ github.ref == 'refs/heads/main' && 'docker-bake-latest.hcl' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/') && 'docker-bake-latest.hcl' || '' }}
             ${{ startsWith(github.ref, 'refs/tags/') && 'docker-bake-release.hcl' || '' }}
 
   merge-devenv:
@@ -423,67 +435,16 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-arm64
 
-# ── Tier 4: Smoke Tests (matrix) ─────────────────────────────────────────────
-#
-# Each phase runs its test/phaseX/smoke_test.sh inside the builder container
-# with the workspace mounted at /workspace. Phases that need Python packages
-# or a .venv get a per-phase pre-setup command.
+# ── Tier 4: Smoke Tests (amd64 + arm64) ──────────────────────────────────────
 
   smoke-tests:
     name: Smoke — ${{ matrix.name }} (${{ matrix.arch }})
-    needs: [changes, build-qemu, tier1-checks, setup]
-    if: needs.changes.outputs.expensive == 'true' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    needs: [changes, build-qemu, tier1-checks, generate-matrix]
+    if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        arch: ${{ fromJson(needs.setup.outputs.arches) }}
-        phase: ["1", "2", "3", "3.5", "4", "5", "6", "7", "8", "9", "10", "11", "11_3", "12", "13", "14", "16", "27", "qmp", "robot"]
-        include:
-          - arch: amd64
-            os: ubuntu-latest
-          - arch: arm64
-            os: ubuntu-24.04-arm
-          - phase: "1"
-            name: "Phase 1 (Minimal Boot)"
-          - phase: "2"
-            name: "Phase 2 (QOM Plugins)"
-          - phase: "3"
-            name: "Phase 3 (repl2qemu)"
-          - phase: "3.5"
-            name: "Phase 3.5 (YAML Platforms)"
-          - phase: "4"
-            name: "Phase 4 (Robot Framework)"
-          - phase: "5"
-            name: "Phase 5 (SystemC Bridge)"
-          - phase: "6"
-            name: "Phase 6 (Zenoh Multi-Node)"
-          - phase: "7"
-            name: "Phase 7 (Zenoh Clock)"
-          - phase: "8"
-            name: "Phase 8 (Multi-Node UART)"
-          - phase: "9"
-            name: "Phase 9 (SystemC Media)"
-          - phase: "10"
-            name: "Phase 10 (Physics SAL/AAL)"
-          - phase: "11"
-            name: "Phase 11 (RISC-V Expansion)"
-          - phase: "11_3"
-            name: "Phase 11.3 (Remote Port)"
-          - phase: "12"
-            name: "Phase 12 (Advanced Observability)"
-          - phase: "13"
-            name: "Phase 13 (AI Debugging & MCP)"
-          - phase: "14"
-            name: "Phase 14 (Wireless & IoT)"
-          - phase: "16"
-            name: "Phase 16 (Perf & Determinism)"
-          - phase: "27"
-            name: "Phase 27 (FlexRay)"
-          - phase: "qmp"
-            name: "pytest (QMP Suite)"
-          - phase: "robot"
-            name: "Robot Framework (Renode Parity)"
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -519,6 +480,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e GCOV_PREFIX=/workspace/coverage-data \
@@ -536,15 +498,12 @@ jobs:
             test-results/
             coverage-data/
 
-# ── Tier 5: Peripheral Coverage Report ───────────────────────────────────────
-#
-# Collects .gcda files from the QEMU build tree after all integration tests
-# have run and generates a unified coverage report for the C plugins.
+# ── Tier 5: Coverage Reports ──────────────────────────────────────────────────
 
   peripheral-coverage:
     name: Peripheral C Coverage
     needs: [changes, smoke-tests]
-    if: needs.changes.outputs.expensive == 'true' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -586,6 +545,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e USER=vscode \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
             bash scripts/test-coverage-peripheral.sh
@@ -597,15 +557,10 @@ jobs:
           name: peripheral-c-coverage
           path: test-results/
 
-# ── Tier 5: Guest Firmware Coverage ──────────────────────────────────────────
-#
-# Uses QEMU TCG plugins (drcov) to track guest firmware execution and maps
-# results back to ELF symbols to ensure tests exercise the HAL.
-
   firmware-coverage:
     name: Guest Firmware Coverage
     needs: [changes, build-qemu, tier1-checks]
-    if: needs.changes.outputs.expensive == 'true' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -640,6 +595,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e PYTHONPATH=/workspace \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
@@ -650,7 +606,6 @@ jobs:
   publish-runtime:
     name: Publish Runtime — ${{ matrix.arch }}
     needs: [smoke-tests, peripheral-coverage, firmware-coverage]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -696,7 +651,7 @@ jobs:
           push: true
           files: |
             docker-bake.hcl
-            ${{ github.ref == 'refs/heads/main' && 'docker-bake-latest.hcl' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/') && 'docker-bake-latest.hcl' || '' }}
             ${{ startsWith(github.ref, 'refs/tags/') && 'docker-bake-release.hcl' || '' }}
 
   merge-runtime:

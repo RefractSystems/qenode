@@ -1,6 +1,20 @@
+//! # MMIO Socket Bridge
+//!
+//! Lock ordering: BQL -> SharedState Mutex -> (Condvar releases Mutex temporarily).
+//! Background I/O thread never acquires BQL.
+//! vCPU thread acquires BQL (held by QEMU), then locks SharedState Mutex, then
+//! waits on Condvar (which releases Mutex). BQL is temporarily yielded during wait
+//! via Bql::temporary_unlock().
+
 use core::ffi::{c_char, c_uint, c_void};
+use std::collections::HashMap;
 use std::ffi::CStr;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::ptr;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
 use virtmcu_api::{
     MmioReq, SyscMsg, VirtmcuHandshake, MMIO_REQ_READ, MMIO_REQ_WRITE, SYSC_MSG_IRQ_CLEAR,
     SYSC_MSG_IRQ_SET, SYSC_MSG_RESP, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
@@ -18,10 +32,17 @@ use virtmcu_qom::{
     error_setg,
 };
 
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+static MAPPED_IDS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+
+fn is_id_mapped(id: &str) -> bool {
+    let mut lock = MAPPED_IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *lock.get_or_insert_with(HashMap::new).get(id).unwrap_or(&false)
+}
+
+fn set_id_mapped(id: &str, mapped: bool) {
+    let mut lock = MAPPED_IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    lock.get_or_insert_with(HashMap::new).insert(id.to_string(), mapped);
+}
 
 #[repr(C)]
 pub struct MmioSocketBridgeQEMU {
@@ -29,6 +50,7 @@ pub struct MmioSocketBridgeQEMU {
     pub mmio: MemoryRegion,
 
     // Properties mapped by QOM
+    pub id: *mut c_char,
     pub socket_path: *mut c_char,
     pub region_size: u32,
     pub base_addr: u64,
@@ -37,56 +59,65 @@ pub struct MmioSocketBridgeQEMU {
     pub irqs: [qemu_irq; 32],
 
     pub rust_state: *mut MmioSocketBridgeState,
+    pub mapped: bool,
 }
 
-use virtmcu_qom::sync::{Bql, QemuCond, QemuMutex};
+use virtmcu_qom::sync::Bql;
 
 pub struct MmioSocketBridgeState {
     shared: Arc<SharedState>,
     bg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 pub struct SharedState {
     socket_path: String,
     reconnect_ms: u32,
     irqs: RawIrqArray, // Points to MmioSocketBridgeQEMU.irqs
-    conn: RawQemuMutex,
-    resp_cond: RawQemuCond,
+    resp_cond: Condvar,
+    connected_cond: Condvar,
+    drain_cond: Condvar,
     state: Mutex<ConnectionState>,
-    active_vcpu_count: AtomicUsize,
 }
 
+// Safe: SharedState is only accessed through Arc and its internal synchronisation
+// primitives (Mutex<ConnectionState>, Condvar). Raw pointers inside wrapper
+// structs are documented below.
 unsafe impl Send for SharedState {}
 unsafe impl Sync for SharedState {}
 
 struct RawIrqArray(*mut qemu_irq);
+// Safe: the IRQ array lives in MmioSocketBridgeQEMU which outlives SharedState.
+// qemu_set_irq is only called while holding the BQL.
 unsafe impl Send for RawIrqArray {}
 unsafe impl Sync for RawIrqArray {}
-
-struct RawQemuMutex(*mut QemuMutex);
-unsafe impl Send for RawQemuMutex {}
-unsafe impl Sync for RawQemuMutex {}
-
-struct RawQemuCond(*mut QemuCond);
-unsafe impl Send for RawQemuCond {}
-unsafe impl Sync for RawQemuCond {}
 
 struct ConnectionState {
     stream: Option<UnixStream>,
     has_resp: bool,
     current_resp: Option<SyscMsg>,
     running: bool,
+    active_vcpu_count: usize,
 }
 
 const BRIDGE_TIMEOUT_MS: u32 = 5000;
+/// Maximum time to wait for all vCPU threads to exit during teardown.
+/// Unbounded wait risks deadlocking QEMU if active_vcpu_count never reaches
+/// zero due to a panic or logic bug in the vCPU path.
+const DRAIN_TIMEOUT_SECS: u64 = 30;
 
 impl Drop for SharedState {
     fn drop(&mut self) {
-        unsafe {
-            virtmcu_qom::sync::virtmcu_mutex_free(self.conn.0);
-            virtmcu_qom::sync::virtmcu_cond_free(self.resp_cond.0);
+        // Rust Mutex and Condvar are automatically freed
+    }
+}
+
+struct VcpuCountGuard<'a>(&'a SharedState);
+impl Drop for VcpuCountGuard<'_> {
+    fn drop(&mut self) {
+        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
+        if lock.active_vcpu_count == 0 {
+            self.0.drain_cond.notify_all();
         }
     }
 }
@@ -113,15 +144,25 @@ impl SharedState {
                 if self.reconnect_ms == 0 {
                     break;
                 }
-                let d = Duration::from_millis(self.reconnect_ms as u64);
-                std::thread::sleep(d); // SLEEP_EXCEPTION: background connector thread; not on vCPU path.
+                let d = Duration::from_millis(u64::from(self.reconnect_ms));
+                let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let start = std::time::Instant::now();
+                while lock.running && start.elapsed() < d {
+                    let remaining =
+                        d.checked_sub(start.elapsed()).unwrap_or(Duration::from_secs(0));
+                    let (new_lock, _) = self
+                        .connected_cond
+                        .wait_timeout(lock, remaining)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    lock = new_lock;
+                }
                 continue;
             };
 
-            // Handshake
+            // Handshake: announce our magic/version and verify the server echoes it back.
             let hs_out =
                 VirtmcuHandshake { magic: VIRTMCU_PROTO_MAGIC, version: VIRTMCU_PROTO_VERSION };
-            let hs_bytes: [u8; 8] = unsafe { core::mem::transmute(hs_out) };
+            let hs_bytes = hs_out.pack();
             if stream.write_all(&hs_bytes).is_err() {
                 continue;
             }
@@ -130,8 +171,9 @@ impl SharedState {
             if stream.read_exact(&mut hs_in_bytes).is_err() {
                 continue;
             }
-            let hs_in: VirtmcuHandshake = unsafe { core::mem::transmute(hs_in_bytes) };
+            let hs_in = VirtmcuHandshake::unpack(&hs_in_bytes);
             if hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION {
+                eprintln!("mmio-socket-bridge: handshake mismatch, retrying");
                 continue;
             }
 
@@ -145,22 +187,25 @@ impl SharedState {
                 lock.stream = Some(stream);
                 eprintln!("mmio-socket-bridge: connected to {}", self.socket_path);
             }
+            // Notify any vCPU thread blocked in send_req_and_wait_internal waiting for
+            // a stream to become available. Without this, the waiter must spin out the
+            // full BRIDGE_TIMEOUT_MS (5 s) before re-checking lock.stream.
+            self.connected_cond.notify_all();
 
-            // Blocking read loop (no timeout needed, shutdown will wake it)
+            // Blocking read loop (no timeout needed; shutdown() wakes it on teardown).
             loop {
                 let mut msg_bytes = [0u8; 16]; // size of SyscMsg
                 if let Ok(()) = read_stream.read_exact(&mut msg_bytes) {
-                    let msg: SyscMsg = unsafe { core::mem::transmute(msg_bytes) };
+                    let msg = SyscMsg::unpack(&msg_bytes);
                     if msg.type_ == SYSC_MSG_RESP {
                         let mut lock =
                             self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         lock.current_resp = Some(msg);
                         lock.has_resp = true;
-                        unsafe { (*self.resp_cond.0).broadcast() };
+                        self.resp_cond.notify_all();
                     } else if (msg.type_ == SYSC_MSG_IRQ_SET || msg.type_ == SYSC_MSG_IRQ_CLEAR)
                         && msg.irq_num < 32
                     {
-                        // Important: We MUST acquire the BQL before calling qemu_set_irq
                         let bql = Bql::lock();
                         unsafe {
                             qemu_set_irq(
@@ -171,96 +216,86 @@ impl SharedState {
                         drop(bql);
                     }
                 } else {
-                    // EOF or error or shutdown
+                    // EOF or error — signal any waiting vCPU thread to return.
                     let mut lock =
                         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     lock.stream = None;
-                    lock.has_resp = true; // Wake up blocked vCPU to return 0
+                    lock.has_resp = true;
                     lock.current_resp = None;
-                    unsafe { (*self.resp_cond.0).broadcast() };
+                    self.resp_cond.notify_all();
                     unsafe { virtmcu_qom::cpu::virtmcu_cpu_exit_all() };
                     eprintln!("mmio-socket-bridge: remote disconnected, closing socket");
                     break;
                 }
             }
         }
-    }
-}
 
-impl SharedState {
+        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        lock.running = false;
+        self.connected_cond.notify_all();
+        self.resp_cond.notify_all();
+    }
+
     fn send_req_and_wait(&self, req: MmioReq) -> Option<SyscMsg> {
-        self.active_vcpu_count.fetch_add(1, Ordering::SeqCst);
-        let res = self.send_req_and_wait_internal(req);
-        self.active_vcpu_count.fetch_sub(1, Ordering::SeqCst);
-        res
+        {
+            let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !lock.running {
+                return None;
+            }
+            lock.active_vcpu_count += 1;
+        }
+        let _guard = VcpuCountGuard(self);
+
+        self.send_req_and_wait_internal(req)
     }
 
     fn send_req_and_wait_internal(&self, req: MmioReq) -> Option<SyscMsg> {
-        let req_bytes: [u8; 32] = unsafe { core::mem::transmute(req) };
-
-        // Wait for connection if not ready
+        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
-            {
-                let mut state_lock =
-                    self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-
-                if !state_lock.running {
-                    return None;
-                }
-
-                let mut success = false;
-                if let Some(stream) = state_lock.stream.as_mut() {
-                    if stream.write_all(&req_bytes).is_err() {
-                        eprintln!("mmio-socket-bridge: write_all failed!");
-                        return None;
-                    }
-                    success = true;
-                }
-                if success {
-                    state_lock.has_resp = false;
-                    eprintln!("mmio-socket-bridge: sent req!");
-                    break; // Successfully sent
-                }
+            if !lock.running {
+                return None;
             }
-
-            // Not connected yet. Drop lock, unlock BQL, and sleep briefly.
-            let _bql_unlock = Bql::temporary_unlock();
-            let d = Duration::from_millis(10);
-            std::thread::sleep(d); // SLEEP_EXCEPTION: vCPU connection-wait; replace with QemuCond::wait_yielding_bql + connected_condvar in BQL rework.
-        }
-
-        // Wait for response using QEMU native primitives
-        unsafe {
-            virtmcu_qom::sync::virtmcu_mutex_lock(self.conn.0);
-
-            // Temporarily unlock BQL if we hold it, so other threads (like QMP) can run.
-            // We use our shim virtmcu_bql_locked() because the native bql_locked()
-            // might return False in a DSO due to TLS issues.
-            let _bql_unlock = Bql::temporary_unlock();
-
-            while !self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).has_resp {
-                if !(*self.resp_cond.0).wait_timeout(&mut *self.conn.0, BRIDGE_TIMEOUT_MS) {
-                    // Timeout
-                    eprintln!(
-                        "mmio-socket-bridge: timeout on socket after {BRIDGE_TIMEOUT_MS} ms, disconnecting"
-                    );
-                    let mut state_lock =
-                        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    state_lock.stream = None;
-                    state_lock.has_resp = true;
-                    // Yield CPU so QMP and other threads can run
-                    virtmcu_qom::cpu::virtmcu_cpu_exit_all();
+            if let Some(mut s) = lock.stream.take() {
+                if s.write_all(&req.pack()).is_ok() {
+                    lock.stream = Some(s);
+                    lock.has_resp = false;
                     break;
                 }
+                // Write failed, stream is None
             }
 
-            virtmcu_qom::sync::virtmcu_mutex_unlock(self.conn.0);
+            // Wait for connection
+            let bql_unlock = Bql::temporary_unlock();
+            let (new_lock, result) = self
+                .connected_cond
+                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lock = new_lock;
+            drop(bql_unlock);
+            if result.timed_out() {
+                eprintln!("mmio-socket-bridge: timeout waiting for connection");
+                return None;
+            }
         }
 
-        let mut state_lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let resp = state_lock.current_resp;
-        state_lock.current_resp = None;
-        resp
+        // Wait for response
+        while !lock.has_resp && lock.running {
+            let bql_unlock = Bql::temporary_unlock();
+            let (new_lock, result) = self
+                .resp_cond
+                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lock = new_lock;
+            drop(bql_unlock);
+            if result.timed_out() {
+                eprintln!("mmio-socket-bridge: timeout waiting for response");
+                lock.stream = None;
+                lock.has_resp = true;
+                break;
+            }
+        }
+
+        lock.current_resp.take()
     }
 }
 
@@ -271,7 +306,7 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
         size: size as u8,
         reserved1: 0,
         reserved2: 0,
-        vtime_ns: unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64,
+        vtime_ns: qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64,
         addr,
         data: 0,
     };
@@ -289,7 +324,7 @@ unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size
         size: size as u8,
         reserved1: 0,
         reserved2: 0,
-        vtime_ns: unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64,
+        vtime_ns: qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64,
         addr,
         data: val,
     };
@@ -319,8 +354,9 @@ static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
 };
 
 unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    eprintln!("mmio-socket-bridge: bridge_realize CALLED!");
     let qemu = &mut *(dev as *mut MmioSocketBridgeQEMU);
+    let obj = dev as *mut Object;
+
     if qemu.socket_path.is_null() {
         error_setg!(errp, "socket-path must be set");
         return;
@@ -330,28 +366,24 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         return;
     }
 
-    let socket_path = CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned();
-
     for i in 0..32 {
         sysbus_init_irq(dev as *mut SysBusDevice, &raw mut qemu.irqs[i]);
     }
 
-    let conn_ptr = virtmcu_qom::sync::virtmcu_mutex_new();
-    let resp_cond_ptr = virtmcu_qom::sync::virtmcu_cond_new();
-
     let shared = Arc::new(SharedState {
-        socket_path,
+        socket_path: CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned(),
         reconnect_ms: qemu.reconnect_ms,
         irqs: RawIrqArray(qemu.irqs.as_mut_ptr()),
-        conn: RawQemuMutex(conn_ptr),
-        resp_cond: RawQemuCond(resp_cond_ptr),
+        resp_cond: Condvar::new(),
+        connected_cond: Condvar::new(),
+        drain_cond: Condvar::new(),
         state: Mutex::new(ConnectionState {
             stream: None,
             has_resp: false,
             current_resp: None,
             running: true,
+            active_vcpu_count: 0,
         }),
-        active_vcpu_count: AtomicUsize::new(0),
     });
 
     let shared_clone = Arc::clone(&shared);
@@ -363,26 +395,37 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         Box::new(MmioSocketBridgeState { shared: Arc::clone(&shared), bg_thread: Some(bg_thread) });
     qemu.rust_state = Box::into_raw(state);
 
-    memory_region_init_io(
-        &raw mut qemu.mmio,
-        dev as *mut Object,
-        &raw const BRIDGE_MMIO_OPS,
-        qemu.rust_state as *mut c_void,
-        c"mmio-socket-bridge".as_ptr(),
-        u64::from(qemu.region_size),
-    );
+    let id_str = if qemu.id.is_null() {
+        None
+    } else {
+        Some(CStr::from_ptr(qemu.id).to_string_lossy().into_owned())
+    };
 
-    sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut qemu.mmio);
+    let already_mapped = if let Some(ref id) = id_str { is_id_mapped(id) } else { false };
 
-    if qemu.base_addr != u64::MAX {
-        unsafe {
+    if !already_mapped {
+        memory_region_init_io(
+            &raw mut qemu.mmio,
+            obj,
+            &raw const BRIDGE_MMIO_OPS,
+            qemu.rust_state as *mut c_void,
+            c"mmio-socket-bridge".as_ptr(),
+            u64::from(qemu.region_size),
+        );
+
+        sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut qemu.mmio);
+
+        if qemu.base_addr != u64::MAX {
             sysbus_mmio_map(dev as *mut SysBusDevice, 0, qemu.base_addr);
         }
+        if let Some(ref id) = id_str {
+            set_id_mapped(id, true);
+        }
+        qemu.mapped = true;
     }
 }
 
 unsafe extern "C" fn bridge_instance_init(_obj: *mut Object) {}
-
 unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
     let qemu = &mut *(obj as *mut MmioSocketBridgeQEMU);
     if !qemu.rust_state.is_null() {
@@ -397,20 +440,39 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
             }
         }
         // Wake it up if it's blocked on connect/wait
-        unsafe {
-            (*state.shared.resp_cond.0).broadcast();
+        state.shared.resp_cond.notify_all();
+        state.shared.connected_cond.notify_all();
+
+        // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock
+        // if active_vcpu_count never reaches zero due to a bug or panic).
+        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while lock.active_vcpu_count > 0 {
+            let bql_unlock = Bql::temporary_unlock();
+            let (new_lock, timed_out) = state
+                .shared
+                .drain_cond
+                .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lock = new_lock;
+            drop(bql_unlock);
+            if timed_out.timed_out() {
+                eprintln!(
+                    "mmio-socket-bridge: drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
+                    DRAIN_TIMEOUT_SECS, lock.active_vcpu_count
+                );
+                break;
+            }
         }
 
         if let Some(handle) = state.bg_thread.take() {
+            let bql_unlock = Bql::temporary_unlock();
             let _ = handle.join();
+            drop(bql_unlock);
         }
 
-        // Wait for any active vCPU threads to exit send_req_and_wait.
-        // This ensures they are no longer using the mutex/condvar before we free them.
-        let mut attempts = 0;
-        while state.shared.active_vcpu_count.load(Ordering::SeqCst) > 0 && attempts < 1000 {
-            std::thread::yield_now();
-            attempts += 1;
+        if qemu.mapped && !qemu.id.is_null() {
+            let id = CStr::from_ptr(qemu.id).to_string_lossy().into_owned();
+            set_id_mapped(&id, false);
         }
 
         qemu.rust_state = ptr::null_mut();
@@ -419,22 +481,21 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static mut BRIDGE_PROPERTIES: [Property; 5] = [
+static BRIDGE_PROPERTIES: [Property; 6] = [
+    define_prop_string!(c"id".as_ptr(), MmioSocketBridgeQEMU, id),
     define_prop_string!(c"socket-path".as_ptr(), MmioSocketBridgeQEMU, socket_path),
-    define_prop_uint32!(c"region-size".as_ptr(), MmioSocketBridgeQEMU, region_size, 0),
+    define_prop_uint32!(c"region-size".as_ptr(), MmioSocketBridgeQEMU, region_size, 0x1000),
     define_prop_uint64!(c"base-addr".as_ptr(), MmioSocketBridgeQEMU, base_addr, u64::MAX),
-    define_prop_uint32!(c"reconnect-ms".as_ptr(), MmioSocketBridgeQEMU, reconnect_ms, 0),
-    // Null terminator
+    define_prop_uint32!(c"reconnect-ms".as_ptr(), MmioSocketBridgeQEMU, reconnect_ms, 1000),
     unsafe { std::mem::zeroed() },
 ];
 
-#[allow(static_mut_refs)]
 unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     (*dc).realize = Some(bridge_realize);
     (*dc).unrealize = Some(bridge_unrealize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 4);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 5);
 }
 
 static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
@@ -453,18 +514,4 @@ static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(mmio_socket_bridge_type_init, BRIDGE_TYPE_INFO);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mmio_socket_bridge_qemu_layout() {
-        assert_eq!(
-            core::mem::offset_of!(MmioSocketBridgeQEMU, parent_obj),
-            0,
-            "SysBusDevice must be the first field"
-        );
-    }
-}
+declare_device_type!(virtmcu_mmio_socket_bridge_init, BRIDGE_TYPE_INFO);

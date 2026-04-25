@@ -19,6 +19,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, device_class};
 
@@ -94,7 +95,7 @@ pub struct ZenohFlexRayState {
     rx_timer: Option<Arc<QomTimer>>,
     cycle_timer: Option<QomTimer>,
     rx_receiver: Receiver<OrderedFlexRayPacket>,
-    local_heap: Mutex<std::collections::BinaryHeap<OrderedFlexRayPacket>>,
+    local_heap: BqlGuarded<std::collections::BinaryHeap<OrderedFlexRayPacket>>,
     earliest_vtime: Arc<AtomicU64>,
     current_cycle: Arc<AtomicUsize>,
 }
@@ -530,7 +531,7 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*(opaque as *mut ZenohFlexRayState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut heap = state.local_heap.get_mut();
 
     while let Ok(packet) = state.rx_receiver.try_recv() {
         heap.push(packet);
@@ -577,7 +578,7 @@ fn zenoh_flexray_init_internal(
     };
 
     let (tx, rx) = bounded(1024);
-    let local_heap = Mutex::new(std::collections::BinaryHeap::new());
+    let local_heap = BqlGuarded::new(std::collections::BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
     let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
 

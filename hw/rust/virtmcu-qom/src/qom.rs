@@ -167,6 +167,7 @@ const _: () = assert!(core::mem::size_of::<Property>() == 72);
 
 unsafe impl Sync for TypeInfo {}
 unsafe impl Sync for Property {}
+unsafe impl Send for Property {}
 
 #[macro_export]
 /// A macro
