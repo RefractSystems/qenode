@@ -378,7 +378,10 @@ COPY Cargo.toml Cargo.lock /tmp/virtmcu/
 COPY hw/ /tmp/virtmcu/hw/
 COPY tools/ /tmp/virtmcu/tools/
 RUN cargo fetch --manifest-path /tmp/virtmcu/Cargo.toml \
-    && rm -rf /tmp/virtmcu
+    && rm -rf /tmp/virtmcu \
+    && chown -R vscode:vscode /usr/local/cargo/registry \
+    && mkdir -p /workspace/target \
+    && chown -R vscode:vscode /workspace/target
 
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"

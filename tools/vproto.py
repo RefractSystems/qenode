@@ -30,7 +30,7 @@ class VirtmcuHandshake:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_VIRTMCU_HANDSHAKE, self.magic, self.version)
+        return struct.pack(FMT_VIRTMCU_HANDSHAKE, self.magic, self.version)  # fmt: skip
 
 
 FMT_MMIO_REQ = "<BBHIQQQ"
@@ -55,9 +55,7 @@ class MmioReq:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(
-            FMT_MMIO_REQ, self.type, self.size, self.reserved1, self.reserved2, self.vtime_ns, self.addr, self.data
-        )
+        return struct.pack(FMT_MMIO_REQ, self.type, self.size, self.reserved1, self.reserved2, self.vtime_ns, self.addr, self.data)  # fmt: skip
 
 
 FMT_SYSC_MSG = "<IIQ"
@@ -78,7 +76,7 @@ class SyscMsg:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_SYSC_MSG, self.type, self.irq_num, self.data)
+        return struct.pack(FMT_SYSC_MSG, self.type, self.irq_num, self.data)  # fmt: skip
 
 
 FMT_CLOCK_ADVANCE_REQ = "<QQ"
@@ -98,7 +96,7 @@ class ClockAdvanceReq:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_CLOCK_ADVANCE_REQ, self.delta_ns, self.mujoco_time_ns)
+        return struct.pack(FMT_CLOCK_ADVANCE_REQ, self.delta_ns, self.mujoco_time_ns)  # fmt: skip
 
 
 FMT_CLOCK_READY_RESP = "<QII"
@@ -119,7 +117,7 @@ class ClockReadyResp:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_CLOCK_READY_RESP, self.current_vtime_ns, self.n_frames, self.error_code)
+        return struct.pack(FMT_CLOCK_READY_RESP, self.current_vtime_ns, self.n_frames, self.error_code)  # fmt: skip
 
 
 FMT_ZENOH_FRAME_HEADER = "<QI"
@@ -139,7 +137,7 @@ class ZenohFrameHeader:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_ZENOH_FRAME_HEADER, self.delivery_vtime_ns, self.size)
+        return struct.pack(FMT_ZENOH_FRAME_HEADER, self.delivery_vtime_ns, self.size)  # fmt: skip
 
 
 FMT_ZENOH_SPI_HEADER = "<QI?BBB"
@@ -163,6 +161,4 @@ class ZenohSPIHeader:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(
-            FMT_ZENOH_SPI_HEADER, self.delivery_vtime_ns, self.size, self.cs, self.cs_index, self._padding_0, self._padding_1
-        )
+        return struct.pack(FMT_ZENOH_SPI_HEADER, self.delivery_vtime_ns, self.size, self.cs, self.cs_index, self._padding_0, self._padding_1)  # fmt: skip

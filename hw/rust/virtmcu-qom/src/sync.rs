@@ -73,18 +73,27 @@ mod mock {
     // Waiters snapshot the generation on entry; a changed generation means "signaled".
     // This approach is immune to lost wakeups (signal before wait) and stale entries
     // from previous tests that reused the same stack address.
-    type CondState = Arc<(Condvar, Mutex<u64>)>;
+    /// A registry of condition variables and mutexes for mocks.
+    static MOCK_REGISTRY: Mutex<Option<HashMap<usize, Arc<MockState>>>> = Mutex::new(None);
 
-    static COND_REGISTRY: Mutex<Option<HashMap<usize, CondState>>> = Mutex::new(None);
-
-    fn get_or_create_cond(addr: usize) -> CondState {
-        let mut guard = COND_REGISTRY.lock().unwrap();
-        let map = guard.get_or_insert_with(HashMap::new);
-        Arc::clone(map.entry(addr).or_insert_with(|| Arc::new((Condvar::new(), Mutex::new(0u64)))))
+    pub struct MockState {
+        pub cv: Condvar,
+        pub gen: Mutex<u64>,
+        pub mutex: Mutex<bool>,
+        pub waiter_count: Mutex<usize>,
     }
 
-    pub fn virtmcu_bql_locked() -> bool {
-        BQL_HELD.with(|b| b.get())
+    pub fn get_or_create_mock(addr: usize) -> Arc<MockState> {
+        let mut guard = MOCK_REGISTRY.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        Arc::clone(map.entry(addr).or_insert_with(|| {
+            Arc::new(MockState {
+                cv: Condvar::new(),
+                gen: Mutex::new(0u64),
+                mutex: Mutex::new(false),
+                waiter_count: Mutex::new(0),
+            })
+        }))
     }
 
     pub fn virtmcu_bql_lock() {
@@ -103,59 +112,88 @@ mod mock {
         virtmcu_bql_lock();
     }
 
-    // The peripheral mutex is a no-op in test: we never actually contend on it
-    // since tests are single-threaded in their critical sections.
-    pub fn virtmcu_mutex_lock(_mutex: *mut QemuMutex) {}
-    pub fn virtmcu_mutex_unlock(_mutex: *mut QemuMutex) {}
+    pub fn virtmcu_bql_locked() -> bool {
+        BQL_HELD.with(|b| b.get())
+    }
+
+    pub fn virtmcu_mutex_lock(mutex: *mut QemuMutex) {
+        let state = get_or_create_mock(mutex as usize);
+        let mut locked = state.mutex.lock().unwrap();
+        while *locked {
+            locked = state.cv.wait(locked).unwrap();
+        }
+        *locked = true;
+    }
+
+    pub fn virtmcu_mutex_unlock(mutex: *mut QemuMutex) {
+        let state = get_or_create_mock(mutex as usize);
+        let mut locked = state.mutex.lock().unwrap();
+        *locked = false;
+        state.cv.notify_all();
+    }
+
+    pub fn virtmcu_cond_signal(cond: *mut QemuCond) {
+        let state = get_or_create_mock(cond as usize);
+        *state.gen.lock().unwrap() += 1;
+        state.cv.notify_all();
+    }
+
+    pub fn virtmcu_cond_broadcast(cond: *mut QemuCond) {
+        let state = get_or_create_mock(cond as usize);
+        *state.gen.lock().unwrap() += 1;
+        state.cv.notify_all();
+    }
 
     pub fn virtmcu_cond_wait(cond: *mut QemuCond, mutex: *mut QemuMutex) {
         virtmcu_cond_timedwait(cond, mutex, u32::MAX);
     }
 
     pub fn virtmcu_cond_timedwait(cond: *mut QemuCond, mutex: *mut QemuMutex, ms: u32) -> i32 {
-        let state = get_or_create_cond(cond as usize);
-        let (cv, gen_mutex) = &*state;
+        let state = get_or_create_mock(cond as usize);
+
+        // Snapshot the generation counter
+        let initial_gen = *state.gen.lock().unwrap();
+
+        // Mandate: BQL must NOT be held when calling wait_yielding_bql logic.
+        assert!(!virtmcu_bql_locked(), "BQL held during blocking wait!");
 
         // Atomically release the peripheral mutex before blocking.
         virtmcu_mutex_unlock(mutex);
 
-        // Snapshot the generation counter: if a signal already arrived (or arrives
-        // concurrently), the generation will differ and we return without blocking.
-        let initial_gen = *gen_mutex.lock().unwrap();
+        // Update waiter count AFTER releasing mutex so tests can synchronize deterministically.
+        {
+            let mut count = state.waiter_count.lock().unwrap();
+            *count += 1;
+            state.cv.notify_all();
+        }
 
         let signaled = if ms == u32::MAX {
-            let guard = gen_mutex.lock().unwrap();
-            drop(cv.wait_while(guard, |g| *g == initial_gen).unwrap());
+            let guard = state.gen.lock().unwrap();
+            drop(state.cv.wait_while(guard, |g| *g == initial_gen).unwrap());
             true
         } else {
             let timeout = std::time::Duration::from_millis(ms as u64);
-            let guard = gen_mutex.lock().unwrap();
-            let result = cv.wait_timeout_while(guard, timeout, |g| *g == initial_gen).unwrap();
+            let guard = state.gen.lock().unwrap();
+            let result =
+                state.cv.wait_timeout_while(guard, timeout, |g| *g == initial_gen).unwrap();
             !result.1.timed_out()
         };
 
         // Re-acquire the peripheral mutex before returning to the caller.
         virtmcu_mutex_lock(mutex);
 
+        // Decrement waiter count.
+        {
+            let mut count = state.waiter_count.lock().unwrap();
+            *count -= 1;
+            state.cv.notify_all();
+        }
+
         if signaled {
             1
         } else {
             0
         }
-    }
-
-    pub fn virtmcu_cond_signal(cond: *mut QemuCond) {
-        let state = get_or_create_cond(cond as usize);
-        let (cv, gen_mutex) = &*state;
-        *gen_mutex.lock().unwrap() += 1;
-        cv.notify_one();
-    }
-
-    pub fn virtmcu_cond_broadcast(cond: *mut QemuCond) {
-        let state = get_or_create_cond(cond as usize);
-        let (cv, gen_mutex) = &*state;
-        *gen_mutex.lock().unwrap() += 1;
-        cv.notify_all();
     }
 }
 
@@ -558,9 +596,14 @@ mod tests {
     use super::*;
     use std::thread;
 
-    struct SendPtr<T>(*mut T);
-    unsafe impl<T> Send for SendPtr<T> {}
-    unsafe impl<T> Sync for SendPtr<T> {}
+    struct SyncPtr<T>(*mut T);
+    unsafe impl<T> Send for SyncPtr<T> {}
+    unsafe impl<T> Sync for SyncPtr<T> {}
+    impl<T> SyncPtr<T> {
+        fn get(self) -> *mut T {
+            self.0
+        }
+    }
 
     #[test]
     fn test_bql_lock_unlock() {
@@ -591,35 +634,64 @@ mod tests {
         }
     }
 
+    /// Safety boundary for test timeouts to prevent CI hangs.
+    const TEST_SAFETY_TIMEOUT_MS: u32 = 10000;
+
     #[test]
     fn test_wait_yielding_bql_signal() {
         let mut mutex: QemuMutex = unsafe { std::mem::zeroed() };
         let cond: QemuCond = unsafe { std::mem::zeroed() };
 
-        let cond_ptr = SendPtr(&cond as *const QemuCond as *mut QemuCond);
+        let cond_ptr = SyncPtr(&cond as *const QemuCond as *mut QemuCond);
+        let mutex_ptr = SyncPtr(&mutex as *const QemuMutex as *mut QemuMutex);
 
         let _bql = Bql::lock();
 
         thread::scope(|s| {
             s.spawn(move || {
-                // Move the whole SendPtr wrapper (which is Send) into scope.
-                // Without this binding, Rust 2021 disjoint capture would extract
-                // only the inner *mut field (!Send) and the closure would be !Send.
-                std::thread::sleep(std::time::Duration::from_millis(50)); // SLEEP_EXCEPTION: test sync
-                let ptr = cond_ptr;
-                // Signal immediately. The generation-counter approach in the mock ensures
-                // this wakeup is not lost even if main thread hasn't called wait yet.
-                unsafe { (*ptr.0).signal() };
+                // Use .get() to capture the whole SyncPtr and get the raw pointer.
+                // This satisfies both the Send bound (capturing the wrapper) and
+                // Miri provenance (using the pointer directly).
+                let cp = cond_ptr.get();
+                let mp = mutex_ptr.get();
+
+                let state = mock::get_or_create_mock(cp as usize);
+                let mutex_state = mock::get_or_create_mock(mp as usize);
+
+                // Deterministically wait for the main thread to be blocked.
+                {
+                    let mut count = state.waiter_count.lock().unwrap();
+                    while *count == 0 {
+                        count = state.cv.wait(count).unwrap();
+                    }
+                }
+
+                // Assertion: The peripheral mutex must be UNLOCKED while the main thread waits.
+                {
+                    let locked = mutex_state.mutex.lock().unwrap();
+                    assert!(!*locked, "Peripheral mutex held while thread is waiting!");
+                }
+
+                // Assertion: The BQL must be UNLOCKED (checked via mock state).
+                // Note: Since mock BQL is thread-local in this simplified mock, we trust
+                // the internal assertion in virtmcu_cond_timedwait.
+
+                // Signal the condition variable.
+                unsafe { (*cp).signal() };
             });
 
             let mut guard = mutex.lock();
-            let res = cond.wait_yielding_bql(&mut guard, 1000);
-            assert!(res, "Should have been signaled");
+
+            // wait_yielding_bql will release BQL, call cond_wait, and re-acquire BQL.
+            let res = cond.wait_yielding_bql(&mut guard, TEST_SAFETY_TIMEOUT_MS);
+            assert!(res, "Wait should have been signaled deterministically");
+
+            // Verify the peripheral mutex is still held by us.
             drop(guard);
         });
 
-        // BQL must be re-acquired after wait_yielding_bql returns.
-        assert!(Bql::temporary_unlock().is_some());
+        // Final Assertion: BQL must be held after the wait.
+        assert!(Bql::is_held(), "BQL lost after wait_yielding_bql!");
     }
 
     // ── BqlGuarded tests ────────────────────────────────────────────────

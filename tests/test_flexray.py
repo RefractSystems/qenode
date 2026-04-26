@@ -131,9 +131,7 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         f"zenoh-flexray.topic={topic}",
     ]
 
-    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
-
-    # Subscribe to FlexRay TX topic
+    # Subscribe to FlexRay TX topic BEFORE launching QEMU to ensure deterministic matching
     tx_topic = f"{topic}/0/tx"
     queue: asyncio.Queue[zenoh.Sample] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -143,8 +141,10 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
 
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(tx_topic, on_msg))
 
-    # Wait for discovery (crucial for parallel runs)
+    # Wait for the router to see our subscriber (very fast local operation)
     await wait_for_zenoh_discovery(zenoh_session, tx_topic)
+
+    await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
     from tests.conftest import VirtualTimeAuthority
 

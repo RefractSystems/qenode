@@ -42,8 +42,11 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
             routers = list(session.info.routers_zid())
             if len(routers) >= 1:
                 logger.info(f"Zenoh: mesh established (routers={len(routers)})")
-                # Even if routers are seen, we add a tiny grace period for pub/sub matching
-                await asyncio.sleep(0.1)
+
+                # Give Zenoh's discovery protocol time to exchange routing tables
+                # and establish pub/sub matching across the mesh.
+                grace_period = 3.0 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 0.5
+                await asyncio.sleep(grace_period)
                 return
         except Exception:
             pass
@@ -285,6 +288,7 @@ async def zenoh_coordinator(zenoh_router):
 
     # First check if CARGO_TARGET_DIR is set (used by CI)
     import os
+
     if "CARGO_TARGET_DIR" in os.environ:
         coord_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/zenoh_coordinator"
     else:
@@ -468,7 +472,7 @@ async def qemu_launcher():
     # Cleanup
     for inst in instances:
         try:
-            await inst["bridge"].close()
+            await asyncio.wait_for(inst["bridge"].close(), timeout=5.0)
         except Exception as e:
             logger.warning(f"Error closing bridge: {e}")
 

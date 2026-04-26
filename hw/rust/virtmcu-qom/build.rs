@@ -57,7 +57,7 @@ fn main() {
     let mut builder = cc::Build::new();
     builder.define("_GNU_SOURCE", None);
 
-    if std::env::var("VIRTMUC_UNIT_TEST").is_ok() {
+    if std::env::var("VIRTMCU_UNIT_TEST").is_ok() {
         builder.define("UNIT_TEST", None);
     }
 

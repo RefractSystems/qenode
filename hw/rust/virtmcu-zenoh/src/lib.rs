@@ -101,6 +101,8 @@ impl Drop for SafeSubscriber {
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
+    const ZENOH_CONN_TIMEOUT: Duration = Duration::from_secs(10);
+
     let mut config = Config::default();
     let mut has_router = false;
 
@@ -127,35 +129,67 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
     // If a router was provided, verify we can actually reach it.
     if has_router {
-        let mut connected = false;
-        let max_attempts = 100; // 10 seconds total
-        for i in 0..max_attempts {
-            let info = session.info();
-            let routers: Vec<_> = info.routers_zid().wait().collect();
-            let peers: Vec<_> = info.peers_zid().wait().collect();
+        let pair = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let pair_c = Arc::clone(&pair);
 
-            if !routers.is_empty() || !peers.is_empty() {
-                virtmcu_qom::vlog!(
-                    "[virtmcu-zenoh] Connected after {} attempts ({} ms). Routers={:?}, Peers={:?}\n",
-                    i,
-                    i * 100,
-                    routers,
-                    peers
-                );
-                connected = true;
-                break;
-            }
-            let d = Duration::from_millis(100);
-            std::thread::sleep(d); // SLEEP_EXCEPTION: one-shot Zenoh router connection retry at device init; not on vCPU path.
+        // Zenoh 1.0+: Liveliness events notify on topology changes (members joining).
+        // We use a callback to signal the condvar as soon as a discovery event occurs.
+        let _watcher = session
+            .liveliness()
+            .declare_subscriber("**")
+            .callback(move |_| {
+                let (lock, cvar) = &*pair_c;
+                if let Ok(mut connected) = lock.lock() {
+                    *connected = true;
+                    cvar.notify_all();
+                }
+            })
+            .wait()
+            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+
+        let (lock, cvar) = &*pair;
+        let mut connected_guard = lock
+            .lock()
+            .map_err(|_| zenoh::Error::from("Zenoh connection mutex poisoned".to_string()))?;
+
+        // Deterministic state-check helper.
+        let check_connected = |s: &Session| -> bool {
+            let info = s.info();
+            // Check if we already have any routers or peers in our view.
+            info.routers_zid().wait().count() > 0 || info.peers_zid().wait().count() > 0
+        };
+
+        if check_connected(&session) {
+            *connected_guard = true;
         }
 
-        if !connected {
+        // Wait for discovery event or safety timeout.
+        // We wake up IMMEDIATELY when Zenoh signals a liveliness change, avoiding assumption-based delays.
+        while !*connected_guard {
+            let (new_guard, timeout_res) =
+                cvar.wait_timeout(connected_guard, ZENOH_CONN_TIMEOUT).map_err(|_| {
+                    zenoh::Error::from("Zenoh connection condvar wait failed".to_string())
+                })?;
+            connected_guard = new_guard;
+            if timeout_res.timed_out() {
+                break;
+            }
+            // Re-verify actual Zenoh state.
+            if check_connected(&session) {
+                *connected_guard = true;
+            }
+        }
+
+        if !*connected_guard {
             virtmcu_qom::vlog!(
-                "[virtmcu-zenoh] FATAL: Failed to connect to explicit router after 10 seconds.\n"
+                "[virtmcu-zenoh] FATAL: Failed to connect to explicit router after {}s.\n",
+                ZENOH_CONN_TIMEOUT.as_secs()
             );
             let _ = session.close().wait();
             return Err(zenoh::Error::from("Failed to connect to explicit router".to_string()));
         }
+
+        virtmcu_qom::vlog!("[virtmcu-zenoh] Connected to Zenoh topology.\n");
     }
 
     Ok(session)

@@ -33,6 +33,7 @@ import struct
 from dataclasses import dataclass
 """
 
+
 def generate_vproto(rust_src: str) -> str:
     lines = rust_src.splitlines()
 
@@ -80,9 +81,7 @@ def generate_vproto(rust_src: str) -> str:
                     continue
                 # Match fixed-size byte arrays: `pub _padding: [u8; N],`
                 # Expand [u8; N] into N separate padding bytes so struct sizes match.
-                array_match = re.match(
-                    r"^pub\s+([a-zA-Z0-9_]+)\s*:\s*\[u8;\s*(\d+)\]\s*,?$", line
-                )
+                array_match = re.match(r"^pub\s+([a-zA-Z0-9_]+)\s*:\s*\[u8;\s*(\d+)\]\s*,?$", line)
                 if array_match:
                     fname = array_match.group(1)
                     count = int(array_match.group(2))
@@ -94,9 +93,13 @@ def generate_vproto(rust_src: str) -> str:
 
     for name, val in constants:
         if name in [
-            "VIRTMCU_PROTO_MAGIC", "VIRTMCU_PROTO_VERSION",
-            "MMIO_REQ_READ", "MMIO_REQ_WRITE",
-            "SYSC_MSG_RESP", "SYSC_MSG_IRQ_SET", "SYSC_MSG_IRQ_CLEAR"
+            "VIRTMCU_PROTO_MAGIC",
+            "VIRTMCU_PROTO_VERSION",
+            "MMIO_REQ_READ",
+            "MMIO_REQ_WRITE",
+            "SYSC_MSG_RESP",
+            "SYSC_MSG_IRQ_SET",
+            "SYSC_MSG_IRQ_CLEAR",
         ]:
             if val.startswith("0x"):
                 output.append(f"{name} = {int(val, 16)}")
@@ -114,7 +117,7 @@ def generate_vproto(rust_src: str) -> str:
         fmt_name = f"FMT_{camel_to_snake(sname).upper()}"
         size_name = f"SIZE_{camel_to_snake(sname).upper()}"
 
-        output.append(f"{fmt_name} = \"{fmt}\"")
+        output.append(f'{fmt_name} = "{fmt}"')
         output.append(f"{size_name} = struct.calcsize({fmt_name})")
         output.append("")
         output.append("")
@@ -128,29 +131,26 @@ def generate_vproto(rust_src: str) -> str:
 
         output.append("")
         output.append("    @classmethod")
-        output.append(f"    def unpack(cls, data: bytes) -> \"{sname}\":")
+        output.append(f'    def unpack(cls, data: bytes) -> "{sname}":')
         output.append(f"        if len(data) != {size_name}:")
-        output.append(f"            raise ValueError(f\"Expected {{{size_name}}} bytes for {sname}, got {{len(data)}}\")")
+        output.append(f'            raise ValueError(f"Expected {{{size_name}}} bytes for {sname}, got {{len(data)}}")')
         output.append(f"        unpacked = struct.unpack({fmt_name}, data)")
         output.append("        return cls(*unpacked)")
         output.append("")
         output.append("    def pack(self) -> bytes:")
         field_list = ", ".join(f"self.{fname}" for fname, _ in fields)
-        pack_line = f"        return struct.pack({fmt_name}, {field_list})"
-        if len(pack_line) > 119:
-            output.append("        return struct.pack(")
-            output.append(f"            {fmt_name}, {field_list}")
-            output.append("        )")
-        else:
-            output.append(pack_line)
+        pack_line = f"        return struct.pack({fmt_name}, {field_list})  # fmt: skip"
+        output.append(pack_line)
         output.append("")
         output.append("")
 
     return "\n".join(output).strip() + "\n"
 
+
 def camel_to_snake(name):
-    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -169,11 +169,12 @@ def main():
             print("ERROR: tools/vproto.py is out of sync with hw/rust/virtmcu-api/src/lib.rs")
             print("Run 'python3 scripts/gen_vproto.py' to update it.")
             import difflib
+
             diff = difflib.unified_diff(
                 current.splitlines(keepends=True),
                 generated.splitlines(keepends=True),
-                fromfile='tools/vproto.py',
-                tofile='generated'
+                fromfile="tools/vproto.py",
+                tofile="generated",
             )
             sys.stdout.writelines(diff)
             sys.exit(1)
@@ -182,6 +183,7 @@ def main():
     else:
         py_file.write_text(generated, encoding="utf-8")
         print(f"Generated {py_file}")
+
 
 if __name__ == "__main__":
     main()

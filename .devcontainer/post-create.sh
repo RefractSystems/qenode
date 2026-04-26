@@ -60,6 +60,10 @@ if [ -z "$(git config --global user.email)" ]; then
     fi
 fi
 
+echo "==> Fixing Docker volume permissions..."
+# Docker creates volumes as root by default. Fix permissions for Cargo caches.
+sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
+
 echo "==> Synchronizing Python Environment..."
 uv sync
 

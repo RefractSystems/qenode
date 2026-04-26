@@ -665,7 +665,8 @@ ci-smoke:
 	        bash scripts/ci-phase.sh $(PHASE)
 
 # Run integration tests compiled with ASan/UBSan inside devenv-base
-ci-asan:	@echo "════════════════════════════════════════════════════"
+ci-asan:
+	@echo "════════════════════════════════════════════════════"
 	@echo "  CI ASan — Docker: devenv-base"
 	@echo "════════════════════════════════════════════════════"
 	@bash scripts/docker-build.sh devenv-base
