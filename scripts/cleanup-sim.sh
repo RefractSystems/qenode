@@ -12,7 +12,7 @@
 # other cloned workspaces.
 # ==============================================================================
 
-set -u
+set -euo pipefail
 
 QUIET=${1:-""}
 FILTER=""
@@ -62,7 +62,7 @@ get_workspace_pids() {
     local pids=""
     
     # Iterate through all PIDs matching the process name for the current user
-    for pid in $(pgrep -u "$(id -u)" -f "$proc_name" 2>/dev/null); do
+    for pid in $(pgrep -u "$(id -u)" -f "$proc_name" 2>/dev/null || true); do
         local cmdline=""
         local cwd=""
         

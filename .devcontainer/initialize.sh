@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs locally on the host machine before the devcontainer is built/started.
 
-set -e
+set -euo pipefail
 
 # 1. Ensure host directories and files exist for bind mounts
 mkdir -p ~/.claude ~/.gemini ~/.config/gh

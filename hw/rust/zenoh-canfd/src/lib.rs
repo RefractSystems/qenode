@@ -10,7 +10,7 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use virtmcu_api::can_generated::virtmcu::can::{CanFdFrame, CanFdFrameArgs};
 use virtmcu_qom::declare_device_type;
 use virtmcu_qom::error::Error;
@@ -19,6 +19,7 @@ use virtmcu_qom::net::{
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
 use virtmcu_qom::qom::{type_register_static, Object, ObjectClass, Property, TypeInfo};
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_zenoh::{open_session, SafeSubscriber};
 use zenoh::Session;
@@ -64,8 +65,8 @@ pub struct State {
     tx_sender: Sender<Vec<u8>>,
     rx_sender: Sender<OrderedCanFrame>,
     rx_receiver: Receiver<OrderedCanFrame>,
-    local_heap: Mutex<BinaryHeap<OrderedCanFrame>>,
-    backlog: Mutex<VecDeque<QemuCanFrame>>,
+    local_heap: BqlGuarded<BinaryHeap<OrderedCanFrame>>,
+    backlog: BqlGuarded<VecDeque<QemuCanFrame>>,
     earliest_vtime: Arc<AtomicU64>,
     rx_timer: Option<Arc<QomTimer>>,
     client_ptr: *mut CanBusClientState,
@@ -77,7 +78,7 @@ unsafe extern "C" fn zenoh_can_receive(client: *mut CanBusClientState) -> bool {
     if state.is_null() {
         return true;
     }
-    let backlog = (*state).backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let backlog = (*state).backlog.get();
     backlog.is_empty()
 }
 
@@ -126,7 +127,7 @@ static mut ZENOH_CAN_CLIENT_INFO: CanBusClientInfo = CanBusClientInfo {
 };
 
 fn drain_can_backlog(state: &State) -> bool {
-    let mut backlog = state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut backlog = state.backlog.get_mut();
     while let Some(frame) = backlog.front() {
         if unsafe {
             match (*(*state.client_ptr).info).can_receive {
@@ -156,7 +157,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
         return;
     }
 
-    let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut heap = state.local_heap.get_mut();
 
     while let Ok(packet) = state.rx_receiver.try_recv() {
         heap.push(packet);
@@ -171,8 +172,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
                 }
             } {
                 // Buffer to backlog
-                let mut backlog =
-                    state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut backlog = state.backlog.get_mut();
                 let p = heap.pop().unwrap_or_else(|| std::process::abort());
                 backlog.push_back(p.frame);
                 break;
@@ -237,8 +237,8 @@ unsafe extern "C" fn zenoh_can_host_connect(ch: *mut CanHostState, _errp: *mut *
         tx_sender: tx_rx,
         rx_sender: tx,
         rx_receiver: rx,
-        local_heap: Mutex::new(BinaryHeap::new()),
-        backlog: Mutex::new(VecDeque::new()),
+        local_heap: BqlGuarded::new(BinaryHeap::new()),
+        backlog: BqlGuarded::new(VecDeque::new()),
         earliest_vtime: std::sync::Arc::clone(&earliest_vtime),
         rx_timer: None,
         client_ptr: &raw mut (*zch).parent_obj.bus_client,

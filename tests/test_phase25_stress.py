@@ -75,9 +75,6 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         # The s32k144-lpuart device is instantiated by the DTB, no need for -device
     ]
 
-    print(f"Starting QEMU with topic {lin_topic}...")
-    await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
-
     # 2. Connect to Zenoh
     session = zenoh_session
 
@@ -101,6 +98,9 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
     rx_topic = f"{lin_topic}/0/rx"
     sub = await asyncio.to_thread(lambda: session.declare_subscriber(tx_topic, on_bus_msg))
     pub = await asyncio.to_thread(lambda: session.declare_publisher(rx_topic))
+
+    print(f"Starting QEMU with topic {lin_topic}...")
+    await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
     from conftest import TimeAuthority
 

@@ -75,9 +75,6 @@ async def test_lin_lpuart(zenoh_router, qemu_launcher, zenoh_session):
         f"s32k144-lpuart,node=0,router={router_endpoint},topic={lin_topic}",
     ]
 
-    print(f"Starting QEMU with topic {lin_topic}...")
-    await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
-
     # 2. Connect to Zenoh
     session = zenoh_session
 
@@ -105,6 +102,9 @@ async def test_lin_lpuart(zenoh_router, qemu_launcher, zenoh_session):
 
     sub = await asyncio.to_thread(lambda: session.declare_subscriber(tx_topic, on_msg))
     pub = await asyncio.to_thread(lambda: session.declare_publisher(rx_topic))
+
+    print(f"Starting QEMU with topic {lin_topic}...")
+    await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
     try:
         # Initial clock sync

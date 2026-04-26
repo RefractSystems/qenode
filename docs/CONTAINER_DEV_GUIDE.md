@@ -258,7 +258,7 @@ All dependency versions live in one place: the `BUILD_DEPS` file at the repo roo
 # 1. Edit BUILD_DEPS
 vim BUILD_DEPS
 
-# 2. Propagate to Dockerfile, pyproject.toml, requirements.txt, ci.yml, Cargo.toml
+# 2. Propagate to Dockerfile, pyproject.toml, requirements.txt, ci-pr.yml, ci-main.yml, Cargo.toml
 make sync-versions
 
 # 3. Verify everything is consistent (also runs in CI lint tier)
@@ -273,7 +273,7 @@ make docker-dev
 | File | Keys synced |
 |---|---|
 | `docker/Dockerfile` | All ARG defaults |
-| `.github/workflows/ci.yml` | `PYTHON_VERSION` env block |
+| `.github/workflows/ci-pr.yml`, `ci-main.yml` | `PYTHON_VERSION` env block |
 | `pyproject.toml` | `eclipse-zenoh`, `flatbuffers` |
 | `requirements.txt` | `eclipse-zenoh`, `flatbuffers` |
 | `tools/zenoh_coordinator/Cargo.toml` | `zenoh` crate version |

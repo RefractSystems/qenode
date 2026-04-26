@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "==> Configuring Git..."
 git config --global credential.https://github.com.helper ''
@@ -21,13 +21,21 @@ fi
 # Fix stale Docker credsStore/credHelpers injected by VS Code if it exists
 if [ -f ~/.docker/config.json ]; then
     echo "    Cleaning up Docker config.json to prevent credential helper errors..."
-    # Remove credsStore and credHelpers which often point to host-only binaries
-    sed -i '/"credsStore":/d' ~/.docker/config.json
-    sed -i '/"credHelpers":/d' ~/.docker/config.json
-    # Clean up empty lines or dangling commas that might break JSON (basic cleanup)
-    sed -i 's/,,/,/g' ~/.docker/config.json
-    sed -i 's/{,/{/g' ~/.docker/config.json
-    sed -i 's/,}/}/g' ~/.docker/config.json
+    # Use jq if available for robust JSON manipulation
+    if command -v jq >/dev/null 2>&1; then
+        TMP_DOCKER_CONFIG=$(mktemp)
+        jq 'del(.credsStore, .credHelpers)' ~/.docker/config.json > "$TMP_DOCKER_CONFIG" && mv "$TMP_DOCKER_CONFIG" ~/.docker/config.json || rm -f "$TMP_DOCKER_CONFIG"
+    else
+        # Fallback to sed if jq is missing (less robust)
+        sed -i '/"credsStore":/d' ~/.docker/config.json
+        sed -i '/"credHelpers":/d' ~/.docker/config.json
+        # Clean up empty lines or dangling commas
+        sed -i 's/,,/,/g' ~/.docker/config.json
+        sed -i 's/{,/{/g' ~/.docker/config.json
+        sed -i 's/,}/}/g' ~/.docker/config.json
+        # Handle trailing commas across newlines (basic attempt)
+        sed -i ':a;N;$!ba;s/,\s*}/\n}/g' ~/.docker/config.json
+    fi
 fi
 
 # Set Git identity if missing globally
@@ -52,23 +60,30 @@ if [ -z "$(git config --global user.email)" ]; then
     fi
 fi
 
+echo "==> Fixing Docker volume permissions..."
+# Docker creates volumes as root by default. Fix permissions for Cargo caches.
+sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
+
 echo "==> Synchronizing Python Environment..."
 uv sync
-echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> ~/.zshrc
-echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> ~/.zshrc
 
 echo "==> Configuring shell environment..."
-echo "alias gemini='gemini --yolo'" >> ~/.zshrc
-echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.zshrc
-echo "export PAGER=less" >> ~/.zshrc
-echo "alias gemini='gemini --yolo'" >> ~/.bashrc
-echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc
-echo "export PAGER=less" >> ~/.bashrc
+for RC_FILE in ~/.zshrc ~/.bashrc; do
+    if [ -f "$RC_FILE" ]; then
+        grep -q "VIRTUAL_ENV/bin/activate" "$RC_FILE" || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> "$RC_FILE"
+        grep -q "source /workspace/.env" "$RC_FILE" || echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> "$RC_FILE"
+        grep -q "alias gemini=" "$RC_FILE" || echo "alias gemini='gemini --yolo'" >> "$RC_FILE"
+        grep -q "export PATH.*.local/bin" "$RC_FILE" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC_FILE"
+        grep -q "export PAGER=less" "$RC_FILE" || echo 'export PAGER=less' >> "$RC_FILE"
+    fi
+done
 
 echo "==> Installing Git Hooks..."
 make install-hooks
 
 echo "==> Initializing Workspace Dependencies..."
+# Ensure /workspace is a safe directory (idempotent)
+git config --global --replace-all safe.directory /workspace
 # This is fast if QEMU is pre-installed in the container.
 # In transition periods, an old container image may carry a stale QEMU version.
 # We allow setup to proceed with a warning so downstream init steps (git hooks,

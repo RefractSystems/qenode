@@ -214,12 +214,11 @@ unsafe extern "C" fn test_rust_realize(dev: *mut c_void, _errp: *mut *mut c_void
     virtmcu_qom::qdev::sysbus_init_mmio(dev as *mut _, &raw mut s.mr);
 }
 
-static mut TEST_PROPERTIES: [virtmcu_qom::qom::Property; 2] =
+static TEST_PROPERTIES: [virtmcu_qom::qom::Property; 2] =
     [virtmcu_qom::define_prop_macaddr!(c"macaddr".as_ptr(), TestRustDevice, mac), unsafe {
         core::mem::zeroed()
     }];
 
-#[allow(static_mut_refs)]
 unsafe extern "C" fn test_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     (*dc).realize = Some(test_rust_realize);

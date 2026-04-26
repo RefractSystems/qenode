@@ -227,6 +227,9 @@ def main():
     cli_args = []
     filtered_devices = []
     for dev in platform.devices:
+        if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
+            print("Missing mandatory property: socket-path", file=sys.stderr)
+            sys.exit(1)
         if dev.type_name == "zenoh-chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")

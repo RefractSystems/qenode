@@ -5,14 +5,14 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::io::Cursor;
 use std::ptr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
+use virtmcu_qom::sync::BqlGuarded;
 
 use virtmcu_qom::chardev::{Chardev, ChardevClass};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::timer::{
     virtmcu_timer_del, virtmcu_timer_free, virtmcu_timer_mod, virtmcu_timer_new_ns, QemuTimer,
-    QEMU_CLOCK_VIRTUAL,
 };
 use virtmcu_qom::{declare_device_type, vlog};
 use virtmcu_zenoh::SafeSubscriber;
@@ -80,11 +80,14 @@ pub struct ZenohChardevState {
     pub subscriber: Option<SafeSubscriber>,
     pub chr: *mut Chardev,
     pub rx_timer: *mut QemuTimer,
+    pub kick_timer: *mut QemuTimer,
     pub timer_ptr: Arc<AtomicUsize>,
     pub rx_receiver: Receiver<OrderedPacket>,
-    pub local_heap: Mutex<BinaryHeap<OrderedPacket>>,
-    pub backlog: Mutex<VecDeque<u8>>,
+    // All state accessed exclusively under BQL; see BqlGuarded docs.
+    pub local_heap: BqlGuarded<BinaryHeap<OrderedPacket>>,
+    pub backlog: BqlGuarded<VecDeque<u8>>,
     pub earliest_vtime: Arc<AtomicU64>,
+    pub running: Arc<AtomicBool>,
     pub tx_sender: Option<Sender<Vec<u8>>>,
     pub tx_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -148,15 +151,15 @@ unsafe extern "C" fn zenoh_chr_parse(
     qemu_chr_parse_common(opts, zenoh_opts as *mut c_void);
 }
 
-fn drain_backlog(state: &ZenohChardevState) {
-    let mut backlog = state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+fn drain_backlog(state: &ZenohChardevState) -> bool {
+    let mut backlog = state.backlog.get_mut();
     if backlog.is_empty() {
-        return;
+        return false;
     }
 
     let can_write = unsafe { qemu_chr_be_can_write(state.chr) };
     if can_write <= 0 {
-        return;
+        return true;
     }
 
     let to_write = std::cmp::min(can_write as usize, backlog.len());
@@ -164,6 +167,11 @@ fn drain_backlog(state: &ZenohChardevState) {
     unsafe {
         qemu_chr_be_write(state.chr, data.as_ptr(), data.len());
     }
+    !backlog.is_empty()
+}
+
+extern "C" fn zenoh_chr_kick_timer_cb(opaque: *mut c_void) {
+    zenoh_chr_rx_timer_cb(opaque);
 }
 
 extern "C" fn zenoh_chr_rx_timer_cb(opaque: *mut c_void) {
@@ -172,10 +180,12 @@ extern "C" fn zenoh_chr_rx_timer_cb(opaque: *mut c_void) {
         unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) }
             as u64;
 
-    // First, try to drain any existing backlog
-    drain_backlog(state);
+    // First, try to drain any existing backlog. If it's still stalled, don't push more.
+    if drain_backlog(state) {
+        return;
+    }
 
-    let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut heap = state.local_heap.get_mut();
 
     // Drain receiver into heap
     while let Ok(packet) = state.rx_receiver.try_recv() {
@@ -183,11 +193,13 @@ extern "C" fn zenoh_chr_rx_timer_cb(opaque: *mut c_void) {
     }
 
     // Process packets <= now
+    let mut next_vtime = u64::MAX;
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
             let can_write = unsafe { qemu_chr_be_can_write(state.chr) };
             if can_write <= 0 {
-                // Cannot write anything, stop processing and wait for next timer or accept_input
+                // Cannot write anything, try again in 1ms (virtual time)
+                next_vtime = now + 1_000_000;
                 break;
             }
 
@@ -199,21 +211,17 @@ extern "C" fn zenoh_chr_rx_timer_cb(opaque: *mut c_void) {
 
                 if to_write < p.data.len() {
                     // Buffer leftovers
-                    let mut backlog =
-                        state.backlog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut backlog = state.backlog.get_mut();
                     backlog.extend(&p.data[to_write..]);
-                    break; // Guest FIFO full
+                    // Try again in 1ms (virtual time)
+                    next_vtime = now + 1_000_000;
+                    break;
                 }
             }
         } else {
+            next_vtime = packet.vtime;
             break;
         }
-    }
-
-    // Rearm if heap isn't empty OR if we still have a backlog
-    let mut next_vtime = u64::MAX;
-    if let Some(packet) = heap.peek() {
-        next_vtime = packet.vtime;
     }
 
     if next_vtime == u64::MAX {
@@ -232,9 +240,11 @@ unsafe extern "C" fn zenoh_chr_accept_input(chr: *mut Chardev) {
         return;
     }
     let state = &*s.rust_state;
-    drain_backlog(state);
+    let stalled = drain_backlog(state);
 
-    virtmcu_timer_mod(state.rx_timer, 0); // 0 means ASAP (now)
+    if !stalled {
+        virtmcu_timer_mod(state.rx_timer, 0); // 0 means ASAP (now)
+    }
 }
 
 fn send_packet(session: &Session, topic: &str, data: &[u8]) {
@@ -255,12 +265,16 @@ fn start_tx_thread(
     session: zenoh::Session,
     tx_topic: String,
     rx_out: Receiver<Vec<u8>>,
+    running: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buffer = Vec::with_capacity(8192);
         let mut last_send = std::time::Instant::now();
 
         loop {
+            if !running.load(AtomicOrdering::Acquire) && rx_out.is_empty() {
+                break;
+            }
             match rx_out.recv_timeout(std::time::Duration::from_millis(10)) {
                 Ok(data) => {
                     buffer.extend_from_slice(&data);
@@ -286,16 +300,16 @@ fn start_tx_thread(
 fn create_subscriber(
     session: &zenoh::Session,
     rx_topic: &str,
-    timer_ptr: Arc<AtomicUsize>,
+    kick_timer_ptr: Arc<AtomicUsize>,
     tx: Sender<OrderedPacket>,
     earliest_vtime: Arc<AtomicU64>,
 ) -> Result<SafeSubscriber, zenoh::Error> {
     SafeSubscriber::new(session, rx_topic, move |sample| {
-        let tp = timer_ptr.load(AtomicOrdering::Acquire);
+        let tp = kick_timer_ptr.load(AtomicOrdering::Acquire);
         if tp == 0 {
             return;
         }
-        let rx_timer = tp as *mut QemuTimer;
+        let kick_timer = tp as *mut QemuTimer;
 
         let data = sample.payload().to_bytes();
         if data.len() < 12 {
@@ -326,7 +340,8 @@ fn create_subscriber(
             if adjusted_vtime < current_earliest {
                 earliest_vtime.store(adjusted_vtime, AtomicOrdering::Release);
                 unsafe {
-                    virtmcu_timer_mod(rx_timer, adjusted_vtime as i64);
+                    // Kick the main loop via a real-time timer (safe without BQL)
+                    virtmcu_timer_mod(kick_timer, 0);
                 }
             }
         } else {
@@ -368,7 +383,9 @@ unsafe extern "C" fn zenoh_chr_open(
 
             let (tx_out, rx_out): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = bounded(65536);
 
-            let tx_thread = start_tx_thread(session.clone(), tx_topic.clone(), rx_out);
+            let running = Arc::new(AtomicBool::new(true));
+            let tx_thread =
+                start_tx_thread(session.clone(), tx_topic.clone(), rx_out, Arc::clone(&running));
 
             let mut state = Box::new(ZenohChardevState {
                 session: session.clone(),
@@ -377,30 +394,42 @@ unsafe extern "C" fn zenoh_chr_open(
                 subscriber: None,
                 chr,
                 rx_timer: ptr::null_mut(),
+                kick_timer: ptr::null_mut(),
                 timer_ptr: Arc::clone(&timer_ptr),
                 rx_receiver: rx,
-                local_heap: Mutex::new(BinaryHeap::new()),
-                backlog: Mutex::new(VecDeque::new()),
+                local_heap: BqlGuarded::new(BinaryHeap::new()),
+                backlog: BqlGuarded::new(VecDeque::new()),
                 earliest_vtime: Arc::clone(&earliest_vtime),
+                running,
                 tx_sender: Some(tx_out),
                 tx_thread: Some(tx_thread),
             });
 
-            let sub = create_subscriber(&session, &rx_topic, timer_ptr, tx, earliest_vtime);
+            let sub =
+                create_subscriber(&session, &rx_topic, Arc::clone(&timer_ptr), tx, earliest_vtime);
 
             match sub {
                 Ok(subscriber) => {
                     state.subscriber = Some(subscriber);
                     let state_ptr = &raw mut *state;
-                    let rx_timer = unsafe {
+
+                    state.rx_timer = unsafe {
                         virtmcu_timer_new_ns(
-                            QEMU_CLOCK_VIRTUAL,
+                            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
                             zenoh_chr_rx_timer_cb,
                             state_ptr as *mut c_void,
                         )
                     };
-                    state.rx_timer = rx_timer;
-                    state.timer_ptr.store(rx_timer as usize, AtomicOrdering::Release);
+
+                    state.kick_timer = unsafe {
+                        virtmcu_timer_new_ns(
+                            virtmcu_qom::timer::QEMU_CLOCK_REALTIME,
+                            zenoh_chr_kick_timer_cb,
+                            state_ptr as *mut c_void,
+                        )
+                    };
+
+                    state.timer_ptr.store(state.kick_timer as usize, AtomicOrdering::Release);
 
                     s.rust_state = Box::into_raw(state);
                     vlog!("[zenoh-chardev] zenoh_chr_open success\n");
@@ -429,24 +458,31 @@ unsafe extern "C" fn zenoh_chr_finalize(obj: *mut Object) {
     vlog!("[zenoh-chardev] zenoh_chr_finalize called\n");
     let s = &mut *(obj as *mut ChardevZenoh);
     if !s.rust_state.is_null() {
-        let mut state = Box::from_raw(s.rust_state);
-        state.timer_ptr.store(0, AtomicOrdering::Release);
+        unsafe {
+            let mut state = Box::from_raw(s.rust_state);
+            state.running.store(false, AtomicOrdering::Release);
+            state.timer_ptr.store(0, AtomicOrdering::Release);
 
-        // Dropping the SafeSubscriber automatically undeclares and waits
-        state.subscriber.take();
+            // Dropping the SafeSubscriber automatically undeclares and waits
+            state.subscriber.take();
 
-        if !state.rx_timer.is_null() {
-            virtmcu_timer_del(state.rx_timer);
-            virtmcu_timer_free(state.rx_timer);
+            if !state.rx_timer.is_null() {
+                virtmcu_timer_del(state.rx_timer);
+                virtmcu_timer_free(state.rx_timer);
+            }
+            if !state.kick_timer.is_null() {
+                virtmcu_timer_del(state.kick_timer);
+                virtmcu_timer_free(state.kick_timer);
+            }
+
+            // Drop the sender to signal the background thread to exit cleanly
+            drop(state.tx_sender.take());
+            if let Some(handle) = state.tx_thread.take() {
+                let _ = handle.join();
+            }
+
+            s.rust_state = ptr::null_mut();
         }
-
-        // Drop the sender to signal the background thread to exit cleanly
-        drop(state.tx_sender.take());
-        if let Some(handle) = state.tx_thread.take() {
-            let _ = handle.join();
-        }
-
-        s.rust_state = ptr::null_mut();
     }
 }
 

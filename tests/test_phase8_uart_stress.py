@@ -14,6 +14,7 @@ These tests cover two layers:
 
 from __future__ import annotations
 
+import os
 import struct
 import subprocess
 from pathlib import Path
@@ -170,7 +171,19 @@ def test_clock_ready_unpacking():
 # Integration smoke-test — runs the full shell script
 # ---------------------------------------------------------------------------
 
-_QEMU_BIN = "/workspace/third_party/qemu/build-virtmcu/install/bin/qemu-system-arm"
+def _get_qemu_bin():
+    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    paths = [
+        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
+        f"/workspace/third_party/qemu/{build_dir}/qemu-system-arm",
+        "/opt/virtmcu/bin/qemu-system-arm",
+    ]
+    for p in paths:
+        if Path(p).exists():
+            return p
+    return paths[0]  # Fallback to first
+
+_QEMU_BIN = _get_qemu_bin()
 _STRESS_SCRIPT = Path(__file__).parent / ".." / "test" / "phase8" / "uart_stress_test.sh"
 
 

@@ -1,6 +1,8 @@
+#include <atomic>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
+#include <poll.h>
 #include <queue>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -19,13 +21,30 @@ using namespace sc_core;
 using namespace sc_dt;
 using namespace std;
 
+// --- OS-to-SystemC Wakeup Infrastructure ---
+struct KernelWakeup {
+  std::mutex mtx;
+  std::condition_variable cv;
+  std::atomic<bool> woken{false};
+
+  void wake() {
+    woken = true;
+    cv.notify_one();
+  }
+};
+
+static KernelWakeup g_kernel;
+
 class AsyncEvent : public sc_core::sc_prim_channel {
   sc_core::sc_event e;
 
 public:
   AsyncEvent()
       : sc_core::sc_prim_channel(sc_core::sc_gen_unique_name("safe_event")) {}
-  void notify_from_os_thread() { async_request_update(); }
+  void notify_from_os_thread() {
+    async_request_update();
+    g_kernel.wake();
+  }
   void update() override { e.notify(sc_core::SC_ZERO_TIME); }
   const sc_core::sc_event &default_event() const { return e; }
 };
@@ -34,16 +53,20 @@ class StopEvent : public sc_core::sc_prim_channel {
 public:
   StopEvent()
       : sc_core::sc_prim_channel(sc_core::sc_gen_unique_name("stop_event")) {}
-  void notify_from_os_thread() { async_request_update(); }
+  void notify_from_os_thread() {
+    async_request_update();
+    g_kernel.wake();
+  }
   void update() override { sc_core::sc_stop(); }
 };
+
 SC_MODULE(QemuAdapter) {
   tlm_utils::simple_initiator_socket<QemuAdapter> socket;
   std::string socket_path;
 
   std::thread io_thread;
   int client_fd;
-  bool running;
+  std::atomic<bool> running;
 
   std::mutex mtx;
   std::mutex socket_mtx;
@@ -72,17 +95,31 @@ SC_MODULE(QemuAdapter) {
     send_msg(msg);
   }
 
-  bool send_msg(const sysc_msg &msg) {
-    std::lock_guard<std::mutex> lock(socket_mtx);
-    if (client_fd >= 0) {
-      return writen_sync(client_fd, &msg, sizeof(msg));
+  bool poll_wait(int fd, short events, int timeout_ms = 100) {
+    while (running) {
+      struct pollfd pfd = {fd, events, 0};
+      int r = ::poll(&pfd, 1, timeout_ms);
+      if (r > 0)
+        return true;
+      if (r < 0 && errno != EINTR)
+        return false;
     }
     return false;
   }
 
-  bool writen_sync(int fd, const void *buf, size_t len) {
+  bool send_msg(const sysc_msg &msg) {
+    std::lock_guard<std::mutex> lock(socket_mtx);
+    if (client_fd >= 0) {
+      return write_sync(client_fd, &msg, sizeof(msg));
+    }
+    return false;
+  }
+
+  bool write_sync(int fd, const void *buf, size_t len) {
     const char *p = static_cast<const char *>(buf);
-    while (len > 0) {
+    while (len > 0 && running) {
+      if (!poll_wait(fd, POLLOUT))
+        return false;
       ssize_t n = ::write(fd, p, len);
       if (n <= 0) {
         if (n < 0 && errno == EINTR)
@@ -92,12 +129,14 @@ SC_MODULE(QemuAdapter) {
       p += n;
       len -= n;
     }
-    return true;
+    return len == 0;
   }
 
-  bool readn(int fd, void *buf, size_t len) {
+  bool read_sync(int fd, void *buf, size_t len) {
     char *p = static_cast<char *>(buf);
-    while (len > 0) {
+    while (len > 0 && running) {
+      if (!poll_wait(fd, POLLIN))
+        return false;
       ssize_t n = ::read(fd, p, len);
       if (n <= 0) {
         if (n < 0 && errno == EINTR)
@@ -107,7 +146,7 @@ SC_MODULE(QemuAdapter) {
       p += n;
       len -= n;
     }
-    return true;
+    return len == 0;
   }
 
   void end_of_elaboration() override {
@@ -117,8 +156,12 @@ SC_MODULE(QemuAdapter) {
   ~QemuAdapter() {
     running = false;
     safe_event.notify_from_os_thread();
+    stop_event.notify_from_os_thread();
+    cv.notify_all(); // Wake up socket thread if it's waiting
     if (client_fd >= 0) {
       shutdown(client_fd, SHUT_RDWR);
+      close(client_fd);
+      client_fd = -1;
     }
     if (io_thread.joinable())
       io_thread.join();
@@ -171,7 +214,7 @@ SC_MODULE(QemuAdapter) {
         else
           trans.set_command(tlm::TLM_WRITE_COMMAND);
 
-        if (req.size > 4 || req.size == 0) {
+        if (req.size > 8 || req.size == 0) {
           cerr << "[QemuAdapter] ERROR: Unsupported size " << (int)req.size
                << endl;
           trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
@@ -221,6 +264,9 @@ SC_MODULE(QemuAdapter) {
     cout << "[SystemC] Listening on " << socket_path << "..." << endl;
 
     while (running) {
+      if (!poll_wait(server_fd, POLLIN, 200))
+        continue;
+
       client_fd = accept(server_fd, NULL, NULL);
       if (client_fd < 0) {
         if (running)
@@ -229,7 +275,7 @@ SC_MODULE(QemuAdapter) {
       }
 
       virtmcu_handshake hs_in;
-      if (!readn(client_fd, &hs_in, sizeof(hs_in))) {
+      if (!read_sync(client_fd, &hs_in, sizeof(hs_in))) {
         close(client_fd);
         client_fd = -1;
         continue;
@@ -241,19 +287,37 @@ SC_MODULE(QemuAdapter) {
       }
 
       virtmcu_handshake hs_out = {VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION};
-      writen_sync(client_fd, &hs_out, sizeof(hs_out));
+      if (!write_sync(client_fd, &hs_out, sizeof(hs_out))) {
+        close(client_fd);
+        client_fd = -1;
+        continue;
+      }
       cout << "[SystemC] QEMU connected." << endl;
 
       while (running) {
         mmio_req req;
-        if (!readn(client_fd, &req, sizeof(req)))
+        if (!read_sync(client_fd, &req, sizeof(req)))
           break;
+
+        // Input validation gate
+        if (req.size > 8 || req.size == 0) {
+          cerr << "[QemuAdapter] VALIDATION ERROR: Invalid req size "
+               << (int)req.size << endl;
+          break;
+        }
+        if (req.type != MMIO_REQ_READ && req.type != MMIO_REQ_WRITE) {
+          cerr << "[QemuAdapter] VALIDATION ERROR: Invalid req type "
+               << (int)req.type << endl;
+          break;
+        }
+
         {
           std::lock_guard<std::mutex> lock(mtx);
           req_queue.push(req);
           has_resp = false;
         }
         safe_event.notify_from_os_thread();
+
         sysc_msg resp;
         {
           std::unique_lock<std::mutex> lock(mtx);
@@ -366,7 +430,7 @@ public:
   std::mutex tx_mtx;
   std::condition_variable tx_cv;
   std::thread tx_thread;
-  bool running;
+  std::atomic<bool> running;
 
   SC_HAS_PROCESS(SharedMedium);
   SharedMedium(sc_module_name name, std::string node)
@@ -620,6 +684,8 @@ void CanController::b_transport(tlm::tlm_generic_payload &trans,
 }
 
 int sc_main(int argc, char *argv[]) {
+  sc_report_handler::set_actions("/OSCI/SystemC/kernel/sc_start/no_activity",
+                                 SC_DO_NOTHING);
   sc_set_time_resolution(1, SC_NS);
   if (argc < 2) {
     cerr << "Usage: " << argv[0] << " <socket_path> [node_id]" << endl;
@@ -646,12 +712,24 @@ int sc_main(int argc, char *argv[]) {
     can->adapter = &adapter;
   }
 
+  // Elaborate and initialize the SystemC kernel
+  // This triggers end_of_elaboration() which spawns our io_thread
+  sc_start(SC_ZERO_TIME);
+
   while (adapter.running) {
-    sc_start();
-    if (adapter.running) {
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
+    if (sc_pending_activity()) {
+      sc_start();
+    } else {
+      std::unique_lock<std::mutex> lock(g_kernel.mtx);
+      g_kernel.cv.wait(
+          lock, [&]() { return g_kernel.woken.load() || !adapter.running; });
+      g_kernel.woken = false;
+      if (adapter.running) {
+        sc_start(SC_ZERO_TIME);
+      }
     }
   }
+
   if (regfile)
     delete regfile;
   if (bus)

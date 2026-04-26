@@ -64,6 +64,29 @@ pub struct VirtmcuHandshake {
     pub version: u32,
 }
 
+impl VirtmcuHandshake {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 8] {
+        let mut b = [0u8; 8];
+        b[0..4].copy_from_slice(&self.magic.to_le_bytes());
+        b[4..8].copy_from_slice(&self.version.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 8]) -> Self {
+        Self {
+            magic: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            version: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
+}
+
 /// A constant
 pub const MMIO_REQ_READ: u8 = 0;
 /// A constant
@@ -89,6 +112,39 @@ pub struct MmioReq {
     pub data: u64,
 }
 
+impl MmioReq {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[0] = self.type_;
+        b[1] = self.size;
+        b[2..4].copy_from_slice(&self.reserved1.to_le_bytes());
+        b[4..8].copy_from_slice(&self.reserved2.to_le_bytes());
+        b[8..16].copy_from_slice(&self.vtime_ns.to_le_bytes());
+        b[16..24].copy_from_slice(&self.addr.to_le_bytes());
+        b[24..32].copy_from_slice(&self.data.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 32]) -> Self {
+        Self {
+            type_: b[0],
+            size: b[1],
+            reserved1: u16::from_le_bytes([b[2], b[3]]),
+            reserved2: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            vtime_ns: u64::from_le_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+            addr: u64::from_le_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]),
+            data: u64::from_le_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
+}
+
 /// A constant
 pub const SYSC_MSG_RESP: u32 = 0;
 /// A constant
@@ -108,6 +164,31 @@ pub struct SyscMsg {
     pub data: u64,
 }
 
+impl SyscMsg {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[0..4].copy_from_slice(&self.type_.to_le_bytes());
+        b[4..8].copy_from_slice(&self.irq_num.to_le_bytes());
+        b[8..16].copy_from_slice(&self.data.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 16]) -> Self {
+        Self {
+            type_: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            irq_num: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            data: u64::from_le_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
+}
+
 /// Clock advancement request sent from TimeAuthority to the node.
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
@@ -116,6 +197,31 @@ pub struct ClockAdvanceReq {
     pub delta_ns: u64,
     /// Absolute simulation time in nanoseconds.
     pub mujoco_time_ns: u64,
+}
+
+impl ClockAdvanceReq {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[0..8].copy_from_slice(&self.delta_ns.to_le_bytes());
+        b[8..16].copy_from_slice(&self.mujoco_time_ns.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 16]) -> Self {
+        Self {
+            delta_ns: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            mujoco_time_ns: u64::from_le_bytes([
+                b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15],
+            ]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
 }
 
 /// Clock ready response sent from node to TimeAuthority.
@@ -130,6 +236,31 @@ pub struct ClockReadyResp {
     pub error_code: u32,
 }
 
+impl ClockReadyResp {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[0..8].copy_from_slice(&self.current_vtime_ns.to_le_bytes());
+        b[8..12].copy_from_slice(&self.n_frames.to_le_bytes());
+        b[12..16].copy_from_slice(&self.error_code.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 16]) -> Self {
+        Self {
+            current_vtime_ns: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            n_frames: u32::from_le_bytes([b[8], b[9], b[10], b[11]]),
+            error_code: u32::from_le_bytes([b[12], b[13], b[14], b[15]]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
+}
+
 /// Header prepended to every Zenoh message for deterministic delivery.
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone, Default)]
@@ -138,6 +269,29 @@ pub struct ZenohFrameHeader {
     pub delivery_vtime_ns: u64,
     /// Size of the payload following this header.
     pub size: u32,
+}
+
+impl ZenohFrameHeader {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 12] {
+        let mut b = [0u8; 12];
+        b[0..8].copy_from_slice(&self.delivery_vtime_ns.to_le_bytes());
+        b[8..12].copy_from_slice(&self.size.to_le_bytes());
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 12]) -> Self {
+        Self {
+            delivery_vtime_ns: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            size: u32::from_le_bytes([b[8], b[9], b[10], b[11]]),
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
 }
 
 #[repr(C, packed)]
@@ -154,6 +308,35 @@ pub struct ZenohSPIHeader {
     pub cs_index: u8,
     /// A struct field
     pub _padding: [u8; 2],
+}
+
+impl ZenohSPIHeader {
+    /// Pack into a byte array (little-endian).
+    pub fn pack(&self) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[0..8].copy_from_slice(&self.delivery_vtime_ns.to_le_bytes());
+        b[8..12].copy_from_slice(&self.size.to_le_bytes());
+        b[12] = if self.cs { 1 } else { 0 };
+        b[13] = self.cs_index;
+        // 14 and 15 are padding
+        b
+    }
+
+    /// Unpack from a byte array (little-endian).
+    pub fn unpack(b: &[u8; 16]) -> Self {
+        Self {
+            delivery_vtime_ns: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            size: u32::from_le_bytes([b[8], b[9], b[10], b[11]]),
+            cs: b[12] != 0,
+            cs_index: b[13],
+            _padding: [b[14], b[15]],
+        }
+    }
+
+    /// Unpack from a byte slice. Returns None if the slice is not the correct length.
+    pub fn unpack_slice(b: &[u8]) -> Option<Self> {
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self::unpack)
+    }
 }
 
 // Both Rust (zenoh-chardev) and Python (uart_stress_test.py) assume this is
@@ -267,10 +450,10 @@ const _: () = assert!(
 
 /// Encode a `ZenohFrameHeader` + payload into a byte vector (little-endian).
 pub fn encode_frame(delivery_vtime_ns: u64, payload: &[u8]) -> Vec<u8> {
-    let header = ZenohFrameHeader { delivery_vtime_ns, size: payload.len() as u32 };
     let mut out = Vec::with_capacity(ZENOH_FRAME_HEADER_SIZE + payload.len());
-    // SAFETY: ZenohFrameHeader is repr(C, packed); reading its bytes is defined.
-    let header_bytes: [u8; 12] = unsafe { core::mem::transmute(header) };
+    let mut header_bytes = [0u8; 12];
+    header_bytes[0..8].copy_from_slice(&delivery_vtime_ns.to_le_bytes());
+    header_bytes[8..12].copy_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&header_bytes);
     out.extend_from_slice(payload);
     out
@@ -280,11 +463,7 @@ pub fn encode_frame(delivery_vtime_ns: u64, payload: &[u8]) -> Vec<u8> {
 ///
 /// Returns `None` if `data` is shorter than `ZENOH_FRAME_HEADER_SIZE`.
 pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
-    if data.len() < ZENOH_FRAME_HEADER_SIZE {
-        return None;
-    }
-    let header: ZenohFrameHeader =
-        unsafe { core::ptr::read_unaligned(data.as_ptr() as *const ZenohFrameHeader) };
+    let header = ZenohFrameHeader::unpack_slice(data)?;
     Some((header, &data[ZENOH_FRAME_HEADER_SIZE..]))
 }
 
@@ -561,8 +740,8 @@ mod tests {
     #[test]
     fn test_clock_advance_req_round_trip() {
         let req = ClockAdvanceReq { delta_ns: 10_000_000, mujoco_time_ns: 42 };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(req) };
-        let req2: ClockAdvanceReq = unsafe { core::mem::transmute(bytes) };
+        let bytes = req.pack();
+        let req2 = ClockAdvanceReq::unpack(&bytes);
         assert_eq!({ req.delta_ns }, { req2.delta_ns });
         assert_eq!({ req.mujoco_time_ns }, { req2.mujoco_time_ns });
     }
@@ -570,14 +749,14 @@ mod tests {
     #[test]
     fn test_clock_advance_req_le_encoding() {
         let req = ClockAdvanceReq { delta_ns: 0x0102030405060708, mujoco_time_ns: 0 };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(req) };
+        let bytes = req.pack();
         assert_eq!(&bytes[0..8], &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]);
     }
 
     #[test]
     fn test_clock_advance_req_zero() {
         let req = ClockAdvanceReq { delta_ns: 0, mujoco_time_ns: 0 };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(req) };
+        let bytes = req.pack();
         assert_eq!(bytes, [0u8; 16]);
     }
 
@@ -590,8 +769,8 @@ mod tests {
             n_frames: 50,
             error_code: CLOCK_ERROR_OK,
         };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(resp) };
-        let resp2: ClockReadyResp = unsafe { core::mem::transmute(bytes) };
+        let bytes = resp.pack();
+        let resp2 = ClockReadyResp::unpack(&bytes);
         assert_eq!({ resp2.current_vtime_ns }, 10_000_000u64);
         assert_eq!({ resp2.n_frames }, 50u32);
         assert_eq!({ resp2.error_code }, CLOCK_ERROR_OK);
@@ -601,8 +780,8 @@ mod tests {
     fn test_clock_ready_resp_stall() {
         let resp =
             ClockReadyResp { current_vtime_ns: 0, n_frames: 0, error_code: CLOCK_ERROR_STALL };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(resp) };
-        let resp2: ClockReadyResp = unsafe { core::mem::transmute(bytes) };
+        let bytes = resp.pack();
+        let resp2 = ClockReadyResp::unpack(&bytes);
         assert_eq!({ resp2.error_code }, CLOCK_ERROR_STALL);
     }
 
@@ -628,6 +807,31 @@ mod tests {
     }
 
     #[test]
+    fn test_mmio_req_cross_language_pack() {
+        let req = MmioReq {
+            type_: 1,
+            size: 4,
+            reserved1: 0x1234,
+            reserved2: 0x56789ABC,
+            vtime_ns: 0x1122334455667788,
+            addr: 0x99AABBCCDDEEFF00,
+            data: 0x1020304050607080,
+        };
+        let bytes = req.pack();
+
+        let expected: [u8; 32] = [
+            0x01, 0x04, 0x34, 0x12, 0xBC, 0x9A, 0x78, 0x56, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33,
+            0x22, 0x11, 0x00, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99, 0x80, 0x70, 0x60, 0x50,
+            0x40, 0x30, 0x20, 0x10,
+        ];
+
+        assert_eq!(
+            bytes, expected,
+            "Rust pack() output must exactly match Python struct.pack('<BBHIQQQ')"
+        );
+    }
+
+    #[test]
     fn test_mmio_req_round_trip() {
         let req = MmioReq {
             type_: MMIO_REQ_WRITE,
@@ -638,8 +842,8 @@ mod tests {
             addr: 0x1000_0000,
             data: 0xDEAD_BEEF,
         };
-        let bytes: [u8; 32] = unsafe { core::mem::transmute(req) };
-        let req2: MmioReq = unsafe { core::mem::transmute(bytes) };
+        let bytes = req.pack();
+        let req2 = MmioReq::unpack(&bytes);
         assert_eq!({ req2.type_ }, MMIO_REQ_WRITE);
         assert_eq!({ req2.size }, 4u8);
         assert_eq!({ req2.vtime_ns }, 999_999u64);
@@ -659,8 +863,8 @@ mod tests {
     #[test]
     fn test_sysc_msg_irq_round_trip() {
         let msg = SyscMsg { type_: SYSC_MSG_IRQ_SET, irq_num: 7, data: 1 };
-        let bytes: [u8; 16] = unsafe { core::mem::transmute(msg) };
-        let msg2: SyscMsg = unsafe { core::mem::transmute(bytes) };
+        let bytes = msg.pack();
+        let msg2 = SyscMsg::unpack(&bytes);
         assert_eq!({ msg2.type_ }, SYSC_MSG_IRQ_SET);
         assert_eq!({ msg2.irq_num }, 7u32);
         assert_eq!({ msg2.data }, 1u64);
@@ -685,8 +889,8 @@ mod tests {
     #[test]
     fn test_handshake_round_trip() {
         let hs = VirtmcuHandshake { magic: VIRTMCU_PROTO_MAGIC, version: VIRTMCU_PROTO_VERSION };
-        let bytes: [u8; 8] = unsafe { core::mem::transmute(hs) };
-        let hs2: VirtmcuHandshake = unsafe { core::mem::transmute(bytes) };
+        let bytes = hs.pack();
+        let hs2 = VirtmcuHandshake::unpack(&bytes);
         assert_eq!({ hs2.magic }, VIRTMCU_PROTO_MAGIC);
         assert_eq!({ hs2.version }, VIRTMCU_PROTO_VERSION);
     }

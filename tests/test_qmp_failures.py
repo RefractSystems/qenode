@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from qemu.qmp.protocol import ConnectError, StateError
+from qemu.qmp.qmp_client import ExecInterruptedError
 
 
 @pytest.mark.asyncio
@@ -37,7 +38,7 @@ async def test_qemu_crash_handling(qemu_launcher):
         await asyncio.sleep(0.5)
 
         # Next command should fail
-        with pytest.raises((ConnectError, StateError, EOFError, asyncio.IncompleteReadError)):
+        with pytest.raises((ConnectError, StateError, EOFError, asyncio.IncompleteReadError, ExecInterruptedError)):
             await bridge.qmp.execute("query-status")
 
     finally:

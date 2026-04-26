@@ -3,7 +3,8 @@
 # scripts/ci-phase.sh - Unified CI Phase Runner
 #
 # This script is the SINGLE SOURCE OF TRUTH for running CI phases.
-# It is used by .github/workflows/ci.yml and the local Makefile.
+# It is used by .github/workflows/ci-pr.yml, ci-main.yml, and the local Makefile.
+# Phase names and ordering are defined in .github/smoke-phases.json.
 # ==============================================================================
 set -euo pipefail
 
@@ -21,7 +22,7 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
     # Ensure system dependencies are present for specific phases
     case "$PHASE" in
         5|9|11_3|all)
-            if ! dpkg -l | grep -q libsystemc-dev; then
+            if ! dpkg -l | grep libsystemc-dev >/dev/null; then
                 echo "==> Installing SystemC dependencies..."
                 apt-get update -qq && apt-get install -y -qq --no-install-recommends libsystemc-dev >/dev/null
             fi

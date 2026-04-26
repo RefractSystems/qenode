@@ -24,7 +24,7 @@ fn test_firmware_studio_handshake() {
     let handshake = VirtmcuHandshake { magic: VIRTMCU_PROTO_MAGIC, version: VIRTMCU_PROTO_VERSION };
 
     // Convert to bytes as if sending over a socket
-    let bytes: [u8; 8] = unsafe { std::mem::transmute(handshake) };
+    let bytes = handshake.pack();
 
     // Magic check: 'V', 'M', 'C', 'U' is 0x564D4355
     // Little endian byte order verification

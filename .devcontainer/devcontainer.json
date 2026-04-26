@@ -11,7 +11,9 @@
   },
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
-    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json.host,type=bind,readonly"
+    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json.host,type=bind,readonly",
+    "source=virtmcu-cargo-target,target=/workspace/target,type=volume",
+    "source=virtmcu-cargo-registry,target=/usr/local/cargo/registry,type=volume"
   ],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",

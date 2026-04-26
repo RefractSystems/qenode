@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 ARCH=$(uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
 BUILDER_IMG="ghcr.io/refractsystems/virtmcu/builder:dev-${ARCH}"

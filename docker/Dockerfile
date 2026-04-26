@@ -235,29 +235,44 @@ RUN mkdir -p qemu/hw/virtmcu \
     && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build \
     && grep -q "subdir('virtmcu')" qemu/hw/meson.build || echo "subdir('virtmcu')" >> qemu/hw/meson.build
 
-# Opt-in ccache support for local builds
 ARG USE_CCACHE=false
 ENV CCACHE_DIR=/var/cache/ccache \
     CCACHE_MAXSIZE=2G \
     CCACHE_SLOPPINESS=time_macros,include_file_mtime
 
 WORKDIR /build/qemu/build-virtmcu
-RUN if [ "${USE_CCACHE}" = "true" ]; then CCACHE_FLAG="--enable-ccache"; else CCACHE_FLAG=""; fi && \
-    ../configure \
-    --prefix=/opt/virtmcu \
-    --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
-    ${CCACHE_FLAG} \
-    --enable-rust \
-    --enable-modules \
-    --enable-fdt \
-    --enable-plugins \
-    --enable-debug \
-    --enable-gcov \
-    --disable-werror \
-    --disable-docs \
-    --disable-dbus-display \
-    --extra-ldflags="-fuse-ld=lld -rdynamic"
-RUN --mount=type=cache,target=/var/cache/ccache make -j"$(nproc)"
+RUN if [ "${USE_CCACHE}" = "true" ]; then \
+        ../configure \
+        --prefix=/opt/virtmcu \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+        --cc="ccache gcc" --cxx="ccache g++" \
+        --enable-rust \
+        --enable-modules \
+        --enable-fdt \
+        --enable-plugins \
+        --enable-debug \
+        --enable-gcov \
+        --disable-werror \
+        --disable-docs \
+        --disable-dbus-display \
+        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
+    else \
+        ../configure \
+        --prefix=/opt/virtmcu \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+        --enable-rust \
+        --enable-modules \
+        --enable-fdt \
+        --enable-plugins \
+        --enable-debug \
+        --enable-gcov \
+        --disable-werror \
+        --disable-docs \
+        --disable-dbus-display \
+        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
+    fi
+RUN --mount=type=cache,target=/var/cache/ccache \
+    make -j"$(nproc)"
 
 # ── Stage 6: builder ──────────────────────────────────────────────────────────
 FROM qemu-builder AS builder
@@ -267,7 +282,6 @@ COPY hw/ /build/virtmcu/hw/
 COPY tools/ /build/virtmcu/tools/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build || echo "subdir('virtmcu')" >> /build/qemu/hw/meson.build \
-    && touch /build/qemu/meson.build \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
     && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
 
@@ -276,32 +290,15 @@ ARG VIRTMCU_USE_ASAN=0
 ARG TARGETARCH
 # hadolint ignore=SC2016
 RUN --mount=type=cache,target=/var/cache/ccache \
-    --mount=type=cache,id=cargo-target-qom-${TARGETARCH},target=/build/qemu/build-virtmcu/hw/virtmcu/target-v2 \
+    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/qemu/build-virtmcu/hw/virtmcu/target \
     --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
-    && make install
+    && make install \
+    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p zenoh_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/zenoh_coordinator /opt/virtmcu/bin/ \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/mujoco_bridge /opt/virtmcu/bin/ \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/resd_replay /opt/virtmcu/bin/
 
-# Build the test tools (zenoh_coordinator, mujoco_bridge, resd_replay) here in
-# the builder stage where ALL workspace members are already present under
-# /build/virtmcu/{hw,tools}.  No member-list pruning or sed hacks required.
-#
-# Cache strategy:
-#   cargo-registry-${TARGETARCH}      — shared with the QOM build above; crate
-#                                       tarballs are already warm.
-#   cargo-target-tools-${TARGETARCH}  — separate from the QOM target so the two
-#                                       Cargo invocations never share artifact dirs.
-#
-# Artifacts are copied to /opt/virtmcu/bin/ within the same RUN so they land in
-# the image layer, not just inside the ephemeral cache mount.
-# Note: 'cyber_bridge' is the package name; its [[bin]] targets are mujoco_bridge
-# and resd_replay (no binary named cyber_bridge is produced).
-WORKDIR /build/virtmcu
-RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cargo-target-tools-${TARGETARCH},target=/build/virtmcu/target \
-    cargo build --release -p zenoh_coordinator -p cyber_bridge \
-    && cp target/release/zenoh_coordinator /opt/virtmcu/bin/ \
-    && cp target/release/mujoco_bridge /opt/virtmcu/bin/ \
-    && cp target/release/resd_replay /opt/virtmcu/bin/
 
 # hadolint ignore=SC2016
 RUN mkdir -p /opt/virtmcu/lib/qemu/plugins \
@@ -374,6 +371,18 @@ LABEL org.opencontainers.image.description="virtmcu development environment — 
 
 # PRE-CACHE QEMU: Copy pre-built QEMU from builder stage at the end to maximize cache
 COPY --from=builder /opt/virtmcu /opt/virtmcu
+
+# Pre-populate the Cargo registry so the first `make build` in a new devcontainer
+# only needs to compile, not download hundreds of crates over the network.
+COPY Cargo.toml Cargo.lock /tmp/virtmcu/
+COPY hw/ /tmp/virtmcu/hw/
+COPY tools/ /tmp/virtmcu/tools/
+RUN cargo fetch --manifest-path /tmp/virtmcu/Cargo.toml \
+    && rm -rf /tmp/virtmcu \
+    && chown -R vscode:vscode /usr/local/cargo/registry \
+    && mkdir -p /workspace/target \
+    && chown -R vscode:vscode /workspace/target
+
 ENV PATH="/opt/virtmcu/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
 ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"

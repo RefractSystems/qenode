@@ -21,13 +21,16 @@ Usage:
     max_jitter_us: max random delay in microseconds (default: 200)
 """
 
+import logging
 import random
-import socket
 import sys
 import threading
 import time
 
 import zenoh
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: [%(name)s] %(message)s")
+logger = logging.getLogger("jitter_proxy")
 
 # Maximum random jitter added per forwarded reply (microseconds).
 DEFAULT_MAX_JITTER_US = 200
@@ -35,26 +38,10 @@ DEFAULT_MAX_JITTER_US = 200
 # Topic pattern for clock-advance queries.
 CLOCK_ADVANCE_PREFIX = "sim/clock/advance/"
 
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 class JitterProxy:
     """
     Subscribes to clock-advance queryables on the upstream router and
     re-publishes replies with injected jitter on the proxy router.
-
-    Implementation note: Zenoh queryables cannot be trivially proxied because
-    the query originator (QEMU) connects to the proxy router, while the actual
-    responder (bench.py TimeAuthority) connects to the upstream router.
-
-    Instead this proxy acts as a *forwarding queryable*: it registers a
-    queryable on the proxy router, forwards incoming queries to the upstream
-    router via session.get(), injects a sleep, then replies to the original
-    query.
     """
 
     def __init__(self, upstream_url: str, proxy_port: int, max_jitter_us: int):
@@ -64,68 +51,83 @@ class JitterProxy:
         self._rng = random.Random()
         self._lock = threading.Lock()
         self.injected_delays_us: list[float] = []
+        self._stop_event = threading.Event()
+        self._in_flight = 0
 
-    def _make_session(self, listen_endpoint: str | None = None) -> zenoh.Session:
-        config = zenoh.Config()
-        config.insert_json5("connect/endpoints", f'["{self.upstream_url}"]')
-        config.insert_json5("scouting/multicast/enabled", "false")
-        if listen_endpoint:
-            config.insert_json5("listen/endpoints", f'["{listen_endpoint}"]')
-        return zenoh.open(config)
+    def stop(self) -> None:
+        """Gracefully signal the proxy to stop."""
+        self._stop_event.set()
 
     def run(self) -> None:
         proxy_listen = f"tcp/127.0.0.1:{self.proxy_port}"
-        print(f"[jitter_proxy] upstream={self.upstream_url}  listen={proxy_listen}  max_jitter={self.max_jitter_us} µs")
+        logger.info(f"upstream={self.upstream_url} listen={proxy_listen} max_jitter={self.max_jitter_us} µs")
 
-        # Upstream session: used to forward queries to the actual TimeAuthority.
-        upstream = self._make_session()
+        # Back-end session: acts as the router for QEMU.
+        backend_cfg = zenoh.Config()
+        backend_cfg.insert_json5("listen/endpoints", f'["{proxy_listen}"]')
+        backend_cfg.insert_json5("scouting/multicast/enabled", "false")
+        backend_session = zenoh.open(backend_cfg)
 
-        # Proxy session: QEMU connects here; we intercept its queries.
-        proxy_cfg = zenoh.Config()
-        proxy_cfg.insert_json5("listen/endpoints", f'["{proxy_listen}"]')
-        proxy_cfg.insert_json5("connect/endpoints", f'["{self.upstream_url}"]')
-        proxy_cfg.insert_json5("scouting/multicast/enabled", "false")
-        proxy_session = zenoh.open(proxy_cfg)
+        # Front-end session: connects to upstream router.
+        frontend_cfg = zenoh.Config()
+        frontend_cfg.insert_json5("connect/endpoints", f'["{self.upstream_url}"]')
+        frontend_cfg.insert_json5("scouting/multicast/enabled", "false")
+        frontend_session = zenoh.open(frontend_cfg)
 
         def handle_query(query):
-            topic = str(query.key_expr)
-            payload = query.payload.to_bytes() if query.payload else b""
-
-            # Inject jitter before forwarding.
-            jitter_us = self._rng.uniform(0, self.max_jitter_us)
-            time.sleep(jitter_us / 1_000_000)
-
             with self._lock:
-                self.injected_delays_us.append(jitter_us)
+                self._in_flight += 1
+                # 50 concurrent queries is far beyond what our benchmarking harness
+                # produces (1 per node). Exceeding this indicates a routing storm.
+                if self._in_flight > 50:
+                    self._in_flight -= 1
+                    logger.error("Infinite recursion or query storm detected! Failing fast.")
+                    query.reply_err(b"proxy: routing loop detected")
+                    return
 
-            # Forward to real TimeAuthority on upstream session.
-            replies = list(upstream.get(topic, payload=payload, timeout=30.0))
-            if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
-                query.reply(topic, replies[0].ok.payload.to_bytes())
-            else:
-                query.reply_err(b"proxy: no upstream reply")
+            try:
+                topic = str(query.key_expr)
+                payload = query.payload.to_bytes() if query.payload else b""
 
-        # Declare a queryable on all clock-advance topics.
-        queryable = proxy_session.declare_queryable(
+                # Forward to QEMU via the backend session.
+                replies = list(backend_session.get(topic, payload=payload, timeout=5.0))
+
+                if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
+                    # Inject jitter before replying back to the TimeAuthority.
+                    jitter_us = self._rng.uniform(0, self.max_jitter_us)
+                    time.sleep(jitter_us / 1_000_000)
+
+                    with self._lock:
+                        self.injected_delays_us.append(jitter_us)
+
+                    query.reply(topic, replies[0].ok.payload.to_bytes())
+                else:
+                    query.reply_err(b"proxy: no QEMU reply")
+            finally:
+                with self._lock:
+                    self._in_flight -= 1
+
+        # Declare a queryable on the frontend (upstream) session.
+        queryable = frontend_session.declare_queryable(
             f"{CLOCK_ADVANCE_PREFIX}*",
             handle_query,
         )
 
-        print("[jitter_proxy] ready — press Ctrl+C to stop")
+        logger.info("ready — waiting for queries")
         try:
-            while True:
-                time.sleep(1)
+            while not self._stop_event.is_set():
+                self._stop_event.wait(1.0)
         except KeyboardInterrupt:
             pass
         finally:
             queryable.undeclare()
-            proxy_session.close()
-            upstream.close()
-            print(
-                f"[jitter_proxy] injected {len(self.injected_delays_us)} delays, "
-                f"mean={sum(self.injected_delays_us) / max(1, len(self.injected_delays_us)):.1f} µs"
-            )
+            frontend_session.close()
+            backend_session.close()
 
+            # Prevent division by zero if no delays were injected
+            n_delays = len(self.injected_delays_us)
+            mean_delay = sum(self.injected_delays_us) / max(1, n_delays)
+            logger.info(f"shutdown complete. injected {n_delays} delays, mean={mean_delay:.1f} µs")
 
 def main() -> None:
     if len(sys.argv) < 3:
@@ -137,8 +139,10 @@ def main() -> None:
     max_jitter_us = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_MAX_JITTER_US
 
     proxy = JitterProxy(upstream_url, proxy_port, max_jitter_us)
-    proxy.run()
-
+    try:
+        proxy.run()
+    except KeyboardInterrupt:
+        proxy.stop()
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,411 @@
+name: CI (PR)
+
+# Validates every pull request and merge-queue entry targeting main.
+# Runs: lint, unit tests, QEMU build, smoke tests, coverage.
+# Does NOT publish any images — that is ci-main.yml's job.
+#
+# Architecture matrix: amd64 only. arm64 is reserved for main-branch builds
+# where the 40-min cross-compile cost is amortised over an actual release artifact.
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BUILDER_IMAGE: virtmcu-builder
+  PYTHON_VERSION: "3.13"
+  VIRTMCU_STALL_TIMEOUT_MS: "120000"
+  CI: "true"
+
+# ── Selective Execution ───────────────────────────────────────────────────────
+
+jobs:
+  changes:
+    name: Check for source changes
+    runs-on: ubuntu-latest
+    outputs:
+      expensive: ${{ steps.filter.outputs.expensive }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            expensive:
+              - '!(**/*.md)'
+              - '!(docs/**)'
+              - '!(.github/**)'
+              - '.github/workflows/ci-pr.yml'
+
+# ── Tier 1: Lint ──────────────────────────────────────────────────────────────
+
+  tier1-checks:
+    name: Tier 1 (Lint & Unit Tests)
+    needs: [changes]
+    if: needs.changes.outputs.expensive == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Set up Workspace Trust
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Build local devenv-base image
+        uses: docker/bake-action@v7
+        env:
+          ARCH: amd64
+          PUSH_CACHE: "false"
+        with:
+          targets: devenv-base
+          load: true
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo-ci-registry
+          key: cargo-registry-tier1-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-tier1-${{ runner.os }}-
+
+      - name: Fix workspace and Cargo registry permissions
+        run: |
+          sudo chown -R 1000:1000 .
+          mkdir -p "$HOME/.cargo-ci-registry"
+          sudo chown -R 1000:1000 "$HOME/.cargo-ci-registry"
+
+      - name: Run Static Analysis (Lint)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
+            -w /workspace \
+            -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e CARGO_TARGET_DIR=/tmp/ci-target \
+            ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
+            make lint
+
+      - name: Build Packaging Tools
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
+            -w /workspace \
+            -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e CARGO_TARGET_DIR=/tmp/ci-target \
+            ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
+            make build-tools
+
+      - name: Run Tier 1 Unit Tests
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cargo-ci-registry:/usr/local/cargo/registry" \
+            -w /workspace \
+            -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e CARGO_TARGET_DIR=/tmp/ci-target \
+            ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
+            make test-unit
+
+      - name: Restore workspace permissions
+        if: always()
+        run: |
+          sudo chown -R runner:docker .
+          sudo chown -R runner:docker "$HOME/.cargo-ci-registry" || true
+
+# ── Tier 2: Build QEMU ────────────────────────────────────────────────────────
+
+  generate-matrix:
+    name: Generate smoke test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build matrix from smoke-phases.json
+        id: gen
+        run: |
+          PHASES=$(cat .github/smoke-phases.json)
+          MATRIX=$(jq -nc \
+            --argjson phases "$PHASES" \
+            '{
+              arch: ["amd64"],
+              phase: [$phases[].phase],
+              include: ([{arch: "amd64", os: "ubuntu-latest"}] + $phases)
+            }')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  build-qemu:
+    name: Build QEMU — amd64
+    needs: [changes]
+    if: needs.changes.outputs.expensive == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - uses: actions/checkout@v6
+
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Compute QEMU cache tag
+        run: |
+          PATCHES_HASH=$(
+            { find patches/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null
+              sha256sum scripts/apply-qemu-patches.sh 2>/dev/null
+            } | sha256sum | cut -c1-12
+          )
+          echo "QEMU_CACHE_TAG=${QEMU_VERSION}-${PATCHES_HASH}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Check for pre-built qemu-base image
+        run: |
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/qemu-base:${{ env.QEMU_CACHE_TAG }}-amd64"
+          if docker manifest inspect "$TAG" >/dev/null 2>&1; then
+            echo "QEMU_BASE_CACHE=hit" >> "$GITHUB_ENV"
+            echo "qemu-base cache HIT — QEMU compile will be skipped ($TAG)"
+          else
+            echo "QEMU_BASE_CACHE=miss" >> "$GITHUB_ENV"
+            echo "qemu-base cache MISS — patches changed or first build; full QEMU compile required"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # qemu-base is intentionally excluded from PR builds — only ci-main.yml
+      # writes to the QEMU cache so experimental patch branches never warm the
+      # shared cache. The builder target reads qemu-base via its cache-from list.
+      - name: Build and push builder stage
+        uses: docker/bake-action@v7
+        env:
+          ARCH: amd64
+          IMAGE_TAG: sha-${{ github.sha }}
+          PUSH_CACHE: "true"
+          CI: "true"
+          QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
+        with:
+          targets: |
+            base
+            toolchain
+            builder
+          push: true
+          files: docker-bake.hcl
+
+      - name: Verify QEMU binary
+        run: |
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64 \
+            qemu-system-arm --version
+
+# ── Tier 4: Smoke Tests (amd64 only) ─────────────────────────────────────────
+
+  smoke-tests:
+    name: Smoke — ${{ matrix.name }} (${{ matrix.arch }})
+    needs: [changes, build-qemu, tier1-checks, generate-matrix]
+    if: needs.changes.outputs.expensive == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Pull builder image
+        run: |
+          for i in {1..5}; do
+            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
+              break
+            fi
+            sleep 15
+            if [ "$i" -eq 5 ]; then exit 1; fi
+          done
+          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
+
+      - name: Run ${{ matrix.name }}
+        run: |
+          mkdir -p coverage-data
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
+            -e GCOV_PREFIX=/workspace/coverage-data \
+            -e GCOV_PREFIX_STRIP=3 \
+            -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash scripts/ci-phase.sh ${{ matrix.phase }}
+
+      - name: Upload results and coverage
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: results-phase-${{ matrix.phase }}-amd64
+          path: |
+            test-results/
+            coverage-data/
+
+# ── Tier 5: Coverage Reports ──────────────────────────────────────────────────
+
+  peripheral-coverage:
+    name: Peripheral C Coverage
+    needs: [changes, smoke-tests]
+    if: needs.changes.outputs.expensive == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Pull builder image
+        run: |
+          for i in {1..5}; do
+            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
+              break
+            fi
+            sleep 15
+            if [ "$i" -eq 5 ]; then exit 1; fi
+          done
+          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: all-coverage
+          pattern: results-phase-*-amd64
+          merge-multiple: true
+
+      - name: Generate unified peripheral coverage
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash scripts/test-coverage-peripheral.sh
+
+      - name: Upload peripheral coverage results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: peripheral-c-coverage
+          path: test-results/
+
+  firmware-coverage:
+    name: Guest Firmware Coverage
+    needs: [changes, build-qemu, tier1-checks]
+    if: needs.changes.outputs.expensive == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Load BUILD_DEPS
+        run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name for GHCR
+        run: |
+          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Pull builder image
+        run: |
+          for i in {1..5}; do
+            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
+              break
+            fi
+            sleep 15
+            if [ "$i" -eq 5 ]; then exit 1; fi
+          done
+          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
+
+      - name: Run coverage analysis (Phase 1)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e VIRTMCU_STALL_TIMEOUT_MS \
+            ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
+            bash scripts/test-coverage-guest.sh

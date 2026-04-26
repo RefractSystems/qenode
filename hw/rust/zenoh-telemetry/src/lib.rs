@@ -19,7 +19,7 @@ use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use virtmcu_api::{telemetry_fb, TraceEvent};
 use virtmcu_qom::cpu::{virtmcu_cpu_halt_hook, CPUState};
 use virtmcu_qom::error::Error;
@@ -29,7 +29,7 @@ use virtmcu_qom::qom::{
     object_child_foreach_recursive, object_dynamic_cast, object_get_canonical_path,
     object_get_root, Object, ObjectClass, TypeInfo, TYPE_DEVICE,
 };
-use virtmcu_qom::sync::virtmcu_bql_locked;
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
@@ -56,7 +56,7 @@ pub struct ZenohTelemetryBackend {
     sender: Sender<Option<TraceEvent>>,
     node_id: u32,
     last_halted: Arc<[AtomicBool; 32]>,
-    irq_slots: Mutex<Vec<IrqSlot>>,
+    irq_slots: BqlGuarded<Vec<IrqSlot>>,
 }
 
 unsafe impl Send for ZenohTelemetryBackend {}
@@ -84,8 +84,7 @@ extern "C" fn telemetry_irq_cb(opaque: *mut c_void, n: c_int, level: c_int) {
         let backend = &*s.rust_state;
 
         let slot_info = {
-            let mut slots =
-                backend.irq_slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut slots = backend.irq_slots.get_mut();
             let mut found_slot = None;
             for slot in slots.iter() {
                 if slot.opaque == opaque {
@@ -112,7 +111,7 @@ unsafe extern "C" fn cache_irq_paths_cb(obj: *mut Object, _opaque: *mut c_void) 
     if !object_dynamic_cast(obj, TYPE_DEVICE).is_null() {
         let s = &*GLOBAL_TELEMETRY;
         let backend = &*s.rust_state;
-        let mut slots = backend.irq_slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slots = backend.irq_slots.get_mut();
         let len = slots.len();
         if len < 64 {
             slots.push(IrqSlot {
@@ -128,7 +127,7 @@ unsafe extern "C" fn cache_irq_paths_cb(obj: *mut Object, _opaque: *mut c_void) 
 unsafe extern "C" fn zenoh_telemetry_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut ZenohTelemetryQOM);
 
-    assert!(virtmcu_bql_locked());
+    assert!(virtmcu_qom::sync::Bql::is_held());
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
 
@@ -165,7 +164,7 @@ unsafe extern "C" fn zenoh_telemetry_instance_finalize(obj: *mut Object) {
         let backend = Box::from_raw(s.rust_state);
         let _ = backend.sender.send(None);
 
-        let slots = backend.irq_slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slots = backend.irq_slots.get_mut();
         for slot in slots.iter() {
             if !slot.path.is_null() {
                 libc::free(slot.path as *mut c_void);
@@ -239,7 +238,7 @@ fn zenoh_telemetry_init_internal(
         sender: tx,
         node_id,
         last_halted: Arc::new(Default::default()),
-        irq_slots: Mutex::new(Vec::with_capacity(64)),
+        irq_slots: BqlGuarded::new(Vec::with_capacity(64)),
     }))
 }
 

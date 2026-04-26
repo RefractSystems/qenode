@@ -1,0 +1,50 @@
+name: PR Cleanup
+
+# Deletes the ephemeral builder image pushed by ci-pr.yml when a PR closes.
+# This keeps GHCR storage tidy — the SHA-tagged images are only needed while
+# smoke tests are running against that specific commit.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  delete-pr-builder-image:
+    name: Delete builder:sha-${{ github.sha }}-amd64
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete PR builder image from GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          # Nested GHCR packages use URL-encoded slashes in the API path.
+          PACKAGE_NAME="${REPO#*/}/builder"
+          PACKAGE_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${PACKAGE_NAME}")
+          TAG="sha-${{ github.sha }}-amd64"
+
+          # Determine API namespace (org vs. personal account).
+          OWNER_TYPE=$(gh api "users/${OWNER}" --jq '.type' 2>/dev/null || echo "User")
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            API_BASE="orgs/${OWNER}"
+          else
+            API_BASE="users/${OWNER}"
+          fi
+
+          # Locate the version ID that carries this tag.
+          VERSION_ID=$(gh api \
+            "${API_BASE}/packages/container/${PACKAGE_ENCODED}/versions" \
+            --paginate \
+            --jq ".[] | select(.metadata.container.tags | index(\"${TAG}\")) | .id" \
+            2>/dev/null | head -1 || true)
+
+          if [ -n "$VERSION_ID" ]; then
+            gh api --method DELETE \
+              "${API_BASE}/packages/container/${PACKAGE_ENCODED}/versions/${VERSION_ID}"
+            echo "Deleted builder:${TAG} (version ${VERSION_ID})"
+          else
+            echo "builder:${TAG} not found in GHCR — already cleaned up or never pushed."
+          fi

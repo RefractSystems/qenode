@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import struct
 import subprocess
@@ -77,8 +78,9 @@ def main():
         ["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-Ttext=0x40000000", "/tmp/stress_irq.S", "-o", elf_path]
     )
 
+    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
     qemu_cmd = [
-        "/workspace/third_party/qemu/build-virtmcu/install/bin/qemu-system-arm",
+        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
         "-M",
         "arm-generic-fdt,hw-dtb=" + dtb_path,
         "-kernel",

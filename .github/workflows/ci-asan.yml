@@ -76,9 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party
-          key: asan-${{ runner.os }}-${{ hashFiles('scripts/setup-qemu.sh', 'scripts/apply-qemu-patches.sh', 'patches/**', 'BUILD_DEPS') }}
+          key: asan-qemu-${{ runner.os }}-${{ env.QEMU_VERSION }}-${{ hashFiles('scripts/setup-qemu.sh', 'scripts/apply-qemu-patches.sh', 'patches/**') }}
           restore-keys: |
-            asan-${{ runner.os }}-
+            asan-qemu-${{ runner.os }}-${{ env.QEMU_VERSION }}-
+            asan-qemu-${{ runner.os }}-
 
       - name: Build QEMU and run tests under ASan
         run: |
@@ -86,6 +87,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e USER=vscode \
+            -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e VIRTMCU_STALL_TIMEOUT_MS=${{ env.VIRTMCU_STALL_TIMEOUT_MS }} \
             ghcr.io/refractsystems/virtmcu/devenv-base:dev-amd64 \
             make test-asan

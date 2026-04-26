@@ -1,6 +1,8 @@
 use core::ffi::c_void;
 
 /// A constant
+pub const QEMU_CLOCK_REALTIME: i32 = 0;
+/// A constant
 pub const QEMU_CLOCK_VIRTUAL: i32 = 1;
 
 #[repr(C)]

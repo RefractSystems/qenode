@@ -101,8 +101,8 @@ To ensure tests are deterministic and do not interfere with each other:
 
 - **Avoid Redundant `make setup`**: Only run `make setup` for the initial environment setup or if QEMU dependencies change. It applies core patches that can trigger massive rebuilds.
 - **Use `make build` for Incremental Changes**: For standard changes to `hw/` peripherals, `make build` is sufficient and much faster.
-- **Targeted Ninja Builds**: For the fastest turnaround when working on a specific peripheral, run ninja directly on the module target:
-  `ninja -C third_party/qemu/build-virtmcu hw-virtmcu-<name>.so`
+- **Targeted Ninja Builds**: For the fastest turnaround when working on a specific peripheral, run ninja directly on the module target (ensure the build directory matches your `VIRTMCU_USE_ASAN` setting):
+  `ninja -C third_party/qemu/build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" ) hw-virtmcu-<name>.so`
 - **Pre-installed QEMU**: In many environments, QEMU is pre-installed at `/opt/virtmcu`. You only need to build if you are modifying the emulator or its peripheral plugins.
 
 ---
@@ -244,7 +244,7 @@ There are three escalating local gates; each is a strict superset of the previou
 | Gate | When to run | What it does |
 |---|---|---|
 | **Hooks** (`make lint && make test-unit`) | Every commit/push automatically | Runs directly in the devcontainer — no Docker spawn. Fast (~3-5 min). |
-| **`make ci-local`** | Before opening a PR | Builds `devenv-base` locally and runs the identical three `docker run` steps that `.github/workflows/ci.yml` executes: `lint → build-tools → test-unit`. |
+| **`make ci-local`** | Before opening a PR | Builds `devenv-base` locally and runs the identical three `docker run` steps that `.github/workflows/ci-main.yml` executes: `lint → build-tools → test-unit`. |
 | **`make ci-full`** | Before merging to main | `ci-local` + ASan + Miri + full `builder` Docker image + all smoke phases run sequentially. Authoritative "will GitHub be green?" answer. |
 
 **Why hooks run directly (not inside Docker):** The devcontainer IS `devenv-base`. Running `make lint` directly in the devcontainer is identical toolchain coverage without the CARGO_HOME conflict that corrupted Cargo's fingerprint cache. Reserve `make ci-local` for the containerised simulation.
@@ -300,8 +300,10 @@ Every peripheral that spawns background threads or blocks vCPU threads MUST impl
 ### 13. Unsafe Rust — Precise Rules
 - **Packed struct fields**: Never dereference a `*const T` where `T` is `#[repr(packed)]` directly. Always use `ptr::read_unaligned`. Packed structs read from byte buffers (`&[u8]`) must always go through `read_unaligned` to avoid UB on architectures that require alignment.
 - **`transmute` for serialization**: Prefer explicit byte-order field serialization (e.g., `byteorder` crate or manual `to_le_bytes()`/`from_le_bytes()`) over `mem::transmute` on structs. `transmute` silently breaks if struct layout has padding.
+- **`to_ne_bytes()` / `from_ne_bytes()` are BANNED for wire protocols**: `to_ne_bytes()` and `from_ne_bytes()` must NEVER be used when serializing values that cross a process or machine boundary (socket, Zenoh, shared memory). They silently corrupt data on big-endian hosts and create cross-platform incompatibility. Always use `to_le_bytes()` or `to_be_bytes()` with an explicit comment stating the expected wire byte order. `to_ne_bytes()` is permitted only for intra-process data structures that never leave the current process. **CI enforcement:** `grep -rn "to_ne_bytes\|from_ne_bytes" hw/rust/ --include="*.rs"` must find zero matches. Any exception requires a `// NE_BYTES_EXCEPTION: <reason>` comment.
 - **`unsafe impl Send/Sync`**: Every `unsafe impl Send` or `unsafe impl Sync` must have a comment immediately above it explaining the invariant that makes it safe (e.g., "Safe: raw pointer is only accessed while BQL is held").
 - **Minimize `unsafe` scope**: Keep `unsafe` blocks as small as possible — ideally one FFI call per block. Do not aggregate multiple unsafe operations in a single block.
+- **No raw pointer byte copies for deserialization**: Never use `ptr::copy_nonoverlapping` to copy bytes into a `&mut T` for the purpose of deserializing a wire value. This is equivalent to `mem::transmute` and has the same endianness and padding risks. Use `T::from_le_bytes()` / `T::from_be_bytes()` (for primitives) or the struct's `unpack()` method instead.
 
 ### 14. Test Quality Mandates
 - **Mock fidelity**: Test mocks in `sync.rs` (and elsewhere) must accurately simulate the invariant they replace. A mock that always returns "success" makes timeout and error paths invisible to the test suite — this provides false confidence. Mocks must support configurable return values and state.
@@ -316,6 +318,7 @@ To prevent historical regressions, agents and developers must strictly avoid the
 - **UART / Hardware FIFO Backpressure:** QEMU's UART models (like PL011) have fixed-size hardware FIFOs (e.g., 32 bytes). Shoving larger packets via Zenoh without checking capacity causes silent data drop. **Rule:** Peripherals must implement backpressure. Check `qemu_chr_be_can_write`, buffer leftovers in a backlog queue, and use the `chr_accept_input` hook to drain the backlog when the guest FIFO frees up.
 - **Testing Failure States:** Smoke tests verifying the "happy path" are insufficient. **Rule:** Implement "Hammer" (high frequency), "Flood" (high volume), and "Stall" (e.g., sending massive 10-billion-instruction quanta to trigger wall-clock timeouts) tests to explicitly verify error recovery and backpressure paths.
 - **Automated Patching Mandate:** Manual local edits to `third_party/qemu` cause "Works on my machine" bugs because CI clones a fresh QEMU tree. **Rule:** All modifications to untracked third-party code MUST be implemented via the automated injection scripts (`scripts/apply-qemu-patches.sh` or `apply_zenoh_hook.py`).
+- **No One-Shot Patch Scripts in Repo Root:** Agents MUST NOT commit one-shot Python or shell scripts (`patch_*.py`, `fix_*.py`, `pathlib_*.py`, etc.) to the repository root. These are development scaffolding that belongs only in a git-ignored scratch directory or should be deleted immediately after use. Committing them pollutes the repo, fails `make lint`, and misleads reviewers. If a bulk transformation is needed, implement it as a permanent, tested utility in `scripts/` — or delete it before committing.
 
 
 ---

@@ -42,8 +42,11 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
             routers = list(session.info.routers_zid())
             if len(routers) >= 1:
                 logger.info(f"Zenoh: mesh established (routers={len(routers)})")
-                # Even if routers are seen, we add a tiny grace period for pub/sub matching
-                await asyncio.sleep(0.1)
+
+                # Give Zenoh's discovery protocol time to exchange routing tables
+                # and establish pub/sub matching across the mesh.
+                grace_period = 3.0 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 0.5
+                await asyncio.sleep(grace_period)
                 return
         except Exception:
             pass
@@ -56,6 +59,9 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
 # VTA step timeout: always longer than the QEMU stall-timeout so QEMU can reply
 # with STALL before Python gives up. VIRTMCU_STALL_TIMEOUT_MS drives both sides:
 # QEMU reads it directly; Python adds a 10-second buffer on top.
+if os.environ.get("VIRTMCU_USE_ASAN") == "1" and "VIRTMCU_STALL_TIMEOUT_MS" not in os.environ:
+    os.environ["VIRTMCU_STALL_TIMEOUT_MS"] = "300000"
+
 _stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
 _DEFAULT_VTA_STEP_TIMEOUT_S: float = max(60.0, _stall_timeout_ms / 1000.0 + 10.0)
 
@@ -143,7 +149,7 @@ class VirtualTimeAuthority:
                 for r in self.session.get(topic, payload=payload, timeout=timeout):
                     return r
             except Exception as e:
-                logger.warning(f"Node {nid} GET error: {e}")
+                logger.warning(f"[VTA] Node {nid} GET error on {topic}: {e}")
             return None
 
         return await asyncio.to_thread(_sync_get)
@@ -280,12 +286,18 @@ async def zenoh_coordinator(zenoh_router):
         curr = Path(curr).parent
     workspace_root = curr
 
-    # Try standard Cargo target directory at workspace root
-    coord_bin = workspace_root / "target/release/zenoh_coordinator"
+    # First check if CARGO_TARGET_DIR is set (used by CI)
+    import os
 
-    # Also check the tool-local target dir
-    if not coord_bin.exists():
-        coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
+    if "CARGO_TARGET_DIR" in os.environ:
+        coord_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/zenoh_coordinator"
+    else:
+        # Try standard Cargo target directory at workspace root
+        coord_bin = workspace_root / "target/release/zenoh_coordinator"
+
+        # Also check the tool-local target dir
+        if not coord_bin.exists():
+            coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
 
     # Use a lock to build once in parallel runs
     if not coord_bin.exists():
@@ -309,9 +321,12 @@ async def zenoh_coordinator(zenoh_router):
                     await asyncio.sleep(1.0)
 
         # Refresh location after build
-        coord_bin = workspace_root / "target/release/zenoh_coordinator"
-        if not coord_bin.exists():
-            coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
+        if "CARGO_TARGET_DIR" in os.environ:
+            coord_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/zenoh_coordinator"
+        else:
+            coord_bin = workspace_root / "target/release/zenoh_coordinator"
+            if not coord_bin.exists():
+                coord_bin = workspace_root / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
 
     logger.info(f"Starting Zenoh Coordinator connecting to {zenoh_router}...")
 
@@ -457,7 +472,7 @@ async def qemu_launcher():
     # Cleanup
     for inst in instances:
         try:
-            await inst["bridge"].close()
+            await asyncio.wait_for(inst["bridge"].close(), timeout=5.0)
         except Exception as e:
             logger.warning(f"Error closing bridge: {e}")
 

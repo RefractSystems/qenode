@@ -71,6 +71,8 @@ public:
 };
 
 int sc_main(int argc, char *argv[]) {
+  sc_report_handler::set_actions("/OSCI/SystemC/kernel/sc_start/no_activity",
+                                 SC_DO_NOTHING);
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <socket-path>\n";
     return 1;

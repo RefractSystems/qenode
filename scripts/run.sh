@@ -7,7 +7,7 @@
 # the environment (like QEMU_MODULE_DIR) for dynamic plugin loading.
 #
 # PLUGIN STALENESS PREVENTION:
-# This script is designed to recursively search the `build-virtmcu` directory
+# This script is designed to recursively search the `$BUILD_DIR_NAME` directory
 # to prioritize the freshest compiled `.so` artifacts over globally installed
 # ones, ensuring developers and agents are always testing their latest code.
 #
@@ -24,12 +24,18 @@
 #   Any other arguments are passed directly to qemu-system-arm.
 # ==============================================================================
 
-set -e
+set -euo pipefail
+
+# SOTA Error visibility
+trap 'echo "ERROR: ${BASH_SOURCE[0]} failed at line $LINENO" >&2' ERR
 
 # Resolve paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
+
+# Inherit optional env vars with safe defaults for -u compatibility
+VIRTMCU_SKIP_BUILD_DIR="${VIRTMCU_SKIP_BUILD_DIR:-}"
 
 # Default architecture
 ARCH="arm"
@@ -57,6 +63,7 @@ IS_TEMP_DTB=false
 EXTRA_ARGS=()
 KERNEL=""
 MACHINE_PROVIDED=false
+INPUT_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -139,16 +146,18 @@ elif [ "$ARCH" = "riscv32" ]; then
 fi
 
 # Prioritize the build directory for developers, unless skipped
-if [[ "$VIRTMCU_SKIP_BUILD_DIR" == "1" ]]; then
+BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )"
+
+if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" == "1" ]]; then
     # Strictly use installed path when skipping build dir
     QEMU_BIN="/opt/virtmcu/bin/qemu-system-$QEMU_ARCH_NAME"
     if [ ! -f "$QEMU_BIN" ]; then
         QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || true)
     fi
-elif [ -f "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
-    QEMU_BIN="$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME"
-elif [ -f "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME" ]; then
-    QEMU_BIN="$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME"
+elif [ -f "$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
+    QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME"
+elif [ -f "$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME" ]; then
+    QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME"
     chmod +x "$QEMU_BIN"
 else
     QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || echo "/opt/virtmcu/bin/qemu-system-$QEMU_ARCH_NAME")
@@ -173,34 +182,49 @@ if [ "$MACHINE_PROVIDED" = false ]; then
     fi
 fi
 
-# Set the QEMU module directory. 
-# Prioritize the build directory for developers, fallback to installed location.
-FOUND_SO=""
-if [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]]; then
-    # Search for the freshest plugin in the entire build tree
-    FOUND_SO=$(find "$QEMU_DIR/build-virtmcu" -name "hw-virtmcu-*.so" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" ")
+# ── Module Discovery ──────────────────────────────────────────────────────────
+
+# Search for the module directory containing VirtMCU plugins.
+# We prioritize the freshest build artifacts, then standard installation paths.
+QEMU_MODULE_DIR=""
+
+# 1. Check for a fresh .so in the build tree (recursive search)
+if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]] && [ -d "$QEMU_DIR/$BUILD_DIR_NAME" ]; then
+    # Find freshest plugin, avoiding the 'qemu-bundle' artifacts
+    FRESH_SO=$(find "$QEMU_DIR/$BUILD_DIR_NAME" -name "hw-virtmcu-*.so*" -not -path "*/qemu-bundle/*" \( -type f -o -type l \) -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " || true)
+    if [ -n "$FRESH_SO" ]; then
+        QEMU_MODULE_DIR=$(dirname "$FRESH_SO")
+    fi
 fi
 
-if [ -n "$FOUND_SO" ]; then
-    QEMU_MODULE_DIR=$(dirname "$FOUND_SO")
-elif [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]] && [ -d "$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu" ] && ls "$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"/hw-virtmcu-*.so >/dev/null 2>&1; then
-    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"
-elif [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]] && [ -d "$QEMU_DIR/build-virtmcu/install/lib/qemu" ] && ls "$QEMU_DIR/build-virtmcu/install/lib/qemu"/hw-virtmcu-*.so >/dev/null 2>&1; then
-    QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
-elif [ -d "/opt/virtmcu/lib/aarch64-linux-gnu/qemu" ] && ls /opt/virtmcu/lib/aarch64-linux-gnu/qemu/hw-virtmcu-*.so >/dev/null 2>&1; then
-    QEMU_MODULE_DIR="/opt/virtmcu/lib/aarch64-linux-gnu/qemu"
-elif [ -d "/opt/virtmcu/lib/x86_64-linux-gnu/qemu" ] && ls /opt/virtmcu/lib/x86_64-linux-gnu/qemu/hw-virtmcu-*.so >/dev/null 2>&1; then
-    QEMU_MODULE_DIR="/opt/virtmcu/lib/x86_64-linux-gnu/qemu"
-elif [ -d "/opt/virtmcu/lib/qemu" ] && ls /opt/virtmcu/lib/qemu/hw-virtmcu-*.so >/dev/null 2>&1; then
-    QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
-else
-    # Final fallback: only if not skipping build dir
-    if [[ "$VIRTMCU_SKIP_BUILD_DIR" != "1" ]]; then
-        QEMU_MODULE_DIR="$QEMU_DIR/build-virtmcu/install/lib/qemu"
-    else
-        echo "Error: No QEMU modules found in /opt/virtmcu and VIRTMCU_SKIP_BUILD_DIR=1 is set."
-        exit 1
+# 2. If not found, check standard paths in priority order
+if [ -z "$QEMU_MODULE_DIR" ]; then
+    POSSIBLE_PATHS=()
+    if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]]; then
+        POSSIBLE_PATHS+=(
+            "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/aarch64-linux-gnu/qemu"
+            "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/x86_64-linux-gnu/qemu"
+            "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/qemu"
+        )
     fi
+    POSSIBLE_PATHS+=(
+        "/opt/virtmcu/lib/aarch64-linux-gnu/qemu"
+        "/opt/virtmcu/lib/x86_64-linux-gnu/qemu"
+        "/opt/virtmcu/lib/qemu"
+    )
+
+    for p in "${POSSIBLE_PATHS[@]}"; do
+        if [ -d "$p" ] && find "$p" -name "hw-virtmcu-*.so*" -print -quit | grep -q .; then
+            QEMU_MODULE_DIR="$p"
+            break
+        fi
+    done
+fi
+
+# 3. Final fallback: use the build dir path even if missing (let QEMU fail with a better error)
+if [ -z "$QEMU_MODULE_DIR" ] && [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]]; then
+    QEMU_MODULE_DIR="$QEMU_DIR/$BUILD_DIR_NAME/install/lib/qemu"
+    mkdir -p "$QEMU_MODULE_DIR"
 fi
 
 # ASan Instrumentation Check
@@ -208,7 +232,7 @@ has_asan() {
     local file="$1"
     if [ ! -f "$file" ]; then return 1; fi
     # Check for ASan initialization symbols which indicate instrumentation
-    if strings "$file" 2>/dev/null | grep -q "__asan_init"; then
+    if strings "$file" 2>/dev/null | grep "__asan_init" >/dev/null; then
         return 0
     fi
     return 1
@@ -219,16 +243,21 @@ check_asan_mismatch() {
     local mod_dir="$2"
     local bin_asan=false
     local mod_asan=false
-    
+
     if has_asan "$bin"; then bin_asan=true; fi
-    
-    # Check at least one plugin if it exists
+
+    # Use find -L so versioned symlinks (e.g. .so -> .so.1) are followed correctly.
     local sample_plugin
-    sample_plugin=$(find "$mod_dir" -name "hw-virtmcu-*.so" -print -quit)
-    if [ -n "$sample_plugin" ] && has_asan "$sample_plugin"; then
+    if [ -d "$mod_dir" ]; then sample_plugin=$(find -L "$mod_dir" -name "hw-virtmcu-*.so*" -type f -print -quit 2>/dev/null || true); fi
+
+    # If no plugins are present yet, skip the mismatch check — the missing-plugin
+    # warning at the end of this script is the correct diagnostic in that case.
+    if [ -z "$sample_plugin" ]; then return 0; fi
+
+    if has_asan "$sample_plugin"; then
         mod_asan=true
     fi
-    
+
     if [ "$bin_asan" != "$mod_asan" ]; then
         echo "=============================================================================="
         echo "FATAL: ASan Instrumentation Mismatch Detected!"
@@ -288,12 +317,19 @@ fi
 CMD+=("${EXTRA_ARGS[@]}")
 
 # Export QEMU_MODULE_DIR so the QEMU binary picks it up
-export QEMU_MODULE_DIR
+
+# Validate plugin discovery
+if [ -n "$QEMU_MODULE_DIR" ]; then
+    if [ ! -d "$QEMU_MODULE_DIR" ] || ! find "$QEMU_MODULE_DIR" -name "hw-virtmcu-*.so*" -print -quit | grep -q .; then
+        echo "WARNING: QEMU_MODULE_DIR ($QEMU_MODULE_DIR) is missing or contains no virtmcu plugins! Simulation boot will likely fail." >&2
+    fi
+    export QEMU_MODULE_DIR
+fi
 
 # Automatically handle ASan LD_PRELOAD if QEMU is instrumented.
 # AddressSanitizer requires that its runtime library be loaded first.
-if ldd "$QEMU_BIN" | grep -q "libasan"; then
-    LIBASAN=$(ldd "$QEMU_BIN" | grep "libasan" | awk '{print $3}')
+if ldd "$QEMU_BIN" | grep "libasan" >/dev/null; then
+    LIBASAN=$(ldd "$QEMU_BIN" | grep "libasan" | awk '{print $3}' || true)
     if [ -n "$LIBASAN" ] && [ -f "$LIBASAN" ]; then
         export LD_PRELOAD="$LIBASAN${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
@@ -314,8 +350,8 @@ if [ "$IS_TEMP_DTB" = true ]; then
     QEMU_PID=$!
     
     # Traps for termination signals
-    trap 'kill -TERM $QEMU_PID 2>/dev/null; wait $QEMU_PID; rm -f "$DTB"; exit 130' INT
-    trap 'kill -TERM $QEMU_PID 2>/dev/null; wait $QEMU_PID; rm -f "$DTB"; exit 143' TERM
+    trap 'kill -TERM $QEMU_PID 2>/dev/null || true; wait $QEMU_PID; rm -f "$DTB"; exit 130' INT
+    trap 'kill -TERM $QEMU_PID 2>/dev/null || true; wait $QEMU_PID; rm -f "$DTB"; exit 143' TERM
     
     wait $QEMU_PID
     exit $?

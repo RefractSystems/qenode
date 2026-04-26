@@ -8,7 +8,7 @@
 # correctly registered and instantiated itself into the QOM tree.
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"

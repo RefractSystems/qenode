@@ -15,7 +15,8 @@ WORKSPACE_DIR = Path(Path(Path(__file__).resolve().parent) / "..")
 BUILD_DIR = Path(WORKSPACE_DIR) / "target/release"
 REPLAY_BIN = Path(BUILD_DIR) / "resd_replay"
 if not REPLAY_BIN.exists():
-    REPLAY_BIN = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
+    import os
+REPLAY_BIN = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay" if "CARGO_TARGET_DIR" in os.environ else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
 print(f"DEBUG: REPLAY_BIN = {REPLAY_BIN}")
 
 
@@ -152,7 +153,7 @@ async def test_mujoco_bridge_shm(zenoh_router):  # noqa: ARG001
 
     bridge_bin = Path(BUILD_DIR) / "mujoco_bridge"
     if not bridge_bin.exists():
-        bridge_bin = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
+        bridge_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge" if "CARGO_TARGET_DIR" in os.environ else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
 
     # Run bridge briefly
     p = subprocess.Popen(

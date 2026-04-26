@@ -4,6 +4,7 @@
 use std::env;
 use std::path::PathBuf;
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)");
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)");
@@ -20,8 +21,14 @@ fn main() {
 
     let qemu_dir =
         std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
-    let build_dir = std::env::var("QEMU_BUILD_DIR")
-        .unwrap_or_else(|_| "../../../third_party/qemu/build-virtmcu".to_string());
+    let build_dir = if std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1" {
+        "build-virtmcu-asan"
+    } else {
+        "build-virtmcu"
+    };
+
+    let qemu_build_dir = std::env::var("QEMU_BUILD_DIR")
+        .unwrap_or_else(|_| format!("../../../third_party/qemu/{build_dir}"));
 
     // Check if QEMU headers are present
     let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
@@ -50,15 +57,15 @@ fn main() {
     let mut builder = cc::Build::new();
     builder.define("_GNU_SOURCE", None);
 
-    if std::env::var("VIRTMUC_UNIT_TEST").is_ok() {
+    if std::env::var("VIRTMCU_UNIT_TEST").is_ok() {
         builder.define("UNIT_TEST", None);
     }
 
     builder
         .file("src/ffi.c")
         .include(format!("{qemu_dir}/include"))
-        .include(&build_dir)
-        .include(format!("{build_dir}/qapi"))
+        .include(&qemu_build_dir)
+        .include(format!("{qemu_build_dir}/qapi"))
         .include(format!("{qemu_dir}/linux-headers"))
         .include("/usr/include/glib-2.0")
         .include("/usr/lib/aarch64-linux-gnu/glib-2.0/include")
@@ -77,8 +84,8 @@ fn main() {
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{qemu_dir}/include"))
-        .clang_arg(format!("-I{build_dir}"))
-        .clang_arg(format!("-I{build_dir}/qapi"))
+        .clang_arg(format!("-I{qemu_build_dir}"))
+        .clang_arg(format!("-I{qemu_build_dir}/qapi"))
         .clang_arg(format!("-I{qemu_dir}/linux-headers"))
         .clang_arg("-I/usr/include/glib-2.0")
         .clang_arg("-I/usr/lib/aarch64-linux-gnu/glib-2.0/include")

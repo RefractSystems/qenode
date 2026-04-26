@@ -11,7 +11,7 @@
 #   3. Capture serial output in a temp file and assert "HI RV" is present.
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 echo "=============================================================================="
 echo "🧪 RUNNING TEST: $(basename "$0")"
@@ -37,6 +37,7 @@ WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RISCV_TEST_DIR="$WORKSPACE_DIR/test/riscv"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 OUTPUT_LOG=$(mktemp /tmp/phase11-uart-XXXXXX.log)
+trap 'rm -f "$OUTPUT_LOG"' EXIT
 
 echo "==> Running Phase 11 Smoke Test (RISC-V Expansion)..."
 
@@ -61,10 +62,8 @@ cat "$OUTPUT_LOG"
 
 if grep -q "HI RV" "$OUTPUT_LOG"; then
     echo "✓ Phase 11 Smoke Test PASSED: RISC-V firmware printed 'HI RV'."
-    rm -f "$OUTPUT_LOG"
     exit 0
 else
     echo "✗ Phase 11 Smoke Test FAILED: 'HI RV' not found in serial output."
-    rm -f "$OUTPUT_LOG"
     exit 1
 fi

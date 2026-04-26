@@ -32,7 +32,8 @@ async def test_phase10_resd_replay_startup():
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
     replay_bin = workspace_root / "target/release/resd_replay"
     if not replay_bin.exists():
-        replay_bin = workspace_root / "tools/cyber_bridge/target/release/resd_replay"
+        import os
+        replay_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay" if "CARGO_TARGET_DIR" in os.environ else workspace_root / "tools/cyber_bridge/target/release/resd_replay"
 
     # Missing file should fail
     proc = await asyncio.create_subprocess_exec(
@@ -52,7 +53,8 @@ async def test_phase10_mujoco_bridge_shm():
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
     bridge_bin = workspace_root / "target/release/mujoco_bridge"
     if not bridge_bin.exists():
-        bridge_bin = workspace_root / "tools/cyber_bridge/target/release/mujoco_bridge"
+        import os
+        bridge_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge" if "CARGO_TARGET_DIR" in os.environ else workspace_root / "tools/cyber_bridge/target/release/mujoco_bridge"
 
     node_id = 99
     shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"

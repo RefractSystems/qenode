@@ -48,8 +48,9 @@ if [ "$PORT" -eq 0 ]; then
 fi
 
 wait_for_queryable() {
-    local topic="$1"
-    local deadline=$(( $(date +%s) + 30 ))
+    local topic="${1:-}"
+    local deadline
+    deadline=$(( $(date +%s) + 30 ))
     echo "Waiting for $topic to become queryable..."
     while (( $(date +%s) < deadline )); do
         if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then

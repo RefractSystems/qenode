@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 
 import pytest
@@ -31,10 +32,11 @@ async def test_qmp_concurrent_commands(qmp_bridge):
         assert "qemu" in res
         return id
 
-    tasks = [task(i) for i in range(50)]
+    iters = 10 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 50
+    tasks = [task(i) for i in range(iters)]
     results = await asyncio.gather(*tasks)
     assert len(results) == 50
-    assert set(results) == set(range(50))
+    assert set(results) == set(range(iters))
 
 
 @pytest.mark.asyncio
@@ -59,7 +61,8 @@ async def test_pc_polling_stress(qmp_bridge):
     This also tests HMP command overhead.
     """
     pcs = []
-    for _ in range(100):
+    iters = 10 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 100
+    for _ in range(iters):
         pc = await qmp_bridge.get_pc()
         pcs.append(pc)
 

@@ -289,7 +289,7 @@ sys.exit(0)
 }
 
 # TEST 1: HANG (Timeout)
-if ! run_test_case "hang" "mmio-socket-bridge: timeout on socket"; then
+if ! run_test_case "hang" "mmio-socket-bridge: timeout waiting for response"; then
     exit 1
 fi
 

@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import time
@@ -58,9 +59,11 @@ conn.close()
     )
 
     # 3. Start QEMU
+    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    qemu_bin = f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm"
     qemu_proc = subprocess.Popen(
         [
-            "/workspace/third_party/qemu/build-virtmcu/install/bin/qemu-system-arm",
+            qemu_bin,
             "-M",
             "arm-generic-fdt,hw-dtb=/tmp/irq.dtb",
             "-kernel",

@@ -88,11 +88,6 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         f"zenoh-clock,mode=slaved-icount,node=1,router={router_endpoint}",
     ]
 
-    print("Launching Master...")
-    await qemu_launcher(master_dtb, master_kernel, extra_args=master_args, ignore_clock_check=True)
-    print("Launching Slave...")
-    await qemu_launcher(slave_dtb, slave_kernel, extra_args=slave_args, ignore_clock_check=True)
-
     # 3. Connect to Zenoh
     session = zenoh_session
 
@@ -114,6 +109,11 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     # Listen to both nodes' TX
     sub0 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/0/tx", on_bus_msg))
     sub1 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/1/tx", on_bus_msg))
+
+    print("Launching Master...")
+    await qemu_launcher(master_dtb, master_kernel, extra_args=master_args, ignore_clock_check=True)
+    print("Launching Slave...")
+    await qemu_launcher(slave_dtb, slave_kernel, extra_args=slave_args, ignore_clock_check=True)
 
     from conftest import TimeAuthority
 
