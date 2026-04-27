@@ -27,6 +27,12 @@ We employ several automated tricks to make local development fast, parallel-safe
 ### Q: What is the "FFI Gate" and why do I need to run `make check-ffi`?
 **A:** To prevent cryptic segmentation faults, our Rust models and QEMU's C code must perfectly agree on memory layouts. The FFI Gate (`scripts/check-ffi.py`) uses `pahole` via `scripts/probe-qemu.py` to extract the *exact* byte offsets from the compiled QEMU binary and validates them against the Rust `assert!` statements.
 
+### Q: Why is my `target/` directory ignored when running `make ci-local`?
+**A:** To prevent Cargo fingerprint corruption between your devcontainer and the isolated CI container, we use **Target Directory Isolation**. `make ci-local` and all `docker run devenv-base` calls in the Makefile set `CARGO_TARGET_DIR=/tmp/ci-target`. This ensures that artifacts built with CI flags (like ASan or specific feature sets) never mix with your local interactive build artifacts.
+
+### Q: How are my Rust dependencies cached across container restarts?
+**A:** We use a **Docker Named Volume** called `ci-cargo-registry` mounted at `/usr/local/cargo/registry`. This is significantly faster and more reliable than bind-mounting your host's `.cargo` directory, which often suffers from I/O overhead and filesystem permission issues on macOS/Windows.
+
 ---
 
 > **CI failing?** See [CI_GUIDE.md](CI_GUIDE.md) — it maps every CI job to its local

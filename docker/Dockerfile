@@ -12,6 +12,7 @@ ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
+ARG MESON_VERSION=1.8.0
 ARG RUST_VERSION=1.95.0
 ARG BINDGEN_VERSION=0.72.1
 ARG FLATBUFFERS_VERSION=25.12.19
@@ -137,26 +138,27 @@ ARG PYTHON_VERSION
 ARG ACTIONLINT_VERSION
 ARG HADOLINT_VERSION
 
-RUN curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- "${ACTIONLINT_VERSION}" \
+RUN curl -fsSL --retry 3 "https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash" | bash -s -- "${ACTIONLINT_VERSION}" \
     && mv actionlint /usr/local/bin/ \
     && case "${TARGETARCH}" in \
          amd64) HADO_ARCH="x86_64" ;; \
          arm64) HADO_ARCH="arm64" ;; \
        esac \
-    && curl -sL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADO_ARCH}" -o /usr/local/bin/hadolint \
+    && curl -fsSL --retry 3 "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADO_ARCH}" -o /usr/local/bin/hadolint \
     && chmod +x /usr/local/bin/hadolint
 
 RUN uv python install ${PYTHON_VERSION}
 
 ARG FLATBUFFERS_VERSION
-RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
+RUN curl -fsSL --retry 3 -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
     && unzip /tmp/flatc.zip -d /usr/local/bin \
     && chmod +x /usr/local/bin/flatc \
     && rm /tmp/flatc.zip
 
 ARG CMAKE_VERSION
+ARG MESON_VERSION
 ENV UV_LINK_MODE=copy
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} --break-system-packages
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} --break-system-packages
 
 # ── Stage 3: flatcc-builder ───────────────────────────────────────────────────
 # Built only when needed for simulation (QEMU)
@@ -283,7 +285,8 @@ COPY tools/ /build/virtmcu/tools/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build || echo "subdir('virtmcu')" >> /build/qemu/hw/meson.build \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
-    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
+    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
 
 WORKDIR /build/qemu/build-virtmcu
 ARG VIRTMCU_USE_ASAN=0
@@ -305,7 +308,6 @@ RUN mkdir -p /opt/virtmcu/lib/qemu/plugins \
     && mkdir -p /opt/virtmcu/include \
     && cp -R /build/zenoh-c/include/* /opt/virtmcu/include/ \
     && cp -R /usr/local/include/flatcc /opt/virtmcu/include/ \
-    && find /opt/virtmcu/lib -name "hw-virtmcu-*.so" -exec mv {} /opt/virtmcu/lib/qemu/ \; \
     && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; 2>/dev/null || true \
     && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \
     && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \

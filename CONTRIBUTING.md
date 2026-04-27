@@ -21,8 +21,6 @@ Windows is not supported (QEMU module loading is unavailable on Windows).
 ### macOS & Windows
 
 > **⚠️ Mandatory Devcontainer:** virtmcu requires a Linux environment. macOS and Windows developers **MUST** use the provided Devcontainer. Bare-metal development on these platforms is not supported.
->
-> **macOS Tip:** For the best performance (near-native I/O and speed), we strongly recommend using [OrbStack](https://orbstack.dev/) as your container engine instead of Docker Desktop.
 
 ### Linux (Debian / Ubuntu)
 

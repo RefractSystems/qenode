@@ -82,18 +82,18 @@ Let's examine the lifecycle of a complete data exchange between Node 0 (TX) and 
 ### Phase 2: Data Transmission (Node 0)
 1.  **Firmware Action:** The guest firmware executing on Node 0 writes a payload to the MMIO registers of the virtual Ethernet MAC.
 2.  **QOM Interception:** QEMU traps the MMIO write and passes it to the Rust `zenoh-netdev` model (while holding the Big QEMU Lock).
-3.  **Serialization:** `zenoh-netdev` packages the data and the current Virtual Time into a FlatBuffer.
-4.  **Zenoh Put:** The model calls `zenoh_publisher.put(flatbuffer)`. This pushes the data into Zenoh's asynchronous egress queue. *The BQL is never yielded during this step.*
+3.  **Serialization**: `zenoh-netdev` packages the data and the current Virtual Time into a `ZenohFrameHeader`.
+4.  **Zenoh Put**: The model calls `zenoh_publisher.put(data)`. This pushes the data into Zenoh's asynchronous egress queue. *The BQL is never yielded during this step.*
 
 ### Phase 3: Routing & Coordination
-1.  **Ingress:** Router 0 receives Node 0's packet. It matches the topic `sim/eth/frame/0/tx` and forwards it to the `zenoh_coordinator`.
-2.  **Simulation Logic:** The coordinator applies link-layer logic (MAC address filtering, simulated cable delays, packet loss probability). 
-3.  **Egress:** The coordinator rewrites the topic to `sim/eth/frame/1/rx` and publishes it back to the router.
+1.  **Ingress**: Router 0 receives Node 0's packet. It matches the topic `sim/eth/frame/0/tx` and forwards it to the `zenoh_coordinator`.
+2.  **Simulation Logic**: The coordinator applies link-layer logic (MAC address filtering, simulated cable delays, packet loss probability). 
+3.  **Egress**: The coordinator rewrites the topic to `sim/eth/frame/1/rx` and publishes it back to the router.
 
 ### Phase 4: Reception (Node 1)
-1.  **Zenoh Async Executor:** The Zenoh background thread inside Node 1's process receives the network packet from the socket.
-2.  **Callback Execution:** The `zenoh-netdev` subscriber callback is invoked.
-3.  **Thread Handoff:** *CRITICAL SAFETY BOUNDARY.* Zenoh callbacks cannot take the Big QEMU Lock (BQL), otherwise QEMU deadlocks. The callback deserializes the FlatBuffer and pushes the data into a `crossbeam_channel::unbounded` queue.
+1.  **Zenoh Async Executor**: The Zenoh background thread inside Node 1's process receives the network packet from the socket.
+2.  **Callback Execution**: The `zenoh-netdev` subscriber callback is invoked.
+3.  **Thread Handoff**: *CRITICAL SAFETY BOUNDARY.* Zenoh callbacks cannot take the Big QEMU Lock (BQL), otherwise QEMU deadlocks. The callback deserializes the `ZenohFrameHeader` and pushes the data into a `crossbeam_channel::unbounded` queue.
 4.  **QEMU Polling/Interrupt:** A registered QEMU timer or bottom-half (BH) running on the main vCPU thread pops the data from the `crossbeam` queue. Since it is on the main thread, it already safely holds the BQL.
 5.  **Hardware Injection:** The `zenoh-netdev` model writes the data into the virtual MAC's RX FIFO and calls `qemu_set_irq` to assert the hardware interrupt line.
 6.  **Firmware Acknowledgment:** Node 1's guest OS jumps to the ISR, reads the MMIO FIFO, and processes the packet.

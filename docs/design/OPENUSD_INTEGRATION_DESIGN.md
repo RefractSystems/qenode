@@ -96,7 +96,7 @@ Integrating a digital twin into a broader simulation ecosystem (like NVIDIA Omni
 - [x] **Parser**: `tools/yaml2qemu.py` converts our USD-aligned YAML into QEMU Device Trees.
 - [x] **Migration**: `tools/repl2yaml.py` converts legacy Renode `.repl` files into this modern standard.
 - [x] **Runner**: `scripts/run.sh` supports `.yaml` natively.
-- [ ] **SAL/AAL Framework**: (Phase 10) Base classes for translating physical properties into binary data.
+- [x] **SAL/AAL Framework**: (Phase 10) Base classes for translating physical properties into binary data.
 - [ ] **Native USD / FSS Plugin**: (Phase 10+) Native `pxr::Usd` and Accellera FSS ingestion.
 
 ---

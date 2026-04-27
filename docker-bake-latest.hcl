@@ -1,4 +1,8 @@
 # docker-bake-latest.hcl — Adds :latest tags when on main branch
+#
+# IMPORTANT: In docker bake, when a target is redefined, the 'tags' array
+# is REPLACED, not merged. We must include both 'latest' and the specific
+# 'sha-<sha>' tags to ensure manifest merge jobs still work.
 
 variable "REGISTRY" {
   default = "ghcr.io"

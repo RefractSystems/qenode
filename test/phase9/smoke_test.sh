@@ -19,6 +19,17 @@ ADAPTER_PID=0
 QEMU_PID=0
 ROUTER_PID=0
 
+# Under ASan/UBSan, QEMU executes TCG blocks significantly slower.
+# Scale polling iteration counts from the stall-timeout environment variable
+# (CI: 120000 ms; ASan CI: 300000 ms; default: 5000 ms).
+# Each iteration sleeps 0.1 s, so divide by 100 to get iteration count.
+# Clamp to a minimum of 100 (10 s) and a maximum of 3000 (300 s).
+_stall_ms="${VIRTMCU_STALL_TIMEOUT_MS:-5000}"
+_poll_iters=$(( _stall_ms / 100 ))
+(( _poll_iters < 100  )) && _poll_iters=100
+(( _poll_iters > 3000 )) && _poll_iters=3000
+POLL_ITERS=$_poll_iters
+
 cleanup() {
     [[ $QEMU_PID -ne 0 ]] && kill "$QEMU_PID" 2>/dev/null || true
     [[ $ADAPTER_PID -ne 0 ]] && kill "$ADAPTER_PID" 2>/dev/null || true
@@ -49,7 +60,7 @@ echo "[phase9] Starting SystemC adapter (standalone)..."
 "$WORKSPACE_DIR/tools/systemc_adapter/build/adapter" "$SOCK_PATH" > "$ADAPTER_LOG" 2>&1 &
 ADAPTER_PID=$!
 
-for _ in $(seq 1 50); do [ -S "$SOCK_PATH" ] && break; sleep 0.1; done
+for _ in $(seq 1 $POLL_ITERS); do [ -S "$SOCK_PATH" ] && break; sleep 0.1; done
 
 cat > "$LD_PATH" <<'LD_EOF'
 ENTRY(_start)
@@ -153,11 +164,11 @@ dtc -I dts -O dtb -o "$DTB_PATH" "$DTS_PATH"
 QEMU_PID=$!
 
 echo "[phase9] Waiting for TEST 1 results..."
-for _ in $(seq 1 100); do
+for _ in $(seq 1 $POLL_ITERS); do
     if grep -q "REG-OK" "$QEMU_LOG" 2>/dev/null; then
         echo "[phase9] TEST 1 SUCCESS!"
         kill "$QEMU_PID" "$ADAPTER_PID" 2>/dev/null || true
-        for _ in $(seq 1 50); do
+        for _ in $(seq 1 $POLL_ITERS); do
             if ! kill -0 "$QEMU_PID" 2>/dev/null && ! kill -0 "$ADAPTER_PID" 2>/dev/null; then break; fi
             sleep 0.1
         done
@@ -184,7 +195,7 @@ echo "[phase9] Starting SystemC adapter (node=p9-test)..."
 "$WORKSPACE_DIR/tools/systemc_adapter/build/adapter" "$SOCK_PATH" "p9-test" > "$ADAPTER_LOG" 2>&1 &
 ADAPTER_PID=$!
 
-for _ in $(seq 1 50); do [ -S "$SOCK_PATH" ] && break; sleep 0.1; done
+for _ in $(seq 1 $POLL_ITERS); do [ -S "$SOCK_PATH" ] && break; sleep 0.1; done
 
 cat > "$ASM_PATH" <<'ASM_EOF'
 .equ UART0_DR, 0x09000000
@@ -252,38 +263,52 @@ cat > "$ZENOH_TX_PY" <<'PY_EOF'
 import zenoh
 import struct
 import time
+import os
 
-session = zenoh.open(zenoh.Config())
-time.sleep(2) # Give adapter time to declare subscriber
+config = zenoh.Config()
+if "ZENOH_CONNECT" in os.environ:
+    config.insert_json5("connect/endpoints", f'["{os.environ["ZENOH_CONNECT"]}"]')
+
+session = zenoh.open(config)
 pub = session.declare_publisher("sim/systemc/frame/p9-test/rx")
 
 # CanWireFrame: vtime(8), size(4), id(4), data(4)
-# Stamp with a future vtime (e.g. 1ms)
-payload = struct.pack("<QIII", 1000000, 8, 0x123, 0x456)
-pub.put(payload)
-time.sleep(0.5)
+# Under ASan, QEMU initialization and Zenoh discovery takes unpredictable wall-clock time.
+# Send frames with exponentially/linearly increasing vtime (1s to 50s virtual time)
+# so the adapter receives at least one frame in its "future".
+for i in range(1, 50):
+    vtime_ns = i * 1000000000 # i seconds
+    payload = struct.pack("<QIII", vtime_ns, 8, 0x123, 0x456)
+    pub.put(payload)
+    time.sleep(0.5)
+
 session.close()
 PY_EOF
 
 echo "[phase9] Injecting Zenoh CAN frame..."
-python3 "$ZENOH_TX_PY"
+python3 "$ZENOH_TX_PY" &
+PY_PID=$!
 
 echo "[phase9] Waiting for TEST 2 results..."
-for _ in $(seq 1 100); do
+for _ in $(seq 1 $POLL_ITERS); do
     if grep -q "CAN-OK" "$QEMU_LOG" 2>/dev/null; then
         echo "[phase9] TEST 2 SUCCESS!"
+        kill $PY_PID 2>/dev/null || true
         exit 0
     fi
     if grep -q "FAIL" "$QEMU_LOG" 2>/dev/null; then
         echo "[phase9] TEST 2 FAILED (ID mismatch)"
+        kill $PY_PID 2>/dev/null || true
         exit 1
     fi
     sleep 0.1
 done
 
+kill $PY_PID 2>/dev/null || true
 echo "[phase9] TEST 2 TIMEOUT. Logs:"
 echo "--- QEMU LOG ---"
 cat "$QEMU_LOG"
 echo "--- ADAPTER LOG ---"
 cat "$ADAPTER_LOG"
 exit 1
+
