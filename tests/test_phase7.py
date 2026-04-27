@@ -12,8 +12,8 @@ def build_phase7_artifacts():
     dtb_path = workspace_root / "test/phase1/minimal.dtb"
     kernel_path = workspace_root / "test/phase1/hello.elf"
 
-    if not dtb_path.exists():
-        subprocess.run(["make", "-C", "test/phase1", "minimal.dtb"], check=True)
+    if not dtb_path.exists() or not kernel_path.exists():
+        subprocess.run(["make", "-C", "test/phase1", "all"], check=True)
 
     return dtb_path, kernel_path
 
