@@ -84,7 +84,7 @@ def test_jitter_proxy_routing(mock_upstream_router):
         assert _wait_for_queryable(ta_session, f"{CLOCK_ADVANCE_PREFIX}0", timeout=5.0), "Routing failed to propagate"
 
         # 3. Execute the actual query
-        qemu_handled_payload = None # reset after ping
+        qemu_handled_payload = None  # reset after ping
         replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"ta_request", timeout=5.0))
 
         # 4. Verify the architecture worked correctly
@@ -170,7 +170,9 @@ def test_jitter_proxy_routing_storm_detection(mock_upstream_router):
         futures = []
         for _ in range(60):
             # session.get is blocking, we need to run it in threads
-            t = threading.Thread(target=lambda: list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=1.0)))
+            t = threading.Thread(
+                target=lambda: list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=1.0))
+            )
             t.daemon = True
             t.start()
             futures.append(t)

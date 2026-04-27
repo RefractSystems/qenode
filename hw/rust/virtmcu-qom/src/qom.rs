@@ -165,8 +165,12 @@ pub struct Property {
 
 const _: () = assert!(core::mem::size_of::<Property>() == 72);
 
+// SAFETY: TypeInfo contains function pointers and static metadata for QOM types.
+// It is used as a static registration struct.
 unsafe impl Sync for TypeInfo {}
+// SAFETY: Property contains static metadata for device properties.
 unsafe impl Sync for Property {}
+// SAFETY: Property contains static metadata for device properties.
 unsafe impl Send for Property {}
 
 #[macro_export]
@@ -175,13 +179,15 @@ macro_rules! declare_device_type {
     ($init_fn:ident, $type_info:expr) => {
         #[used]
         #[no_mangle]
-        #[allow(non_upper_case_globals)]
         #[cfg_attr(target_os = "linux", link_section = ".init_array")]
         #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
         #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
         pub static $init_fn: extern "C" fn() = {
             extern "C" fn wrapper() {
                 #[cfg(not(miri))]
+                // SAFETY: register_dso_module_init is a QEMU-provided function to register
+                // a module initialization function. It is safe to call during global
+                // constructors as long as the parameters are valid.
                 unsafe {
                     $crate::qom::register_dso_module_init(real_init, $crate::qom::MODULE_INIT_QOM);
                 }

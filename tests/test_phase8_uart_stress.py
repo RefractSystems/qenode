@@ -4,7 +4,7 @@ Phase 8.6 — High-Baud UART Stress Test: pytest integration layer.
 These tests cover two layers:
 
 1. Unit tests for the ZenohFrameHeader wire format (pure Python, no QEMU needed).
-   Validates that the 12-byte struct encoding used by the Python test and by the
+   Validates that the 20-byte struct encoding used by the Python test and by the
    Rust zenoh-chardev plugin is consistent.
 
 2. An integration smoke-test that runs uart_stress_test.sh as a subprocess and
@@ -26,9 +26,10 @@ import pytest
 # hw/rust/virtmcu-api/src/lib.rs ZenohFrameHeader.
 # ---------------------------------------------------------------------------
 
-FRAME_HEADER_SIZE = 12  # ZenohFrameHeader: u64 + u32 (packed, no padding)
+FRAME_HEADER_SIZE = 20  # ZenohFrameHeader: u64 + u64 + u32 (packed, no padding)
 FRAME_VTIME_OFFSET = 0  # delivery_vtime_ns field offset
-FRAME_SIZE_OFFSET = 8  # size field offset
+FRAME_SEQUENCE_OFFSET = 8  # sequence_number field offset
+FRAME_SIZE_OFFSET = 16  # size field offset
 
 
 # ---------------------------------------------------------------------------
@@ -36,19 +37,19 @@ FRAME_SIZE_OFFSET = 8  # size field offset
 # ---------------------------------------------------------------------------
 
 
-def encode_frame(delivery_vtime_ns: int, payload: bytes) -> bytes:
+def encode_frame(delivery_vtime_ns: int, payload: bytes, sequence: int = 0) -> bytes:
     """Pack a ZenohFrameHeader + payload, matching the Rust zenoh-chardev format."""
-    header = struct.pack("<QI", delivery_vtime_ns, len(payload))
+    header = struct.pack("<QQI", delivery_vtime_ns, sequence, len(payload))
     return header + payload
 
 
-def decode_frame(data: bytes) -> tuple[int, int, bytes]:
-    """Return (delivery_vtime_ns, size, payload).  Raises ValueError if too short."""
+def decode_frame(data: bytes) -> tuple[int, int, int, bytes]:
+    """Return (delivery_vtime_ns, sequence, size, payload).  Raises ValueError if too short."""
     if len(data) < FRAME_HEADER_SIZE:
         raise ValueError(f"Frame too short: {len(data)} < {FRAME_HEADER_SIZE}")
-    vtime, size = struct.unpack_from("<QI", data, 0)
+    vtime, seq, size = struct.unpack_from("<QQI", data, 0)
     payload = data[FRAME_HEADER_SIZE:]
-    return vtime, size, payload
+    return vtime, seq, size, payload
 
 
 # ---------------------------------------------------------------------------
@@ -57,20 +58,22 @@ def decode_frame(data: bytes) -> tuple[int, int, bytes]:
 
 
 def test_frame_header_size():
-    """ZenohFrameHeader is exactly 12 bytes (u64 + u32, no padding)."""
-    assert FRAME_HEADER_SIZE == 12
+    """ZenohFrameHeader is exactly 20 bytes (u64 + u64 + u32, no padding)."""
+    assert FRAME_HEADER_SIZE == 20
 
 
 def test_encode_decode_round_trip():
     """Encoding then decoding returns the original values."""
     vtime = 10_000_800
+    seq = 42
     payload = b"X"
-    frame = encode_frame(vtime, payload)
+    frame = encode_frame(vtime, payload, seq)
 
     assert len(frame) == FRAME_HEADER_SIZE + len(payload)
 
-    decoded_vtime, decoded_size, decoded_payload = decode_frame(frame)
+    decoded_vtime, decoded_seq, decoded_size, decoded_payload = decode_frame(frame)
     assert decoded_vtime == vtime
+    assert decoded_seq == seq
     assert decoded_size == len(payload)
     assert decoded_payload == payload
 
@@ -80,25 +83,26 @@ def test_encode_vtime_ordering():
     earlier = encode_frame(10_000_000, b"X")
     later = encode_frame(10_000_800, b"X")
 
-    vtime_a, _, _ = decode_frame(earlier)
-    vtime_b, _, _ = decode_frame(later)
+    vtime_a, _, _, _ = decode_frame(earlier)
+    vtime_b, _, _, _ = decode_frame(later)
 
     assert vtime_a < vtime_b
 
 
 def test_decode_rejects_short_frame():
-    """Frames shorter than 12 bytes raise ValueError."""
+    """Frames shorter than 20 bytes raise ValueError."""
     import pytest
 
     with pytest.raises(ValueError, match="too short"):
-        decode_frame(b"\x00" * 11)
+        decode_frame(b"\x00" * 19)
 
 
 def test_decode_empty_payload():
     """A frame with zero-length payload is valid (size=0)."""
     frame = encode_frame(999, b"")
-    vtime, size, payload = decode_frame(frame)
+    vtime, seq, size, payload = decode_frame(frame)
     assert vtime == 999
+    assert seq == 0
     assert size == 0
     assert payload == b""
 
@@ -107,7 +111,7 @@ def test_multi_byte_payload():
     """size field matches the actual payload length for multi-byte payloads."""
     payload = b"hello world"
     frame = encode_frame(12345, payload)
-    _, size, decoded = decode_frame(frame)
+    _, _, size, decoded = decode_frame(frame)
     assert size == len(payload)
     assert decoded == payload
 
@@ -116,7 +120,7 @@ def test_vtime_max_u64():
     """delivery_vtime_ns handles u64 max without overflow."""
     max_u64 = (1 << 64) - 1
     frame = encode_frame(max_u64, b"X")
-    vtime, _, _ = decode_frame(frame)
+    vtime, _, _, _ = decode_frame(frame)
     assert vtime == max_u64
 
 
@@ -137,8 +141,9 @@ def test_stress_frame_sequence():
 
     for i, frame in enumerate(frames):
         expected_vtime = start_vtime + i * interval
-        vtime, size, payload = decode_frame(frame)
+        vtime, seq, size, payload = decode_frame(frame)
         assert vtime == expected_vtime, f"frame {i}: vtime mismatch"
+        assert seq == 0
         assert size == 1
         assert payload == b"X"
 
@@ -171,6 +176,7 @@ def test_clock_ready_unpacking():
 # Integration smoke-test — runs the full shell script
 # ---------------------------------------------------------------------------
 
+
 def _get_qemu_bin():
     build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
     paths = [
@@ -182,6 +188,7 @@ def _get_qemu_bin():
         if Path(p).exists():
             return p
     return paths[0]  # Fallback to first
+
 
 _QEMU_BIN = _get_qemu_bin()
 _STRESS_SCRIPT = Path(__file__).parent / ".." / "test" / "phase8" / "uart_stress_test.sh"

@@ -68,5 +68,49 @@ class TestYamlValidation(unittest.TestCase):
             self.assertIn("✓ Validation successful.", result.stdout)
 
 
+    def test_topology_validation_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "test.yaml"
+            dtb_path = Path(tmpdir) / "test.dtb"
+
+            test_yaml = {
+                "nodes": [{"id": "node1"}],
+                "topology": {
+                    "max_messages_per_node_per_quantum": 500,
+                    "global_seed": 42,
+                    "links": [{"nodes": ["node1"]}]
+                },
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+            }
+
+            with Path(yaml_path).open("w") as f:
+                yaml.dump(test_yaml, f)
+
+            cmd = ["python3", "-m", "tools.yaml2qemu", str(yaml_path), "--out-dtb", str(dtb_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f"yaml2qemu failed: {result.stderr}")
+
+    def test_topology_validation_invalid_max_msgs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "test.yaml"
+            dtb_path = Path(tmpdir) / "test.dtb"
+
+            test_yaml = {
+                "nodes": [{"id": "node1"}],
+                "topology": {
+                    "max_messages_per_node_per_quantum": -1,
+                    "global_seed": 42,
+                },
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+            }
+
+            with Path(yaml_path).open("w") as f:
+                yaml.dump(test_yaml, f)
+
+            cmd = ["python3", "-m", "tools.yaml2qemu", str(yaml_path), "--out-dtb", str(dtb_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("max_messages_per_node_per_quantum must be a positive integer", result.stderr)
+
 if __name__ == "__main__":
     unittest.main()

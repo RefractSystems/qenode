@@ -614,6 +614,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "deterministic_coordinator"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "clap",
+ "flatbuffers",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "virtmcu-api",
+ "zenoh",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4125,8 +4144,8 @@ dependencies = [
 name = "zenoh-chardev"
 version = "0.1.0"
 dependencies = [
- "byteorder",
  "crossbeam-channel",
+ "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh",
  "zenoh",
@@ -4570,7 +4589,6 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "flatbuffers",
- "libc",
  "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh",

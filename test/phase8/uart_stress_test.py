@@ -64,10 +64,10 @@ received_all_event = threading.Event()
 def on_tx_sample(sample: zenoh.Sample) -> None:
     global _x_count, _first_logged
     raw = sample.payload.to_bytes()
-    if len(raw) < 12:
+    if len(raw) < 20:
         return
-    # Skip 12-byte ZenohFrameHeader (delivery_vtime_ns:u64 + size:u32)
-    payload = raw[12:]
+    # Skip 20-byte ZenohFrameHeader (vtime:u64 + seq:u64 + size:u32)
+    payload = raw[20:]
     if not payload:
         return
 
@@ -96,8 +96,9 @@ for i in range(0, TOTAL_BYTES, CHUNK_SIZE):
     chunk_end = min(i + CHUNK_SIZE, TOTAL_BYTES)
     for j in range(i, chunk_end):
         vtime = START_VTIME_NS + (j * BAUD_10MBPS_INTERVAL_NS)
-        # ZenohFrameHeader: delivery_vtime_ns (u64 LE) + size (u32 LE)
-        header = struct.pack("<QI", vtime, 1)
+        # ZenohFrameHeader: delivery_vtime_ns (u64 LE) + sequence_number (u64 LE) + size (u32 LE)
+        # Using sequence number 0 for pre-published bytes as they have distinct vtimes.
+        header = struct.pack("<QQI", vtime, 0, 1)
         _pub.put(header + TEST_BYTE)
     time.sleep(CHUNK_SLEEP_S)
 

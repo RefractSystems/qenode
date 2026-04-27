@@ -53,17 +53,19 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     zenoh_session.declare_subscriber("firmware/control/**", on_sample)
 
     extra_args = [
-        "-icount", "shift=4,align=off,sleep=off",
-        "-device", f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        "-icount",
+        "shift=4,align=off,sleep=off",
+        "-device",
+        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
     ]
     bridge = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
-    from tests.conftest import wait_for_zenoh_discovery
-    await wait_for_zenoh_discovery(zenoh_session, "firmware/control/**")
+
 
     await bridge.start_emulation()
 
     from tests.conftest import VirtualTimeAuthority
+
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
     success_1 = False
@@ -81,7 +83,9 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
         if success_1 and success_2:
             break
     else:
-        pytest.fail(f"Did not receive all control signals (s1={success_1}, s2={success_2}) at vtime={vta.current_vtimes[0]}")
+        pytest.fail(
+            f"Did not receive all control signals (s1={success_1}, s2={success_2}) at vtime={vta.current_vtimes[0]}"
+        )
 
     assert success_1, "Did not receive first control signal (ID=42)"
     assert success_2, "Did not receive second control signal (ID=99)"

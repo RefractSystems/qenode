@@ -186,5 +186,9 @@ extern "C" {
     ) -> isize;
 }
 
+// SAFETY: NetClientInfo contains function pointers that are called by QEMU.
+// It is used as a static registration struct.
 unsafe impl Sync for NetClientInfo {}
+// SAFETY: CanBusClientInfo contains function pointers for CAN bus operations.
+// Used as a static registration struct.
 unsafe impl Sync for CanBusClientInfo {}

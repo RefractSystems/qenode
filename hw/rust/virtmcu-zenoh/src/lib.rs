@@ -1,12 +1,39 @@
 #![allow(missing_docs)]
-use core::ffi::c_char;
-use std::ffi::CStr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::ToString;
+use alloc::sync::Arc;
+use core::ffi::{c_char, CStr};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::time::Duration;
+use std::sync::OnceLock;
 use virtmcu_qom::sync::Bql;
 use zenoh::pubsub::Subscriber;
 use zenoh::{Config, Session, Wait};
+
+static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new();
+
+/// Returns a shared Zenoh session, initializing it if necessary.
+///
+/// This implements the Shared Zenoh Session Pool (DET-2).
+///
+/// # Safety
+///
+/// The caller must ensure that `router` is either NULL or a valid, null-terminated
+/// C string if this is the first call to this function.
+pub unsafe fn get_or_init_session(router: *const c_char) -> Result<Arc<Session>, zenoh::Error> {
+    if let Some(session) = SHARED_SESSION.get() {
+        return Ok(Arc::clone(session));
+    }
+
+    // SAFETY: router validity is guaranteed by the caller.
+    let session = Arc::new(unsafe { open_session(router)? });
+    match SHARED_SESSION.set(Arc::clone(&session)) {
+        Ok(()) => Ok(session),
+        Err(existing) => Ok(Arc::clone(&existing)),
+    }
+}
 
 /// A thread-safe, RAII-enabled Zenoh subscriber for VirtMCU QOM devices.
 ///
@@ -19,6 +46,7 @@ pub struct SafeSubscriber {
     subscriber: Option<Subscriber<()>>,
     is_valid: Arc<AtomicBool>,
     active_count: Arc<AtomicUsize>,
+    drain_cond: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
 }
 
 impl SafeSubscriber {
@@ -37,6 +65,8 @@ impl SafeSubscriber {
         let valid_clone = Arc::clone(&is_valid);
         let active_count = Arc::new(AtomicUsize::new(0));
         let active_clone = Arc::clone(&active_count);
+        let drain_cond = Arc::new((std::sync::Mutex::new(()), std::sync::Condvar::new()));
+        let drain_clone = Arc::clone(&drain_cond);
 
         let subscriber = session
             .declare_subscriber(topic)
@@ -56,10 +86,16 @@ impl SafeSubscriber {
 
                 // Decrement active count when finished.
                 active_clone.fetch_sub(1, Ordering::SeqCst);
+
+                // Notify any waiting Drop call that we are done.
+                let (lock, cvar) = &*drain_clone;
+                if let Ok(_guard) = lock.lock() {
+                    cvar.notify_all();
+                }
             })
             .wait()?;
 
-        Ok(Self { subscriber: Some(subscriber), is_valid, active_count })
+        Ok(Self { subscriber: Some(subscriber), is_valid, active_count, drain_cond })
     }
 }
 
@@ -83,10 +119,14 @@ impl Drop for SafeSubscriber {
         // 4. Wait for any remaining active callbacks to finish their wrapper body.
         //    This ensures that when Drop returns, the captured variables (like raw state pointers)
         //    are no longer being accessed by any Zenoh thread.
-        let mut attempts = 0;
-        while self.active_count.load(Ordering::SeqCst) > 0 && attempts < 1000 {
-            std::thread::yield_now();
-            attempts += 1;
+        let (lock, cvar) = &*self.drain_cond;
+        if let Ok(mut guard) = lock.lock() {
+            while self.active_count.load(Ordering::SeqCst) > 0 {
+                match cvar.wait(guard) {
+                    Ok(new_guard) => guard = new_guard,
+                    Err(_) => break, // Mutex poisoned; best-effort exit.
+                }
+            }
         }
     }
 }
@@ -110,7 +150,8 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     let _ = config.insert_json5("task_planning/concurrency", "8");
 
     if !router.is_null() {
-        if let Ok(r_str) = CStr::from_ptr(router).to_str() {
+        // SAFETY: The caller guarantees that router is a valid null-terminated C string.
+        if let Ok(r_str) = unsafe { CStr::from_ptr(router) }.to_str() {
             if !r_str.is_empty() {
                 let json = format!("[\"{r_str}\"]");
                 let _ = config.insert_json5("mode", "\"client\"");
@@ -198,7 +239,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use core::sync::atomic::AtomicUsize;
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -241,5 +282,62 @@ mod tests {
         let d = Duration::from_millis(100);
         std::thread::sleep(d); // SLEEP_EXCEPTION: test-only; verifying quiescence after subscriber drop (wall-clock boundary test).
         assert_eq!(counter.load(Ordering::SeqCst), count_after_drop);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_safe_subscriber_drain_completes_under_load() {
+        let config = Config::default();
+        let session = zenoh::open(config).wait().unwrap();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let topic = "test/stress/drain";
+
+        // Create a SafeSubscriber whose callback has a slight delay to simulate load
+        let counter_clone = Arc::clone(&counter);
+        let sub = SafeSubscriber::new(&session, topic, move |_sample| {
+            // Simulating workload that takes some time
+            std::thread::sleep(Duration::from_millis(1)); // SLEEP_EXCEPTION: test-only; simulating workload
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+
+        // Spawn threads to publish many messages
+        let mut handles = vec![];
+        for _ in 0..8 {
+            let session_clone = session.clone();
+            let handle = std::thread::spawn(move || {
+                for _ in 0..20 {
+                    let _ = session_clone.put(topic, "data").wait();
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait a tiny bit for some callbacks to start
+        std::thread::sleep(Duration::from_millis(10)); // SLEEP_EXCEPTION: test-only
+
+        // Drop the subscriber while messages are still being processed
+        drop(sub);
+
+        // After drop returns, active_count MUST be 0 and no more increments should happen
+        let final_count = counter.load(Ordering::SeqCst);
+
+        // Wait to be sure no late callbacks arrive
+        std::thread::sleep(Duration::from_millis(100)); // SLEEP_EXCEPTION: test-only
+        assert_eq!(counter.load(Ordering::SeqCst), final_count, "Counter increased after Drop!");
+
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_shared_session() {
+        // SAFETY: Using null for router is safe.
+        let s1 = unsafe { get_or_init_session(std::ptr::null()) }.unwrap();
+        let s2 = unsafe { get_or_init_session(std::ptr::null()) }.unwrap();
+
+        assert!(Arc::ptr_eq(&s1, &s2));
     }
 }

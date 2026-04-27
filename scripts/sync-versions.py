@@ -20,16 +20,16 @@ def sync():
         print("Error: ZENOH_VERSION not found in BUILD_DEPS")
         return
 
-    # 1. Update tools/zenoh_coordinator/Cargo.toml
-    cargo_path = "tools/zenoh_coordinator/Cargo.toml"
-    if Path(cargo_path).exists():
-        with Path(cargo_path).open() as f:
-            content = f.read()
-        new_content = re.sub(r'zenoh = "[^"]+"', f'zenoh = "{zenoh_ver}"', content)
-        if content != new_content:
-            print(f"Updating {cargo_path} to zenoh {zenoh_ver}")
-            with Path(cargo_path).open("w") as f:
-                f.write(new_content)
+    # 1. Update tools/zenoh_coordinator/Cargo.toml and tools/deterministic_coordinator/Cargo.toml
+    for cargo_path in ["tools/zenoh_coordinator/Cargo.toml", "tools/deterministic_coordinator/Cargo.toml"]:
+        if Path(cargo_path).exists():
+            with Path(cargo_path).open() as f:
+                content = f.read()
+            new_content = re.sub(r'zenoh = "[^"]+"', f'zenoh = "{zenoh_ver}"', content)
+            if content != new_content:
+                print(f"Updating {cargo_path} to zenoh {zenoh_ver}")
+                with Path(cargo_path).open("w") as f:
+                    f.write(new_content)
 
     # 1.5 Update root Cargo.toml (workspace)
     hw_cargo_path = "Cargo.toml"

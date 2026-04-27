@@ -10,6 +10,8 @@ from tools.vproto import (
     MmioReq,
     SyscMsg,
     VirtmcuHandshake,
+    ZenohFrameHeader,
+    ZenohSPIHeader,
 )
 
 
@@ -109,3 +111,24 @@ def test_clock_ready_resp_pack_unpack():
 def test_clock_ready_resp_unpack_error():
     with pytest.raises(ValueError, match="Expected 16 bytes"):
         ClockReadyResp.unpack(b"wrongsize")
+
+def test_zenoh_frame_header_pack_unpack():
+    hdr = ZenohFrameHeader(delivery_vtime_ns=1000, sequence_number=42, size=1024)
+    packed = hdr.pack()
+    assert len(packed) == 20
+    unpacked = ZenohFrameHeader.unpack(packed)
+    assert unpacked.delivery_vtime_ns == 1000
+    assert unpacked.sequence_number == 42
+    assert unpacked.size == 1024
+
+def test_zenoh_spi_header_pack_unpack():
+    hdr = ZenohSPIHeader(delivery_vtime_ns=5000, sequence_number=17, size=4, cs=True, cs_index=1, _padding_0=0, _padding_1=0)
+    packed = hdr.pack()
+    assert len(packed) == 24
+    unpacked = ZenohSPIHeader.unpack(packed)
+    assert unpacked.delivery_vtime_ns == 5000
+    assert unpacked.sequence_number == 17
+    assert unpacked.size == 4
+    assert unpacked.cs is True
+    assert unpacked.cs_index == 1
+

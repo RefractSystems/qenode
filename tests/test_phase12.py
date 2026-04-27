@@ -27,9 +27,7 @@ async def test_phase12_yaml2qemu_validation(tmp_path):
 
     # Missing socket-path
     invalid_yaml = {
-        "machine": {
-            "cpus": [{"name": "cpu0", "type": "cortex-m4"}]
-        },
+        "machine": {"cpus": [{"name": "cpu0", "type": "cortex-m4"}]},
         "peripherals": [
             {
                 "name": "bridge0",
@@ -143,9 +141,11 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
             kernel,
             extra_args=[
                 *cli_args,
-                "-serial", "null",
-                "-monitor", "null",
-            ]
+                "-serial",
+                "null",
+                "-monitor",
+                "null",
+            ],
         )
 
         # In standalone mode, QEMU runs at wall-clock speed.
@@ -225,9 +225,12 @@ async def test_phase12_zenoh_clock_error(qemu_launcher):
 
     # Invalid router to trigger Zenoh error
     extra_args = [
-        "-device", "zenoh-clock,node=0,mode=slaved-suspend,router=tcp/1.1.1.1:1",
-        "-serial", "null",
-        "-monitor", "null",
+        "-device",
+        "zenoh-clock,node=0,mode=slaved-suspend,router=tcp/1.1.1.1:1",
+        "-serial",
+        "null",
+        "-monitor",
+        "null",
     ]
 
     # QEMU should fail to realize the device or report error on first query
@@ -244,6 +247,7 @@ async def test_phase12_coordinator_topology(zenoh_router):
     """
     workspace_root = Path(__file__).resolve().parent.parent
     import os
+
     if "CARGO_TARGET_DIR" in os.environ:
         coordinator_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/zenoh_coordinator"
     else:
@@ -257,7 +261,8 @@ async def test_phase12_coordinator_topology(zenoh_router):
     # Start coordinator
     proc = await asyncio.create_subprocess_exec(
         str(coordinator_bin),
-        "--connect", zenoh_router,
+        "--connect",
+        zenoh_router,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -271,6 +276,7 @@ async def test_phase12_coordinator_topology(zenoh_router):
             proc.terminate()
         await proc.wait()
 
+
 @pytest.mark.asyncio
 async def test_phase12_telemetry_listener_flatbuffers():
     """
@@ -280,10 +286,12 @@ async def test_phase12_telemetry_listener_flatbuffers():
     # This test validates that the Python tool 'telemetry_listener.py'
     # can import the generated FlatBuffers code and has correct paths.
     import sys
+
     sys.path.append(str(Path(workspace_root) / "tools"))
 
     try:
         import telemetry_listener
+
         # Just verify we can instantiate a parser/listener if it has a class
         # or simply that the import didn't fail due to path issues.
         assert telemetry_listener is not None

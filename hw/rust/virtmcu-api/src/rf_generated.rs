@@ -5,6 +5,7 @@
 //   namespace virtmcu.rf;
 //   table RfHeader {
 //     delivery_vtime_ns: uint64 = 0;
+//     sequence_number:   uint64 = 0;
 //     size:              uint32 = 0;
 //     rssi:              int8   = 0;
 //     lqi:               uint8  = 255;
@@ -25,12 +26,14 @@ use flatbuffers::FlatBufferBuilder;
 
 pub mod rf_header {
     use super::FlatBufferBuilder;
+    use alloc::vec::Vec;
 
     /// VTable slot offsets for RfHeader fields.
     pub const VT_DELIVERY_VTIME_NS: flatbuffers::VOffsetT = 4;
-    pub const VT_SIZE: flatbuffers::VOffsetT = 6;
-    pub const VT_RSSI: flatbuffers::VOffsetT = 8;
-    pub const VT_LQI: flatbuffers::VOffsetT = 10;
+    pub const VT_SEQUENCE_NUMBER: flatbuffers::VOffsetT = 6;
+    pub const VT_SIZE: flatbuffers::VOffsetT = 8;
+    pub const VT_RSSI: flatbuffers::VOffsetT = 10;
+    pub const VT_LQI: flatbuffers::VOffsetT = 12;
 
     /// Identifier used in size-prefixed buffers.
     const RF_HEADER_IDENTIFIER: Option<&'static str> = None;
@@ -57,6 +60,11 @@ pub mod rf_header {
         #[inline]
         pub fn delivery_vtime_ns(&self) -> u64 {
             unsafe { self._tab.get::<u64>(VT_DELIVERY_VTIME_NS, Some(0)) }.unwrap_or(0)
+        }
+
+        #[inline]
+        pub fn sequence_number(&self) -> u64 {
+            unsafe { self._tab.get::<u64>(VT_SEQUENCE_NUMBER, Some(0)) }.unwrap_or(0)
         }
 
         #[inline]
@@ -88,6 +96,11 @@ pub mod rf_header {
         }
 
         #[inline]
+        pub fn add_sequence_number(&mut self, v: u64) {
+            self.fbb_.push_slot::<u64>(VT_SEQUENCE_NUMBER, v, 0);
+        }
+
+        #[inline]
         pub fn add_size(&mut self, v: u32) {
             self.fbb_.push_slot::<u32>(VT_SIZE, v, 0);
         }
@@ -116,10 +129,17 @@ pub mod rf_header {
     }
 
     /// Serialize an `RfHeader` into a size-prefixed FlatBuffer.
-    pub fn encode(delivery_vtime_ns: u64, size: u32, rssi: i8, lqi: u8) -> Vec<u8> {
+    pub fn encode(
+        delivery_vtime_ns: u64,
+        sequence_number: u64,
+        size: u32,
+        rssi: i8,
+        lqi: u8,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::with_capacity(64);
         let mut hdr = RfHeaderBuilder::new(&mut builder);
         hdr.add_delivery_vtime_ns(delivery_vtime_ns);
+        hdr.add_sequence_number(sequence_number);
         hdr.add_size(size);
         hdr.add_rssi(rssi);
         hdr.add_lqi(lqi);
@@ -130,9 +150,15 @@ pub mod rf_header {
 
     /// Parse the first `RfHeader` from a size-prefixed FlatBuffer slice.
     /// Returns `None` if the buffer is too short or otherwise malformed.
-    pub fn decode(buf: &[u8]) -> Option<(u64, u32, i8, u8)> {
+    pub fn decode(buf: &[u8]) -> Option<(u64, u64, u32, i8, u8)> {
         match flatbuffers::size_prefixed_root::<RfHeader>(buf) {
-            Ok(hdr) => Some((hdr.delivery_vtime_ns(), hdr.size(), hdr.rssi(), hdr.lqi())),
+            Ok(hdr) => Some((
+                hdr.delivery_vtime_ns(),
+                hdr.sequence_number(),
+                hdr.size(),
+                hdr.rssi(),
+                hdr.lqi(),
+            )),
             Err(_) => None,
         }
     }
@@ -145,6 +171,7 @@ pub mod rf_header {
         ) -> Result<(), flatbuffers::InvalidFlatbuffer> {
             v.visit_table(pos)?
                 .visit_field::<u64>("delivery_vtime_ns", VT_DELIVERY_VTIME_NS, false)?
+                .visit_field::<u64>("sequence_number", VT_SEQUENCE_NUMBER, false)?
                 .visit_field::<u32>("size", VT_SIZE, false)?
                 .visit_field::<i8>("rssi", VT_RSSI, false)?
                 .visit_field::<u8>("lqi", VT_LQI, false)?
@@ -169,14 +196,17 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip() {
         let vtime: u64 = 123_456_789_000;
+        let seq: u64 = 42;
         let size: u32 = 127;
         let rssi: i8 = -70;
         let lqi: u8 = 200;
 
-        let buf = rf_header::encode(vtime, size, rssi, lqi);
-        let (v2, s2, r2, l2) = rf_header::decode(&buf).unwrap_or_else(|| std::process::abort()); // "decode failed");
+        let buf = rf_header::encode(vtime, seq, size, rssi, lqi);
+        let (v2, sq2, s2, r2, l2) =
+            rf_header::decode(&buf).unwrap_or_else(|| std::process::abort()); // "decode failed");
 
         assert_eq!(v2, vtime);
+        assert_eq!(sq2, seq);
         assert_eq!(s2, size);
         assert_eq!(r2, rssi);
         assert_eq!(l2, lqi);
@@ -187,8 +217,8 @@ mod tests {
         // lqi default is 255.  When the writer writes 255 the vtable entry is
         // elided (FlatBuffers stores defaults as absent).  The reader must
         // return 255 regardless.
-        let buf = rf_header::encode(0, 0, 0, 255);
-        let (_, _, _, lqi) = rf_header::decode(&buf).unwrap_or_else(|| std::process::abort()); // "decode failed");
+        let buf = rf_header::encode(0, 0, 0, 0, 255);
+        let (_, _, _, _, lqi) = rf_header::decode(&buf).unwrap_or_else(|| std::process::abort()); // "decode failed");
         assert_eq!(lqi, 255, "absent lqi field should return default 255");
     }
 
@@ -197,9 +227,10 @@ mod tests {
         // An old writer writes only delivery_vtime_ns and size (rssi=0, lqi=255
         // — both defaults, so elided).  A new reader that knows about rssi and
         // lqi must receive sensible defaults for those absent fields.
-        let buf = rf_header::encode(999, 42, 0, 255);
-        let (vtime, size, rssi, lqi) = rf_header::decode(&buf).unwrap();
+        let buf = rf_header::encode(999, 0, 42, 0, 255);
+        let (vtime, seq, size, rssi, lqi) = rf_header::decode(&buf).unwrap();
         assert_eq!(vtime, 999);
+        assert_eq!(seq, 0);
         assert_eq!(size, 42);
         assert_eq!(rssi, 0); // default
         assert_eq!(lqi, 255); // default

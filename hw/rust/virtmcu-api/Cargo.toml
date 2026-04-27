@@ -11,5 +11,9 @@ workspace = true
 [dependencies]
 flatbuffers.workspace = true
 
+[features]
+default = ["std"]
+std = []
+
 [dev-dependencies]
 proptest = "1.4.0"

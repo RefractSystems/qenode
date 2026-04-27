@@ -13,10 +13,30 @@ import zenoh
 # Paths
 WORKSPACE_DIR = Path(Path(Path(__file__).resolve().parent) / "..")
 BUILD_DIR = Path(WORKSPACE_DIR) / "target/release"
-REPLAY_BIN = Path(BUILD_DIR) / "resd_replay"
-if not REPLAY_BIN.exists():
-    import os
-REPLAY_BIN = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay" if "CARGO_TARGET_DIR" in os.environ else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
+
+
+def find_replay_bin():
+    # 1. Check CARGO_TARGET_DIR if set
+    if "CARGO_TARGET_DIR" in os.environ:
+        p = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay"
+        if p.exists():
+            return p
+
+    # 2. Check workspace target
+    p = Path(WORKSPACE_DIR) / "target/release/resd_replay"
+    if p.exists():
+        return p
+
+    # 3. Check tool-specific target
+    p = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
+    if p.exists():
+        return p
+
+    # Default to workspace target for better error message if missing
+    return Path(WORKSPACE_DIR) / "target/release/resd_replay"
+
+
+REPLAY_BIN = find_replay_bin()
 print(f"DEBUG: REPLAY_BIN = {REPLAY_BIN}")
 
 
@@ -91,9 +111,6 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
         q = session.declare_queryable(f"{unique_prefix}/advance/{i}", on_query)
         queryables.append(q)
 
-    from tests.conftest import wait_for_zenoh_discovery
-    for i in range(num_nodes):
-        await wait_for_zenoh_discovery(session, f"{unique_prefix}/advance/{i}")
 
     # Start resd_replay processes
     procs = []
@@ -153,7 +170,11 @@ async def test_mujoco_bridge_shm(zenoh_router):  # noqa: ARG001
 
     bridge_bin = Path(BUILD_DIR) / "mujoco_bridge"
     if not bridge_bin.exists():
-        bridge_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge" if "CARGO_TARGET_DIR" in os.environ else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
+        bridge_bin = (
+            Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge"
+            if "CARGO_TARGET_DIR" in os.environ
+            else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
+        )
 
     # Run bridge briefly
     p = subprocess.Popen(

@@ -1,6 +1,12 @@
-use core::ffi::{c_char, c_int, c_void};
-use std::ffi::CStr;
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ptr;
 
 use virtmcu_api::ZenohSPIHeader;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -29,38 +35,49 @@ pub struct ZenohSPI {
 }
 
 pub struct ZenohSPIBackend {
-    session: Session,
+    session: Arc<Session>,
     id: String,
 }
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
-unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
+/// # Safety
+/// This function is called by QEMU when an SPI transfer happens. `dev` must be a valid pointer to `ZenohSPI`.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
     let was_locked = virtmcu_qom::sync::Bql::is_held();
     if !was_locked {
         vlog!("[zenoh-spi] WARNING: zenoh_spi_transfer called without BQL!\n");
     }
 
-    let s = &mut *(dev as *mut ZenohSPI);
+    // SAFETY: dev is a valid pointer to ZenohSPI provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut ZenohSPI) };
     if s.rust_state.is_null() {
         return 0;
     }
-    let backend = &*s.rust_state;
+    // SAFETY: rust_state is non-null and owned by the device.
+    let backend = unsafe { &*s.rust_state };
 
-    let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    let header = ZenohSPIHeader {
-        delivery_vtime_ns: now,
-        size: 4,
-        cs: (*dev).cs,
-        cs_index: (*dev).cs_index,
-        _padding: [0; 2],
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    // SAFETY: dev points to a valid SSIPeripheral.
+    let header = unsafe {
+        ZenohSPIHeader {
+            delivery_vtime_ns: now,
+            sequence_number: 0,
+            size: 4,
+            cs: (*dev).cs,
+            cs_index: (*dev).cs_index,
+            _padding: [0; 2],
+        }
     };
 
     let mut data = Vec::with_capacity(16 + 4);
     data.extend_from_slice(&header.pack());
     data.extend_from_slice(&val.to_le_bytes());
 
-    let topic = format!("sim/spi/{}/{}", backend.id, (*dev).cs_index);
+    // SAFETY: dev points to a valid SSIPeripheral.
+    let topic = unsafe { format!("sim/spi/{}/{}", backend.id, (*dev).cs_index) };
 
     // Release BQL before blocking for Zenoh query
     let _bql = virtmcu_qom::sync::Bql::temporary_unlock();
@@ -96,55 +113,78 @@ unsafe extern "C" fn zenoh_spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u3
     received_val
 }
 
-unsafe extern "C" fn zenoh_spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
+/// # Safety
+/// This function is called by QEMU when Chip Select state changes. `dev` must be a valid pointer to `ZenohSPI`.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
     let _was_locked = virtmcu_qom::sync::Bql::is_held();
 
-    let s = &mut *(dev as *mut ZenohSPI);
+    // SAFETY: dev is a valid pointer to ZenohSPI provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut ZenohSPI) };
     if s.rust_state.is_null() {
         return 0;
     }
-    let backend = &*s.rust_state;
+    // SAFETY: rust_state is non-null and owned by the device.
+    let backend = unsafe { &*s.rust_state };
 
-    let now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64;
-    let header = ZenohSPIHeader {
-        delivery_vtime_ns: now,
-        size: 0,
-        cs: select,
-        cs_index: (*dev).cs_index,
-        _padding: [0; 2],
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    // SAFETY: dev points to a valid SSIPeripheral.
+    let header = unsafe {
+        ZenohSPIHeader {
+            delivery_vtime_ns: now,
+            sequence_number: 0,
+            size: 0,
+            cs: select,
+            cs_index: (*dev).cs_index,
+            _padding: [0; 2],
+        }
     };
 
     let header_bytes = header.pack();
 
-    let topic = format!("sim/spi/{}/{}/cs", backend.id, (*dev).cs_index);
+    // SAFETY: dev points to a valid SSIPeripheral.
+    let topic = unsafe { format!("sim/spi/{}/{}/cs", backend.id, (*dev).cs_index) };
 
+    // Release BQL before blocking for Zenoh put
+    let _bql = virtmcu_qom::sync::Bql::temporary_unlock();
     let _ = backend.session.put(topic, header_bytes.to_vec()).wait();
 
     0
 }
 
-unsafe extern "C" fn zenoh_spi_realize(dev: *mut SSIPeripheral, errp: *mut *mut c_void) {
+/// # Safety
+/// This function is called by QEMU to realize the device. `dev` must be a valid pointer to `ZenohSPI`.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_spi_realize(dev: *mut SSIPeripheral, errp: *mut *mut c_void) {
     // Task 21.7.3: SPI/UART Topology Runtime Assertions
     // Verify that this device is indeed attached to an SSI bus
-    let dev_state = &mut (*dev).parent_obj;
+    // SAFETY: dev points to a valid SSIPeripheral.
+    let dev_state = unsafe { &mut (*dev).parent_obj };
     if dev_state.parent_bus.is_null() {
+        // SAFETY: errp is a valid error pointer.
         virtmcu_qom::error_setg!(errp, "zenoh-spi: device must be attached to an SSI bus\n");
         return;
     }
 
-    let s = &mut *(dev as *mut ZenohSPI);
+    // SAFETY: dev is a valid pointer to ZenohSPI provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut ZenohSPI) };
 
     let id_str = if s.id.is_null() {
         format!("spi{}", s.node_id)
     } else {
-        CStr::from_ptr(s.id).to_string_lossy().into_owned()
+        // SAFETY: s.id is a valid C-string if it's not null.
+        unsafe { CStr::from_ptr(s.id).to_string_lossy().into_owned() }
     };
 
     let router_str = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
 
-    let session = match virtmcu_zenoh::open_session(router_str) {
+    // SAFETY: get_or_init_session handles null and valid pointers.
+    // Safety: router validity is guaranteed by the caller.
+    let session = match unsafe { virtmcu_zenoh::get_or_init_session(router_str) } {
         Ok(s) => s,
         Err(_e) => {
+            // SAFETY: errp is a valid error pointer.
             virtmcu_qom::error_setg!(errp, "zenoh-spi: failed to open Zenoh session");
             return;
         }
@@ -157,10 +197,17 @@ unsafe extern "C" fn zenoh_spi_realize(dev: *mut SSIPeripheral, errp: *mut *mut 
     // vlog!("[zenoh-spi] Realized (id={}, node={})\n", id_str, s.node_id);
 }
 
-unsafe extern "C" fn zenoh_spi_instance_finalize(obj: *mut Object) {
-    let s = &mut *(obj as *mut ZenohSPI);
+/// # Safety
+/// This function is called by QEMU when finalizing the device. `obj` must be a valid pointer to `ZenohSPI`.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_spi_instance_finalize(obj: *mut Object) {
+    // SAFETY: obj is a valid pointer to ZenohSPI provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut ZenohSPI) };
     if !s.rust_state.is_null() {
-        drop(Box::from_raw(s.rust_state));
+        // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
+        unsafe {
+            drop(Box::from_raw(s.rust_state));
+        }
         s.rust_state = ptr::null_mut();
     }
 }
@@ -176,14 +223,21 @@ define_properties!(
     ]
 );
 
-unsafe extern "C" fn zenoh_spi_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+/// # Safety
+/// This function is called by QEMU to initialize the class. `klass` must be a valid `ObjectClass` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_spi_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let ssc = ssi_peripheral_class!(klass);
-    let dc = &mut (*ssc).parent_class;
+    // SAFETY: ssc is a valid SSIPeripheralClass pointer.
+    let dc = unsafe { &mut (*ssc).parent_class };
 
-    (*ssc).realize = Some(zenoh_spi_realize);
-    (*ssc).transfer = Some(zenoh_spi_transfer);
-    (*ssc).set_cs = Some(zenoh_spi_set_cs);
-    (*ssc).cs_polarity = 1; // SSI_CS_LOW (TODO: make property)
+    // SAFETY: ssc is a valid SSIPeripheralClass pointer.
+    unsafe {
+        (*ssc).realize = Some(zenoh_spi_realize);
+        (*ssc).transfer = Some(zenoh_spi_transfer);
+        (*ssc).set_cs = Some(zenoh_spi_set_cs);
+        (*ssc).cs_polarity = 1; // SSI_CS_LOW (TODO: make property)
+    }
 
     dc.user_creatable = true;
     virtmcu_qom::device_class_set_props!(dc, ZENOH_SPI_PROPERTIES);
@@ -192,20 +246,20 @@ unsafe extern "C" fn zenoh_spi_class_init(klass: *mut ObjectClass, _data: *const
 static ZENOH_SPI_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"zenoh-spi".as_ptr(),
     parent: TYPE_SSI_PERIPHERAL,
-    instance_size: std::mem::size_of::<ZenohSPI>(),
+    instance_size: core::mem::size_of::<ZenohSPI>(),
     instance_align: 0,
     instance_init: None,
     instance_post_init: None,
     instance_finalize: Some(zenoh_spi_instance_finalize),
     abstract_: false,
-    class_size: std::mem::size_of::<SSIPeripheralClass>(),
+    class_size: core::mem::size_of::<SSIPeripheralClass>(),
     class_init: Some(zenoh_spi_class_init),
     class_base_init: None,
     class_data: ptr::null(),
     interfaces: ptr::null(),
 };
 
-declare_device_type!(zenoh_spi_type_init, ZENOH_SPI_TYPE_INFO);
+declare_device_type!(ZENOH_SPI_TYPE_INIT, ZENOH_SPI_TYPE_INFO);
 
 #[cfg(test)]
 mod tests {

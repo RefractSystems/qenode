@@ -13,6 +13,8 @@
  * 3. Link Modeling: It applies distance-based attenuation or drop probabilities
  *    defined via the Dynamic Network Topology API.
  */
+mod topology;
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use clap::Parser;
 use rand::{Rng, SeedableRng};
@@ -47,6 +49,10 @@ struct Args {
     /// RX sensitivity in dBm. Packets below this will be dropped.
     #[arg(long, default_value_t = -90.0)]
     sensitivity: f32,
+
+    /// Path to YAML file defining the network topology.
+    #[arg(long)]
+    topology: Option<String>,
 
     /// Path to YAML file defining AABB obstacles with per-box dB attenuation.
     /// Format: obstacles: [{x_min, x_max, y_min, y_max, z_min, z_max, attenuation_db}]
@@ -89,15 +95,51 @@ struct PositionUpdate {
     z: f64,
 }
 
-// ─── Obstacle Attenuation Model (Phase 14.9) ─────────────────────────────────
-//
-// Each obstacle is an axis-aligned bounding box (AABB) with a fixed dB
-// attenuation penalty.  For every TX→RX pair the coordinator checks whether
-// the line segment between sender and receiver intersects any obstacle using
-// the parametric slab method.  All intersecting obstacles' attenuation values
-// are summed and subtracted from the computed RSSI before the sensitivity
-// check, so thick walls and stacked obstacles combine additively.
-//
+use virtmcu_api::{ClockAdvanceReq, ClockSyncTransport};
+
+#[allow(dead_code)]
+/// Represents a managed node in the deterministic simulation.
+struct Node {
+    _id: String,
+    _transport: Box<dyn ClockSyncTransport>,
+    _current_vtime_ns: u64,
+}
+
+#[allow(dead_code)]
+/// Orchestrates virtual time across multiple nodes (DET-5).
+struct VirtualTimeAuthority {
+    _nodes: Vec<Node>,
+    _quantum_ns: u64,
+}
+
+#[allow(dead_code)]
+impl VirtualTimeAuthority {
+    fn new(quantum_ns: u64) -> Self {
+        Self {
+            _nodes: Vec::new(),
+            _quantum_ns: quantum_ns,
+        }
+    }
+
+    fn add_node(&mut self, node: Node) {
+        self._nodes.push(node);
+    }
+
+    /// Advances all nodes by one quantum and returns when the barrier is reached.
+    fn step(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 1. Send clock-advance requests to all nodes.
+        for node in &self._nodes {
+            let _req = ClockAdvanceReq {
+                delta_ns: self._quantum_ns,
+                mujoco_time_ns: node._current_vtime_ns + self._quantum_ns,
+            };
+            // This assumes the transport is already connected and waiting in a worker thread.
+            // Actually, for the coordinator, we might want a non-blocking or multi-threaded approach.
+            // Let's refine how the coordinator interacts with the transports.
+        }
+        Ok(())
+    }
+}
 // Loaded from a YAML file at startup via --obstacles <path>.
 
 /// Single AABB obstacle entry loaded from the YAML config.
@@ -272,6 +314,27 @@ async fn main() {
     println!("  RF TX Power: {} dBm", args.tx_power);
     println!("  RF Sensitivity: {} dBm", args.sensitivity);
 
+    let topology_graph = if let Some(ref path) = args.topology {
+        match topology::TopologyGraph::from_yaml(std::path::Path::new(path)) {
+            Ok(g) => {
+                println!("  Topology: loaded from '{}'", path);
+                g
+            }
+            Err(e) => panic!("Failed to load topology from '{}': {:?}", path, e),
+        }
+    } else {
+        topology::TopologyGraph::default()
+    };
+
+    let mut prng_seed = args.seed;
+    if let Some(seed) = topology_graph.global_seed {
+        prng_seed = seed;
+        println!(
+            "  Overriding PRNG seed with global_seed from topology: {}",
+            prng_seed
+        );
+    }
+
     let obstacles: Vec<ObstacleBox> = if let Some(ref path) = args.obstacles {
         let file = std::fs::File::open(path)
             .unwrap_or_else(|e| panic!("Cannot open obstacles file '{}': {}", path, e));
@@ -379,37 +442,45 @@ async fn main() {
     };
 
     // Deterministic PRNG
-    let mut rng = ChaCha8Rng::seed_from_u64(args.seed);
+    let mut rng = ChaCha8Rng::seed_from_u64(prng_seed);
+
+    let topology_graph = Arc::new(RwLock::new(topology_graph));
 
     println!("Listening for packets and topology updates...");
 
     loop {
         tokio::select! {
             Ok(sample) = eth_sub.recv_async() => {
-                let _ = handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns, &mut rng).await;
+                let tg = topology_graph.read().await;
+                let _ = handle_eth_msg(&session, sample, &mut known_eth_nodes, &topology, args.delay_ns, &mut rng, &tg).await;
             }
             Ok(sample) = uart_sub.recv_async() => {
-                let _ = handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns, &mut rng).await;
+                let tg = topology_graph.read().await;
+                let _ = handle_uart_msg(&session, sample, &mut known_uart_nodes, &topology, args.delay_ns, &mut rng, &tg).await;
             }
             Ok(sample) = sysc_sub.recv_async() => {
-                let _ = handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns).await;
+                let tg = topology_graph.read().await;
+                let _ = handle_sysc_msg(&session, sample, &mut known_sysc_nodes, &topology, args.delay_ns, &tg).await;
             }
             Ok(sample) = rf_802154_sub.recv_async() => {
+                let tg = topology_graph.read().await;
                 let positions = node_positions.read().await;
                 let _ = handle_rf_msg(&session, sample, &mut known_rf_nodes, RfCtx {
                     _topic_prefix: "sim/rf/802154", positions: &positions,
                     args: &args, has_rf_header: true, obstacles: &obstacles,
-                }).await;
+                }, &tg).await;
             }
             Ok(sample) = rf_hci_sub.recv_async() => {
+                let tg = topology_graph.read().await;
                 let positions = node_positions.read().await;
                 let _ = handle_rf_msg(&session, sample, &mut known_rf_nodes, RfCtx {
                     _topic_prefix: "sim/rf/hci", positions: &positions,
                     args: &args, has_rf_header: false, obstacles: &obstacles,
-                }).await;
+                }, &tg).await;
             }
             Ok(sample) = lin_sub.recv_async() => {
-                let _ = handle_lin_msg(&session, sample, &mut known_lin_nodes, &topology, args.delay_ns).await;
+                let tg = topology_graph.read().await;
+                let _ = handle_lin_msg(&session, sample, &mut known_lin_nodes, &topology, args.delay_ns, &tg).await;
             }
             Ok(sample) = ctrl_sub.recv_async() => {
                 let topic = sample.key_expr().as_str();
@@ -437,6 +508,9 @@ async fn main() {
                     let payload_bytes = sample.payload().to_bytes();
                     if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
                         if let Ok(update) = serde_json::from_str::<PositionUpdate>(payload_str) {
+                            let mut tg = topology_graph.write().await;
+                            tg.update_positions(vec![(update.id.clone(), [update.x, update.y, update.z])]);
+
                             let mut positions = node_positions.write().await;
                             let entry = positions.entry((prefix.clone(), update.id.clone())).or_insert(NodeInfo {
                                 id: update.id.clone(),
@@ -460,6 +534,7 @@ async fn handle_eth_msg(
     topology: &HashMap<(String, String, String), LinkState>,
     default_delay_ns: u64,
     rng: &mut ChaCha8Rng,
+    tg: &topology::TopologyGraph,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let (world_prefix, base_topic, sender_id) = match parse_topic_with_prefix(topic) {
@@ -496,6 +571,14 @@ async fn handle_eth_msg(
     if let Some(nodes) = known_nodes.get(&base_topic) {
         for node in nodes.iter() {
             if node == &sender_id {
+                continue;
+            }
+
+            if !tg.is_link_allowed(&sender_id, node, &topology::Protocol::Ethernet) {
+                eprintln!(
+                    "[Topology Violation] Dropping ETH msg from {} to {}",
+                    sender_id, node
+                );
                 continue;
             }
 
@@ -544,6 +627,7 @@ async fn handle_uart_msg(
     topology: &HashMap<(String, String, String), LinkState>,
     default_delay_ns: u64,
     rng: &mut ChaCha8Rng,
+    tg: &topology::TopologyGraph,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let (world_prefix, base_topic, sender_id) = match parse_topic_with_prefix(topic) {
@@ -574,6 +658,14 @@ async fn handle_uart_msg(
     if let Some(nodes) = known_nodes.get(&base_topic) {
         for node in nodes.iter() {
             if node == &sender_id {
+                continue;
+            }
+
+            if !tg.is_link_allowed(&sender_id, node, &topology::Protocol::Uart) {
+                eprintln!(
+                    "[Topology Violation] Dropping UART msg from {} to {}",
+                    sender_id, node
+                );
                 continue;
             }
 
@@ -621,6 +713,7 @@ async fn handle_lin_msg(
     known_nodes: &mut HashMap<String, HashSet<String>>,
     topology: &HashMap<(String, String, String), LinkState>,
     default_delay_ns: u64,
+    tg: &topology::TopologyGraph,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let (world_prefix, base_topic, sender_id) = match parse_topic_with_prefix(topic) {
@@ -644,6 +737,14 @@ async fn handle_lin_msg(
     if let Some(nodes) = known_nodes.get(&base_topic) {
         for node in nodes.iter() {
             if node == &sender_id {
+                continue;
+            }
+
+            if !tg.is_link_allowed(&sender_id, node, &topology::Protocol::Lin) {
+                eprintln!(
+                    "[Topology Violation] Dropping LIN msg from {} to {}",
+                    sender_id, node
+                );
                 continue;
             }
 
@@ -684,6 +785,7 @@ async fn handle_sysc_msg(
     known_nodes: &mut HashMap<String, HashSet<String>>,
     topology: &HashMap<(String, String, String), LinkState>,
     default_delay_ns: u64,
+    tg: &topology::TopologyGraph,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let topic = sample.key_expr().as_str();
     let (world_prefix, base_topic, sender_id) = match parse_topic_with_prefix(topic) {
@@ -713,6 +815,14 @@ async fn handle_sysc_msg(
     if let Some(nodes) = known_nodes.get(&base_topic) {
         for node in nodes.iter() {
             if node == &sender_id {
+                continue;
+            }
+
+            if !tg.is_link_allowed(&sender_id, node, &topology::Protocol::Spi) {
+                eprintln!(
+                    "[Topology Violation] Dropping SYSC (SPI) msg from {} to {}",
+                    sender_id, node
+                );
                 continue;
             }
 
@@ -752,6 +862,7 @@ async fn handle_rf_msg(
     sample: zenoh::sample::Sample,
     known_nodes: &mut HashMap<String, HashSet<String>>,
     ctx: RfCtx<'_>,
+    tg: &topology::TopologyGraph,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let RfCtx {
         _topic_prefix: _,
@@ -775,29 +886,30 @@ async fn handle_rf_msg(
 
     // Decode header: 802.15.4 frames use FlatBuffer RfHeader; HCI frames use
     // the legacy 12-byte packed header (delivery_vtime_ns:u64 + size:u32).
-    let (delivery_vtime_ns, size, orig_rssi, orig_lqi, payload_offset) = if has_rf_header {
-        match rf_header::decode(&payload) {
-            Some((vt, sz, rssi, lqi)) => {
-                // Header size = size-prefix (4) + FlatBuffer body (le32 value at [0..4])
-                let fb_len = if payload.len() >= 4 {
-                    4 + u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]])
-                        as usize
-                } else {
-                    return Ok(());
-                };
-                (vt, sz, rssi, lqi, fb_len)
+    let (delivery_vtime_ns, sequence_number, size, orig_rssi, orig_lqi, payload_offset) =
+        if has_rf_header {
+            match rf_header::decode(&payload) {
+                Some((vt, seq, sz, rssi, lqi)) => {
+                    // Header size = size-prefix (4) + FlatBuffer body (le32 value at [0..4])
+                    let fb_len = if payload.len() >= 4 {
+                        4 + u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]])
+                            as usize
+                    } else {
+                        return Ok(());
+                    };
+                    (vt, seq, sz, rssi, lqi, fb_len)
+                }
+                None => return Ok(()),
             }
-            None => return Ok(()),
-        }
-    } else {
-        if payload.len() < 12 {
-            return Ok(());
-        }
-        let mut cursor = Cursor::new(&payload);
-        let vt = cursor.read_u64::<LittleEndian>()?;
-        let sz = cursor.read_u32::<LittleEndian>()?;
-        (vt, sz, 0i8, 255u8, 12)
-    };
+        } else {
+            if payload.len() < 12 {
+                return Ok(());
+            }
+            let mut cursor = Cursor::new(&payload);
+            let vt = cursor.read_u64::<LittleEndian>()?;
+            let sz = cursor.read_u32::<LittleEndian>()?;
+            (vt, 0, sz, 0i8, 255u8, 12)
+        };
     let _ = orig_rssi; // used only in the re-encode path below via rssi_f
 
     if payload.len() < payload_offset + size as usize {
@@ -807,8 +919,7 @@ async fn handle_rf_msg(
 
     let sender_pos = positions.get(&(world_prefix.clone(), sender_id.clone()));
 
-    // Spatial index: only check nodes in adjacent grid cells (Phase 14.6).
-    let candidate_ids: Vec<String> = if let Some(spos) = sender_pos {
+    let mut candidate_ids: Vec<String> = if let Some(spos) = sender_pos {
         let grid = SpatialGrid::build(positions, &world_prefix);
         grid.candidates(spos.x, spos.y, spos.z, &sender_id)
     } else {
@@ -821,6 +932,17 @@ async fn handle_rf_msg(
             None => Vec::new(),
         }
     };
+
+    // Apply DET-6 Topology constraint for wireless if specified
+    if tg.is_explicit {
+        if tg.has_wireless() {
+            let neighbors = tg.rf_neighbors(&sender_id);
+            candidate_ids.retain(|id| neighbors.contains(id));
+        } else {
+            // Explicit topology provided but no wireless medium defined. Drop all RF.
+            candidate_ids.clear();
+        }
+    }
 
     for receiver_id in &candidate_ids {
         let receiver_pos = positions.get(&(world_prefix.clone(), receiver_id.clone()));
@@ -856,7 +978,8 @@ async fn handle_rf_msg(
 
         let new_payload: Vec<u8> = if has_rf_header {
             let clamped_rssi = rssi_f.clamp(-128.0, 127.0) as i8;
-            let mut buf = rf_header::encode(new_vtime, size, clamped_rssi, orig_lqi);
+            let mut buf =
+                rf_header::encode(new_vtime, sequence_number, size, clamped_rssi, orig_lqi);
             buf.extend_from_slice(frame_data);
             buf
         } else {

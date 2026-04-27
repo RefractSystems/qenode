@@ -30,30 +30,48 @@ def unpack_clock_ready(data: bytes) -> tuple[int, int, int]:
 async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_count: int = 1, timeout: float = 30.0):
     """
     Blocks until Zenoh discovery confirms the network mesh is established.
-    Empirically verifies router connectivity.
+    Uses the Zenoh Liveliness API for deterministic signaling without polling or sleeps.
     """
-    logger.info(f"Zenoh: verifying connectivity for {topic} (expected={expected_count})...")
-    start = asyncio.get_running_loop().time()
+    logger.info(f"Zenoh: waiting for liveliness on {topic} (expected={expected_count})...")
 
-    while asyncio.get_running_loop().time() - start < timeout:
-        # Check if we see at least one router or peer.
-        # In our test topology, there is usually 1 persistent router.
+    event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def on_liveliness(sample):
+        # We only care about PUT (token declared) or existing tokens
+        if sample.kind == zenoh.SampleKind.PUT:
+            logger.info(f"Zenoh: liveliness detected on {topic}")
+            loop.call_soon_threadsafe(event.set)
+
+    # 1. Subscribe to liveliness changes
+    sub = await asyncio.to_thread(
+        lambda: session.liveliness().declare_subscriber(topic, on_liveliness)
+    )
+
+    try:
+        # 2. Check if it's already alive
+        # We do a quick get to see if the token exists already
+        def check_current():
+            replies = session.liveliness().get(topic)
+            for _ in replies:
+                return True
+            return False
+
+        if await asyncio.to_thread(check_current):
+            logger.info(f"Zenoh: {topic} is already alive")
+            return
+
+        # 3. Wait for the event with a timeout
         try:
-            routers = list(session.info.routers_zid())
-            if len(routers) >= 1:
-                logger.info(f"Zenoh: mesh established (routers={len(routers)})")
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            # Give a tiny bit of breathing room for the internal routing table update,
+            # but we've eliminated the multi-second ASan grace period.
+            await asyncio.sleep(0.1)
+        except TimeoutError as err:
+            raise TimeoutError(f"Zenoh discovery timeout for {topic} after {timeout}s") from err
+    finally:
+        await asyncio.to_thread(sub.undeclare)
 
-                # Give Zenoh's discovery protocol time to exchange routing tables
-                # and establish pub/sub matching across the mesh.
-                grace_period = 3.0 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 0.5
-                await asyncio.sleep(grace_period)
-                return
-        except Exception:
-            pass
-
-        await asyncio.sleep(0.1)
-
-    raise TimeoutError(f"Zenoh discovery timeout for {topic} after {timeout}s")
 
 
 # VTA step timeout: always longer than the QEMU stall-timeout so QEMU can reply
@@ -101,6 +119,8 @@ class VirtualTimeAuthority:
         self.session = session
         self.node_ids = node_ids
         self.current_vtimes = dict.fromkeys(node_ids, 0)
+        self._expected_vtime_ns = dict.fromkeys(node_ids, 0)
+        self._overshoot_ns = dict.fromkeys(node_ids, 0)
 
     async def step(self, delta_ns: int, timeout: float = _DEFAULT_VTA_STEP_TIMEOUT_S) -> Any:
         """
@@ -110,7 +130,12 @@ class VirtualTimeAuthority:
         tasks = []
         for nid in self.node_ids:
             topic = f"sim/clock/advance/{nid}"
-            payload = pack_clock_advance(delta_ns)
+
+            # Compensate for accumulated overshoot from previous quantum.
+            adjusted_delta = max(0, delta_ns - self._overshoot_ns[nid])
+            target_mujoco_time = self._expected_vtime_ns[nid] + delta_ns
+
+            payload = pack_clock_advance(adjusted_delta, target_mujoco_time)
             tasks.append(self._get_reply(nid, topic, payload, timeout))
 
         replies = await asyncio.gather(*tasks)
@@ -130,6 +155,8 @@ class VirtualTimeAuthority:
                 )
 
             self.current_vtimes[nid] = vtime
+            self._expected_vtime_ns[nid] += delta_ns
+            self._overshoot_ns[nid] = max(0, vtime - self._expected_vtime_ns[nid])
 
         return self.current_vtimes
 

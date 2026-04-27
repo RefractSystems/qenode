@@ -27,10 +27,46 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
         data = yaml.safe_load(f)
 
     # Hardening: Check for unknown top-level keys to prevent silent failures
-    KNOWN_KEYS = {"machine", "peripherals", "memory", "include"}  # noqa: N806
+    KNOWN_KEYS = {"machine", "peripherals", "memory", "include", "nodes", "topology"}  # noqa: N806
     for key in data:
         if key not in KNOWN_KEYS:
             print(f"Warning: Unknown top-level key '{key}' in {yaml_path}. It will be ignored.", file=sys.stderr)
+
+    # Validate topology if present
+    topology = data.get("topology")
+    if topology:
+        nodes = data.get("nodes", [])
+        valid_node_ids = set()
+
+        # If nodes is a list of dicts, extract 'id' or 'name'. If it's a list of ints/strings, use them.
+        for node in nodes:
+            if isinstance(node, dict) and "id" in node:
+                valid_node_ids.add(str(node["id"]))
+            elif isinstance(node, (int, str)):
+                valid_node_ids.add(str(node))
+
+        # Validate global_seed
+        seed = topology.get("global_seed", 0)
+        if not isinstance(seed, int) or seed < 0:
+            raise ValueError(f"Topology validation failed: global_seed must be a non-negative integer, got {seed}")
+
+        # Validate max_messages_per_node_per_quantum
+        max_msgs = topology.get("max_messages_per_node_per_quantum", 1024)
+        if not isinstance(max_msgs, int) or max_msgs < 1:
+            raise ValueError(f"Topology validation failed: max_messages_per_node_per_quantum must be a positive integer, got {max_msgs}")
+
+        # Validate links
+        for link in topology.get("links", []):
+            for node_id in link.get("nodes", []):
+                if str(node_id) not in valid_node_ids:
+                    raise ValueError(f"Topology validation failed: node ID {node_id} in links not found in nodes:")
+
+        # Validate wireless
+        wireless = topology.get("wireless", {})
+        for w_node in wireless.get("nodes", []):
+            node_id = w_node.get("id")
+            if str(node_id) not in valid_node_ids:
+                raise ValueError(f"Topology validation failed: node ID {node_id} in wireless nodes not found in nodes:")
 
     platform = ReplPlatform()
 
@@ -210,7 +246,12 @@ def main():
         sys.exit(1)
 
     print(f"Parsing YAML: {args.input}...")
-    platform, _ = parse_yaml_platform(args.input)
+    try:
+        platform, _ = parse_yaml_platform(args.input)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
     original_devices = list(platform.devices)
 
     # Extract architecture

@@ -37,16 +37,16 @@ pub extern "C" fn type_register_static(info: *const TypeInfo) -> *mut c_void {
         MOCK_CALLED = true;
         // Verify some fields
         let name_str =
-            std::ffi::CStr::from_ptr((*info).name as *const c_char).to_str().unwrap_or_default();
+            core::ffi::CStr::from_ptr((*info).name as *const c_char).to_str().unwrap_or_default();
         assert_eq!(name_str, "test-device");
 
         let parent_str =
-            std::ffi::CStr::from_ptr((*info).parent as *const c_char).to_str().unwrap_or_default();
+            core::ffi::CStr::from_ptr((*info).parent as *const c_char).to_str().unwrap_or_default();
         assert_eq!(parent_str, "sys-bus-device");
 
         assert_eq!((*info).instance_size, 128);
     }
-    std::ptr::null_mut()
+    core::ptr::null_mut()
 }
 
 static TEST_TYPE_INFO: TypeInfo = TypeInfo {

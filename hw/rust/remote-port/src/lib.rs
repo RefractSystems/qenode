@@ -6,10 +6,10 @@
 //! waits on Condvar (which releases Mutex). BQL is temporarily yielded during wait
 //! via Bql::temporary_unlock().
 
+use core::ffi::CStr;
 use core::ffi::{c_char, c_uint, c_void};
-use std::ffi::CStr;
-use std::ptr;
-use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
+use core::ptr;
+use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_NATIVE_ENDIAN,
 };
@@ -22,10 +22,10 @@ use virtmcu_qom::{
     error_setg,
 };
 
+use core::time::Duration;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
 
 // --- Remote Port Protocol Definitions ---
 
@@ -241,7 +241,7 @@ impl RpPktInterrupt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ptr;
+    use core::ptr;
 
     #[test]
     fn test_unaligned_hdr_read() {
@@ -264,7 +264,7 @@ mod tests {
             ptr::copy_nonoverlapping(
                 hdr_ptr,
                 buf.as_mut_ptr().add(1),
-                std::mem::size_of::<RpPktHdr>(),
+                core::mem::size_of::<RpPktHdr>(),
             );
         }
 
@@ -311,7 +311,7 @@ mod tests {
             ptr::copy_nonoverlapping(
                 pkt_ptr,
                 buf.as_mut_ptr().add(1),
-                std::mem::size_of::<RpPktBusaccess>(),
+                core::mem::size_of::<RpPktBusaccess>(),
             );
         }
 
@@ -350,7 +350,7 @@ mod tests {
             ptr::copy_nonoverlapping(
                 pkt_ptr,
                 buf.as_mut_ptr().add(1),
-                std::mem::size_of::<RpPktInterrupt>(),
+                core::mem::size_of::<RpPktInterrupt>(),
             );
         }
 
@@ -427,7 +427,7 @@ mod tests {
 
     // Stubs for linker when running tests
     #[no_mangle]
-    pub extern "C" fn qemu_set_irq(_irq: qemu_irq, _level: i32) {}
+    pub extern "C" fn qemu_set_irq(_irq: QemuIrq, _level: i32) {}
     #[no_mangle]
     pub extern "C" fn memory_region_init_io(
         _mr: *mut MemoryRegion,
@@ -443,7 +443,7 @@ mod tests {
     #[no_mangle]
     pub extern "C" fn sysbus_mmio_map(_sbd: *mut SysBusDevice, _n: i32, _addr: u64) {}
     #[no_mangle]
-    pub extern "C" fn sysbus_init_irq(_sbd: *mut SysBusDevice, _irq: *mut qemu_irq) {}
+    pub extern "C" fn sysbus_init_irq(_sbd: *mut SysBusDevice, _irq: *mut QemuIrq) {}
     #[no_mangle]
     pub extern "C" fn object_class_dynamic_cast_assert(
         _klass: *mut ObjectClass,
@@ -481,7 +481,7 @@ mod tests {
     pub extern "C" fn qemu_mutex_unlock_impl(_m: *mut c_void, _f: *const c_char, _l: i32) {}
     #[no_mangle]
     pub extern "C" fn g_malloc0_n(_n: usize, _s: usize) -> *mut c_void {
-        std::ptr::null_mut()
+        core::ptr::null_mut()
     }
     #[no_mangle]
     pub extern "C" fn qemu_mutex_init(_m: *mut c_void) {}
@@ -534,7 +534,7 @@ pub struct RemotePortBridgeQEMU {
     pub base_addr: u64,
     pub reconnect_ms: u32,
 
-    pub irqs: [qemu_irq; 32],
+    pub irqs: [QemuIrq; 32],
 
     pub rust_state: *mut RemotePortBridgeState,
 }
@@ -559,7 +559,7 @@ pub struct SharedState {
 unsafe impl Send for SharedState {}
 unsafe impl Sync for SharedState {}
 
-struct RawIrqArray(*mut qemu_irq);
+struct RawIrqArray(*mut QemuIrq);
 // Safe: the IRQ array lives in RemotePortBridgeQEMU which outlives SharedState.
 // qemu_set_irq is only called while holding the BQL.
 unsafe impl Send for RawIrqArray {}
@@ -627,7 +627,7 @@ impl SharedState {
                     }
                     continue;
                 } else {
-                    eprintln!(
+                    virtmcu_qom::vlog!(
                         "remote-port-bridge: failed to connect to {}, exiting thread",
                         self.socket_path
                     );
@@ -639,15 +639,15 @@ impl SharedState {
             let hello = RpPktHello {
                 hdr: RpPktHdr {
                     cmd: RpCmd::Hello as u32,
-                    len: (std::mem::size_of::<RpVersion>() + std::mem::size_of::<RpCapabilities>())
-                        as u32,
+                    len: (core::mem::size_of::<RpVersion>()
+                        + core::mem::size_of::<RpCapabilities>()) as u32,
                     id: 0,
                     flags: 0,
                     dev: 0,
                 },
                 version: RpVersion { major: RP_VERSION_MAJOR, minor: RP_VERSION_MINOR },
                 caps: RpCapabilities {
-                    offset: (std::mem::size_of::<RpPktHello>() as u32),
+                    offset: (core::mem::size_of::<RpPktHello>() as u32),
                     len: 0,
                     reserved0: 0,
                 },
@@ -667,7 +667,7 @@ impl SharedState {
             {
                 let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 lock.stream = Some(stream);
-                eprintln!("remote-port-bridge: connected to {}", self.socket_path);
+                virtmcu_qom::vlog!("remote-port-bridge: connected to {}", self.socket_path);
             }
             self.connected_cond.notify_all();
 
@@ -678,11 +678,11 @@ impl SharedState {
                     Ok(0) => break, // EOF
                     Ok(n) => {
                         rx_buf.extend_from_slice(&temp_buf[..n]);
-                        while rx_buf.len() >= std::mem::size_of::<RpPktHdr>() {
+                        while rx_buf.len() >= core::mem::size_of::<RpPktHdr>() {
                             let hdr_be =
                                 unsafe { ptr::read_unaligned(rx_buf.as_ptr() as *const RpPktHdr) };
                             let hdr = hdr_be.from_be();
-                            let pkt_len = std::mem::size_of::<RpPktHdr>() + hdr.len as usize;
+                            let pkt_len = core::mem::size_of::<RpPktHdr>() + hdr.len as usize;
 
                             if rx_buf.len() < pkt_len {
                                 break;
@@ -700,7 +700,7 @@ impl SharedState {
                 let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 lock.stream = None;
                 lock.has_resp = true;
-                eprintln!("remote-port-bridge: remote disconnected");
+                virtmcu_qom::vlog!("remote-port-bridge: remote disconnected");
             }
             self.resp_cond.notify_all();
 
@@ -728,7 +728,7 @@ impl SharedState {
 
     fn handle_packet(&self, data: &[u8], hdr: &RpPktHdr) {
         if hdr.cmd == RpCmd::Interrupt as u32 {
-            if data.len() >= std::mem::size_of::<RpPktInterrupt>() {
+            if data.len() >= core::mem::size_of::<RpPktInterrupt>() {
                 let pkt_be = unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktInterrupt) };
                 let pkt = pkt_be.from_be();
                 if pkt.line < 32 {
@@ -745,18 +745,18 @@ impl SharedState {
         } else {
             let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if hdr.cmd == RpCmd::Read as u32 || hdr.cmd == RpCmd::Write as u32 {
-                if data.len() >= std::mem::size_of::<RpPktBusaccess>() {
+                if data.len() >= core::mem::size_of::<RpPktBusaccess>() {
                     let pkt_be =
                         unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktBusaccess) };
                     lock.current_resp = Some(pkt_be.from_be());
 
                     let bus_hdr_len =
-                        std::mem::size_of::<RpPktBusaccess>() - std::mem::size_of::<RpPktHdr>();
+                        core::mem::size_of::<RpPktBusaccess>() - core::mem::size_of::<RpPktHdr>();
                     let payload_len = hdr.len as usize - bus_hdr_len;
                     if payload_len > 0 && payload_len <= 8 {
                         lock.current_data[..payload_len].copy_from_slice(
-                            &data[std::mem::size_of::<RpPktBusaccess>()
-                                ..std::mem::size_of::<RpPktBusaccess>() + payload_len],
+                            &data[core::mem::size_of::<RpPktBusaccess>()
+                                ..core::mem::size_of::<RpPktBusaccess>() + payload_len],
                         );
                     }
                 }
@@ -808,8 +808,8 @@ impl SharedState {
                 lock.has_resp = false;
                 lock.current_resp = None;
 
-                let bus_hdr_len = (std::mem::size_of::<RpPktBusaccess>()
-                    - std::mem::size_of::<RpPktHdr>()) as u32;
+                let bus_hdr_len = (core::mem::size_of::<RpPktBusaccess>()
+                    - core::mem::size_of::<RpPktHdr>()) as u32;
                 let payload_len = data_to_write.map(|d| d.len()).unwrap_or(0) as u32;
 
                 let pkt = RpPktBusaccess {
@@ -860,7 +860,7 @@ impl SharedState {
             lock = new_lock;
             drop(bql_unlock); // Re-acquires BQL
             if result.timed_out() {
-                eprintln!("remote-port-bridge: timeout waiting for connection");
+                virtmcu_qom::vlog!("remote-port-bridge: timeout waiting for connection");
                 return None;
             }
         }
@@ -875,7 +875,7 @@ impl SharedState {
             lock = new_lock;
             drop(bql_unlock); // Re-acquires BQL
             if result.timed_out() {
-                eprintln!("remote-port-bridge: timeout waiting for response");
+                virtmcu_qom::vlog!("remote-port-bridge: timeout waiting for response");
                 lock.stream = None;
                 lock.has_resp = true;
                 break;
@@ -1024,7 +1024,7 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
             lock = new_lock;
             drop(bql_unlock);
             if timed_out.timed_out() {
-                eprintln!(
+                virtmcu_qom::vlog!(
                     "remote-port-bridge: drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
                     DRAIN_TIMEOUT_SECS, lock.active_vcpu_count
                 );
@@ -1080,7 +1080,7 @@ unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_
 static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"remote-port-bridge".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
-    instance_size: std::mem::size_of::<RemotePortBridgeQEMU>(),
+    instance_size: core::mem::size_of::<RemotePortBridgeQEMU>(),
     instance_align: 0,
     instance_init: Some(bridge_instance_init),
     instance_post_init: None,
@@ -1093,4 +1093,4 @@ static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(remote_port_bridge_type_init, BRIDGE_TYPE_INFO);
+declare_device_type!(REMOTE_PORT_BRIDGE_TYPE_INIT, BRIDGE_TYPE_INFO);

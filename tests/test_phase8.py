@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import wait_for_zenoh_discovery
-
 
 class ZenohUartMonitor:
     def __init__(self, session, node_id, base_topic, is_rx=False):
@@ -129,7 +127,6 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
 
     sub_bridge = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(f"{topic0}/0/tx", bridge_cb))
 
-    await wait_for_zenoh_discovery(zenoh_session, f"{topic0}/0/tx")
     await bridge0.start_emulation()
     await bridge1.start_emulation()
 
@@ -160,7 +157,7 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
 
         await vta.step(5_000_000)
         vtime = vta.current_vtimes[0]
-        header_bytes = struct.pack("<QI", vtime + 1_000_000, len(msg_byte))
+        header_bytes = struct.pack("<QQI", vtime + 1_000_000, 0, len(msg_byte))
 
         def _do_put(h=header_bytes, m=msg_byte):
             zenoh_session.put(monitor0.rx_topic, h + m)
@@ -220,11 +217,10 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     dummy_topic = f"{topic}/1/tx"
 
     def _reg():
-        zenoh_session.put(dummy_topic, struct.pack("<QI", 0, 1) + b"H")
+        zenoh_session.put(dummy_topic, struct.pack("<QQI", 0, 0, 1) + b"H")
 
     await asyncio.to_thread(_reg)
 
-    await wait_for_zenoh_discovery(zenoh_session, f"{topic}/0/tx")
     await bridge.start_emulation()
 
     from tests.conftest import VirtualTimeAuthority
@@ -266,7 +262,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
 
     # 5. Inject P1 (X) to Node 0, it should NOT reach Node 1 RX
     msg = b"X"
-    header = struct.pack("<QI", vta.current_vtimes[0] + 1_000_000, len(msg))
+    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(msg))
     await asyncio.to_thread(lambda: zenoh_session.put(monitor.rx_topic, header + msg))
 
     for _ in range(50):
@@ -285,7 +281,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     await vta.step(1_000_000)
 
     msg = b"Y"
-    header = struct.pack("<QI", vta.current_vtimes[0] + 1_000_000, len(msg))
+    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(msg))
     await asyncio.to_thread(lambda: zenoh_session.put(monitor.rx_topic, header + msg))
 
     for _ in range(50):
@@ -335,7 +331,6 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
     monitor = ZenohUartMonitor(zenoh_session, 0, topic)
     await monitor.start()
 
-    await wait_for_zenoh_discovery(zenoh_session, f"{topic}/0/tx")
     await bridge.start_emulation()
 
     from tests.conftest import VirtualTimeAuthority
@@ -360,7 +355,7 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
     # Blast a 128-byte burst (Exceeds PL011 32-byte FIFO)
     # This verifies the flow control and backlog implementation in zenoh-chardev
     burst_data = b"BURST_TEST_" * 12 + b"END"  # ~135 bytes
-    header = struct.pack("<QI", vta.current_vtimes[0] + 1_000_000, len(burst_data))
+    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(burst_data))
 
     def _do_burst():
         zenoh_session.put(f"{topic}/0/rx", header + burst_data)

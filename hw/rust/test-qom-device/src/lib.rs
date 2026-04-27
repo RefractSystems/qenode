@@ -13,6 +13,7 @@ use virtmcu_qom::ssi::{SSIPeripheral, SSIPeripheralClass, TYPE_SSI_PERIPHERAL};
 use virtmcu_qom::{declare_device_type, define_prop_chr, define_properties, device_class};
 
 #[cfg(not(test))]
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -89,7 +90,7 @@ static SPI_ECHO_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: core::ptr::null(),
 };
 
-declare_device_type!(spi_echo_init, SPI_ECHO_TYPE_INFO);
+declare_device_type!(SPI_ECHO_TYPE_INIT, SPI_ECHO_TYPE_INFO);
 
 /* ── UART Echo Device ─────────────────────────────────────────────────────── */
 
@@ -157,7 +158,7 @@ static UART_ECHO_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: core::ptr::null(),
 };
 
-declare_device_type!(uart_echo_init, UART_ECHO_TYPE_INFO);
+declare_device_type!(UART_ECHO_TYPE_INIT, UART_ECHO_TYPE_INFO);
 
 /* ── Test Rust Device (Phase 19) ────────────────────────────────────────── */
 
@@ -214,10 +215,11 @@ unsafe extern "C" fn test_rust_realize(dev: *mut c_void, _errp: *mut *mut c_void
     virtmcu_qom::qdev::sysbus_init_mmio(dev as *mut _, &raw mut s.mr);
 }
 
-static TEST_PROPERTIES: [virtmcu_qom::qom::Property; 2] =
-    [virtmcu_qom::define_prop_macaddr!(c"macaddr".as_ptr(), TestRustDevice, mac), unsafe {
-        core::mem::zeroed()
-    }];
+static TEST_PROPERTIES: [virtmcu_qom::qom::Property; 2] = [
+    virtmcu_qom::define_prop_macaddr!(c"macaddr".as_ptr(), TestRustDevice, mac),
+    // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
+    unsafe { core::mem::zeroed() },
+];
 
 unsafe extern "C" fn test_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
@@ -241,4 +243,4 @@ static TEST_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: core::ptr::null(),
 };
 
-declare_device_type!(test_rust_device_init, TEST_TYPE_INFO);
+declare_device_type!(TEST_RUST_DEVICE_TYPE_INIT, TEST_TYPE_INFO);

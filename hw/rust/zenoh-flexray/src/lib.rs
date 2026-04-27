@@ -1,14 +1,18 @@
-#![allow(unused_variables)]
-#![allow(dead_code, unused_imports)]
-#![allow(clippy::all)]
+//! Zenoh-based FlexRay controller for VirtMCU.
 
-use core::ffi::{c_char, c_uint, c_void};
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::collections::BinaryHeap;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ptr;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use crossbeam_channel::{bounded, Receiver};
 use flatbuffers::FlatBufferBuilder;
-use std::ffi::CStr;
-use std::ptr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
 use virtmcu_api::flexray_generated::virtmcu::flexray::{FlexRayFrame, FlexRayFrameArgs};
 use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
@@ -21,7 +25,7 @@ use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
-use virtmcu_qom::{declare_device_type, device_class};
+use virtmcu_qom::{declare_device_type, device_class, vlog};
 
 #[repr(C)]
 pub struct ZenohFlexRay {
@@ -88,14 +92,14 @@ pub struct OrderedFlexRayPacket {
 
 pub struct ZenohFlexRayState {
     parent: *mut ZenohFlexRay,
-    session: Session,
+    session: Arc<Session>,
     node_id: u32,
     topic: String,
     subscriber: Option<SafeSubscriber>,
     rx_timer: Option<Arc<QomTimer>>,
     cycle_timer: Option<QomTimer>,
     rx_receiver: Receiver<OrderedFlexRayPacket>,
-    local_heap: BqlGuarded<std::collections::BinaryHeap<OrderedFlexRayPacket>>,
+    local_heap: BqlGuarded<BinaryHeap<OrderedFlexRayPacket>>,
     earliest_vtime: Arc<AtomicU64>,
     current_cycle: Arc<AtomicUsize>,
 }
@@ -107,33 +111,42 @@ impl PartialEq for OrderedFlexRayPacket {
 }
 impl Eq for OrderedFlexRayPacket {}
 impl PartialOrd for OrderedFlexRayPacket {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 impl Ord for OrderedFlexRayPacket {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         other.vtime.cmp(&self.vtime)
     }
 }
 
-unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    let s = &mut *(dev as *mut ZenohFlexRay);
+/// # Safety
+/// Called by QEMU during device realization. `dev` must be a valid pointer to `ZenohFlexRay`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
+    // SAFETY: dev is a valid pointer to ZenohFlexRay provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut ZenohFlexRay) };
 
-    println!("[flexray] Realizing node {}...", s.node_id);
+    vlog!("[flexray] Realizing node {}...\n", s.node_id);
 
     let router = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
     let topic = if s.topic.is_null() {
         "sim/flexray/frame".to_string()
     } else {
-        CStr::from_ptr(s.topic).to_string_lossy().into_owned()
+        // SAFETY: s.topic is a valid C-string if it's not null.
+        unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() }
     };
 
     s.rust_state = zenoh_flexray_init_internal(s, s.node_id, router, topic);
 }
 
-unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
-    let s = &mut *(opaque as *mut ZenohFlexRay);
+/// # Safety
+/// Called by QEMU on MMIO read. `opaque` must be a valid pointer to `ZenohFlexRay`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
+    // SAFETY: opaque is a valid pointer to ZenohFlexRay provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut ZenohFlexRay) };
     match addr {
         0x00 => u64::from(s.vrc),
         0x04 => u64::from(s.succ1),
@@ -188,8 +201,12 @@ unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, size: c_uint) 
     }
 }
 
-unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, size: c_uint) {
-    let s = &mut *(opaque as *mut ZenohFlexRay);
+/// # Safety
+/// Called by QEMU on MMIO write. `opaque` must be a valid pointer to `ZenohFlexRay`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _size: c_uint) {
+    // SAFETY: opaque is a valid pointer to ZenohFlexRay provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut ZenohFlexRay) };
     match addr {
         0x04 => s.succ1 = data as u32,
         0x08 => s.succ2 = data as u32,
@@ -295,7 +312,7 @@ fn handle_command(s: &mut ZenohFlexRay, cmd: u32) {
     match cmd & 0xF {
         0x1 => {
             // CONFIG
-            s.ccsv = (s.ccsv & !0x3F) | 0x0; // POCS = CONFIG
+            s.ccsv &= !0x3F; // POCS = CONFIG
         }
         0x2 => {
             // READY
@@ -305,7 +322,9 @@ fn handle_command(s: &mut ZenohFlexRay, cmd: u32) {
             // RUN
             s.ccsv = (s.ccsv & !0x3F) | 0x3; // POCS = NORMAL_ACTIVE
             if !s.rust_state.is_null() {
+                // SAFETY: rust_state is non-null and owned by the device.
                 let state = unsafe { &*s.rust_state };
+                // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
                 let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
                 if let Some(cycle_timer) = &state.cycle_timer {
                     cycle_timer.mod_ns(now + 5_000_000);
@@ -320,14 +339,13 @@ fn flexray_send_frame(s: &mut ZenohFlexRay, frame_id: u16, channel: u8, data: &[
     if s.rust_state.is_null() {
         return;
     }
+    // SAFETY: rust_state is non-null and owned by the device.
     let state = unsafe { &*s.rust_state };
 
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    eprintln!(
-        "[zenoh-flexray] Sending frame: ID={}, vtime={}, topic={}",
-        frame_id, now, state.topic
-    );
+    vlog!("[zenoh-flexray] Sending frame: ID={}, vtime={}, topic={}\n", frame_id, now, state.topic);
 
     let mut fbb = FlatBufferBuilder::new();
     let data_offset = fbb.create_vector(data);
@@ -349,17 +367,20 @@ fn flexray_send_frame(s: &mut ZenohFlexRay, frame_id: u16, channel: u8, data: &[
 
     let tx_topic = format!("{}/{}/tx", state.topic, state.node_id);
     if let Err(e) = state.session.put(tx_topic, finished_data).wait() {
-        eprintln!("[zenoh-flexray] Failed to send frame: {e:?}");
+        vlog!("[zenoh-flexray] Failed to send frame: {:?}\n", e);
     }
 }
 
 extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
+    // SAFETY: opaque is a valid pointer to ZenohFlexRayState.
     let state = unsafe { &*(opaque as *mut ZenohFlexRayState) };
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
 
     let cycle = state.current_cycle.fetch_add(1, AtomicOrdering::SeqCst) % 64;
 
     // Update CCSV register (Cycle count is bits 8-13)
+    // SAFETY: state.parent is a valid pointer to ZenohFlexRay.
     unsafe {
         let parent = &mut *state.parent;
         parent.ccsv = (parent.ccsv & !(0x3F << 8)) | ((cycle as u32) << 8);
@@ -410,22 +431,29 @@ static FLEXRAY_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
-    let s = &mut *(obj as *mut ZenohFlexRay);
+/// # Safety
+/// Called by QEMU to initialize the object instance. `obj` must be a valid pointer to `ZenohFlexRay`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
+    // SAFETY: obj is a valid pointer to ZenohFlexRay provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut ZenohFlexRay) };
     s.vrc = 0x00000001;
     s.ccsv = 0x0;
     s.msg_ram_headers = [FlexRayMsgHeader::default(); 128];
     s.msg_ram_data = [0; 8192];
 
-    virtmcu_qom::memory::memory_region_init_io(
-        &raw mut s.mmio,
-        obj,
-        &raw const FLEXRAY_OPS,
-        obj as *mut c_void,
-        c"zenoh-flexray".as_ptr(),
-        0x1000,
-    );
-    virtmcu_qom::qdev::sysbus_init_mmio(&raw mut s.parent_obj, &raw mut s.mmio);
+    // SAFETY: Initializing memory region is safe.
+    unsafe {
+        virtmcu_qom::memory::memory_region_init_io(
+            &raw mut s.mmio,
+            obj,
+            &raw const FLEXRAY_OPS,
+            obj as *mut c_void,
+            c"zenoh-flexray".as_ptr(),
+            0x1000,
+        );
+        virtmcu_qom::qdev::sysbus_init_mmio(&raw mut s.parent_obj, &raw mut s.mmio);
+    }
 }
 
 virtmcu_qom::define_properties!(
@@ -440,17 +468,28 @@ virtmcu_qom::define_properties!(
     ]
 );
 
-unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+/// # Safety
+/// Called by QEMU to initialize the class. `klass` must be a valid pointer to `ObjectClass`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
-    (*dc).user_creatable = true;
-    (*dc).realize = Some(flexray_realize);
+    // SAFETY: dc is a valid DeviceClass pointer.
+    unsafe {
+        (*dc).user_creatable = true;
+        (*dc).realize = Some(flexray_realize);
+    }
     virtmcu_qom::device_class_set_props!(dc, FLEXRAY_PROPS);
 }
 
-unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
-    let s = &mut *(obj as *mut ZenohFlexRay);
+/// # Safety
+/// Called by QEMU when finalizing the instance. `obj` must be a valid pointer to `ZenohFlexRay`.
+#[no_mangle]
+pub unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
+    // SAFETY: obj is a valid pointer to ZenohFlexRay provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut ZenohFlexRay) };
     if !s.rust_state.is_null() {
-        let mut state = Box::from_raw(s.rust_state);
+        // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
+        let mut state = unsafe { Box::from_raw(s.rust_state) };
 
         // Explicitly stop the subscriber and wait for it to finish
         state.subscriber.take();
@@ -462,7 +501,7 @@ unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
 static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"zenoh-flexray".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,
-    instance_size: std::mem::size_of::<ZenohFlexRay>(),
+    instance_size: core::mem::size_of::<ZenohFlexRay>(),
     instance_align: 0,
     instance_init: Some(flexray_instance_init),
     instance_post_init: None,
@@ -475,7 +514,7 @@ static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(flexray_type_init, FLEXRAY_TYPE_INFO);
+declare_device_type!(FLEXRAY_TYPE_INIT, FLEXRAY_TYPE_INFO);
 
 #[cfg(test)]
 mod tests {
@@ -492,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_packet_min_heap_ordering() {
-        let mut heap = std::collections::BinaryHeap::new();
+        let mut heap = BinaryHeap::new();
         heap.push(OrderedFlexRayPacket {
             vtime: 500,
             frame_id: 1,
@@ -528,7 +567,9 @@ mod tests {
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
+    // SAFETY: opaque is a valid pointer to ZenohFlexRayState.
     let state = unsafe { &*(opaque as *mut ZenohFlexRayState) };
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
     let mut heap = state.local_heap.get_mut();
@@ -540,6 +581,7 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
             let packet = heap.pop().unwrap_or_else(|| std::process::abort());
+            // SAFETY: parent is a valid pointer to ZenohFlexRay.
             let parent = unsafe { &mut *state.parent };
             for i in 0..128 {
                 if parent.msg_ram_headers[i].frame_id == packet.frame_id {
@@ -570,21 +612,22 @@ fn zenoh_flexray_init_internal(
     router: *const c_char,
     topic: String,
 ) -> *mut ZenohFlexRayState {
+    // SAFETY: get_or_init_session handles null and valid pointers.
     let session = unsafe {
-        match virtmcu_zenoh::open_session(router) {
+        match virtmcu_zenoh::get_or_init_session(router) {
             Ok(s) => s,
             Err(_) => return ptr::null_mut(),
         }
     };
 
     let (tx, rx) = bounded(1024);
-    let local_heap = BqlGuarded::new(std::collections::BinaryHeap::new());
+    let local_heap = BqlGuarded::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-    let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
+    let earliest_clone = Arc::clone(&earliest_vtime);
 
     let mut state = Box::new(ZenohFlexRayState {
         parent,
-        session: session.clone(),
+        session: Arc::clone(&session),
         node_id,
         topic: topic.clone(),
         subscriber: None,
@@ -597,16 +640,18 @@ fn zenoh_flexray_init_internal(
     });
 
     let state_ptr = &raw mut *state;
+    // SAFETY: Creating a QomTimer is safe.
     let rx_timer = Arc::new(unsafe {
         QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, state_ptr as *mut c_void)
     });
     let rx_timer_clone = Arc::clone(&rx_timer);
+    // SAFETY: Creating a QomTimer is safe.
     let cycle_timer = unsafe {
         QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, state_ptr as *mut c_void)
     };
 
     let subscriber = SafeSubscriber::new(&session, &topic, move |sample| {
-        eprintln!("[zenoh-flexray] Received message on topic: {}", sample.key_expr());
+        vlog!("[zenoh-flexray] Received message on topic: {}\n", sample.key_expr());
 
         let buf = sample.payload().to_bytes();
         let frame =

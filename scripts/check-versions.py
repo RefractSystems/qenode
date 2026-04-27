@@ -106,6 +106,40 @@ def check():
             elif match.group(1) != py_ver:
                 errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
 
+    # 5. Check Cargo.toml (workspace)
+    cargo_path = "Cargo.toml"
+    if Path(cargo_path).exists():
+        with Path(cargo_path).open() as f:
+            content = f.read()
+
+        zenoh_ver = versions.get("ZENOH_VERSION")
+        if zenoh_ver:
+            match = re.search(r'zenoh = "([^"]+)"', content)
+            if not match:
+                errors.append(f"{cargo_path}: Could not find zenoh dependency")
+            elif match.group(1) != zenoh_ver:
+                errors.append(f"{cargo_path}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
+
+        fb_ver = versions.get("FLATBUFFERS_VERSION")
+        if fb_ver:
+            match = re.search(r'flatbuffers = "([^"]+)"', content)
+            if not match:
+                errors.append(f"{cargo_path}: Could not find flatbuffers dependency")
+            elif match.group(1) != fb_ver:
+                errors.append(f"{cargo_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
+
+    # 6. Check tools/*/Cargo.toml
+    for child_cargo in ["tools/deterministic_coordinator/Cargo.toml", "tools/zenoh_coordinator/Cargo.toml"]:
+        if Path(child_cargo).exists():
+            with Path(child_cargo).open() as f:
+                content = f.read()
+            if zenoh_ver and "zenoh =" in content:
+                match = re.search(r'zenoh = "([^"]+)"', content)
+                if not match:
+                    errors.append(f"{child_cargo}: Could not parse zenoh dependency")
+                elif match.group(1) != zenoh_ver:
+                    errors.append(f"{child_cargo}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
+
     if errors:
         print("Version check FAILED:")
         for err in errors:

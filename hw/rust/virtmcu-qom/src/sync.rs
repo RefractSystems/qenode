@@ -172,7 +172,7 @@ mod mock {
             drop(state.cv.wait_while(guard, |g| *g == initial_gen).unwrap());
             true
         } else {
-            let timeout = std::time::Duration::from_millis(ms as u64);
+            let timeout = core::time::Duration::from_millis(ms as u64);
             let guard = state.gen.lock().unwrap();
             let result =
                 state.cv.wait_timeout_while(guard, timeout, |g| *g == initial_gen).unwrap();
@@ -204,6 +204,8 @@ impl Bql {
     /// Acquires the BQL and returns a guard. The lock is released when the guard is dropped.
     pub fn lock() -> BqlGuard {
         #[cfg(not(test))]
+        // SAFETY: virtmcu_bql_lock is a QEMU-provided function to acquire the
+        // global lock. It is safe to call from any thread.
         unsafe {
             virtmcu_bql_lock();
         };
@@ -216,6 +218,8 @@ impl Bql {
     /// This is used when transferring lock ownership to a C caller.
     pub fn lock_forget() {
         #[cfg(not(test))]
+        // SAFETY: virtmcu_bql_lock is safe to call. Ownership is explicitly
+        // managed by the caller.
         unsafe {
             virtmcu_bql_lock();
         };
@@ -238,12 +242,15 @@ impl Bql {
     /// Returns None if the BQL was not held.
     pub fn temporary_unlock() -> Option<BqlUnlockGuard> {
         #[cfg(not(test))]
+        // SAFETY: virtmcu_bql_locked is safe to call from any thread to check
+        // lock status.
         let was_locked = unsafe { virtmcu_bql_locked() };
         #[cfg(test)]
         let was_locked = mock::virtmcu_bql_locked();
 
         if was_locked {
             #[cfg(not(test))]
+            // SAFETY: virtmcu_bql_force_unlock is safe when the lock is held.
             unsafe {
                 virtmcu_bql_force_unlock();
             }
@@ -258,6 +265,7 @@ impl Bql {
     /// Returns true if the BQL is currently held by the calling thread.
     pub fn is_held() -> bool {
         #[cfg(not(test))]
+        // SAFETY: Safe FFI call.
         unsafe {
             virtmcu_bql_locked()
         }
@@ -272,6 +280,7 @@ pub struct BqlGuard;
 impl Drop for BqlGuard {
     fn drop(&mut self) {
         #[cfg(not(test))]
+        // SAFETY: Releasing the lock is safe if held.
         unsafe {
             virtmcu_bql_unlock();
         };
@@ -286,6 +295,7 @@ pub struct BqlUnlockGuard;
 impl Drop for BqlUnlockGuard {
     fn drop(&mut self) {
         #[cfg(not(test))]
+        // SAFETY: Re-acquiring the lock is safe.
         unsafe {
             virtmcu_bql_force_lock();
         };
@@ -319,6 +329,7 @@ impl QemuMutex {
     /// A method
     pub fn lock(&mut self) -> QemuMutexGuard<'_> {
         #[cfg(not(test))]
+        // SAFETY: Mutex pointer is valid.
         unsafe {
             virtmcu_mutex_lock(core::ptr::from_ref(self).cast_mut());
         };
@@ -334,6 +345,7 @@ impl QemuMutex {
 impl Drop for QemuMutexGuard<'_> {
     fn drop(&mut self) {
         #[cfg(not(test))]
+        // SAFETY: Mutex pointer is valid and locked by current thread.
         unsafe {
             virtmcu_mutex_unlock(self.mutex);
         };
@@ -346,6 +358,7 @@ impl QemuCond {
     /// A method
     pub fn wait(&self, mutex: &mut QemuMutex) {
         #[cfg(not(test))]
+        // SAFETY: Both pointers are valid.
         unsafe {
             virtmcu_cond_wait(core::ptr::from_ref(self).cast_mut(), core::ptr::from_mut(mutex));
         };
@@ -356,6 +369,7 @@ impl QemuCond {
     /// A method
     pub fn wait_timeout(&self, mutex: &mut QemuMutex, ms: u32) -> bool {
         #[cfg(not(test))]
+        // SAFETY: Both pointers are valid.
         unsafe {
             virtmcu_cond_timedwait(
                 core::ptr::from_ref(self).cast_mut(),
@@ -376,6 +390,7 @@ impl QemuCond {
     /// A method
     pub fn signal(&self) {
         #[cfg(not(test))]
+        // SAFETY: Condition variable pointer is valid.
         unsafe {
             virtmcu_cond_signal(core::ptr::from_ref(self).cast_mut());
         };
@@ -386,6 +401,7 @@ impl QemuCond {
     /// A method
     pub fn broadcast(&self) {
         #[cfg(not(test))]
+        // SAFETY: Condition variable pointer is valid.
         unsafe {
             virtmcu_cond_broadcast(core::ptr::from_ref(self).cast_mut());
         };
@@ -407,6 +423,7 @@ impl QemuCond {
         // SAFETY: We use the raw mutex from the guard.
         let signaled = {
             #[cfg(not(test))]
+            // SAFETY: Both pointers are valid.
             unsafe {
                 virtmcu_cond_timedwait(
                     core::ptr::from_ref(self).cast_mut(),
@@ -427,6 +444,7 @@ impl QemuCond {
         // 3. To avoid lock order inversion (BQL -> mutex vs mutex -> BQL),
         // we must release the peripheral mutex before re-acquiring the BQL.
         #[cfg(not(test))]
+        // SAFETY: Mutex pointer is valid and locked.
         unsafe {
             virtmcu_mutex_unlock(guard.mutex);
         }
@@ -438,6 +456,7 @@ impl QemuCond {
 
         // 5. Re-acquire peripheral mutex to restore caller's invariants.
         #[cfg(not(test))]
+        // SAFETY: Mutex pointer is valid.
         unsafe {
             virtmcu_mutex_lock(guard.mutex);
         }
@@ -473,7 +492,10 @@ pub struct BqlGuarded<T> {
 
 // Safety: The value is only ever read or written while BQL is held, and we use
 // dynamic borrow checking to prevent re-entrancy if the BQL is yielded.
+// BqlGuarded is Send if the inner type is Send.
 unsafe impl<T: Send> Send for BqlGuarded<T> {}
+// Safety: BqlGuarded is Sync if the inner type is Send and Sync, because
+// BQL serialization ensures that no two threads can access it simultaneously.
 unsafe impl<T: Send + Sync> Sync for BqlGuarded<T> {}
 
 /// A read guard for `BqlGuarded`.
@@ -768,7 +790,7 @@ mod tests {
         let elapsed = t0.elapsed();
 
         assert!(!res, "Should have timed out");
-        assert!(elapsed >= std::time::Duration::from_millis(10));
+        assert!(elapsed >= core::time::Duration::from_millis(10));
         assert!(Bql::temporary_unlock().is_some(), "BQL should be re-acquired");
         drop(guard);
     }

@@ -53,6 +53,8 @@ endif
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   BUILD_SUFFIX := -asan
+else ifeq ($(VIRTMCU_USE_TSAN),1)
+  BUILD_SUFFIX := -tsan
 else
   BUILD_SUFFIX :=
 endif
@@ -315,14 +317,14 @@ lint-audit:
 	@if command -v cargo-audit >/dev/null 2>&1; then \
 		cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 -f Cargo.lock; \
 	else \
-		echo "⚠️  cargo-audit not installed. Skipping Rust security audit. (Run 'cargo install cargo-audit' to enable)"; \
+		echo "❌ cargo-audit not installed. Run 'cargo install cargo-audit' to enable."; exit 1; \
 	fi
 
 	@echo "==> cargo deny (supply chain security)..."
 	@if command -v cargo-deny >/dev/null 2>&1; then \
 		cargo deny check && echo "✓ cargo deny passed." || { echo "❌ cargo deny failed"; exit 1; }; \
 	else \
-		echo "⚠️  cargo-deny not installed. Skipping Rust supply chain audit. (Run 'cargo install cargo-deny' to enable)"; \
+		echo "❌ cargo-deny not installed. Run 'cargo install cargo-deny' to enable."; exit 1; \
 	fi
 	@echo "✓ Audit checks completed."
 # Run Python linting and type checking

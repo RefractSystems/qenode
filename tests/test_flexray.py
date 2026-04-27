@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import zenoh
 
-from tests.conftest import TimeAuthority, wait_for_zenoh_discovery
+from tests.conftest import TimeAuthority
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
@@ -142,7 +142,6 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(tx_topic, on_msg))
 
     # Wait for the router to see our subscriber (very fast local operation)
-    await wait_for_zenoh_discovery(zenoh_session, tx_topic)
 
     await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -207,7 +206,6 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
     # Initial sync (Wait for discovery)
-    await wait_for_zenoh_discovery(zenoh_session, topic)
     await vta.step(0)
 
     # Prepare Zenoh frame to send
@@ -288,7 +286,6 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
     vta = VirtualTimeAuthority(zenoh_session, [0])
 
     # Initial sync (Wait for discovery)
-    await wait_for_zenoh_discovery(zenoh_session, topic)
     await vta.step(0)
 
     import sys

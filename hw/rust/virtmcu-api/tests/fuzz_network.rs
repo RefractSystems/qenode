@@ -1,5 +1,5 @@
+use core::mem::size_of;
 use proptest::prelude::*;
-use std::mem::size_of;
 use virtmcu_api::ZenohFrameHeader;
 
 proptest! {
@@ -9,7 +9,7 @@ proptest! {
         if data.len() >= size_of::<ZenohFrameHeader>() {
             let mut header = ZenohFrameHeader::default();
             unsafe {
-                std::ptr::copy_nonoverlapping(
+                core::ptr::copy_nonoverlapping(
                     data.as_ptr(),
                     core::ptr::from_mut(&mut header).cast::<u8>(),
                     size_of::<ZenohFrameHeader>(),
@@ -18,6 +18,7 @@ proptest! {
             // Ensure no panic
             let _ = &data[size_of::<ZenohFrameHeader>()..];
             let _ = header.delivery_vtime_ns;
+            let _ = header.sequence_number;
             let _ = header.size;
         }
     }

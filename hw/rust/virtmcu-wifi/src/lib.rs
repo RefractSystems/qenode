@@ -85,6 +85,7 @@ static WIFI_PROPERTIES: [Property; 4] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
     define_prop_string!(c"node".as_ptr(), VirtmcuWifiQEMU, node_id),
     define_prop_string!(c"router".as_ptr(), VirtmcuWifiQEMU, router),
+    // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
     unsafe { core::mem::zeroed() },
 ];
 
@@ -112,8 +113,9 @@ static WIFI_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: core::ptr::null(),
 };
 
-declare_device_type!(virtmcu_wifi_type_init, WIFI_TYPE_INFO);
+declare_device_type!(VIRTMCU_WIFI_TYPE_INIT, WIFI_TYPE_INFO);
 
+#[cfg(not(test))]
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {

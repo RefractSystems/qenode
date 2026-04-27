@@ -1,3 +1,3 @@
 fn main() {
-    println!("Zenoh imports OK");
+    // Just a dummy check to ensure the binary builds.
 }

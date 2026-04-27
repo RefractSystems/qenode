@@ -1,33 +1,19 @@
-#![allow(unused_variables)]
-#![allow(clippy::all)]
-#![allow(
-    clippy::missing_safety_doc,
-    clippy::collapsible_match,
-    dead_code,
-    unused_imports,
-    clippy::needless_return,
-    clippy::manual_range_contains,
-    clippy::single_component_path_imports,
-    clippy::len_zero,
-    clippy::while_immutable_condition
-)]
+extern crate alloc;
 
+use alloc::sync::Arc;
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ptr;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
-use std::ptr;
-use std::sync::Arc;
-use virtmcu_qom::error::Error;
-use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
+use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
 };
-use virtmcu_qom::qdev::{sysbus_get_connected_irq, sysbus_init_mmio, DeviceClass, SysBusDevice};
+use virtmcu_qom::qdev::{sysbus_get_connected_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
-    device_class_set_props, error_setg,
+    error_setg,
 };
 use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
@@ -51,13 +37,13 @@ pub struct ZenohUiQEMU {
 }
 
 pub struct ZenohUiState {
-    session: Session,
+    session: Arc<Session>,
     node_id: u32,
     buttons: BqlGuarded<HashMap<u32, ButtonState>>,
 }
 
 struct ButtonState {
-    irq: qemu_irq,
+    _irq: QemuIrq,
     subscriber: Option<SafeSubscriber>,
     pressed: bool,
 }
@@ -67,8 +53,12 @@ const REG_LED_STATE: u64 = 0x04;
 const REG_BTN_ID: u64 = 0x10;
 const REG_BTN_STATE: u64 = 0x14;
 
-unsafe extern "C" fn zenoh_ui_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
-    let s = &mut *(opaque as *mut ZenohUiQEMU);
+/// # Safety
+/// This function is called by QEMU. opaque must be a valid pointer to ZenohUiQEMU.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_ui_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
+    // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
     if addr == REG_LED_ID {
         return u64::from(s.active_led_id);
     }
@@ -79,24 +69,34 @@ unsafe extern "C" fn zenoh_ui_read(opaque: *mut c_void, addr: u64, _size: c_uint
         if s.rust_state.is_null() {
             return 0;
         }
-        return u64::from(zenoh_ui_get_button(&*s.rust_state, s.active_btn_id));
+        // SAFETY: rust_state is non-null and owned by the device.
+        return u64::from(zenoh_ui_get_button(unsafe { &*s.rust_state }, s.active_btn_id));
     }
     0
 }
 
-unsafe extern "C" fn zenoh_ui_write(opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
-    let s = &mut *(opaque as *mut ZenohUiQEMU);
+/// # Safety
+/// This function is called by QEMU. opaque must be a valid pointer to ZenohUiQEMU.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_ui_write(opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
+    // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
     if addr == REG_LED_ID {
         s.active_led_id = val as u32;
     } else if addr == REG_LED_STATE {
         if !s.rust_state.is_null() {
-            zenoh_ui_set_led(&*s.rust_state, s.active_led_id, val != 0);
+            // SAFETY: rust_state is non-null and owned by the device.
+            zenoh_ui_set_led(unsafe { &*s.rust_state }, s.active_led_id, val != 0);
         }
     } else if addr == REG_BTN_ID {
         s.active_btn_id = val as u32;
-        let irq = sysbus_get_connected_irq(opaque as *mut SysBusDevice, s.active_btn_id as c_int);
+        // SAFETY: opaque is a valid pointer to SysBusDevice.
+        let irq = unsafe {
+            sysbus_get_connected_irq(opaque as *mut SysBusDevice, s.active_btn_id as c_int)
+        };
         if !s.rust_state.is_null() {
-            zenoh_ui_ensure_button(&*s.rust_state, s.active_btn_id, irq);
+            // SAFETY: rust_state is non-null and owned by the device.
+            zenoh_ui_ensure_button(unsafe { &*s.rust_state }, s.active_btn_id, irq);
         }
     }
 }
@@ -123,32 +123,43 @@ static ZENOH_UI_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-unsafe extern "C" fn zenoh_ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    let s = &mut *(dev as *mut ZenohUiQEMU);
+/// # Safety
+/// This function is called by QEMU to realize the device. dev must be a valid pointer to ZenohUiQEMU.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    // SAFETY: dev is a valid pointer to ZenohUiQEMU provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut ZenohUiQEMU) };
 
-    memory_region_init_io(
-        &raw mut s.mmio,
-        dev as *mut Object,
-        &raw const ZENOH_UI_OPS,
-        dev,
-        c"zenoh-ui".as_ptr(),
-        0x100,
-    );
-    sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
+    // SAFETY: s->mmio is initialized by QEMU MemoryRegion API.
+    unsafe {
+        memory_region_init_io(
+            &raw mut s.mmio,
+            dev as *mut Object,
+            &raw const ZENOH_UI_OPS,
+            dev,
+            c"zenoh-ui".as_ptr(),
+            0x100,
+        );
+        sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
+    }
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
 
     s.rust_state = zenoh_ui_init_internal(s.node_id, router_ptr);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust Zenoh UI");
-        return;
     }
 }
 
-unsafe extern "C" fn zenoh_ui_instance_finalize(obj: *mut Object) {
-    let s = &mut *(obj as *mut ZenohUiQEMU);
+/// # Safety
+/// This function is called by QEMU when finalizing the device. obj must be a valid pointer to ZenohUiQEMU.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_ui_instance_finalize(obj: *mut Object) {
+    // SAFETY: obj is a valid pointer to ZenohUiQEMU provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut ZenohUiQEMU) };
     if !s.rust_state.is_null() {
-        let state = Box::from_raw(s.rust_state);
+        // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
+        let state = unsafe { Box::from_raw(s.rust_state) };
         {
             let mut btns = state.buttons.get_mut();
             for (_, btn) in btns.iter_mut() {
@@ -168,8 +179,12 @@ define_properties!(
     ]
 );
 
-unsafe extern "C" fn zenoh_ui_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+/// # Safety
+/// This function is called by QEMU to initialize the class. klass must be a valid pointer to ObjectClass.
+#[no_mangle]
+pub unsafe extern "C" fn zenoh_ui_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
+    // SAFETY: dc is a valid DeviceClass pointer.
     unsafe {
         (*dc).realize = Some(zenoh_ui_realize);
         (*dc).user_creatable = true;
@@ -180,7 +195,7 @@ unsafe extern "C" fn zenoh_ui_class_init(klass: *mut ObjectClass, _data: *const 
 static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"zenoh-ui".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
-    instance_size: std::mem::size_of::<ZenohUiQEMU>(),
+    instance_size: core::mem::size_of::<ZenohUiQEMU>(),
     instance_align: 0,
     instance_init: None,
     instance_post_init: None,
@@ -193,13 +208,15 @@ static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(zenoh_ui_type_init, ZENOH_UI_TYPE_INFO);
+declare_device_type!(ZENOH_UI_TYPE_INIT, ZENOH_UI_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 fn zenoh_ui_init_internal(node_id: u32, router: *const c_char) -> *mut ZenohUiState {
+    // SAFETY: get_or_init_session is safe if router is valid or null.
+    // Safety: router validity is guaranteed by the caller.
     let session = unsafe {
-        match virtmcu_zenoh::open_session(router) {
+        match virtmcu_zenoh::get_or_init_session(router) {
             Ok(s) => s,
             Err(_) => return ptr::null_mut(),
         }
@@ -223,7 +240,7 @@ fn zenoh_ui_get_button(state: &ZenohUiState, btn_id: u32) -> bool {
     btns.get(&btn_id).is_some_and(|b| b.pressed)
 }
 
-fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: qemu_irq) {
+fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
     let mut btns = state.buttons.get_mut();
     if btns.contains_key(&btn_id) {
         return;
@@ -234,18 +251,19 @@ fn zenoh_ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: qemu_irq) {
 
     let subscriber = SafeSubscriber::new(&state.session, &topic, move |sample| {
         let payload = sample.payload();
-        if payload.len() < 1 {
+        if payload.is_empty() {
             return;
         }
         let val = payload.to_bytes()[0] != 0;
 
+        // SAFETY: irq_ptr is a valid QemuIrq passed during initialization.
         unsafe {
-            qemu_set_irq(irq_ptr as qemu_irq, i32::from(val));
+            qemu_set_irq(irq_ptr as QemuIrq, i32::from(val));
         }
     })
     .ok();
 
-    btns.insert(btn_id, ButtonState { irq, subscriber, pressed: false });
+    btns.insert(btn_id, ButtonState { _irq: irq, subscriber, pressed: false });
 }
 
 #[cfg(test)]
