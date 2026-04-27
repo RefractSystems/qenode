@@ -166,14 +166,14 @@ changes ──┬─────────────────────
   (amd64 + arm64)          │               │
           │                └──────────────►▼
           ▼                       smoke-tests (N phases × 2 arches)
-   publish-devenv                          │
-   (amd64 + arm64)                         ├──► firmware-coverage
-          │                                │
-          ▼                                ▼
-   merge-devenv                    peripheral-coverage
-   (multi-arch manifest)                   │
-                                           ▼
-                                   publish-runtime (amd64 + arm64)
+   publish-devenv                          │              ┌────────────┐
+   (amd64 + arm64)                         │              │ firmware-  │
+          │                                ├─────────────►│ coverage   │
+          ▼                                ▼              └─────┬──────┘
+   merge-devenv                    peripheral-coverage          │
+   (multi-arch manifest)                   │                    │
+                                           ▼                    │
+                                   publish-runtime (amd64 + arm64) <──┘
                                            │
                                            ▼
                                    merge-runtime (multi-arch manifest)
@@ -223,6 +223,14 @@ The QEMU build (`qemu-builder` stage, Stage 5) is the most expensive step — 12
 Previously only main wrote to `build-cache:builder-amd64`. A PR on a runner with a cold GHA cache had no registry to read from and always triggered a full 40-min QEMU compile.
 
 PRs now set `PUSH_CACHE: "true"` for `build-qemu`. This writes the intermediate layer cache (`build-cache:builder-amd64,mode=max`) without touching image tags — the `latest` and semver tags are applied only by `docker-bake-latest.hcl` and `docker-bake-release.hcl`, which are excluded from PR bake invocations. Safe: the build cache and the published image tags are separate namespaces in GHCR.
+
+### Docker Bake Tag Replacement Rule
+
+**IMPORTANT TECHNICAL GOTCHA:** In Docker Bake, when a target is redefined across multiple files (e.g., `docker-bake.hcl` and `docker-bake-release.hcl`), the `tags` array is **REPLACED**, not merged.
+
+- **The Problem:** If `docker-bake.hcl` defines `tags = ["sha-<sha>"]` and `docker-bake-release.hcl` defines `tags = ["v1.2.3"]`, the resulting image will *only* have the `v1.2.3` tag.
+- **The Impact:** Our manifest merge jobs depend on the `sha-<sha>` tags. If they are missing because a release tag overwrote them, the multi-arch manifest creation will fail.
+- **The Fix:** `docker-bake-release.hcl` and `docker-bake-latest.hcl` must explicitly include both the semantic tag and the SHA-based tag.
 
 ### Why GHA cache uses per-stage scopes
 

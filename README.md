@@ -51,7 +51,7 @@ Sensor Data files) and integrated (lock-step with MuJoCo via shared memory). A
 **QMP-backed Robot Framework library** provides test automation parity with Renode's
 keyword suite.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-dive.
+See [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md) for the full technical deep-dive and [`docs/BUILD_ARCHITECTURE.md`](docs/BUILD_ARCHITECTURE.md) for build system details.
 
 ---
 
@@ -151,11 +151,11 @@ virtmcu/
 
 ## Where to Start
 
-**Read the architecture first**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**Read the architecture first**: [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md).
 Sections 1–3 cover the design rationale and the five implementation pillars. Section 5
 covers the timing design and BQL constraints. Section 6 covers prior art (qbox, MINRES).
 
-**For a deep dive on clock modes and BQL mechanics**: [`docs/TIME_MANAGEMENT_DESIGN.md`](docs/TIME_MANAGEMENT_DESIGN.md).
+**For a deep dive on clock modes and BQL mechanics**: [`docs/design/TIME_MANAGEMENT_DESIGN.md`](docs/design/TIME_MANAGEMENT_DESIGN.md).
 
 **Write a new peripheral**: Navigate to `hw/rust/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
@@ -198,7 +198,7 @@ Open in VS Code and accept **"Reopen in Container"**. Everything runs automatica
 
 ### Manual (Native Linux Only)
 
-> **⚠️ macOS & Windows Support:** virtmcu requires a Linux environment. macOS and Windows developers **MUST** use the provided Devcontainer. Bare-metal development on macOS/Windows is not supported. For macOS developers, we highly recommend using [OrbStack](https://orbstack.dev/) instead of Docker Desktop for a significantly faster and more native Devcontainer experience.
+> **⚠️ macOS & Windows Support:** virtmcu requires a Linux environment. macOS and Windows developers **MUST** use the provided Devcontainer. Bare-metal development on macOS/Windows is not supported.
 
 ```bash
 # Linux (Debian/Ubuntu)
@@ -215,7 +215,7 @@ make run           # smoke-test
 
 > **macOS note**: Native builds work for Phases 1–3. Phase 4+ requires Docker — a
 > GLib conflict (`--enable-modules` + `--enable-plugins`, GitLab #516) breaks module
-> loading on macOS. See `docs/ARCHITECTURE.md §6`.
+> loading on macOS. See `docs/design/ARCHITECTURE.md §6`.
 
 ---
 

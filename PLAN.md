@@ -70,6 +70,7 @@ For every completed phase, an automated integration test MUST be added to `tests
 | G1 | Replace `slice::from_raw_parts` on RP packet sends with `pack_be()` | ✅ CLOSED |
 | G2 | `VcpuCountGuard` RAII added to both bridges to fix panic-safety | ✅ CLOSED |
 | H | `BqlGuarded<T>` migration for all Zenoh peripherals + Mutex lint | ✅ CLOSED |
+| I | Fix Docker Bake tag replacement behavior (prevent manifest failures) | ✅ CLOSED |
 
 **Audit findings fixed on top of G (2026-04-25)**:
 - `bridge_write` in `remote-port` used `to_ne_bytes()` (implicit LE-host assumption) → fixed to `to_le_bytes()`.

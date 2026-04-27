@@ -5,6 +5,18 @@ BUILDER_IMG ?= ghcr.io/refractsystems/virtmcu/builder:$(IMAGE_TAG)-$(ARCH)
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
 
+# Prevent host-leaked VIRTUAL_ENV from breaking container builds.
+# When opening this project in a Devcontainer via VS Code, the host OS's absolute
+# VIRTUAL_ENV path (e.g., /Users/name/.../.venv) can leak into the container's
+# environment. `uv sync --active` will try to write to this non-existent path
+# and fail with "Permission denied". This defensively unsets invalid paths.
+ifneq ($(VIRTUAL_ENV),)
+ifeq ($(wildcard $(VIRTUAL_ENV)),)
+$(warning Warning: VIRTUAL_ENV=$(VIRTUAL_ENV) does not exist (likely leaked from host). Unsetting it.)
+unexport VIRTUAL_ENV
+endif
+endif
+
 # ==============================================================================
 # Top-level Makefile for virtmcu
 #

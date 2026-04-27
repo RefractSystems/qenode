@@ -103,7 +103,7 @@ Binary fidelity must be verified by a dedicated test suite separate from unit te
 
 ## Golden Firmware References
 
-Golden reference firmware binaries used for validation are stored in `third_party/firmware/`. 
+Golden reference firmware binaries used for validation are stored in `tests/firmware/`. 
 These files are managed via Git LFS and represent the ground truth for hardware emulation.
 Currently, this includes:
 - `cortex-a15-virt/echo.elf`: Basic UART echo firmware for ARM Cortex-A15.

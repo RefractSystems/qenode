@@ -37,6 +37,20 @@ ELF_PATH="/tmp/virtmcu-phase5-$$.elf"
 ASM_PATH="/tmp/virtmcu-phase5-$$.S"
 LD_PATH="/tmp/virtmcu-phase5-$$.ld"
 
+ADAPTER_PID=0
+QEMU_PID=0
+
+# Under ASan/UBSan, QEMU executes TCG blocks significantly slower.
+# Scale polling iteration counts from the stall-timeout environment variable
+# (CI: 120000 ms; ASan CI: 300000 ms; default: 5000 ms).
+# Each iteration sleeps 0.1 s, so divide by 100 to get iteration count.
+# Clamp to a minimum of 100 (10 s) and a maximum of 3000 (300 s).
+_stall_ms="${VIRTMCU_STALL_TIMEOUT_MS:-5000}"
+_poll_iters=$(( _stall_ms / 100 ))
+(( _poll_iters < 100  )) && _poll_iters=100
+(( _poll_iters > 3000 )) && _poll_iters=3000
+POLL_ITERS=$_poll_iters
+
 cleanup() {
     kill "${QEMU_PID:-}"    2>/dev/null || true
     kill "${ADAPTER_PID:-}" 2>/dev/null || true
@@ -61,7 +75,7 @@ echo "[phase5] Starting SystemC adapter on $SOCK_PATH..."
 ADAPTER_PID=$!
 
 # Poll for the socket file (adapter calls bind() before printing its message)
-for _ in $(seq 1 50); do
+for _ in $(seq 1 $POLL_ITERS); do
     [ -S "$SOCK_PATH" ] && break
     sleep 0.1
 done
@@ -157,7 +171,7 @@ QEMU_PID=$!
 # ── 6. Wait for adapter to log the expected transactions ─────────────────────
 echo "[phase5] Waiting for firmware transactions..."
 PASSED=false
-for _ in $(seq 1 50); do
+for _ in $(seq 1 $POLL_ITERS); do
     if grep -q "Wrote deadbeef to reg 0" "$ADAPTER_LOG" 2>/dev/null && \
        grep -q "Read deadbeef from reg 0"  "$ADAPTER_LOG" 2>/dev/null; then
         PASSED=true
@@ -183,7 +197,7 @@ fi
 # Kill the functional test QEMU gracefully
 kill "$QEMU_PID" 2>/dev/null || true
 # Wait for it to exit with timeout
-for _ in $(seq 1 50); do
+for _ in $(seq 1 $POLL_ITERS); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then break; fi
     sleep 0.1
 done
@@ -204,7 +218,7 @@ run_test_case() {
     python3 -u "$SCRIPT_DIR/malicious_adapter.py" "$SOCK_PATH" "$mode" > "$ADAPTER_LOG" 2>&1 &
     ADAPTER_PID=$!
 
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 $POLL_ITERS); do
         [ -S "$SOCK_PATH" ] && break
         sleep 0.1
     done
@@ -260,7 +274,7 @@ sys.exit(0)
     # ── Check for expected error in QEMU log ──
     echo "[phase5.6]   Killing QEMU (PID $QEMU_PID) gracefully..."
     kill "$QEMU_PID" 2>/dev/null || true
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 $POLL_ITERS); do
         if ! kill -0 "$QEMU_PID" 2>/dev/null; then break; fi
         sleep 0.1
     done
@@ -281,7 +295,7 @@ sys.exit(0)
     fi
 
     kill "$ADAPTER_PID" 2>/dev/null || true
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 $POLL_ITERS); do
         if ! kill -0 "$ADAPTER_PID" 2>/dev/null; then break; fi
         sleep 0.1
     done

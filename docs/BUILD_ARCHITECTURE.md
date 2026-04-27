@@ -26,11 +26,19 @@ The codebase is divided into three primary build domains: **Dependencies**, **QE
 * **When:** Built on-demand when running `make test-integration` or directly via `cargo build`.
 * **Where:** Rust artifacts land in the workspace `target/` directory.
 
+### D. Content-Addressed QEMU Cache
+* **What:** A pre-compiled `qemu-base` Docker image containing the patched QEMU binaries.
+* **Why:** To avoid the 40-minute QEMU compilation on every PR.
+* **Mechanism:** The image is tagged with a hash of `QEMU_VERSION` + the contents of `patches/` and `scripts/apply-qemu-patches.sh`.
+* **Rule:** If the hash matches an existing image in GHCR, `build-qemu` skips compilation and pulls the cached layer.
+
 ---
 
 ## 2. The Dual-Output Strategy (Standard vs. ASan)
 
 To prevent cache thrashing when switching between standard development and Memory Sanitizer (ASan) debugging, QEMU and its plugins compile into entirely isolated directories based on the `VIRTMCU_USE_ASAN` environment variable.
+
+**IMPORTANT BAKE RULE:** In Docker Bake, when a target is redefined across multiple files (e.g., adding `docker-bake-release.hcl`), the `tags` array is **REPLACED**, not merged. All bake files must explicitly include the SHA-based tags if they are needed for downstream manifest merging.
 
 ```mermaid
 graph TD

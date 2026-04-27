@@ -178,6 +178,9 @@ The SAL/AAL lives at the QOM peripheral boundary:
 - *Integrated (MuJoCo)*: Zero-copy `mjData` shared memory provides live physics state.
   Actuator outputs are applied to MuJoCo before the next `mj_step()`.
 
+**Status**: Implemented (Phase 10). Base classes and native Zenoh support are fully 
+integrated into the core simulation loop.
+
 ### Pillar 4 — Dynamic Machines and QOM Plugin Infrastructure
 
 QEMU traditionally requires recompiling the emulator to add a new device or define a new
@@ -407,7 +410,7 @@ This eliminates the previous dependency on the external `zenoh-c` shared library
 
 ## 9. Timing Design and Performance
 
-> **See also:** [docs/TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
+> **See also:** [TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
 
 ### Clock Mode Selection
 
@@ -602,7 +605,7 @@ To support LLM-driven debugging and lifecycle management, virtmcu includes a sta
 - **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause).
 - **Introspection**: AI agents can inspect raw memory, registers, and disassemble code dynamically via the `qmp_bridge.py` wrapper.
 - **I/O Integration**: Agents can interact with UART consoles and monitor network state.
-*(For more details, see `docs/MCP_DESIGN.md`)*.
+*(For more details, see [MCP_DESIGN.md](MCP_DESIGN.md))*.
 
 ---
 
