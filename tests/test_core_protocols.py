@@ -35,7 +35,7 @@ CLOCK_ERROR_OK: int = 0
 CLOCK_ERROR_STALL: int = 1
 CLOCK_ERROR_ZENOH: int = 2
 
-ZENOH_FRAME_HEADER_SIZE: int = 12  # ZenohFrameHeader: u64 + u32, packed
+ZENOH_FRAME_HEADER_SIZE: int = 20  # ZenohFrameHeader: u64 + u64 + u32, packed
 CLOCK_ADVANCE_REQ_SIZE: int = 16  # ClockAdvanceReq: u64 + u64
 CLOCK_READY_RESP_SIZE: int = 16  # ClockReadyResp: u64 + u32 + u32
 MMIO_REQ_SIZE: int = 32  # MmioReq: 1+1+2+4+8+8+8
@@ -52,18 +52,18 @@ CLOCK_TOPIC_BASE: str = "sim/clock"
 # ---------------------------------------------------------------------------
 
 
-def encode_zenoh_frame(delivery_vtime_ns: int, payload: bytes) -> bytes:
+def encode_zenoh_frame(delivery_vtime_ns: int, payload: bytes, sequence_number: int = 0) -> bytes:
     """Pack ZenohFrameHeader + payload (mirrors Rust encode_frame())."""
-    header = struct.pack("<QI", delivery_vtime_ns, len(payload))
+    header = struct.pack("<QQI", delivery_vtime_ns, sequence_number, len(payload))
     return header + payload
 
 
-def decode_zenoh_frame(data: bytes) -> tuple[int, int, bytes]:
-    """Unpack ZenohFrameHeader. Returns (vtime, size, payload). Raises ValueError if too short."""
+def decode_zenoh_frame(data: bytes) -> tuple[int, int, int, bytes]:
+    """Unpack ZenohFrameHeader. Returns (vtime, sequence, size, payload). Raises ValueError if too short."""
     if len(data) < ZENOH_FRAME_HEADER_SIZE:
         raise ValueError(f"Frame too short: {len(data)} < {ZENOH_FRAME_HEADER_SIZE}")
-    vtime, size = struct.unpack_from("<QI", data, 0)
-    return vtime, size, data[ZENOH_FRAME_HEADER_SIZE:]
+    vtime, seq, size = struct.unpack_from("<QQI", data, 0)
+    return vtime, seq, size, data[ZENOH_FRAME_HEADER_SIZE:]
 
 
 def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0) -> bytes:
@@ -130,38 +130,40 @@ def decode_handshake(raw: bytes) -> tuple[int, int]:
 
 class TestZenohFrameHeader:
     def test_size_constant(self):
-        assert ZENOH_FRAME_HEADER_SIZE == 12
+        assert ZENOH_FRAME_HEADER_SIZE == 20
 
     def test_encode_decode_round_trip(self):
-        vtime, payload = 12_345_678, b"hello"
-        frame = encode_zenoh_frame(vtime, payload)
+        vtime, seq, payload = 12_345_678, 42, b"hello"
+        frame = encode_zenoh_frame(vtime, payload, seq)
         assert len(frame) == ZENOH_FRAME_HEADER_SIZE + len(payload)
-        v, sz, rest = decode_zenoh_frame(frame)
+        v, s, sz, rest = decode_zenoh_frame(frame)
         assert v == vtime
+        assert s == seq
         assert sz == len(payload)
         assert rest == payload
 
     def test_empty_payload(self):
         frame = encode_zenoh_frame(0, b"")
-        v, sz, rest = decode_zenoh_frame(frame)
+        v, s, sz, rest = decode_zenoh_frame(frame)
         assert v == 0
+        assert s == 0
         assert sz == 0
         assert rest == b""
 
     def test_vtime_zero(self):
         frame = encode_zenoh_frame(0, b"X")
-        v, _, _ = decode_zenoh_frame(frame)
+        v, _, _, _ = decode_zenoh_frame(frame)
         assert v == 0
 
     def test_vtime_max_u64(self):
         max_u64 = (1 << 64) - 1
         frame = encode_zenoh_frame(max_u64, b"X")
-        v, _, _ = decode_zenoh_frame(frame)
+        v, _, _, _ = decode_zenoh_frame(frame)
         assert v == max_u64
 
     def test_rejects_short_frame(self):
         with pytest.raises(ValueError, match="too short"):
-            decode_zenoh_frame(b"\x00" * 11)
+            decode_zenoh_frame(b"\x00" * 19)
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError):
@@ -169,8 +171,9 @@ class TestZenohFrameHeader:
 
     def test_exact_header_size_accepted(self):
         frame = encode_zenoh_frame(1, b"")
-        v, sz, rest = decode_zenoh_frame(frame)
+        v, s, sz, rest = decode_zenoh_frame(frame)
         assert v == 1
+        assert s == 0
         assert sz == 0
         assert rest == b""
 
@@ -180,15 +183,20 @@ class TestZenohFrameHeader:
         frame = encode_zenoh_frame(vtime, b"")
         assert frame[:8] == bytes([0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01])
 
+    def test_little_endian_sequence(self):
+        seq = 0x0102030405060708
+        frame = encode_zenoh_frame(0, b"", seq)
+        assert frame[8:16] == bytes([0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01])
+
     def test_little_endian_size(self):
         frame = encode_zenoh_frame(0, b"hello")  # size=5 = [05,00,00,00]
-        assert frame[8:12] == bytes([0x05, 0x00, 0x00, 0x00])
+        assert frame[16:20] == bytes([0x05, 0x00, 0x00, 0x00])
 
     def test_vtime_ordering(self):
         earlier = encode_zenoh_frame(1_000_000, b"A")
         later = encode_zenoh_frame(2_000_000, b"A")
-        v1, _, _ = decode_zenoh_frame(earlier)
-        v2, _, _ = decode_zenoh_frame(later)
+        v1, _, _, _ = decode_zenoh_frame(earlier)
+        v2, _, _, _ = decode_zenoh_frame(later)
         assert v1 < v2
 
     def test_10mbps_baud_interval_ns(self):
@@ -200,7 +208,7 @@ class TestZenohFrameHeader:
         n, start, step = 1_000, 10_000_000, 800
         for i in range(n):
             frame = encode_zenoh_frame(start + i * step, b"X")
-            v, sz, payload = decode_zenoh_frame(frame)
+            v, _, sz, payload = decode_zenoh_frame(frame)
             assert v == start + i * step, f"frame {i}: vtime mismatch"
             assert sz == 1
             assert payload == b"X"
@@ -209,14 +217,14 @@ class TestZenohFrameHeader:
         for length in [0, 1, 127, 255, 1024]:
             payload = bytes([0xAB] * length)
             frame = encode_zenoh_frame(0, payload)
-            _, sz, _ = decode_zenoh_frame(frame)
+            _, _, sz, _ = decode_zenoh_frame(frame)
             assert sz == length
 
     def test_payload_boundary_integrity(self):
         """Payload bytes are not touched by encode/decode."""
         payload = bytes(range(256))
         frame = encode_zenoh_frame(42, payload)
-        _, _, rest = decode_zenoh_frame(frame)
+        _, _, _, rest = decode_zenoh_frame(frame)
         assert rest == payload
 
 
@@ -474,18 +482,21 @@ class TestTopicNaming:
 
 @dataclass(order=False)
 class DeliveryPacket:
-    """Mirrors OrderedPacket in zenoh-chardev: min-heap by vtime."""
+    """Mirrors OrderedPacket in zenoh-chardev: min-heap by vtime + sequence."""
 
     vtime: int
+    sequence: int = 0
     data: bytes = field(default=b"", compare=False)
 
     def __lt__(self, other: DeliveryPacket) -> bool:
+        if self.vtime == other.vtime:
+            return self.sequence < other.sequence
         return self.vtime < other.vtime
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DeliveryPacket):
             return NotImplemented
-        return self.vtime == other.vtime
+        return self.vtime == other.vtime and self.sequence == other.sequence
 
 
 class TestDeliveryQueue:
@@ -496,6 +507,15 @@ class TestDeliveryQueue:
         assert heapq.heappop(heap).vtime == 1_000
         assert heapq.heappop(heap).vtime == 2_000
         assert heapq.heappop(heap).vtime == 3_000
+
+    def test_sequence_ordering(self):
+        heap: list[DeliveryPacket] = []
+        heapq.heappush(heap, DeliveryPacket(1_000, sequence=2))
+        heapq.heappush(heap, DeliveryPacket(1_000, sequence=0))
+        heapq.heappush(heap, DeliveryPacket(1_000, sequence=1))
+        assert heapq.heappop(heap).sequence == 0
+        assert heapq.heappop(heap).sequence == 1
+        assert heapq.heappop(heap).sequence == 2
 
     def test_vtime_zero_first(self):
         heap: list[DeliveryPacket] = []
@@ -513,8 +533,8 @@ class TestDeliveryQueue:
 
     def test_equal_vtimes_both_dequeued(self):
         heap: list[DeliveryPacket] = []
-        heapq.heappush(heap, DeliveryPacket(500, b"A"))
-        heapq.heappush(heap, DeliveryPacket(500, b"B"))
+        heapq.heappush(heap, DeliveryPacket(500, sequence=0, data=b"A"))
+        heapq.heappush(heap, DeliveryPacket(500, sequence=1, data=b"B"))
         assert len(heap) == 2
         heapq.heappop(heap)
         heapq.heappop(heap)

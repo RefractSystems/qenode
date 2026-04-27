@@ -29,10 +29,11 @@ See [ADR-006](ADR-006-binary-fidelity.md) for enforcement rules and test require
 
 Firmware for cyber-physical systems cannot be tested in isolation. It reads sensors,
 drives actuators, and communicates with peer microcontrollers — all of which unfold in
-physical time. Correct simulation requires that every virtual MCU shares the same notion
-of time, that inter-node communication is deterministically ordered by virtual time (not
-wall-clock scheduling), and that the boundary between firmware registers and physical
-quantities is explicitly modeled.
+physical time. Correct simulation requires three guarantees simultaneously:
+
+1. **Temporal correctness**: every virtual MCU shares the same notion of time, gated by an external physics master clock.
+2. **Global determinism**: two runs with identical inputs (topology, firmware, seed) produce bit-identical output — same UART bytes, same PCAP log, same actuator commands — regardless of host CPU load.
+3. **Causal ordering**: inter-node communication is ordered by virtual time, not wall-clock scheduling. Same-timestamp messages are broken by canonical `(vtime, src_node_id, seq)` order enforced by a central coordinator barrier, not by OS scheduling.
 
 virtmcu addresses these requirements at the QEMU layer, using native Rust QOM modules
 (and legacy C modules) linked directly into the emulator. No Python daemons run in the 
@@ -53,37 +54,52 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 ## 2. System Context
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  FirmwareStudio World                                                │
-│                                                                      │
-│  ┌──────────────┐   mj_step()   ┌──────────────────┐                 │
-│  │  MuJoCo      │ ────────────► │  TimeAuthority   │                 │
-│  │  (physics)   │               │  (Python)        │                 │
-│  │              │ ◄──────────── │                  │                 │
-│  └──────────────┘  sensor data  └────────┬─────────┘                 │
-│                                          │                           │
-│                     Zenoh GET sim/clock/advance/{node_id}            │
-│                     (no Python middleman — native Rust plugin)       │
-│                                          │                           │
-│              ┌───────────────────────────┼────────────────────┐      │
-│              │  QEMU node 0              │  QEMU node 1       │      │
-│              │  + hw/rust/               │  + hw/rust/        │      │
-│              │    zenoh-clock    ◄───────┘    zenoh-clock    │      │
-│              │    zenoh-netdev   ◄────────────zenoh-netdev   │      │
-│              │    zenoh-chardev  ◄────────────zenoh-chardev  │      │
-│              │  + QOM peripherals        │  + QOM peripherals │      │
-│              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)  │      │
-│              │                           │                    │      │
-│              │  firmware (bare-metal C)  │  firmware          │      │
-│              └───────────────────────────┴────────────────────┘      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  FirmwareStudio World                                                       │
+│                                                                             │
+│  ┌──────────────┐  mj_step()  ┌───────────────────────────────────────┐    │
+│  │  MuJoCo      │ ──────────► │  TimeAuthority (Python)               │    │
+│  │  (physics)   │             │  - steps all node clocks              │    │
+│  │              │ ◄────────── │  - pushes topology updates            │    │
+│  └──────────────┘ sensor data └───────┬───────────────────────────────┘    │
+│                                       │                                     │
+│               clock: ClockSyncTransport (Unix socket / Zenoh GET)          │
+│               one channel per node — direct, no coordinator in path        │
+│                                       │                                     │
+│           ┌───────────────────────────┼──────────────────────┐             │
+│           │  QEMU node 0              │   QEMU node 1        │             │
+│           │  hw/rust/zenoh-clock ◄────┘   hw/rust/zenoh-clock│             │
+│           │  hw/rust/zenoh-netdev          zenoh-netdev       │             │
+│           │  hw/rust/zenoh-chardev         zenoh-chardev      │             │
+│           │  QOM peripherals               QOM peripherals    │             │
+│           │  firmware (bare-metal C)       firmware           │             │
+│           └───────────┬───────────────────────────┬──────────┘             │
+│                       │  emulated comms            │                        │
+│                       ▼   (all inter-node traffic) ▼                        │
+│            ┌─────────────────────────────────────────┐                     │
+│            │  DeterministicCoordinator               │                     │
+│            │  - owns topology graph (from YAML)      │                     │
+│            │  - quantum barrier: waits for ALL nodes │                     │
+│            │  - sorts: (vtime_ns, src_id, seq_num)   │                     │
+│            │  - applies topology mask (RF/wire)      │                     │
+│            │  - emits PCAP log side-channel          │                     │
+│            └─────────────────────────────────────────┘                     │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-All inter-node communication — Ethernet frames, UART bytes, clock quanta — flows through
-**Zenoh** as the federation bus. There are no UDP sockets, no Python bridges, no shared
-memory between nodes. Virtual timestamps embedded in each message enforce causal ordering:
-a frame sent at virtual time T by node 0 cannot be read by node 1 until its virtual clock
-reaches T plus the modeled propagation delay.
+**Two separate channels serve distinct purposes:**
+
+1. **Clock sync** (TimeAuthority ↔ each QEMU node): Uses `ClockSyncTransport` — a Unix
+   domain socket for single-host runs (1–3 µs RTT), or a Zenoh Queryable for distributed
+   multi-host deployments (10–50 µs RTT). This channel is strictly 1:1, never routed
+   through the coordinator.
+
+2. **Emulated network traffic** (QEMU ↔ QEMU): All inter-node Ethernet frames, UART
+   bytes, CAN-FD messages, RF packets, and sensor/actuator data route through the
+   `DeterministicCoordinator`. The coordinator buffers all messages from quantum Q,
+   waits for all nodes to signal completion, sorts them into canonical order, and delivers
+   them before releasing nodes to start quantum Q+1. Virtual timestamps enforce causal
+   ordering within this barrier.
 
 ---
 
@@ -132,30 +148,48 @@ In Rust, this is managed via RAII guards in `virtmcu-qom/src/sync.rs`:
 ### Pillar 2 — Deterministic Multi-Node Communication
 
 In a multi-node simulation, every message crossing a node boundary must carry a virtual
-timestamp. The receiving node's delivery machinery must not inject the message into the
-guest until its virtual clock reaches the stamped time. This is the only way to make
-inter-node behavior reproducible across runs, regardless of host scheduling.
+timestamp AND be delivered in a globally canonical order. Virtual timestamps alone are
+insufficient: two messages with identical timestamps from different nodes produce
+non-deterministic delivery order if processed directly by independent Zenoh subscribers
+(OS scheduling breaks ties differently each run).
 
-**Ethernet** (`hw/rust/zenoh-netdev`): A custom `-netdev` backend that:
-- On TX: reads the current `QEMU_CLOCK_VIRTUAL` value, attaches it as a header, publishes
-  the frame to `sim/eth/frame/{src_node}/tx` on Zenoh.
-- On RX: a Zenoh subscriber receives frames into a priority queue keyed by delivery
-  virtual time. A `QEMUTimer` on `QEMU_CLOCK_VIRTUAL` fires when the earliest queued
-  frame's timestamp is reached, injecting it into the guest NIC via `qemu_send_packet`.
+**The PDES barrier model**: The `DeterministicCoordinator` implements the Parallel
+Discrete Event Simulation (PDES) barrier pattern:
 
-**UART** (`hw/rust/zenoh-chardev`): The same virtual-timestamp model applied to serial
-bytes, using QEMU's chardev backend API. Enables multi-node UART communication (e.g.,
-firmware on MCU-A sends a command string to MCU-B's UART) with correct virtual ordering.
-Also supports human-in-the-loop interactivity — terminal input is delivered at the correct
-virtual time rather than injected at whatever wall-clock moment the user typed.
+1. Each node sends all outbound messages to the coordinator (tagged with virtual timestamp
+   and a per-source sequence number).
+2. Each node signals "quantum Q done" to the coordinator.
+3. The coordinator waits until **all N nodes** have signaled completion.
+4. The coordinator sorts all buffered messages by `(delivery_vtime_ns, source_node_id,
+   sequence_number)` — a total order that is deterministic and independent of arrival order.
+5. The coordinator applies the topology mask (drops messages not permitted by the declared
+   link graph).
+6. The coordinator delivers sorted messages to recipients and signals "quantum Q+1 start".
 
-**Wire protocol** (TimeAuthority ↔ QEMU):
+This guarantees that two runs with identical inputs produce identical delivery sequences.
+
+**Ethernet** (`hw/rust/zenoh-netdev`): On TX, attaches a `ZenohFrameHeader` (vtime + seq)
+and publishes to the coordinator's ingress topic. On RX, a priority queue keyed by delivery
+virtual time feeds a `QEMUTimer` on `QEMU_CLOCK_VIRTUAL`.
+
+**UART** (`hw/rust/zenoh-chardev`): Same virtual-timestamp model for serial bytes.
+
+**Topology declaration** (world YAML `topology:` section): The full network graph —
+node IDs, wire links, RF neighborhoods, max wireless range — is declared at startup.
+The coordinator loads this graph and rejects connections not in the graph. Mobile node
+positions are pushed by the physics engine before each quantum; the coordinator
+recomputes RF neighborhoods deterministically from position vectors.
+
+**Wire protocol** (TimeAuthority ↔ QEMU, via `ClockSyncTransport`):
 ```
-GET sim/clock/advance/{node_id}
-  payload → { uint64 delta_ns; uint64 mujoco_time_ns; }           (16 bytes)
-  reply   ← { uint64 current_vtime_ns; uint32 n_frames; uint32 error_code; }  (16 bytes)
+Advance request  (TA → QEMU):  16 bytes: [uint64 delta_ns LE][uint64 mujoco_time_ns LE]
+Ready reply      (QEMU → TA):  16 bytes: [uint64 vtime_ns LE][uint32 n_frames LE][uint32 error_code LE]
 
-error_code: 0=OK, 1=STALL (QEMU didn't reach TB boundary), 2=ZENOH_ERROR
+error_code: 0=OK, 1=STALL (QEMU didn't reach TB boundary), 2=TRANSPORT_ERROR
+
+Transport options (ClockSyncTransport implementations):
+  ZenohClockTransport    — Zenoh Queryable; default for multi-host deployments
+  UnixSocketClockTransport — Unix domain socket; default for single-host (~10 nodes)
 ```
 
 ### Pillar 3 — Sensor/Actuator Abstraction (SAL/AAL)
@@ -195,6 +229,42 @@ QEMU modules (`--enable-modules`). The resulting `.so` files are auto-discovered
 QEMU's `module_info` table. All peripherals are native C or Rust (via FFI).
 Core infrastructure and all new peripherals are written in **Rust** using the `virtmcu-qom` 
 safe wrapper library.
+
+### Pillar 6 — Global Determinism Guarantee
+
+**Invariant**: Two simulation runs with identical world YAML, firmware ELFs, and
+`global_seed` produce byte-identical UART output, identical PCAP log, and identical
+actuator command sequences — regardless of host CPU load, thread scheduling, or
+wall-clock time.
+
+This invariant is enforced at three levels:
+
+**Level 1 — Clock**: The TimeAuthority drives all virtual time. Nodes cannot advance
+time on their own. The clock channel (`ClockSyncTransport`) is strictly 1:1 between TA
+and each QEMU node; no intermediary touches the clock messages.
+
+**Level 2 — Message ordering**: The `DeterministicCoordinator` enforces canonical
+`(vtime_ns, src_node_id, seq_num)` order for all inter-node messages within each quantum.
+This eliminates OS-scheduling-dependent tie-breaking.
+
+**Level 3 — Stochastic seeding**: All protocols with random behavior (CSMA/CA backoff,
+BLE advertising slot selection) MUST use `virtmcu_zenoh::seed_for_quantum(global_seed,
+node_id, quantum_number)` as the sole PRNG seed source. The `global_seed` comes from
+the world YAML `topology.global_seed` field (default: 0). Using system time, PIDs, or
+`rand::thread_rng()` as a seed in any simulation code path is banned.
+
+**Observability**: The coordinator emits a libpcap-format log (`--pcap-log <path>`)
+containing every inter-node message with its virtual timestamp. Two runs with the same
+seed produce byte-identical PCAP files. This file is the ground-truth determinism oracle
+for CI regression tests and the feed for the Wireshark extcap plugin.
+
+**Scaling**: Single-host scenarios (~10 nodes) use Unix socket clock transport and a
+single-process coordinator — no Zenoh router required. Distributed scenarios (1000s of
+nodes across hosts) use hierarchical coordinators connected via Zenoh, with one
+coordinator per host cluster. The per-cluster coordinator protocol is identical; only
+the inter-cluster transport changes.
+
+---
 
 ### Pillar 5 — Co-Simulation with External Hardware Models
 
@@ -540,15 +610,19 @@ throughput. Making it the default would unnecessarily penalize the 95% of worklo
 do not need nanosecond accuracy within a quantum. `standalone` mode is essential for
 development and CI without a physics engine.
 
-### ADR-002: Zenoh for all inter-node traffic
+### ADR-002: Zenoh for emulated network traffic; `ClockSyncTransport` for clock
 
-**Decision**: Use Zenoh as the sole message bus for clock quanta, Ethernet frames, UART
-bytes, and sensor data.
-**Rationale**: A single bus simplifies the operational model. Zenoh is language-agnostic
-(C, Rust, Python clients all available), works across containers and physical machines
-without VPN or network configuration, and is already part of FirmwareStudio infrastructure.
-UDP multicast (the QEMU default for multi-node) is non-deterministic and does not support
-virtual-timestamp delivery.
+**Decision**: Use Zenoh pub/sub (via the `DeterministicCoordinator`) for emulated network
+traffic (Ethernet frames, UART bytes, RF packets, sensor/actuator data). Use the
+`ClockSyncTransport` abstraction (Unix socket for single-host, Zenoh Queryable for
+multi-host) for the clock-advance RPC. These are NOT the same channel.
+
+**Rationale**: Emulated network traffic benefits from Zenoh's language-agnostic pub/sub,
+flexible topology routing, and cross-host capability. Clock sync requires the lowest
+possible latency, strict 1:1 semantics, and no async executor involvement — properties
+that conflict with Zenoh's Queryable model (see Zenoh executor deadlock postmortem,
+2026-04-18, and ADR-015). Topology is declared in YAML and enforced by the coordinator;
+runtime discovery via Zenoh multicast scouting is disabled in simulation mode.
 
 ### ADR-003: No Python in the simulation loop
 
@@ -569,6 +643,44 @@ that timestamp.
 is determined by wall-clock scheduling — non-deterministic, host-load-dependent, and
 therefore not reproducible. The priority-queue + QEMUTimer pattern is the only correct
 implementation given QEMU's timer subsystem semantics.
+
+### ADR-014: Global Determinism as a First-Class Requirement
+
+**Decision**: Any simulation run with identical world YAML, firmware ELFs, and
+`global_seed` MUST produce bit-identical output. Violations are bugs in VirtMCU.
+
+**Rationale**: Firmware developers rely on reproducible simulation to debug rare
+concurrent faults. Non-determinism caused by OS scheduling (Zenoh subscriber callback
+order, thread wakeup order) makes it impossible to reproduce bugs. The PDES coordinator
+barrier and canonical message ordering are the minimum necessary mechanism.
+
+**Constraints**:
+- Topology is declared, not discovered. The `DeterministicCoordinator` owns the graph.
+- All stochastic seeding uses `seed_for_quantum(global_seed, node_id, quantum_number)`.
+- The PCAP log is the observable determinism oracle for CI.
+
+### ADR-015: `ClockSyncTransport` — Separate Clock from Comms Transport
+
+**Decision**: The clock-advance RPC (TimeAuthority ↔ QEMU) uses a dedicated transport
+abstraction (`ClockSyncTransport` trait) separate from the emulated network transport.
+For single-host deployments, the default implementation is Unix domain socket. For
+multi-host, the Zenoh Queryable implementation is used.
+
+**Rationale**: The clock path has fundamentally different requirements from pub/sub
+networking: it is strictly 1:1, both endpoints are known at startup, requires the
+lowest possible latency, and must never involve a broker as a SPOF. The Zenoh Queryable
+executor-deadlock postmortem (`2026-04-18`) was caused by conflating the clock's blocking
+RPC semantics with Zenoh's async executor model. The `ClockSyncTransport` trait decouples
+these concerns and enables a Unix socket fast path (1–3 µs vs 10–50 µs).
+
+**Interface**:
+```rust
+pub trait ClockSyncTransport: Send + Sync + 'static {
+    fn recv_advance(&self, timeout: Duration) -> Option<ClockAdvanceReq>;
+    fn send_ready(&self, resp: ClockReadyResp) -> Result<(), ClockTransportError>;
+    fn shutdown(&self);
+}
+```
 
 ### ADR-005: SystemC for co-simulation, not for the main simulation kernel
 

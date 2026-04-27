@@ -146,7 +146,7 @@ elif [ "$ARCH" = "riscv32" ]; then
 fi
 
 # Prioritize the build directory for developers, unless skipped
-BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )"
+BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )$( [ "${VIRTMCU_USE_TSAN:-0}" = "1" ] && echo "-tsan" || echo "" )"
 
 if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" == "1" ]]; then
     # Strictly use installed path when skipping build dir
@@ -227,24 +227,28 @@ if [ -z "$QEMU_MODULE_DIR" ] && [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]]; the
     mkdir -p "$QEMU_MODULE_DIR"
 fi
 
-# ASan Instrumentation Check
+# ASan/TSan Instrumentation Check
 has_asan() {
     local file="$1"
     if [ ! -f "$file" ]; then return 1; fi
     # Check for ASan initialization symbols which indicate instrumentation
-    if strings "$file" 2>/dev/null | grep "__asan_init" >/dev/null; then
+    if strings "$file" 2>/dev/null | grep -E "__asan_init|__tsan_init" >/dev/null; then
         return 0
     fi
     return 1
 }
 
-check_asan_mismatch() {
+check_sanitizer_mismatch() {
     local bin="$1"
     local mod_dir="$2"
-    local bin_asan=false
-    local mod_asan=false
+    local bin_san=false
+    local mod_san=false
+    local san_type="ASan/TSan"
 
-    if has_asan "$bin"; then bin_asan=true; fi
+    if has_asan "$bin"; then 
+        bin_san=true
+        if strings "$bin" 2>/dev/null | grep "__tsan_init" >/dev/null; then san_type="TSan"; else san_type="ASan"; fi
+    fi
 
     # Use find -L so versioned symlinks (e.g. .so -> .so.1) are followed correctly.
     local sample_plugin
@@ -255,31 +259,32 @@ check_asan_mismatch() {
     if [ -z "$sample_plugin" ]; then return 0; fi
 
     if has_asan "$sample_plugin"; then
-        mod_asan=true
+        mod_san=true
     fi
 
-    if [ "$bin_asan" != "$mod_asan" ]; then
+    if [ "$bin_san" != "$mod_san" ]; then
         echo "=============================================================================="
-        echo "FATAL: ASan Instrumentation Mismatch Detected!"
+        echo "FATAL: $san_type Instrumentation Mismatch Detected!"
         echo "------------------------------------------------------------------------------"
-        echo "QEMU Binary ($bin): ASan=$( [ "$bin_asan" = true ] && echo "YES" || echo "NO" )"
-        echo "QEMU Modules ($mod_dir): ASan=$( [ "$mod_asan" = true ] && echo "YES" || echo "NO" )"
+        echo "QEMU Binary ($bin): Sanitizer=$( [ "$bin_san" = true ] && echo "YES" || echo "NO" )"
+        echo "QEMU Modules ($mod_dir): Sanitizer=$( [ "$mod_san" = true ] && echo "YES" || echo "NO" )"
         echo "------------------------------------------------------------------------------"
-        echo "Mixing instrumented and non-instrumented code causes 'ASan runtime does not"
-        echo "come first' errors or silent corruption."
+
+        echo "Mixing instrumented and non-instrumented code causes runtime errors"
+        echo "or silent corruption."
         echo ""
-        if [ "$bin_asan" = true ]; then
-            echo "Action: Rebuild your plugins with VIRTMCU_USE_ASAN=1 or use a non-ASan QEMU."
+        if [ "$bin_san" = true ]; then
+            echo "Action: Rebuild your plugins with VIRTMCU_USE_ASAN=1 or VIRTMCU_USE_TSAN=1."
         else
-            echo "Action: Rebuild your plugins without ASan or use an ASan-instrumented QEMU."
+            echo "Action: Rebuild your plugins without sanitizers or use an instrumented QEMU."
         fi
         echo "=============================================================================="
         exit 1
     fi
 }
 
-# Perform pre-flight ASan check
-check_asan_mismatch "$QEMU_BIN" "$QEMU_MODULE_DIR"
+# Perform pre-flight sanitizer check
+check_sanitizer_mismatch "$QEMU_BIN" "$QEMU_MODULE_DIR"
 
 # Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
 if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
@@ -326,14 +331,15 @@ if [ -n "$QEMU_MODULE_DIR" ]; then
     export QEMU_MODULE_DIR
 fi
 
-# Automatically handle ASan LD_PRELOAD if QEMU is instrumented.
-# AddressSanitizer requires that its runtime library be loaded first.
-if ldd "$QEMU_BIN" | grep "libasan" >/dev/null; then
-    LIBASAN=$(ldd "$QEMU_BIN" | grep "libasan" | awk '{print $3}' || true)
-    if [ -n "$LIBASAN" ] && [ -f "$LIBASAN" ]; then
-        export LD_PRELOAD="$LIBASAN${LD_PRELOAD:+:$LD_PRELOAD}"
+# Automatically handle ASan/TSan LD_PRELOAD if QEMU is instrumented.
+# Sanitizers require that their runtime library be loaded first.
+if ldd "$QEMU_BIN" | grep -E "libasan|libtsan" >/dev/null; then
+    LIBSAN=$(ldd "$QEMU_BIN" | grep -E "libasan|libtsan" | awk '{print $3}' || true)
+    if [ -n "$LIBSAN" ] && [ -f "$LIBSAN" ]; then
+        export LD_PRELOAD="$LIBSAN${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
 fi
+
 
 echo "Running: ${CMD[*]}"
 

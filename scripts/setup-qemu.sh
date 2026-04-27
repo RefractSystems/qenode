@@ -28,6 +28,7 @@ fi
 CI="${CI:-}"
 VIRTMCU_USE_CCACHE="${VIRTMCU_USE_CCACHE:-}"
 VIRTMCU_USE_ASAN="${VIRTMCU_USE_ASAN:-}"
+VIRTMCU_USE_TSAN="${VIRTMCU_USE_TSAN:-}"
 
 # Function to download pre-built QEMU SDK from GitHub Releases
 download_prebuilt_qemu() {
@@ -200,7 +201,7 @@ fi
 
 # Configure and build QEMU in a dedicated build directory
 cd "$QEMU_DIR"
-BUILD_DIR_NAME="build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" || echo "" )"
+BUILD_DIR_NAME="build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" || echo "" )$( [ "$VIRTMCU_USE_TSAN" = "1" ] && echo "-tsan" || echo "" )"
 echo "==> QEMU Build Directory: $QEMU_DIR/$BUILD_DIR_NAME"
 mkdir -p "$BUILD_DIR_NAME"
 cd "$BUILD_DIR_NAME"
@@ -234,6 +235,13 @@ if [ "$VIRTMCU_USE_ASAN" = "1" ]; then
     export VIRTMCU_USE_ASAN
     # Ensure all Rust targets (including QEMU's own and our plugins) link with sanitizers
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined"
+elif [ "$VIRTMCU_USE_TSAN" = "1" ]; then
+    echo "TSAN enabled: adding --enable-tsan to QEMU build"
+    CONFIGURE_ARGS+=(--enable-tsan)
+    export VIRTMCU_USE_TSAN
+    # ThreadSanitizer in Rust requires nightly or RUSTC_BOOTSTRAP=1 with unstable flags
+    export RUSTC_BOOTSTRAP=1
+    export RUSTFLAGS="${RUSTFLAGS:-} -Z sanitizer=thread"
 fi
 
 if [ "$(uname)" = "Darwin" ]; then

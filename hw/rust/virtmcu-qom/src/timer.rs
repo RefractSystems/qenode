@@ -39,9 +39,10 @@ pub struct QomTimer {
     inner: *mut QemuTimer,
 }
 
-// QEMU timers are accessed under the BQL, making them effectively thread-safe
+// SAFETY: QEMU timers are accessed under the BQL, making them effectively thread-safe
 // from the perspective of Rust's type system when bounded by QOM devices.
 unsafe impl Send for QomTimer {}
+// SAFETY: See above.
 unsafe impl Sync for QomTimer {}
 
 impl QomTimer {
@@ -49,6 +50,7 @@ impl QomTimer {
     /// # Safety
     /// The `cb` and `opaque` pointers must be valid.
     pub unsafe fn new(clock_type: i32, cb: QemuTimerCb, opaque: *mut c_void) -> Self {
+        // SAFETY: The caller guarantees that cb and opaque are valid.
         let inner = unsafe { virtmcu_timer_new_ns(clock_type, cb, opaque) };
         assert!(!inner.is_null(), "virtmcu_timer_new_ns returned null");
         Self { inner }
@@ -56,12 +58,14 @@ impl QomTimer {
 
     /// Modifies the timer to expire at the given virtual time in nanoseconds.
     pub fn mod_ns(&self, expire_time: i64) {
+        // SAFETY: self.inner is a valid pointer to a QemuTimer managed by this struct.
         unsafe { virtmcu_timer_mod(self.inner, expire_time) }
     }
 }
 
 impl Drop for QomTimer {
     fn drop(&mut self) {
+        // SAFETY: self.inner is a valid pointer to a QemuTimer.
         unsafe {
             virtmcu_timer_del(self.inner);
             virtmcu_timer_free(self.inner);

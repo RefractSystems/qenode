@@ -18,6 +18,11 @@ def main():
         config.insert_json5("transport/shared/task_workers", "16")
     print(f"Starting persistent Zenoh mock router on {endpoint}...")
     session = zenoh.open(config)
+
+    # Declare a liveliness token so clients can deterministically wait for the router to be ready.
+    # The key sim/router/check is used by wait_for_zenoh_discovery in conftest.py.
+    _liveliness = session.liveliness().declare_token("sim/router/check")
+
     try:
         while True:
             time.sleep(1)

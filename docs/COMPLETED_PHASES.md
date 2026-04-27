@@ -287,4 +287,38 @@ This file serves as a historical record of completed phases and tasks in the vir
 - [x] **31.3** Python Test Parallelization (`pytest-xdist`).
 - [x] **31.4** Deep C Static Analysis (`cppcheck`).
 - [x] **31.5** LLVM Linker (`lld`) for QEMU & Rust.
+
+---
+
+## P0 Serial Tasks — Enterprise Hardening ✅
+
+**Completed**: 2026-04-25 (Tasks A–I) / 2026-04-27 (P01 Rust mechanism, P09 partial)
+
+### Summary
+
+| Task | What was done |
+|---|---|
+| P00 | Re-enabled Phase 7 tests; fixed ASan false-stall by adding `stall-timeout=60000` (later superseded by `is_first_quantum` in P01). |
+| P01 | `is_first_quantum: AtomicBool` + `BOOT_QUANTUM_TIMEOUT = 5 min` added to `ZenohClockBackend`. First quantum uses a 5-minute grace window; subsequent quanta revert to `stall_timeout_ms`. |
+| P01b | Restored main branch to fully green state. |
+| P02 | All `#[repr(C, packed)]` reads in `remote-port` replaced with `ptr::read_unaligned`. Unit tests: `test_unaligned_hdr_read`, `test_unaligned_busaccess_read`, `test_unaligned_interrupt_read`. |
+| P03 | `sync.rs` BQL mock upgraded to support configurable return values. Unit tests cover `BqlGuard` drop, `BqlUnlockGuard` re-acquire, `temporary_unlock()` when not held, timeout path, signal path. |
+| P04 | All direct `virtmcu_bql_locked()` FFI calls replaced with `Bql::is_held()`. `BqlGuarded<T>` introduced and migrated across all Zenoh peripherals. `Mutex<T>` banned in peripheral state via `make lint` gate. |
+| P05 | Both `mmio-socket-bridge` and `remote-port` converted to pure Rust `std::sync::Mutex`/`Condvar`. Raw `*mut QemuMutex`/`*mut QemuCond` eliminated. Lock order documented in module-level comments. |
+| P06 | `VcpuCountGuard` RAII ensures `active_vcpu_count` is decremented even on panic. `drain_cond.wait_timeout(30 s)` replaces the bounded spinloop in both bridges. |
+| P07 | All `thread::sleep` reconnect/connection-wait loops replaced with `connected_cond.wait_timeout()`. CI grep gate enforces zero untagged sleeps in `hw/rust/`. |
+| P08 | `.github/workflows/ci-asan.yml` added; gates on `push` to `main` and all `pull_request` targets. `make test-asan` runs nightly Rust ASan suite. |
+| P09 | `static_mut_refs` and `too_many_lines` suppressors removed. `cargo clippy -D warnings` enforced. Five peripheral crates still require `#![allow(clippy::all)]` cleanup — tracked in `PLAN.md`. |
+| P10-1 | `zenoh-chardev` flow control: `drain_backlog()` with `qemu_chr_be_can_write`, byte-level `VecDeque` backlog, `chr_accept_input` drain. 128-byte burst test passes. |
+| P10-2.2 | `VirtualTimeAuthority` fixture in `conftest.py` with `step()` and `run_until()`. `TimeAuthority` legacy wrapper maintained. |
+| P10-3 | All Phase 8 tests use `slaved-icount`. Burst test, `test_phase8_uart_stress.py`, and marker-packet drop test in place. |
+| P11 | Dynamic ports, `tmp_path` isolation, workspace-scoped `cleanup-sim.sh`, binary resolution for Rust tool crates. |
+| Task A | `remote-port` `bridge_write` and `send_req_and_wait_internal`: `to_ne_bytes()` → `to_le_bytes()`, raw `ptr::copy_nonoverlapping` → `u64::from_le_bytes()`. |
+| Task B | `zenoh-spi` header serialization: raw `ptr::copy_nonoverlapping` → `ZenohSPIHeader::pack()`. |
+| Task E (P-SERIAL) | Eliminated `transmute` and raw memory views across all peripherals; explicit `pack()`/`unpack()` methods for all wire structs. |
+| Task F (P-SCHEMA) | `scripts/gen_vproto.py` auto-generates `tools/vproto.py` from `hw/rust/virtmcu-api/src/lib.rs`. `gen_vproto.py --check` runs in `make lint`. |
+| Task G1 | `slice::from_raw_parts` on RP packet sends replaced with `pack_be()`. Byte-exact tests for `RpPktBusaccess` and `RpPktInterrupt`. |
+| Task G2 | `VcpuCountGuard` RAII added to both bridges for panic-safety. |
+| Task H | `BqlGuarded<T>` migration across `zenoh-802154`, `zenoh-netdev`, `zenoh-flexray`, `zenoh-telemetry`, `zenoh-ui`, `zenoh-canfd`, `zenoh-chardev`. |
+| Task I | Fixed Docker Bake tag replacement behavior (prevented manifest failures in multi-arch builds). |
 - [x] **31.6** Universal Typo Prevention (`codespell`).

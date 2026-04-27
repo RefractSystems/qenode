@@ -24,10 +24,25 @@ Imagine a single `.usd` file where:
 
 To bridge today's ecosystem with tomorrow's USD-native future, virtmcu uses a **strongly-typed YAML schema** designed to map 1:1 with USD Primitives and Attributes.
 
-### Why YAML first?
-- **Lightweight**: No need for the 500MB `pxr` USD library for headless CI or simple firmware testing.
-- **Ubiquitous**: Easily edited by humans and parsed by every language in the simulation loop (Python, Rust, C++).
-- **Extensible**: Perfectly mirrors the hierarchical nature of USD.
+### Evaluation: Why YAML currently, and when do we transition?
+
+**Pros of keeping YAML right now:**
+- **Zero-Bloat CI/CD (The biggest factor)**: The official Python OpenUSD library (`pxr`) is massive (often 500MB+ depending on the build). Keeping YAML allows our core simulation loop and CI pipelines to remain incredibly lightweight. We avoid forcing developers to install heavy 3D VFX libraries just to test bare-metal firmware.
+- **Human Readability & Tooling**: YAML is natively understood by Python, Rust, and developers. It's much easier to quickly hand-edit a YAML file during active development than to write a Python script using the `pxr` API to mutate a `.usd` binary cache.
+- **Agnostic Core**: It keeps the emulator (`qemu` and our Rust plugins) entirely decoupled from the complexities of 3D scene graphs.
+
+**Cons of keeping YAML:**
+- **Lack of Native Composition**: OpenUSD's greatest superpower is "Composition" (Sublayers, References, Variants). With YAML, we lack native merging logic if we want modular hardware definitions (e.g., overlaying a `camera_sensor` on a `base_drone`).
+- **The "Two Source of Truth" Problem**: For mobile nodes, the YAML defines the initial layout, but the physics engine (e.g., MuJoCo) moves them. If they aren't using the exact same file format, we have to synchronize the YAML state with the physics engine state continuously.
+- **No Native Schema Enforcement**: OpenUSD has strict, compiled schema validation. With YAML, we rely on custom Python parsing logic to manually check for typos or invalid node links.
+
+**The Horizon: When will we *have* to move to OpenUSD?**
+We will hit a hard ceiling with YAML when we transition from **"Firmware Testing"** to **"Federated Digital Twins"** (Phase 10+). Specifically, OpenUSD becomes mandatory when:
+1. **Full Physics Integration**: When a robotic arm's firmware reads joint encoders directly from a 3D physics engine in real-time. Maintaining a separate YAML topology for the network and a USD topology for the physics becomes unmanageable.
+2. **Complex System-of-Systems**: Simulating a swarm of 100 drones, where each drone has variants. OpenUSD's composition engine is mandatory for scaling this without duplicating 100 YAML files.
+
+**The Architectural Boundary:**
+Even when that horizon arrives, we will **not** rewrite `virtmcu` to ingest `.usd` directly in the hot loop. The OpenUSD orchestrator will use the USD API to compose the scene, and then **export/generate** the YAML + DTB just-in-time for the emulator to consume (as prototyped in `tools/usd_to_virtmcu.py`).
 
 ### The Schema Concept
 A virtmcu YAML platform is structured as a tree of "Objects":

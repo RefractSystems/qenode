@@ -1,37 +1,30 @@
-#![allow(unused_variables)]
-#![allow(clippy::all)]
-#![allow(
-    clippy::missing_safety_doc,
-    clippy::collapsible_match,
-    dead_code,
-    unused_imports,
-    clippy::needless_return,
-    clippy::manual_range_contains,
-    clippy::single_component_path_imports,
-    clippy::len_zero,
-    clippy::while_immutable_condition
-)]
+//! Zenoh-based virtual network device for VirtMCU.
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
-use std::ffi::{CStr, CString};
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ptr;
 use virtmcu_qom::error::Error;
 use virtmcu_qom::net::{
     qemu_new_net_client, virtmcu_zenoh_netdev_hook, NetClientInfo, NetClientState, Netdev,
     NET_CLIENT_DRIVER_ZENOH,
 };
-use virtmcu_qom::qdev::{DeviceClass, SysBusDevice};
-use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::qdev::SysBusDevice;
+use virtmcu_qom::qom::{ObjectClass, TypeInfo};
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
 use virtmcu_zenoh::SafeSubscriber;
 use zenoh::Session;
 use zenoh::Wait;
 
+use alloc::collections::{BinaryHeap, VecDeque};
+use core::cmp::Ordering;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use crossbeam_channel::{bounded, Receiver, Sender};
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::Arc;
 use virtmcu_api::ZenohFrameHeader;
 use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
@@ -51,12 +44,13 @@ pub struct ZenohNetClient {
 
 pub struct OrderedPacket {
     pub vtime: u64,
+    pub sequence: u64,
     pub data: Vec<u8>,
 }
 
 impl PartialEq for OrderedPacket {
     fn eq(&self, other: &Self) -> bool {
-        self.vtime == other.vtime
+        self.vtime == other.vtime && self.sequence == other.sequence
     }
 }
 impl Eq for OrderedPacket {}
@@ -67,15 +61,24 @@ impl PartialOrd for OrderedPacket {
 }
 impl Ord for OrderedPacket {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.vtime.cmp(&self.vtime)
+        match other.vtime.cmp(&self.vtime) {
+            Ordering::Equal => other.sequence.cmp(&self.sequence),
+            ord => ord,
+        }
     }
 }
 
+pub struct TxPacket {
+    pub vtime: u64,
+    pub sequence: u64,
+    pub data: Vec<u8>,
+}
+
 pub struct ZenohNetdevState {
-    session: Session,
+    _session: Arc<Session>,
     nc: *mut NetClientState,
-    node_id: u32,
-    topic: String,
+    _node_id: u32,
+    _topic: String,
     subscriber: Option<SafeSubscriber>,
     rx_timer: Option<Arc<QomTimer>>,
     rx_receiver: Receiver<OrderedPacket>,
@@ -83,6 +86,10 @@ pub struct ZenohNetdevState {
     local_heap: BqlGuarded<BinaryHeap<OrderedPacket>>,
     backlog: BqlGuarded<VecDeque<Vec<u8>>>,
     earliest_vtime: Arc<AtomicU64>,
+    tx_sequence: AtomicU64,
+    tx_sender: Option<Sender<TxPacket>>,
+    tx_thread: Option<std::thread::JoinHandle<()>>,
+    running: Arc<AtomicBool>,
 }
 
 unsafe extern "C" fn zenoh_netdev_receive(
@@ -91,36 +98,55 @@ unsafe extern "C" fn zenoh_netdev_receive(
     size: usize,
 ) -> isize {
     // Find ZenohNetdevQEMU from nc using offset_of
-    let s = &mut *(nc as *mut ZenohNetClient);
+    // SAFETY: nc is a valid pointer provided by QEMU.
+    // SAFETY: casting to ZenohNetClient is safe as QEMU allocates this specific layout.
+    let s = unsafe { &mut *(nc as *mut ZenohNetClient) };
     if s.rust_state.is_null() {
         return 0;
     }
-    zenoh_netdev_receive_internal(&*s.rust_state, buf, size)
+    // SAFETY: rust_state is non-null.
+    unsafe { zenoh_netdev_receive_internal(&*s.rust_state, buf, size) }
 }
 
 unsafe extern "C" fn zenoh_netdev_can_receive(nc: *mut NetClientState) -> bool {
-    let s = &mut *(nc as *mut ZenohNetClient);
+    // SAFETY: nc is a valid pointer provided by QEMU.
+    // SAFETY: casting to ZenohNetClient is safe as QEMU allocates this specific layout.
+    let s = unsafe { &mut *(nc as *mut ZenohNetClient) };
     if s.rust_state.is_null() {
         return true;
     }
-    let backlog = (*s.rust_state).backlog.get();
+    // SAFETY: rust_state is non-null.
+    let backlog = unsafe { (*s.rust_state).backlog.get() };
     backlog.is_empty()
 }
 
 unsafe extern "C" fn zenoh_netdev_cleanup(nc: *mut NetClientState) {
-    let s = &mut *(nc as *mut ZenohNetClient);
+    // SAFETY: nc is a valid pointer provided by QEMU.
+    // SAFETY: casting to ZenohNetClient is safe as QEMU allocates this specific layout.
+    let s = unsafe { &mut *(nc as *mut ZenohNetClient) };
     if !s.rust_state.is_null() {
-        let mut state = Box::from_raw(s.rust_state);
-        // Explicitly drop subscriber first to wait for callbacks
-        state.subscriber.take();
-        state.rx_timer.take();
-        s.rust_state = ptr::null_mut();
+        // SAFETY: rust_state was allocated via Box::into_raw.
+        unsafe {
+            let mut state = Box::from_raw(s.rust_state);
+            state.running.store(false, AtomicOrdering::Release);
+            // Explicitly drop subscriber first to wait for callbacks
+            state.subscriber.take();
+            state.rx_timer.take();
+
+            // Signal TX thread to exit
+            drop(state.tx_sender.take());
+            if let Some(handle) = state.tx_thread.take() {
+                let _ = handle.join();
+            }
+
+            s.rust_state = ptr::null_mut();
+        }
     }
 }
 
 static NET_ZENOH_INFO: NetClientInfo = NetClientInfo {
     type_id: NET_CLIENT_DRIVER_ZENOH,
-    size: std::mem::size_of::<ZenohNetClient>(),
+    size: core::mem::size_of::<ZenohNetClient>(),
     receive: Some(zenoh_netdev_receive),
     receive_raw: ptr::null_mut(),
     receive_iov: ptr::null_mut(),
@@ -135,15 +161,20 @@ unsafe extern "C" fn zenoh_netdev_hook(
     peer: *mut NetClientState,
     errp: *mut *mut Error,
 ) -> c_int {
-    let opts = &(*netdev).u.zenoh;
+    // SAFETY: netdev is a valid pointer.
+    let opts = unsafe { &(*netdev).u.zenoh };
 
-    let nc = qemu_new_net_client(&raw const NET_ZENOH_INFO, peer, c"zenoh".as_ptr(), name);
-    let s = &mut *(nc as *mut ZenohNetClient);
+    // SAFETY: nc is a valid pointer.
+    let nc =
+        unsafe { qemu_new_net_client(&raw const NET_ZENOH_INFO, peer, c"zenoh".as_ptr(), name) };
+    // SAFETY: nc is returned by qemu_new_net_client which allocates ZenohNetClient layout.
+    let s = unsafe { &mut *(nc as *mut ZenohNetClient) };
 
     let node_id = if opts.node.is_null() {
         0
     } else {
-        CStr::from_ptr(opts.node).to_string_lossy().parse::<u32>().unwrap_or(0)
+        // SAFETY: opts.node is a valid null-terminated C string.
+        unsafe { CStr::from_ptr(opts.node) }.to_string_lossy().parse::<u32>().unwrap_or(0)
     };
 
     let router = if opts.router.is_null() { ptr::null() } else { opts.router.cast_const() };
@@ -151,7 +182,8 @@ unsafe extern "C" fn zenoh_netdev_hook(
     let topic = if opts.topic.is_null() {
         "sim/eth/frame".to_string()
     } else {
-        CStr::from_ptr(opts.topic).to_string_lossy().into_owned()
+        // SAFETY: opts.topic is a valid null-terminated C string.
+        unsafe { CStr::from_ptr(opts.topic) }.to_string_lossy().into_owned()
     };
 
     s.rust_state = zenoh_netdev_init_internal(nc, node_id, router, topic);
@@ -165,6 +197,7 @@ unsafe extern "C" fn zenoh_netdev_hook(
 
 unsafe extern "C" fn zenoh_netdev_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
+    // SAFETY: Setting hooks during class init is safe.
     unsafe {
         (*dc).user_creatable = true;
         virtmcu_zenoh_netdev_hook = Some(zenoh_netdev_hook);
@@ -174,7 +207,7 @@ unsafe extern "C" fn zenoh_netdev_class_init(klass: *mut ObjectClass, _data: *co
 static ZENOH_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"zenoh-netdev".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
-    instance_size: std::mem::size_of::<ZenohNetdevQEMU>(),
+    instance_size: core::mem::size_of::<ZenohNetdevQEMU>(),
     instance_align: 0,
     instance_init: None,
     instance_post_init: None,
@@ -187,17 +220,19 @@ static ZENOH_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(zenoh_netdev_type_init, ZENOH_NETDEV_TYPE_INFO);
+declare_device_type!(ZENOH_NETDEV_TYPE_INIT, ZENOH_NETDEV_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 fn drain_net_backlog(state: &ZenohNetdevState) -> bool {
     let mut backlog = state.backlog.get_mut();
-    while let Some(packet) = backlog.front() {
+    while let Some(_packet) = backlog.front() {
+        // SAFETY: nc is a valid NetClientState pointer.
         if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
             return false;
         }
         let data = backlog.pop_front().unwrap_or_else(|| std::process::abort());
+        // SAFETY: nc and data pointers are valid.
         unsafe {
             virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len());
         }
@@ -207,7 +242,9 @@ fn drain_net_backlog(state: &ZenohNetdevState) -> bool {
 
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     debug_assert!(virtmcu_qom::sync::Bql::is_held(), "BQL must be held during timer callbacks");
+    // SAFETY: opaque is a valid pointer to ZenohNetdevState.
     let state = unsafe { &*(opaque as *mut ZenohNetdevState) };
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
     // 1. Drain backlog
@@ -227,6 +264,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
 
     while let Some(packet) = heap.peek() {
         if packet.vtime <= now {
+            // SAFETY: nc is valid.
             if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
                 let mut backlog = state.backlog.get_mut();
                 let p = heap.pop().unwrap_or_else(|| std::process::abort());
@@ -235,6 +273,7 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
             }
 
             let p = heap.pop().unwrap_or_else(|| std::process::abort());
+            // SAFETY: nc and data pointers are valid.
             unsafe {
                 virtmcu_qom::net::qemu_send_packet(state.nc, p.data.as_ptr(), p.data.len());
             }
@@ -252,46 +291,94 @@ extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     }
 }
 
+fn start_tx_thread(
+    session: Arc<Session>,
+    tx_topic: String,
+    rx_out: Receiver<TxPacket>,
+    running: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        if !running.load(AtomicOrdering::Acquire) && rx_out.is_empty() {
+            break;
+        }
+        match rx_out.recv_timeout(core::time::Duration::from_millis(10)) {
+            Ok(packet) => {
+                let header = ZenohFrameHeader {
+                    delivery_vtime_ns: packet.vtime,
+                    sequence_number: packet.sequence,
+                    size: packet.data.len() as u32,
+                };
+                let mut data = Vec::with_capacity(20 + packet.data.len());
+                data.extend_from_slice(&header.pack());
+                data.extend_from_slice(&packet.data);
+
+                if let Err(e) = session.put(&tx_topic, data).wait() {
+                    virtmcu_qom::vlog!(
+                        "[zenoh-netdev] Warning: Failed to send Zenoh packet: {}\n",
+                        e
+                    );
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    })
+}
+
 fn zenoh_netdev_init_internal(
     nc: *mut NetClientState,
     node_id: u32,
     router: *const c_char,
     topic: String,
 ) -> *mut ZenohNetdevState {
+    // SAFETY: get_or_init_session is safe with valid router pointer or null.
+    // Safety: router validity is guaranteed by the caller.
     let session = unsafe {
-        match virtmcu_zenoh::open_session(router) {
+        match virtmcu_zenoh::get_or_init_session(router) {
             Ok(s) => s,
             Err(_) => return ptr::null_mut(),
         }
     };
 
     let (tx, rx) = bounded(65536);
+    let (tx_out, rx_out) = bounded(65536);
     let local_heap = BqlGuarded::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-    let earliest_clone = std::sync::Arc::clone(&earliest_vtime);
+    let earliest_clone = Arc::clone(&earliest_vtime);
+
+    let tx_topic = format!("{topic}/{node_id}/tx");
+    let running = Arc::new(AtomicBool::new(true));
+    let tx_thread = start_tx_thread(Arc::clone(&session), tx_topic, rx_out, Arc::clone(&running));
 
     let mut state = Box::new(ZenohNetdevState {
-        session: session.clone(),
+        _session: Arc::clone(&session),
+
         nc,
-        node_id,
-        topic: topic.clone(),
+        _node_id: node_id,
+        _topic: topic.clone(),
         subscriber: None,
         rx_timer: None,
         rx_receiver: rx,
         local_heap,
         backlog: BqlGuarded::new(VecDeque::new()),
         earliest_vtime,
+        tx_sequence: AtomicU64::new(0),
+        tx_sender: Some(tx_out),
+        tx_thread: Some(tx_thread),
+        running,
     });
 
-    let state_ptr = &raw mut *state;
+    let state_ptr = core::ptr::from_mut::<ZenohNetdevState>(&mut *state);
+    // SAFETY: creating timer is safe.
     let rx_timer = Arc::new(unsafe {
         QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void)
     });
     let rx_timer_clone = Arc::clone(&rx_timer);
 
-    let subscriber = SafeSubscriber::new(&session, &topic, move |sample| {
+    let rx_topic = format!("{topic}/rx");
+    let subscriber = SafeSubscriber::new(&session, &rx_topic, move |sample| {
         let data = sample.payload().to_bytes();
-        if data.len() < 12 {
+        if data.len() < 20 {
             virtmcu_qom::vlog!(
                 "[zenoh-netdev] Warning: Dropping malformed packet (too short: {} bytes)\n",
                 data.len()
@@ -299,14 +386,18 @@ fn zenoh_netdev_init_internal(
             return;
         }
 
-        let header = match ZenohFrameHeader::unpack_slice(&data[..12]) {
+        let header = match ZenohFrameHeader::unpack_slice(&data[..20]) {
             Some(h) => h,
             None => return,
         };
 
-        let payload = data[12..].to_vec();
+        let payload = data[20..].to_vec();
 
-        let packet = OrderedPacket { vtime: header.delivery_vtime_ns, data: payload };
+        let packet = OrderedPacket {
+            vtime: header.delivery_vtime_ns,
+            sequence: header.sequence_number,
+            data: payload,
+        };
 
         if tx.send(packet).is_ok() {
             let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
@@ -327,18 +418,17 @@ fn zenoh_netdev_init_internal(
 }
 
 fn zenoh_netdev_receive_internal(state: &ZenohNetdevState, buf: *const u8, size: usize) -> isize {
-    let tx_topic = format!("{}/{}/tx", state.topic, state.node_id);
-    let payload = unsafe { std::slice::from_raw_parts(buf, size) };
+    // SAFETY: buf is a valid pointer to size bytes provided by QEMU.
+    let payload = unsafe { core::slice::from_raw_parts(buf, size) };
 
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
-    let header = ZenohFrameHeader { delivery_vtime_ns: now, size: size as u32 };
+    let seq = state.tx_sequence.fetch_add(1, AtomicOrdering::SeqCst);
 
-    let mut data = Vec::with_capacity(12 + size);
-    data.extend_from_slice(&header.pack());
-    data.extend_from_slice(payload);
-
-    let _ = state.session.put(tx_topic, data).wait();
+    if let Some(sender) = &state.tx_sender {
+        let _ = sender.send(TxPacket { vtime: now, sequence: seq, data: payload.to_vec() });
+    }
     size as isize
 }
 
@@ -350,14 +440,27 @@ mod tests {
     #[test]
     fn test_ordered_packet_ord() {
         let mut heap = BinaryHeap::new();
-        heap.push(OrderedPacket { vtime: 1000, data: vec![1] });
-        heap.push(OrderedPacket { vtime: 500, data: vec![2] });
-        heap.push(OrderedPacket { vtime: 2000, data: vec![3] });
+        heap.push(OrderedPacket { vtime: 1000, sequence: 0, data: vec![1] });
+        heap.push(OrderedPacket { vtime: 500, sequence: 0, data: vec![2] });
+        heap.push(OrderedPacket { vtime: 2000, sequence: 0, data: vec![3] });
 
         // Lowest vtime (500) should pop first (min-heap)
         assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).vtime, 500);
         assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).vtime, 1000);
         assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).vtime, 2000);
+    }
+
+    #[test]
+    fn test_ordered_packet_sequence_tiebreak() {
+        let mut heap = BinaryHeap::new();
+        heap.push(OrderedPacket { vtime: 1000, sequence: 2, data: vec![1] });
+        heap.push(OrderedPacket { vtime: 1000, sequence: 0, data: vec![2] });
+        heap.push(OrderedPacket { vtime: 1000, sequence: 1, data: vec![3] });
+
+        // Same vtime: lower sequence (0) should pop first
+        assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).sequence, 0);
+        assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).sequence, 1);
+        assert_eq!(heap.pop().unwrap_or_else(|| std::process::abort()).sequence, 2);
     }
 
     #[test]

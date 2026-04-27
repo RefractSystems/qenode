@@ -1,5 +1,5 @@
+use core::mem::size_of;
 use flatbuffers::FlatBufferBuilder;
-use std::mem::size_of;
 use virtmcu_api::{
     telemetry_fb, telemetry_generated::virtmcu::telemetry::TraceEvent as GenTraceEvent,
     ClockAdvanceReq, ClockReadyResp, MmioReq, SyscMsg, VirtmcuHandshake, ZenohFrameHeader,
@@ -15,7 +15,7 @@ fn test_firmware_studio_struct_sizes() {
     assert_eq!(size_of::<SyscMsg>(), 16);
     assert_eq!(size_of::<ClockAdvanceReq>(), 16);
     assert_eq!(size_of::<ClockReadyResp>(), 16);
-    assert_eq!(size_of::<ZenohFrameHeader>(), 12);
+    assert_eq!(size_of::<ZenohFrameHeader>(), 20);
 }
 
 #[test]

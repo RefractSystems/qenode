@@ -65,6 +65,8 @@ macro_rules! vlog {
         let mut cursor = $crate::BufCursor::new(&mut buf);
         let _ = write!(cursor, $($arg)*);
         let _ = write!(cursor, "\0");
+        // SAFETY: virtmcu_log takes a null-terminated string. buf contains a null-terminated
+        // string at this point. The buffer is alive for the duration of the call.
         unsafe { $crate::virtmcu_log(buf.as_ptr() as *const _) };
     }};
 }

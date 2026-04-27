@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -24,16 +25,30 @@ async def test_phase10_usd_metadata():
     assert "GIC_BASE" in output
 
 
+def find_bin(name):
+    workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
+    # 1. Check CARGO_TARGET_DIR
+    if "CARGO_TARGET_DIR" in os.environ:
+        p = Path(os.environ["CARGO_TARGET_DIR"]) / f"release/{name}"
+        if p.exists():
+            return p
+    # 2. Check workspace target
+    p = workspace_root / f"target/release/{name}"
+    if p.exists():
+        return p
+    # 3. Check tool-specific target
+    p = workspace_root / f"tools/cyber_bridge/target/release/{name}"
+    if p.exists():
+        return p
+    return workspace_root / f"target/release/{name}"
+
+
 @pytest.mark.asyncio
 async def test_phase10_resd_replay_startup():
     """
     TEST 3: resd_replay startup + empty-file rejection
     """
-    workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    replay_bin = workspace_root / "target/release/resd_replay"
-    if not replay_bin.exists():
-        import os
-        replay_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay" if "CARGO_TARGET_DIR" in os.environ else workspace_root / "tools/cyber_bridge/target/release/resd_replay"
+    replay_bin = find_bin("resd_replay")
 
     # Missing file should fail
     proc = await asyncio.create_subprocess_exec(
@@ -50,11 +65,7 @@ async def test_phase10_mujoco_bridge_shm():
     """
     TEST 4: mujoco_bridge shared memory creation
     """
-    workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    bridge_bin = workspace_root / "target/release/mujoco_bridge"
-    if not bridge_bin.exists():
-        import os
-        bridge_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge" if "CARGO_TARGET_DIR" in os.environ else workspace_root / "tools/cyber_bridge/target/release/mujoco_bridge"
+    bridge_bin = find_bin("mujoco_bridge")
 
     node_id = 99
     shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"

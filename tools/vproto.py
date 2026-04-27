@@ -120,13 +120,14 @@ class ClockReadyResp:
         return struct.pack(FMT_CLOCK_READY_RESP, self.current_vtime_ns, self.n_frames, self.error_code)  # fmt: skip
 
 
-FMT_ZENOH_FRAME_HEADER = "<QI"
+FMT_ZENOH_FRAME_HEADER = "<QQI"
 SIZE_ZENOH_FRAME_HEADER = struct.calcsize(FMT_ZENOH_FRAME_HEADER)
 
 
 @dataclass
 class ZenohFrameHeader:
     delivery_vtime_ns: int  # uint64_t
+    sequence_number: int  # uint64_t
     size: int  # uint32_t
 
     @classmethod
@@ -137,16 +138,17 @@ class ZenohFrameHeader:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_ZENOH_FRAME_HEADER, self.delivery_vtime_ns, self.size)  # fmt: skip
+        return struct.pack(FMT_ZENOH_FRAME_HEADER, self.delivery_vtime_ns, self.sequence_number, self.size)  # fmt: skip
 
 
-FMT_ZENOH_SPI_HEADER = "<QI?BBB"
+FMT_ZENOH_SPI_HEADER = "<QQI?BBB"
 SIZE_ZENOH_SPI_HEADER = struct.calcsize(FMT_ZENOH_SPI_HEADER)
 
 
 @dataclass
 class ZenohSPIHeader:
     delivery_vtime_ns: int  # uint64_t
+    sequence_number: int  # uint64_t
     size: int  # uint32_t
     cs: int  # bool
     cs_index: int  # uint8_t
@@ -161,4 +163,4 @@ class ZenohSPIHeader:
         return cls(*unpacked)
 
     def pack(self) -> bytes:
-        return struct.pack(FMT_ZENOH_SPI_HEADER, self.delivery_vtime_ns, self.size, self.cs, self.cs_index, self._padding_0, self._padding_1)  # fmt: skip
+        return struct.pack(FMT_ZENOH_SPI_HEADER, self.delivery_vtime_ns, self.sequence_number, self.size, self.cs, self.cs_index, self._padding_0, self._padding_1)  # fmt: skip

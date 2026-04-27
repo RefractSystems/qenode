@@ -29,7 +29,7 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordi
         pubs.append(s.declare_publisher(f"sim/eth/frame/{i}/tx"))
 
     for i in range(num_nodes):
-        pubs[i].put(struct.pack("<QI", 0, 0))
+        pubs[i].put(struct.pack("<QQI", 0, 0, 0))
     time.sleep(1)
 
     received_count[0] = 0
@@ -40,7 +40,7 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordi
         pub = pubs[node_id]
         payload = b"X" * 64
         for i in range(msgs_per_node):
-            pub.put(struct.pack("<QI", i * 1000, len(payload)) + payload)
+            pub.put(struct.pack("<QQI", i * 1000, 0, len(payload)) + payload)
             time.sleep(0.001)
 
     threads = []

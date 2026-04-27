@@ -23,16 +23,13 @@ async def test_qemu_crash_handling(qemu_launcher):
 
     try:
         # Kill QEMU
-        # qemu_launcher doesn't expose proc easily, but we can find it
         import psutil
-        qemu_proc = None
-        for p in psutil.process_iter(["cmdline"]):
-            cmdline = str(p.info.get("cmdline") or [])
-            if "qemu-system-arm" in cmdline and str(dtb) in cmdline:
-                qemu_proc = p
-                break
-        assert qemu_proc is not None
-        qemu_proc.kill()
+
+        try:
+            qemu_proc = psutil.Process(bridge.pid)
+            qemu_proc.kill()
+        except psutil.NoSuchProcess:
+            pass
 
         # Give it a tiny moment to die
         await asyncio.sleep(0.5)

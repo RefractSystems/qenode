@@ -38,6 +38,7 @@ DEFAULT_MAX_JITTER_US = 200
 # Topic pattern for clock-advance queries.
 CLOCK_ADVANCE_PREFIX = "sim/clock/advance/"
 
+
 class JitterProxy:
     """
     Subscribes to clock-advance queryables on the upstream router and
@@ -129,6 +130,7 @@ class JitterProxy:
             mean_delay = sum(self.injected_delays_us) / max(1, n_delays)
             logger.info(f"shutdown complete. injected {n_delays} delays, mean={mean_delay:.1f} µs")
 
+
 def main() -> None:
     if len(sys.argv) < 3:
         print(__doc__)
@@ -143,6 +145,7 @@ def main() -> None:
         proxy.run()
     except KeyboardInterrupt:
         proxy.stop()
+
 
 if __name__ == "__main__":
     main()

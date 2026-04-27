@@ -54,7 +54,12 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [
+    ".",
+    "tools/lin_fbs",
+    "tools/telemetry_fbs",
+    "tools/flexray_fbs",
+]
 asyncio_mode = "strict"
 timeout = 600
 

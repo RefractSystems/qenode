@@ -87,6 +87,11 @@ extern "C" {
     );
 }
 
+// SAFETY: These structs are passed to QEMU which expects them to be constant
+// and accessible from multiple threads (e.g. vCPU threads). Since they only
+// contain function pointers and static configuration, they are safe to be Sync.
 unsafe impl Sync for MemoryRegionOps {}
+// SAFETY: Static configuration for memory regions.
 unsafe impl Sync for MemoryRegionValidRange {}
+// SAFETY: Static configuration for memory regions.
 unsafe impl Sync for MemoryRegionImplRange {}

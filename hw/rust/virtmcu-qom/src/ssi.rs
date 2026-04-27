@@ -44,6 +44,9 @@ const _: () = assert!(core::mem::size_of::<SSIPeripheralClass>() == 224);
 impl SSIPeripheral {
     /// A method
     pub fn transfer(&mut self, val: u32) -> u32 {
+        // SAFETY: spc is a valid pointer to SSIPeripheralClass provided by QOM.
+        // The transfer and transfer_raw function pointers are also provided by
+        // the class and are safe to call if present.
         unsafe {
             let klass = &*self.spc;
             if let Some(transfer_raw) = klass.transfer_raw {
@@ -61,6 +64,9 @@ impl SSIPeripheral {
 /// A macro
 macro_rules! ssi_peripheral_class {
     ($klass:expr) => {
+        // SAFETY: Casting an object class to SSIPeripheralClass is safe if the
+        // object is indeed an SSI peripheral. QEMU's dynamic cast assert will
+        // abort if the cast is invalid.
         unsafe {
             $crate::qom::object_class_dynamic_cast_assert(
                 $klass,

@@ -127,7 +127,7 @@ pub struct SysBusDeviceClass {
         Option<unsafe extern "C" fn(dev: *const SysBusDevice) -> *mut c_char>,
     /// A struct field
     pub connect_irq_notifier:
-        Option<unsafe extern "C" fn(dev: *mut SysBusDevice, irq: crate::irq::qemu_irq)>,
+        Option<unsafe extern "C" fn(dev: *mut SysBusDevice, irq: crate::irq::QemuIrq)>,
 }
 
 #[repr(C)]
@@ -177,6 +177,8 @@ pub struct PropertyInfo {
         Option<unsafe extern "C" fn(obj: *mut Object, name: *const c_char, opaque: *mut c_void)>,
 }
 
+// SAFETY: PropertyInfo contains function pointers and static metadata used by QOM.
+// It is used as a static registration struct and is safe to be Sync.
 unsafe impl Sync for PropertyInfo {}
 
 #[cfg(not(miri))]
@@ -201,9 +203,9 @@ extern "C" {
     /// A function
     pub fn sysbus_mmio_map(sbd: *mut SysBusDevice, n: c_int, addr: u64);
     /// A function
-    pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::qemu_irq);
+    pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::QemuIrq);
     /// A function
-    pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::qemu_irq;
+    pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::QemuIrq;
 }
 
 #[cfg(miri)]
@@ -246,9 +248,9 @@ mod miri_statics {
         /// A function
         pub fn sysbus_mmio_map(sbd: *mut SysBusDevice, n: c_int, addr: u64);
         /// A function
-        pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::qemu_irq);
+        pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::QemuIrq);
         /// A function
-        pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::qemu_irq;
+        pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::QemuIrq;
     }
 }
 #[cfg(miri)]
@@ -260,7 +262,9 @@ macro_rules! define_prop_macaddr {
     ($name:expr, $state:ty, $field:ident) => {
         $crate::qom::Property {
             name: $name,
-            info: unsafe { &$crate::qdev::qdev_prop_macaddr as *const _ as *const _ },
+            info:
+                // SAFETY: qdev_prop_macaddr is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::qdev::qdev_prop_macaddr as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
             bitmask: 0,
@@ -279,6 +283,8 @@ macro_rules! define_prop_macaddr {
 /// A macro
 macro_rules! device_class_set_props {
     ($dc:expr, $props:expr) => {
+        // SAFETY: device_class_set_props_n is a QEMU function. We pass a pointer
+        // and length from a slice, which is safe.
         unsafe {
             $crate::qdev::device_class_set_props_n($dc, $props.as_ptr(), $props.len());
         }
@@ -301,7 +307,9 @@ macro_rules! define_prop_uint64 {
     ($name:expr, $state:ty, $field:ident, $default:expr) => {
         $crate::qom::Property {
             name: $name,
-            info: unsafe { &$crate::qdev::qdev_prop_uint64 as *const _ as *const _ },
+            info:
+                // SAFETY: qdev_prop_uint64 is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::qdev::qdev_prop_uint64 as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
             bitmask: 0,
@@ -322,7 +330,9 @@ macro_rules! define_prop_uint32 {
     ($name:expr, $state:ty, $field:ident, $default:expr) => {
         $crate::qom::Property {
             name: $name,
-            info: unsafe { &$crate::qdev::qdev_prop_uint32 as *const _ as *const _ },
+            info:
+                // SAFETY: qdev_prop_uint32 is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::qdev::qdev_prop_uint32 as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
             bitmask: 0,
@@ -343,7 +353,9 @@ macro_rules! define_prop_string {
     ($name:expr, $state:ty, $field:ident) => {
         $crate::qom::Property {
             name: $name,
-            info: unsafe { &$crate::qdev::qdev_prop_string as *const _ as *const _ },
+            info:
+                // SAFETY: qdev_prop_string is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::qdev::qdev_prop_string as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
             bitmask: 0,
@@ -364,7 +376,9 @@ macro_rules! define_prop_chr {
     ($name:expr, $state:ty, $field:ident) => {
         $crate::qom::Property {
             name: $name,
-            info: unsafe { &$crate::chardev::qdev_prop_chr as *const _ as *const _ },
+            info:
+                // SAFETY: qdev_prop_chr is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::chardev::qdev_prop_chr as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
             bitmask: 0,

@@ -57,9 +57,9 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router, tm
         payload = query.payload
         if payload:
             data_bytes = payload.to_bytes()
-            if len(data_bytes) >= 16 + 4:
-                # Header is 16 bytes, data is 4 bytes
-                data = data_bytes[16:20]
+            if len(data_bytes) >= 24 + 4:
+                # Header is 24 bytes, data is 4 bytes
+                data = data_bytes[24:28]
                 # Echo back
                 query.reply(query.key_expr, data)
 

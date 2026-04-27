@@ -17,9 +17,26 @@ This is the non-negotiable design constraint from which everything else follows:
 - No virtmcu-specific startup code, linker sections, or compile-time flags in firmware.
 - Peripherals mapped at the **exact** base addresses the real MCU datasheet specifies.
 - Register layouts, reset values, and interrupt numbers must match physical silicon.
-- \`zenoh-clock\` and all co-simulation infrastructure are **invisible to the firmware** — they operate at the QEMU level with no guest MMIO exposure.
+- `zenoh-clock` and all co-simulation infrastructure are **invisible to the firmware** — they operate at the QEMU level with no guest MMIO exposure.
 
 Any feature that requires firmware modification to work in VirtMCU is a bug in VirtMCU, not a firmware problem. See [ADR-006](docs/ADR-006-binary-fidelity.md) for the full rationale and enforcement rules.
+
+---
+
+## SECOND PRIORITY: Global Simulation Determinism
+
+**Two runs of the same simulation with the same configuration and seed MUST produce bit-identical output.**
+
+This is the second non-negotiable design constraint. It means:
+
+- **Same inputs → same outputs**: same topology YAML + same firmware ELFs + same `global_seed` → identical UART output, identical PCAP log, identical actuator commands on every run, regardless of host CPU load or wall-clock time.
+- **Topology is declared, not discovered**: The full network graph (node IDs, link types, RF neighborhoods for wireless) is declared in the world YAML and loaded by the `DeterministicCoordinator` at startup. Runtime Zenoh peer-mode multicast scouting is BANNED in simulation — topology is never auto-discovered at runtime.
+- **Canonical tie-breaking**: When two messages arrive at a node with identical virtual timestamps within the same quantum, they MUST be delivered in canonical order: `(delivery_vtime_ns, source_node_id, sequence_number)`. This order is enforced by the `DeterministicCoordinator`, not by individual nodes. Relying on OS scheduling to break ties is a bug.
+- **Per-quantum barrier**: The coordinator does not forward any message from quantum Q to any recipient until ALL nodes have signaled "quantum Q complete". This is the PDES (Parallel Discrete Event Simulation) barrier pattern.
+- **Stochastic seeding**: All protocols with stochastic behavior (CSMA/CA backoff for 802.15.4, BLE advertising) MUST derive their per-node PRNG seed as `seed_for_quantum(global_seed, node_id, quantum_number)` using the utility in `virtmcu-zenoh`. Calling `rand::thread_rng()` or seeding from wall-clock time in any simulation code path is BANNED.
+- **Mobile nodes**: Topology changes (e.g., moving nodes) are pushed by the physics engine to the coordinator before each quantum step — they are never discovered at runtime. The coordinator updates RF neighborhoods deterministically from provided position vectors.
+
+Any feature that produces different output across runs with identical inputs is a bug in VirtMCU, not in firmware. See [ADR-014](docs/design/ADR-014-global-determinism.md) for full rationale and enforcement rules.
 
 ---
 
@@ -91,9 +108,11 @@ To ensure tests are deterministic and do not interfere with each other:
 
 ## Key Constraints
 
-- **MMIO Delivery**: \`mmio-socket-bridge\` delivers **relative offsets** to the socket. External models should NOT include the base address in their match logic.
-- **DTB Validation**: \`yaml2qemu\` validates that every peripheral defined in YAML is correctly mapped in the output DTB. If a mapping is missing, build will fail.
-- **SysBus Mapping**: Devices added via \`-device\` only (not in YAML) are **NOT mapped** into guest memory. They will cause Data Aborts.
+- **MMIO Delivery**: `mmio-socket-bridge` delivers **relative offsets** to the socket. External models should NOT include the base address in their match logic.
+- **DTB Validation**: `yaml2qemu` validates that every peripheral defined in YAML is correctly mapped in the output DTB. If a mapping is missing, build will fail.
+- **SysBus Mapping**: Devices added via `-device` only (not in YAML) are **NOT mapped** into guest memory. They will cause Data Aborts.
+- **Topology-First Design**: The network graph (node IDs, link types, RF neighborhoods) MUST be fully declared in the world YAML `topology:` section before the simulation starts. The `DeterministicCoordinator` loads this graph at startup and rejects inter-node connections not present in the graph. Connections not in the graph are silently dropped and logged as topology violations in the PCAP log. Topology changes for mobile nodes are pushed by the physics engine, not discovered.
+- **Clock and Comms Separation**: The clock-sync channel (QEMU ↔ TimeAuthority) and the emulated network channels (QEMU ↔ coordinator ↔ QEMU) use different transports. Clock sync uses `ClockSyncTransport` (Zenoh Queryable for distributed runs, Unix socket for single-host). Emulated comms always route through the `DeterministicCoordinator`. Never mix these paths.
 
 ---
 
@@ -294,7 +313,8 @@ Every peripheral that spawns background threads or blocks vCPU threads MUST impl
 3. Wait for all active vCPU threads to exit (via `drain_cond` signaled when `active_vcpu_count` reaches zero) — **never use a bounded spinloop**.
 4. Join the background thread.
 5. Only then drop `Arc<SharedState>` (which frees QEMU mutex/condvar memory).
-- **BANNED:** Bounded spinloops (`while count > 0 && attempts < N { yield_now() }`) as teardown drain mechanisms. They create a time-bomb UAF when the bound is exhausted.
+- **BANNED:** Bounded spinloops (`while count > 0 && attempts < N { yield_now() }`) as teardown drain mechanisms. They create a time-bomb UAF when the bound is exhausted. **Pattern:** Always use a `Condvar`-based drain (as implemented in `SafeSubscriber`).
+- **Correct drain pattern**: Add a `drain_cond: Arc<(Mutex<()>, Condvar)>` to the struct. The callback wrapper calls `cvar.notify_all()` after decrementing `active_count`. `Drop` waits unconditionally: `while active_count > 0 { guard = cvar.wait(guard).unwrap(); }`.
 - **Verification:** Every new peripheral must have a shutdown integration test that triggers teardown while a vCPU thread is blocked in an MMIO operation and asserts clean exit with no sanitizer errors.
 
 ### 13. Unsafe Rust — Precise Rules
@@ -312,8 +332,10 @@ Every peripheral that spawns background threads or blocks vCPU threads MUST impl
 
 ### 15. Lessons Learned & Architectural Gotchas
 To prevent historical regressions, agents and developers must strictly avoid these known anti-patterns derived from past incident postmortems (e.g., Phase 7 & 18.9):
+- **SafeSubscriber Bounded-Spinloop UAF (DET-1):** Historically, `virtmcu-zenoh/src/lib.rs`'s `SafeSubscriber::drop()` used a bounded spinloop which could exit before callbacks finished under heavy load, causing a UAF. **Rule:** Never bound a drain loop. Use `Condvar::notify_all()` from the callback + `Condvar::wait()` in Drop (see §12 correct drain pattern). This was fixed by replacing the loop with a mandatory `Condvar` wait.
+- **PDES Tie-Breaking Gap:** Zenoh's pub/sub delivery order for same-virtual-time messages is determined by OS thread scheduling and is non-deterministic across runs. Two messages sent at virtual time T=10ms from nodes A and B to node C may arrive in different order on different runs. **Rule:** All inter-node message delivery MUST route through the `DeterministicCoordinator`, which enforces canonical order `(delivery_vtime_ns, source_node_id, sequence_number)`. Direct Zenoh pub/sub between nodes for emulated traffic is BANNED.
 - **The "DSO TLS Trap":** QEMU macros or functions relying on file-static or coroutine-local TLS (like `bql_locked()`) **cannot** be reliably called from a plugin/DSO. The linker resolves the symbol, but the DSO reads its own uninitialized local copy of the TLS slot. **Rule:** Always use main-binary wrapper functions (e.g., `virtmcu_is_bql_locked()`) exported from a proper header.
-- **Multi-Flag Protocol Hygiene:** In producer-consumer synchronization (e.g., `quantum_ready` / `quantum_done`), every signal flag **must be reset by the consumer** immediately after consumption. Never leave a "done" flag set, as it causes stale reads and deadlocks in the next cycle.
+- **Atomic State Transitions:** In producer-consumer synchronization (e.g., `QuantumState`), use a single `AtomicU8` state enum and `compare_exchange` for all transitions. This prevents illegal states possible with multiple boolean flags. Always reset the state to `Waiting` or `Executing` immediately after consumption to prevent stale reads.
 - **Zenoh Executor Deadlocks:** Never block a Zenoh async executor thread with synchronous calls like `.wait()`, `.recv()`, or `thread::sleep()` inside a callback. **Rule:** Offload blocking work to a background thread and use non-blocking channels (`crossbeam_channel::unbounded` or `bounded`) to bridge Zenoh and QEMU.
 - **UART / Hardware FIFO Backpressure:** QEMU's UART models (like PL011) have fixed-size hardware FIFOs (e.g., 32 bytes). Shoving larger packets via Zenoh without checking capacity causes silent data drop. **Rule:** Peripherals must implement backpressure. Check `qemu_chr_be_can_write`, buffer leftovers in a backlog queue, and use the `chr_accept_input` hook to drain the backlog when the guest FIFO frees up.
 - **Testing Failure States:** Smoke tests verifying the "happy path" are insufficient. **Rule:** Implement "Hammer" (high frequency), "Flood" (high volume), and "Stall" (e.g., sending massive 10-billion-instruction quanta to trigger wall-clock timeouts) tests to explicitly verify error recovery and backpressure paths.

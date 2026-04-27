@@ -33,9 +33,7 @@ def test_dynamic_devices_realization():
     lib = QemuLibrary()
     try:
         # Use -S to prevent execution
-        qmp_sock, uart_sock = lib.launch_qemu(
-            tmp_yaml_path, kernel_path=None, extra_args=["-S"]
-        )
+        qmp_sock, uart_sock = lib.launch_qemu(tmp_yaml_path, kernel_path=None, extra_args=["-S"])
         assert Path(qmp_sock).exists()
         try:
             lib.connect_to_qemu(qmp_sock, uart_sock)

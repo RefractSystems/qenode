@@ -25,9 +25,10 @@ pub mod virtmcu {
 
         impl<'a> CanFdFrame<'a> {
             pub const VT_DELIVERY_VTIME_NS: ::flatbuffers::VOffsetT = 4;
-            pub const VT_CAN_ID: ::flatbuffers::VOffsetT = 6;
-            pub const VT_FLAGS: ::flatbuffers::VOffsetT = 8;
-            pub const VT_DATA: ::flatbuffers::VOffsetT = 10;
+            pub const VT_SEQUENCE_NUMBER: ::flatbuffers::VOffsetT = 6;
+            pub const VT_CAN_ID: ::flatbuffers::VOffsetT = 8;
+            pub const VT_FLAGS: ::flatbuffers::VOffsetT = 10;
+            pub const VT_DATA: ::flatbuffers::VOffsetT = 12;
 
             #[inline]
             pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -44,6 +45,7 @@ pub mod virtmcu {
                 args: &'args CanFdFrameArgs<'args>,
             ) -> ::flatbuffers::WIPOffset<CanFdFrame<'bldr>> {
                 let mut builder = CanFdFrameBuilder::new(_fbb);
+                builder.add_sequence_number(args.sequence_number);
                 builder.add_delivery_vtime_ns(args.delivery_vtime_ns);
                 if let Some(x) = args.data {
                     builder.add_data(x);
@@ -55,30 +57,22 @@ pub mod virtmcu {
 
             #[inline]
             pub fn delivery_vtime_ns(&self) -> u64 {
-                // Safety:
-                // Created from valid Table for this object
-                // which contains a valid value in this slot
                 unsafe { self._tab.get::<u64>(CanFdFrame::VT_DELIVERY_VTIME_NS, Some(0)).unwrap() }
             }
             #[inline]
+            pub fn sequence_number(&self) -> u64 {
+                unsafe { self._tab.get::<u64>(CanFdFrame::VT_SEQUENCE_NUMBER, Some(0)).unwrap() }
+            }
+            #[inline]
             pub fn can_id(&self) -> u32 {
-                // Safety:
-                // Created from valid Table for this object
-                // which contains a valid value in this slot
                 unsafe { self._tab.get::<u32>(CanFdFrame::VT_CAN_ID, Some(0)).unwrap() }
             }
             #[inline]
             pub fn flags(&self) -> u32 {
-                // Safety:
-                // Created from valid Table for this object
-                // which contains a valid value in this slot
                 unsafe { self._tab.get::<u32>(CanFdFrame::VT_FLAGS, Some(0)).unwrap() }
             }
             #[inline]
             pub fn data(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
-                // Safety:
-                // Created from valid Table for this object
-                // which contains a valid value in this slot
                 unsafe {
                     self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(
                         CanFdFrame::VT_DATA,
@@ -96,6 +90,7 @@ pub mod virtmcu {
             ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
                 v.visit_table(pos)?
                     .visit_field::<u64>("delivery_vtime_ns", Self::VT_DELIVERY_VTIME_NS, false)?
+                    .visit_field::<u64>("sequence_number", Self::VT_SEQUENCE_NUMBER, false)?
                     .visit_field::<u32>("can_id", Self::VT_CAN_ID, false)?
                     .visit_field::<u32>("flags", Self::VT_FLAGS, false)?
                     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>(
@@ -109,6 +104,7 @@ pub mod virtmcu {
         }
         pub struct CanFdFrameArgs<'a> {
             pub delivery_vtime_ns: u64,
+            pub sequence_number: u64,
             pub can_id: u32,
             pub flags: u32,
             pub data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
@@ -116,7 +112,13 @@ pub mod virtmcu {
         impl Default for CanFdFrameArgs<'_> {
             #[inline]
             fn default() -> Self {
-                CanFdFrameArgs { delivery_vtime_ns: 0, can_id: 0, flags: 0, data: None }
+                CanFdFrameArgs {
+                    delivery_vtime_ns: 0,
+                    sequence_number: 0,
+                    can_id: 0,
+                    flags: 0,
+                    data: None,
+                }
             }
         }
 
@@ -128,6 +130,10 @@ pub mod virtmcu {
             #[inline]
             pub fn add_delivery_vtime_ns(&mut self, delivery_vtime_ns: u64) {
                 self.fbb_.push_slot::<u64>(CanFdFrame::VT_DELIVERY_VTIME_NS, delivery_vtime_ns, 0);
+            }
+            #[inline]
+            pub fn add_sequence_number(&mut self, sequence_number: u64) {
+                self.fbb_.push_slot::<u64>(CanFdFrame::VT_SEQUENCE_NUMBER, sequence_number, 0);
             }
             #[inline]
             pub fn add_can_id(&mut self, can_id: u32) {
@@ -163,6 +169,7 @@ pub mod virtmcu {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 let mut ds = f.debug_struct("CanFdFrame");
                 ds.field("delivery_vtime_ns", &self.delivery_vtime_ns());
+                ds.field("sequence_number", &self.sequence_number());
                 ds.field("can_id", &self.can_id());
                 ds.field("flags", &self.flags());
                 ds.field("data", &self.data());
@@ -170,36 +177,18 @@ pub mod virtmcu {
             }
         }
         #[inline]
-        /// Verifies that a buffer of bytes contains a `CanFdFrame`
-        /// and returns it.
-        /// Note that verification is still experimental and may not
-        /// catch every error, or be maximally performant. For the
-        /// previous, unchecked, behavior use
-        /// `root_as_can_fd_frame_unchecked`.
         pub fn root_as_can_fd_frame(
             buf: &[u8],
         ) -> Result<CanFdFrame<'_>, ::flatbuffers::InvalidFlatbuffer> {
             ::flatbuffers::root::<CanFdFrame>(buf)
         }
         #[inline]
-        /// Verifies that a buffer of bytes contains a size prefixed
-        /// `CanFdFrame` and returns it.
-        /// Note that verification is still experimental and may not
-        /// catch every error, or be maximally performant. For the
-        /// previous, unchecked, behavior use
-        /// `size_prefixed_root_as_can_fd_frame_unchecked`.
         pub fn size_prefixed_root_as_can_fd_frame(
             buf: &[u8],
         ) -> Result<CanFdFrame<'_>, ::flatbuffers::InvalidFlatbuffer> {
             ::flatbuffers::size_prefixed_root::<CanFdFrame>(buf)
         }
         #[inline]
-        /// Verifies, with the given options, that a buffer of bytes
-        /// contains a `CanFdFrame` and returns it.
-        /// Note that verification is still experimental and may not
-        /// catch every error, or be maximally performant. For the
-        /// previous, unchecked, behavior use
-        /// `root_as_can_fd_frame_unchecked`.
         pub fn root_as_can_fd_frame_with_opts<'b, 'o>(
             opts: &'o ::flatbuffers::VerifierOptions,
             buf: &'b [u8],
@@ -207,12 +196,6 @@ pub mod virtmcu {
             ::flatbuffers::root_with_opts::<CanFdFrame<'b>>(opts, buf)
         }
         #[inline]
-        /// Verifies, with the given verifier options, that a buffer of
-        /// bytes contains a size prefixed `CanFdFrame` and returns
-        /// it. Note that verification is still experimental and may not
-        /// catch every error, or be maximally performant. For the
-        /// previous, unchecked, behavior use
-        /// `root_as_can_fd_frame_unchecked`.
         pub fn size_prefixed_root_as_can_fd_frame_with_opts<'b, 'o>(
             opts: &'o ::flatbuffers::VerifierOptions,
             buf: &'b [u8],
@@ -220,16 +203,10 @@ pub mod virtmcu {
             ::flatbuffers::size_prefixed_root_with_opts::<CanFdFrame<'b>>(opts, buf)
         }
         #[inline]
-        /// Assumes, without verification, that a buffer of bytes contains a CanFdFrame and returns it.
-        /// # Safety
-        /// Callers must trust the given bytes do indeed contain a valid `CanFdFrame`.
         pub unsafe fn root_as_can_fd_frame_unchecked(buf: &[u8]) -> CanFdFrame<'_> {
             unsafe { ::flatbuffers::root_unchecked::<CanFdFrame>(buf) }
         }
         #[inline]
-        /// Assumes, without verification, that a buffer of bytes contains a size prefixed CanFdFrame and returns it.
-        /// # Safety
-        /// Callers must trust the given bytes do indeed contain a valid size prefixed `CanFdFrame`.
         pub unsafe fn size_prefixed_root_as_can_fd_frame_unchecked(buf: &[u8]) -> CanFdFrame<'_> {
             unsafe { ::flatbuffers::size_prefixed_root_unchecked::<CanFdFrame>(buf) }
         }

@@ -83,6 +83,7 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
         with contextlib.suppress(Exception):
             await server.wait_closed()
 
+
 @pytest.mark.asyncio
 async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
     """
@@ -100,6 +101,7 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
 
     # Remote Port Hello packet
     from struct import Struct
+
     rp_pkt_hdr_struct = Struct(">IIIII")  # cmd, len, id, flags, dev
     rp_version_struct = Struct(">HH")
     rp_caps_struct = Struct(">IHH")

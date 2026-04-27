@@ -1,21 +1,20 @@
-#![allow(unused_variables)]
-#![allow(clippy::all)]
+//! S32K144 LPUART peripheral for VirtMCU simulation.
 
-use core::ffi::{c_char, c_uint, c_void};
+extern crate alloc;
+
+use alloc::collections::BinaryHeap;
+use alloc::sync::Arc;
+use core::cmp::Ordering;
+use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crossbeam_channel::{bounded, Receiver, Sender};
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
-use std::ffi::CStr;
-use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, PoisonError};
 use virtmcu_api::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
-use virtmcu_qom::irq::{qemu_irq, qemu_set_irq};
-use virtmcu_qom::memory::{
-    memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
-};
+use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
+use virtmcu_qom::memory::{MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN};
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
-use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_qom::qom::{ObjectClass, TypeInfo};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties,
@@ -28,24 +27,36 @@ use zenoh::Wait;
 
 const MAX_RX_FIFO: usize = 4;
 
+/// S32K144 LPUART QEMU object structure
 #[repr(C)]
 pub struct S32K144LpuartQemu {
+    /// Parent object
     pub parent_obj: SysBusDevice,
+    /// I/O memory region
     pub iomem: MemoryRegion,
-    pub irq: qemu_irq,
+    /// IRQ line
+    pub irq: QemuIrq,
 
     /* Properties */
+    /// Unique node ID
     pub node_id: u32,
+    /// Zenoh router address
     pub router: *mut c_char,
+    /// Zenoh base topic
     pub topic: *mut c_char,
 
     /* Rust state */
+    /// Opaque pointer to the Rust backend state
     pub rust_state: *mut LpuartState,
 }
 
+/// Ordered LIN frame for deterministic delivery
 pub struct OrderedLinFrame {
+    /// Virtual time of delivery
     pub vtime: u64,
+    /// LIN message type
     pub msg_type: LinMessageType,
+    /// Frame data
     pub data: Vec<u8>,
 }
 
@@ -66,10 +77,10 @@ impl Ord for OrderedLinFrame {
     }
 }
 
-#[allow(dead_code)]
+/// Internal state for LPUART
 pub struct LpuartState {
-    irq: qemu_irq,
-    session: Session,
+    irq: QemuIrq,
+    _session: Arc<Session>,
     publisher: Publisher<'static>,
     subscriber: Option<SafeSubscriber>,
 
@@ -77,7 +88,7 @@ pub struct LpuartState {
     baud: u32,
     stat: u32,
     ctrl: u32,
-    data: u32,
+    _data: u32,
     match_: u32,
     modir: u32,
     fifo: u32,
@@ -87,7 +98,7 @@ pub struct LpuartState {
     rx_buffer: Vec<u8>,
 
     // Deterministic delivery
-    rx_sender: Sender<OrderedLinFrame>,
+    _rx_sender: Sender<OrderedLinFrame>,
     rx_receiver: Receiver<OrderedLinFrame>,
     local_heap: Mutex<BinaryHeap<OrderedLinFrame>>,
     rx_timer: Option<Arc<QomTimer>>,
@@ -124,12 +135,17 @@ const CTRL_SBK: u32 = 1 << 0;
 const BAUD_LBKDIE: u32 = 1 << 31;
 const BAUD_LBKDE: u32 = 1 << 24;
 
-unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, size: c_uint) -> u64 {
-    let s = &mut *(opaque as *mut S32K144LpuartQemu);
+/// # Safety
+/// This function is called by QEMU on MMIO read. `opaque` must be a valid `S32K144LpuartQemu` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
+    // SAFETY: opaque is a valid pointer to S32K144LpuartQemu provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut S32K144LpuartQemu) };
     if s.rust_state.is_null() {
         return 0;
     }
-    let state = &mut *s.rust_state;
+    // SAFETY: rust_state is non-null and owned by the device.
+    let state = unsafe { &mut *s.rust_state };
     match offset {
         0x00 => 0x04010001, // VERID
         0x04 => 0x00020202, // PARAM
@@ -157,12 +173,17 @@ unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, size: c_uint)
     }
 }
 
-unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u64, size: c_uint) {
-    let s = &mut *(opaque as *mut S32K144LpuartQemu);
+/// # Safety
+/// This function is called by QEMU on MMIO write. `opaque` must be a valid `S32K144LpuartQemu` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u64, _size: c_uint) {
+    // SAFETY: opaque is a valid pointer to S32K144LpuartQemu provided by QEMU.
+    let s = unsafe { &mut *(opaque as *mut S32K144LpuartQemu) };
     if s.rust_state.is_null() {
         return;
     }
-    let state = &mut *s.rust_state;
+    // SAFETY: rust_state is non-null and owned by the device.
+    let state = unsafe { &mut *s.rust_state };
     let val = value as u32;
 
     match offset {
@@ -179,13 +200,11 @@ unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u64, 
             }
             update_irqs(state);
         }
-        REG_DATA => {
-            if state.ctrl & CTRL_TE != 0 {
-                let byte = val as u8;
-                send_lin_msg(state, LinMessageType::Data, &[byte]);
-                state.stat |= STAT_TC | STAT_TDRE;
-                update_irqs(state);
-            }
+        REG_DATA if state.ctrl & CTRL_TE != 0 => {
+            let byte = val as u8;
+            send_lin_msg(state, LinMessageType::Data, &[byte]);
+            state.stat |= STAT_TC | STAT_TDRE;
+            update_irqs(state);
         }
         REG_MATCH => state.match_ = val,
         REG_MODIR => state.modir = val,
@@ -198,6 +217,7 @@ unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u64, 
 fn send_lin_msg(s: &mut LpuartState, msg_type: LinMessageType, data: &[u8]) {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
     let data_offset = fbb.create_vector(data);
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
     let args = LinFrameArgs { delivery_vtime_ns: now, type_: msg_type, data: Some(data_offset) };
@@ -227,19 +247,22 @@ fn update_irqs(s: &mut LpuartState) {
         pending = true;
     }
 
+    // SAFETY: s.irq was correctly initialized during device init.
     unsafe {
         qemu_set_irq(s.irq, i32::from(pending));
     }
 }
 
 extern "C" fn lpuart_rx_timer_cb(opaque: *mut c_void) {
+    // SAFETY: opaque is a valid pointer to LpuartState.
     let state = unsafe { &mut *(opaque as *mut LpuartState) };
+    // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
     let mut next_vtime = None;
 
     {
-        let mut heap = state.local_heap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut heap = state.local_heap.lock().unwrap_or_else(PoisonError::into_inner);
 
         while let Ok(packet) = state.rx_receiver.try_recv() {
             heap.push(packet);
@@ -247,25 +270,21 @@ extern "C" fn lpuart_rx_timer_cb(opaque: *mut c_void) {
 
         while let Some(packet) = heap.peek() {
             if packet.vtime <= now {
-                if let Some(packet) = heap.pop() {
-                    match packet.msg_type {
-                        LinMessageType::Break => {
-                            if state.baud & BAUD_LBKDE != 0 {
-                                state.stat |= STAT_LBKDIF;
-                            }
+                if let Some(p) = heap.pop() {
+                    match p.msg_type {
+                        LinMessageType::Break if state.baud & BAUD_LBKDE != 0 => {
+                            state.stat |= STAT_LBKDIF;
                         }
-                        LinMessageType::Data => {
-                            if state.ctrl & CTRL_RE != 0 {
-                                for byte in packet.data {
-                                    if state.rx_buffer.len() >= MAX_RX_FIFO {
-                                        state.stat |= STAT_OR;
-                                    } else {
-                                        state.rx_buffer.push(byte);
-                                    }
+                        LinMessageType::Data if state.ctrl & CTRL_RE != 0 => {
+                            for byte in p.data {
+                                if state.rx_buffer.len() >= MAX_RX_FIFO {
+                                    state.stat |= STAT_OR;
+                                } else {
+                                    state.rx_buffer.push(byte);
                                 }
-                                if !state.rx_buffer.is_empty() {
-                                    state.stat |= STAT_RDRF;
-                                }
+                            }
+                            if !state.rx_buffer.is_empty() {
+                                state.stat |= STAT_RDRF;
                             }
                         }
                         _ => {}
@@ -311,28 +330,37 @@ static LPUART_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    let s = &mut *(dev as *mut S32K144LpuartQemu);
+/// # Safety
+/// This function is called by QEMU to realize the device. `dev` must be a valid `S32K144LpuartQemu` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    // SAFETY: dev is a valid pointer to S32K144LpuartQemu provided by QEMU.
+    let s = unsafe { &mut *(dev as *mut S32K144LpuartQemu) };
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
 
     let topic = if s.topic.is_null() {
         None
     } else {
+        // SAFETY: s.topic is a valid C-string if it's not null.
         Some(unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() })
     };
 
     s.rust_state = lpuart_init_internal(s.irq, s.node_id, router_ptr, topic);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust LPUART");
-        return;
     }
 }
 
-unsafe extern "C" fn lpuart_instance_finalize(obj: *mut Object) {
-    let s = &mut *(obj as *mut S32K144LpuartQemu);
+/// # Safety
+/// This function is called by QEMU when finalizing the device. `obj` must be a valid `S32K144LpuartQemu` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_instance_finalize(obj: *mut virtmcu_qom::qom::Object) {
+    // SAFETY: obj is a valid pointer to S32K144LpuartQemu provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut S32K144LpuartQemu) };
     if !s.rust_state.is_null() {
-        let mut state = Box::from_raw(s.rust_state);
+        // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
+        let mut state = unsafe { Box::from_raw(s.rust_state) };
         // Explicitly stop the subscriber first to wait for callbacks
         state.subscriber.take();
         state.rx_timer.take();
@@ -340,22 +368,29 @@ unsafe extern "C" fn lpuart_instance_finalize(obj: *mut Object) {
     }
 }
 
-unsafe extern "C" fn lpuart_instance_init(obj: *mut Object) {
-    let s = &mut *(obj as *mut S32K144LpuartQemu);
+/// # Safety
+/// This function is called by QEMU on object initialization. `obj` must be a valid `S32K144LpuartQemu` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_instance_init(obj: *mut virtmcu_qom::qom::Object) {
+    // SAFETY: obj is a valid pointer to S32K144LpuartQemu provided by QEMU.
+    let s = unsafe { &mut *(obj as *mut S32K144LpuartQemu) };
     s.rust_state = ptr::null_mut();
     s.router = ptr::null_mut();
     s.topic = ptr::null_mut();
 
-    memory_region_init_io(
-        &raw mut s.iomem,
-        obj,
-        &raw const LPUART_OPS,
-        obj as *mut c_void,
-        c"s32k144-lpuart".as_ptr(),
-        0x100,
-    );
-    sysbus_init_mmio(obj as *mut SysBusDevice, &raw mut s.iomem);
-    sysbus_init_irq(obj as *mut SysBusDevice, &raw mut s.irq);
+    // SAFETY: s.iomem initialization is safe.
+    unsafe {
+        virtmcu_qom::memory::memory_region_init_io(
+            &raw mut s.iomem,
+            obj,
+            &raw const LPUART_OPS,
+            obj as *mut c_void,
+            c"s32k144-lpuart".as_ptr(),
+            0x100,
+        );
+        sysbus_init_mmio(obj as *mut SysBusDevice, &raw mut s.iomem);
+        sysbus_init_irq(obj as *mut SysBusDevice, &raw mut s.irq);
+    }
 }
 
 define_properties!(
@@ -367,8 +402,12 @@ define_properties!(
     ]
 );
 
-unsafe extern "C" fn lpuart_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+/// # Safety
+/// This function is called by QEMU to initialize the class. `klass` must be a valid `ObjectClass` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lpuart_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = virtmcu_qom::device_class!(klass);
+    // SAFETY: dc is a valid DeviceClass pointer.
     unsafe {
         (*dc).realize = Some(lpuart_realize);
         (*dc).user_creatable = true;
@@ -379,7 +418,7 @@ unsafe extern "C" fn lpuart_class_init(klass: *mut ObjectClass, _data: *const c_
 static LPUART_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"s32k144-lpuart".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
-    instance_size: std::mem::size_of::<S32K144LpuartQemu>(),
+    instance_size: core::mem::size_of::<S32K144LpuartQemu>(),
     instance_align: 0,
     instance_init: Some(lpuart_instance_init),
     instance_post_init: None,
@@ -392,15 +431,17 @@ static LPUART_TYPE_INFO: TypeInfo = TypeInfo {
     interfaces: ptr::null(),
 };
 
-declare_device_type!(lpuart_type_init, LPUART_TYPE_INFO);
+declare_device_type!(LPUART_TYPE_INIT, LPUART_TYPE_INFO);
 
 fn lpuart_init_internal(
-    irq: qemu_irq,
+    irq: QemuIrq,
     node_id: u32,
     router: *const c_char,
     topic: Option<String>,
 ) -> *mut LpuartState {
-    let session = match unsafe { virtmcu_zenoh::open_session(router) } {
+    // SAFETY: get_or_init_session handles null and valid pointers correctly.
+    // Safety: router validity is guaranteed by the caller.
+    let session = match unsafe { virtmcu_zenoh::get_or_init_session(router) } {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
@@ -419,8 +460,9 @@ fn lpuart_init_internal(
     let earliest_clone = Arc::clone(&earliest_vtime);
 
     let state_ptr_raw: *mut LpuartState =
-        Box::into_raw(Box::<std::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
+        Box::into_raw(Box::<core::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
 
+    // SAFETY: Creating a QomTimer is safe.
     let rx_timer = Arc::new(unsafe {
         QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
     });
@@ -463,26 +505,42 @@ fn lpuart_init_internal(
 
     let state = LpuartState {
         irq,
-        session,
+        _session: session,
         publisher,
         subscriber,
         baud: 0x0F000004,
         stat: STAT_TDRE | STAT_TC,
         ctrl: 0,
-        data: 0,
+        _data: 0,
         match_: 0,
         modir: 0,
         fifo: 0,
         water: 0,
         rx_buffer: Vec::new(),
-        rx_sender: tx,
+        _rx_sender: tx,
         rx_receiver: rx,
         local_heap: Mutex::new(BinaryHeap::new()),
         rx_timer: Some(rx_timer),
         earliest_vtime,
     };
 
+    // SAFETY: write to freshly allocated MaybeUninit box is safe.
     unsafe { ptr::write(state_ptr_raw, state) };
 
     state_ptr_raw
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_s32k144_lpuart_qemu_layout() {
+        // QOM layout validation
+        assert_eq!(
+            core::mem::offset_of!(S32K144LpuartQemu, parent_obj),
+            0,
+            "SysBusDevice must be the first field"
+        );
+    }
 }
