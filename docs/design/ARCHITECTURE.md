@@ -16,7 +16,7 @@ This is the highest-priority design rule. It means:
   layouts specified in the target MCU's datasheet.
 - Interrupt numbers match the physical NVIC/GIC configuration.
 - Reset register values match silicon defaults.
-- Co-simulation infrastructure (`zenoh-clock`, `zenoh-netdev`, `zenoh-chardev`) is
+- Co-simulation infrastructure (`clock`, `netdev`, `chardev`) is
   entirely invisible to the firmware — no guest-visible MMIO, no firmware API.
 - Firmware is compiled once for the MCU target. It does not know whether it is running
   on silicon or inside QEMU.
@@ -68,9 +68,9 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 │                                       │                                     │
 │           ┌───────────────────────────┼──────────────────────┐             │
 │           │  QEMU node 0              │   QEMU node 1        │             │
-│           │  hw/rust/zenoh-clock ◄────┘   hw/rust/zenoh-clock│             │
-│           │  hw/rust/zenoh-netdev          zenoh-netdev       │             │
-│           │  hw/rust/zenoh-chardev         zenoh-chardev      │             │
+│           │  hw/rust/backbone/clock ◄─┘   hw/rust/backbone/cl│             │
+│           │  hw/rust/comms/netdev         netdev             │             │
+│           │  hw/rust/comms/chardev        chardev            │             │
 │           │  QOM peripherals               QOM peripherals    │             │
 │           │  firmware (bare-metal C)       firmware           │             │
 │           └───────────┬───────────────────────────┬──────────┘             │
@@ -80,6 +80,7 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 │            │  DeterministicCoordinator               │                     │
 │            │  - owns topology graph (from YAML)      │                     │
 │            │  - quantum barrier: waits for ALL nodes │                     │
+│            │  - DataTransport (Unix / Zenoh)         │                     │
 │            │  - sorts: (vtime_ns, src_id, seq_num)   │                     │
 │            │  - applies topology mask (RF/wire)      │                     │
 │            │  - emits PCAP log side-channel          │                     │
@@ -114,11 +115,11 @@ instruction. This requires QEMU to be a **time slave**: it runs at full TCG spee
 each quantum but blocks at every quantum boundary until the external TimeAuthority grants
 the next advance.
 
-**Implementation**: `hw/rust/zenoh-clock` is a native QOM device that:
+**Implementation**: `hw/rust/backbone/clock` is a native QOM device that:
 1. Hooks into the TCG execution loop via the `virtmcu_tcg_quantum_hook` function pointer
    injected into `cpu-exec.c` by `patches/apply_zenoh_hook.py`.
 2. At each quantum boundary, calls `cpu_exit()` to request a clean translation-block exit,
-   releases the BQL, and blocks on a Zenoh `GET` to `sim/clock/advance/{node_id}`.
+   releases the BQL, and blocks on a reply from the TimeAuthority (using `ClockSyncTransport`).
 3. On reply, re-acquires the BQL and optionally advances `timers_state.qemu_icount_bias`
    for exact nanosecond virtual time in `slaved-icount` mode.
 
@@ -127,8 +128,8 @@ the next advance.
 | Mode | QEMU flags | Throughput | Use when |
 |---|---|---|---|
 | `standalone` | (none) | **100%** | Development and CI without a physics engine. Full TCG speed. |
-| `slaved-suspend` | `-device zenoh-clock,mode=suspend` | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
-| `slaved-icount` | `-device zenoh-clock,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
+| `slaved-suspend` | `-device clock,mode=suspend` | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
+| `slaved-icount` | `-device clock,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
 
 **BQL constraint**: The Zenoh `GET` call must always be made with the BQL released.
 Blocking while holding the BQL deadlocks the QEMU process — the main event loop (QMP,
@@ -168,11 +169,11 @@ Discrete Event Simulation (PDES) barrier pattern:
 
 This guarantees that two runs with identical inputs produce identical delivery sequences.
 
-**Ethernet** (`hw/rust/zenoh-netdev`): On TX, attaches a `ZenohFrameHeader` (vtime + seq)
+**Ethernet** (`hw/rust/comms/netdev`): On TX, attaches a `ZenohFrameHeader` (vtime + seq)
 and publishes to the coordinator's ingress topic. On RX, a priority queue keyed by delivery
 virtual time feeds a `QEMUTimer` on `QEMU_CLOCK_VIRTUAL`.
 
-**UART** (`hw/rust/zenoh-chardev`): Same virtual-timestamp model for serial bytes.
+**UART** (`hw/rust/comms/chardev`): Same virtual-timestamp model for serial bytes.
 
 **Topology declaration** (world YAML `topology:` section): The full network graph —
 node IDs, wire links, RF neighborhoods, max wireless range — is declared at startup.
@@ -248,8 +249,9 @@ and each QEMU node; no intermediary touches the clock messages.
 This eliminates OS-scheduling-dependent tie-breaking.
 
 **Level 3 — Stochastic seeding**: All protocols with random behavior (CSMA/CA backoff,
-BLE advertising slot selection) MUST use `virtmcu_zenoh::seed_for_quantum(global_seed,
-node_id, quantum_number)` as the sole PRNG seed source. The `global_seed` comes from
+BLE advertising slot selection) MUST use `virtmcu_api::seed_for_quantum(global_seed,
+node_id, quantum_number)` as the sole PRNG seed source.
+ The `global_seed` comes from
 the world YAML `topology.global_seed` field (default: 0). Using system time, PIDs, or
 `rand::thread_rng()` as a seed in any simulation code path is banned.
 
@@ -366,9 +368,9 @@ communicating over a virtual UART bus.
 ### Scenario: Node A sends 'X' to Node B
 
 1.  **Firmware write (Node A)**: Node A's firmware writes 'X' to its UART TX register.
-2.  **MMIO Intercept**: Node A's VCPU thread enters the `zenoh-chardev` write handler 
+2.  **MMIO Intercept**: Node A's VCPU thread enters the `chardev` write handler 
     (holding Node A's BQL).
-3.  **Timestamping**: `zenoh-chardev` reads Node A's virtual clock (e.g., T=100.0ms).
+3.  **Timestamping**: `chardev` reads Node A's virtual clock (e.g., T=100.0ms).
 4.  **Zenoh Dispatch**: Node A serializes the byte and timestamp into a 
     `ZenohFrameHeader` + payload. It publishes to `sim/uart/A/tx`.
 5.  **Zenoh Federation**: The message travels over the Zenoh bus to Node B's subscriber.
@@ -406,7 +408,7 @@ Before moving to a realistic model, we must account for several edge cases that 
 
 Virtmcu prioritizes **Software-Observable Fidelity over Cycle-Accuracy**. We explicitly accept the loss of microscopic bus-contention accuracy to maintain the execution speed required for CI/CD workflows. To achieve this sweet spot, all time-sensitive peripherals will transition to a realistic backpressure model using native QEMU virtual timers:
 1.  **TX Backpressure**: When firmware writes to the TX FIFO, the peripheral calculates the transmission duration (e.g., `baud_delay = 10 bits / 115200 bps = 86.8 µs`). It schedules a `QEMUTimer` (tied to `QEMU_CLOCK_VIRTUAL`) to fire at `now + baud_delay`.
-2.  **No Zenoh Clock Subscription**: Individual peripherals **do not** subscribe to the Zenoh clock. The `zenoh-clock` device synchronizes the global `QEMU_CLOCK_VIRTUAL`. Peripherals rely purely on local QEMU timers.
+2.  **No Zenoh Clock Subscription**: Individual peripherals **do not** subscribe to the Zenoh clock. The `clock` device synchronizes the global `QEMU_CLOCK_VIRTUAL`. Peripherals rely purely on local QEMU timers.
 3.  **Timer Callbacks**: When the timer fires, the peripheral pops the byte from the TX FIFO, transmits it over Zenoh, updates the "FIFO Full/Empty" flags, and asserts the TX interrupt. If the FIFO is not empty, it re-arms the timer for the next byte.
 4.  **RX Modeling**: Incoming Zenoh frames are queued. A timer is scheduled to simulate the physical reception delay before drip-feeding the bytes into the guest's RX FIFO.
 
@@ -446,6 +448,7 @@ All data sent over Zenoh must be deterministic and cross-platform.
   2. `patches/apply_zenoh_hook.py` — AST-injects `virtmcu_tcg_quantum_hook` function
      pointer into `accel/tcg/cpu-exec.c`
   3. `patches/apply_zenoh_netdev.py` — registers the Zenoh netdev backend
+  4. `patches/apply_zenoh_chardev.py` — registers the Zenoh chardev backend
 
 - **Required configure flags**:
   ```
@@ -466,13 +469,13 @@ and appends `subdir('virtmcu')` to `third_party/qemu/hw/meson.build`.
 modules += {'hw-virtmcu': hw_virtmcu_modules}
 ```
 
-With `--enable-modules`, this produces `hw-virtmcu-zenoh.so`, `hw-virtmcu-dummy.so`, etc.,
+With `--enable-modules`, this produces `hw-transport-zenoh.so`, `hw-transport-unix.so`, `hw-virtmcu-dummy.so`, etc.,
 installed in `QEMU_MODDIR`. `QEMU_MODULE_DIR` is set by `scripts/run.sh`.
 
-### Rust and Zenoh Dependencies
+### Rust Dependencies
 
 Core plugins are now written in native Rust (located in `hw/rust/`). 
-Rust dependencies, including the `zenoh` crate, are managed by `cargo` and statically linked into the resulting QEMU modules (`.so` files). 
+Rust dependencies, including the `zenoh` crate and `DataTransport` implementations, are managed by `cargo` and statically linked into the resulting QEMU modules (`.so` files). 
 
 This eliminates the previous dependency on the external `zenoh-c` shared library and removes the need for complex `LD_LIBRARY_PATH` configurations to load the plugins.
 
@@ -693,12 +696,23 @@ maintainable.
 
 ### ADR-009: KVM/hvf prohibited in slaved modes and for Cortex-M
 
-**Decision**: Hardware virtualization is disabled whenever zenoh-clock is active and for
+**Decision**: Hardware virtualization is disabled whenever clock is active and for
 all Cortex-M targets.
 **Rationale**: `slaved-suspend` and `slaved-icount` both require control of TCG internals
 (translation block exit hooks, `qemu_icount_bias`) that are bypassed when KVM/hvf owns
 execution. Cortex-M profiles are not supported by any current hypervisor; QEMU silently
 falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile targets.
+
+### ADR-016: Transport-Agnostic Data Plane
+
+**Decision**: Abstract the data plane transport layer (`DataTransport` trait) to allow peripherals to operate over multiple communication backends (Zenoh or Unix Domain Sockets) without changing peripheral logic.
+
+**Rationale**: While Zenoh is the preferred federation bus for distributed simulation, Unix Domain Sockets provide a zero-configuration, lower-latency alternative for single-host co-simulations and CI environments where a Zenoh router may not be present or desired. Decoupling the peripheral logic from the underlying pub/sub implementation improves maintainability and enables easier integration with other transport protocols in the future.
+
+**Constraints**:
+- All peripherals MUST use the `DataTransport` trait for I/O.
+- The transport is chosen at runtime based on the `topology.transport` field in the world YAML.
+- `SafeSubscription` handles BQL management and lifecycle regardless of the underlying transport.
 
 ---
 
@@ -708,8 +722,8 @@ As virtmcu evolves from a foundational emulator into a robust digital twin envir
 
 ### Advanced Observability (COOJA-Inspired)
 FirmwareStudio needs rich, interactive observability (visual timelines, network topologies, interactive virtual boards). virtmcu provides this without embedding a GUI into QEMU by:
-1. Tracing CPU sleep states and peripheral events via `hw/rust/zenoh-telemetry` and publishing deterministic timelines over Zenoh.
-2. Enabling dynamic manipulation of network latency and drop rates via RPC endpoints on the `zenoh_coordinator`.
+1. Tracing CPU sleep states and peripheral events via `hw/rust/observability/telemetry` and publishing deterministic timelines over Zenoh.
+2. Enabling dynamic manipulation of network latency and drop rates via RPC endpoints on the `deterministic_coordinator`.
 3. Emitting UI state (LEDs, Buttons) via SAL/AAL abstraction topics.
 
 ### AI Debugging & MCP Interface
@@ -740,7 +754,7 @@ The `mmio-socket-bridge` (and most other virtmcu bridges) delivers **offsets rel
 ### Zenoh Router Reachability
 If QEMU hangs at startup or `TimeAuthority` reports a "Timeout" during `sim/clock/advance`, first verify that the Zenoh router is reachable from the QEMU container.
 
-- **Check `ZENOH_ROUTER`**: Ensure the `router=` property on `zenoh-clock` matches your router's endpoint.
+- **Check `ZENOH_ROUTER`**: Ensure the `router=` property on `clock` matches your router's endpoint.
 - **Status Codes**: Check the `status` field in the `ClockReadyPayload`. A status of `1` (`ZCLOCK_STATUS_STALL_TIMEOUT`) indicates that QEMU reached the router but failed to advance instructions fast enough to hit the next quantum boundary.
 
 If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:

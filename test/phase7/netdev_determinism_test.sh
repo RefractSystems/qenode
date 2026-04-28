@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test/phase7/netdev_determinism_test.sh — Determinism test for zenoh-netdev
+# test/phase7/netdev_determinism_test.sh — Determinism test for netdev
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,7 +1,5 @@
 import asyncio
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +8,9 @@ import pytest
 sys.path.append(str(Path.cwd() / "tools/lin_fbs"))
 
 from virtmcu.lin import LinFrame, LinMessageType
+
+from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
+from tools.testing.virtmcu_test_suite.orchestrator import VirtMcuOrchestrator
 
 
 @pytest.mark.asyncio
@@ -25,15 +26,15 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     master_kernel = Path(tmpdir) / "lin_master.elf"
     slave_kernel = Path(tmpdir) / "lin_slave.elf"
 
-    subprocess.run(
-        f"arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T test/phase25/lin_echo.ld test/phase25/lin_master.S -o {master_kernel}",
-        shell=True,
-        check=True,
+    compile_firmware(
+        [Path("test/phase25/lin_master.S")],
+        master_kernel,
+        linker_script=Path("test/phase25/lin_echo.ld")
     )
-    subprocess.run(
-        f"arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T test/phase25/lin_echo.ld test/phase25/lin_slave.S -o {slave_kernel}",
-        shell=True,
-        check=True,
+    compile_firmware(
+        [Path("test/phase25/lin_slave.S")],
+        slave_kernel,
+        linker_script=Path("test/phase25/lin_echo.ld")
     )
 
     # Use unique topic to avoid interference
@@ -44,10 +45,13 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
 
     # Generate Master DTB in tmpdir
     master_dtb = Path(tmpdir) / "lin_master.dtb"  # Replace router and compile
-    subprocess.run(
-        f"sed -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {master_dtb}",
-        shell=True,
-        check=True,
+    compile_dtb(
+        Path("test/phase25/lin_test.dts"),
+        {
+            "tcp/127.0.0.1:7447": router_endpoint,
+            '"sim/lin"': f'"{lin_topic}"'
+        },
+        master_dtb
     )
 
     # Master node (Node 0)
@@ -58,21 +62,22 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "null,id=n0",
         "-serial",
         "chardev:n0",
-        "-icount",
-        "shift=0,align=off,sleep=off",
         "-net",
         "none",
-        "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint}",
     ]
 
     # Generate Slave DTB
     slave_dtb = Path(tmpdir) / "lin_slave.dtb"
-    subprocess.run(
-        f"sed -e 's/node = <0>;/node = <1>;/' -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {slave_dtb}",
-        shell=True,
-        check=True,
+    compile_dtb(
+        Path("test/phase25/lin_test.dts"),
+        {
+            "node = <0>;": "node = <1>;",
+            "tcp/127.0.0.1:7447": router_endpoint,
+            '"sim/lin"': f'"{lin_topic}"'
+        },
+        slave_dtb
     )
+
     slave_args = [
         "-cpu",
         "cortex-a15",
@@ -80,12 +85,8 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
         "null,id=n1",
         "-serial",
         "chardev:n1",
-        "-icount",
-        "shift=0,align=off,sleep=off",
         "-net",
         "none",
-        "-device",
-        f"zenoh-clock,mode=slaved-icount,node=1,router={router_endpoint}",
     ]
 
     # 3. Connect to Zenoh
@@ -110,49 +111,27 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     sub0 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/0/tx", on_bus_msg))
     sub1 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/1/tx", on_bus_msg))
 
-    print("Launching Master...")
-    await qemu_launcher(master_dtb, master_kernel, extra_args=master_args, ignore_clock_check=True)
-    print("Launching Slave...")
-    await qemu_launcher(slave_dtb, slave_kernel, extra_args=slave_args, ignore_clock_check=True)
-
-    from conftest import TimeAuthority
-
-    ta0 = TimeAuthority(session, node_id=0)
-    ta1 = TimeAuthority(session, node_id=1)
-
     try:
-        # Wait for interaction
-        timeout = 20
-        start_time = time.time()
-        found_master_header = False
-        found_slave_response = False
+        async with VirtMcuOrchestrator(session, router_endpoint, qemu_launcher) as sim:
+            print("Launching Master and Slave via Orchestrator...")
+            sim.add_node(node_id=0, dtb_path=str(master_dtb), kernel_path=str(master_kernel), extra_args=master_args)
+            sim.add_node(node_id=1, dtb_path=str(slave_dtb), kernel_path=str(slave_kernel), extra_args=slave_args)
 
-        # Clock advance loop
-        current_vtime = 0
-        step_ns = 1_000_000  # 1ms
+            await sim.start()
 
-        while time.time() - start_time < timeout:
-            # Advance both nodes
-            await asyncio.gather(ta0.step(step_ns), ta1.step(step_ns))
-            current_vtime += step_ns
+            def condition_met():
+                found_master_header = False
+                found_slave_response = False
+                for topic, msg_type, data in bus_messages:
+                    if topic == f"{lin_topic}/0/tx" and msg_type == LinMessageType.LinMessageType.Break:
+                        found_master_header = True
+                    if topic == f"{lin_topic}/1/tx" and msg_type == LinMessageType.LinMessageType.Data and b"S" in data:
+                        found_slave_response = True
+                return found_master_header and found_slave_response
 
-            for topic, msg_type, data in bus_messages:
-                if topic == f"{lin_topic}/0/tx" and msg_type == LinMessageType.LinMessageType.Break:
-                    found_master_header = True
-                if topic == f"{lin_topic}/1/tx" and msg_type == LinMessageType.LinMessageType.Data and b"S" in data:
-                    found_slave_response = True
+            await sim.run_until(condition_met, timeout=20.0, step_ns=1_000_000)
 
-            if found_master_header and found_slave_response:
-                break
-
-            await asyncio.sleep(0.01)
-
-        if found_master_header and found_slave_response:
-            print(f"SUCCESS: Multi-node LIN communication verified at vtime={current_vtime}!")
-        else:
-            pytest.fail(
-                f"FAILED: found_master_header={found_master_header}, found_slave_response={found_slave_response}, vtime={current_vtime}"
-            )
+            print(f"SUCCESS: Multi-node LIN communication verified at vtime={sim._vtime_ns}!")
 
     finally:
         await asyncio.to_thread(sub0.undeclare)

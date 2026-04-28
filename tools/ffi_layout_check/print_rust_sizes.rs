@@ -11,7 +11,7 @@ mod qom { pub struct Object { _opaque: [u8; 40] } }
 mod error { pub struct Error; }
 
 // Example: Include the source file directly or define the structs here
-// include!("hw/rust/virtmcu-qom/src/net.rs");
+// include!("hw/rust/common/virtmcu-qom/src/net.rs");
 
 fn main() {
     println!("Add the structures you want to measure to tools/ffi_layout_check/print_rust_sizes.rs");

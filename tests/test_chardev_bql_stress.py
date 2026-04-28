@@ -8,7 +8,7 @@ import zenoh
 # Paths
 WORKSPACE_DIR = Path(__file__).parent.parent.resolve()
 
-# Header format for zenoh-chardev: [vtime(8) | len(4)]
+# Header format for chardev: [vtime(8) | len(4)]
 HEADER_FORMAT = "<QI"
 HEADER_SIZE = 12
 
@@ -30,19 +30,19 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
     dtb = Path(WORKSPACE_DIR) / "test/phase1/minimal.dtb"
 
     if not kernel.exists():
-        pytest.skip(f"Kernel {kernel} not found")
+        pytest.fail(f"Kernel {kernel} not found")
     if not dtb.exists():
-        pytest.skip(f"DTB {dtb} not found")
+        pytest.fail(f"DTB {dtb} not found")
 
     node_id = 42
     topic_base = f"virtmcu/uart/{node_id}"
     rx_topic = f"{topic_base}/rx"
     tx_topic = f"{topic_base}/tx"
 
-    # Start QEMU with zenoh chardev and zenoh-clock in slaved-suspend mode
+    # Start QEMU with zenoh chardev and clock in slaved-suspend mode
     extra_args = [
-        "-device", f"zenoh-clock,node={node_id},mode=slaved-suspend,router={router_endpoint}",
-        "-chardev", f"zenoh,id=char0,node={node_id},router={router_endpoint}",
+        "-device", f"virtmcu-clock,node={node_id},mode=slaved-suspend,router={router_endpoint}",
+        "-chardev", f"virtmcu,id=char0,node={node_id},router={router_endpoint}",
         "-serial", "chardev:char0"
     ]
 
@@ -82,10 +82,6 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
     packet = encode_chardev_packet(start_vtime, payload_data)
     pub.put(packet)
 
-    # Advance time to let QEMU process
-    await vta.step(10_000_000, timeout=300.0) # 10ms steps
-    await asyncio.sleep(0.5)
-
     # Final time advancement to ensure all data is processed
     timeout = 60
     start_time = asyncio.get_event_loop().time()
@@ -93,7 +89,11 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
         await vta.step(10_000_000, timeout=300.0) # 10ms steps
         if asyncio.get_event_loop().time() - start_time > timeout:
             break
-        await asyncio.sleep(0.1)
+        try:
+            await asyncio.wait_for(received_event.wait(), timeout=0.01)
+            received_event.clear()
+        except TimeoutError:
+            pass
 
     assert len(received_data) == expected_count, f"Dropped data: got {len(received_data)} bytes, expected {expected_count}"
 

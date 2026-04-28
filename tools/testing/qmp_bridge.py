@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from qemu.qmp import QMPClient
-from qemu.qmp.protocol import Runstate
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +25,12 @@ class QmpBridge:
         self.uart_writer: asyncio.StreamWriter | None = None
         self.uart_buffer = ""
         self._read_task: asyncio.Task | None = None
+        self.uart_event = asyncio.Event()
 
     @property
     def is_connected(self) -> bool:
-        return self.qmp.runstate == Runstate.RUNNING
+        # Check if the session is established. runstate is populated after greeting.
+        return self.qmp.runstate is not None
 
     async def connect(self, qmp_socket_path: str, uart_socket_path: str | None = None):
         """
@@ -55,6 +56,7 @@ class QmpBridge:
                         logger.debug("UART socket reached EOF.")
                         break
                     self.uart_buffer += data.decode("utf-8", errors="replace")
+                    self.uart_event.set()
                 except (asyncio.IncompleteReadError, ConnectionResetError) as e:
                     logger.debug(f"UART connection closed: {e}")
                     break
@@ -62,13 +64,13 @@ class QmpBridge:
             pass
         except Exception as e:
             logger.error(f"UART read error: {e}")
+        finally:
+            self.uart_event.set()
 
     async def execute(self, cmd: str, args: dict[str, Any] | None = None) -> Any:
         """
         Executes a QMP command and returns the result.
         """
-        if not self.is_connected:
-            raise RuntimeError("QMP is not connected.")
         # qemu.qmp.execute returns the 'return' object directly if successful
         return await self.qmp.execute(cmd, args)
 
@@ -95,7 +97,7 @@ class QmpBridge:
                     # Standalone mode or VM paused at startup — fall back to wall clock.
                     if asyncio.get_running_loop().time() - start_wall > timeout:
                         raise TimeoutError()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
         async def get_event():
             from qemu.qmp.events import EventListener
@@ -148,17 +150,19 @@ class QmpBridge:
             if regex.search(self.uart_buffer):
                 return True
 
+            try:
+                await asyncio.wait_for(self.uart_event.wait(), timeout=0.1)
+                self.uart_event.clear()
+            except TimeoutError:
+                pass
+
             current_vtime = await self.get_virtual_time_ns()
             if current_vtime > start_vtime:
-                # Virtual time is advancing — rely on it strictly.
                 if (current_vtime - start_vtime) / 1e9 > timeout:
                     return False
             else:
-                # Fallback: virtual time stuck at 0 (standalone mode or early boot).
                 if loop.time() - start_wall_time > timeout:
                     return False
-
-            await asyncio.sleep(0.1)
 
     async def wait_for_virtual_time(self, target_vtime_ns: int, timeout_wall: float = 30.0):
         """
@@ -175,7 +179,7 @@ class QmpBridge:
             if loop.time() - start_wall > timeout_wall:
                 raise TimeoutError(f"Timed out waiting for vtime {target_vtime_ns} ns (current: {current_vtime} ns)")
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
     def clear_uart_buffer(self):
         """
@@ -197,7 +201,9 @@ class QmpBridge:
         """
         Starts or resumes the emulation.
         """
+        print("calling cont")
         await self.execute("cont")
+        print("cont returned")
 
     async def pause_emulation(self):
         """

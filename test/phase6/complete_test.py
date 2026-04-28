@@ -5,6 +5,8 @@ import sys
 import time
 from pathlib import Path
 
+import vproto
+
 sys.path.append(Path(Path(__file__).resolve().parent))
 import flatbuffers
 import zenoh
@@ -15,6 +17,7 @@ def pack_rf_header(vtime, size, rssi, lqi):
     builder = flatbuffers.Builder(64)
     RfHeader.Start(builder)
     RfHeader.AddDeliveryVtimeNs(builder, vtime)
+    RfHeader.AddSequenceNumber(builder, 0)
     RfHeader.AddSize(builder, size)
     RfHeader.AddRssi(builder, rssi)
     RfHeader.AddLqi(builder, lqi)
@@ -71,10 +74,10 @@ def main():
 
     # 4. RF test (802.15.4)
     rx_rf = []
-    s.declare_subscriber("sim/rf/802154/1/rx", lambda sample: rx_rf.append(sample.payload.to_bytes()))
-    pub_rf_tx0 = s.declare_publisher("sim/rf/802154/0/tx")
-    pub_rf_tx1 = s.declare_publisher("sim/rf/802154/1/tx")
-    pub_rf_tx2 = s.declare_publisher("sim/rf/802154/2/tx")
+    s.declare_subscriber("sim/rf/ieee802154/1/rx", lambda sample: rx_rf.append(sample.payload.to_bytes()))
+    pub_rf_tx0 = s.declare_publisher("sim/rf/ieee802154/0/tx")
+    pub_rf_tx1 = s.declare_publisher("sim/rf/ieee802154/1/tx")
+    pub_rf_tx2 = s.declare_publisher("sim/rf/ieee802154/2/tx")
 
     # 5. Topology control
     pub_ctrl = s.declare_publisher("sim/network/control")
@@ -83,19 +86,19 @@ def main():
 
     print("Making nodes known...")
     # Nodes must transmit to be known
-    pub_eth_tx2.put(struct.pack("<QI", 0, 0))
-    pub_uart_tx2.put(struct.pack("<QI", 0, 0))
-    pub_sysc_tx2.put(struct.pack("<QI", 0, 0))
+    pub_eth_tx2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
+    pub_uart_tx2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
+    pub_sysc_tx2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
     pub_rf_tx1.put(pack_rf_header(0, 0, 0, 0))  # Node 1 is at (10,0,0), Node 0 is at (0,0,0)
     pub_rf_tx2.put(pack_rf_header(0, 0, 0, 0))  # Node 2 is at (100,0,0)
 
     time.sleep(1)
 
     print("Testing ETH...")
-    pub_eth_tx1.put(struct.pack("<QI", 1000, 4) + b"ETH1")
+    pub_eth_tx1.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ETH1")
     time.sleep(0.5)
     if len(rx_eth) > 0:
-        vtime, size = struct.unpack("<QI", rx_eth[0][:12])
+        vtime, _seq, size = struct.unpack("<QQI", rx_eth[0][:20])
         if vtime == 1001000:  # default 1ms delay
             results["eth"] = True
             print("  ETH PASS")
@@ -105,10 +108,10 @@ def main():
         print("  ETH FAIL: no frame")
 
     print("Testing UART...")
-    pub_uart_tx1.put(struct.pack("<QI", 2000, 4) + b"UART")
+    pub_uart_tx1.put(vproto.ZenohFrameHeader(2000, 0, 4).pack() + b"UART")
     time.sleep(0.5)
     if len(rx_uart) > 0:
-        vtime, size = struct.unpack("<QI", rx_uart[0][:12])
+        vtime, _seq, size = struct.unpack("<QQI", rx_uart[0][:20])
         if vtime == 1002000:
             results["uart"] = True
             print("  UART PASS")
@@ -118,7 +121,7 @@ def main():
         print("  UART FAIL: no frame")
 
     print("Testing SystemC...")
-    pub_sysc_tx1.put(struct.pack("<QI", 3000, 4) + b"SYSC")
+    pub_sysc_tx1.put(vproto.ZenohFrameHeader(3000, 0, 4).pack() + b"SYSC")
     time.sleep(0.5)
     if len(rx_sysc) > 0:
         vtime, size = struct.unpack("<QI", rx_sysc[0][:12])
@@ -151,10 +154,10 @@ def main():
     print("Testing Overflow...")
     orig_vtime = 0xFFFFFFFFFFFFFFFF - 500000
     rx_eth.clear()
-    pub_eth_tx1.put(struct.pack("<QI", orig_vtime, 4) + b"OVER")
+    pub_eth_tx1.put(vproto.ZenohFrameHeader(orig_vtime, 0, 4).pack() + b"OVER")
     time.sleep(0.5)
     if len(rx_eth) > 0:
-        vtime, size = struct.unpack("<QI", rx_eth[0][:12])
+        vtime, _seq, size = struct.unpack("<QQI", rx_eth[0][:20])
         if vtime >= orig_vtime:
             results["overflow"] = True
             print("  Overflow PASS")
@@ -168,7 +171,8 @@ def main():
     # fspl = 20*log10(100) + 40.04 = 80.04 dB. RSSI = -80.04 dBm.
     # Default sensitivity is -90.0 dBm, so it should be received!
     rx_rf2 = []
-    s.declare_subscriber("sim/rf/802154/2/rx", lambda sample: rx_rf2.append(sample.payload.to_bytes()))
+    s.declare_subscriber("sim/rf/ieee802154/2/rx", lambda sample: rx_rf2.append(sample.payload.to_bytes()))
+    time.sleep(0.5)
     pub_rf_tx0.put(pack_rf_header(8000, 4, 0, 0) + b"RF02")
     time.sleep(0.5)
     if len(rx_rf2) > 0:
@@ -184,13 +188,13 @@ def main():
     s.declare_subscriber("sim/rf/hci/1/rx", lambda sample: rx_hci.append(sample.payload.to_bytes()))
     pub_hci_tx0 = s.declare_publisher("sim/rf/hci/0/tx")
     pub_hci_tx1 = s.declare_publisher("sim/rf/hci/1/tx")
-    pub_hci_tx1.put(struct.pack("<QI", 0, 0))  # known
+    pub_hci_tx1.put(vproto.ZenohFrameHeader(0, 0, 0).pack())  # known
     time.sleep(0.5)
-    pub_hci_tx0.put(struct.pack("<QI", 7000, 4) + b"HCI0")
+    pub_hci_tx0.put(vproto.ZenohFrameHeader(7000, 0, 4).pack() + b"HCI0")
     time.sleep(0.5)
     if len(rx_hci) > 0:
         data = rx_hci[0]
-        vtime, _size = struct.unpack("<QI", data[:12])
+        vtime, _seq, _size = struct.unpack("<QQI", data[:vproto.SIZE_ZENOH_FRAME_HEADER])
         if vtime >= 7000 + 1000000:
             print("  RF HCI PASS")
             results["rf_hci"] = True
@@ -201,7 +205,7 @@ def main():
     print("Testing Mismatched Size (Malformed)...")
     rx_eth.clear()
     # Header says size 100, but we send only 4 bytes of data
-    pub_eth_tx1.put(struct.pack("<QI", 9000, 100) + b"ABCD")
+    pub_eth_tx1.put(vproto.ZenohFrameHeader(9000, 0, 100).pack() + b"ABCD")
     time.sleep(0.5)
     if len(rx_eth) == 0:
         print("  Mismatched Size PASS")
@@ -212,7 +216,7 @@ def main():
     pub_ctrl.put(json.dumps(update))
     time.sleep(0.5)
     rx_eth.clear()
-    pub_eth_tx1.put(struct.pack("<QI", 5000, 4) + b"DROP")
+    pub_eth_tx1.put(vproto.ZenohFrameHeader(5000, 0, 4).pack() + b"DROP")
     time.sleep(0.5)
     if len(rx_eth) == 0:
         print("  Topology (Drop) PASS")
@@ -220,7 +224,7 @@ def main():
         update = {"from": "1", "to": "2", "drop_probability": 0.0}
         pub_ctrl.put(json.dumps(update))
         time.sleep(0.5)
-        pub_eth_tx1.put(struct.pack("<QI", 6000, 4) + b"KEPT")
+        pub_eth_tx1.put(vproto.ZenohFrameHeader(6000, 0, 4).pack() + b"KEPT")
         time.sleep(0.5)
         if len(rx_eth) > 0:
             results["topology"] = True

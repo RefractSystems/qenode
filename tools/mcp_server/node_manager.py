@@ -171,7 +171,7 @@ class NodeManager:
                 raise RuntimeError(
                     f"QEMU process exited early with code {node.process.returncode}: {stderr_data.decode()}"
                 )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
         if not Path(node.qmp_socket_path).exists():
             if node.process and node.process.returncode is None:

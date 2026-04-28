@@ -133,7 +133,7 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
     for _ in range(50):
         if Path(mmio_sock).exists():
             break
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: wait for mmio server socket
 
     try:
         await qemu_launcher(
@@ -149,8 +149,11 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
         )
 
         # In standalone mode, QEMU runs at wall-clock speed.
-        # We just wait for a moment for the guest to perform MMIO.
-        await asyncio.sleep(2.0)
+        # Wait for at least one MMIO request to be processed
+        for _ in range(200):
+            if len(received_reqs) > 0:
+                break
+            await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: wait for guest MMIO
     finally:
         server_task.cancel()
         server.close()
@@ -189,7 +192,7 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
     # Update cli_args to include our router
     new_args = []
     for arg in cli_args:
-        if "zenoh-telemetry" in arg and "node=0" in arg:
+        if "telemetry" in arg and "node=0" in arg:
             new_args.append(arg + f",router={zenoh_router}")
         else:
             new_args.append(arg)
@@ -206,7 +209,12 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
     await qemu_launcher(
         dtb_file, kernel, extra_args=[*new_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
     )
-    await asyncio.sleep(3.0)
+
+    # Wait deterministically for telemetry events (up to 15 seconds for ASan)
+    for _ in range(3000):
+        if len(received_events) > 0:
+            break
+        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: yield to Zenoh Rx task
 
     await asyncio.to_thread(sub.undeclare)
 
@@ -215,9 +223,9 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
 
 
 @pytest.mark.asyncio
-async def test_phase12_zenoh_clock_error(qemu_launcher):
+async def test_phase12_clock_error(qemu_launcher):
     """
-    4. zenoh-clock: Verify error code 2 (ZENOH_ERROR) reporting [P2]
+    4. clock: Verify error code 2 (ZENOH_ERROR) reporting [P2]
     """
     workspace_root = Path(__file__).resolve().parent.parent
     dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
@@ -226,7 +234,7 @@ async def test_phase12_zenoh_clock_error(qemu_launcher):
     # Invalid router to trigger Zenoh error
     extra_args = [
         "-device",
-        "zenoh-clock,node=0,mode=slaved-suspend,router=tcp/1.1.1.1:1",
+        "virtmcu-clock,node=0,mode=slaved-suspend,router=tcp/1.1.1.1:1",
         "-serial",
         "null",
         "-monitor",
@@ -245,18 +253,8 @@ async def test_phase12_coordinator_topology(zenoh_router):
     """
     5. Topology: zenoh_coordinator must correctly link nodes via queryables [P1]
     """
-    workspace_root = Path(__file__).resolve().parent.parent
-    import os
-
-    if "CARGO_TARGET_DIR" in os.environ:
-        coordinator_bin = Path(os.environ["CARGO_TARGET_DIR"]) / "release/zenoh_coordinator"
-    else:
-        coordinator_bin = Path(workspace_root) / "target/release/zenoh_coordinator"
-        if not coordinator_bin.exists():
-            coordinator_bin = Path(workspace_root) / "tools/zenoh_coordinator/target/release/zenoh_coordinator"
-
-    if not coordinator_bin.exists():
-        pytest.skip(f"zenoh_coordinator binary not found at {coordinator_bin}")
+    from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+    coordinator_bin = resolve_rust_binary("zenoh_coordinator")
 
     # Start coordinator
     proc = await asyncio.create_subprocess_exec(
@@ -269,7 +267,7 @@ async def test_phase12_coordinator_topology(zenoh_router):
 
     try:
         # Give it a moment to start
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(1.0)  # SLEEP_EXCEPTION: let coordinator initialize
         assert proc.returncode is None
     finally:
         if proc.returncode is None:

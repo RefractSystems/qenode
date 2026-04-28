@@ -1,17 +1,18 @@
 import struct
 import sys
 
+import vproto
 import zenoh
 
 
 # Standard virtmcu ClockAdvanceReq/ClockReadyResp packing
-def pack_clock_advance(delta_ns, mujoco_time_ns=0):
-    return struct.pack("<QQ", delta_ns, mujoco_time_ns)
+def pack_clock_advance(delta_ns, mujoco_time_ns=0, quantum_number=0):
+    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
 
 
 def unpack_clock_ready(data):
-    # current_vtime_ns (Q), n_frames (I), error_code (I)
-    return struct.unpack("<QII", data)
+    # current_vtime_ns (Q), n_frames (I), error_code (I), quantum_number (Q)
+    return struct.unpack("<QIIQ", data)
 
 
 def main():
@@ -28,11 +29,13 @@ def main():
     TOTAL_NS = 2_000_000_000  # noqa: N806
 
     current_vtime = 0
+    q_num = 0
     while current_vtime < TOTAL_NS:
-        replies = session.get("sim/clock/advance/0", payload=pack_clock_advance(QUANTA_NS))
+        replies = session.get("sim/clock/advance/0", payload=pack_clock_advance(QUANTA_NS, quantum_number=q_num))
         for reply in replies:
             if reply.ok:
-                current_vtime, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
+                current_vtime, _, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
+        q_num += 1
         # print(f"[TimeAuthority] vtime: {current_vtime} ns")
         # No sleep here, we want to advance as fast as QEMU allows
 

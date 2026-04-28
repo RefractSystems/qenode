@@ -37,7 +37,7 @@ sleep 2
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$WORKSPACE_DIR/test/phase1/minimal.dtb" \
     -kernel "$WORKSPACE_DIR/test/phase8/echo.elf" \
     -icount shift=6,align=off,sleep=off \
-    -device zenoh-clock,node=0,mode=slaved-icount,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
+    -device virtmcu-clock,node=0,mode=slaved-icount,router=tcp/127.0.0.1:$PORT,stall-timeout=60000 \
     -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:$PORT \
     -serial chardev:uart0 \
     -display none -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &

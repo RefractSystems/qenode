@@ -1,7 +1,7 @@
 /*
  * test/actuator/actuator.c
  *
- * Bare-metal firmware to test the zenoh-actuator device.
+ * Bare-metal firmware to test the actuator device.
  */
 
 #include <stdint.h>

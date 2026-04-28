@@ -55,12 +55,9 @@ async fn main() {
     // Simulate stepping until last_ts_ns
     while current_vtime_ns <= last_ts_ns {
         // Send clock advance query
-        use virtmcu_api::{ClockAdvanceReq, ClockReadyResp};
-        let req = ClockAdvanceReq {
-            delta_ns,
-            mujoco_time_ns: current_vtime_ns,
-        };
-        let req_bytes: [u8; 16] = unsafe { core::mem::transmute(req) };
+        use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt};
+        let req = ClockAdvanceReq::new(delta_ns, current_vtime_ns, 0);
+        let req_bytes = req.pack();
 
         let replies = session
             .get(&advance_topic)
@@ -72,15 +69,15 @@ async fn main() {
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {
                 let payload = sample.payload().to_bytes();
-                if payload.len() == 16 {
-                    let mut arr = [0u8; 16];
+                if payload.len() == 24 {
+                    let mut arr = [0u8; 24];
                     arr.copy_from_slice(&payload);
-                    let resp: ClockReadyResp = unsafe { core::mem::transmute(arr) };
-                    current_vtime_ns = resp.current_vtime_ns;
+                    let resp = ClockReadyResp::unpack_slice(&arr).unwrap();
+                    current_vtime_ns = resp.current_vtime_ns();
                     got_reply = true;
                 } else {
                     eprintln!(
-                        "[RESD Replay] Node {}: Received invalid payload size: {}",
+                        "[RESD Replay] Node {}: Received invalid payload size: {} (expected 24)",
                         node_id,
                         payload.len()
                     );

@@ -8,11 +8,11 @@ on. A bug here silently corrupts all work built on top of it. The core consists 
 | Layer | Crate / File | Role |
 |---|---|---|
 | **Protocol wire format** | `virtmcu-api/src/lib.rs` | Shared structs between Rust and Python (`ZenohFrameHeader`, `ClockAdvanceReq`, `ClockReadyResp`, `MmioReq`, `SyscMsg`) |
-| **Zenoh session management** | `virtmcu-zenoh/src/lib.rs` | Opens authenticated sessions; failure here = all devices dead |
+| **Zenoh session management** | `transport-zenoh/src/lib.rs` | Opens authenticated sessions; failure here = all devices dead |
 | **BQL / sync primitives** | `virtmcu-qom/src/sync.rs` | Wraps QEMU's Big QEMU Lock; misuse = deadlock or data corruption |
-| **Clock synchronization** | `zenoh-clock/src/lib.rs` | Drives virtual time advancement; stall = sim hangs forever |
-| **UART delivery pipeline** | `zenoh-chardev/src/lib.rs` | Ordered RX delivery; bug = firmware sees garbled or missing bytes |
-| **Network delivery pipeline** | `zenoh-netdev/src/lib.rs` | Ordered Ethernet RX delivery; structurally mirrors chardev |
+| **Clock synchronization** | `clock/src/lib.rs` | Drives virtual time advancement; stall = sim hangs forever |
+| **UART delivery pipeline** | `chardev/src/lib.rs` | Ordered RX delivery; bug = firmware sees garbled or missing bytes |
+| **Network delivery pipeline** | `netdev/src/lib.rs` | Ordered Ethernet RX delivery; structurally mirrors chardev |
 
 Everything above these layers (new SoC peripherals, actuators, telemetry, 802.15.4 radio) inherits
 whatever correctness properties (or defects) live here. This document catalogs every known risk and
@@ -24,10 +24,10 @@ prescribes testable fixes.
 
 ### CRITICAL — can crash or deadlock the simulator
 
-#### C-1: `libc::abort()` on clock stall (zenoh-clock:214)
+#### C-1: `libc::abort()` on clock stall (clock:214)
 
 ```rust
-// zenoh_clock_quantum_wait_internal
+// clock_quantum_wait_internal
 if result.timed_out() && start.elapsed() > timeout {
     vlog!("[virtmcu-clock] ERROR: Timeout ...");
     unsafe { libc::abort() };  // kills the entire QEMU process
@@ -38,8 +38,8 @@ if result.timed_out() && start.elapsed() > timeout {
 triggers an immediate, non-recoverable process kill. The error is indistinguishable from a SIGSEGV
 in the CI log.
 
-**Fix**: Return an error code (`CLOCK_ERROR_STALL = 1`) from `zenoh_clock_quantum_wait_internal`.
-The caller (`zenoh_clock_cpu_halt_cb`) re-acquires BQL and logs the stall, then lets the
+**Fix**: Return an error code (`CLOCK_ERROR_STALL = 1`) from `clock_quantum_wait_internal`.
+The caller (`clock_cpu_halt_cb`) re-acquires BQL and logs the stall, then lets the
 simulation continue (time authority can retry). For catastrophic stalls the test harness already
 has a wall-clock timeout; `abort()` provides nothing beyond that except an uglier failure.
 
@@ -51,8 +51,8 @@ without process termination.
 #### C-2: `unwrap()` on `Mutex::lock()` in hot paths (multiple files)
 
 Occurrences:
-- `zenoh-clock/src/lib.rs:189`, `205`, `251`, `270`, `513`
-- `zenoh-chardev/src/lib.rs:246`
+- `clock/src/lib.rs:189`, `205`, `251`, `270`, `513`
+- `chardev/src/lib.rs:246`
 
 ```rust
 let mut heap = state.local_heap.lock().unwrap();  // panics if poisoned
@@ -70,7 +70,7 @@ invalid after a panic during a peek/pop.
 
 ---
 
-#### C-3: BQL double-unlock potential (zenoh-clock:129 + 136–142)
+#### C-3: BQL double-unlock potential (clock:129 + 136–142)
 
 ```rust
 let was_locked = unsafe { virtmcu_qom::sync::virtmcu_bql_locked() };
@@ -90,7 +90,7 @@ after this function returns, so we drop the guard without releasing. However:
 - `Bql::unlock()` has **no assertion** that the BQL is actually held. If
   `virtmcu_bql_locked()` returns a stale false-negative (possible under races on some QEMU
   builds), we call `virtmcu_bql_unlock()` on an unlocked BQL — undefined behaviour in pthreads.
-- The `debug_assert!` in `zenoh_clock_quantum_wait_internal` (line 180) is **only active in debug
+- The `debug_assert!` in `clock_quantum_wait_internal` (line 180) is **only active in debug
   builds**. Release CI runs without it.
 
 **Fix**:
@@ -100,7 +100,7 @@ after this function returns, so we drop the guard without releasing. However:
 
 ---
 
-#### C-4: Subscriber callback acquires BQL (zenoh-chardev:358, 382)
+#### C-4: Subscriber callback acquires BQL (chardev:358, 382)
 
 ```rust
 // Inside Zenoh subscriber callback (runs on a Zenoh I/O thread)
@@ -129,7 +129,7 @@ test that performs simultaneous clock advance + chardev RX to expose any regress
 
 ### HIGH — silent data corruption or resource leak
 
-#### H-1: Unbounded channels cause OOM under sustained flood (zenoh-chardev)
+#### H-1: Unbounded channels cause OOM under sustained flood (chardev)
 
 ```rust
 let (tx, rx) = unbounded();  // RX subscriber → rx_timer_cb (MPSC)
@@ -141,7 +141,7 @@ the channel faster than `rx_timer_cb` drains them. The `BinaryHeap` in `local_he
 without bound, consuming ~50 bytes per `OrderedPacket` (vtime u64 + Vec). At 50k packets this is
 ~2.5 MB — acceptable. But at 1M+ (future stress scenarios) it becomes a problem.
 
-`zenoh-netdev` uses `bounded(1024)` which silently drops packets when full — also wrong.
+`netdev` uses `bounded(1024)` which silently drops packets when full — also wrong.
 
 **Fix**: Use `bounded(65536)` for both channels. On overflow, log the drop and set a
 `rx_overflow: AtomicU64` counter that is visible via a QEMU monitor command or telemetry topic.
@@ -155,7 +155,7 @@ static mut GLOBAL_CLOCK: *mut ZenohClock = ptr::null_mut();
 ```
 
 **What goes wrong**:
-1. Multiple `zenoh-clock` devices instantiated (e.g. multi-node QEMU) → last `realize()` wins;
+1. Multiple `clock` devices instantiated (e.g. multi-node QEMU) → last `realize()` wins;
    previous pointer leaked and hooks overwritten.
 2. Hooks (`virtmcu_cpu_set_halt_hook`) are function pointers in QEMU's C code. There is no
    mutex protecting them; a concurrent `instance_finalize` + `realize` race is UB.
@@ -166,7 +166,7 @@ keyed by node_id is the correct long-term solution.
 
 ---
 
-#### H-3: Query-reply threads spawned without bound (zenoh-clock:290)
+#### H-3: Query-reply threads spawned without bound (clock:290)
 
 ```rust
 std::thread::spawn(move || {
@@ -184,7 +184,7 @@ reply in flight at a time.
 
 ---
 
-#### H-4: Heartbeat thread leaks after QEMU device teardown (zenoh-clock:504)
+#### H-4: Heartbeat thread leaks after QEMU device teardown (clock:504)
 
 ```rust
 std::thread::spawn(move || loop { ... std::thread::sleep(Duration::from_millis(1000)); });
@@ -198,7 +198,7 @@ The heartbeat thread holds a `backend_ptr` that was freed in `instance_finalize`
 
 ---
 
-#### H-5: Legacy-header "compatibility" path silently misroutes packets (zenoh-chardev:351)
+#### H-5: Legacy-header "compatibility" path silently misroutes packets (chardev:351)
 
 ```rust
 if data.len() < 12 {
@@ -217,14 +217,14 @@ legacy senders exist, fix them.
 
 ---
 
-#### H-6: `std::mem::forget(queryable)` leaks the Zenoh queryable (zenoh-clock:498)
+#### H-6: `std::mem::forget(queryable)` leaks the Zenoh queryable (clock:498)
 
 ```rust
 std::mem::forget(queryable);
 ```
 
 This prevents the queryable from being deregistered when the Zenoh session is dropped. If
-`zenoh_clock_init_internal` is called more than once (e.g. hot-reload of a plugin), the first
+`clock_init_internal` is called more than once (e.g. hot-reload of a plugin), the first
 queryable leaks and continues firing `on_clock_query` with a dangling `backend_ptr`.
 
 **Fix**: Store the queryable in `ZenohClockBackend` and drop it explicitly in
@@ -234,7 +234,7 @@ queryable leaks and continues firing `on_clock_query` with a dangling `backend_p
 
 ### MEDIUM — incorrect behaviour, not immediately fatal
 
-#### M-1: `virtmcu-zenoh` blocks QEMU init thread for up to 4 seconds
+#### M-1: `transport-zenoh` blocks QEMU init thread for up to 4 seconds
 
 ```rust
 for i in 0..40 {  // 40 × 100ms = 4 seconds
@@ -254,7 +254,7 @@ controlled by a `VIRTMCU_ZENOH_CONNECT_TIMEOUT_MS` env var). The current 40×100
 
 ---
 
-#### M-2: `on_clock_query` reads `ClockAdvanceReq` via `read_unaligned` (zenoh-clock:234)
+#### M-2: `on_clock_query` reads `ClockAdvanceReq` via `read_unaligned` (clock:234)
 
 ```rust
 let req = unsafe { std::ptr::read_unaligned(payload_bytes.as_ptr() as *const ClockAdvanceReq) };
@@ -275,7 +275,7 @@ defensive length assertion immediately before the cast.
 
 #### M-3: `Bql::lock()` returns `BqlGuard` that double-unlocks if combined with `mem::forget`
 
-In `zenoh_clock_cpu_halt_cb`:
+In `clock_cpu_halt_cb`:
 ```rust
 let _bql = virtmcu_qom::sync::Bql::lock();
 std::mem::forget(_bql);  // intentional: keep BQL locked
@@ -308,15 +308,15 @@ include floating-point percentages and counters, can exceed this easily with man
 
 | Risk | Where | Missing Test |
 |---|---|---|
-| Stall error code propagation | zenoh-clock | No test for `STALL` response reaching Python caller |
-| Clock sync handshake | zenoh-clock | No unit test for `quantum_done` → `quantum_ready` state machine |
-| `OrderedPacket` min-heap semantics | zenoh-chardev/netdev | No Rust unit tests; Python tests cover encoding, not Rust heap |
-| Poison recovery on mutex | zenoh-chardev | No test for behavior after a panic inside `rx_timer_cb` |
+| Stall error code propagation | clock | No test for `STALL` response reaching Python caller |
+| Clock sync handshake | clock | No unit test for `quantum_done` → `quantum_ready` state machine |
+| `OrderedPacket` min-heap semantics | chardev/netdev | No Rust unit tests; Python tests cover encoding, not Rust heap |
+| Poison recovery on mutex | chardev | No test for behavior after a panic inside `rx_timer_cb` |
 | Concurrent clock + chardev RX | integration | ABBA deadlock (C-4) has no regression test |
-| Bounded vs unbounded channel overflow | zenoh-chardev | No test for drop-on-overflow with counter |
-| Legacy short-payload path | zenoh-chardev | No test asserting discard behavior |
-| Multi-instance `GLOBAL_CLOCK` | zenoh-clock | No test; would require two `-device zenoh-clock` |
-| Router disconnect recovery | virtmcu-zenoh | No test for behavior when router dies mid-sim |
+| Bounded vs unbounded channel overflow | chardev | No test for drop-on-overflow with counter |
+| Legacy short-payload path | chardev | No test asserting discard behavior |
+| Multi-instance `GLOBAL_CLOCK` | clock | No test; would require two `-device clock` |
+| Router disconnect recovery | transport-zenoh | No test for behavior when router dies mid-sim |
 | Frame size = 0 in ZenohFrameHeader | virtmcu-api | Tested in Python but not Rust |
 | `ClockReadyResp.error_code = STALL` | virtmcu-api | Python unpack tested; Rust struct not |
 | BQL held/not-held assertion | virtmcu-qom | `debug_assert!` only; no release-mode coverage |
@@ -337,7 +337,7 @@ any of the core crates. The pure-logic parts can reach ~60–70%:
 - Wire format encoding/decoding
 - Topic string construction
 
-**Rust integration tests** (with QEMU): ~40–50% of `zenoh-clock` and `zenoh-chardev` is
+**Rust integration tests** (with QEMU): ~40–50% of `clock` and `chardev` is
 reachable via the existing shell-based integration tests. The remaining 50% requires mocking
 QEMU FFI (`virtmcu_bql_lock`, `qemu_clock_get_ns`, etc.) — feasible with `#[cfg(test)]` stub
 modules.
@@ -351,11 +351,11 @@ integration).
 
 ### Tier 1 — Fix before next SoC peripheral (prevents cascading bugs)
 
-1. **Replace `abort()` with stall error code** in `zenoh_clock_quantum_wait_internal`
+1. **Replace `abort()` with stall error code** in `clock_quantum_wait_internal`
 2. **Replace all `unwrap()` on Mutex::lock()** with poison-recovery
 3. **Add `Arc<AtomicBool>` shutdown flag** to heartbeat thread
 4. **Store queryable in struct** instead of `mem::forget`; drop on finalize
-5. **Remove legacy short-payload path** in zenoh-chardev subscriber; replace with logged discard
+5. **Remove legacy short-payload path** in chardev subscriber; replace with logged discard
 6. **Add Rust unit tests** for `OrderedPacket` ordering, wire format, topic naming
 
 ### Tier 2 — Structural safety (next sprint)

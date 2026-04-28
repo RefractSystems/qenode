@@ -1,0 +1,19 @@
+[package]
+name = "ieee802154"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+[lints] 
+workspace = true 
+[dependencies]
+virtmcu-qom.workspace = true
+transport-unix.workspace = true
+virtmcu-api.workspace = true
+transport-zenoh.workspace = true
+byteorder.workspace = true
+[package.metadata.cargo-machete]
+ignored = ["zenoh", "transport-zenoh", "transport-unix", "serde", "serde_json", "tracing", "virtmcu-qom"]

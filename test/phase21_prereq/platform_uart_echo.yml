@@ -20,3 +20,6 @@ peripherals:
     address: 0x09001000
     properties:
       chardev: chr_echo
+
+topology:
+  links: []

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test/phase18/bql_deadlock_test.sh — Phase 18 deadlock test for zenoh-clock
+# test/phase18/bql_deadlock_test.sh — Phase 18 deadlock test for clock
 set -euo pipefail
 
 echo "=============================================================================="
@@ -53,7 +53,7 @@ wait_for_queryable() {
     deadline=$(( $(date +%s) + 30 ))
     echo "Waiting for $topic to become queryable..."
     while (( $(date +%s) < deadline )); do
-        if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+        if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$topic', payload=vproto.ClockAdvanceReq(0, 0, 0).pack(), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
             echo "$topic is queryable!"
             return 0
         fi
@@ -73,7 +73,7 @@ QMP_SOCK="$TMPDIR_LOCAL/qmp.sock"
 
 # Run: QEMU in slaved-suspend mode, with QMP
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT \
+    -device virtmcu-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none -qmp "unix:$QMP_SOCK,server,nowait" > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 

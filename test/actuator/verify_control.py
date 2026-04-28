@@ -64,8 +64,8 @@ def main():
         "none",
         "-serial",
         "stdio",
-        # Use zenoh-clock in standalone mode (no TimeAuthority) so QEMU runs at full speed
-        # Actually, if we don't provide -device zenoh-clock, it runs standalone.
+        # Use clock in standalone mode (no TimeAuthority) so QEMU runs at full speed
+        # Actually, if we don't provide -device virtmcu-clock, it runs standalone.
     ]
 
     print(f"[Test] Running: {' '.join(map(str, cmd))}")

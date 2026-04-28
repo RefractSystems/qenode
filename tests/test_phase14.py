@@ -19,8 +19,8 @@ def test_phase14_parsing(tmp_path):
     )
 
     cli_content = cli_out.read_text()
-    assert "zenoh-802154,node=0" in cli_content
-    assert "zenoh,id=hci0,node=0,topic=sim/rf/hci/0" in cli_content
+    assert "ieee802154,node=0" in cli_content
+    assert "virtmcu,id=hci0,node=0,topic=sim/rf/hci/0" in cli_content
 
     dtc_output = subprocess.check_output(["dtc", "-I", "dtb", "-O", "dts", str(dtb_out)], text=True)
     assert "radio0 {" in dtc_output

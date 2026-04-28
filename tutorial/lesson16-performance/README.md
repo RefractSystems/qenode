@@ -180,7 +180,7 @@ bash src/jitter_test.sh
 **Goal**: observe the MIPS overhead of adding a second slaved peripheral.
 
 1. Run the baseline benchmark: `python3 src/bench.py`
-2. Modify `src/bench.py` to add `-device zenoh-telemetry,node=0,router=<router>` to the QEMU command for `slaved-icount` mode (note: ensure `zenoh-telemetry` is available in your build).
+2. Modify `src/bench.py` to add `-device telemetry,node=0,router=<router>` to the QEMU command for `slaved-icount` mode (note: ensure `telemetry` is available in your build).
 3. Re-run and compare MIPS. You should see a 1–5% overhead from the telemetry IRQ hook.
 
 **Questions to consider**:

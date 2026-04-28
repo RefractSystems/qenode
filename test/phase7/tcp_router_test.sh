@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test/phase7/tcp_router_test.sh — Explicit TCP router connectivity test.
 #
-# Verifies that the router= property on the zenoh-clock device causes QEMU to
+# Verifies that the router= property on the clock device causes QEMU to
 # connect via TCP rather than falling back to multicast peer discovery.
 #
 # This test is the key guard against multi-container deployment failures: in
@@ -11,7 +11,7 @@
 # Approach:
 #   1. Start a Zenoh listener on tcp/127.0.0.1:7448 with multicast disabled.
 #   2. Start QEMU with router=tcp/127.0.0.1:7448 (also multicast disabled via
-#      the router= code path in zenoh-clock.c).
+#      the router= code path in clock.c).
 #   3. Run a full clock-advance handshake through the TCP connection.
 #   4. Verify the reply contains a monotonically increasing vtime.
 #
@@ -26,7 +26,7 @@ echo "==========================================================================
 cat << 'TEST_DOC_BLOCK'
 test/phase7/tcp_router_test.sh — Explicit TCP router connectivity test.
 
-Verifies that the router= property on the zenoh-clock device causes QEMU to
+Verifies that the router= property on the clock device causes QEMU to
 connect via TCP rather than falling back to multicast peer discovery.
 
 This test is the key guard against multi-container deployment failures: in
@@ -36,7 +36,7 @@ between containers, so the router= TCP path is the ONLY reliable route.
 Approach:
   1. Start a Zenoh listener on tcp/127.0.0.1:7448 with multicast disabled.
   2. Start QEMU with router=tcp/127.0.0.1:7448 (also multicast disabled via
-     the router= code path in zenoh-clock.c).
+     the router= code path in clock.c).
   3. Run a full clock-advance handshake through the TCP connection.
   4. Verify the reply contains a monotonically increasing vtime.
 
@@ -147,7 +147,7 @@ TIMEOUT_S   = 15.0
 
 
 def pack_req(delta_ns: int) -> bytes:
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=0)
     return req.pack()
 
 
@@ -208,7 +208,7 @@ timeout 5 bash -c 'until ss -tln | grep -q ":${ROUTER_PORT} "; do sleep 0.1; don
 "$WORKSPACE_DIR/scripts/run.sh" \
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -device "zenoh-clock,mode=suspend,router=tcp/127.0.0.1:$ROUTER_PORT,node=0" \
+    -device "virtmcu-clock,mode=slaved-suspend,router=tcp/127.0.0.1:$ROUTER_PORT,node=0" \
     -nographic \
     -monitor none \
     > "$TMPDIR_LOCAL/qemu_tcp.log" 2>&1 &

@@ -11,7 +11,7 @@ python3 -m tools.yaml2qemu test/phase14/board.yaml --out-dtb test/phase14/test.d
 
 # 2. Verify CLI arguments
 echo "Verifying CLI arguments..."
-grep -q "zenoh-802154,node=0" test/phase14/test.cli
+grep -q "ieee802154,node=0" test/phase14/test.cli
 grep -q "zenoh,id=hci0,node=0,topic=sim/rf/hci/0" test/phase14/test.cli
 echo "✓ CLI arguments correct."
 

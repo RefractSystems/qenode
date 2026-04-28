@@ -1,6 +1,6 @@
 # Lesson 7 — Zenoh Clock: Deterministic Co-simulation Time Synchronization
 
-This lesson explains the `zenoh-clock` QOM device (`hw/rust/zenoh-clock`), which
+This lesson explains the `virtmcu-clock` QOM device (`hw/rust/clock`), which
 makes QEMU run as a **time slave** to an external physics simulation (MuJoCo/FirmwareStudio).
 
 ---
@@ -15,7 +15,7 @@ the MuJoCo container) is the time master.  QEMU must:
 2. **Advance by exactly** the number of nanoseconds the physics step computed.
 3. **Block** at the end of each quantum until the next step arrives.
 
-The `zenoh-clock` plugin implements this contract without any Python in the simulation
+The `virtmcu-clock` plugin implements this contract without any Python in the simulation
 loop.  It links `zenoh-c` directly into QEMU and hooks into the TCG execution loop.
 
 ---
@@ -26,7 +26,7 @@ loop.  It links `zenoh-c` directly into QEMU and hooks into the TCG execution lo
 TimeAuthority (Python, MuJoCo container)
       │  Zenoh: sim/clock/advance/0  (query with delta_ns payload)
       ▼
-hw/rust/zenoh-clock  ──  on_query()
+hw/rust/clock  ──  on_query()
       │  wakes vCPU, waits for quantum completion
       ▼
 zclock_quantum_hook()  (called at every TCG translation-block boundary)
@@ -42,7 +42,7 @@ TimeAuthority receives reply: current_vtime_ns
 ### suspend mode (default)
 
 ```
--device zenoh-clock,mode=suspend,node=0
+-device virtmcu-clock,mode=suspend,node=0
 ```
 
 TCG runs at **full host speed** between quanta. At each TB boundary the hook
@@ -62,7 +62,7 @@ It gives ~95% of unconstrained TCG speed.
 
 ```
 -icount shift=0,align=off,sleep=off
--device zenoh-clock,mode=icount,node=0
+-device virtmcu-clock,mode=icount,node=0
 ```
 
 QEMU's instruction counter drives virtual time. `on_query` performs the exact same handshake as suspend mode to guarantee strict causal consistency. The `qemu_icount_bias` is advanced in Step 8 of the hook (after the handshake), not directly in `on_query`. The TimeAuthority waits for the hook to complete the quantum before receiving a reply. Use this when firmware timestamps need sub-quantum precision.
@@ -85,20 +85,22 @@ not acquire BQL in the suspend path.
 
 ## Wire Protocol
 
-### Query payload (`ClockAdvancePayload`, 16 bytes, little-endian)
+### Query payload (`ClockAdvancePayload`, 24 bytes, little-endian)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 8 | `delta_ns` | Nanoseconds to advance virtual time |
 | 8 | 8 | `mujoco_time_ns` | MuJoCo wall time (informational) |
+| 16 | 8 | `quantum_number` | Monotonically increasing quantum ID |
 
-### Reply payload (`ClockReadyPayload`, 16 bytes, little-endian)
+### Reply payload (`ClockReadyPayload`, 24 bytes, little-endian)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 8 | `current_vtime_ns` | Virtual clock value after the quantum |
 | 8 | 4 | `n_frames` | Reserved, always 0 |
 | 12 | 4 | `error_code` | 0=OK, 1=STALL, 2=ZENOH_ERROR |
+| 16 | 8 | `quantum_number` | Echoed quantum ID for verification |
 
 ---
 
@@ -106,7 +108,7 @@ not acquire BQL in the suspend path.
 
 ### Prerequisites
 
-- QEMU built with the zenoh-clock module (see `scripts/setup-qemu.sh`).
+- QEMU built with the clock module (see `scripts/setup-qemu.sh`).
 - `zenoh-c` library in `third_party/zenoh-c/`.
 - `eclipse-zenoh` Python package (`uv sync` or `uv pip install eclipse-zenoh`).
 - `arm-none-eabi-gcc` and `dtc` on PATH.
@@ -136,7 +138,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
 scripts/run.sh \
     --dtb test/phase1/minimal.dtb \
     -kernel /tmp/spin.elf \
-    -device zenoh-clock,mode=suspend,node=0 \
+    -device virtmcu-clock,mode=suspend,node=0 \
     -nographic -monitor none &
 
 # Send a clock-advance query from Python
@@ -144,9 +146,9 @@ python3 - <<'PY'
 import zenoh, struct, time
 s = zenoh.open(zenoh.Config())
 time.sleep(1)  # wait for QEMU to register queryable
-payload = struct.pack("<QQ", 5_000_000, 0)  # advance 5 ms
+payload = struct.pack("<QQQ", 5_000_000, 0, 0)  # advance 5 ms, q=0
 for reply in s.get("sim/clock/advance/0", payload=payload, timeout=5.0):
-    vtime_ns, _, err = struct.unpack("<QII", reply.ok.payload.to_bytes())
+    vtime_ns, _, err, q = struct.unpack("<QIIQ", reply.ok.payload.to_bytes())
     if err == 0:
         print(f"Virtual time after quantum: {vtime_ns} ns")
     else:
@@ -205,7 +207,7 @@ vCPU starts ──► hook() [needs_quantum=true]
 
 ## Relationship to FirmwareStudio
 
-`zenoh-clock` is the QEMU-side half of the FirmwareStudio time synchronization
+`clock` is the QEMU-side half of the FirmwareStudio time synchronization
 protocol.  The other half is the `TimeAuthority` in `cyber/src/time_authority.py`
 (MuJoCo container).  Together they guarantee that firmware never runs ahead of the
 physics simulation, giving causally consistent sensor readings and actuator responses.

@@ -12,6 +12,8 @@ pub enum Protocol {
     CanFd,
     FlexRay,
     Lin,
+    Rf802154,
+    RfHci,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +87,21 @@ pub struct TopologyGraph {
     node_positions: HashMap<String, [f64; 3]>,
     max_wireless_range_m: f64,
     pub is_explicit: bool,
+    pub max_messages_per_node_per_quantum: usize,
+}
+
+impl Default for TopologyGraph {
+    fn default() -> Self {
+        TopologyGraph {
+            global_seed: None,
+            wire_links: Vec::new(),
+            wireless_medium: None,
+            node_positions: HashMap::new(),
+            max_wireless_range_m: 0.0,
+            is_explicit: false,
+            max_messages_per_node_per_quantum: 1024,
+        }
+    }
 }
 
 impl TopologyGraph {
@@ -110,21 +127,11 @@ impl TopologyGraph {
                 node_positions: positions,
                 max_wireless_range_m: max_range,
                 is_explicit: true,
+                max_messages_per_node_per_quantum: 1024,
             })
         } else {
             // Default allow-all topology if no topology section is defined
             Ok(TopologyGraph::default())
-        }
-    }
-
-    pub fn default() -> Self {
-        TopologyGraph {
-            global_seed: None,
-            wire_links: Vec::new(),
-            wireless_medium: None,
-            node_positions: HashMap::new(),
-            max_wireless_range_m: 0.0,
-            is_explicit: false,
         }
     }
 
@@ -221,6 +228,7 @@ topology:
             node_positions: HashMap::new(),
             max_wireless_range_m: 0.0,
             is_explicit: true,
+            max_messages_per_node_per_quantum: 1024,
         };
 
         assert!(tg.is_link_allowed("0", "1", &Protocol::Uart));
@@ -245,13 +253,14 @@ topology:
             global_seed: None,
             wire_links: vec![],
             wireless_medium: Some(WirelessMedium {
-                medium: "802154".to_string(),
+                medium: "ieee802154".to_string(),
                 nodes: vec![],
                 max_range_m: 10.0,
             }),
             node_positions: HashMap::new(),
             max_wireless_range_m: 10.0,
             is_explicit: true,
+            max_messages_per_node_per_quantum: 1024,
         };
 
         tg.update_positions(vec![

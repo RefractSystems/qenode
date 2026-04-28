@@ -126,9 +126,9 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
+        f"virtmcu-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
-        f"zenoh-flexray.topic={topic}",
+        f"flexray.topic={topic}",
     ]
 
     # Subscribe to FlexRay TX topic BEFORE launching QEMU to ensure deterministic matching
@@ -195,9 +195,9 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
+        f"virtmcu-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
-        f"zenoh-flexray.topic={topic}",
+        f"flexray.topic={topic}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
@@ -275,9 +275,9 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={zenoh_router}",
+        f"virtmcu-clock,mode=slaved-icount,node=0,router={zenoh_router}",
         "-global",
-        f"zenoh-flexray.topic={topic}",
+        f"flexray.topic={topic}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)

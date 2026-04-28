@@ -30,9 +30,9 @@ requires three things that stock QEMU does not provide:
    only when the physics engine grants a time quantum, so that firmware never runs ahead
    of or behind the simulated physical world.
 
-virtmcu addresses all three at the QEMU layer, using native C/Rust QOM modules and Zenoh
-as the inter-node message bus. No Python daemons in the simulation loop; no approximations
-in inter-node timing.
+virtmcu addresses all three at the QEMU layer, using native C/Rust QOM modules and an
+abstract message bus (Zenoh or Unix Domain Sockets). No Python daemons in the
+simulation loop; no approximations in inter-node timing.
 
 ---
 
@@ -41,8 +41,8 @@ in inter-node timing.
 **QEMU 11.0.0**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
 ARM and RISC-V hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
 as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
-no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/rust/`) links
-the official `zenoh` Rust crate directly into QEMU: it hooks the TCG execution loop at translation-block
+no recompilation of the emulator. A native **VirtMCU QOM plugin** (`hw/rust/`) links
+the `DataTransport` abstraction directly into QEMU: it hooks the TCG execution loop at translation-block
 boundaries to implement cooperative suspend/resume, acts as a deterministic Ethernet and
 UART backend for multi-node communication, and synchronizes virtual time with the external
 physics engine. A **Sensor/Actuator Abstraction Layer (SAL/AAL)** translates raw MMIO
@@ -64,17 +64,17 @@ See [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md) for the full te
   `-device` — no QEMU recompilation required. Discovered automatically via QEMU's module
   system (`--enable-modules`).
 
-- **Deterministic Multi-Node Networking**: `hw/rust/zenoh-netdev` delivers Ethernet
+- **Deterministic Multi-Node Networking**: `hw/rust/comms/netdev` delivers Ethernet
   frames between QEMU instances with embedded virtual timestamps. Frames are buffered and
   injected into the guest NIC only when virtual time reaches the stamped arrival time.
-  No UDP multicast jitter.
+  No UDP multicast jitter. Supports Zenoh and Unix Domain Sockets.
 
-- **Deterministic Multi-Node UART**: `hw/rust/zenoh-chardev` extends the same
+- **Deterministic Multi-Node UART**: `hw/rust/comms/chardev` extends the same
   virtual-timestamp model to serial ports, enabling multi-node UART communication and
   human-in-the-loop interactivity with correct virtual ordering.
 
-- **Cooperative Time Slaving**: `hw/rust/zenoh-clock` blocks QEMU's TCG loop at each
-  quantum boundary, waiting for a Zenoh `GET` reply from the external TimeAuthority.
+- **Cooperative Time Slaving**: `hw/rust/backbone/clock` blocks QEMU's TCG loop at each
+  quantum boundary, waiting for a reply from the external TimeAuthority.
   Two modes: `slaved-suspend` (full TCG speed, ~95% throughput — default) and
   `slaved-icount` (exact nanosecond virtual time — for firmware measuring sub-quantum
   intervals such as PWM or µs-precision DMA).
@@ -110,17 +110,18 @@ virtmcu/
 ├── hw/                         # Rust QOM peripheral models (no Python in sim loop)
 │   ├── remote-port/            # AMD/Xilinx Remote Port QOM bridge for SystemC/Verilator
 │   ├── rust/                   # All native Rust plugins and bridges
-│   │   ├── rust-dummy/         # Minimal Rust QOM SysBusDevice — start here
-│   │   ├── zenoh-clock/        # TCG cooperative halt + Zenoh clock sync
-│   │   ├── zenoh-netdev/       # Deterministic multi-node Ethernet backend
-│   │   └── zenoh-chardev/      # Deterministic multi-node UART backend
+│   │   ├── backbone/           # Clock, MMIO bridge, Transport abstractions
+│   │   ├── comms/              # Netdev, CAN, SPI, UART (chardev), ieee802154, wifi
+│   │   ├── observability/      # Actuator, Telemetry, UI
+│   │   ├── mcu/                # MCU-specific peripherals (S32K144, etc.)
+│   │   └── common/             # Shared APIs (virtmcu-api, virtmcu-qom)
 │   └── meson.build             # Integrates hw/ into QEMU's module build
 │
 ├── tools/                      # Assorted offline utilities and debugging helpers
 │   ├── yaml2qemu.py            # .yaml → Device Tree + QEMU CLI transpiler
 │   ├── cyber_bridge/           # C++ SAL/AAL telemetry and MuJoCo shm synchronization
 │   ├── debug/                  # Python GDB helpers for interactive debugging
-│   └── zenoh_coordinator/      # Rust daemon for strictly ordering multi-node frames
+│   └── deterministic_coordinator/ # Rust daemon for strictly ordering multi-node frames
 │
 ├── tests/                      # pytest / Robot test suites
 │   ├── conftest.py             # pytest fixtures for Zenoh and QEMU orchestration
@@ -157,7 +158,7 @@ covers the timing design and BQL constraints. Section 6 covers prior art (qbox, 
 
 **For a deep dive on clock modes and BQL mechanics**: [`docs/design/TIME_MANAGEMENT_DESIGN.md`](docs/design/TIME_MANAGEMENT_DESIGN.md).
 
-**Write a new peripheral**: Navigate to `hw/rust/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
+**Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
 ./scripts/run.sh --dtb test/phase1/minimal.dtb -device your-device-name -nographic
@@ -173,11 +174,11 @@ source .venv/bin/activate
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
 ./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
-    -device zenoh-clock,node=0,router=tcp/localhost:7447
+    -device clock,node=0,transport=zenoh,router=tcp/localhost:7447
 
 # slaved-icount (exact ns — only for sub-quantum hardware timer firmware)
 ./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
-    -device zenoh-clock,node=0,router=tcp/localhost:7447,mode=icount \
+    -device clock,node=0,transport=zenoh,router=tcp/localhost:7447,mode=icount \
     -icount shift=0,align=off,sleep=off
 ```
 
@@ -225,8 +226,8 @@ The core framework development is complete. All architectural pillars and capabi
 
 - [x] Dynamic ARM and RISC-V machine generation from `.repl` and `.yaml` files.
 - [x] Dynamic QOM plugin infrastructure for C and Rust peripherals.
-- [x] Native Zenoh clock plugin (`slaved-suspend` and `slaved-icount` modes) for physics engine synchronization.
-- [x] Deterministic multi-node Ethernet and UART communication via Zenoh.
+- [x] Native clock plugin (`slaved-suspend` and `slaved-icount` modes) for physics engine synchronization.
+- [x] Deterministic multi-node Ethernet and UART communication via an abstract transport (Zenoh or Unix sockets).
 - [x] Sensor/Actuator Abstraction Layers (SAL/AAL) for MuJoCo and OpenUSD integration.
 - [x] Full TLM-2.0 co-simulation via AMD/Xilinx Remote Port and SystemC.
 - [x] Automated test suite using pytest, QMP, and Robot Framework keywords.
@@ -237,11 +238,12 @@ The core framework development is complete. All architectural pillars and capabi
 
 - **No Python in the simulation loop.** All peripherals, clock sync, and networking are
   native C/Rust QOM modules. Python is offline-only (repl2qemu, pytest). See ADR-003.
-- **Zenoh as the federation bus.** A single message bus handles clock quanta, Ethernet
-  frames, UART bytes, and sensor data. Language-agnostic, works across containers.
+- **Abstract federation bus.** A pluggable transport layer (`DataTransport`) handles clock quanta, Ethernet
+  frames, UART bytes, and sensor data. Default implementations for Zenoh and Unix Domain Sockets.
 - **Three clock modes.** `standalone` (free-run, full speed), `slaved-suspend` (~95%
   throughput — recommended default for FirmwareStudio), `slaved-icount` (exact nanosecond
-  virtual time — for sub-quantum hardware timers). Implemented in `hw/rust/zenoh-clock`.
+  virtual time — for firmware measuring sub-quantum hardware timers). Implemented in `hw/rust/backbone/clock`.
+
 - **Meson integration, not LD_PRELOAD.** `hw/` is symlinked into QEMU's source tree so
   devices compile as proper QEMU modules with auto-discovery. `-device foo` just works.
 - **arm-generic-fdt is not upstream.** 33-patch patchew series on QEMU 11.0.0.
@@ -254,7 +256,7 @@ The core framework development is complete. All architectural pillars and capabi
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<phase>-<short-desc>`.
-Commit style: `scope: imperative description` (e.g., `hw/rust/zenoh-chardev: add buffering`).
+Commit style: `scope: imperative description` (e.g., `hw/rust/chardev: add buffering`).
 
 ---
 

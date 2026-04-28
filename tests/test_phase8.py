@@ -1,10 +1,10 @@
 import asyncio
 import os
-import struct
 import uuid
 from pathlib import Path
 
 import pytest
+import vproto
 
 
 class ZenohUartMonitor:
@@ -26,8 +26,8 @@ class ZenohUartMonitor:
 
         def on_sample(sample):
             payload = sample.payload.to_bytes()
-            if len(payload) > 12:
-                text = payload[12:].decode("utf-8", errors="replace")
+            if len(payload) > 20:
+                text = payload[vproto.SIZE_ZENOH_FRAME_HEADER:].decode("utf-8", errors="replace")
                 loop.call_soon_threadsafe(self.queue.put_nowait, text)
 
         self.sub = await asyncio.to_thread(lambda: self.session.declare_subscriber(self.topic, on_sample))
@@ -70,6 +70,7 @@ async def test_phase8_interactive_echo(qemu_launcher, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 2, "pdes": True}], indirect=True)
 async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, zenoh_session, tmp_path):  # noqa: ARG001
     """
     Phase 8: Multi-node UART over Zenoh.
@@ -91,9 +92,9 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=true",
         "-chardev",
-        f"zenoh,id=chr0,node=0,router={zenoh_router},topic={topic0}",
+        f"virtmcu,id=chr0,node=0,router={zenoh_router},topic={topic0}",
         "-serial",
         "chardev:chr0",
     ]
@@ -104,9 +105,9 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=1,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=1,mode=slaved-icount,router={zenoh_router},coordinated=true",
         "-chardev",
-        f"zenoh,id=chr0,node=1,router={zenoh_router},topic={topic1}",
+        f"virtmcu,id=chr0,node=1,router={zenoh_router},topic={topic1}",
         "-serial",
         "chardev:chr0",
     ]
@@ -157,7 +158,7 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
 
         await vta.step(5_000_000)
         vtime = vta.current_vtimes[0]
-        header_bytes = struct.pack("<QQI", vtime + 1_000_000, 0, len(msg_byte))
+        header_bytes = vproto.ZenohFrameHeader(vtime + 1_000_000, 0, len(msg_byte)).pack()
 
         def _do_put(h=header_bytes, m=msg_byte):
             zenoh_session.put(monitor0.rx_topic, h + m)
@@ -171,7 +172,7 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
             if msg_byte.decode() in monitor0.buffer and msg_byte.decode() in monitor1_rx.buffer:
                 break
         else:
-            pytest.fail(f"Echo failed for {msg_byte.decode()}")
+            pytest.fail(f"Echo failed for {msg_byte.decode()} | mon0: {monitor0.buffer!r} | mon1_rx: {monitor1_rx.buffer!r}")
 
         monitor0.buffer = monitor0.buffer.replace(msg_byte.decode(), "", 1)
         monitor1_rx.buffer = monitor1_rx.buffer.replace(msg_byte.decode(), "", 1)
@@ -183,6 +184,7 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 1, "pdes": True}], indirect=True)
 async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_session, qemu_launcher, tmp_path):  # noqa: ARG001
     """
     Phase 8: Test Zenoh coordinator topology control (Packet Drop).
@@ -202,9 +204,9 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=true",
         "-chardev",
-        f"zenoh,id=chr0,node=0,router={zenoh_router},topic={topic}",
+        f"virtmcu,id=chr0,node=0,router={zenoh_router},topic={topic}",
         "-serial",
         "chardev:chr0",
     ]
@@ -217,7 +219,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     dummy_topic = f"{topic}/1/tx"
 
     def _reg():
-        zenoh_session.put(dummy_topic, struct.pack("<QQI", 0, 0, 1) + b"H")
+        zenoh_session.put(dummy_topic, vproto.ZenohFrameHeader(0, 0, 1).pack() + b"H")
 
     await asyncio.to_thread(_reg)
 
@@ -255,14 +257,14 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
 
     def on_node1_rx(sample):
         payload = sample.payload.to_bytes()
-        if len(payload) > 12:
-            received_msgs.append(payload[12:])
+        if len(payload) > 20:
+            received_msgs.append(payload[vproto.SIZE_ZENOH_FRAME_HEADER:])
 
     sub1_rx = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(f"{topic}/1/rx", on_node1_rx))
 
     # 5. Inject P1 (X) to Node 0, it should NOT reach Node 1 RX
     msg = b"X"
-    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(msg))
+    header = vproto.ZenohFrameHeader(vta.current_vtimes[0] + 1_000_000, 0, len(msg)).pack()
     await asyncio.to_thread(lambda: zenoh_session.put(monitor.rx_topic, header + msg))
 
     for _ in range(50):
@@ -281,7 +283,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     await vta.step(1_000_000)
 
     msg = b"Y"
-    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(msg))
+    header = vproto.ZenohFrameHeader(vta.current_vtimes[0] + 1_000_000, 0, len(msg)).pack()
     await asyncio.to_thread(lambda: zenoh_session.put(monitor.rx_topic, header + msg))
 
     for _ in range(50):
@@ -304,7 +306,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
 async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path):
     """
     Phase 8: UART Stress test using slaved-icount and large bursts.
-    Verifies that the zenoh-chardev flow control fix works.
+    Verifies that the chardev flow control fix works.
     """
     workspace_root = Path(__file__).parent.parent
     kernel = workspace_root / "test/phase8/echo.elf"
@@ -320,9 +322,9 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=false",
         "-chardev",
-        f"zenoh,id=uart0,node=0,router={zenoh_router},topic={topic}",
+        f"virtmcu,id=uart0,node=0,router={zenoh_router},topic={topic}",
         "-serial",
         "chardev:uart0",
     ]
@@ -353,9 +355,9 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
         pytest.fail("Stress test boot timeout")
 
     # Blast a 128-byte burst (Exceeds PL011 32-byte FIFO)
-    # This verifies the flow control and backlog implementation in zenoh-chardev
+    # This verifies the flow control and backlog implementation in chardev
     burst_data = b"BURST_TEST_" * 12 + b"END"  # ~135 bytes
-    header = struct.pack("<QQI", vta.current_vtimes[0] + 1_000_000, 0, len(burst_data))
+    header = vproto.ZenohFrameHeader(vta.current_vtimes[0] + 1_000_000, 0, len(burst_data)).pack()
 
     def _do_burst():
         zenoh_session.put(f"{topic}/0/rx", header + burst_data)

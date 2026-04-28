@@ -2,7 +2,7 @@
 Zenoh mock router for TCP connectivity testing.
 
 Listens on tcp/127.0.0.1:7447 with multicast scouting disabled.  QEMU must
-connect via `-device zenoh-clock,router=tcp/127.0.0.1:7447,...`.  Once QEMU
+connect via `-device virtmcu-clock,router=tcp/127.0.0.1:7447,...`.  Once QEMU
 registers the sim/clock/advance/0 queryable, the mock completes one full
 clock-advance handshake and exits 0.
 
@@ -28,7 +28,7 @@ TIMEOUT_S = 15.0
 
 
 def pack_req(delta_ns: int) -> bytes:
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=0)
     return req.pack()
 
 

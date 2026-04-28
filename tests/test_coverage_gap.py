@@ -341,13 +341,13 @@ peripherals:
         assert f.read() == "arm"
 
 
-def test_yaml2qemu_zenoh_chardev_filtering(tmp_path):
+def test_yaml2qemu_chardev_filtering(tmp_path):
     yaml_content = """
 machine:
   cpus: []
 peripherals:
   - name: serial0
-    type: zenoh-chardev
+    type: chardev
     address: none
     properties:
       node: "1"
@@ -370,6 +370,6 @@ peripherals:
     with Path(cli_file).open() as f:
         content = f.read()
         assert "-chardev" in content
-        assert "zenoh,id=chr_serial0,node=1" in content
+        assert "virtmcu,id=chr_serial0,node=1" in content
         assert "-serial" in content
         assert "chardev:chr_serial0" in content

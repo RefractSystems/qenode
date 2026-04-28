@@ -24,7 +24,7 @@ MuJoCo / RESD replay
         │  shared memory (mjData) or file I/O
         ▼
 tools/cyber_bridge/
-    mujoco_bridge  ─── Zenoh sim/clock/advance/{id}  ──► hw/rust/zenoh-clock
+    mujoco_bridge  ─── Zenoh sim/clock/advance/{id}  ──► hw/rust/clock
     resd_replay                                            (TimeAuthority role)
         │  Zenoh sim/sensor/{id}/{name}
         ▼
@@ -37,8 +37,8 @@ firmware MMIO write
 ## Phase 7.7 → Phase 10 Timing Link
 
 Task 7.7 added `VirtmcuQuantumTiming` to `include/virtmcu/hooks.h` and wired it
-into `zenoh-clock.c`. The `ClockAdvancePayload.mujoco_time_ns` field carries the
-physics-engine simulation time to QEMU, where `zenoh-clock` stores it in
+into `clock.c`. The `ClockAdvancePayload.mujoco_time_ns` field carries the
+physics-engine simulation time to QEMU, where `virtmcu-clock` stores it in
 `s->mujoco_time_ns`. QEMU-internal SAL models can then call:
 
 ```c
@@ -60,7 +60,7 @@ For deterministic CI/CD regression testing without a physics engine:
 ```bash
 # Terminal 1: QEMU in suspend mode
 scripts/run.sh --dtb board.dtb -kernel firmware.elf \
-    -device zenoh-clock,mode=suspend,node=0 -nographic -monitor none
+    -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
 # Terminal 2: Play the RESD trace (acts as TimeAuthority)
 tools/cyber_bridge/build/resd_replay test_trace.resd 0
@@ -78,7 +78,7 @@ For closed-loop control validation with real physics:
 ```bash
 # Terminal 1: QEMU in suspend mode
 scripts/run.sh --dtb board.dtb -kernel firmware.elf \
-    -device zenoh-clock,mode=suspend,node=0 -nographic -monitor none
+    -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
 # Terminal 2: MuJoCo bridge (node_id=0, nu=2 actuators, nsensordata=6, 1ms quanta)
 tools/cyber_bridge/build/mujoco_bridge 0 2 6 1000000
@@ -231,7 +231,7 @@ Expected output:
 - The SAL peripheral on the QEMU side must subscribe to the same topic.
 
 **`mujoco_bridge` exits with "Timeout waiting for QEMU"**
-- Verify QEMU started with `-device zenoh-clock,mode=suspend,node={same_id}`.
+- Verify QEMU started with `-device virtmcu-clock,mode=suspend,node={same_id}`.
 - Check the Zenoh router is reachable from both processes.
 - Run `zenoh-router` locally: `cargo install zenohd && zenohd`
 

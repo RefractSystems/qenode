@@ -92,7 +92,7 @@ async def main():
             print(f"Start error: {res['error']}")
             break
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(1)  # SLEEP_EXCEPTION: deliberate yielding
 
         print(f"Iteration {i + 1}: Reading PC...")
         await send_json(
@@ -116,7 +116,7 @@ async def main():
         )
         await recv_json()
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: deliberate yielding
 
     proc.terminate()
     await proc.wait()

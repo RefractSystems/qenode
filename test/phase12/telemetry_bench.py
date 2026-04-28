@@ -2,7 +2,7 @@
 """
 telemetry_bench.py — Phase 12.8 Telemetry Throughput Benchmark.
 
-Measures the rate at which zenoh-telemetry can publish telemetry events
+Measures the rate at which telemetry can publish telemetry events
 while firmware is executing a continuous IRQ storm.
 
 Acceptance criteria (PLAN §12.8):
@@ -13,7 +13,7 @@ Acceptance criteria (PLAN §12.8):
 Usage:
     python3 test/phase12/telemetry_bench.py
 
-The script starts QEMU with the IRQ-storm firmware and the zenoh-telemetry
+The script starts QEMU with the IRQ-storm firmware and the telemetry
 plugin enabled, counts incoming Zenoh publications on
 sim/telemetry/trace/0 for MEASUREMENT_WINDOW_S seconds, then checks the
 throughput against the threshold.
@@ -94,7 +94,7 @@ def main() -> None:
 
     sub = session.declare_subscriber("sim/telemetry/trace/0", on_sample)
 
-    # Launch QEMU with zenoh-telemetry enabled.
+    # Launch QEMU with telemetry enabled.
     run_sh = Path(WORKSPACE_DIR) / "scripts" / "run.sh"
     cmd = [
         run_sh,
@@ -108,7 +108,7 @@ def main() -> None:
         "-monitor",
         "none",
         "-device",
-        f"zenoh-telemetry,node=0,router={router_url}",
+        f"telemetry,node=0,router={router_url}",
     ]
 
     qemu_proc = subprocess.Popen(
@@ -131,7 +131,7 @@ def main() -> None:
         router_proc.wait()
         print(
             "ERROR: No telemetry events received within startup timeout — "
-            "is zenoh-telemetry plugin built and QEMU path correct?"
+            "is telemetry plugin built and QEMU path correct?"
         )
         sys.exit(1)
 

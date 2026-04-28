@@ -35,3 +35,6 @@ peripherals:
   # In QEMU, we'll need to define this chardev.
   # yaml2qemu doesn't yet support defining custom chardevs in YAML easily
   # unless we add it to the cli_args.
+
+topology:
+  links: []

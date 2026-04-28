@@ -17,8 +17,8 @@ Multi Node UART Should Echo Across Nodes
     [Documentation]    Verify Node 1 sending UART data reaches Node 2 via Zenoh coordinator.
     
     # 1. Start QEMU instances with Zenoh Chardev configured
-    ${qmp1}    ${uart1}=    Launch Qemu    ${DTB_PATH}    ${FIRMWARE}    extra_args=-S -chardev zenoh,id=chr0,node=node1 -serial chardev:chr0
-    ${qmp2}    ${uart2}=    Launch Qemu    ${DTB_PATH}    ${FIRMWARE}    extra_args=-S -chardev zenoh,id=chr0,node=node2 -serial chardev:chr0
+    ${qmp1}    ${uart1}=    Launch Qemu    ${DTB_PATH}    ${FIRMWARE}    extra_args=-S -chardev virtmcu,id=chr0,node=node1 -serial chardev:chr0
+    ${qmp2}    ${uart2}=    Launch Qemu    ${DTB_PATH}    ${FIRMWARE}    extra_args=-S -chardev virtmcu,id=chr0,node=node2 -serial chardev:chr0
     
     Connect To Emulation    ${qmp1}    ${uart1}
     # TODO: Current QmpBridge is a singleton connected to the last Launch Qemu.

@@ -39,14 +39,22 @@ def main():
     insertion4 = """.name = "node",
             .type = QEMU_OPT_STRING,
         },{
+            .name = "transport",
+            .type = QEMU_OPT_STRING,
+        },{
             .name = "router",
             .type = QEMU_OPT_STRING,
         },{
             .name = "topic",
             .type = QEMU_OPT_STRING,
         },{
+            .name = "max-backlog",
+            .type = QEMU_OPT_SIZE,
+        },{
             """
-    if patch_file(char_c, marker_pattern, insertion4, after=False):
+    # Use a more specific check for the whole block to avoid double patching
+    content = Path(char_c).read_text()
+    if ".name = \"max-backlog\"," not in content and patch_file(char_c, marker_pattern, insertion4, after=False):
         print(f"  patched {char_c}")
 
 

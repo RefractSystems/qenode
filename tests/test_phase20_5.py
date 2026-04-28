@@ -79,7 +79,7 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router, tm
             break
         if b"F" in bridge.uart_buffer.encode():
             pytest.fail(f"Firmware signaled SPI verification FAILURE. UART: {bridge.uart_buffer}")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
     if not success:
         print(f"DEBUG: UART Buffer: {bridge.uart_buffer!r}")

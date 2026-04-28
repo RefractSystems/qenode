@@ -3,11 +3,12 @@ from collections import namedtuple
 from unittest.mock import AsyncMock
 
 import pytest
+import vproto
 from conftest import VirtualTimeAuthority
 
 
-def pack_clock_ready(vtime_ns: int, n_frames: int = 0, error_code: int = 0) -> bytes:
-    return struct.pack("<QII", vtime_ns, n_frames, error_code)
+def pack_clock_ready(vtime_ns: int, n_frames: int = 0, error_code: int = 0, quantum_number: int = 0) -> bytes:
+    return vproto.ClockReadyResp(vtime_ns, n_frames, error_code, quantum_number).pack()
 
 @pytest.mark.asyncio
 async def test_no_overshoot_when_exact():
@@ -47,7 +48,7 @@ async def test_overshoot_subtracted_next_step():
     # Check that _get_reply was called with exactly 10_000_000
     call_args = vta._get_reply.call_args[0]
     payload_sent = call_args[2] # 3rd arg is payload
-    delta_ns, mujoco_ns = struct.unpack("<QQ", payload_sent)
+    delta_ns, mujoco_ns, _qn = struct.unpack("<QQQ", payload_sent)
     assert delta_ns == 10_000_000
     assert mujoco_ns == 10_000_000
 
@@ -59,7 +60,7 @@ async def test_overshoot_subtracted_next_step():
 
     call_args = vta._get_reply.call_args[0]
     payload_sent = call_args[2]
-    delta_ns, mujoco_ns = struct.unpack("<QQ", payload_sent)
+    delta_ns, mujoco_ns, _qn = struct.unpack("<QQQ", payload_sent)
     assert delta_ns == 9_998_000
     assert mujoco_ns == 20_000_000 # 10_000_000 (expected from previous) + 10_000_000
 
@@ -97,13 +98,13 @@ async def test_1000_quantum_drift_under_1_quantum():
 
     async def mock_get_reply(_nid, _topic, payload, _timeout):
         nonlocal actual_sum_of_adjusted_deltas, current_mock_vtime
-        delta_ns, _mujoco_ns = struct.unpack("<QQ", payload)
+        delta_ns, _mujoco_ns, qn = struct.unpack("<QQQ", payload)
         actual_sum_of_adjusted_deltas += delta_ns
 
         # QEMU executes adjusted delta + 100ns overshoot
         current_mock_vtime += delta_ns + 100
 
-        return Reply(ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(current_mock_vtime))))
+        return Reply(ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(current_mock_vtime, quantum_number=qn))))
 
     vta._get_reply = AsyncMock(side_effect=mock_get_reply)
 

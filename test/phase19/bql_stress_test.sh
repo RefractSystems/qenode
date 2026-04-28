@@ -52,7 +52,7 @@ sleep 1
 
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -chardev zenoh,id=uart0,node=0,router=tcp/127.0.0.1:$PORT \
-    -device zenoh-ui,node=0,router=tcp/127.0.0.1:$PORT \
+    -device ui,node=0,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 

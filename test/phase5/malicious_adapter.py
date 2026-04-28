@@ -3,6 +3,8 @@ import struct
 import sys
 from pathlib import Path
 
+import vproto
+
 # From virtmcu_proto.h
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -36,7 +38,7 @@ def main():
     magic, version = struct.unpack("<II", data)
     print(f"Received handshake: magic=0x{magic:X}, version={version}", flush=True)
 
-    hs_out = struct.pack("<II", VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION)
+    hs_out = vproto.VirtmcuHandshake(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION).pack()
     conn.sendall(hs_out)
     print("Sent handshake", flush=True)
 

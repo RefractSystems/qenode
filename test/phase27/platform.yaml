@@ -9,8 +9,11 @@ peripherals:
     properties:
       size: "0x01000000"
   - name: flexray
-    type: zenoh-flexray
+    type: flexray
     address: "0x09003000"
     properties:
       node: 0
       router: "tcp/127.0.0.1:7447"
+
+topology:
+  links: []

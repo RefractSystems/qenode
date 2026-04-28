@@ -31,21 +31,21 @@ endif
 #
 # Environment Variables / Flags:
 #   VIRTMCU_SKIP_BUILD_DIR=1  — Forces `scripts/run.sh` to bypass the local build 
-#                               directory (`third_party/qemu/build-virtmcu`) and 
-#                               strictly use installed artifacts in `/opt/virtmcu`. 
-#                               Essential for CI and Docker targets testing final images.
-#   VIRTMCU_STALL_TIMEOUT_MS  — Milliseconds the Python orchestrator and zenoh-clock 
-#                               will wait for a QEMU TCG quantum to complete before 
-#                               declaring a clock stall. Increased for ASan (e.g., 300000ms).
-#   VIRTMCU_USE_ASAN=1        — Compiles QEMU and Rust plugins with Memory Sanitizer 
-#                               (ASan) and UndefinedBehaviorSanitizer (UBSan) enabled. 
-#                               Output goes to `build-virtmcu-asan`.
-#   PYTEST_WORKERS=N          — Number of parallel workers for `pytest -n`. Defaults to `auto`.
+#			       directory (`third_party/qemu/build-virtmcu`) and 
+#			       strictly use installed artifacts in `/opt/virtmcu`. 
+#			       Essential for CI and Docker targets testing final images.
+#   VIRTMCU_STALL_TIMEOUT_MS  — Milliseconds the Python orchestrator and clock 
+#			       will wait for a QEMU TCG quantum to complete before 
+#			       declaring a clock stall. Increased for ASan (e.g., 300000ms).
+#   VIRTMCU_USE_ASAN=1	— Compiles QEMU and Rust plugins with Memory Sanitizer 
+#			       (ASan) and UndefinedBehaviorSanitizer (UBSan) enabled. 
+#			       Output goes to `build-virtmcu-asan`.
+#   PYTEST_WORKERS=N	  — Number of parallel workers for `pytest -n`. Defaults to `auto`.
 #
 # Advanced CI/Testing Flags:
-#   ASAN_OPTIONS              — Runtime options for AddressSanitizer (e.g., detect_leaks=0).
-#   UBSAN_OPTIONS             — Runtime options for UndefinedBehaviorSanitizer.
-#   MIRIFLAGS                 — Flags passed to cargo miri test (e.g., -Zmiri-disable-isolation).
+#   ASAN_OPTIONS	      — Runtime options for AddressSanitizer (e.g., detect_leaks=0).
+#   UBSAN_OPTIONS	     — Runtime options for UndefinedBehaviorSanitizer.
+#   MIRIFLAGS		 — Flags passed to cargo miri test (e.g., -Zmiri-disable-isolation).
 #   VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 — Silences warning about missing QEMU headers in local-ci.
 #   UV_PROJECT_ENVIRONMENT    — Path to the isolated virtual environment for Docker test runs.
 #   GCOV_PREFIX / GCOV_PREFIX_STRIP — Used to correctly map host-side C coverage paths inside Docker.
@@ -69,10 +69,19 @@ else
   JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 endif
 
-.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi test test-unit test-python test-integration test-robot test-all build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-smoke ci-full perf-bench perf-check perf-baseline tag
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi check-protocols test test-unit test-python test-integration test-robot test-all build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-smoke ci-full perf-bench perf-check perf-baseline tag
 
 # By default, perform an incremental build
 all: build
+
+# ------------------------------------------------------------------------------
+# Protocol Verification
+# ------------------------------------------------------------------------------
+
+# Verify that Python protocol definitions are in sync with Rust source of truth.
+check-protocols:
+	@echo "==> Verifying protocol synchronization..."
+	@python3 scripts/sync-protocols.py --check
 
 # ------------------------------------------------------------------------------
 # FFI Layout Verification
@@ -248,13 +257,13 @@ coverage-report:
 		--directory $(QEMU_BUILD)/libhw-virtmcu-mmio-socket-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-remote-port-bridge.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-rust-dummy.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-clock.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-chardev.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-netdev.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-actuator.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-telemetry.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-802154.a.p \
-		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh-ui.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-clock.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-chardev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-netdev.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-actuator.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-telemetry.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-ieee802154.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-ui.a.p \
 		--directory $(QEMU_BUILD)/libhw-virtmcu-test-qom-device.a.p \
 		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
 	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
@@ -272,8 +281,8 @@ build-test-artifacts:
 	@if [ "$$CI" = "true" ] && command -v zenoh_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
-		echo "==> Building test tools (zenoh_coordinator, cyber_bridge)..."; \
-		cargo build --release -p zenoh_coordinator -p cyber_bridge; \
+		echo "==> Building test tools (zenoh_coordinator, deterministic_coordinator, cyber_bridge)..."; \
+		cargo build --release -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge; \
 	fi
 
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
@@ -302,8 +311,14 @@ test-integration-docker:
 # ------------------------------------------------------------------------------
 
 # Run all linting and static analysis checks
-lint: venv check-versions check-ffi lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
+lint: venv check-versions check-protocols check-ffi lint-exports lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
 	@echo "All linting and static analysis checks passed!"
+
+# Verify that plugins export required unmangled FFI symbols
+lint-exports:
+	@echo "==> Verifying plugin exports..."
+	@uv run --active python3 scripts/verify-exports.py
+	@echo "✓ Plugin exports verified."
 
 # Check Rust documentation for warnings
 lint-docs:
@@ -329,12 +344,24 @@ lint-audit:
 	@echo "✓ Audit checks completed."
 # Run Python linting and type checking
 lint-python:
-	@echo "==> Check vproto.py synchronization..."
-	uv run --active python3 scripts/gen_vproto.py --check
+	@echo "==> Check for manual struct.pack..."
+	@if grep -rE "struct\.pack\([\"']<(QQQ|QQI|BB)" test/ tests/ tools/; then \
+		echo "❌ ERROR: Found struct.pack for virtmcu protocols! Use vproto.py instead."; exit 1; \
+	fi
+	@echo "==> Check for hardcoded stall-timeout..."
+	@if grep -rE "stall-timeout=[0-9]+" tests/ tools/ ; then \
+		echo "❌ ERROR: Hardcoded stall-timeout detected. Use dynamic scaling via VIRTMCU_STALL_TIMEOUT_MS."; exit 1; \
+	fi
+	@echo "==> Check for banned asyncio.sleep..."
+	@violations=$$(grep -rn "asyncio\.sleep" tests/ tools/ | grep -v "SLEEP_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+	        echo "❌ ERROR: Banned asyncio.sleep found in tests/tools (use vta.step or transport signaling instead):"; \
+	        echo "$$violations"; \
+	        exit 1; \
+	fi
 	@echo "==> ruff check..."
-	uv run --active ruff check .
+	@uv run --active ruff check .
 	@echo "✓ ruff passed."
-
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
@@ -444,7 +471,7 @@ lint-rust:
 	@# caller already holds the BQL, making the Mutex permanently uncontended and its
 	@# presence actively misleading. Use BqlGuarded<T> from virtmcu-qom::sync instead.
 	@# Approved exceptions must carry an inline // MUTEX_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "Mutex<" hw/rust/zenoh-*/src/lib.rs | \
+	@violations=$$(grep -rn "Mutex<" hw/rust/comms/*/src/lib.rs hw/rust/mcu/*/src/lib.rs hw/rust/observability/*/src/lib.rs | \
 		grep -v "Arc<Mutex\|// MUTEX_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
 		echo "ERROR: Banned Mutex<T> in peripheral state (use BqlGuarded<T> instead):"; \
@@ -453,6 +480,45 @@ lint-rust:
 		exit 1; \
 	fi
 	@echo "✓ No banned peripheral Mutex<T> found."
+	@echo "==> Checking for misleading #![no_std] in hw/rust/..."
+	@# #![no_std] is banned in peripheral crates because they implicitly link against std
+	@# via virtmcu-qom or zenoh. It provides a false sense of environment safety.
+	@# Approved exceptions must carry an inline // NO_STD_EXCEPTION: <reason> comment.
+	@violations=$$(grep -rn "#!\[no_std\]" hw/rust/ --include="*.rs" | grep -v "NO_STD_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Misleading #![no_std] found in hw/rust/:"; \
+		echo "$$violations"; \
+		echo "  Fix: remove #![no_std] or add // NO_STD_EXCEPTION: <reason> inline."; \
+		exit 1; \
+	fi
+	@echo "✓ No misleading #![no_std] found."
+	@echo "==> Checking for banned to_ne_bytes/from_ne_bytes in hw/rust/..."
+	@# to_ne_bytes/from_ne_bytes are banned for any value that crosses a process or machine
+	@# boundary (socket, Zenoh, shared memory) because they silently corrupt data on
+	@# big-endian hosts. Use to_le_bytes/to_be_bytes with a comment stating wire byte order.
+	@# to_ne_bytes is permitted only for intra-process data that never leaves the process.
+	@# Approved exceptions must carry an inline // NE_BYTES_EXCEPTION: <reason> comment.
+	@violations=$$(grep -rn "to_ne_bytes\|from_ne_bytes" hw/rust/ --include="*.rs" | grep -v "NE_BYTES_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Banned to_ne_bytes/from_ne_bytes found in hw/rust/:"; \
+		echo "$$violations"; \
+		echo "  Fix: use to_le_bytes()/from_le_bytes() with a wire-order comment, or add // NE_BYTES_EXCEPTION: <reason>."; \
+		exit 1; \
+	fi
+	@echo "✓ No banned to_ne_bytes/from_ne_bytes found."
+	@echo "==> Checking for banned rand::thread_rng in hw/rust/..."
+	@# rand::thread_rng() is banned in simulation code because it seeds from wall-clock
+	@# entropy, breaking determinism. Use seed_for_quantum(global_seed, node_id, quantum)
+	@# from transport-zenoh for all stochastic simulation behaviour.
+	@# Approved exceptions must carry an inline // RNG_EXCEPTION: <reason> comment.
+	@violations=$$(grep -rn "rand::thread_rng\b" hw/rust/ --include="*.rs" | grep -v "RNG_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Banned rand::thread_rng found in hw/rust/:"; \
+		echo "$$violations"; \
+		echo "  Fix: use seed_for_quantum() from transport-zenoh, or add // RNG_EXCEPTION: <reason>."; \
+		exit 1; \
+	fi
+	@echo "✓ No banned rand::thread_rng found."
 	@echo "==> Running cargo clippy..."
 	@cargo clippy --workspace
 
@@ -640,14 +706,14 @@ ci-full: ci-local ci-asan ci-miri
 	@mkdir -p coverage-data
 	@echo "==> Running full smoke test matrix (Equivalent to GitHub CI)..."
 	docker run --rm \
-	        -v "$(CURDIR):/workspace" -w /workspace \
-	        -e PYTHONPATH=/workspace \
-	        -e VIRTMCU_STALL_TIMEOUT_MS=120000 \
-	        -e GCOV_PREFIX=/workspace/coverage-data \
-	        -e GCOV_PREFIX_STRIP=3 \
-	        -e VIRTMCU_SKIP_BUILD_DIR=1 \
-	        $(BUILDER_IMG) \
-	        bash scripts/ci-phase.sh all	@echo ""
+		-v "$(CURDIR):/workspace" -w /workspace \
+		-e PYTHONPATH=/workspace \
+		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
+		-e GCOV_PREFIX=/workspace/coverage-data \
+		-e GCOV_PREFIX_STRIP=3 \
+		-e VIRTMCU_SKIP_BUILD_DIR=1 \
+		$(BUILDER_IMG) \
+		bash scripts/ci-phase.sh all	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
 	@echo "════════════════════════════════════════════════════"
@@ -659,9 +725,9 @@ ci-full: ci-local ci-asan ci-miri
 # Run a single CI smoke phase in Docker (e.g., make ci-smoke PHASE=2)
 ci-smoke:
 	@if [ -z "$(PHASE)" ]; then \
-	        echo "Usage: make ci-smoke PHASE=<phase_number>"; \
-	        echo "Example: make ci-smoke PHASE=2"; \
-	        exit 1; \
+		echo "Usage: make ci-smoke PHASE=<phase_number>"; \
+		echo "Example: make ci-smoke PHASE=2"; \
+		exit 1; \
 	fi
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Smoke Phase $(PHASE) — Docker: builder"
@@ -669,14 +735,14 @@ ci-smoke:
 	@bash scripts/docker-build.sh builder
 	@mkdir -p coverage-data
 	docker run --rm \
-	        -v "$(CURDIR):/workspace" -w /workspace \
-	        -e PYTHONPATH=/workspace \
-	        -e VIRTMCU_STALL_TIMEOUT_MS=120000 \
-	        -e GCOV_PREFIX=/workspace/coverage-data \
-	        -e GCOV_PREFIX_STRIP=3 \
-	        -e VIRTMCU_SKIP_BUILD_DIR=1 \
-	        $(BUILDER_IMG) \
-	        bash scripts/ci-phase.sh $(PHASE)
+		-v "$(CURDIR):/workspace" -w /workspace \
+		-e PYTHONPATH=/workspace \
+		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
+		-e GCOV_PREFIX=/workspace/coverage-data \
+		-e GCOV_PREFIX_STRIP=3 \
+		-e VIRTMCU_SKIP_BUILD_DIR=1 \
+		$(BUILDER_IMG) \
+		bash scripts/ci-phase.sh $(PHASE)
 
 # Run integration tests compiled with ASan/UBSan inside devenv-base
 ci-asan:

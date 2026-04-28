@@ -68,7 +68,7 @@ async def test_phase21_mac_stress(qemu_launcher, tmp_path):
         mac = f"00:11:22:33:44:{i:02x}"
         macs.append(mac)
         addr = 0x50000000 + i * 0x1000
-        yml += f'  - name: wifi{i}\n    type: virtmcu-wifi\n    address: 0x{addr:x}\n    properties:\n      MACAddress: "{mac}"\n      node: "{i}"\n'
+        yml += f'  - name: wifi{i}\n    type: wifi\n    address: 0x{addr:x}\n    properties:\n      MACAddress: "{mac}"\n      node: "{i}"\n'
 
     test_yaml = Path(tmp_path) / "stress_mac.yml"
     with Path(test_yaml).open("w") as f:

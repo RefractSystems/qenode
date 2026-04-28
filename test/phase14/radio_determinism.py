@@ -41,14 +41,14 @@ def on_sample(sample):
     resp1_data = struct.pack("<HBH HH H", 0x8841, 0x02, 0xABCD, 0x5678, 0x1234, 0) + b"MISMATCHED ACK"
     msg1 = struct.pack(RF_HEADER_FORMAT, resp1_vtime, len(resp1_data), 0xCE, 0xFF) + resp1_data
     print(f"[{resp1_vtime}] Sending MISMATCHED response...")
-    session.put("sim/rf/802154/0/rx", msg1)
+    session.put("sim/rf/ieee802154/0/rx", msg1)
 
     # 2. Respond with CORRECT address after 2ms virtual time
     resp2_vtime = vtime + 2000000
     resp2_data = struct.pack("<HBH HH H", 0x8861, 0x03, 0xABCD, 0x1234, 0x5678, 0) + b"MATCHED ACK"
     msg2 = struct.pack(RF_HEADER_FORMAT, resp2_vtime, len(resp2_data), 0xCE, 0xFF) + resp2_data
     print(f"[{resp2_vtime}] Sending MATCHED response...")
-    session.put("sim/rf/802154/0/rx", msg2)
+    session.put("sim/rf/ieee802154/0/rx", msg2)
 
 
 def on_tx_sample(sample):
@@ -75,7 +75,7 @@ def main():
     conf.insert_json5("connect/endpoints", f'["{router}"]')
     session = zenoh.open(conf)
 
-    sub_topic = f"sim/rf/802154/{node_id}/tx"
+    sub_topic = f"sim/rf/ieee802154/{node_id}/tx"
     print(f"Listening on {sub_topic}...")
     session.declare_subscriber(sub_topic, on_sample)
     session.declare_subscriber(sub_topic, on_tx_sample)

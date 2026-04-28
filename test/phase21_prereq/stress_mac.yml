@@ -9,50 +9,53 @@ peripherals:
     properties:
       size: 0x01000000
   - name: wifi0
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50000000
     properties:
       MACAddress: "00:11:22:33:44:00"
       node: "0"
   - name: wifi1
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50001000
     properties:
       MACAddress: "00:11:22:33:44:01"
       node: "1"
   - name: wifi2
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50002000
     properties:
       MACAddress: "00:11:22:33:44:02"
       node: "2"
   - name: wifi3
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50003000
     properties:
       MACAddress: "00:11:22:33:44:03"
       node: "3"
   - name: wifi4
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50004000
     properties:
       MACAddress: "00:11:22:33:44:04"
       node: "4"
   - name: wifi5
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50005000
     properties:
       MACAddress: "00:11:22:33:44:05"
       node: "5"
   - name: wifi6
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50006000
     properties:
       MACAddress: "00:11:22:33:44:06"
       node: "6"
   - name: wifi7
-    type: virtmcu-wifi
+    type: wifi
     address: 0x50007000
     properties:
       MACAddress: "00:11:22:33:44:07"
       node: "7"
+
+topology:
+  links: []

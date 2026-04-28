@@ -16,8 +16,13 @@ TOPIC = "sim/clock/advance/0"
 TIMEOUT_S = 10.0
 
 
+Q_NUM = 0
+
+
 def pack_req(delta_ns):
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    global Q_NUM
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=Q_NUM)
+    Q_NUM += 1
     return req.pack()
 
 

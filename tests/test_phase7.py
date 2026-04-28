@@ -1,10 +1,10 @@
 import asyncio
-import struct
 import subprocess
 from functools import partial
 from pathlib import Path
 
 import pytest
+import vproto
 
 
 def build_phase7_artifacts():
@@ -21,12 +21,12 @@ def build_phase7_artifacts():
 @pytest.mark.asyncio
 async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
     """
-    Phase 7: zenoh-clock in slaved-suspend mode.
+    Phase 7: clock in slaved-suspend mode.
     Verify that virtual time advances and matches queries.
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    extra_args = ["-S", "-device", f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router}"]
+    extra_args = ["-S", "-device", f"virtmcu-clock,node=0,mode=slaved-suspend,router={zenoh_router}"]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -52,16 +52,18 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
 @pytest.mark.asyncio
 async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
     """
-    Phase 7: zenoh-clock stall detection.
+    Phase 7: clock stall detection.
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    # Use a shorter stall-timeout specifically for the stall test, but not too short
-    stall_timeout = 15000
+    # Use a shorter stall-timeout specifically for the stall test.
+    # Since we use bridge.pause_emulation() to artificially induce the stall,
+    # we don't need a huge ASan timeout.
+    stall_timeout = 2000
     extra_args = [
         "-S",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout={stall_timeout}",
+        f"virtmcu-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout={stall_timeout}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
@@ -81,11 +83,11 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
     try:
         with pytest.raises(RuntimeError, match="reported CLOCK STALL"):
             # Wait longer than stall_timeout to ensure it's triggered
-            await vta.step(10_000_000, timeout=20.0)
+            await vta.step(10_000_000, timeout=(stall_timeout / 1000.0) + 10.0)
 
         await bridge.start_emulation()
         # Give QEMU a moment to resume
-        await asyncio.sleep(0.5)
+        await bridge.wait_for_event("RESUME")
         vtime = (await vta.step(1_000_000))[0]
         assert vtime > 0
 
@@ -105,12 +107,14 @@ async def test_phase7_slow_boot_fast_execute(zenoh_router, qemu_launcher, zenoh_
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
-    # Use a short stall-timeout to make the test fast
-    stall_timeout = 2000
+    # We must use a short stall-timeout to avoid sleeping for 5 minutes during ASan.
+    # However, ASan can be slow enough that 2000ms is too tight for normal execution.
+    # We will use 5000ms.
+    stall_timeout = 5000
     extra_args = [
         "-S",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout={stall_timeout}",
+        f"virtmcu-clock,node=0,mode=slaved-suspend,router={zenoh_router},stall-timeout={stall_timeout}",
     ]
 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
@@ -122,20 +126,19 @@ async def test_phase7_slow_boot_fast_execute(zenoh_router, qemu_launcher, zenoh_
     # 1. Start emulation. It will run until it hits the first quantum boundary (0 ns).
     await bridge.start_emulation()
 
-    # 2. Delay the first sync beyond stall_timeout (2s) but within boot timeout (5m)
-    # We use a controlled wait here ONLY to verify the multi-timeout invariant.
+    # 2. Delay the first sync beyond stall_timeout but within boot timeout (10m)
     # SLEEP_EXCEPTION: testing wall-clock boundaries for boot vs stall timeouts
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(6.0)  # SLEEP_EXCEPTION: testing wall-clock boundaries
 
-    # This should succeed despite the 3s delay because it's the first quantum
-    await vta.step(0)
+    # This should succeed despite the 6s delay because it's the first quantum
+    await vta.step(0, timeout=10.0)
 
     # 3. Advance clock to complete the first quantum
-    await vta.step(1_000_000)
+    await vta.step(1_000_000, timeout=10.0)
 
-    # 4. Subsequent quantum should be subject to the strict 2s stall-timeout
+    # 4. Subsequent quantum should be subject to the strict 5s stall-timeout
     # SLEEP_EXCEPTION: testing wall-clock boundaries for boot vs stall timeouts
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(6.0)  # SLEEP_EXCEPTION: testing wall-clock boundaries
     try:
         with pytest.raises(RuntimeError, match="reported CLOCK STALL"):
             # This should stall
@@ -147,7 +150,7 @@ async def test_phase7_slow_boot_fast_execute(zenoh_router, qemu_launcher, zenoh_
 @pytest.mark.asyncio
 async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     """
-    Phase 7: zenoh-netdev basic packet delivery.
+    Phase 7: netdev basic packet delivery.
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
@@ -156,9 +159,9 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=1,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=1,mode=slaved-icount,router={zenoh_router}",
         "-netdev",
-        f"zenoh,node=1,id=n1,router={zenoh_router}",
+        f"virtmcu,node=1,id=n1,router={zenoh_router}",
     ]
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -172,7 +175,7 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
     NETDEV_TOPIC = "sim/eth/frame/1/rx"  # noqa: N806
     DELIVERY_VTIME_NS = 500_000  # noqa: N806
     FRAME = b"\xff" * 14  # noqa: N806
-    packet = struct.pack("<QQI", DELIVERY_VTIME_NS, 0, len(FRAME)) + FRAME
+    packet = vproto.ZenohFrameHeader(DELIVERY_VTIME_NS, 0, len(FRAME)).pack() + FRAME
 
     pub = await asyncio.to_thread(lambda: zenoh_session.declare_publisher(NETDEV_TOPIC))
 
@@ -185,7 +188,7 @@ async def test_phase7_netdev(zenoh_router, qemu_launcher, zenoh_session):
 @pytest.mark.asyncio
 async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
     """
-    Phase 7: zenoh-netdev stress test.
+    Phase 7: netdev stress test.
     """
     dtb_path, kernel_path = build_phase7_artifacts()
 
@@ -194,9 +197,9 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router}",
         "-netdev",
-        f"zenoh,node=0,id=n0,router={zenoh_router}",
+        f"virtmcu,node=0,id=n0,router={zenoh_router}",
     ]
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -209,7 +212,7 @@ async def test_phase7_netdev_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     for i in range(100, 0, -1):
         vtime = i * 1_000_000
-        packet = struct.pack("<QQI", vtime, 0, 14) + b"\xee" * 14
+        packet = vproto.ZenohFrameHeader(vtime, 0, 14).pack() + b"\xee" * 14
         await asyncio.to_thread(partial(zenoh_session.put, "sim/eth/frame/0/rx", packet))
 
     await vta.step(200_000_000)
@@ -228,9 +231,9 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
         "-icount",
         "shift=0,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router}",
         "-netdev",
-        f"zenoh,node=0,id=n0,router={zenoh_router}",
+        f"virtmcu,node=0,id=n0,router={zenoh_router}",
     ]
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
 
@@ -241,7 +244,7 @@ async def test_phase7_determinism(zenoh_router, qemu_launcher, zenoh_session):
     await bridge.start_emulation()
     await vta.step(0)
 
-    packet = struct.pack("<QQI", 5_000_000, 0, 14) + b"\xdd" * 14
+    packet = vproto.ZenohFrameHeader(5_000_000, 0, 14).pack() + b"\xdd" * 14
     await asyncio.to_thread(lambda: zenoh_session.put("sim/eth/frame/0/rx", packet))
 
     await vta.step(10_000_000)

@@ -94,7 +94,7 @@ async def main():
     )
     await recv_json()
 
-    await asyncio.sleep(2)
+    await asyncio.sleep(2)  # SLEEP_EXCEPTION: deliberate yielding
 
     # 5. Read CPU State
     await send_json(

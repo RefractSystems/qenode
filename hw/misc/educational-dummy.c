@@ -2,8 +2,8 @@
  * Minimal Educational C Dummy Device for virtmcu.
  * This device serves as an example of a legacy C QOM peripheral.
  *
- * NOTE: For new peripherals, refer to hw/rust/rust-dummy/ as the preferred
- * Rust-native approach.
+ * NOTE: For new peripherals, refer to hw/rust/common/rust-dummy/ as the
+ * preferred Rust-native approach.
  */
 
 // clang-format off

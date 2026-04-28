@@ -8,7 +8,7 @@ For the tutorial-style explanation with sequence diagrams, see
 
 ## Clock Modes
 
-| Mode | `-device zenoh-clock` | Additional flags | Effective throughput |
+| Mode | `-device clock` | Additional flags | Effective throughput |
 |---|---|---|---|
 | `standalone` | No | — | 100% of host TCG speed |
 | `slaved-suspend` | Yes, `mode` omitted or `mode=suspend` | — | ~95% — one Zenoh round-trip overhead per quantum |
@@ -128,5 +128,5 @@ QMP monitor and UART both unresponsive.
 - [TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — tutorial, sequence diagrams, rationale
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system context, Five Pillars, prior art
 - [ADR-001](ARCHITECTURE.md#adr-001-three-clock-modes-standalone--slaved-suspend--slaved-icount) — rationale for three modes
-- `hw/rust/zenoh-clock` — implementation
+- `hw/rust/clock` — implementation
 - `patches/apply_zenoh_hook.py` — TCG hook injection

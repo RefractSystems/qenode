@@ -1,11 +1,12 @@
 import json
 import os
 import socket
-import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import vproto
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -104,7 +105,7 @@ def main():
 
     # 3. Trigger IRQ and verify
     print("Triggering IRQ 5...")
-    conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_SET, 5, 0))
+    conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
     time.sleep(0.5)
 
     # Check NVIC state via HMP (through QMP)
@@ -118,7 +119,7 @@ def main():
         pass  # We will refine the check based on output
 
     print("Clearing IRQ 5...")
-    conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_CLEAR, 5, 0))
+    conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
     time.sleep(0.5)
 
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})

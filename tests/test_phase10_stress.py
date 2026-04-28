@@ -8,35 +8,20 @@ import time
 from pathlib import Path
 
 import pytest
+import vproto
 import zenoh
+
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 
 # Paths
 WORKSPACE_DIR = Path(Path(Path(__file__).resolve().parent) / "..")
 BUILD_DIR = Path(WORKSPACE_DIR) / "target/release"
 
-
-def find_replay_bin():
-    # 1. Check CARGO_TARGET_DIR if set
-    if "CARGO_TARGET_DIR" in os.environ:
-        p = Path(os.environ["CARGO_TARGET_DIR"]) / "release/resd_replay"
-        if p.exists():
-            return p
-
-    # 2. Check workspace target
-    p = Path(WORKSPACE_DIR) / "target/release/resd_replay"
-    if p.exists():
-        return p
-
-    # 3. Check tool-specific target
-    p = Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/resd_replay"
-    if p.exists():
-        return p
-
-    # Default to workspace target for better error message if missing
-    return Path(WORKSPACE_DIR) / "target/release/resd_replay"
-
-
-REPLAY_BIN = find_replay_bin()
+try:
+    REPLAY_BIN = resolve_rust_binary("resd_replay")
+except FileNotFoundError:
+    # Allow test collection to proceed if binary is missing, test will fail later
+    REPLAY_BIN = Path(WORKSPACE_DIR) / "target/release/resd_replay"
 print(f"DEBUG: REPLAY_BIN = {REPLAY_BIN}")
 
 
@@ -93,14 +78,14 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
         try:
             node_id = int(str(query.key_expr).split("/")[-1])
             payload = query.payload.to_bytes()
-            delta_ns, _mujoco_time = struct.unpack("<QQ", payload)
-            print(f"DEBUG: Node {node_id} advance: delta={delta_ns}")
+            delta_ns, _mujoco_time, qn = struct.unpack("<QQQ", payload)
+            print(f"DEBUG: Node {node_id} advance: delta={delta_ns}, qn={qn}")
 
             # Atomically update vtime
             node_vtimes[node_id] += delta_ns
 
-            # Reply with ClockReadyPayload { current_vtime_ns, n_frames }
-            reply_payload = struct.pack("<QII", node_vtimes[node_id], 1, 0)
+            # Reply with ClockReadyPayload { current_vtime_ns, n_frames, error_code, quantum_number }
+            reply_payload = vproto.ClockReadyResp(node_vtimes[node_id], 1, 0, qn).pack()
             query.reply(query.key_expr, reply_payload)
         except Exception as e:
             print(f"DEBUG ERROR in on_query: {e}")
@@ -168,13 +153,7 @@ async def test_mujoco_bridge_shm(zenoh_router):  # noqa: ARG001
     nu = 4
     nsensordata = 8
 
-    bridge_bin = Path(BUILD_DIR) / "mujoco_bridge"
-    if not bridge_bin.exists():
-        bridge_bin = (
-            Path(os.environ["CARGO_TARGET_DIR"]) / "release/mujoco_bridge"
-            if "CARGO_TARGET_DIR" in os.environ
-            else Path(WORKSPACE_DIR) / "tools/cyber_bridge/target/release/mujoco_bridge"
-        )
+    bridge_bin = resolve_rust_binary("mujoco_bridge")
 
     # Run bridge briefly
     p = subprocess.Popen(

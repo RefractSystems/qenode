@@ -9,3 +9,6 @@ peripherals:
     size: 0x1000
     properties:
       region-size: 0x1000
+
+topology:
+  links: []

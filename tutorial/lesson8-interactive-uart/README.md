@@ -67,7 +67,7 @@ This is critical. If we do not suspend the CPU on boot, the firmware will execut
 
 While interactive local debugging is useful, true system validation often requires multiple microcontrollers communicating with each other over serial connections (e.g., an MCU commanding a GPS module or a motor driver over UART).
 
-In the next phase, we will implement `zenoh-chardev.c`. This native QEMU plugin will allow us to map the UART byte stream to Zenoh topics (e.g., `virtmcu/uart/node1/tx`), enabling cycle-accurate, deterministic serial communication between multiple emulated nodes across the network, just as we did with Ethernet in Phase 6.
+In the next phase, we will implement `chardev.c`. This native QEMU plugin will allow us to map the UART byte stream to Zenoh topics (e.g., `virtmcu/uart/node1/tx`), enabling cycle-accurate, deterministic serial communication between multiple emulated nodes across the network, just as we did with Ethernet in Phase 6.
 
 ## 4. Running the Multi-Node Deterministic UART
 

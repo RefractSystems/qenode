@@ -15,7 +15,7 @@ env:
   BUILDER_IMAGE: virtmcu-builder
   PYTHON_VERSION: "3.13"
   CI: "true"
-  # CI runners can be slow; raise the zenoh-clock STALL timeout
+  # CI runners can be slow; raise the clock STALL timeout
   VIRTMCU_STALL_TIMEOUT_MS: "300000"
 
 jobs:

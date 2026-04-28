@@ -81,48 +81,48 @@ def test_sysc_msg_unpack_error():
 
 
 def test_clock_advance_req_pack_unpack():
-    req = ClockAdvanceReq(delta_ns=1000000, mujoco_time_ns=2000000)
+    req = ClockAdvanceReq(delta_ns=1000000, mujoco_time_ns=2000000, quantum_number=123)
     packed = req.pack()
-    # 8+8 = 16
-    assert len(packed) == 16
+    assert len(packed) == 24
 
     unpacked = ClockAdvanceReq.unpack(packed)
     assert unpacked.delta_ns == 1000000
     assert unpacked.mujoco_time_ns == 2000000
+    assert unpacked.quantum_number == 123
 
 
 def test_clock_advance_req_unpack_error():
-    with pytest.raises(ValueError, match="Expected 16 bytes"):
+    with pytest.raises(ValueError, match="Expected 24 bytes"):
         ClockAdvanceReq.unpack(b"toolittle")
 
 
 def test_clock_ready_resp_pack_unpack():
-    resp = ClockReadyResp(current_vtime_ns=5000000, n_frames=10, error_code=0)
+    resp = ClockReadyResp(current_vtime_ns=5000000, n_frames=10, error_code=0, quantum_number=123)
     packed = resp.pack()
-    # 8+4+4 = 16
-    assert len(packed) == 16
+    assert len(packed) == 24
 
     unpacked = ClockReadyResp.unpack(packed)
     assert unpacked.current_vtime_ns == 5000000
     assert unpacked.n_frames == 10
     assert unpacked.error_code == 0
+    assert unpacked.quantum_number == 123
 
 
 def test_clock_ready_resp_unpack_error():
-    with pytest.raises(ValueError, match="Expected 16 bytes"):
+    with pytest.raises(ValueError, match="Expected 24 bytes"):
         ClockReadyResp.unpack(b"wrongsize")
 
 def test_zenoh_frame_header_pack_unpack():
     hdr = ZenohFrameHeader(delivery_vtime_ns=1000, sequence_number=42, size=1024)
     packed = hdr.pack()
-    assert len(packed) == 20
+    assert len(packed) == 24
     unpacked = ZenohFrameHeader.unpack(packed)
     assert unpacked.delivery_vtime_ns == 1000
     assert unpacked.sequence_number == 42
     assert unpacked.size == 1024
 
-def test_zenoh_spi_header_pack_unpack():
-    hdr = ZenohSPIHeader(delivery_vtime_ns=5000, sequence_number=17, size=4, cs=True, cs_index=1, _padding_0=0, _padding_1=0)
+def test_spi_header_pack_unpack():
+    hdr = ZenohSPIHeader(delivery_vtime_ns=5000, sequence_number=17, size=4, cs=True, cs_index=1, )
     packed = hdr.pack()
     assert len(packed) == 24
     unpacked = ZenohSPIHeader.unpack(packed)

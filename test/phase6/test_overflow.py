@@ -2,6 +2,7 @@ import struct
 import sys
 import time
 
+import vproto
 import zenoh
 
 
@@ -20,11 +21,11 @@ def main():
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
 
     time.sleep(1)
-    pub2.put(struct.pack("<QI", 0, 0))
+    pub2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
     time.sleep(0.5)
 
     orig_vtime = 0xFFFFFFFFFFFFFFFF - 500000
-    pub1.put(struct.pack("<QI", orig_vtime, 4) + b"DEAD")
+    pub1.put(vproto.ZenohFrameHeader(orig_vtime, 0, 4).pack() + b"DEAD")
 
     time.sleep(1)
 

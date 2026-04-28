@@ -92,7 +92,7 @@ async def main():
         await recv_json()
 
     print("Both nodes started. Waiting for them to boot...")
-    await asyncio.sleep(3)
+    await asyncio.sleep(3)  # SLEEP_EXCEPTION: deliberate yielding
 
     # Check status resource
     print("Checking simulation status...")

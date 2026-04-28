@@ -358,7 +358,7 @@ Tests never use hardcoded ports. Every parallel worker gets its own ephemeral Ze
 
 ## 12. Clock Sync & Stall Timeouts
 
-To maintain deterministic co-simulation, `zenoh-clock` enforces a **Stall Timeout**. If QEMU fails to reach a virtual-time boundary within a certain wall-clock window, it reports a STALL (error code 1).
+To maintain deterministic co-simulation, `clock` enforces a **Stall Timeout**. If QEMU fails to reach a virtual-time boundary within a certain wall-clock window, it reports a STALL (error code 1).
 
 ### Enterprise Policy: Environment-Driven Timeouts
 We avoid hardcoding `stall-timeout` in test files. Instead, the system uses a centralized scaling policy:

@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import vproto
 import zenoh
 
 
@@ -30,7 +31,7 @@ async def test_quantum_sync_stress(qemu_launcher, zenoh_router):
 
     # Start with node=0 (bypass mode) to allow QMP to start
     extra_args = [
-        "-device", f"zenoh-clock,node=0,router={zenoh_router},stall-timeout=10000"
+        "-device", f"virtmcu-clock,node=0,router={zenoh_router}"
     ]
 
     bridge = await qemu_launcher(dtb_path=dtb, kernel_path=kernel, extra_args=extra_args, ignore_clock_check=True)
@@ -40,7 +41,7 @@ async def test_quantum_sync_stress(qemu_launcher, zenoh_router):
     res = await bridge.qmp.execute("qom-list", {"path": "/machine/unattached"})
     clock_path = None
     for item in res:
-        if item.get("type") == "child<zenoh-clock>":
+        if item.get("type") == "child<clock>":
             clock_path = f"/machine/unattached/{item['name']}"
             break
 
@@ -60,7 +61,7 @@ async def test_quantum_sync_stress(qemu_launcher, zenoh_router):
         # Advance clock
         replies = session.get(
             f"sim/clock/advance/{node_id}",
-            payload=struct.pack("<QQ", quantum_ns, 0),
+            payload=vproto.ClockAdvanceReq(quantum_ns, 0, 0).pack(),
             timeout=10.0
         )
 
@@ -86,8 +87,8 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
     node_id = 43
 
     extra_args = [
-        "-device", f"zenoh-clock,node=0,router={zenoh_router}",
-        "-chardev", f"zenoh,id=char0,node={node_id},router={zenoh_router}",
+        "-device", f"virtmcu-clock,node=0,router={zenoh_router}",
+        "-chardev", f"virtmcu,id=char0,node={node_id},router={zenoh_router}",
         "-serial", "chardev:char0",
         "-S" # Start frozen
     ]
@@ -98,7 +99,7 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
     res = await bridge.qmp.execute("qom-list", {"path": "/machine/unattached"})
     clock_path = None
     for item in res:
-        if item.get("type") == "child<zenoh-clock>":
+        if item.get("type") == "child<clock>":
             clock_path = f"/machine/unattached/{item['name']}"
             break
     await bridge.qmp.execute("qom-set", {"path": clock_path, "property": "node", "value": node_id})
@@ -115,16 +116,16 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
     await bridge.start_emulation()
 
     # 1. Advance past boot
-    session.get(f"sim/clock/advance/{node_id}", payload=struct.pack("<QQ", 100_000_000, 0), timeout=10.0)
+    session.get(f"sim/clock/advance/{node_id}", payload=vproto.ClockAdvanceReq(100_000_000, 0, 0).pack(), timeout=10.0)
 
     # 2. Pre-publish "HELLO" all at the SAME virtual time
     vtime = 200_000_000
     test_str = b"HELLO"
     for i, char in enumerate(test_str):
-        header = struct.pack("<QQI", vtime, i, 1)
+        header = vproto.ZenohFrameHeader(vtime, i, 1).pack()
         pub.put(header + bytes([char]))
 
     for _ in range(10):
-        session.get(f"sim/clock/advance/{node_id}", payload=struct.pack("<QQ", 1_000_000, 0), timeout=10.0)
+        session.get(f"sim/clock/advance/{node_id}", payload=vproto.ClockAdvanceReq(1_000_000, 0, 0).pack(), timeout=10.0)
 
     session.close()

@@ -25,9 +25,9 @@ hs = conn.recv(8)
 conn.sendall(hs)
 time.sleep(1)
 # Send IRQs
-conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_SET, 5, 0))
+conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
 time.sleep(0.1)
-conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_CLEAR, 5, 0))
+conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
 time.sleep(1)
 conn.close()
 """

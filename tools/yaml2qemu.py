@@ -153,7 +153,7 @@ def validate_dtb(dtb_path, devices):
         for dev in devices:
             if "CPU" in dev.type_name:
                 continue
-            if dev.type_name in ("zenoh-chardev", "zenoh-telemetry"):
+            if dev.type_name in ("chardev", "telemetry"):
                 continue  # CLI-only, no DTB node
 
             # Check for name@address (DTS node format), e.g. "uart0@9000000".
@@ -261,9 +261,13 @@ def main():
         with Path(args.out_arch).open("w") as f:
             f.write(arch)
 
+    # Extract transport from topology
+    topology: dict[str, str] = {} # topology is parsed in coordinator instead
+    transport = topology.get("transport", "zenoh")
+
     # Extract devices that require explicit CLI instantiation.
-    # zenoh-chardev: CLI-only (no DTB node).
-    # zenoh-telemetry: CLI-only (no DTB node).
+    # chardev: CLI-only (no DTB node).
+    # telemetry: CLI-only (no DTB node).
     # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
@@ -271,13 +275,13 @@ def main():
         if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
             print("Missing mandatory property: socket-path", file=sys.stderr)
             sys.exit(1)
-        if dev.type_name == "zenoh-chardev":
+        if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
 
-            chardev_arg = f"zenoh,id={chardev_id},node={node}"
+            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport}"
             if router:
                 chardev_arg += f",router={router}"
             if topic:
@@ -287,21 +291,24 @@ def main():
             cli_args.append(chardev_arg)
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
-        elif dev.type_name == "zenoh-telemetry":
-            node = dev.properties.get("node", "0")
-            router = dev.properties.get("router")
-            # Force module load early via -device with id matching DTB node name
-            device_arg = f"zenoh-telemetry,id={dev.name},node={node}"
-            if router:
-                device_arg += f",router={router}"
-            cli_args.append("-device")
-            cli_args.append(device_arg)
-            filtered_devices.append(dev)  # Keep in DTB for machine awareness
-        elif dev.type_name == "zenoh-802154":
+        elif dev.type_name == "telemetry":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
-            device_arg = f"zenoh-802154,node={node}"
+            # Force module load early via -device with id matching DTB node name
+            device_arg = f"telemetry,id={dev.name},node={node},transport={transport}"
+            if router:
+                device_arg += f",router={router}"
+            if topic:
+                device_arg += f",topic={topic}"
+            cli_args.append("-device")
+            cli_args.append(device_arg)
+            filtered_devices.append(dev)  # Keep in DTB for machine awareness
+        elif dev.type_name == "ieee802154":
+            node = dev.properties.get("node", "0")
+            router = dev.properties.get("router")
+            topic = dev.properties.get("topic")
+            device_arg = f"ieee802154,node={node},transport={transport}"
             if router:
                 device_arg += f",router={router}"
             if topic:
@@ -324,7 +331,7 @@ def main():
             filtered_devices.append(dev)  # Handled via DTB (memory map)
         else:
             if dev.type_name == "zenoh-wifi":
-                dev.type_name = "virtmcu-wifi"
+                dev.type_name = "wifi"
             filtered_devices.append(dev)
 
     platform.devices = filtered_devices

@@ -302,15 +302,16 @@ sys.exit(0)
     return 0
 }
 
-# TEST 1: HANG (Timeout)
-if ! run_test_case "hang" "mmio-socket-bridge: timeout waiting for response"; then
+# TEST 1: HANG (Network timeout)
+if ! run_test_case "hang" "timeout waiting for response"; then
     exit 1
 fi
+
 
 echo "----------------------------------------------------------------------"
 
 # TEST 2: CRASH (Immediate disconnect)
-if ! run_test_case "crash" "mmio-socket-bridge: remote disconnected"; then
+if ! run_test_case "crash" "remote disconnected"; then
     exit 1
 fi
 

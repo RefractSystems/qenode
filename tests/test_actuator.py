@@ -7,7 +7,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session, tmp_path):
     """
-    Test that the zenoh-actuator device correctly publishes to Zenoh.
+    Test that the actuator device correctly publishes to Zenoh.
     """
     workspace_root = Path(__file__).resolve().parent.parent
 
@@ -53,11 +53,13 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     zenoh_session.declare_subscriber("firmware/control/**", on_sample)
 
     extra_args = [
+        "-S",
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"zenoh-clock,node=0,mode=slaved-icount,router={zenoh_router}",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router}",
     ]
+
     bridge = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
 

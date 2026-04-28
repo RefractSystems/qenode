@@ -32,7 +32,7 @@ PYTHONPATH="$WORKSPACE_DIR" "$WORKSPACE_DIR/scripts/run.sh" \
     -serial null \
     -monitor none \
     -qmp unix:"$QMP_SOCK",server,nowait \
-    -device zenoh-telemetry,node=0 \
+    -device telemetry,node=0 \
     -icount shift=0,align=off,sleep=off &
 QEMU_PID=$!
 trap 'kill -9 $QEMU_PID 2>/dev/null || true; rm -f "$QMP_SOCK"' EXIT

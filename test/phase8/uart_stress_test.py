@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 
+import vproto
 import zenoh
 
 # 10 Mbps = 1,250,000 bytes per second
@@ -33,13 +34,13 @@ CLOCK_TOTAL_NS = 1_000_000_000
 RX_TIMEOUT_S = 60  # wall-clock timeout waiting for all echoes
 
 
-def _pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0) -> bytes:
-    return struct.pack("<QQ", delta_ns, mujoco_time_ns)
+def _pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
+    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
 
 
-def _unpack_clock_ready(data: bytes) -> tuple[int, int, int]:
-    # current_vtime_ns (Q), n_frames (I), error_code (I)
-    return struct.unpack("<QII", data)
+def _unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:
+    # current_vtime_ns (Q), n_frames (I), error_code (I), quantum_number (Q)
+    return struct.unpack("<QIIQ", data)
 
 
 def _open_session(router: str) -> zenoh.Session:
@@ -64,10 +65,10 @@ received_all_event = threading.Event()
 def on_tx_sample(sample: zenoh.Sample) -> None:
     global _x_count, _first_logged
     raw = sample.payload.to_bytes()
-    if len(raw) < 20:
+    if len(raw) < 24:
         return
     # Skip 20-byte ZenohFrameHeader (vtime:u64 + seq:u64 + size:u32)
-    payload = raw[20:]
+    payload = raw[vproto.SIZE_ZENOH_FRAME_HEADER:]
     if not payload:
         return
 
@@ -98,7 +99,7 @@ for i in range(0, TOTAL_BYTES, CHUNK_SIZE):
         vtime = START_VTIME_NS + (j * BAUD_10MBPS_INTERVAL_NS)
         # ZenohFrameHeader: delivery_vtime_ns (u64 LE) + sequence_number (u64 LE) + size (u32 LE)
         # Using sequence number 0 for pre-published bytes as they have distinct vtimes.
-        header = struct.pack("<QQI", vtime, 0, 1)
+        header = vproto.ZenohFrameHeader(vtime, 0, 1).pack()
         _pub.put(header + TEST_BYTE)
     time.sleep(CHUNK_SLEEP_S)
 
@@ -114,7 +115,7 @@ def _time_authority_loop() -> None:
         )
         for reply in replies:
             if reply.ok:
-                current_vtime, _, _ = _unpack_clock_ready(reply.ok.payload.to_bytes())
+                current_vtime, _, _, _ = _unpack_clock_ready(reply.ok.payload.to_bytes())
 
 
 _ta_thread = threading.Thread(target=_time_authority_loop, daemon=True)

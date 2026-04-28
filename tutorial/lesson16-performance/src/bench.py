@@ -42,8 +42,8 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def pack_req(delta_ns):
-    return ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0).pack()
+def pack_req(delta_ns, quantum_number=0):
+    return ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=quantum_number).pack()
 
 
 def unpack_rep(data):
@@ -112,9 +112,10 @@ class BenchmarkRunner:
 
         ready = False
         deadline = time.perf_counter() + 15
+        q_num = 0
         while time.perf_counter() < deadline:
             # Use a longer timeout for the ready check to allow QEMU to reach first boundary
-            replies = list(session.get(topic, payload=pack_req(0), timeout=5.0))
+            replies = list(session.get(topic, payload=pack_req(0, q_num), timeout=5.0))
             if replies:
                 for r in replies:
                     if hasattr(r, "ok") and r.ok is not None:
@@ -125,6 +126,7 @@ class BenchmarkRunner:
             if ready:
                 break
             time.sleep(0.2)
+            q_num += 1
 
         if not ready:
             print(f"  ERROR: [{self.mode}] queryable not found after 15 s")
@@ -132,13 +134,15 @@ class BenchmarkRunner:
             self.wall_time = time.perf_counter() - t0
             return False
 
+        current_q = q_num
         for q in range(MAX_QUANTUMS):
             if proc.poll() is not None:
                 break
 
             lat0 = time.perf_counter()
-            replies = list(session.get(topic, payload=pack_req(QUANTUM_NS), timeout=30.0))
+            replies = list(session.get(topic, payload=pack_req(QUANTUM_NS, current_q), timeout=30.0))
             lat1 = time.perf_counter()
+            current_q += 1
 
             if not replies or not hasattr(replies[0], "ok") or replies[0].ok is None:
                 print(f"  ERROR: [{self.mode}] quantum {q} — no reply")
@@ -194,7 +198,7 @@ class BenchmarkRunner:
                     "-icount",
                     "shift=0,align=off,sleep=off",
                     "-device",
-                    f"zenoh-clock,mode=slaved-suspend,node=0,router={self.router}",
+                    f"virtmcu-clock,mode=slaved-suspend,node=0,router={self.router}",
                 ]
 
             proc = subprocess.Popen(

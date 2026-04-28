@@ -24,3 +24,6 @@ peripherals:
   properties:
     architectureVersion: .GICv2
   container: sysmem
+
+topology:
+  links: []

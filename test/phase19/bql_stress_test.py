@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 
+import vproto
 import zenoh
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
@@ -16,9 +17,8 @@ def publish_chardev():
     pub = session.declare_publisher("virtmcu/uart/0/rx")
     for _i in range(1000):
         # 12 byte header (8 byte vtime, 4 byte size) + payload
-        import struct
 
-        header = struct.pack("<QI", 0, 5)
+        header = vproto.ZenohFrameHeader(0, 0, 5).pack()
         payload = header + b"Hello"
         pub.put(payload)
         time.sleep(0.001)

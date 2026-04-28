@@ -34,13 +34,13 @@ inside VirtMCU without any modifications to the firmware source or build system.
    must not fault unless the real hardware would fault.
 
 3. **Interrupt fidelity**: IRQ numbers in the DTB `interrupts` property must match the
-   NVIC/GIC numbers in the datasheet. virtmcu co-simulation devices (`zenoh-clock`,
-   `zenoh-netdev`) must not consume interrupt lines that the target MCU exposes to
+   NVIC/GIC numbers in the datasheet. virtmcu co-simulation devices (`clock`,
+   `netdev`) must not consume interrupt lines that the target MCU exposes to
    firmware.
 
-4. **Co-simulation transparency**: `zenoh-clock`, `zenoh-netdev`, and `zenoh-chardev`
+4. **Co-simulation transparency**: `clock`, `netdev`, and `chardev`
    are QEMU-level devices only. They must not appear as MMIO regions in the guest
-   physical address space. Adding `-device zenoh-clock` must be equivalent to adding an
+   physical address space. Adding `-device clock` must be equivalent to adding an
    oscilloscope probe — it observes and controls timing without altering the circuit the
    firmware sees.
 
@@ -48,7 +48,7 @@ inside VirtMCU without any modifications to the firmware source or build system.
    mailbox, or special memory region that firmware calls to interact with the simulator.
    Any such interface would break binary fidelity immediately.
 
-6. **Standalone mode must be transparent**: Running without `-device zenoh-clock`
+6. **Standalone mode must be transparent**: Running without `-device clock`
    (standalone mode) must produce functionally identical firmware behavior to running
    with it. The only permitted difference is wall-clock speed and virtual-time
    determinism.

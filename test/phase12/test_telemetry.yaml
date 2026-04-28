@@ -9,9 +9,12 @@ peripherals:
     properties:
       size: '0x01000000'
   - name: telemetry0
-    type: zenoh-telemetry
+    type: telemetry
     properties:
       node: 0
   - name: uart0
     type: UART.PL011
     address: 0x09000000
+
+topology:
+  links: []

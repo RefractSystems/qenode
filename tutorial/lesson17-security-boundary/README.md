@@ -6,7 +6,7 @@ In cyber-physical systems and digital twins, the boundary between the simulated 
 This lesson explores how virtmcu leverages Rust and fuzzing to protect this boundary.
 
 ## The Oxidization Strategy
-Originally, virtmcu plugins like `zenoh-netdev` were written in C. C is notoriously prone to buffer overflows, especially when parsing untrusted binary network data.
+Originally, virtmcu plugins like `netdev` were written in C. C is notoriously prone to buffer overflows, especially when parsing untrusted binary network data.
 
 By migrating these plugins to Rust (Phase 18), we eliminated entire classes of memory safety vulnerabilities. The Rust compiler guarantees that we cannot accidentally read past the end of a Zenoh packet array or dereference a null pointer.
 
@@ -24,7 +24,7 @@ pytest tests/test_parser_fuzzing.py
 We use `proptest` to throw random byte arrays at our native Rust network header deserialization logic.
 Run the tests:
 ```bash
-cargo test --manifest-path hw/rust/virtmcu-api/Cargo.toml --test fuzz_network
+cargo test --manifest-path hw/rust/common/virtmcu-api/Cargo.toml --test fuzz_network
 ```
 
 ## Conclusion

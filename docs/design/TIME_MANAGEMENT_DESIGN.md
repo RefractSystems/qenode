@@ -19,7 +19,7 @@ QEMU's virtual time does not advance on its own. It only advances when the exter
 ```mermaid
 sequenceDiagram
     participant TA as TimeAuthority (Physics)
-    participant ZC as hw/rust/zenoh-clock (QEMU)
+    participant ZC as hw/rust/backbone/clock (QEMU)
     participant TCG as QEMU CPU Loop (TCG)
     participant FW as Guest Firmware
 
@@ -41,13 +41,13 @@ sequenceDiagram
 
 ## 2. The Three Modes of Time
 
-virtmcu provides three distinct clock modes, controlled by whether the `zenoh-clock` device is instantiated and which properties are passed to it.
+virtmcu provides three distinct clock modes, controlled by whether the `clock` device is instantiated and which properties are passed to it.
 
 | Mode | QEMU Arguments | Speed | When to use |
 |---|---|---|---|
-| **Standalone** | *(omit `-device zenoh-clock`)* | 100% | Pure firmware development, CI/CD unit tests where physics are not required. QEMU uses host wall-clock time. |
-| **Slaved-Suspend** | `-device zenoh-clock,node=N,router=<url>` | ~95% | **Default for FirmwareStudio.** QEMU runs at full native speed but pauses at Translation Block boundaries when the physics quantum expires. Ideal for control loops >= one quantum. |
-| **Slaved-icount** | `-device zenoh-clock,node=N,router=<url>,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | ~15–20% | Strict instruction-counting mode. 1 instruction = 1 virtual nanosecond. Required when firmware measures sub-quantum intervals (PWM, bit-banging, microsecond DMA). |
+| **Standalone** | *(omit `-device clock`)* | 100% | Pure firmware development, CI/CD unit tests where physics are not required. QEMU uses host wall-clock time. |
+| **Slaved-Suspend** | `-device clock,node=N,router=<url>` | ~95% | **Default for FirmwareStudio.** QEMU runs at full native speed but pauses at Translation Block boundaries when the physics quantum expires. Ideal for control loops >= one quantum. |
+| **Slaved-icount** | `-device clock,node=N,router=<url>,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | ~15–20% | Strict instruction-counting mode. 1 instruction = 1 virtual nanosecond. Required when firmware measures sub-quantum intervals (PWM, bit-banging, microsecond DMA). |
 
 Where `N` is the QEMU node index (0-based) and `<url>` is the Zenoh router address (e.g. `tcp/127.0.0.1:7447`).
 
@@ -65,9 +65,9 @@ We use a python script (`patches/apply_zenoh_hook.py`) to inject a function poin
 ### The Big QEMU Lock (BQL) Dance
 QEMU is notoriously heavily threaded, yet relies on a single massive mutex called the **Big QEMU Lock (BQL)** to protect hardware state. 
 
-If our `zenoh-clock` receives a network packet and tries to pause the CPU while holding the BQL, the entire QEMU process deadlocks. The QMP monitor, GDB stub, and UART output all freeze because they are waiting for the BQL to process I/O.
+If our `clock` receives a network packet and tries to pause the CPU while holding the BQL, the entire QEMU process deadlocks. The QMP monitor, GDB stub, and UART output all freeze because they are waiting for the BQL to process I/O.
 
-Here is how `hw/rust/zenoh-clock` safely handles the suspend/resume cycle:
+Here is how `hw/rust/clock` safely handles the suspend/resume cycle:
 
 ```mermaid
 flowchart TD
@@ -124,7 +124,7 @@ Frameworks like MINRES `libqemu-cxx` compile QEMU as a C++ library and wrap it i
 ### Why not just use `-icount` with a Python script adjusting `qemu_icount_bias`?
 Earlier prototypes of FirmwareStudio tried to run a Python agent that paused QEMU, adjusted the icount bias via QMP, and resumed it.
 * **The Problem:** Python in the hot simulation loop is disastrous for performance. Pausing QEMU via QMP took ~2 milliseconds per quantum. If the quantum is 1ms, the simulation runs at 0.5x real-time purely due to IPC overhead.
-* **Our Solution:** `hw/rust/zenoh-clock` is compiled natively into QEMU. The Zenoh Rust backend handles the network synchronization in microseconds.
+* **Our Solution:** `hw/rust/clock` is compiled natively into QEMU. The Zenoh Rust backend handles the network synchronization in microseconds.
 
 ### Why have `slaved-suspend` if `slaved-icount` is more accurate?
 * **The Problem:** `-icount` forces QEMU to count every single instruction, disabling many of TCG's speed optimizations. It cuts performance by ~80%.
@@ -136,24 +136,24 @@ Earlier prototypes of FirmwareStudio tried to run a Python agent that paused QEM
 
 To run a simulation in the recommended slaved-suspend mode:
 ```bash
-./scripts/run.sh --dtb board.dtb -device zenoh-clock,node=0
+./scripts/run.sh --dtb board.dtb -device clock,node=0
 ```
 
 To run a simulation in cycle-accurate slaved-icount mode:
 ```bash
-./scripts/run.sh --dtb board.dtb -device zenoh-clock,node=0,mode=icount -icount shift=0,align=off,sleep=off
+./scripts/run.sh --dtb board.dtb -device clock,node=0,mode=icount -icount shift=0,align=off,sleep=off
 ```
 
 ## 7. Project Structure
 
-- `hw/rust/zenoh-clock`: The native QEMU module handling the Zenoh network protocol and QEMU BQL locking.
-- `patches/apply_zenoh_hook.py`: The injection script allowing `zenoh-clock` to hook into `accel/tcg/cpu-exec.c`.
+- `hw/rust/backbone/clock`: The native QEMU module handling the abstract transport protocol and QEMU BQL locking.
+- `patches/apply_zenoh_hook.py`: The injection script allowing `clock` to hook into `accel/tcg/cpu-exec.c`.
 - `tools/testing/qmp_bridge.py`: Testing utility tracking virtual time.
 - `test/phase7/`: Shell scripts verifying determinism across runs using these clock modes.
 
 ## 8. Code Style
 
-- Rust Code (`hw/rust/zenoh-clock`): Follow standard Rust idioms. Run `cargo clippy` and `cargo fmt`.
+- Rust Code (`hw/rust/clock`): Follow standard Rust idioms. Run `cargo clippy` and `cargo fmt`.
 - Concurrency: All Zenoh network callbacks happen on a background thread. Interaction with QEMU state MUST be synchronized using `qemu_mutex_lock_iothread()` / `bql_lock()`.
 
 ## 9. Testing Strategy
@@ -185,13 +185,13 @@ When a firmware access to an `mmio-socket-bridge` occurs, the vCPU thread blocks
 
 ### Zenoh-Clock Stalls
 Because virtual time only advances when instructions run (or timers fire), a QEMU process that is heavily throttled by host load might not reach its next quantum boundary within the `TimeAuthority`'s wall-clock deadline.
-- If QEMU fails to reach the boundary, `zenoh-clock` will return an error code in the `ClockReadyPayload`.
+- If QEMU fails to reach the boundary, `clock` will return an error code in the `ClockReadyPayload`.
 - **Error Codes**:
     - `0` (OK): Quantum completed successfully.
-    - `1` (STALL): QEMU did not reach TB boundary within the stall timeout (default 5 s; override with `-device zenoh-clock,stall-timeout=<ms>`; likely firmware crash or deadlock).
+    - `1` (STALL): QEMU did not reach TB boundary within the stall timeout (default 5 s; override with `-device clock,stall-timeout=<ms>`; likely firmware crash or deadlock).
     - `2` (ZENOH_ERROR): Transport-level failure or malformed payload.
 - This is a **host performance issue**, not a simulation determinism issue. The simulation remains deterministic, but it is running slower than the requester's timeout threshold.
 
 - **Always do**: Unlock the BQL (`bql_unlock()`) before blocking on a Zenoh network reply. If the BQL is held during a block, QEMU will permanently deadlock.
 - **Ask first**: Before proposing any Python-based synchronization scripts inside the simulation loop. Native Rust plugins are a hard requirement for performance.
-- **Never do**: Use `-accel kvm` when `zenoh-clock` is attached. KVM bypasses the TCG event loop entirely, making the quantum hooks unreachable.
+- **Never do**: Use `-accel kvm` when `clock` is attached. KVM bypasses the TCG event loop entirely, making the quantum hooks unreachable.

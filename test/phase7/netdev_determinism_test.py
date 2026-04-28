@@ -1,7 +1,8 @@
+
 """
 test/phase7/netdev_determinism_test.py
 
-Determinism test for zenoh-netdev's priority-queue RX path (task 7.8).
+Determinism test for netdev's priority-queue RX path (task 7.8).
 
 Scenario
 --------
@@ -23,11 +24,12 @@ the delivery ordering is observable purely from QEMU's stderr.
 
 import argparse
 import re
-import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import vproto
 
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
 WORKSPACE_DIR = Path(Path(SCRIPT_DIR).parent.parent)
@@ -43,14 +45,19 @@ SIZE_A = 34  # Packet A: 14-byte Ethernet header + 20 payload bytes
 SIZE_B = 24  # Packet B: 14-byte Ethernet header + 10 payload bytes
 
 
+Q_NUM = 0
+
+
 def pack_clock_req(delta_ns: int) -> bytes:
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    global Q_NUM
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=Q_NUM)
+    Q_NUM += 1
     return req.pack()
 
 
 def pack_net_frame(vtime_ns: int, data: bytes) -> bytes:
-    """Wire format expected by zenoh-netdev: 8-byte LE vtime + 4-byte LE size + payload."""
-    return struct.pack("<QI", vtime_ns, len(data)) + data
+    """Wire format expected by netdev: 8-byte LE vtime + 4-byte LE size + payload."""
+    return vproto.ZenohFrameHeader(vtime_ns, 0, len(data)).pack() + data
 
 
 def build_firmware(tmpdir: str) -> str:
@@ -131,7 +138,7 @@ def main():
             "-icount",
             "shift=0,align=off,sleep=off",
             "-device",
-            f"zenoh-clock,mode=slaved-icount,node=0,router={args.router}",
+            f"clock,mode=slaved-icount,node=0,router={args.router}",
             "-netdev",
             f"zenoh,id=net0,node=0,router={args.router}",
             "-nographic",

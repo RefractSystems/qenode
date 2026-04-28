@@ -1,8 +1,10 @@
 import asyncio
-import os
 from pathlib import Path
 
 import pytest
+
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
 
 
 @pytest.mark.asyncio
@@ -14,33 +16,13 @@ async def test_phase10_usd_metadata():
     yaml_file = Path(workspace_root) / "test/phase3/test_board.yaml"
     tool = Path(workspace_root) / "tools/usd_to_virtmcu.py"
 
-    proc = await asyncio.create_subprocess_exec(
-        "python3", tool, yaml_file, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    stdout, _stderr = await proc.communicate()
-    assert proc.returncode == 0
-    output = stdout.decode()
-    assert "MEMORY_BASE" in output
-    assert "UART0_BASE" in output
-    assert "GIC_BASE" in output
-
-
-def find_bin(name):
-    workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    # 1. Check CARGO_TARGET_DIR
-    if "CARGO_TARGET_DIR" in os.environ:
-        p = Path(os.environ["CARGO_TARGET_DIR"]) / f"release/{name}"
-        if p.exists():
-            return p
-    # 2. Check workspace target
-    p = workspace_root / f"target/release/{name}"
-    if p.exists():
-        return p
-    # 3. Check tool-specific target
-    p = workspace_root / f"tools/cyber_bridge/target/release/{name}"
-    if p.exists():
-        return p
-    return workspace_root / f"target/release/{name}"
+    async with AsyncManagedProcess("python3", tool, yaml_file) as proc:
+        await proc.wait()
+        assert proc.returncode == 0
+        output = proc.stdout_text
+        assert "MEMORY_BASE" in output
+        assert "UART0_BASE" in output
+        assert "GIC_BASE" in output
 
 
 @pytest.mark.asyncio
@@ -48,16 +30,13 @@ async def test_phase10_resd_replay_startup():
     """
     TEST 3: resd_replay startup + empty-file rejection
     """
-    replay_bin = find_bin("resd_replay")
+    replay_bin = resolve_rust_binary("resd_replay")
 
     # Missing file should fail
-    proc = await asyncio.create_subprocess_exec(
-        str(replay_bin), "/nonexistent.resd", "0", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-
-    _stdout, stderr = await proc.communicate()
-    assert proc.returncode != 0
-    assert b"Failed to parse" in stderr
+    async with AsyncManagedProcess(str(replay_bin), "/nonexistent.resd", "0") as proc:
+        await proc.wait()
+        assert proc.returncode != 0
+        assert "Failed to parse" in proc.stderr_text
 
 
 @pytest.mark.asyncio
@@ -65,7 +44,7 @@ async def test_phase10_mujoco_bridge_shm():
     """
     TEST 4: mujoco_bridge shared memory creation
     """
-    bridge_bin = find_bin("mujoco_bridge")
+    bridge_bin = resolve_rust_binary("mujoco_bridge")
 
     node_id = 99
     shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"
@@ -73,19 +52,15 @@ async def test_phase10_mujoco_bridge_shm():
         Path(shm_path).unlink()
 
     # Start bridge
-    proc = await asyncio.create_subprocess_exec(
-        str(bridge_bin), str(node_id), "2", "6", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    # Wait for SHM to appear
-    for _ in range(20):
-        if Path(shm_path).exists():
-            break
-        await asyncio.sleep(0.1)
+    async with AsyncManagedProcess(str(bridge_bin), str(node_id), "2", "6"):
+        # Wait for SHM to appear
+        for _ in range(20):
+            if Path(shm_path).exists():
+                break
+            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: wait for shm file creation
 
-    assert Path(shm_path).exists(), "Shared memory segment not created"
+        assert Path(shm_path).exists(), "Shared memory segment not created"
 
-    # Cleanup
-    proc.terminate()
-    await proc.wait()
+    # Cleanup is handled automatically by AsyncManagedProcess context manager
     if Path(shm_path).exists():
         Path(shm_path).unlink()
