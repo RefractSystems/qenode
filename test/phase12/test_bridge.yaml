@@ -14,3 +14,6 @@ peripherals:
     properties:
       socket-path: "/tmp/mmio.sock"
       region-size: 0x1000
+
+topology:
+  links: []

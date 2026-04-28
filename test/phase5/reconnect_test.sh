@@ -122,16 +122,16 @@ def run():
     
     # Trigger IRQ
     print("Sending IRQ SET...")
-    conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_SET, 0, 0))
+    conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
     time.sleep(0.1)
     print("Sending IRQ CLEAR...")
-    conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_CLEAR, 0, 0))
+    conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
 
     while True:
         req = conn.recv(32)
         if not req: break
         # Send back 0x42
-        resp = struct.pack("<IIQ", SYSC_MSG_RESP, 0, 0x42)
+        resp = vproto.SyscMsg(SYSC_MSG_RESP, 0, 0x42).pack()
         conn.sendall(resp)
 run()
 EOF

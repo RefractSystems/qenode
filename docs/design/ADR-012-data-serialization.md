@@ -5,7 +5,7 @@
 
 ## Context
 
-The `virtmcu` simulation framework communicates with external tools (like SystemC adapters, `zenoh-clock` masters, and Firmware Studio telemetry dashboards) heavily. Originally, we used raw C `struct` types mapped directly over sockets and parsed manually in Python using `struct.unpack("<QQII", data)`. 
+The `virtmcu` simulation framework communicates with external tools (like SystemC adapters, `clock` masters, and Firmware Studio telemetry dashboards) heavily. Originally, we used raw C `struct` types mapped directly over sockets and parsed manually in Python using `struct.unpack("<QQII", data)`. 
 
 As the structs evolved (e.g., adding `vtime_ns` to MMIO requests), this resulted in "silent failures" where mismatched sizes or misaligned padding caused Python parsers and SystemC adapters to hang or interpret garbage data. We needed a robust, cross-language serialization format. However, the QEMU main loop (TCG thread) is hyper-sensitive to latency, meaning heavy serialization overhead (like JSON or even FlatBuffers builders) directly inside the MMIO or Clock hooks would drastically lower simulation Instructions-Per-Second (IPS).
 
@@ -16,7 +16,7 @@ We chose a **Hybrid Serialization Strategy** tailored to the synchronous vs. asy
 ### 1. Synchronous Hot Paths (MMIO & Clock)
 For blocking, high-frequency bridges where every nanosecond counts, we use **Strict Versioned Binary Structs**.
 *   **Format:** Raw C `struct` marked `__attribute__((packed))`.
-*   **Single Source of Truth:** `hw/rust/virtmcu-api/src/lib.rs` defines all payloads (`MmioReq`, `ClockAdvanceReq`, etc.) natively in Rust.
+*   **Single Source of Truth:** `hw/rust/common/virtmcu-api/src/lib.rs` defines all payloads (`MmioReq`, `ClockAdvanceReq`, etc.) natively in Rust.
 *   **Handshake Safety:** Every connection must immediately send and verify a `VirtmcuHandshake` struct containing a `MAGIC` (0x564D4355) and an incrementing `VERSION`.
 *   **Downstream (Python):** We auto-generate Python `dataclass` bindings via `scripts/gen_vproto.py`. Downstream tools import `vproto.py` to seamlessly pack/unpack data without hardcoded format strings.
 *   **Downstream (C/C++):** Legacy components use `hw/misc/virtmcu_proto.h` which must be kept in sync with the Rust SSOT.

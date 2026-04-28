@@ -15,10 +15,13 @@ peripherals:
   renode_type: UART.PL011
   address: '0x09000000'
 - name: actuator
-  type: zenoh-actuator
+  type: actuator
   address: '0x50000000'
   properties:
     node: 0
     region-size: 256
     topic-prefix: "firmware/control"
     router: "tcp/127.0.0.1:7450"
+
+topology:
+  links: []

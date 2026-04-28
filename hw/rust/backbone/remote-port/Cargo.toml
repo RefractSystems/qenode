@@ -1,0 +1,11 @@
+[package]
+name = "remote-port"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+virtmcu-qom.workspace = true
+
+[lib]
+crate-type = ["staticlib"]

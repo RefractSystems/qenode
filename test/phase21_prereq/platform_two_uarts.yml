@@ -19,3 +19,6 @@ peripherals:
     type: UART.PL011
     address: 0x09005000
     interrupts: [34]
+
+topology:
+  links: []

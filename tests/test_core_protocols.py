@@ -3,7 +3,7 @@ Core protocol hardening tests for virtmcu.
 
 Tests the shared wire-format contracts between Rust (virtmcu-api) and Python
 without requiring a QEMU binary or Zenoh router.  Every struct, topic naming
-convention, and error code defined in hw/rust/virtmcu-api/src/lib.rs has a
+convention, and error code defined in hw/rust/common/virtmcu-api/src/lib.rs has a
 corresponding test here.
 
 Run with: pytest tests/test_core_protocols.py -v
@@ -16,9 +16,10 @@ import struct
 from dataclasses import dataclass, field
 
 import pytest
+import vproto
 
 # ---------------------------------------------------------------------------
-# Constants — must match hw/rust/virtmcu-api/src/lib.rs exactly
+# Constants — must match hw/rust/common/virtmcu-api/src/lib.rs exactly
 # ---------------------------------------------------------------------------
 
 VIRTMCU_PROTO_MAGIC: int = 0x564D4355
@@ -36,13 +37,13 @@ CLOCK_ERROR_STALL: int = 1
 CLOCK_ERROR_ZENOH: int = 2
 
 ZENOH_FRAME_HEADER_SIZE: int = 20  # ZenohFrameHeader: u64 + u64 + u32, packed
-CLOCK_ADVANCE_REQ_SIZE: int = 16  # ClockAdvanceReq: u64 + u64
-CLOCK_READY_RESP_SIZE: int = 16  # ClockReadyResp: u64 + u32 + u32
+CLOCK_ADVANCE_REQ_SIZE: int = 24  # ClockAdvanceReq: u64 + u64 + u64
+CLOCK_READY_RESP_SIZE: int = 24  # ClockReadyResp: u64 + u32 + u32 + u64
 MMIO_REQ_SIZE: int = 32  # MmioReq: 1+1+2+4+8+8+8
 SYSC_MSG_SIZE: int = 16  # SyscMsg: 4+4+8
 VIRTMCU_HANDSHAKE_SIZE: int = 8  # VirtmcuHandshake: u32 + u32
 
-# Topic naming (must match zenoh-chardev, zenoh-netdev, zenoh-clock)
+# Topic naming (must match chardev, netdev, clock)
 CHARDEV_TOPIC_BASE: str = "sim/chardev"
 CLOCK_TOPIC_BASE: str = "sim/clock"
 
@@ -54,7 +55,7 @@ CLOCK_TOPIC_BASE: str = "sim/clock"
 
 def encode_zenoh_frame(delivery_vtime_ns: int, payload: bytes, sequence_number: int = 0) -> bytes:
     """Pack ZenohFrameHeader + payload (mirrors Rust encode_frame())."""
-    header = struct.pack("<QQI", delivery_vtime_ns, sequence_number, len(payload))
+    header = vproto.ZenohFrameHeader(delivery_vtime_ns, sequence_number, len(payload)).pack()
     return header + payload
 
 
@@ -66,24 +67,24 @@ def decode_zenoh_frame(data: bytes) -> tuple[int, int, int, bytes]:
     return vtime, seq, size, data[ZENOH_FRAME_HEADER_SIZE:]
 
 
-def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0) -> bytes:
-    return struct.pack("<QQ", delta_ns, mujoco_time_ns)
+def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
+    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
 
 
-def decode_clock_advance_req(data: bytes) -> tuple[int, int]:
+def decode_clock_advance_req(data: bytes) -> tuple[int, int, int]:
     if len(data) < CLOCK_ADVANCE_REQ_SIZE:
         raise ValueError(f"ClockAdvanceReq too short: {len(data)}")
-    return struct.unpack_from("<QQ", data, 0)
+    return struct.unpack_from("<QQQ", data, 0)
 
 
-def encode_clock_ready_resp(current_vtime_ns: int, n_frames: int = 0, error_code: int = CLOCK_ERROR_OK) -> bytes:
-    return struct.pack("<QII", current_vtime_ns, n_frames, error_code)
+def encode_clock_ready_resp(current_vtime_ns: int, n_frames: int = 0, error_code: int = CLOCK_ERROR_OK, quantum_number: int = 0) -> bytes:
+    return vproto.ClockReadyResp(current_vtime_ns, n_frames, error_code, quantum_number).pack()
 
 
-def decode_clock_ready_resp(data: bytes) -> tuple[int, int, int]:
+def decode_clock_ready_resp(data: bytes) -> tuple[int, int, int, int]:
     if len(data) < CLOCK_READY_RESP_SIZE:
         raise ValueError(f"ClockReadyResp too short: {len(data)}")
-    return struct.unpack_from("<QII", data, 0)
+    return struct.unpack_from("<QIIQ", data, 0)
 
 
 def encode_mmio_req(
@@ -93,7 +94,7 @@ def encode_mmio_req(
     addr: int,
     data: int,
 ) -> bytes:
-    return struct.pack("<BBxxI QQQ", type_, size, 0, vtime_ns, addr, data)
+    return vproto.MmioReq(type_, size, 0, 0, vtime_ns, addr, data).pack()
 
 
 def decode_mmio_req(raw: bytes) -> tuple:
@@ -104,7 +105,7 @@ def decode_mmio_req(raw: bytes) -> tuple:
 
 
 def encode_sysc_msg(type_: int, irq_num: int, data: int) -> bytes:
-    return struct.pack("<IIQ", type_, irq_num, data)
+    return vproto.SyscMsg(type_, irq_num, data).pack()
 
 
 def decode_sysc_msg(raw: bytes) -> tuple[int, int, int]:
@@ -114,7 +115,7 @@ def decode_sysc_msg(raw: bytes) -> tuple[int, int, int]:
 
 
 def encode_handshake(magic: int = VIRTMCU_PROTO_MAGIC, version: int = VIRTMCU_PROTO_VERSION) -> bytes:
-    return struct.pack("<II", magic, version)
+    return vproto.VirtmcuHandshake(magic, version).pack()
 
 
 def decode_handshake(raw: bytes) -> tuple[int, int]:
@@ -235,35 +236,36 @@ class TestZenohFrameHeader:
 
 class TestClockAdvanceReq:
     def test_size_constant(self):
-        assert CLOCK_ADVANCE_REQ_SIZE == 16
+        assert CLOCK_ADVANCE_REQ_SIZE == 24
 
     def test_round_trip(self):
-        raw = encode_clock_advance_req(10_000_000, 42)
-        delta, mujoco = decode_clock_advance_req(raw)
+        raw = encode_clock_advance_req(10_000_000, 42, 123)
+        delta, mujoco, qn = decode_clock_advance_req(raw)
         assert delta == 10_000_000
         assert mujoco == 42
+        assert qn == 123
 
     def test_zero_values(self):
-        raw = encode_clock_advance_req(0, 0)
-        assert raw == b"\x00" * 16
+        raw = encode_clock_advance_req(0, 0, 0)
+        assert raw == b"\x00" * 24
 
     def test_max_u64_delta(self):
         max_u64 = (1 << 64) - 1
-        raw = encode_clock_advance_req(max_u64, 0)
-        delta, _ = decode_clock_advance_req(raw)
+        raw = encode_clock_advance_req(max_u64, 0, 0)
+        delta, _, _ = decode_clock_advance_req(raw)
         assert delta == max_u64
 
     def test_little_endian_encoding(self):
-        raw = encode_clock_advance_req(0x0102030405060708, 0)
+        raw = encode_clock_advance_req(0x0102030405060708, 0, 0)
         assert raw[:8] == bytes([0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01])
 
     def test_rejects_short_payload(self):
         with pytest.raises(ValueError):
-            decode_clock_advance_req(b"\x00" * 15)
+            decode_clock_advance_req(b"\x00" * 23)
 
     def test_quantum_10ms(self):
-        raw = encode_clock_advance_req(10_000_000, 0)
-        delta, _ = decode_clock_advance_req(raw)
+        raw = encode_clock_advance_req(10_000_000, 0, 0)
+        delta, _, _ = decode_clock_advance_req(raw)
         assert delta == 10_000_000  # 10 ms in ns
 
 
@@ -274,23 +276,24 @@ class TestClockAdvanceReq:
 
 class TestClockReadyResp:
     def test_size_constant(self):
-        assert CLOCK_READY_RESP_SIZE == 16
+        assert CLOCK_READY_RESP_SIZE == 24
 
     def test_ok_round_trip(self):
-        raw = encode_clock_ready_resp(10_000_000, n_frames=50, error_code=CLOCK_ERROR_OK)
-        vtime, n, err = decode_clock_ready_resp(raw)
+        raw = encode_clock_ready_resp(10_000_000, n_frames=50, error_code=CLOCK_ERROR_OK, quantum_number=123)
+        vtime, n, err, qn = decode_clock_ready_resp(raw)
         assert vtime == 10_000_000
         assert n == 50
         assert err == CLOCK_ERROR_OK
+        assert qn == 123
 
     def test_stall_error_code(self):
         raw = encode_clock_ready_resp(0, error_code=CLOCK_ERROR_STALL)
-        _, _, err = decode_clock_ready_resp(raw)
+        _, _, err, _ = decode_clock_ready_resp(raw)
         assert err == CLOCK_ERROR_STALL
 
     def test_zenoh_error_code(self):
         raw = encode_clock_ready_resp(0, error_code=CLOCK_ERROR_ZENOH)
-        _, _, err = decode_clock_ready_resp(raw)
+        _, _, err, _ = decode_clock_ready_resp(raw)
         assert err == CLOCK_ERROR_ZENOH
 
     def test_error_codes_distinct(self):
@@ -303,12 +306,12 @@ class TestClockReadyResp:
 
     def test_rejects_short_payload(self):
         with pytest.raises(ValueError):
-            decode_clock_ready_resp(b"\x00" * 15)
+            decode_clock_ready_resp(b"\x00" * 23)
 
     def test_vtime_preserved(self):
         for vtime in [0, 1, 10_000_000, (1 << 63), (1 << 64) - 1]:
             raw = encode_clock_ready_resp(vtime)
-            v, _, _ = decode_clock_ready_resp(raw)
+            v, _, _, _ = decode_clock_ready_resp(raw)
             assert v == vtime, f"vtime mismatch at {vtime}"
 
 
@@ -476,13 +479,13 @@ class TestTopicNaming:
 
 
 # ---------------------------------------------------------------------------
-# Delivery queue (min-heap by vtime) — mirrors zenoh-chardev OrderedPacket
+# Delivery queue (min-heap by vtime) — mirrors chardev OrderedPacket
 # ---------------------------------------------------------------------------
 
 
 @dataclass(order=False)
 class DeliveryPacket:
-    """Mirrors OrderedPacket in zenoh-chardev: min-heap by vtime + sequence."""
+    """Mirrors OrderedPacket in chardev: min-heap by vtime + sequence."""
 
     vtime: int
     sequence: int = 0
@@ -586,18 +589,18 @@ class TestStallProtocol:
         """A stall reply has error_code=CLOCK_ERROR_STALL, vtime is last-known."""
         last_known_vtime = 5_000_000
         raw = encode_clock_ready_resp(last_known_vtime, n_frames=0, error_code=CLOCK_ERROR_STALL)
-        vtime, n, err = decode_clock_ready_resp(raw)
+        vtime, n, err, _ = decode_clock_ready_resp(raw)
         assert err == CLOCK_ERROR_STALL
         assert vtime == last_known_vtime
         assert n == 0
 
     def test_ok_reply_zero_stalls(self):
         raw = encode_clock_ready_resp(10_000_000, error_code=CLOCK_ERROR_OK)
-        _, _, err = decode_clock_ready_resp(raw)
+        _, _, err, _ = decode_clock_ready_resp(raw)
         assert err == CLOCK_ERROR_OK
 
     def test_stall_sentinel_is_u64_max(self):
-        # QUANTUM_WAIT_STALL_SENTINEL in zenoh-clock is u64::MAX
+        # QUANTUM_WAIT_STALL_SENTINEL in clock is u64::MAX
         sentinel = (1 << 64) - 1
         assert sentinel == 0xFFFF_FFFF_FFFF_FFFF
 
@@ -608,8 +611,8 @@ class TestStallProtocol:
 
     def test_clock_advance_with_zero_delta_is_valid(self):
         """delta_ns=0 is a valid request (time authority confirms current vtime)."""
-        raw = encode_clock_advance_req(0, 0)
-        delta, _ = decode_clock_advance_req(raw)
+        raw = encode_clock_advance_req(0, 0, 0)
+        delta, _, _ = decode_clock_advance_req(raw)
         assert delta == 0
 
     def test_multiple_stall_codes_independent(self):

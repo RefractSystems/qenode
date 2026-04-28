@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 
+import vproto
 import zenoh
 
 # 10 Mbps = 800 ns interval
@@ -11,12 +12,12 @@ TOTAL_BYTES = 10000
 TOPIC_BASE = "virtmcu/uart"
 
 
-def pack_clock_advance(delta_ns, mujoco_time_ns=0):
-    return struct.pack("<QQ", delta_ns, mujoco_time_ns)
+def pack_clock_advance(delta_ns, mujoco_time_ns=0, quantum_number=0):
+    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
 
 
 def unpack_clock_ready(data):
-    return struct.unpack("<QII", data)
+    return struct.unpack("<QIIQ", data)
 
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
@@ -73,7 +74,7 @@ print(f"[Multi-Node UART] Injecting {TOTAL_BYTES} bytes into Node 0...")
 start_vtime = 10_000_000
 for i in range(TOTAL_BYTES):
     vtime = start_vtime + (i * BAUD_10MBPS_INTERVAL_NS)
-    header = struct.pack("<QI", vtime, 1)
+    header = vproto.ZenohFrameHeader(vtime, 0, 1).pack()
     pub0.put(header + b"S")
 
 print("[Multi-Node UART] Starting Time Authority for both nodes...")
@@ -86,7 +87,7 @@ def ta_loop(node_id):
         replies = session.get(f"sim/clock/advance/{node_id}", payload=pack_clock_advance(QUANTA_NS))
         for reply in replies:
             if reply.ok:
-                current_vtime, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
+                current_vtime, _, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
         time.sleep(0.001)
 
 

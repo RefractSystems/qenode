@@ -1,16 +1,16 @@
-import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+import vproto
 import zenoh
 
 WORKSPACE_DIR = "/workspace"
 
 
 def pack_zenoh_frame(vtime_ns: int, data: bytes) -> bytes:
-    header = struct.pack("<QI", vtime_ns, len(data))
+    header = vproto.ZenohFrameHeader(vtime_ns, 0, len(data).pack())
     return header + data
 
 

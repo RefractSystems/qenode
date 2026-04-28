@@ -106,7 +106,7 @@ run_sh = os.path.join(WORKSPACE, "scripts", "run.sh")
 cmd = [run_sh, "--dtb", dtb, "--kernel", kernel,
        "-nographic", "-serial", "stdio", "-monitor", "none",
        "-icount", "shift=0,align=off,sleep=off",
-       "-device", f"zenoh-clock,mode=slaved-suspend,node=0,router={PROXY_URL}"]
+       "-device", f"virtmcu-clock,mode=slaved-suspend,node=0,router={PROXY_URL}"]
 
 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
 threading.Thread(target=reader, args=(proc,), daemon=True).start()
@@ -118,7 +118,8 @@ cfg.insert_json5("scouting/multicast/enabled", "false")
 session = zenoh.open(cfg)
 
 topic = "sim/clock/advance/0"
-payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0).pack()
+q_num = 0
+payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0, quantum_number=q_num).pack()
 
 # Wait for QEMU to reach first quantum boundary.
 ready = False
@@ -129,6 +130,8 @@ while time.perf_counter() < deadline:
         ready = True
         break
     time.sleep(0.2)
+    q_num += 1
+    payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0, quantum_number=q_num).pack()
 
 if not ready:
     proc.terminate(); proc.wait()
@@ -136,11 +139,13 @@ if not ready:
     print("0")
     sys.exit(0)
 
-payload_adv = ClockAdvanceReq(delta_ns=QUANTUM_NS, mujoco_time_ns=0).pack()
+current_q = q_num
 for _ in range(MAX_QUANTA):
     if proc.poll() is not None:
         break
+    payload_adv = ClockAdvanceReq(delta_ns=QUANTUM_NS, mujoco_time_ns=0, quantum_number=current_q).pack()
     replies = list(session.get(topic, payload=payload_adv, timeout=30.0))
+    current_q += 1
     if not replies or not hasattr(replies[0], "ok") or replies[0].ok is None:
         break
     resp = ClockReadyResp.unpack(replies[0].ok.payload.to_bytes())

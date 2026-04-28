@@ -47,7 +47,7 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
             req_received.set()
 
             # Keep connection open to keep vCPU blocked
-            await asyncio.sleep(60)
+            await asyncio.sleep(60)  # SLEEP_EXCEPTION: block vCPU intentionally
         except asyncio.IncompleteReadError:
             pass
         except Exception as e:
@@ -64,7 +64,7 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
     for _ in range(50):
         if Path(mmio_sock).exists():
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: waiting for server socket
 
     try:
         # Launch QEMU
@@ -124,7 +124,7 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
             req_received.set()
 
             # ... we just wait
-            await asyncio.sleep(60)
+            await asyncio.sleep(60)  # SLEEP_EXCEPTION: block vCPU intentionally
         except Exception as e:
             print(f"RP Server Error: {e}")
         finally:

@@ -36,6 +36,8 @@ impl Ord for CoordMessage {
 pub enum BarrierError {
     Timeout,
     DuplicateDone,
+    NodeIndexOutOfBounds(u32),
+    QuantumMismatch { expected: u64, got: u64 },
 }
 
 pub struct QuantumBarrier {
@@ -62,11 +64,22 @@ impl QuantumBarrier {
     pub fn submit_done(
         &self,
         node_id: u32,
+        quantum: u64,
+        expected_quantum: u64,
         mut messages: Vec<CoordMessage>,
     ) -> Result<Option<Vec<CoordMessage>>, BarrierError> {
+        if quantum != expected_quantum {
+            return Err(BarrierError::QuantumMismatch {
+                expected: expected_quantum,
+                got: quantum,
+            });
+        }
         {
             let mut done_nodes = self.done_nodes.lock().unwrap();
-            if node_id as usize >= self.n_nodes || done_nodes[node_id as usize] {
+            if node_id as usize >= self.n_nodes {
+                return Err(BarrierError::NodeIndexOutOfBounds(node_id));
+            }
+            if done_nodes[node_id as usize] {
                 return Err(BarrierError::DuplicateDone);
             }
             done_nodes[node_id as usize] = true;
@@ -87,7 +100,10 @@ impl QuantumBarrier {
             messages.truncate(self.max_messages_per_node);
         }
 
-        let mut buffer = self.message_buffer.lock().unwrap();
+        let mut buffer = self
+            .message_buffer
+            .lock()
+            .expect("message_buffer mutex poisoned");
         buffer.extend(messages);
 
         let count = self.done_count.fetch_add(1, AtomicOrdering::SeqCst) + 1;
@@ -103,7 +119,10 @@ impl QuantumBarrier {
 
     pub fn reset(&self) {
         self.done_count.store(0, AtomicOrdering::SeqCst);
-        let mut buffer = self.message_buffer.lock().unwrap();
+        let mut buffer = self
+            .message_buffer
+            .lock()
+            .expect("message_buffer mutex poisoned");
         buffer.clear();
         let mut done_nodes = self.done_nodes.lock().unwrap();
         for d in done_nodes.iter_mut() {
@@ -112,14 +131,20 @@ impl QuantumBarrier {
     }
 
     pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
-        let buffer = self.message_buffer.lock().unwrap();
+        let buffer = self
+            .message_buffer
+            .lock()
+            .expect("message_buffer mutex poisoned");
         if self.done_count.load(AtomicOrdering::SeqCst) == self.n_nodes {
             let mut msgs = buffer.clone();
             msgs.sort();
             return Ok(msgs);
         }
 
-        let (buffer, wait_result) = self.all_done_cond.wait_timeout(buffer, timeout).unwrap();
+        let (buffer, wait_result) = self
+            .all_done_cond
+            .wait_timeout(buffer, timeout)
+            .expect("all_done_cond wait failed");
         if wait_result.timed_out() {
             Err(BarrierError::Timeout)
         } else {
@@ -148,18 +173,22 @@ mod tests {
     #[test]
     fn test_barrier_waits_for_all_3_nodes() {
         let barrier = QuantumBarrier::new(3, 1024);
-        assert!(barrier.submit_done(0, vec![]).unwrap().is_none());
-        assert!(barrier.submit_done(1, vec![]).unwrap().is_none());
-        assert!(barrier.submit_done(2, vec![]).unwrap().is_some());
+        assert!(barrier.submit_done(0, 0, 0, vec![]).unwrap().is_none());
+        assert!(barrier.submit_done(1, 0, 0, vec![]).unwrap().is_none());
+        assert!(barrier.submit_done(2, 0, 0, vec![]).unwrap().is_some());
     }
 
     #[test]
     fn test_canonical_sort_same_vtime() {
         let barrier = QuantumBarrier::new(3, 1024);
-        barrier.submit_done(2, vec![dummy_msg(10, 0, 2)]).unwrap();
-        barrier.submit_done(0, vec![dummy_msg(10, 0, 0)]).unwrap();
+        barrier
+            .submit_done(2, 0, 0, vec![dummy_msg(10, 0, 2)])
+            .unwrap();
+        barrier
+            .submit_done(0, 0, 0, vec![dummy_msg(10, 0, 0)])
+            .unwrap();
         let sorted = barrier
-            .submit_done(1, vec![dummy_msg(10, 0, 1)])
+            .submit_done(1, 0, 0, vec![dummy_msg(10, 0, 1)])
             .unwrap()
             .unwrap();
 
@@ -172,10 +201,14 @@ mod tests {
     #[test]
     fn test_canonical_sort_different_vtime() {
         let barrier = QuantumBarrier::new(3, 1024);
-        barrier.submit_done(0, vec![dummy_msg(30, 0, 0)]).unwrap();
-        barrier.submit_done(1, vec![dummy_msg(10, 0, 1)]).unwrap();
+        barrier
+            .submit_done(0, 0, 0, vec![dummy_msg(30, 0, 0)])
+            .unwrap();
+        barrier
+            .submit_done(1, 0, 0, vec![dummy_msg(10, 0, 1)])
+            .unwrap();
         let sorted = barrier
-            .submit_done(2, vec![dummy_msg(20, 0, 2)])
+            .submit_done(2, 0, 0, vec![dummy_msg(20, 0, 2)])
             .unwrap()
             .unwrap();
 
@@ -188,21 +221,21 @@ mod tests {
     #[test]
     fn test_barrier_reset_allows_next_quantum() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done(0, vec![]).unwrap();
-        barrier.submit_done(1, vec![]).unwrap();
+        barrier.submit_done(0, 0, 0, vec![]).unwrap();
+        barrier.submit_done(1, 0, 0, vec![]).unwrap();
 
         barrier.reset();
 
-        assert!(barrier.submit_done(0, vec![]).unwrap().is_none());
-        assert!(barrier.submit_done(1, vec![]).unwrap().is_some());
+        assert!(barrier.submit_done(0, 0, 0, vec![]).unwrap().is_none());
+        assert!(barrier.submit_done(1, 0, 0, vec![]).unwrap().is_some());
     }
 
     #[test]
     fn test_barrier_duplicate_done_rejected() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done(0, vec![]).unwrap();
+        barrier.submit_done(0, 0, 0, vec![]).unwrap();
         assert!(matches!(
-            barrier.submit_done(0, vec![]),
+            barrier.submit_done(0, 0, 0, vec![]),
             Err(BarrierError::DuplicateDone)
         ));
     }
@@ -218,7 +251,10 @@ mod tests {
             dummy_msg(0, 4, 0),
         ];
 
-        let result = barrier.submit_done(0, msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done(0, 0, 0, msgs)
+            .unwrap()
+            .unwrap_or_else(|| std::process::abort());
         assert_eq!(result.len(), 3);
     }
 
@@ -233,7 +269,10 @@ mod tests {
             dummy_msg(15, 5, 0),
         ];
 
-        let result = barrier.submit_done(0, msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done(0, 0, 0, msgs)
+            .unwrap()
+            .unwrap_or_else(|| std::process::abort());
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].delivery_vtime_ns, 5);
@@ -251,14 +290,20 @@ mod tests {
         let barrier = QuantumBarrier::new(1, 3);
         let msgs = vec![dummy_msg(0, 0, 0), dummy_msg(0, 1, 0), dummy_msg(0, 2, 0)];
 
-        let result = barrier.submit_done(0, msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done(0, 0, 0, msgs)
+            .unwrap()
+            .unwrap_or_else(|| std::process::abort());
         assert_eq!(result.len(), 3);
     }
 
     #[test]
     fn test_admission_control_zero_messages() {
         let barrier = QuantumBarrier::new(1, 3);
-        let result = barrier.submit_done(0, vec![]).unwrap().unwrap();
+        let result = barrier
+            .submit_done(0, 0, 0, vec![])
+            .unwrap()
+            .unwrap_or_else(|| std::process::abort());
         assert_eq!(result.len(), 0);
     }
 
@@ -273,7 +318,10 @@ mod tests {
             msgs.push(dummy_msg(i as u64, (10_000 - i) as u64, 0));
         }
 
-        let result = barrier.submit_done(0, msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done(0, 0, 0, msgs)
+            .unwrap()
+            .unwrap_or_else(|| std::process::abort());
 
         assert_eq!(result.len(), max_msgs);
         assert_eq!(result[0].delivery_vtime_ns, 0);

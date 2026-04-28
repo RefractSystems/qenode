@@ -22,7 +22,7 @@ def main():
     topic = "sim/clock/advance/0"
     print(f"Sending query to {topic}...")
 
-    req = ClockAdvanceReq(delta_ns=1000000, mujoco_time_ns=0).pack()
+    req = ClockAdvanceReq(delta_ns=1000000, mujoco_time_ns=0, quantum_number=0).pack()
 
     start = time.perf_counter()
     replies = list(session.get(topic, payload=req, timeout=10.0))

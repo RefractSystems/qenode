@@ -5,7 +5,7 @@ These tests cover two layers:
 
 1. Unit tests for the ZenohFrameHeader wire format (pure Python, no QEMU needed).
    Validates that the 20-byte struct encoding used by the Python test and by the
-   Rust zenoh-chardev plugin is consistent.
+   Rust chardev plugin is consistent.
 
 2. An integration smoke-test that runs uart_stress_test.sh as a subprocess and
    asserts it exits 0.  Skipped when the QEMU binary is absent (e.g. in Docker
@@ -20,10 +20,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import vproto
 
 # ---------------------------------------------------------------------------
 # Constants — must match test/phase8/uart_stress_test.py and
-# hw/rust/virtmcu-api/src/lib.rs ZenohFrameHeader.
+# hw/rust/common/virtmcu-api/src/lib.rs ZenohFrameHeader.
 # ---------------------------------------------------------------------------
 
 FRAME_HEADER_SIZE = 20  # ZenohFrameHeader: u64 + u64 + u32 (packed, no padding)
@@ -38,8 +39,8 @@ FRAME_SIZE_OFFSET = 16  # size field offset
 
 
 def encode_frame(delivery_vtime_ns: int, payload: bytes, sequence: int = 0) -> bytes:
-    """Pack a ZenohFrameHeader + payload, matching the Rust zenoh-chardev format."""
-    header = struct.pack("<QQI", delivery_vtime_ns, sequence, len(payload))
+    """Pack a ZenohFrameHeader + payload, matching the Rust chardev format."""
+    header = vproto.ZenohFrameHeader(delivery_vtime_ns, sequence, len(payload)).pack()
     return header + payload
 
 
@@ -152,7 +153,7 @@ def test_clock_advance_packing():
     """ClockAdvanceReq wire format: two u64 LE (delta_ns, mujoco_time_ns)."""
     delta_ns = 10_000_000
     mujoco = 0
-    packed = struct.pack("<QQ", delta_ns, mujoco)
+    packed = vproto.ClockAdvanceReq(delta_ns, mujoco, 0).pack()
     assert len(packed) == 16
     out_delta, out_mujoco = struct.unpack("<QQ", packed)
     assert out_delta == delta_ns
@@ -164,7 +165,7 @@ def test_clock_ready_unpacking():
     vtime = 10_000_000
     n_frames = 0
     error_code = 0
-    packed = struct.pack("<QII", vtime, n_frames, error_code)
+    packed = vproto.ClockReadyResp(vtime, n_frames, error_code, 0).pack()
     assert len(packed) == 16
     out_vtime, out_n, out_err = struct.unpack("<QII", packed)
     assert out_vtime == vtime

@@ -57,7 +57,7 @@ sleep 1
 echo "Starting QEMU..."
 "$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT,stall-timeout=2000 \
+    -device virtmcu-clock,mode=slaved-suspend,node=0,router=tcp/127.0.0.1:$PORT,stall-timeout=2000 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 

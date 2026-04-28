@@ -1,0 +1,50 @@
+namespace virtmcu.core;
+
+struct VirtmcuHandshake {
+    magic: uint32;
+    version: uint32;
+}
+
+struct MmioReq {
+    type_: uint8;
+    size: uint8;
+    reserved1: uint16;
+    reserved2: uint32;
+    vtime_ns: uint64;
+    addr: uint64;
+    data: uint64;
+}
+
+struct SyscMsg {
+    type_: uint32;
+    irq_num: uint32;
+    data: uint64;
+}
+
+struct ClockAdvanceReq {
+    delta_ns: uint64;
+    mujoco_time_ns: uint64;
+    quantum_number: uint64;
+}
+
+struct ClockReadyResp {
+    current_vtime_ns: uint64;
+    n_frames: uint32;
+    error_code: uint32;
+    quantum_number: uint64;
+}
+
+struct ZenohFrameHeader {
+    delivery_vtime_ns: uint64;
+    sequence_number: uint64;
+    size: uint32;
+}
+
+struct ZenohSPIHeader {
+    delivery_vtime_ns: uint64;
+    sequence_number: uint64;
+    size: uint32;
+    cs: bool;
+    cs_index: uint8;
+    padding: uint16;
+}

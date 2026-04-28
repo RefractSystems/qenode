@@ -1,7 +1,7 @@
-# Postmortem: Phase 18.9 — BQL/TLS Deadlock & Protocol Bugs in zenoh-clock
+# Postmortem: Phase 18.9 — BQL/TLS Deadlock & Protocol Bugs in clock
 
 **Date:** 2026-04-18  
-**Component:** `hw/zenoh/zenoh-clock.c`, `hw/rust/zenoh-clock/src/lib.rs`  
+**Component:** `hw/zenoh/clock.c`, `hw/rust/clock/src/lib.rs`  
 **Severity:** Critical — simulator hangs deterministically after the first clock query  
 **Status:** Resolved
 
@@ -10,8 +10,8 @@
 ## Background
 
 Phase 18.9 migrated the Zenoh clock backend from `zenoh-c` (C FFI) to a native Rust library
-(`hw/rust/zenoh-clock/`) linked via `virtmcu-rust-ffi`. The Rust library exposes three C-callable
-functions: `zenoh_clock_init`, `zenoh_clock_free`, and `zenoh_clock_quantum_wait`.
+(`hw/rust/clock/`) linked via `virtmcu-rust-ffi`. The Rust library exposes three C-callable
+functions: `clock_init`, `clock_free`, and `clock_quantum_wait`.
 
 During testing, QEMU would accept the first Zenoh clock query but then hang permanently on the
 second query. The Phase 7 smoke test timed out at the 30-second queryable-readiness check.
@@ -25,7 +25,7 @@ each fix exposed the next bug rather than restoring full function.
 
 ### Symptom
 
-QEMU hung silently after `zenoh_clock_quantum_wait` returned. No crash, no assertion, no log
+QEMU hung silently after `clock_quantum_wait` returned. No crash, no assertion, no log
 output. The vCPU thread never resumed executing translation blocks (TBs).
 
 ### Root Cause: Two Hook Call Sites with Different BQL State
@@ -42,7 +42,7 @@ The original code did an unconditional BQL sandwich:
 ```c
 // WRONG
 bql_unlock();
-int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
+int64_t delta = clock_quantum_wait(rust_state, now);
 bql_lock();
 ```
 
@@ -82,10 +82,10 @@ void virtmcu_safe_bql_lock(void)   { if (!bql_locked()) bql_lock(); }
 Declare them in `include/qemu/main-loop.h` and use them in the plugin:
 
 ```c
-// zenoh-clock.c — correct conditional sandwich
+// clock.c — correct conditional sandwich
 bool locked = virtmcu_bql_locked();   // calls virtmcu_is_bql_locked() via ffi
 if (locked) { virtmcu_bql_unlock(); }
-int64_t delta = zenoh_clock_quantum_wait(rust_state, now);
+int64_t delta = clock_quantum_wait(rust_state, now);
 if (locked) { virtmcu_bql_lock(); }
 ```
 
@@ -110,7 +110,7 @@ The original timer callback was:
 
 ```c
 // WRONG
-static void zenoh_clock_timer_cb(void *opaque)
+static void clock_timer_cb(void *opaque)
 {
     bql_lock();           // BQL is ALREADY held — deadlock
     virtmcu_cpu_exit_all();
@@ -127,7 +127,7 @@ callbacks:
 
 ```c
 // CORRECT
-static void zenoh_clock_timer_cb(void *opaque)
+static void clock_timer_cb(void *opaque)
 {
     // Fires from the QEMU main loop with BQL already held.
     virtmcu_cpu_exit_all();
@@ -288,7 +288,7 @@ python3 tests/zenoh_router_persistent.py &
 
 # Start QEMU with just the clock device
 scripts/run.sh --dtb /tmp/dummy.dtb -kernel /tmp/firmware.elf \
-  -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 \
+  -device clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 \
   -nographic -monitor none &
 
 # Single query
@@ -343,10 +343,10 @@ immediately narrows the search to lock/unlock pairs.
 In Rust, temporary `eprintln!` statements in async/threaded code are invaluable:
 
 ```rust
-eprintln!("[zenoh-clock] on_clock_query START node={} delta={} already_done={}",
+eprintln!("[clock] on_clock_query START node={} delta={} already_done={}",
     backend.node_id, delta, already_done);
 // ... critical section ...
-eprintln!("[zenoh-clock] on_clock_query END node={} vtime={} error={}",
+eprintln!("[clock] on_clock_query END node={} vtime={} error={}",
     backend.node_id, vtime, error_code);
 ```
 
@@ -354,7 +354,7 @@ The gap between START and END (or its absence) tells you which side of the code 
 Similarly in C:
 
 ```c
-fprintf(stderr, "[zenoh-clock] entering quantum_wait now=%lld\n", (long long)now);
+fprintf(stderr, "[clock] entering quantum_wait now=%lld\n", (long long)now);
 ```
 
 Remove or gate these behind a `VIRTMCU_DEBUG` env check before merging.
@@ -365,10 +365,10 @@ Draw a table before writing or modifying any code that touches a shared lock:
 
 | Function | Caller | BQL state on entry |
 |----------|--------|--------------------|
-| `zenoh_clock_timer_cb` | QEMU main loop | **Held** |
-| `zenoh_clock_cpu_halt_cb` (via halt hook) | vCPU, WFI path | **Held** |
-| `zenoh_clock_tcg_quantum_cb` (via TCG hook) | vCPU, exec loop | **Not held** |
-| `zenoh_clock_quantum_wait` | vCPU | Depends on caller |
+| `clock_timer_cb` | QEMU main loop | **Held** |
+| `clock_cpu_halt_cb` (via halt hook) | vCPU, WFI path | **Held** |
+| `clock_tcg_quantum_cb` (via TCG hook) | vCPU, exec loop | **Not held** |
+| `clock_quantum_wait` | vCPU | Depends on caller |
 
 Without this table it is easy to assume a uniform BQL state and introduce a double-lock or
 a missed unlock.
@@ -418,7 +418,7 @@ fix is not done.**
 
 | Step | What happened |
 |------|---------------|
-| Phase 18.9 start | Gemini CLI migrates zenoh-clock to Rust; integration tests hang |
+| Phase 18.9 start | Gemini CLI migrates clock to Rust; integration tests hang |
 | Debugging round 1 | Identify Bug 1 (TLS/BQL). Fix conditional sandwich. |
 | Debugging round 2 | Identify Bug 2 (timer callback double-lock). Fix timer callback. |
 | Debugging round 3 | Stale process interference masks progress; cleanup script added to workflow. |
@@ -431,7 +431,7 @@ Total calendar time: ~2 sessions across separate context windows.
 
 ---
 
-## Checklist for Future zenoh-clock or Hook Work
+## Checklist for Future clock or Hook Work
 
 - [ ] Document BQL state at every hook call site in a table comment.
 - [ ] Never call QEMU macros that use file-static TLS from a DSO — use main-binary wrappers.

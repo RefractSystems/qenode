@@ -26,7 +26,7 @@ for (i = 0; i < reg.n; ++i) {
 
 The bug was two-fold:
 1. **Unsafe Casting**: It used `SYS_BUS_DEVICE(obj)` without verifying that `obj` (the instantiated FDT node) actually inherited from `TYPE_SYS_BUS_DEVICE`.
-2. **Missing NULL Check**: It assumed `sysbus_mmio_get_region` would always return a valid `MemoryRegion`. If a DTB node had more `reg` entries than the device had registered MMIO regions (common with virtual boundary devices or custom Rust models like `zenoh-actuator`), it returned `NULL`.
+2. **Missing NULL Check**: It assumed `sysbus_mmio_get_region` would always return a valid `MemoryRegion`. If a DTB node had more `reg` entries than the device had registered MMIO regions (common with virtual boundary devices or custom Rust models like `actuator`), it returned `NULL`.
 
 ASan correctly identified that `memory_region_add_subregion_overlap` then attempted to access `subregion->priority`, causing a crash.
 

@@ -12,7 +12,7 @@ If two QEMU instances are running at different speeds (or if the host CPU contex
 
 To guarantee determinism, virtmcu decouples **host delivery time** from **virtual arrival time**.
 
-1. **TX (Transmission):** When a QEMU instance transmits a frame, the `zenoh-netdev` backend intercepts it. It embeds QEMU's exact current virtual time (`QEMU_CLOCK_VIRTUAL`) into the packet header and publishes it to the Zenoh topic `sim/eth/frame/{node_id}/tx`.
+1. **TX (Transmission):** When a QEMU instance transmits a frame, the `netdev` backend intercepts it. It embeds QEMU's exact current virtual time (`QEMU_CLOCK_VIRTUAL`) into the packet header and publishes it to the Zenoh topic `sim/eth/frame/{node_id}/tx`.
 2. **The Coordinator:** A lightweight Rust process (`tools/zenoh_coordinator`) subscribes to all `tx` topics. It acts as the physical medium (the air or wire). It applies propagation delay (and can apply attenuation/packet loss), updates the delivery virtual time in the header, and forwards the packet to other nodes on their `rx` topics.
 3. **RX (Reception):** When QEMU receives a frame from Zenoh, it does **not** deliver it to the guest immediately. Instead, it extracts the `delivery_vtime_ns` and places the frame into a min-heap priority queue. A QEMU virtual timer is armed to fire exactly at `delivery_vtime_ns`.
 4. **Delivery:** Only when QEMU's internal virtual clock reaches the exact designated nanosecond does the timer fire and inject the packet into the guest's NIC.

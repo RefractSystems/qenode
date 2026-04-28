@@ -23,3 +23,6 @@ peripherals:
       router: tcp/127.0.0.1:51929
     parent: spi0
     address: 0
+
+topology:
+  links: []

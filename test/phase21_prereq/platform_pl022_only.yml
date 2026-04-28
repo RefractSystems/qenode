@@ -19,3 +19,6 @@ peripherals:
     type: SPI.PL022
     address: 0x09001000
     interrupts: [34]
+
+topology:
+  links: []

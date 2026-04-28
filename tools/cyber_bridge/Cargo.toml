@@ -8,5 +8,5 @@ edition = "2021"
 zenoh = "1.9.0"
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 byteorder = "1.5"
-virtmcu-api = { path = "../../hw/rust/virtmcu-api" }
+virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
 

@@ -44,3 +44,6 @@ peripherals:
     type: spi-echo
     parent: spi3
     address: 0
+
+topology:
+  links: []

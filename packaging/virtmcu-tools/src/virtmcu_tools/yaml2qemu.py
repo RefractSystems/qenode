@@ -89,7 +89,7 @@ def validate_dtb(dtb_path, devices):
         for dev in devices:
             if "CPU" in dev.type_name:
                 continue
-            if dev.type_name in ("zenoh-chardev", "zenoh-telemetry"):
+            if dev.type_name in ("chardev", "telemetry"):
                 continue  # CLI-only, no DTB node
 
             # Check for name@address (DTS node format), e.g. "uart0@9000000".
@@ -156,13 +156,13 @@ def main():
             f.write(arch)
 
     # Extract devices that require explicit CLI instantiation.
-    # zenoh-chardev: CLI-only (no DTB node).
-    # zenoh-telemetry: CLI-only (no DTB node).
+    # chardev: CLI-only (no DTB node).
+    # telemetry: CLI-only (no DTB node).
     # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
     for dev in platform.devices:
-        if dev.type_name == "zenoh-chardev":
+        if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
@@ -178,19 +178,19 @@ def main():
             cli_args.append(chardev_arg)
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
-        elif dev.type_name == "zenoh-telemetry":
+        elif dev.type_name == "telemetry":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
-            device_arg = f"zenoh-telemetry,node={node}"
+            device_arg = f"telemetry,node={node}"
             if router:
                 device_arg += f",router={router}"
             cli_args.append("-device")
             cli_args.append(device_arg)
-        elif dev.type_name == "zenoh-802154":
+        elif dev.type_name == "ieee802154":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
-            device_arg = f"zenoh-802154,node={node}"
+            device_arg = f"ieee802154,node={node}"
             if router:
                 device_arg += f",router={router}"
             if topic:

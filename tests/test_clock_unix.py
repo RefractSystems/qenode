@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import vproto
 
 
 def build_artifacts():
@@ -33,21 +34,21 @@ class MockUnixTimeAuthority:
         self.conn, _ = await loop.sock_accept(self.server)
 
     async def step(self, delta_ns, mujoco_time_ns):
-        # ClockAdvanceReq: delta_ns (u64), mujoco_time_ns (u64)
-        req = struct.pack("<QQ", delta_ns, mujoco_time_ns)
+        # ClockAdvanceReq: delta_ns (u64), mujoco_time_ns (u64), quantum_number (u64)
+        req = vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, 0).pack()
         assert self.conn is not None
         await asyncio.get_running_loop().sock_sendall(self.conn, req)
 
-        # ClockReadyResp: current_vtime_ns (u64), n_frames (u32), error_code (u32)
+        # ClockReadyResp: current_vtime_ns (u64), n_frames (u32), error_code (u32), quantum_number (u64)
         resp_data = b""
-        while len(resp_data) < 16:
+        while len(resp_data) < vproto.SIZE_CLOCK_READY_RESP:
             assert self.conn is not None
-            chunk = await asyncio.get_running_loop().sock_recv(self.conn, 16 - len(resp_data))
+            chunk = await asyncio.get_running_loop().sock_recv(self.conn, 24 - len(resp_data))
             if not chunk:
                 raise RuntimeError("Connection closed")
             resp_data += chunk
 
-        current_vtime, n_frames, error_code = struct.unpack("<QII", resp_data)
+        current_vtime, n_frames, error_code, _qn = struct.unpack("<QIIQ", resp_data)
         return current_vtime, n_frames, error_code
 
     def close(self):
@@ -62,7 +63,7 @@ class MockUnixTimeAuthority:
 @pytest.mark.asyncio
 async def test_clock_unix_socket(qemu_launcher):
     """
-    DET-4: Verify zenoh-clock with unix socket transport.
+    DET-4: Verify clock with unix socket transport.
     """
     dtb_path, kernel_path = build_artifacts()
 
@@ -70,9 +71,9 @@ async def test_clock_unix_socket(qemu_launcher):
         socket_path = str(Path(tmpdir) / "clock.sock")
         vta = MockUnixTimeAuthority(socket_path)
 
-        extra_args = ["-S", "-device", f"zenoh-clock,node=1,mode=slaved-unix,router={socket_path}"]
+        extra_args = ["-S", "-device", f"virtmcu-clock,node=1,mode=slaved-unix,router={socket_path}"]
 
-        # 1. Launch QEMU. It will start, realize zenoh-clock (spawn worker),
+        # 1. Launch QEMU. It will start, realize clock (spawn worker),
         #    and start QMP server.
         launcher_task = asyncio.create_task(qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True))
 

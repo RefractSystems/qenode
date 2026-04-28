@@ -25,7 +25,7 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 2. **Language Agnostic**: The `TimeAuthority` can be written in Python, the `zenoh_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
 3. **Flexible Discovery**: Zenoh supports both decentralized discovery (multicast) and explicit endpoints. VirtMCU strictly mandates explicit TCP/UDP endpoints for deterministic CI execution.
 4. **Flexible Topologies**: Zenoh can route over shared memory (SHM), TCP, UDP, or QUIC. If two QEMU instances are on the same host, Zenoh uses SHM. If they are in different cloud regions, it uses TCP. The `virtmcu` code does not change.
-5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `zenoh-clock` requirement where QEMU must block the TCG loop and ask the `TimeAuthority` for the next time quantum.
+5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `clock` requirement where QEMU must block the TCG loop and ask the `TimeAuthority` for the next time quantum.
 
 ### Cons
 1. **Toolchain Complexity**: Integrating a modern Rust library into QEMU requires managing Rust cross-compilation toolchains alongside the standard C toolchain.
@@ -34,8 +34,8 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 
 ## Implementation Notes for Junior Developers
 If you are reading the code in `hw/rust/`:
-- **`zenoh-clock`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request to ask the `TimeAuthority` to advance time. It blocks until the reply is received.
-- **`zenoh-netdev` and `zenoh-chardev`** use Zenoh's **Pub/Sub** API. They declare publishers to send outbound bytes and subscribers to receive inbound bytes asynchronously. The subscriber callback places the data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
+- **`clock`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request to ask the `TimeAuthority` to advance time. It blocks until the reply is received.
+- **`netdev` and `chardev`** use Zenoh's **Pub/Sub** API. They declare publishers to send outbound bytes and subscribers to receive inbound bytes asynchronously. The subscriber callback places the data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
 
 ## External References
 * For a complete mapping of all active Zenoh topics in the system, see [Zenoh Topic Map](ZENOH_TOPIC_MAP.md).

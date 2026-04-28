@@ -112,5 +112,26 @@ class TestYamlValidation(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("max_messages_per_node_per_quantum must be a positive integer", result.stderr)
 
+    def test_topology_validation_unknown_node(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "test.yaml"
+            dtb_path = Path(tmpdir) / "test.dtb"
+
+            test_yaml = {
+                "nodes": [{"id": "node1"}],
+                "topology": {
+                    "links": [{"nodes": ["node1", "unknown_node"]}]
+                },
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+            }
+
+            with Path(yaml_path).open("w") as f:
+                yaml.dump(test_yaml, f)
+
+            cmd = ["python3", "-m", "tools.yaml2qemu", str(yaml_path), "--out-dtb", str(dtb_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Topology validation failed: node ID unknown_node in links not found in nodes", result.stderr)
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,7 @@ DTS_PATH="/tmp/virtmcu-p9-$$.dts"
 ELF_PATH="/tmp/virtmcu-p9-$$.elf"
 ASM_PATH="/tmp/virtmcu-p9-$$.S"
 LD_PATH="/tmp/virtmcu-p9-$$.ld"
-ZENOH_TX_PY="/tmp/virtmcu-zenoh-tx-$$.py"
+ZENOH_TX_PY="/tmp/transport-zenoh-tx-$$.py"
 
 ADAPTER_PID=0
 QEMU_PID=0
@@ -278,7 +278,7 @@ pub = session.declare_publisher("sim/systemc/frame/p9-test/rx")
 # so the adapter receives at least one frame in its "future".
 for i in range(1, 50):
     vtime_ns = i * 1000000000 # i seconds
-    payload = struct.pack("<QIII", vtime_ns, 8, 0x123, 0x456)
+    payload = vproto.MmioReq(1, 8, 0, 0, vtime_ns, 0x123, 0x456).pack()
     pub.put(payload)
     time.sleep(0.5)
 

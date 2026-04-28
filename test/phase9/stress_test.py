@@ -1,10 +1,10 @@
 import contextlib
-import struct
 import subprocess
 import threading
 import time
 from pathlib import Path
 
+import vproto
 import zenoh
 from mmio_client import MMIOClient
 
@@ -90,7 +90,7 @@ def test_rapid_can():
 
             def injector():
                 for i in range(count):
-                    payload = struct.pack("<QIII", (i + 1) * 1000000, 8, 0x100 + i, 0x1000 + i)
+                    payload = vproto.MmioReq(1, 8, 0, 0, (i + 1) * 1000000, 0x100 + i, 0x1000 + i).pack()
                     z_pub.put(payload)
                     time.sleep(0.05)  # Slower injection
 

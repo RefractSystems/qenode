@@ -28,3 +28,6 @@ peripherals:
   - name: test_dev
     type: test-rust-device
     address: 0x09002000
+
+topology:
+  links: []

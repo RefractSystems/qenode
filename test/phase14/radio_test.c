@@ -1,7 +1,7 @@
 /*
  * test/phase14/radio_test.c
  *
- * Bare-metal firmware to test the zenoh-802154 radio device.
+ * Bare-metal firmware to test the ieee802154 radio device.
  * Uses PL011 UART for logging.
  */
 

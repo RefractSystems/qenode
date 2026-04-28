@@ -24,7 +24,7 @@ COMPAT_MAP = {
     "Network.IMX_FEC": "imx.fec",
     "Network.LAN9118": "lan9118",
     "SPI.PL022": "pl022",
-    "SPI.ZenohBridge": "zenoh-spi",
+    "SPI.ZenohBridge": "spi",
     "SPI.Echo": "spi-echo",
 }
 

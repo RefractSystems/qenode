@@ -1,7 +1,7 @@
 import os
-import struct
 import time
 
+import vproto
 import zenoh
 
 
@@ -28,10 +28,10 @@ def main():
 
     # Node 2 must be "known"
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
-    pub2.put(struct.pack("<QI", 0, 0))
+    pub2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
     time.sleep(0.5)
 
-    pub_valid.put(struct.pack("<QI", 1000, 4) + b"ABCD")
+    pub_valid.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ABCD")
 
     time.sleep(1)
     print("Test finished. Check coordinator logs.")

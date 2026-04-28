@@ -34,15 +34,15 @@ We migrated the core `hw/` subsystem and infrastructure to native Rust.
     *   Stabilized the `hw/rust-dummy/` pattern into a reusable crate for QOM device registration in Rust.
     *   Enabled `meson` to compile and link Rust plugins into the QEMU binary as `.so` modules.
 *   **18.2: Native Zenoh-Clock in Rust**
-    *   Rewrote `zenoh-clock.c` in Rust using the `zenoh` crate.
+    *   Rewrote `clock.c` in Rust using the `zenoh` crate.
     *   Implemented BQL (`Big QEMU Lock`) management using Rust's safety patterns.
 *   **18.3: Native Zenoh-Netdev in Rust**
-    *   Migrated `zenoh-netdev.c` to Rust.
+    *   Migrated `netdev.c` to Rust.
     *   Replaced the C priority queue with a native Rust `BinaryHeap` for virtual-time delivery.
 *   **18.4: Native Zenoh-Chardev in Rust**
-    *   Migrated `zenoh-chardev.c` to Rust.
+    *   Migrated `chardev.c` to Rust.
 *   **18.5: Native Zenoh-Telemetry in Rust**
-    *   Migrated `zenoh-telemetry.c` to Rust and integrated directly with the FlatBuffers schema.
+    *   Migrated `telemetry.c` to Rust and integrated directly with the FlatBuffers schema.
 
 ## Status Update (2026-04-24)
 Phase 18 and 19 have been successfully completed. All core plugins are now native Rust QOM modules, leveraging the `virtmcu-qom` abstraction layer.

@@ -1,11 +1,12 @@
 import json
 import os
 import socket
-import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import vproto
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -119,8 +120,8 @@ def main():
     NUM_IRQS = 1000  # noqa: N806
     start_time = time.time()
     for i in range(NUM_IRQS):
-        conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_SET, 0, 0))
-        conn.sendall(struct.pack("<IIQ", SYSC_MSG_IRQ_CLEAR, 0, 0))
+        conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
+        conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
         if i % 100 == 0:
             print(f"Sent {i} IRQs...", flush=True)
             # Periodically check QMP responsiveness

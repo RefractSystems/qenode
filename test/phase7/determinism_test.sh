@@ -61,7 +61,7 @@ sleep 1
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:$PORT \
+    -device virtmcu-clock,mode=slaved-icount,node=0,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
@@ -69,7 +69,7 @@ QEMU_PID=$!
 CLOCK_TOPIC="sim/clock/advance/0"
 deadline=$(( $(date +%s) + 15 ))
 while (( $(date +%s) < deadline )); do
-    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=vproto.ClockAdvanceReq(0, 0, 0).pack(), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         break
     fi
     sleep 0.25

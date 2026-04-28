@@ -61,8 +61,8 @@ sleep 1
     --dtb "$TMPDIR_LOCAL/dummy.dtb" \
     -kernel "$TMPDIR_LOCAL/firmware.elf" \
     -icount shift=0,align=off,sleep=off \
-    -device zenoh-clock,mode=icount,node=1,router=tcp/127.0.0.1:$PORT \
-    -device zenoh-netdev -device zenoh-netdev -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:$PORT \
+    -device virtmcu-clock,mode=slaved-icount,node=1,router=tcp/127.0.0.1:$PORT \
+    -device netdev -device netdev -netdev zenoh,node=1,id=n1,router=tcp/127.0.0.1:$PORT \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
@@ -70,7 +70,7 @@ QEMU_PID=$!
 CLOCK_TOPIC="sim/clock/advance/1"
 deadline=$(( $(date +%s) + 15 ))
 while (( $(date +%s) < deadline )); do
-    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=struct.pack('<QQ', 0, 0), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('$CLOCK_TOPIC', payload=vproto.ClockAdvanceReq(0, 0, 0).pack(), timeout=0.5)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         break
     fi
     sleep 0.25
@@ -84,7 +84,7 @@ ROUTER = sys.argv[2]
 NETDEV_TOPIC = "sim/eth/frame/1/rx"
 DELIVERY_VTIME_NS = 500_000
 FRAME = b'\xff' * 14
-packet = struct.pack("<QI", DELIVERY_VTIME_NS, len(FRAME)) + FRAME
+packet = vproto.ZenohFrameHeader(DELIVERY_VTIME_NS, 0, len(FRAME).pack()) + FRAME
 c = zenoh.Config()
 c.insert_json5("connect/endpoints", f'["{ROUTER}"]')
 c.insert_json5("scouting/multicast/enabled", "false")
@@ -92,7 +92,7 @@ session = zenoh.open(c)
 pub = session.declare_publisher(NETDEV_TOPIC)
 pub.put(packet)
 time.sleep(0.1)
-replies = list(session.get(CLOCK_TOPIC, payload=struct.pack("<QQ", 1000000, 0), timeout=5.0))
+replies = list(session.get(CLOCK_TOPIC, payload=vproto.ClockAdvanceReq(1000000, 0, 0).pack(), timeout=5.0))
 if not replies: sys.exit(1)
 session.close()
 print("PASS")

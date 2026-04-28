@@ -56,7 +56,7 @@ virtmcu-dist/
 ├── lib/
 │   ├── libzenohc.so
 │   └── qemu/
-│       └── hw-virtmcu-zenoh.so  <-- The plugins!
+│       └── hw-transport-zenoh.so  <-- The plugins!
 └── README-BINARY.md
 ```
 

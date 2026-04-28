@@ -1,8 +1,8 @@
 import os
-import struct
 import threading
 import time
 
+import vproto
 import zenoh
 
 
@@ -11,7 +11,7 @@ def node_thread(node_id, num_messages, session):
     for i in range(num_messages):
         vtime = i * 1000
         payload = b"X" * 64
-        pub.put(struct.pack("<QI", vtime, len(payload)) + payload)
+        pub.put(vproto.ZenohFrameHeader(vtime, 0, len(payload)).pack() + payload)
         # time.sleep(0.001)
 
 
@@ -32,7 +32,7 @@ def main():
     pubs = []
     for i in range(num_nodes):
         p = s.declare_publisher(f"sim/eth/frame/{i}/tx")
-        p.put(struct.pack("<QI", 0, 0))
+        p.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
         pubs.append(p)
 
     time.sleep(2)

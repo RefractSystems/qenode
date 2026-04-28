@@ -1,0 +1,17 @@
+[package]
+name = "chardev"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+[lints] 
+workspace = true 
+[dependencies]
+virtmcu-api.workspace = true
+transport-zenoh.workspace = true
+virtmcu-qom.workspace = true
+transport-unix.workspace = true
+crossbeam-channel.workspace = true

@@ -9,7 +9,7 @@
 # (like the zenoh clock sync from FirmwareStudio) to cooperatively halt QEMU
 # at translation block boundaries, we must inject a global function pointer.
 #
-# This pointer is then set by the `zenoh-clock` QOM device in FirmWareStudio.
+# This pointer is then set by the `clock` QOM device in FirmWareStudio.
 # ==============================================================================
 
 import hashlib
@@ -87,13 +87,17 @@ typedef struct {
 
 /* Global function pointers used for guest synchronization */
 extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
-extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+extern int (*virtmcu_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
 extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
 extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
 
 /* Hook setters used by external QOM plugins (DSOs) */
 void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
 void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
+
+/* Global helpers for guest synchronization (called from DSOs) */
+void virtmcu_kick_first_cpu_for_quantum(void);
+bool virtmcu_vcpu_should_yield(void);
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
 extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
@@ -160,10 +164,11 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
     # return the authoritative value.
     cpus_c = Path(qemu) / "system" / "cpus.c"
     if Path(cpus_c).exists():
+        patch_file(cpus_c, '#include "qemu/osdep.h"', '\n#include "virtmcu/hooks.h"', after=True)
         patch_file(
             cpus_c,
             "void bql_unlock(void)\n{\n    g_assert(bql_locked());\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
-            "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_safe_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_safe_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n",
+            "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_safe_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_safe_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n\n/* virtmcu: vCPU yield and kick helpers in main binary to avoid DSO TLS Trap */\nstatic void virtmcu_quantum_vcpu_work(CPUState *cpu, run_on_cpu_data data) {\n    if (virtmcu_cpu_halt_hook) {\n        virtmcu_cpu_halt_hook(cpu, false);\n    }\n}\n\nvoid virtmcu_kick_first_cpu_for_quantum(void) {\n    CPUState *cpu = first_cpu;\n    if (cpu) {\n        async_run_on_cpu(cpu, virtmcu_quantum_vcpu_work, RUN_ON_CPU_NULL);\n    }\n}\n\nbool virtmcu_vcpu_should_yield(void) {\n    if (current_cpu) {\n        return current_cpu->stop || current_cpu->unplug || qatomic_read(&current_cpu->exit_request);\n    }\n    return false;\n}\n",
             after=True,
         )
 

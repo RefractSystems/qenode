@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # test/phase12/telemetry_throughput_test.sh — Phase 12.8 Telemetry Throughput Benchmark
 #
-# Runs the zenoh-telemetry plugin under IRQ-storm load and verifies that the
+# Runs the telemetry plugin under IRQ-storm load and verifies that the
 # host-side event throughput reaches ≥ 100,000 events/second without stalling
 # the vCPU (no timeout errors from QEMU).
 #
 # This script is NOT part of the default smoke_test.sh sweep because it
-# requires QEMU to be built with zenoh-telemetry and is slow (~10 s).
+# requires QEMU to be built with telemetry and is slow (~10 s).
 # Run explicitly with:
 #   bash test/phase12/telemetry_throughput_test.sh
 set -euo pipefail

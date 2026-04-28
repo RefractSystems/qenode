@@ -16,3 +16,6 @@ peripherals:
     address: 0x09000000
     interrupts:
       - 33
+
+topology:
+  links: []

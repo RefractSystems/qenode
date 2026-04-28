@@ -1,7 +1,7 @@
 # Postmortem: Phase 19.1 — Core Stability, Endianness & Protocol Convergence
 
 **Date:** 2026-04-19  
-**Component:** `hw/rust/virtmcu-qom`, `hw/rust/zenoh-actuator`, `hw/rust/zenoh-clock`, `hw/misc/virtmcu-rust-ffi.[ch]`  
+**Component:** `hw/rust/common/virtmcu-qom`, `hw/rust/actuator`, `hw/rust/clock`, `hw/misc/virtmcu-rust-ffi.[ch]`  
 **Severity:** High — intermittent hangs, incorrect register reads, and protocol desyncs  
 **Status:** Resolved
 
@@ -27,7 +27,7 @@ A Rust-based peripheral implemented a simple ID register. A read from the guest 
 In QEMU, the `MemoryRegionOps` struct requires an `endianness` field. The Rust bindings (`virtmcu-qom`) used a hardcoded constant:
 
 ```rust
-// hw/rust/virtmcu-qom/src/memory.rs (OLD)
+// hw/rust/common/virtmcu-qom/src/memory.rs (OLD)
 pub const DEVICE_LITTLE_ENDIAN: i32 = 1; 
 ```
 
@@ -71,7 +71,7 @@ The Python test scripts were updated to expect this prefix:
 vtime, value = struct.unpack("<QI", payload)
 ```
 
-However, the `zenoh-actuator` Rust implementation was still sending only the raw 4-byte `value`.
+However, the `actuator` Rust implementation was still sending only the raw 4-byte `value`.
 
 ### Fix
 
@@ -145,6 +145,6 @@ When debugging these issues, I used a technique I call **Divergence Search**:
 | Step | Discovery | Fix |
 |------|-----------|-----|
 | 1 | Phase 19 integration tests show byte-swapped register values. | Identified `DEVICE_LITTLE_ENDIAN` mismatch; corrected Rust constant. |
-| 2 | Actuator tests fail with "Incomplete payload". | Traced Python test expectations; updated Rust `zenoh-actuator` to include `vtime_ns`. |
-| 3 | Simulator hangs during guest idle (`WFI`). | Implemented 4-flag handshake in `zenoh-clock` and `cpu_clock_offset` jumping. |
+| 2 | Actuator tests fail with "Incomplete payload". | Traced Python test expectations; updated Rust `actuator` to include `vtime_ns`. |
+| 3 | Simulator hangs during guest idle (`WFI`). | Implemented 4-flag handshake in `clock` and `cpu_clock_offset` jumping. |
 | 4 | Final Verification. | Ran `make test-all` (110 units, 19 phases). All Green. |

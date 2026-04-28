@@ -16,7 +16,7 @@ s.listen(1)
 conn, addr = s.accept()
 hs = conn.recv(8)
 # Send wrong magic
-conn.sendall(struct.pack("<II", 0xDEADBEEF, 1))
+conn.sendall(vproto.VirtmcuHandshake(0xDEADBEEF, 1).pack())
 conn.close()
 """
     adapter_proc = subprocess.Popen(["python3", "-c", cat_cmd])

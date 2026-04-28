@@ -15,7 +15,7 @@ TIMEOUT_S = 5.0
 
 
 def pack_req(delta_ns):
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=0)
     return req.pack()
 
 

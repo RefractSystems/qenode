@@ -14,7 +14,7 @@ This document defines the standardized Zenoh topics (KeyExpressions) used across
 | **UART (Serial)** | `virtmcu/uart/{node_id}/tx` <br> `virtmcu/uart/{node_id}/rx` | Pub/Sub | `ZenohFrameHeader` + Raw Bytes |
 | **UI LEDs** | `sim/ui/{node_id}/led/{led_id}` | Publisher | State change payload |
 | **UI Buttons** | `sim/ui/{node_id}/button/{btn_id}` | Subscriber | State change payload |
-| **802.15.4 Radio** | `sim/rf/802154/{node_id}/tx` <br> `sim/rf/802154/{node_id}/rx` | Pub/Sub | `ZenohFrameHeader` + Radio Frame |
+| **802.15.4 Radio** | `sim/rf/ieee802154/{node_id}/tx` <br> `sim/rf/ieee802154/{node_id}/rx` | Pub/Sub | `ZenohFrameHeader` + Radio Frame |
 | **Bluetooth HCI** | `sim/rf/hci/{node_id}/tx` <br> `sim/rf/hci/{node_id}/rx` | Pub/Sub | `ZenohFrameHeader` + HCI Frame |
 | **Sensors** | `sim/sensor/{node_id}/{name}` | Subscriber | Physics data (from `mujoco_bridge`) |
 | **Actuators** | `sim/actuator/{node_id}/{name}` | Publisher | Control data (to `mujoco_bridge`) |
@@ -44,10 +44,10 @@ struct ZenohFrameHeader {
 }
 ```
 
-The receiving node (via `zenoh-netdev` or `zenoh-chardev`) buffers incoming payloads in an internal priority queue sorted by `delivery_vtime_ns`, and only injects the frame into the guest firmware when `QEMU_CLOCK_VIRTUAL` matches or exceeds this timestamp.
+The receiving node (via `netdev` or `chardev`) buffers incoming payloads in an internal priority queue sorted by `delivery_vtime_ns`, and only injects the frame into the guest firmware when `QEMU_CLOCK_VIRTUAL` matches or exceeds this timestamp.
 
 ### UART Channel Defaults
-If the `-chardev` topic option is unspecified, QEMU's `zenoh-chardev` backend defaults to `virtmcu/uart/{node_id}/tx|rx` instead of `sim/`.
+If the `-chardev` topic option is unspecified, QEMU's `chardev` backend defaults to `virtmcu/uart/{node_id}/tx|rx` instead of `sim/`.
 
 ## External References
 * [ADR-011: Zenoh as the Federation Message Bus](ADR-011-zenoh-federation-bus.md)

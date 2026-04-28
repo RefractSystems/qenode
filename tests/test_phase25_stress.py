@@ -1,9 +1,10 @@
 import asyncio
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
 
 # Add tools/lin_fbs to sys.path
 sys.path.append(str(Path.cwd() / "tools/lin_fbs"))
@@ -39,10 +40,10 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     # Build ELF
     kernel = Path(tmpdir) / "lin_echo.elf"
-    subprocess.run(
-        f"arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T test/phase25/lin_echo.ld test/phase25/lin_echo.S -o {kernel}",
-        shell=True,
-        check=True,
+    compile_firmware(
+        [Path("test/phase25/lin_echo.S")],
+        kernel,
+        linker_script=Path("test/phase25/lin_echo.ld")
     )
 
     # Use unique topic to avoid interference
@@ -53,10 +54,13 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
-    subprocess.run(
-        f"sed -e 's|tcp/127.0.0.1:7447|{router_endpoint}|' -e 's|\"sim/lin\"|\"{lin_topic}\"|' test/phase25/lin_test.dts | dtc -I dts -O dtb -o {dtb}",
-        shell=True,
-        check=True,
+    compile_dtb(
+        Path("test/phase25/lin_test.dts"),
+        {
+            "tcp/127.0.0.1:7447": router_endpoint,
+            '"sim/lin"': f'"{lin_topic}"'
+        },
+        dtb
     )
 
     extra_args = [
@@ -71,7 +75,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         "-net",
         "none",
         "-device",
-        f"zenoh-clock,mode=slaved-icount,node=0,router={router_endpoint}",
+        f"virtmcu-clock,mode=slaved-icount,node=0,router={router_endpoint}",
         # The s32k144-lpuart device is instantiated by the DTB, no need for -device
     ]
 

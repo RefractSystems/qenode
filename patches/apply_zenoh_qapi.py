@@ -6,7 +6,7 @@
 #
 # QEMU's QAPI schemas (qapi/net.json, qapi/char.json) define the set of
 # recognised -netdev and -chardev backends.  Our native Zenoh QOM plugins
-# (hw/virtmcu/zenoh/zenoh-netdev.c and zenoh-chardev.c) reference the
+# (hw/virtmcu/zenoh/netdev.c and chardev.c) reference the
 # QAPI-generated types NET_CLIENT_DRIVER_ZENOH, NetdevZenohOptions,
 # CHARDEV_BACKEND_KIND_ZENOH, and ChardevZenohOptions.  Without these
 # additions the generated C headers are missing those symbols and the build
@@ -62,111 +62,121 @@ def main():
 
     # ── qapi/net.json ─────────────────────────────────────────────────────────
 
-    # 1. Add 'zenoh' to NetClientDriver enum documentation
+    # 1. Add 'virtmcu' to NetClientDriver enum documentation
     patch_file(
         net_json,
         marker="# @vhost-vdpa: since 5.1",
-        insertion="\n#\n# @zenoh: since 11.0",
-        guard="# @zenoh: since",
+        insertion="\n#\n# @virtmcu: since 11.0",
+        guard="# @virtmcu: since",
         after=True,
     )
 
-    # 2. Add 'zenoh' to NetClientDriver enum (after 'vhost-vdpa')
+    # 2. Add 'virtmcu' to NetClientDriver enum (after 'vhost-vdpa')
     patch_file(
         net_json,
         marker="'vhost-vdpa',",
-        insertion="\n            'zenoh',",
-        guard="\n            'zenoh',",
+        insertion="\n            'virtmcu',",
+        guard="\n            'virtmcu',",
         after=True,
     )
 
-    # 3. Add NetdevZenohOptions struct (before the vmnet-host docstring block)
+    # 3. Add NetdevVirtmcuOptions struct (before the vmnet-host docstring block)
     netdev_struct = """
 ##
-# @NetdevZenohOptions:
+# @NetdevVirtmcuOptions:
 #
-# virtmcu: Zenoh virtual clock network backend
+# virtmcu: Virtual clock network backend
 #
-# @node: The zenoh node ID
+# @node: The node ID
+# @transport: The transport to use (zenoh or unix) (optional)
 # @router: The zenoh router address (optional)
-# @topic: The zenoh topic to publish/subscribe to (optional)
+# @topic: The topic to publish/subscribe to (optional)
+# @max-backlog: Maximum number of frames in the RX backlog
+#     (default: 256) (optional)
 #
 # Since: 11.0
 ##
-{ 'struct': 'NetdevZenohOptions',
+{ 'struct': 'NetdevVirtmcuOptions',
   'data': {
     'node': 'str',
+    '*transport': 'str',
     '*router': 'str',
-    '*topic': 'str' } }
+    '*topic': 'str',
+    '*max-backlog': 'size' } }
 
 """
     patch_file(
         net_json,
         marker="##\n# @NetdevVmnetHostOptions:",
         insertion=netdev_struct,
-        guard="{ 'struct': 'NetdevZenohOptions',",
+        guard="{ 'struct': 'NetdevVirtmcuOptions',",
         after=False,
     )
 
-    # 4. Add 'zenoh' discriminator to Netdev union (before 'vmnet-host')
+    # 4. Add 'virtmcu' discriminator to Netdev union (before 'vmnet-host')
     patch_file(
         net_json,
         marker="    'vhost-vdpa': 'NetdevVhostVDPAOptions',",
-        insertion="\n    'zenoh':    'NetdevZenohOptions',",
-        guard="'zenoh':    'NetdevZenohOptions',",
+        insertion="\n    'virtmcu':    'NetdevVirtmcuOptions',",
+        guard="'virtmcu':    'NetdevVirtmcuOptions',",
         after=True,
     )
 
     # ── qapi/char.json ────────────────────────────────────────────────────────
 
-    # 5. Add 'zenoh' to ChardevBackendKind enum documentation
+    # 5. Add 'virtmcu' to ChardevBackendKind enum documentation
     patch_file(
         char_json,
         marker="# @ringbuf: memory ring buffer (since 1.6)",
-        insertion="\n#\n# @zenoh: zenoh virtual clock backend (since 11.0)",
-        guard="# @zenoh: zenoh virtual clock backend (since",
+        insertion="\n#\n# @virtmcu: virtmcu virtual clock backend (since 11.0)",
+        guard="# @virtmcu: virtmcu virtual clock backend (since",
         after=True,
     )
 
-    # 6. Add 'zenoh' to ChardevBackendKind enum (after 'ringbuf', before 'memory')
+    # 6. Add 'virtmcu' to ChardevBackendKind enum (after 'ringbuf', before 'memory')
     patch_file(
         char_json,
         marker="            'ringbuf',",
-        insertion="\n            'zenoh',",
-        guard="\n            'zenoh',",
+        insertion="\n            'virtmcu',",
+        guard="\n            'virtmcu',",
         after=True,
     )
 
-    # 7. Add ChardevZenohOptions + ChardevZenohWrapper structs
+    # 7. Add ChardevVirtmcuOptions + ChardevVirtmcuWrapper structs
     #    (before the existing ChardevFileWrapper docstring block)
     chardev_structs = """
 ##
-# @ChardevZenohOptions:
+# @ChardevVirtmcuOptions:
 #
-# virtmcu: Zenoh virtual clock chardev backend
+# virtmcu: Virtual clock chardev backend
 #
-# @node: The zenoh node ID
+# @node: The node ID
+# @transport: The transport to use (zenoh or unix) (optional)
 # @router: The zenoh router address (optional)
-# @topic: The zenoh topic to publish/subscribe to (optional)
+# @topic: The topic to publish/subscribe to (optional)
+# @max-backlog: Maximum number of bytes in the RX backlog
+#     (default: 256) (optional)
 #
 # Since: 11.0
 ##
-{ 'struct': 'ChardevZenohOptions',
+{ 'struct': 'ChardevVirtmcuOptions',
   'base': 'ChardevCommon',
   'data': {
     'node': 'str',
+    '*transport': 'str',
     '*router': 'str',
-    '*topic': 'str' } }
+    '*topic': 'str',
+    '*max-backlog': 'size' } }
 
 ##
-# @ChardevZenohWrapper:
+# @ChardevVirtmcuWrapper:
 #
-# @data: Configuration info for zenoh chardevs
+# @data: Configuration info for virtmcu chardevs
 #
 # Since: 11.0
 ##
-{ 'struct': 'ChardevZenohWrapper',
-  'data': { 'data': 'ChardevZenohOptions' } }
+{ 'struct': 'ChardevVirtmcuWrapper',
+  'data': { 'data': 'ChardevVirtmcuOptions' } }
 
 
 """
@@ -174,16 +184,16 @@ def main():
         char_json,
         marker="##\n# @ChardevFileWrapper:",
         insertion=chardev_structs,
-        guard="{ 'struct': 'ChardevZenohOptions',",
+        guard="{ 'struct': 'ChardevVirtmcuOptions',",
         after=False,
     )
 
-    # 8. Add 'zenoh' discriminator to ChardevBackend union (before 'memory')
+    # 8. Add 'virtmcu' discriminator to ChardevBackend union (before 'memory')
     patch_file(
         char_json,
         marker="'ringbuf': 'ChardevRingbufWrapper',",
-        insertion="\n            'zenoh': 'ChardevZenohWrapper',",
-        guard="'zenoh': 'ChardevZenohWrapper'",
+        insertion="\n            'virtmcu': 'ChardevVirtmcuWrapper',",
+        guard="'virtmcu': 'ChardevVirtmcuWrapper'",
         after=False,
     )
 
@@ -191,52 +201,54 @@ def main():
 
     # ── qapi/qom.json ─────────────────────────────────────────────────────────
 
-    can_host_zenoh_struct = """
+    can_host_virtmcu_struct = """
 ##
-# @CanHostZenohProperties:
+# @CanHostVirtmcuProperties:
 #
-# Properties for can-host-zenoh objects.
+# Properties for can-host-virtmcu objects.
 #
-# @node: The zenoh node ID
+# @node: The node ID
+# @transport: The transport to use (zenoh or unix) (optional)
 # @router: The zenoh router address (optional)
-# @topic: The zenoh topic to publish/subscribe to
+# @topic: The topic to publish/subscribe to
 #
 # @canbus: object ID of the can-bus object to connect to the host
 #     interface
 #
 # Since: 11.0
 ##
-{ 'struct': 'CanHostZenohProperties',
+{ 'struct': 'CanHostVirtmcuProperties',
   'data': { 'canbus': 'str',
             'node': 'str',
+            '*transport': 'str',
             '*router': 'str',
             'topic': 'str' } }
 
 """
-    # 9. Add CanHostZenohProperties struct (before ColoCompareProperties)
+    # 9. Add CanHostVirtmcuProperties struct (before ColoCompareProperties)
     patch_file(
         qom_json,
         marker="##\n# @ColoCompareProperties:",
-        insertion=can_host_zenoh_struct,
-        guard="CanHostZenohProperties",
+        insertion=can_host_virtmcu_struct,
+        guard="CanHostVirtmcuProperties",
         after=False,
     )
 
-    # 10. Add 'can-host-zenoh' to ObjectType enum (before colo-compare)
+    # 10. Add 'can-host-virtmcu' to ObjectType enum (before colo-compare)
     patch_file(
         qom_json,
         marker="    'colo-compare',",
-        insertion="    'can-host-zenoh',\n",
-        guard="'can-host-zenoh',",
+        insertion="    'can-host-virtmcu',\n",
+        guard="'can-host-virtmcu',",
         after=False,
     )
 
-    # 11. Add 'can-host-zenoh' discriminator to ObjectOptions (before colo-compare)
+    # 11. Add 'can-host-virtmcu' discriminator to ObjectOptions (before colo-compare)
     patch_file(
         qom_json,
         marker="      'colo-compare':               'ColoCompareProperties',",
-        insertion="      'can-host-zenoh':             'CanHostZenohProperties',\n",
-        guard="'can-host-zenoh':             'CanHostZenohProperties',",
+        insertion="      'can-host-virtmcu':             'CanHostVirtmcuProperties',\n",
+        guard="'can-host-virtmcu':             'CanHostVirtmcuProperties',",
         after=False,
     )
 

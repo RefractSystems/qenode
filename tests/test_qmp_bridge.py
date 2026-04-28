@@ -119,7 +119,7 @@ async def test_wait_for_line_match_before_timeout():
     bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
 
     async def populate_buffer():
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: deliberate yielding
         bridge.uart_buffer = "boot complete\n"
 
     asyncio.create_task(populate_buffer())  # noqa: RUF006

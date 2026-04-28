@@ -1,8 +1,8 @@
-import struct
 import sys
 import threading
 import time
 
+import vproto
 import zenoh
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
@@ -18,7 +18,7 @@ def publish_netdev():
     pub = session.declare_publisher("sim/network/0/tx")
 
     # 12 byte header (8 byte vtime, 4 byte size)
-    header = struct.pack("<QI", 0, 10)
+    header = vproto.ZenohFrameHeader(0, 0, 10).pack()
     payload = header + b"1234567890"
 
     print("[Flood] Blasting 50,000 packets rapidly to trigger backpressure/OOM...")

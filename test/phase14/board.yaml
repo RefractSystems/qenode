@@ -20,15 +20,18 @@ peripherals:
     interrupts: [33]
 
   - name: radio0
-    type: zenoh-802154
+    type: ieee802154
     address: 0x09001000
     interrupts: [38]
     properties:
       node: 0
 
   - name: ble0
-    type: zenoh-chardev
+    type: chardev
     properties:
       node: "0"
       topic: "sim/rf/hci/0"
       id: "hci0"
+
+topology:
+  links: []

@@ -30,6 +30,7 @@ exclude = [
     ".venv/",
     ".cargo-cache/",
     "**/__pycache__/",
+    "tools/virtmcu/",
     "**/*_fbs/",
     "test/phase6/virtmcu/rf/",
 ]
@@ -59,9 +60,11 @@ pythonpath = [
     "tools/lin_fbs",
     "tools/telemetry_fbs",
     "tools/flexray_fbs",
+    "tools",
 ]
 asyncio_mode = "strict"
-timeout = 600
+# Reduced from 600s to 60s to fail fast during deadlocks while allowing normal tests to pass
+timeout = 300
 
 [dependency-groups]
 dev = [

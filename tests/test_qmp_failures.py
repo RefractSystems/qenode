@@ -32,7 +32,7 @@ async def test_qemu_crash_handling(qemu_launcher):
             pass
 
         # Give it a tiny moment to die
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: yield to let OS kill process
 
         # Next command should fail
         with pytest.raises((ConnectError, StateError, EOFError, asyncio.IncompleteReadError, ExecInterruptedError)):

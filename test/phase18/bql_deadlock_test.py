@@ -65,8 +65,13 @@ class QmpThread(threading.Thread):
             traceback.print_exc()
 
 
+Q_NUM = 0
+
+
 def pack_req(delta_ns):
-    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    global Q_NUM
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=Q_NUM)
+    Q_NUM += 1
     return req.pack()
 
 
@@ -100,7 +105,7 @@ def main():
 
     try:
         for i in range(3):
-            # Sleep to ensure QEMU hits the quantum boundary and blocks in zenoh_clock_quantum_wait
+            # Sleep to ensure QEMU hits the quantum boundary and blocks in clock_quantum_wait
             time.sleep(1.0)
 
             if qmp_thread.error:

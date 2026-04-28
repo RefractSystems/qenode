@@ -4,12 +4,10 @@
 
 import flatbuffers
 from flatbuffers.compat import import_numpy
-
 np = import_numpy()
 
-
-class RfHeader:
-    __slots__ = ["_tab"]
+class RfHeader(object):
+    __slots__ = ['_tab']
 
     @classmethod
     def GetRootAs(cls, buf, offset=0):
@@ -22,7 +20,6 @@ class RfHeader:
     def GetRootAsRfHeader(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
-
     # RfHeader
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -35,70 +32,71 @@ class RfHeader:
         return 0
 
     # RfHeader
-    def Size(self):
+    def SequenceNumber(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
+        return 0
+
+    # RfHeader
+    def Size(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
     # RfHeader
     def Rssi(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
     # RfHeader
     def Lqi(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
         return 255
 
-
 def RfHeaderStart(builder):
-    builder.StartObject(4)
-
+    builder.StartObject(5)
 
 def Start(builder):
     RfHeaderStart(builder)
 
-
 def RfHeaderAddDeliveryVtimeNs(builder, deliveryVtimeNs):
     builder.PrependUint64Slot(0, deliveryVtimeNs, 0)
-
 
 def AddDeliveryVtimeNs(builder, deliveryVtimeNs):
     RfHeaderAddDeliveryVtimeNs(builder, deliveryVtimeNs)
 
+def RfHeaderAddSequenceNumber(builder, sequenceNumber):
+    builder.PrependUint64Slot(1, sequenceNumber, 0)
+
+def AddSequenceNumber(builder, sequenceNumber):
+    RfHeaderAddSequenceNumber(builder, sequenceNumber)
 
 def RfHeaderAddSize(builder, size):
-    builder.PrependUint32Slot(1, size, 0)
-
+    builder.PrependUint32Slot(2, size, 0)
 
 def AddSize(builder, size):
     RfHeaderAddSize(builder, size)
 
-
 def RfHeaderAddRssi(builder, rssi):
-    builder.PrependInt8Slot(2, rssi, 0)
-
+    builder.PrependInt8Slot(3, rssi, 0)
 
 def AddRssi(builder, rssi):
     RfHeaderAddRssi(builder, rssi)
 
-
 def RfHeaderAddLqi(builder, lqi):
-    builder.PrependUint8Slot(3, lqi, 255)
-
+    builder.PrependUint8Slot(4, lqi, 255)
 
 def AddLqi(builder, lqi):
     RfHeaderAddLqi(builder, lqi)
 
-
 def RfHeaderEnd(builder):
     return builder.EndObject()
-
 
 def End(builder):
     return RfHeaderEnd(builder)

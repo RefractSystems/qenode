@@ -1,6 +1,8 @@
 import socket
 import struct
 
+import vproto
+
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 
@@ -22,7 +24,7 @@ class MMIOClient:
         self.sock.settimeout(2.0)
         self.sock.connect(self.socket_path)
         # Handshake
-        hs_out = struct.pack("<II", VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION)
+        hs_out = vproto.VirtmcuHandshake(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION).pack()
         self.sock.sendall(hs_out)
         hs_in = self.sock.recv(8)
         if len(hs_in) < 8:
@@ -43,7 +45,7 @@ class MMIOClient:
 
     def write(self, addr, data, size=4, vtime_ns=0):
         # struct mmio_req { uint8_t type; uint8_t size; uint16_t res1; uint32_t res2; uint64_t vtime_ns; uint64_t addr; uint64_t data; }
-        req = struct.pack("<BBHIQQQ", MMIO_REQ_WRITE, size, 0, 0, vtime_ns, addr, data)
+        req = vproto.MmioReq(MMIO_REQ_WRITE, size, 0, 0, vtime_ns, addr, data).pack()
         self.sock.sendall(req)
 
         # Wait for response, but handle IRQs in between
@@ -57,7 +59,7 @@ class MMIOClient:
                 self.irqs[irq_num] = False
 
     def read(self, addr, size=4, vtime_ns=0):
-        req = struct.pack("<BBHIQQQ", MMIO_REQ_READ, size, 0, 0, vtime_ns, addr, 0)
+        req = vproto.MmioReq(MMIO_REQ_READ, size, 0, 0, vtime_ns, addr, 0).pack()
         self.sock.sendall(req)
 
         while True:

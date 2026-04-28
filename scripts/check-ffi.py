@@ -25,8 +25,9 @@ STRUCTS_TO_CHECK = [
     "SSIPeripheralClass",
     "ChardevClass",
     "Chardev",
-    "ChardevZenohOptions",
+    "ChardevVirtmcuOptions",
     "Netdev",
+    "NetdevVirtmcuOptions",
     "NetClientState",
     "NetClientInfo",
 ]
@@ -145,13 +146,13 @@ def main():
             print(f"Warning: Could not probe struct {struct}")
 
     rust_files = [
-        "hw/rust/virtmcu-qom/src/qom.rs",
-        "hw/rust/virtmcu-qom/src/qdev.rs",
-        "hw/rust/virtmcu-qom/src/ssi.rs",
-        "hw/rust/virtmcu-qom/src/chardev.rs",
-        "hw/rust/virtmcu-qom/src/net.rs",
-        "hw/rust/zenoh-chardev/src/lib.rs",
-        "hw/rust/zenoh-netdev/src/lib.rs",
+        "hw/rust/common/virtmcu-qom/src/qom.rs",
+        "hw/rust/common/virtmcu-qom/src/qdev.rs",
+        "hw/rust/common/virtmcu-qom/src/ssi.rs",
+        "hw/rust/common/virtmcu-qom/src/chardev.rs",
+        "hw/rust/common/virtmcu-qom/src/net.rs",
+        "hw/rust/chardev/src/lib.rs",
+        "hw/rust/netdev/src/lib.rs",
     ]
 
     overall_success = True

@@ -49,7 +49,7 @@ To achieve **Enterprise-grade 100% correctness**, we implemented a bifurcated st
 ### The Fundamental Emulator Guarantee
 Peripheral developers do not need to know about Zenoh discovery. They simply call:
 ```rust
-let session = virtmcu_zenoh::open_session(router_endpoint)?;
+let session = transport_zenoh::open_session(router_endpoint)?;
 ```
 Under the hood, `open_session` executes a state-based block:
 1. It opens the TCP socket.
@@ -74,15 +74,15 @@ Let's examine the lifecycle of a complete data exchange between Node 0 (TX) and 
 
 ### Phase 1: Mesh Initialization
 1.  **Coordinator Boot:** The `zenoh_coordinator` process boots, connects to the TCP router, and declares subscribers for `sim/eth/frame/*/tx`.
-2.  **Node 1 (RX) Boot:** QEMU Node 1 is launched. `virtmcu-zenoh` blocks in `open_session` until the router replies with liveliness. Once unblocked, the `zenoh-netdev` peripheral initializes and calls `session.declare_subscriber("sim/eth/frame/1/rx")`.
+2.  **Node 1 (RX) Boot:** QEMU Node 1 is launched. `transport-zenoh` blocks in `open_session` until the router replies with liveliness. Once unblocked, the `netdev` peripheral initializes and calls `session.declare_subscriber("sim/eth/frame/1/rx")`.
 3.  **Node 0 (TX) Boot:** QEMU Node 0 boots. It completes `open_session`, then calls `session.declare_publisher("sim/eth/frame/0/tx")`. 
 
 *Crucially, because Node 0's publisher requires no routing-table propagation to start sending, we rely on the Coordinator being booted first to catch Node 0's packets.*
 
 ### Phase 2: Data Transmission (Node 0)
 1.  **Firmware Action:** The guest firmware executing on Node 0 writes a payload to the MMIO registers of the virtual Ethernet MAC.
-2.  **QOM Interception:** QEMU traps the MMIO write and passes it to the Rust `zenoh-netdev` model (while holding the Big QEMU Lock).
-3.  **Serialization**: `zenoh-netdev` packages the data and the current Virtual Time into a `ZenohFrameHeader`.
+2.  **QOM Interception:** QEMU traps the MMIO write and passes it to the Rust `netdev` model (while holding the Big QEMU Lock).
+3.  **Serialization**: `netdev` packages the data and the current Virtual Time into a `ZenohFrameHeader`.
 4.  **Zenoh Put**: The model calls `zenoh_publisher.put(data)`. This pushes the data into Zenoh's asynchronous egress queue. *The BQL is never yielded during this step.*
 
 ### Phase 3: Routing & Coordination
@@ -92,10 +92,10 @@ Let's examine the lifecycle of a complete data exchange between Node 0 (TX) and 
 
 ### Phase 4: Reception (Node 1)
 1.  **Zenoh Async Executor**: The Zenoh background thread inside Node 1's process receives the network packet from the socket.
-2.  **Callback Execution**: The `zenoh-netdev` subscriber callback is invoked.
+2.  **Callback Execution**: The `netdev` subscriber callback is invoked.
 3.  **Thread Handoff**: *CRITICAL SAFETY BOUNDARY.* Zenoh callbacks cannot take the Big QEMU Lock (BQL), otherwise QEMU deadlocks. The callback deserializes the `ZenohFrameHeader` and pushes the data into a `crossbeam_channel::unbounded` queue.
 4.  **QEMU Polling/Interrupt:** A registered QEMU timer or bottom-half (BH) running on the main vCPU thread pops the data from the `crossbeam` queue. Since it is on the main thread, it already safely holds the BQL.
-5.  **Hardware Injection:** The `zenoh-netdev` model writes the data into the virtual MAC's RX FIFO and calls `qemu_set_irq` to assert the hardware interrupt line.
+5.  **Hardware Injection:** The `netdev` model writes the data into the virtual MAC's RX FIFO and calls `qemu_set_irq` to assert the hardware interrupt line.
 6.  **Firmware Acknowledgment:** Node 1's guest OS jumps to the ISR, reads the MMIO FIFO, and processes the packet.
 
 ---

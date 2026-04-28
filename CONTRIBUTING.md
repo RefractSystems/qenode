@@ -101,12 +101,12 @@ the right QEMU binary.
 ### Adding a New Peripheral
 
 **For Rust Models (Preferred):**
-1. Copy the `hw/rust/rust-dummy/` template to `hw/rust/<name>`.
-2. Edit `src/lib.rs` for your `#[no_std]` Rust implementation.
+1. Copy the `hw/rust/common/rust-dummy/` template to `hw/rust/<category>/<name>`.
+2. Edit `src/lib.rs` for your Rust implementation.
 3. Update `hw/meson.build` to compile and link your module.
 
 **For C Models (Legacy/Bridge only):**
-1. Copy `hw/rust/virtmcu-test-devices/dummy.c` (as a template) or use existing C models.
+1. Copy `hw/rust/common/virtmcu-test-devices/dummy.c` (as a template) or use existing C models.
 2. Add an entry to `hw/meson.build` following the existing pattern.
 
 **For all models:**

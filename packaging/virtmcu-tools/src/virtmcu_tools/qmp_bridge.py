@@ -81,7 +81,7 @@ class QmpBridge:
                     # Standalone mode or VM paused at startup — fall back to wall clock.
                     if asyncio.get_running_loop().time() - start_wall > timeout:
                         raise TimeoutError()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
         async def get_event():
             from qemu.qmp.events import EventListener
@@ -144,7 +144,7 @@ class QmpBridge:
                 if loop.time() - start_wall_time > timeout:
                     return False
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
 
     def clear_uart_buffer(self):
         """

@@ -3,7 +3,7 @@
 jitter_proxy.py — Zenoh clock-advance jitter injection proxy for Phase 16.4.
 
 This proxy sits between the benchmark harness (TimeAuthority) and QEMU's
-zenoh-clock device.  It forwards every clock-advance queryable reply with a
+clock device.  It forwards every clock-advance queryable reply with a
 random additional delay in [0, MAX_JITTER_US) microseconds, injected via a
 simple sleep.
 

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::thread;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn stress_barrier() {
     let n_nodes = 10;
     let rounds = 1000;
@@ -28,7 +29,9 @@ fn stress_barrier() {
                         payload: vec![m as u8],
                     });
                 }
-                barrier_clone.submit_done(node_id as u32, msgs).unwrap()
+                barrier_clone
+                    .submit_done(node_id as u32, 0, 0, msgs)
+                    .unwrap()
             }));
         }
 

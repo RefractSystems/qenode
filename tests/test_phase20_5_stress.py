@@ -61,14 +61,9 @@ async def test_spi_stress_baremetal(qemu_launcher, zenoh_session, zenoh_router, 
     bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=["-S"])
     await bridge.start_emulation()
 
-    success = False
-    for _ in range(200): # Allow up to 20 seconds for 10k messages
-        if b"P" in bridge.uart_buffer.encode():
-            success = True
-            break
-        if b"F" in bridge.uart_buffer.encode():
-            pytest.fail(f"Firmware signaled SPI stress test FAILURE. UART: {bridge.uart_buffer}")
-        await asyncio.sleep(0.1)
+    success = await bridge.wait_for_line_on_uart("P|F", timeout=20.0)
+    if "F" in bridge.uart_buffer:
+        pytest.fail(f"Firmware signaled SPI stress test FAILURE. UART: {bridge.uart_buffer}")
 
     assert success, f"Firmware timed out. Received {received_queries}/10000 queries. UART: {bridge.uart_buffer!r}"
     assert received_queries == 10000, f"Expected exactly 10,000 SPI transactions, got {received_queries}"

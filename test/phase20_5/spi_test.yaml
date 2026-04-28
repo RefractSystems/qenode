@@ -21,3 +21,6 @@ peripherals:
     type: spi-echo
     parent: spi0
     address: 0
+
+topology:
+  links: []
