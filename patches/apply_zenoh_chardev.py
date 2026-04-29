@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import logging
 import re
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def patch_file(filepath, marker_pattern, insertion, after=False):
@@ -12,7 +15,7 @@ def patch_file(filepath, marker_pattern, insertion, after=False):
 
     match = re.search(marker_pattern, content)
     if not match:
-        print(f"Error: Could not find marker pattern '{marker_pattern}' in {filepath}")
+        logger.error(f"Error: Could not find marker pattern '{marker_pattern}' in {filepath}")
         sys.exit(1)
 
     idx = match.start()
@@ -27,7 +30,7 @@ def patch_file(filepath, marker_pattern, insertion, after=False):
 
 def main():
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
 
     qemu = Path(sys.argv[1]).resolve()
@@ -54,9 +57,10 @@ def main():
             """
     # Use a more specific check for the whole block to avoid double patching
     content = Path(char_c).read_text()
-    if ".name = \"max-backlog\"," not in content and patch_file(char_c, marker_pattern, insertion4, after=False):
-        print(f"  patched {char_c}")
+    if '.name = "max-backlog",' not in content and patch_file(char_c, marker_pattern, insertion4, after=False):
+        logger.info(f"  patched {char_c}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

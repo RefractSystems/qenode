@@ -1,11 +1,14 @@
 import asyncio
 import contextlib
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 from qemu.qmp import QMPClient
+
+from tools.testing.utils import get_time_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +29,62 @@ class QmpBridge:
         self.uart_buffer = ""
         self._read_task: asyncio.Task | None = None
         self.uart_event = asyncio.Event()
+        self._watchdog_task: asyncio.Task | None = None
+        # Task: Deterministic signaling
+        self.vtime_condition = asyncio.Condition()
+        self.current_vtime_ns = 0
+        self._vtime_sub = None
 
     @property
     def is_connected(self) -> bool:
         # Check if the session is established. runstate is populated after greeting.
         return self.qmp.runstate is not None
 
-    async def connect(self, qmp_socket_path: str, uart_socket_path: str | None = None):
+    async def _hang_watchdog(self):
+        """
+        Monitors virtual time advancement. If wall clock advances significantly but
+        virtual time is completely stalled, fails fast.
+        """
+        stall_count = 0
+        last_vtime = -1
+        # Use a generous threshold: at least 30s or 2x the base stall timeout if detectable.
+        # This prevents the watchdog from killing the test during slow multi-node transitions
+        # or heavy CI load where neighbors might be temporarily slow.
+        base_timeout = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "15000"))
+        max_stalls = max(15, (base_timeout // 1000) // 2 + 5)
+
+        while True:
+            try:
+                await asyncio.sleep(2.0)  # SLEEP_EXCEPTION: watchdog check frequency
+                if not self.qmp:
+                    continue
+                current_vtime = await self.get_virtual_time_ns()
+                if current_vtime == last_vtime and current_vtime > 0:
+                    stall_count += 1
+                    logger.debug(f"Watchdog stall count: {stall_count} vtime={current_vtime}")
+                else:
+                    stall_count = 0
+                    last_vtime = current_vtime
+
+                if stall_count >= max_stalls:
+                    logger.error(
+                        f"Guest OS deadlocked! Virtual time stalled at {current_vtime}ns for {max_stalls * 2}s of wall-clock time."
+                    )
+                    # Abort the python test cleanly instead of killing the entire process
+                    for task in asyncio.all_tasks():
+                        if task is not asyncio.current_task():
+                            task.cancel("Guest OS deadlocked!")
+                    break
+            except Exception:
+                break
+
+    def start_hang_watchdog(self):
+        if not self._watchdog_task:
+            self._watchdog_task = asyncio.create_task(self._hang_watchdog())
+
+    async def connect(
+        self, qmp_socket_path: str, uart_socket_path: str | None = None, zenoh_session=None, node_id: int | None = None
+    ):
         """
         Connects to the QMP socket and optionally the UART socket.
         """
@@ -43,6 +95,22 @@ class QmpBridge:
             logger.info(f"Connecting to UART socket: {uart_socket_path}")
             self.uart_reader, self.uart_writer = await asyncio.open_unix_connection(uart_socket_path)
             self._read_task = asyncio.create_task(self._read_uart())
+
+        if zenoh_session and node_id is not None:
+            topic = f"sim/clock/vtime/{node_id}"
+            loop = asyncio.get_running_loop()
+
+            def on_vtime(sample):
+                vtime = int.from_bytes(sample.payload.to_bytes(), "little")
+
+                async def update():
+                    async with self.vtime_condition:
+                        self.current_vtime_ns = vtime
+                        self.vtime_condition.notify_all()
+
+                loop.call_soon_threadsafe(lambda: loop.create_task(update()))
+
+            self._vtime_sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(topic, on_vtime))
 
     async def _read_uart(self):
         """
@@ -57,6 +125,9 @@ class QmpBridge:
                         break
                     self.uart_buffer += data.decode("utf-8", errors="replace")
                     self.uart_event.set()
+                    # Wake up any waiters on vtime_condition too for UART polling
+                    async with self.vtime_condition:
+                        self.vtime_condition.notify_all()
                 except (asyncio.IncompleteReadError, ConnectionResetError) as e:
                     logger.debug(f"UART connection closed: {e}")
                     break
@@ -75,6 +146,8 @@ class QmpBridge:
         return await self.qmp.execute(cmd, args)
 
     async def wait_for_event(self, event_name: str, timeout: float = 10.0) -> Any:
+        if timeout is not None:
+            timeout *= get_time_multiplier()
         """
         Waits for a specific QMP event to occur.
 
@@ -97,7 +170,13 @@ class QmpBridge:
                     # Standalone mode or VM paused at startup — fall back to wall clock.
                     if asyncio.get_running_loop().time() - start_wall > timeout:
                         raise TimeoutError()
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+
+                # Task: Deterministic signaling
+                # Wait for vtime update or UART activity
+                async with self.vtime_condition:
+                    with contextlib.suppress(TimeoutError):
+                        # Wait with a short timeout as a safety fallback for standalone mode
+                        await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
         async def get_event():
             from qemu.qmp.events import EventListener
@@ -135,6 +214,8 @@ class QmpBridge:
         raise TimeoutError(f"Timed out waiting for event: {event_name}")
 
     async def wait_for_line_on_uart(self, pattern: str, timeout: float = 10.0) -> bool:
+        if timeout is not None:
+            timeout *= get_time_multiplier()
         """
         Waits until a pattern appears in the UART buffer.
 
@@ -150,11 +231,10 @@ class QmpBridge:
             if regex.search(self.uart_buffer):
                 return True
 
-            try:
-                await asyncio.wait_for(self.uart_event.wait(), timeout=0.1)
-                self.uart_event.clear()
-            except TimeoutError:
-                pass
+            # Task: Deterministic signaling
+            async with self.vtime_condition:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
             current_vtime = await self.get_virtual_time_ns()
             if current_vtime > start_vtime:
@@ -165,6 +245,8 @@ class QmpBridge:
                     return False
 
     async def wait_for_virtual_time(self, target_vtime_ns: int, timeout_wall: float = 30.0):
+        if timeout_wall is not None:
+            timeout_wall *= get_time_multiplier()
         """
         Waits until the virtual clock reaches the target nanoseconds.
         """
@@ -179,7 +261,10 @@ class QmpBridge:
             if loop.time() - start_wall > timeout_wall:
                 raise TimeoutError(f"Timed out waiting for vtime {target_vtime_ns} ns (current: {current_vtime} ns)")
 
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+            # Task: Deterministic signaling
+            async with self.vtime_condition:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
     def clear_uart_buffer(self):
         """
@@ -201,9 +286,10 @@ class QmpBridge:
         """
         Starts or resumes the emulation.
         """
-        print("calling cont")
+        logger.info("calling cont")
         await self.execute("cont")
-        print("cont returned")
+        self.start_hang_watchdog()
+        logger.info("cont returned")
 
     async def pause_emulation(self):
         """
@@ -286,6 +372,9 @@ class QmpBridge:
                 await asyncio.wait_for(self.uart_writer.wait_closed(), timeout=2.0)
             self.uart_writer = None
             self.uart_reader = None
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
 
         if self.is_connected:
             await self.qmp.disconnect()

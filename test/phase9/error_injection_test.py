@@ -1,8 +1,11 @@
+import logging
 import subprocess
 import time
 from pathlib import Path
 
 from mmio_client import MMIOClient
+
+logger = logging.getLogger(__name__)
 
 ADAPTER_PATH = "./tools/systemc_adapter/build/adapter"
 SOCKET_PATH = "/tmp/error_test.sock"
@@ -30,11 +33,11 @@ def connect_to_adapter(path, timeout=5):
 
 
 def test_invalid_mmio_size():
-    print("--- Testing Invalid MMIO Sizes ---")
+    logger.info("--- Testing Invalid MMIO Sizes ---")
     adapter = run_adapter()
     client = connect_to_adapter(SOCKET_PATH)
     if not client:
-        print("Failed to connect")
+        logger.error("Failed to connect")
         adapter.terminate()
         return
 
@@ -46,17 +49,17 @@ def test_invalid_mmio_size():
 
         # Test read size 8
         val = client.read(0, size=8)
-        print(f"Read size 8 returned: {val} (Expected 0 as adapter should return error)")
+        logger.info(f"Read size 8 returned: {val} (Expected 0 as adapter should return error)")
 
         # Test write size 1
         client.write(0, 0xAA, size=1)
         val = client.read(0, size=4)
-        print(f"Read after write size 1: {hex(val)}")
+        logger.info(f"Read after write size 1: {hex(val)}")
 
         # Test write size 2
         client.write(4, 0xBBBB, size=2)
         val = client.read(4, size=4)
-        print(f"Read after write size 2: {hex(val)}")
+        logger.info(f"Read after write size 2: {hex(val)}")
 
     finally:
         client.close()
@@ -65,11 +68,11 @@ def test_invalid_mmio_size():
 
 
 def test_abrupt_disconnect():
-    print("--- Testing Abrupt Disconnect ---")
+    logger.info("--- Testing Abrupt Disconnect ---")
     adapter = run_adapter()
     client = connect_to_adapter(SOCKET_PATH)
     if not client:
-        print("Failed to connect")
+        logger.error("Failed to connect")
         adapter.terminate()
         return
 
@@ -78,20 +81,20 @@ def test_abrupt_disconnect():
         # Actually MMIOClient.read waits.
         # Let's just close the socket while it's connected.
         client.close()
-        print("Client closed socket.")
+        logger.info("Client closed socket.")
         time.sleep(1)
 
         # Reconnect should work because of my fix
-        print("Attempting to reconnect...")
+        logger.info("Attempting to reconnect...")
         client2 = connect_to_adapter(SOCKET_PATH)
         if client2:
-            print("Reconnected successfully.")
+            logger.info("Reconnected successfully.")
             client2.write(0, 0x1234)
             val = client2.read(0)
-            print(f"Read after reconnect: {hex(val)}")
+            logger.info(f"Read after reconnect: {hex(val)}")
             client2.close()
         else:
-            print("Failed to reconnect!")
+            logger.error("Failed to reconnect!")
 
     finally:
         adapter.terminate()
@@ -99,5 +102,6 @@ def test_abrupt_disconnect():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_invalid_mmio_size()
     test_abrupt_disconnect()

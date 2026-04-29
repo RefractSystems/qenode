@@ -18,9 +18,22 @@ def test_phase14_parsing(tmp_path):
         cwd=workspace_root,
     )
 
-    cli_content = cli_out.read_text()
-    assert "ieee802154,node=0" in cli_content
-    assert "virtmcu,id=hci0,node=0,topic=sim/rf/hci/0" in cli_content
+    cli_lines = cli_out.read_text().splitlines()
+
+    # Robust order-independent verification for the chardev
+    assert any(
+        line.startswith("virtmcu")
+        and "id=hci0" in line.split(",")
+        and "node=0" in line.split(",")
+        and "transport=zenoh" in line.split(",")
+        and "topic=sim/rf/hci/0" in line.split(",")
+        for line in cli_lines
+    ), f"Could not find valid virtmcu chardev configuration in: {cli_lines}"
 
     dtc_output = subprocess.check_output(["dtc", "-I", "dtb", "-O", "dts", str(dtb_out)], text=True)
-    assert "radio0 {" in dtc_output
+    assert "uart0@9000000 {" in dtc_output
+    assert "radio0@9001000 {" in dtc_output
+
+    assert 'transport = "zenoh";' in dtc_output
+
+

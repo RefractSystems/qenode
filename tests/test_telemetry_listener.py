@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from tools.telemetry_listener import on_sample
 
 
-def test_on_sample_cpu_state(capsys):
+def test_on_sample_cpu_state(caplog):
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
@@ -20,11 +20,12 @@ def test_on_sample_cpu_state(capsys):
 
         on_sample(mock_sample)
 
-        out, _ = capsys.readouterr()
+        caplog.set_level("INFO")
+        out = caplog.text
         assert "[           1000] CPU_STATE  cpu=1 val= 42" in out
 
 
-def test_on_sample_irq(capsys):
+def test_on_sample_irq(caplog):
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
@@ -40,11 +41,12 @@ def test_on_sample_irq(capsys):
 
         on_sample(mock_sample)
 
-        out, _ = capsys.readouterr()
+        caplog.set_level("INFO")
+        out = caplog.text
         assert "[           2000] IRQ        slot= 3 pin= 5 val=  1" in out
 
 
-def test_on_sample_peripheral(capsys):
+def test_on_sample_peripheral(caplog):
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
@@ -60,11 +62,12 @@ def test_on_sample_peripheral(capsys):
 
         on_sample(mock_sample)
 
-        out, _ = capsys.readouterr()
+        caplog.set_level("INFO")
+        out = caplog.text
         assert "[           3000] PERIPHERAL id=99 val=  0" in out
 
 
-def test_on_sample_unknown(capsys):
+def test_on_sample_unknown(caplog):
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
@@ -80,11 +83,12 @@ def test_on_sample_unknown(capsys):
 
         on_sample(mock_sample)
 
-        out, _ = capsys.readouterr()
+        caplog.set_level("INFO")
+        out = caplog.text
         assert "[           4000] UNKNOWN    id=88 val=  5" in out
 
 
-def test_on_sample_exception(capsys):
+def test_on_sample_exception(caplog):
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"\x01\x02"
 
@@ -93,14 +97,15 @@ def test_on_sample_exception(capsys):
 
         on_sample(mock_sample)
 
-        out, _ = capsys.readouterr()
+        caplog.set_level("INFO")
+        out = caplog.text
         assert "Received malformed payload of size 2: 0102 (Parse error)" in out
 
 
 @patch("sys.argv", ["telemetry_listener.py", "1"])
 @patch("tools.telemetry_listener.zenoh")
 @patch("time.sleep")
-def test_main_block(mock_sleep, mock_zenoh, capsys):  # noqa: ARG001
+def test_main_block(mock_sleep, mock_zenoh, caplog):  # noqa: ARG001
     # Make time.sleep raise KeyboardInterrupt to exit the infinite loop
     mock_sleep.side_effect = KeyboardInterrupt
 

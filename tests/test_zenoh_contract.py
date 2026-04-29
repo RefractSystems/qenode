@@ -1,7 +1,10 @@
+import logging
 import os
 import re
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_python_zenoh_version():
@@ -93,18 +96,18 @@ if __name__ == "__main__":
     py_ver = get_python_zenoh_version()
     c_ver = get_libzenohc_version("/opt/virtmcu/lib/libzenohc.so") or get_libzenohc_version("libzenohc.so")
 
-    print(f"Python eclipse-zenoh: {py_ver}")
-    print(f"C libzenohc.so:      {c_ver}")
+    logger.info(f"Python eclipse-zenoh: {py_ver}")
+    logger.info(f"C libzenohc.so:      {c_ver}")
 
     if py_ver and c_ver:
         py_mm = py_ver.split(".")[:2]
         c_mm = c_ver.split(".")[:2]
         if py_mm == c_mm:
-            print("✅ Zenoh version contract verified.")
+            logger.info("✅ Zenoh version contract verified.")
             sys.exit(0)
         else:
-            print(f"❌ Version mismatch: {py_ver} vs {c_ver}")
+            logger.error(f"❌ Version mismatch: {py_ver} vs {c_ver}")
             sys.exit(1)
     else:
-        print("❌ Could not determine one or both versions.")
+        logger.error("❌ Could not determine one or both versions.")
         sys.exit(1)

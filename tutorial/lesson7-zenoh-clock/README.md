@@ -143,16 +143,16 @@ scripts/run.sh \
 
 # Send a clock-advance query from Python
 python3 - <<'PY'
-import zenoh, struct, time
+import zenoh, vproto, time, sys
 s = zenoh.open(zenoh.Config())
 time.sleep(1)  # wait for QEMU to register queryable
-payload = struct.pack("<QQQ", 5_000_000, 0, 0)  # advance 5 ms, q=0
+payload = vproto.ClockAdvanceReq(5_000_000, 0, 0).pack()  # advance 5 ms, q=0
 for reply in s.get("sim/clock/advance/0", payload=payload, timeout=5.0):
-    vtime_ns, _, err, q = struct.unpack("<QIIQ", reply.ok.payload.to_bytes())
-    if err == 0:
-        print(f"Virtual time after quantum: {vtime_ns} ns")
+    resp = vproto.ClockReadyResp.unpack(reply.ok.payload.to_bytes())
+    if resp.error_code == 0:
+        sys.stdout.write(f"Virtual time after quantum: {resp.current_vtime_ns} ns\n")
     else:
-        print(f"Error: {err}")
+        sys.stderr.write(f"Error: {resp.error_code}\n")
 s.close()
 PY
 ```

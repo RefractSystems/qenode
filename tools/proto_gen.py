@@ -7,8 +7,11 @@ stay exactly in sync with the C structs, preventing "version drift" and
 struct.unpack alignment bugs.
 """
 
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
 PROTO_H_PATH = SCRIPT_DIR.parent / "hw" / "misc" / "virtmcu_proto.h"
@@ -112,8 +115,9 @@ def generate_python(defines, structs):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     defines, structs = parse_header()
     py_code = generate_python(defines, structs)
     with Path(OUT_PY_PATH).open("w") as f:
         f.write(py_code)
-    print(f"Generated {OUT_PY_PATH}")
+    logger.info(f"Generated {OUT_PY_PATH}")

@@ -20,10 +20,7 @@ def compile_dtb(base_dts: Path | str, replacements: dict[str, str], out_dtb: Pat
 
     try:
         subprocess.run(
-            ["dtc", "-I", "dts", "-O", "dtb", "-o", str(out_dtb), tmp_dts],
-            check=True,
-            capture_output=True,
-            text=True
+            ["dtc", "-I", "dts", "-O", "dtb", "-o", str(out_dtb), tmp_dts], check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"dtc failed: {e.stderr}") from e
@@ -34,7 +31,12 @@ def compile_dtb(base_dts: Path | str, replacements: dict[str, str], out_dtb: Pat
     return out_dtb
 
 
-def compile_firmware(source_files: list[Path | str], out_elf: Path | str, linker_script: Path | str | None = None, cpu: str = "cortex-a15") -> Path:
+def compile_firmware(
+    source_files: list[Path | str],
+    out_elf: Path | str,
+    linker_script: Path | str | None = None,
+    cpu: str = "cortex-a15",
+) -> Path:
     """
     Compiles a list of source files (C or Assembly) into a bare-metal ELF.
     """
@@ -57,7 +59,9 @@ def compile_firmware(source_files: list[Path | str], out_elf: Path | str, linker
     return out_elf
 
 
-def compile_c_snippet(snippet: str, out_dir: Path | str, linker_script: Path | str | None = None, filename: str = "snippet.c") -> Path:
+def compile_c_snippet(
+    snippet: str, out_dir: Path | str, linker_script: Path | str | None = None, filename: str = "snippet.c"
+) -> Path:
     """
     Convenience method to write a C snippet to disk and compile it to an ELF.
     """

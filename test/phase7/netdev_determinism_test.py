@@ -1,4 +1,3 @@
-
 """
 test/phase7/netdev_determinism_test.py
 
@@ -23,6 +22,7 @@ the delivery ordering is observable purely from QEMU's stderr.
 """
 
 import argparse
+import logging
 import re
 import subprocess
 import sys
@@ -39,6 +39,8 @@ if TOOLS_DIR not in sys.path:
 
 import zenoh  # noqa: E402
 from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # Frame sizes used to identify packets in the delivery log.
 SIZE_A = 34  # Packet A: 14-byte Ethernet header + 20 payload bytes
@@ -146,7 +148,7 @@ def main():
             "none",
         ]
 
-        print(f"Running: {' '.join(qemu_cmd)}")
+        logger.info(f"Running: {' '.join(qemu_cmd)}")
         qemu_proc = subprocess.Popen(qemu_cmd, stderr=subprocess.STDOUT, stdout=stderr_file)
 
         try:
@@ -162,7 +164,7 @@ def main():
             now_ns = 0
             while time.time() < deadline:
                 replies = list(session.get(clock_topic, payload=pack_clock_req(1_000_000), timeout=10.0))
-                print("REPLIES:", replies)
+                logger.info("REPLIES:", replies)
                 if replies:
                     # replies is a list of zenoh.Reply
                     for reply in replies:
@@ -177,15 +179,15 @@ def main():
                 time.sleep(0.5)
 
             if not ready:
-                print("FAIL: Could not get valid initial clock state.", file=sys.stderr)
+                logger.error("FAIL: Could not get valid initial clock state.")
                 # Dump stderr for debugging
                 stderr_file.flush()
                 with Path(stderr_path).open() as f:
-                    print("\n--- QEMU stderr ---")
-                    print(f.read())
+                    logger.info("\n--- QEMU stderr ---")
+                    logger.info(f.read())
                 sys.exit(1)
 
-            print(f"QEMU ready. now={now_ns} ns. Injecting out-of-order frames...")
+            logger.info(f"QEMU ready. now={now_ns} ns. Injecting out-of-order frames...")
 
             # Schedule frames in the next quantum (current now_ns is at least 1ms)
             VTIME_A_NS = now_ns + 200_000_000_000  # now + 200s  # noqa: N806
@@ -200,13 +202,13 @@ def main():
 
             # Deliberately publish A (later vtime) first to test re-ordering.
             session.put(rx_topic, pack_net_frame(VTIME_A_NS, packet_a))
-            print(f"  Sent Packet A  vtime={VTIME_A_NS} ns  size={SIZE_A}  (published first)")
+            logger.info(f"  Sent Packet A  vtime={VTIME_A_NS} ns  size={SIZE_A}  (published first)")
             time.sleep(0.5)
             session.put(rx_topic, pack_net_frame(VTIME_B_NS, packet_b))
-            print(f"  Sent Packet B  vtime={VTIME_B_NS} ns  size={SIZE_B}  (published second)")
+            logger.info(f"  Sent Packet B  vtime={VTIME_B_NS} ns  size={SIZE_B}  (published second)")
 
             # Advance clock past both vtimes — this drains the priority queue.
-            print(f"Advancing clock by {CLOCK_ADV_NS} ns...")
+            logger.info(f"Advancing clock by {CLOCK_ADV_NS} ns...")
             list(session.get(clock_topic, payload=pack_clock_req(CLOCK_ADV_NS), timeout=10.0))
 
             # Give rx_timer_cb a moment to flush its log to stderr.
@@ -230,16 +232,16 @@ def main():
             if m:
                 deliveries.append((int(m.group(1)), int(m.group(2))))
 
-    print("\nDelivery log (vtime_ns, size):")
+    logger.info("\nDelivery log (vtime_ns, size):")
     for vt, sz in deliveries:
-        print(f"  vtime={vt}  size={sz}")
+        logger.info(f"  vtime={vt}  size={sz}")
 
     if len(deliveries) < 2:
-        print(f"FAIL: expected ≥ 2 delivery events, got {len(deliveries)}")
+        logger.error(f"FAIL: expected ≥ 2 delivery events, got {len(deliveries)}")
         # Dump stderr for debugging
         with Path(stderr_path).open() as f:
-            print("\n--- QEMU stderr ---")
-            print(f.read())
+            logger.info("\n--- QEMU stderr ---")
+            logger.info(f.read())
         sys.exit(1)
 
     # Find the delivery index of each packet by size.
@@ -247,19 +249,20 @@ def main():
     idx_b = next((i for i, (_, sz) in enumerate(deliveries) if sz == SIZE_B), -1)
 
     if idx_a == -1 or idx_b == -1:
-        print(f"FAIL: could not identify both packets. idx_a={idx_a} idx_b={idx_b}")
+        logger.error(f"FAIL: could not identify both packets. idx_a={idx_a} idx_b={idx_b}")
         sys.exit(1)
 
     if idx_b >= idx_a:
-        print(
+        logger.info(
             f"FAIL: Packet B (vtime={VTIME_B_NS}) delivered at index {idx_b} "
             f"but Packet A (vtime={VTIME_A_NS}) delivered at index {idx_a}. "
             f"Expected B before A."
         )
         sys.exit(1)
 
-    print(f"PASS: Packet B delivered before Packet A [idx_b={idx_b} < idx_a={idx_a}]")
+    logger.info(f"PASS: Packet B delivered before Packet A [idx_b={idx_b} < idx_a={idx_a}]")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

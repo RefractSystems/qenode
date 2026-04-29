@@ -7,9 +7,12 @@
 # ==============================================================================
 
 import json
+import logging
 import socket
 import sys
 import time
+
+logger = logging.getLogger(__name__)
 
 
 def check_dummy():
@@ -27,7 +30,7 @@ def check_dummy():
         except Exception:
             time.sleep(1.0)
     else:
-        print("FAILED: Could not connect to QEMU QMP socket (timeout 20s)")
+        logger.error("FAILED: Could not connect to QEMU QMP socket (timeout 20s)")
         sys.exit(1)
 
     # Read the initial QMP greeting message
@@ -72,12 +75,13 @@ def check_dummy():
 
     # Start the recursive search from the root of the QOM tree
     if find_dummy("/"):
-        print("PASSED: 'dummy-device' found in QOM tree!")
+        logger.info("PASSED: 'dummy-device' found in QOM tree!")
         sys.exit(0)
     else:
-        print("FAILED: 'dummy-device' NOT found in QOM tree!")
+        logger.error("FAILED: 'dummy-device' NOT found in QOM tree!")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     check_dummy()

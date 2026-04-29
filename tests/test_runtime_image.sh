@@ -93,7 +93,7 @@ peripherals:
 YML
     python3 -m tools.yaml2qemu "$TMP_YAML" --out-dtb "$TMP_DTB" > /dev/null
 
-    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); import sys; sys.stdout.write(str(s.getsockname()[1])); s.close()')
     
     # Start the mock router (TCP-only, no multicast)
     python3 -u "$WS/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &

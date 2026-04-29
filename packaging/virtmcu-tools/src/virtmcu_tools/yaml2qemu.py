@@ -7,6 +7,7 @@
 # ==============================================================================
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+
+logger = logging.getLogger(__name__)
 
 
 def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
@@ -107,28 +110,28 @@ def validate_dtb(dtb_path, devices):
                 missing.append(dev.name)
 
         if missing:
-            print(
+            logger.info(
                 f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}",
                 file=sys.stderr,
             )
-            print(
+            logger.info(
                 "This usually means the device type is unknown to FdtEmitter or the address mapping failed.",
                 file=sys.stderr,
             )
-            print("FAILED: DTB validation failed.")
+            logger.error("FAILED: DTB validation failed.")
             sys.exit(1)
-        print("✓ Validation successful.")
+        logger.info("✓ Validation successful.")
     except subprocess.CalledProcessError as e:
-        print(f"⚠️ Warning: dtc failed during validation: {e.stderr}", file=sys.stderr)
+        logger.error(f"⚠️ Warning: dtc failed during validation: {e.stderr}")
     except FileNotFoundError:
-        print(
+        logger.info(
             "ERROR: 'dtc' (device-tree-compiler) not found — DTB validation skipped. "
             "Install dtc to enable post-build validation.",
             file=sys.stderr,
         )
         sys.exit(1)
     except Exception as e:
-        print(f"⚠️ Warning: Could not validate DTB: {e}", file=sys.stderr)
+        logger.error(f"⚠️ Warning: Could not validate DTB: {e}")
 
 
 def main():
@@ -141,10 +144,10 @@ def main():
     args = parser.parse_args()
 
     if not Path(args.input).exists():
-        print(f"Error: Input file '{args.input}' not found.")
+        logger.error(f"Error: Input file '{args.input}' not found.")
         sys.exit(1)
 
-    print(f"Parsing YAML: {args.input}...")
+    logger.info(f"Parsing YAML: {args.input}...")
     platform, _ = parse_yaml_platform(args.input)
     original_devices = list(platform.devices)
 
@@ -203,7 +206,7 @@ def main():
 
     platform.devices = filtered_devices
 
-    print(f"Generating Device Tree for {len(platform.devices)} devices...")
+    logger.info(f"Generating Device Tree for {len(platform.devices)} devices...")
     dts = emitter.generate_dts()
 
     if args.out_cli:
@@ -211,14 +214,15 @@ def main():
             for arg in cli_args:
                 f.write(arg + "\n")
 
-    print(f"Compiling into '{args.out_dtb}'...")
+    logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):
-        print("✓ Compilation Success.")
+        logger.info("✓ Compilation Success.")
         validate_dtb(args.out_dtb, original_devices)
     else:
-        print("FAILED.")
+        logger.error("FAILED.")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

@@ -1,9 +1,11 @@
-import struct
+import logging
 import sys
 import time
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -30,21 +32,23 @@ def main():
     time.sleep(1)
 
     if len(rx_frames) == 0:
-        print("FAIL: No frame received")
+        logger.error("FAIL: No frame received")
         sys.exit(1)
 
-    vtime, _size = struct.unpack("<QI", rx_frames[0][:12])
-    print(f"Original vtime: {orig_vtime}")
-    print(f"Forwarded vtime: {vtime}")
+    vtime = int.from_bytes(rx_frames[0][:8], "little")
+    _size = int.from_bytes(rx_frames[0][8:12], "little")
+    logger.info(f"Original vtime: {orig_vtime}")
+    logger.info(f"Forwarded vtime: {vtime}")
 
     if vtime < orig_vtime:
-        print("FAIL: VTime wrapped around!")
+        logger.error("FAIL: VTime wrapped around!")
         sys.exit(1)
     else:
-        print("PASS: VTime did not wrap around.")
+        logger.info("PASS: VTime did not wrap around.")
 
     s.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

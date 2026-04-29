@@ -1,9 +1,12 @@
+import logging
 import os
 import threading
 import time
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 
 def node_thread(node_id, num_messages, session):
@@ -48,12 +51,13 @@ def main():
         t.join()
 
     end_time = time.time()
-    print(f"Sent {num_nodes * msgs_per_node} messages in {end_time - start_time:.2f} seconds")
+    logger.info(f"Sent {num_nodes * msgs_per_node} messages in {end_time - start_time:.2f} seconds")
 
     time.sleep(2)
     s.close()
-    print("Stress test finished.")
+    logger.info("Stress test finished.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::sync::Arc;
 use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
@@ -45,7 +45,7 @@ fn is_id_mapped(id: &str) -> bool {
 
 fn set_id_mapped(id: &str, mapped: bool) {
     let mut lock = MAPPED_IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    lock.get_or_insert_with(HashMap::new).insert(id.to_string(), mapped);
+    lock.get_or_insert_with(HashMap::new).insert(id.to_owned(), mapped);
 }
 
 #[repr(C)]

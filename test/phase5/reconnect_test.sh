@@ -101,7 +101,10 @@ g++ -O3 "$SCRIPT_DIR/stress_adapter.cpp" -o "$SCRIPT_DIR/reconnect_adapter"
 # (My stress_adapter echoes back data, so I'll just use a python mock instead)
 
 cat > /tmp/mock_adapter.py <<EOF
-import os, socket, struct, time
+import os, socket, struct, time, logging
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 SYSC_MSG_RESP = 0
@@ -113,18 +116,18 @@ def run():
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind("$SOCK_PATH")
     s.listen(1)
-    print("Mock adapter listening...")
+    logger.info("Mock adapter listening...")
     conn, addr = s.accept()
-    print("Connected!")
+    logger.info("Connected!")
     # Handshake
     hs = conn.recv(8)
     conn.sendall(hs)
     
     # Trigger IRQ
-    print("Sending IRQ SET...")
+    logger.info("Sending IRQ SET...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
     time.sleep(0.1)
-    print("Sending IRQ CLEAR...")
+    logger.info("Sending IRQ CLEAR...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
 
     while True:

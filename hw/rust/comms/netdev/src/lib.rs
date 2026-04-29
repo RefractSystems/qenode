@@ -4,7 +4,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_int, c_void, CStr};
@@ -204,7 +204,7 @@ unsafe extern "C" fn netdev_hook(
     };
 
     let transport_name = if opts.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(opts.transport) }.to_string_lossy().into_owned()
     };
@@ -212,7 +212,7 @@ unsafe extern "C" fn netdev_hook(
     let router = if opts.router.is_null() { ptr::null() } else { opts.router.cast_const() };
 
     let topic = if opts.topic.is_null() {
-        "sim/eth/frame".to_string()
+        "sim/eth/frame".to_owned()
     } else {
         unsafe { CStr::from_ptr(opts.topic) }.to_string_lossy().into_owned()
     };
@@ -485,7 +485,7 @@ fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BinaryHeap;
+    use alloc::collections::BinaryHeap;
 
     #[test]
     fn test_ordered_packet_ord() {

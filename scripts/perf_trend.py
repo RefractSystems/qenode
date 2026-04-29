@@ -17,8 +17,11 @@ Regression thresholds (PLAN §16.5):
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 
@@ -85,8 +88,8 @@ def check_regression(baseline: list[dict], current: list[dict]) -> list[str]:
 
 
 def print_comparison(baseline: list[dict], current: list[dict]) -> None:
-    print(f"{'Metric':<30} {'Baseline':>12} {'Current':>12} {'Change':>10}")
-    print("-" * 66)
+    logger.info(f"{'Metric':<30} {'Baseline':>12} {'Current':>12} {'Change':>10}")
+    logger.info("-" * 66)
 
     bm = extract_mips(baseline)
     cm = extract_mips(current)
@@ -94,7 +97,7 @@ def print_comparison(baseline: list[dict], current: list[dict]) -> None:
         bv = bm.get(mode, 0)
         cv = cm.get(mode, 0)
         change = f"{(cv - bv) / bv * 100:+.1f}%" if bv > 0 else "N/A"
-        print(f"  MIPS [{mode:<18}] {bv:>12.1f} {cv:>12.1f} {change:>10}")
+        logger.info(f"  MIPS [{mode:<18}] {bv:>12.1f} {cv:>12.1f} {change:>10}")
 
     bl = extract_latency(baseline)
     cl = extract_latency(current)
@@ -103,10 +106,10 @@ def print_comparison(baseline: list[dict], current: list[dict]) -> None:
             bv = bl.get(key, 0)
             cv = cl.get(key, 0)
             change = f"{(cv - bv) / bv * 100:+.1f}%" if bv > 0 else "N/A"
-            print(f"  {key:<30} {bv:>12.1f} {cv:>12.1f} {change:>10}")
+            logger.info(f"  {key:<30} {bv:>12.1f} {cv:>12.1f} {change:>10}")
         stalls_b = bl.get("stalls", 0)
         stalls_c = cl.get("stalls", 0)
-        print(f"  {'stalls':<30} {stalls_b:>12} {stalls_c:>12}")
+        logger.info(f"  {'stalls':<30} {stalls_b:>12} {stalls_c:>12}")
 
 
 def main() -> None:
@@ -121,28 +124,28 @@ def main() -> None:
 
     if args.save_baseline:
         if not Path(RESULTS_PATH).exists():
-            print(f"ERROR: {RESULTS_PATH} not found — run bench.py first", file=sys.stderr)
+            logger.error(f"ERROR: {RESULTS_PATH} not found — run bench.py first")
             sys.exit(1)
         import shutil
 
         shutil.copy2(RESULTS_PATH, BASELINE_PATH)
         current = load_json(RESULTS_PATH)
-        print(f"Baseline saved to {BASELINE_PATH}")
+        logger.info(f"Baseline saved to {BASELINE_PATH}")
         mips = extract_mips(current)
         for mode, val in mips.items():
-            print(f"  {mode}: {val:.1f} MIPS")
+            logger.info(f"  {mode}: {val:.1f} MIPS")
         lat = extract_latency(current)
         if lat:
-            print(
+            logger.info(
                 f"  P50={lat.get('p50_us', 0):.0f} µs  P99={lat.get('p99_us', 0):.0f} µs  stalls={lat.get('stalls', 0)}"
             )
         return
 
     if not Path(BASELINE_PATH).exists():
-        print(f"ERROR: {BASELINE_PATH} not found — run with --save-baseline first", file=sys.stderr)
+        logger.error(f"ERROR: {BASELINE_PATH} not found — run with --save-baseline first")
         sys.exit(1)
     if not Path(RESULTS_PATH).exists():
-        print(f"ERROR: {RESULTS_PATH} not found — run bench.py first", file=sys.stderr)
+        logger.error(f"ERROR: {RESULTS_PATH} not found — run bench.py first")
         sys.exit(1)
 
     baseline = load_json(BASELINE_PATH)
@@ -156,13 +159,14 @@ def main() -> None:
     print_comparison(baseline, current)
     failures = check_regression(baseline, current)
     if failures:
-        print()
+        logger.info("")
         for msg in failures:
-            print(f"REGRESSION: {msg}")
+            logger.info(f"REGRESSION: {msg}")
         sys.exit(1)
     else:
-        print("\nNo regressions detected.")
+        logger.info("\nNo regressions detected.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

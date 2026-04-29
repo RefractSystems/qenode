@@ -1,8 +1,11 @@
+import logging
 import os
 
 import pytest
 
 from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -36,6 +39,6 @@ async def test_canfd_plugin_loads():
             # QEMU shouldn't exit if it's running successfully with -S
             assert True
         else:
-            print(f"STDOUT: {proc.stdout_text}")
-            print(f"STDERR: {proc.stderr_text}")
+            logger.info(f"STDOUT: {proc.stdout_text}")
+            logger.info(f"STDERR: {proc.stderr_text}")
             assert proc.returncode == 0, f"QEMU crashed or failed to load the plugin. STDERR: {proc.stderr_text}"

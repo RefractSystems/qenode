@@ -1,8 +1,11 @@
+import logging
 import threading
 import time
 
 import pytest
 import vproto
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -57,4 +60,4 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordi
     duration = end_time - start_time
 
     assert received_count[0] >= int(expected * 0.5), f"Dropped too many: {received_count[0]} / {expected}"
-    print(f"Routed {received_count[0]} messages in {duration:.2f} seconds")
+    logger.info(f"Routed {received_count[0]} messages in {duration:.2f} seconds")

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -16,6 +17,8 @@ sys.path.append(str(Path(WORKSPACE_DIR) / "tools"))
 import contextlib  # noqa: E402
 
 from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # 10 ms quantums give ~30 RTT samples for the benchmark workload.
 QUANTUM_NS = 10_000_000
@@ -90,7 +93,7 @@ class BenchmarkRunner:
 
     def _output_reader(self, proc):
         for line in proc.stdout:
-            print(f"  [QEMU/{self.mode}/stdout] {line.strip()}")
+            logger.info(f"  [QEMU/{self.mode}/stdout] {line.strip()}")
             if "CNTFRQ: " in line and not self.cntfrq:
                 with contextlib.suppress(Exception):
                     self.cntfrq = int(line.split("CNTFRQ: ")[1].strip(), 16)
@@ -98,23 +101,23 @@ class BenchmarkRunner:
                 try:
                     self.exit_cycles = int(line.split("CYCLES: ")[1].strip(), 16)
                 except Exception as e:
-                    print(f"  [{self.mode}] CYCLES parse error: {e}")
+                    logger.info(f"  [{self.mode}] CYCLES parse error: {e}")
             if "EXIT" in line:
                 self._exit_event.set()
 
     def _stderr_relay(self, proc):
         for line in proc.stderr:
-            print(f"  [QEMU/{self.mode}/stderr] {line.strip()}", file=sys.stderr)
+            logger.error(f"  [QEMU/{self.mode}/stderr] {line.strip()}")
 
     def _run_icount(self, proc, t0) -> bool:
         config = zenoh.Config()
         config.insert_json5("connect/endpoints", f'["{self.router}"]')
         config.insert_json5("scouting/multicast/enabled", "false")
-        print(f"  [Test] Connecting to Zenoh router at {self.router}...")
+        logger.info(f"  [Test] Connecting to Zenoh router at {self.router}...")
         session = zenoh.open(config)
 
         topic = "sim/clock/advance/0"
-        print(f"  [Test] Waiting for queryable on {topic}...")
+        logger.info(f"  [Test] Waiting for queryable on {topic}...")
 
         ready = False
         deadline = time.perf_counter() + 15
@@ -128,14 +131,14 @@ class BenchmarkRunner:
                         ready = True
                         break
                     if hasattr(r, "err") and r.err is not None:
-                        print(f"  [Test] Reply error: {r.err}")
+                        logger.info(f"  [Test] Reply error: {r.err}")
             if ready:
                 break
             time.sleep(0.2)
             q_num += 1
 
         if not ready:
-            print(f"  ERROR: [{self.mode}] queryable not found after 15 s")
+            logger.info(f"  ERROR: [{self.mode}] queryable not found after 15 s")
             session.close()
             self.wall_time = time.perf_counter() - t0
             return False
@@ -151,12 +154,12 @@ class BenchmarkRunner:
             current_q += 1
 
             if not replies or not hasattr(replies[0], "ok") or replies[0].ok is None:
-                print(f"  ERROR: [{self.mode}] quantum {q} — no reply")
+                logger.info(f"  ERROR: [{self.mode}] quantum {q} — no reply")
                 break
 
             resp = unpack_rep(replies[0].ok.payload.to_bytes())
             if resp.error_code != 0:
-                print(f"  ERROR: [{self.mode}] quantum {q} — error_code={resp.error_code}")
+                logger.info(f"  ERROR: [{self.mode}] quantum {q} — error_code={resp.error_code}")
                 if resp.error_code == 1:  # STALL
                     self.stall_count += 1
                 break
@@ -169,7 +172,7 @@ class BenchmarkRunner:
                 self.exit_vtime_ns = resp.current_vtime_ns
                 break
         else:
-            print(f"  WARN: [{self.mode}] hit MAX_QUANTUMS ({MAX_QUANTUMS}) without EXIT")
+            logger.info(f"  WARN: [{self.mode}] hit MAX_QUANTUMS ({MAX_QUANTUMS}) without EXIT")
 
         self.wall_time = time.perf_counter() - t0
         session.close()
@@ -222,7 +225,7 @@ class BenchmarkRunner:
                 deadline = t0 + STANDALONE_TIMEOUT
                 while not self._exit_event.is_set() and proc.poll() is None:
                     if time.perf_counter() > deadline:
-                        print(f"  ERROR: [{self.mode}] timed out ({STANDALONE_TIMEOUT} s)")
+                        logger.info(f"  ERROR: [{self.mode}] timed out ({STANDALONE_TIMEOUT} s)")
                         break
                     time.sleep(0.05)
                 self.wall_time = time.perf_counter() - t0
@@ -240,7 +243,7 @@ class BenchmarkRunner:
                 break
             retries -= 1
             if retries > 0:
-                print(f"  [{self.mode}] retrying… ({retries} left)")
+                logger.info(f"  [{self.mode}] retrying… ({retries} left)")
                 time.sleep(2)
 
 
@@ -266,43 +269,43 @@ def main():
     results = {}
     try:
         for mode in ("standalone", "slaved-icount", "slaved-icount-2"):
-            print(f"--- [{mode}] ---")
+            logger.info(f"--- [{mode}] ---")
             runner = BenchmarkRunner(mode, dtb, kernel, zenoh_router)
             runner.run()
             results[mode] = runner
-            print(f"  wall  : {runner.wall_time:.3f} s")
+            logger.info(f"  wall  : {runner.wall_time:.3f} s")
             if runner.cntfrq:
-                print(f"  cntfrq: {runner.cntfrq:,} Hz  (NOTE: QEMU counter increments at 1 GHz regardless)")
+                logger.info(f"  cntfrq: {runner.cntfrq:,} Hz  (NOTE: QEMU counter increments at 1 GHz regardless)")
             if runner.exit_cycles:
-                print(f"  cycles: {runner.exit_cycles:,}")
+                logger.info(f"  cycles: {runner.exit_cycles:,}")
             if runner.exit_vtime_ns:
-                print(
+                logger.info(
                     f"  vtime : {runner.exit_vtime_ns / 1e6:.3f} ms virtual "
                     f"({runner.exit_vtime_ns:,} ns ≈ instructions)"
                 )
             if runner.latencies:
-                print(f"  rtt   : {latency_stats(runner.latencies)}")
+                logger.info(f"  rtt   : {latency_stats(runner.latencies)}")
     finally:
         router.terminate()
         router.wait()
 
-    print("\n=== Performance Summary ===")
+    logger.info("\n=== Performance Summary ===")
 
     r_sa = results["standalone"]
     r_ic = results["slaved-icount"]
     r_ic2 = results["slaved-icount-2"]
 
     if not r_ic.exit_cycles:
-        print("ERROR: slaved-icount run produced no CYCLES output")
+        logger.error("ERROR: slaved-icount run produced no CYCLES output")
         sys.exit(1)
 
     # Determinism: firmware CNTVCT delta must be identical across runs.
     drift_threshold = 0
     if abs(r_ic.exit_cycles - r_ic2.exit_cycles) <= drift_threshold:
-        print(f"Determinism          : PASSED  ({r_ic.exit_cycles:,} vs {r_ic2.exit_cycles:,} cycles)")
+        logger.info(f"Determinism          : PASSED  ({r_ic.exit_cycles:,} vs {r_ic2.exit_cycles:,} cycles)")
     else:
         diff = abs(r_ic.exit_cycles - r_ic2.exit_cycles)
-        print(f"Determinism          : FAILED  (delta={diff} cycles)")
+        logger.info(f"Determinism          : FAILED  (delta={diff} cycles)")
         sys.exit(1)
 
     # IPS: use Zenoh vtime (icount shift=0 → vtime_ns == instructions).
@@ -312,10 +315,10 @@ def main():
     mips_ic = 0.0
     if r_ic.exit_vtime_ns and r_ic.wall_time > 0:
         mips_ic = r_ic.exit_vtime_ns / r_ic.wall_time / 1e6
-        print(f"slaved-icount MIPS   : {mips_ic:.1f}")
+        logger.info(f"slaved-icount MIPS   : {mips_ic:.1f}")
         record = {"mode": "slaved-icount", "mips": round(mips_ic, 1)}
         json_results.append(record)
-        print(json.dumps(record))
+        logger.info(json.dumps(record))
         thresh = MIPS_THRESHOLDS.get("slaved-icount")
         if thresh and mips_ic < thresh["fail"]:
             failures.append(f"slaved-icount MIPS {mips_ic:.1f} < fail threshold {thresh['fail']}")
@@ -323,17 +326,17 @@ def main():
     mips_sa = 0.0
     if r_sa.exit_cycles and r_sa.wall_time > 0 and r_ic.exit_vtime_ns:
         mips_sa = r_ic.exit_vtime_ns / r_sa.wall_time / 1e6
-        print(f"standalone MIPS (est): {mips_sa:.1f}")
+        logger.info(f"standalone MIPS (est): {mips_sa:.1f}")
         record = {"mode": "standalone", "mips": round(mips_sa, 1)}
         json_results.append(record)
-        print(json.dumps(record))
+        logger.info(json.dumps(record))
         thresh = MIPS_THRESHOLDS.get("standalone")
         if thresh and mips_sa < thresh["fail"]:
             failures.append(f"standalone MIPS {mips_sa:.1f} < fail threshold {thresh['fail']}")
 
     # Latency thresholds (PLAN §16.2).
     if r_ic.latencies:
-        print(f"Co-sim latency       : {latency_stats(r_ic.latencies)}")
+        logger.info(f"Co-sim latency       : {latency_stats(r_ic.latencies)}")
         sorted_lat = sorted(r_ic.latencies)
         p50_us = _percentile(sorted_lat, 50) * 1_000
         p99_us = _percentile(sorted_lat, 99) * 1_000
@@ -344,7 +347,7 @@ def main():
             "stalls": stall_count,
         }
         json_results.append(latency_record)
-        print(json.dumps(latency_record))
+        logger.info(json.dumps(latency_record))
         if p50_us > LATENCY_P50_FAIL_US:
             failures.append(f"P50 latency {p50_us:.0f} µs > fail threshold {LATENCY_P50_FAIL_US} µs")
         if p99_us > LATENCY_P99_FAIL_US:
@@ -359,14 +362,15 @@ def main():
 
     if failures:
         for msg in failures:
-            print(f"THRESHOLD FAILURE: {msg}")
+            logger.info(f"THRESHOLD FAILURE: {msg}")
         if os.environ.get("VIRTMCU_USE_ASAN") == "1":
-            print("WARNING: Bypassing performance failures because ASan is active.")
+            logger.warning("WARNING: Bypassing performance failures because ASan is active.")
         else:
             sys.exit(1)
 
-    print("=== Phase 16 PASSED ===")
+    logger.info("=== Phase 16 PASSED ===")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

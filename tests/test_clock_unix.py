@@ -1,6 +1,5 @@
 import asyncio
 import socket
-import struct
 import subprocess
 import tempfile
 from pathlib import Path
@@ -43,13 +42,13 @@ class MockUnixTimeAuthority:
         resp_data = b""
         while len(resp_data) < vproto.SIZE_CLOCK_READY_RESP:
             assert self.conn is not None
-            chunk = await asyncio.get_running_loop().sock_recv(self.conn, 24 - len(resp_data))
+            chunk = await asyncio.get_running_loop().sock_recv(self.conn, vproto.SIZE_CLOCK_READY_RESP - len(resp_data))
             if not chunk:
                 raise RuntimeError("Connection closed")
             resp_data += chunk
 
-        current_vtime, n_frames, error_code, _qn = struct.unpack("<QIIQ", resp_data)
-        return current_vtime, n_frames, error_code
+        resp = vproto.ClockReadyResp.unpack(resp_data)
+        return resp.current_vtime_ns, resp.n_frames, resp.error_code
 
     def close(self):
         if self.conn:
@@ -75,7 +74,9 @@ async def test_clock_unix_socket(qemu_launcher):
 
         # 1. Launch QEMU. It will start, realize clock (spawn worker),
         #    and start QMP server.
-        launcher_task = asyncio.create_task(qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True))
+        launcher_task = asyncio.create_task(
+            qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+        )
 
         # 2. Wait for the worker thread to connect to our socket.
         await vta.accept()

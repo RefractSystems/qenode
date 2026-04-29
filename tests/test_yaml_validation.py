@@ -67,7 +67,6 @@ class TestYamlValidation(unittest.TestCase):
             self.assertEqual(result.returncode, 0, f"yaml2qemu failed: {result.stderr}")
             self.assertIn("✓ Validation successful.", result.stdout)
 
-
     def test_topology_validation_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_path = Path(tmpdir) / "test.yaml"
@@ -78,9 +77,9 @@ class TestYamlValidation(unittest.TestCase):
                 "topology": {
                     "max_messages_per_node_per_quantum": 500,
                     "global_seed": 42,
-                    "links": [{"nodes": ["node1"]}]
+                    "links": [{"nodes": ["node1"]}],
                 },
-                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
             }
 
             with Path(yaml_path).open("w") as f:
@@ -101,7 +100,7 @@ class TestYamlValidation(unittest.TestCase):
                     "max_messages_per_node_per_quantum": -1,
                     "global_seed": 42,
                 },
-                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
             }
 
             with Path(yaml_path).open("w") as f:
@@ -119,10 +118,8 @@ class TestYamlValidation(unittest.TestCase):
 
             test_yaml = {
                 "nodes": [{"id": "node1"}],
-                "topology": {
-                    "links": [{"nodes": ["node1", "unknown_node"]}]
-                },
-                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]}
+                "topology": {"links": [{"nodes": ["node1", "unknown_node"]}]},
+                "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
             }
 
             with Path(yaml_path).open("w") as f:
@@ -132,6 +129,7 @@ class TestYamlValidation(unittest.TestCase):
             result = subprocess.run(cmd, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Topology validation failed: node ID unknown_node in links not found in nodes", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 # test/actuator/verify_control.py
+import logging
 import os
 import signal
-import struct
 import subprocess
 import sys
 import time
@@ -9,15 +9,17 @@ from pathlib import Path
 
 import zenoh
 
+logger = logging.getLogger(__name__)
+
 
 def main():
-    print("[Test] Starting Zenoh control verification...")
+    logger.info("[Test] Starting Zenoh control verification...")
 
     workspace_dir = Path(__file__).resolve().parent.parent.parent
     router_script = Path(workspace_dir) / "tests" / "zenoh_router_persistent.py"
 
     # 1. Start Zenoh router
-    print("[Test] Starting Zenoh router...")
+    logger.info("[Test] Starting Zenoh router...")
     router_proc = subprocess.Popen([sys.executable, router_script, "tcp/127.0.0.1:7450"])
     time.sleep(2)
 
@@ -34,12 +36,14 @@ def main():
         payload = sample.payload.to_bytes()
         if len(payload) < 8:
             return
-        vtime_ns = struct.unpack("<Q", payload[:8])[0]
+        vtime_ns = int.from_bytes(payload[:8], "little")
         data_bytes = payload[8:]
-        n_doubles = len(data_bytes) // 8
-        vals = struct.unpack("<" + "d" * n_doubles, data_bytes)
+        import array
 
-        print(f"[Zenoh] Received: topic={topic}, vtime={vtime_ns}, vals={vals}")
+        a = array.array("d", data_bytes)
+        vals = a.tolist()
+
+        logger.info(f"[Zenoh] Received: topic={topic}, vtime={vtime_ns}, vals={vals}")
         received_msgs.append({"topic": topic, "vtime": vtime_ns, "vals": vals})
 
     # Subscribe to firmware/control/0/**
@@ -68,7 +72,7 @@ def main():
         # Actually, if we don't provide -device virtmcu-clock, it runs standalone.
     ]
 
-    print(f"[Test] Running: {' '.join(map(str, cmd))}")
+    logger.info(f"[Test] Running: {' '.join(map(str, cmd))}")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, preexec_fn=os.setsid)
 
     # 3. Wait for output and messages
@@ -81,13 +85,13 @@ def main():
     try:
         while time.time() - start_time < timeout:
             if proc.poll() is not None:
-                print(f"[QEMU] Process exited unexpectedly with code {proc.returncode}")
+                logger.info(f"[QEMU] Process exited unexpectedly with code {proc.returncode}")
                 break
 
             # Non-blocking read would be better, but for this simple test, we just rely on timeout
             line = proc.stdout.readline()
             if line:
-                print(f"[QEMU] {line.strip()}")
+                logger.info(f"[QEMU] {line.strip()}")
                 if "Control signal 2 sent." in line:
                     # Give it a bit of time for Zenoh to deliver
                     time.sleep(1)
@@ -98,7 +102,7 @@ def main():
 
             time.sleep(0.1)
     except Exception as e:
-        print(f"[Test] Exception: {e}")
+        logger.info(f"[Test] Exception: {e}")
     finally:
         # Kill QEMU
         if proc.poll() is None:
@@ -121,13 +125,14 @@ def main():
             success_2 = True
 
     if success_1 and success_2:
-        print("[Test] SUCCESS: All control signals verified.")
+        logger.info("[Test] SUCCESS: All control signals verified.")
         sys.exit(0)
     else:
-        print(f"[Test] FAILURE: success_1={success_1}, success_2={success_2}")
-        print(f"[Test] Received {len(received_msgs)} messages total.")
+        logger.info(f"[Test] FAILURE: success_1={success_1}, success_2={success_2}")
+        logger.info(f"[Test] Received {len(received_msgs)} messages total.")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

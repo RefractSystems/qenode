@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import logging
 import re
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_versions():
@@ -141,14 +144,15 @@ def check():
                     errors.append(f"{child_cargo}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
 
     if errors:
-        print("Version check FAILED:")
+        logger.info("Version check FAILED:")
         for err in errors:
-            print(f"  - {err}")
-        print("\nRun 'make sync-versions' to fix.")
+            logger.info(f"  - {err}")
+        logger.info("\nRun 'make sync-versions' to fix.")
         sys.exit(1)
     else:
-        print("Version check PASSED")
+        logger.info("Version check PASSED")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     check()

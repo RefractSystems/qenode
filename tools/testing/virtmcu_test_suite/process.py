@@ -2,7 +2,10 @@ import asyncio
 import contextlib
 import logging
 
+from tools.testing.utils import get_time_multiplier
+
 logger = logging.getLogger(__name__)
+
 
 class AsyncManagedProcess:
     """
@@ -25,7 +28,10 @@ class AsyncManagedProcess:
         self.output_event = asyncio.Event()
 
     async def wait_for_line(self, pattern: str, target: str = "stdout", timeout: float = 10.0) -> bool:
+        if timeout is not None:
+            timeout *= get_time_multiplier()
         import re
+
         regex = re.compile(pattern)
         loop = asyncio.get_running_loop()
         start = loop.time()
@@ -52,10 +58,11 @@ class AsyncManagedProcess:
             cwd=self.cwd,
             stdout=asyncio.subprocess.PIPE if self.capture_output else None,
             stderr=asyncio.subprocess.PIPE if self.capture_output else None,
-            **self.kwargs
+            **self.kwargs,
         )
 
         if self.capture_output:
+
             async def _stream(stream, target_list):
                 while True:
                     line = await stream.readline()

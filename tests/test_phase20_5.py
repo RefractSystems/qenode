@@ -1,8 +1,13 @@
 import asyncio
+import logging
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tools.testing.utils import yield_now
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -79,9 +84,9 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router, tm
             break
         if b"F" in bridge.uart_buffer.encode():
             pytest.fail(f"Firmware signaled SPI verification FAILURE. UART: {bridge.uart_buffer}")
-        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+        await yield_now()
 
     if not success:
-        print(f"DEBUG: UART Buffer: {bridge.uart_buffer!r}")
+        logger.info(f"DEBUG: UART Buffer: {bridge.uart_buffer!r}")
 
     assert success, f"Firmware timed out without signaling success (P). UART: {bridge.uart_buffer!r}"

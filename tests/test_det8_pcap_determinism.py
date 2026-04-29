@@ -1,10 +1,13 @@
 import asyncio
-import struct
+import logging
 from pathlib import Path
 
 import pytest
 
+from tests.conftest import wait_for_zenoh_discovery
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -25,36 +28,86 @@ topology:
 
     async def run_simulation(pcap_path: Path):
         proc = await asyncio.create_subprocess_exec(
-            "stdbuf", "-oL",
+            "stdbuf",
+            "-oL",
             str(coordinator_bin),
-            "--connect", zenoh_router,
-            "--topology", str(world_yaml),
-            "--pcap-log", str(pcap_path),
-            "--nodes", "2",
+            "--connect",
+            zenoh_router,
+            "--topology",
+            str(world_yaml),
+            "--pcap-log",
+            str(pcap_path),
+            "--nodes",
+            "2",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
 
         try:
-            await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: pending ARCH-20
+            await wait_for_zenoh_discovery(zenoh_session, "sim/coord/alive")
+
             msg_payload_eth = b"ETH"
-            msg_eth = struct.pack("<IIIQQBI", 1, 0, 2, 1000, 1, 0, len(msg_payload_eth)) + msg_payload_eth
+            msg_eth = (
+                (1).to_bytes(4, "little")
+                + (0).to_bytes(4, "little")
+                + (2).to_bytes(4, "little")
+                + (1000).to_bytes(8, "little")
+                + (1).to_bytes(8, "little")
+                + (0).to_bytes(1, "little")
+                + len(msg_payload_eth).to_bytes(4, "little")
+                + msg_payload_eth
+            )
             msg_payload_uart1 = b"UART1"
-            msg_uart1 = struct.pack("<IIIQQBI", 1, 0, 1, 2000, 2, 1, len(msg_payload_uart1)) + msg_payload_uart1
+            msg_uart1 = (
+                (1).to_bytes(4, "little")
+                + (0).to_bytes(4, "little")
+                + (1).to_bytes(4, "little")
+                + (2000).to_bytes(8, "little")
+                + (2).to_bytes(8, "little")
+                + (1).to_bytes(1, "little")
+                + len(msg_payload_uart1).to_bytes(4, "little")
+                + msg_payload_uart1
+            )
             msg_payload_uart2 = b"UART2"
-            msg_uart2 = struct.pack("<IIIQQBI", 1, 1, 0, 3000, 3, 1, len(msg_payload_uart2)) + msg_payload_uart2
+            msg_uart2 = (
+                (1).to_bytes(4, "little")
+                + (1).to_bytes(4, "little")
+                + (0).to_bytes(4, "little")
+                + (3000).to_bytes(8, "little")
+                + (3).to_bytes(8, "little")
+                + (1).to_bytes(1, "little")
+                + len(msg_payload_uart2).to_bytes(4, "little")
+                + msg_payload_uart2
+            )
 
-            def _send():
-                zenoh_session.put("sim/coord/0/tx", msg_eth)
-                zenoh_session.put("sim/coord/0/tx", msg_uart1)
-                zenoh_session.put("sim/coord/1/tx", msg_uart2)
-                import time
-                time.sleep(0.2) # SLEEP_EXCEPTION: mock node simulating execution time to avoid Zenoh publisher race condition
-                zenoh_session.put("sim/coord/0/done", struct.pack("<Q", 1))
-                zenoh_session.put("sim/coord/1/done", struct.pack("<Q", 1))
+            loop = asyncio.get_running_loop()
+            quantum_event = asyncio.Event()
 
-            await asyncio.to_thread(_send)
-            await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: pending ARCH-20
+            def on_start(sample):
+                q = int.from_bytes(sample.payload.to_bytes(), "little")
+                if q == 2:
+                    loop.call_soon_threadsafe(quantum_event.set)
+
+            sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/clock/start/0", on_start))
+
+            try:
+
+                def _send():
+                    zenoh_session.put("sim/coord/0/tx", msg_eth)
+                    zenoh_session.put("sim/coord/0/tx", msg_uart1)
+                    zenoh_session.put("sim/coord/1/tx", msg_uart2)
+                    import time
+
+                    time.sleep(
+                        0.2
+                    )  # SLEEP_EXCEPTION: mock node simulating execution time to avoid Zenoh publisher race condition
+                    zenoh_session.put("sim/coord/0/done", (1).to_bytes(8, "little"))
+                    zenoh_session.put("sim/coord/1/done", (1).to_bytes(8, "little"))
+
+                await asyncio.to_thread(_send)
+                await asyncio.wait_for(quantum_event.wait(), timeout=5.0)
+            finally:
+                await asyncio.to_thread(sub.undeclare)
 
         finally:
             try:
@@ -67,10 +120,10 @@ topology:
             stderr = (await proc.stderr.read()).decode()
             assert proc.stdout is not None
             stdout = (await proc.stdout.read()).decode()
-            print("STDOUT:", stdout)
-            print("STDERR:", stderr)
+            logger.info("STDOUT: %s", stdout)
+            logger.info("STDERR: %s", stderr)
             if proc.returncode != 0 and proc.returncode != -15:
-                print(f"Coordinator exited with code {proc.returncode}")
+                logger.info(f"Coordinator exited with code {proc.returncode}")
 
     pcap1 = tmp_path / "run1.pcap"
     await run_simulation(pcap1)
@@ -87,4 +140,3 @@ topology:
 
     assert content1 == content2, "PCAP files are not bit-identical!"
     assert len(content1) > 24, "PCAP file only contains the global header, no packets written!"
-

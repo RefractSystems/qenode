@@ -371,21 +371,28 @@ pub unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void
     let s = unsafe { &mut *(dev as *mut S32K144LpuartQemu) };
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
-    println!("ROUTER: {:?}, TRANSPORT: {:?}, TOPIC: {:?}", s.router, s.transport, s.topic);
-    let router_str = if s.router.is_null() {
-        "".to_string()
+    virtmcu_qom::sim_info!(
+        "ROUTER: {:?}, TRANSPORT: {:?}, TOPIC: {:?}",
+        s.router,
+        s.transport,
+        s.topic
+    );
+    let router_addr = if s.router.is_null() {
+        String::new()
     } else {
         unsafe { core::ffi::CStr::from_ptr(s.router).to_string_lossy().into_owned() }
     };
     let transport_name = if !s.transport.is_null() {
         unsafe { core::ffi::CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
-    } else if router_str.ends_with(".sock")
-        || router_str.starts_with("/tmp/")
-        || router_str.starts_with("unix:")
+    } else if std::path::Path::new(&router_addr)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
+        || router_addr.starts_with("/tmp/")
+        || router_addr.starts_with("unix:")
     {
-        "unix".to_string()
+        "unix".to_owned()
     } else {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     };
 
     let topic = if s.topic.is_null() {
@@ -513,14 +520,14 @@ fn lpuart_init_internal(
     router: *const c_char,
     topic: Option<String>,
 ) -> *mut LpuartState {
-    println!("TRANSPORT NAME IS: {:?}", transport_name);
+    virtmcu_qom::sim_info!("TRANSPORT NAME IS: {:?}", transport_name);
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
         let path = unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() };
-        println!("LPUART path = {}", path);
+        virtmcu_qom::sim_info!("LPUART path = {}", path);
         match transport_unix::UnixDataTransport::new(&path) {
             Ok(t) => Arc::new(t),
             Err(e) => {
-                eprintln!("UNIX DATA TRANSPORT ERROR: {}", e);
+                virtmcu_qom::sim_err!("UNIX DATA TRANSPORT ERROR: {}", e);
                 return ptr::null_mut();
             }
         }
@@ -528,13 +535,13 @@ fn lpuart_init_internal(
         match unsafe { transport_zenoh::get_or_init_session(router) } {
             Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
             Err(e) => {
-                eprintln!("UNIX DATA TRANSPORT ERROR: {}", e);
+                virtmcu_qom::sim_err!("UNIX DATA TRANSPORT ERROR: {}", e);
                 return ptr::null_mut();
             }
         }
     };
 
-    let base_topic = topic.unwrap_or_else(|| "sim/lin".to_string());
+    let base_topic = topic.unwrap_or_else(|| "sim/lin".to_owned());
     let tx_topic = format!("{base_topic}/{node_id}/tx");
     let rx_topic = format!("{base_topic}/{node_id}/rx");
 

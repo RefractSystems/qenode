@@ -19,8 +19,10 @@ dependencies = [
     "ruff==0.15.11",
     "flatbuffers==25.12.19",
     "pyelftools==0.32",
+    "fdt==0.3.0",
     "pytest-xdist==3.5.0",
     "pytest-timeout==2.4.0",
+    "watchdog>=4.0.0",
 ]
 
 [tool.ruff]
@@ -48,6 +50,7 @@ select = [
     "ARG",    # flake8-unused-arguments
     "PTH",    # flake8-use-pathlib
     "RUF",    # ruff-specific rules
+    "T20",    # flake8-print
 ]
 ignore = [
     "E501",   # line-too-long — acceptable in a C/embedded project with long strings
@@ -63,14 +66,18 @@ pythonpath = [
     "tools",
 ]
 asyncio_mode = "strict"
-# Reduced from 600s to 60s to fail fast during deadlocks while allowing normal tests to pass
-timeout = 300
+markers = [
+    "skip_asan: marks tests that are too timing sensitive to run under ASan"
+]
+# Reduced from 300s to 60s to fail fast during deadlocks while allowing normal tests to pass
+timeout = 60
 
 [dependency-groups]
 dev = [
     "mypy>=1.20.1",
     "psutil>=7.2.2",
     "types-pyyaml>=6.0.12.20260408",
+    "dtschema>=2024.2",
 ]
 
 [tool.mypy]

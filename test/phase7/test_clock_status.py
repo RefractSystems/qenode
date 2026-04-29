@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -9,6 +10,8 @@ if TOOLS_DIR not in sys.path:
     sys.path.append(TOOLS_DIR)
 
 from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 TOPIC = "sim/clock/advance/0"
 TIMEOUT_S = 5.0
@@ -37,25 +40,26 @@ def main():
     config.insert_json5("scouting/multicast/enabled", "false")
     session = zenoh.open(config)
 
-    print("Sending query...")
+    logger.info("Sending query...")
     replies = list(session.get(TOPIC, payload=pack_req(1000000), timeout=TIMEOUT_S))
     if not replies:
-        print("FAIL: No reply received", file=sys.stderr)
+        logger.error("FAIL: No reply received")
         sys.exit(1)
 
     payload = replies[0].ok.payload.to_bytes()
     vtime, error_code = unpack_rep(payload)
 
-    print(f"Reply: vtime={vtime}, error_code={error_code}")
+    logger.info(f"Reply: vtime={vtime}, error_code={error_code}")
 
     if error_code == 0:
-        print("PASS: error_code is OK")
+        logger.info("PASS: error_code is OK")
     else:
-        print(f"FAIL: Unexpected error_code {error_code} (1=STALL, 2=ZENOH_ERROR)", file=sys.stderr)
+        logger.error(f"FAIL: Unexpected error_code {error_code} (1=STALL, 2=ZENOH_ERROR)")
         sys.exit(1)
 
     session.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

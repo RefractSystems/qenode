@@ -153,25 +153,60 @@ class NodeManager:
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
 
-        # Wait a bit for QEMU to create the sockets
-        for _ in range(50):
-            if Path(node.qmp_socket_path).exists() and Path(node.uart_socket_path).exists():
-                break
-            # Check if process exited early
-            if node.process.returncode is not None:
-                stderr = await node.process.stderr.read()
-                raise RuntimeError(f"QEMU process exited early with code {node.process.returncode}: {stderr.decode()}")
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+        from ..utils import wait_for_file_creation, yield_now
 
-        if not Path(node.qmp_socket_path).exists():
+        # Wait for sockets deterministically
+        try:
+            wait_tasks = [wait_for_file_creation(node.qmp_socket_path), wait_for_file_creation(node.uart_socket_path)]
+
+            files_task = asyncio.ensure_future(asyncio.gather(*wait_tasks))
+            exit_task = asyncio.create_task(node.process.wait())
+
+            done, pending = await asyncio.wait(
+                [files_task, exit_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=10.0,
+            )
+
+            for task in pending:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+            if exit_task in done:
+                await yield_now()
+                stderr_data = b""
+                if node.process.stderr:
+                    stderr_data = await node.process.stderr.read()
+                raise RuntimeError(
+                    f"QEMU process exited early with code {node.process.returncode}: {stderr_data.decode()}"
+                )
+
+            if not done:
+                raise TimeoutError()
+
+            files_task.result()
+
+        except (TimeoutError, RuntimeError) as e:
             if node.process.returncode is None:
                 node.process.terminate()
-                stderr = await node.process.stderr.read()
-                raise RuntimeError(f"QEMU failed to create QMP socket for {node_id}. stderr: {stderr.decode()}")
-            raise RuntimeError(f"QEMU failed to start or create QMP socket for {node_id}")
+            stderr_data = b""
+            if node.process.stderr:
+                stderr_data = await node.process.stderr.read()
+            logger.error(f"QEMU failed to start. STDERR: {stderr_data.decode()}")
+            if isinstance(e, TimeoutError):
+                raise RuntimeError(f"QEMU QMP/UART sockets did not appear in time for {node_id}") from e
+            raise
 
         try:
-            await node.qmp_bridge.connect(node.qmp_socket_path, node.uart_socket_path)
+            import re
+
+            match = re.search(r"node(\d+)", node_id)
+            n_id = int(match.group(1)) if match else None
+
+            await node.qmp_bridge.connect(
+                node.qmp_socket_path, node.uart_socket_path, zenoh_session=self.get_zenoh_session(), node_id=n_id
+            )
         except Exception as e:
             if node.process.returncode is None:
                 node.process.terminate()

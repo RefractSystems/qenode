@@ -1,8 +1,10 @@
-import struct
+import logging
 import sys
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 
 # Standard virtmcu ClockAdvanceReq/ClockReadyResp packing
@@ -11,8 +13,8 @@ def pack_clock_advance(delta_ns, mujoco_time_ns=0, quantum_number=0):
 
 
 def unpack_clock_ready(data):
-    # current_vtime_ns (Q), n_frames (I), error_code (I), quantum_number (Q)
-    return struct.unpack("<QIIQ", data)
+    resp = vproto.ClockReadyResp.unpack(data)
+    return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
 def main():
@@ -22,7 +24,7 @@ def main():
     conf.insert_json5("connect/endpoints", f'["{router}"]')
     session = zenoh.open(conf)
 
-    print("[TimeAuthority] Advancing clock on sim/clock/advance/0...")
+    logger.info("[TimeAuthority] Advancing clock on sim/clock/advance/0...")
 
     # Advance 2 seconds in 10ms quanta
     QUANTA_NS = 10_000_000  # noqa: N806
@@ -36,12 +38,13 @@ def main():
             if reply.ok:
                 current_vtime, _, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
         q_num += 1
-        # print(f"[TimeAuthority] vtime: {current_vtime} ns")
+        # logger.info(f"[TimeAuthority] vtime: {current_vtime} ns")
         # No sleep here, we want to advance as fast as QEMU allows
 
-    print("[TimeAuthority] Reached target virtual time.")
+    logger.info("[TimeAuthority] Reached target virtual time.")
     session.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

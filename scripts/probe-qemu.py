@@ -11,10 +11,13 @@ compiler. This serves as the backend for the FFI validation suite.
 """
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_qemu_bin():
@@ -104,14 +107,15 @@ def main():
 
     qemu_bin = args.bin or get_qemu_bin()
     if not qemu_bin:
-        print("Error: QEMU binary not found. Build QEMU or set QEMU_BIN.", file=sys.stderr)
+        logger.error("Error: QEMU binary not found. Build QEMU or set QEMU_BIN.")
         sys.exit(1)
 
     if args.type == "struct":
-        print(probe_struct(qemu_bin, args.name))
+        logger.info(probe_struct(qemu_bin, args.name))
     else:
-        print(probe_enum(qemu_bin, args.name))
+        logger.info(probe_enum(qemu_bin, args.name))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

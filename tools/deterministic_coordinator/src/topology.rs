@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Ethernet,
@@ -15,7 +15,13 @@ pub enum Protocol {
     Rf802154,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+impl Protocol {
+    pub fn is_wireless(&self) -> bool {
+        matches!(self, Protocol::Rf802154)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
     #[default]
@@ -104,17 +110,17 @@ pub enum TopologyError {
     UnknownNode(u32),
 }
 
-impl std::fmt::Display for TopologyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TopologyError::IoError(e) => write!(f, "IO Error: {}", e),
-            TopologyError::YamlError(e) => write!(f, "YAML Error: {}", e),
-            TopologyError::UnknownNode(n) => write!(f, "Unknown node in topology: {}", n),
+            TopologyError::IoError(e) => write!(f, "IO Error: {e}"),
+            TopologyError::YamlError(e) => write!(f, "YAML Error: {e}"),
+            TopologyError::UnknownNode(n) => write!(f, "Unknown node in topology: {n}"),
         }
     }
 }
 
-impl std::error::Error for TopologyError {}
+impl core::error::Error for TopologyError {}
 
 impl From<std::io::Error> for TopologyError {
     fn from(err: std::io::Error) -> Self {
@@ -208,9 +214,16 @@ impl TopologyGraph {
         self.wireless_medium.is_some()
     }
 
+    pub fn wire_links(&self) -> &[WireLink] {
+        &self.wire_links
+    }
+
     pub fn is_link_allowed(&self, src: u32, dst: u32, protocol: Protocol) -> bool {
         if !self.is_explicit {
             return true; // implicitly allow all if no topology is loaded
+        }
+        if protocol.is_wireless() {
+            return self.rf_neighbors(src).contains(&dst);
         }
         for link in &self.wire_links {
             if link.protocol == protocol && link.nodes.contains(&src) && link.nodes.contains(&dst) {
@@ -314,7 +327,7 @@ topology:
             global_seed: 0,
             wire_links: vec![],
             wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_string(),
+                medium: "ieee802154".to_owned(),
                 nodes: vec![],
                 max_range_m: 10.0,
             }),
@@ -337,7 +350,7 @@ topology:
             global_seed: 0,
             wire_links: vec![],
             wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_string(),
+                medium: "ieee802154".to_owned(),
                 nodes: vec![],
                 max_range_m: 10.0,
             }),
@@ -360,7 +373,7 @@ topology:
             global_seed: 0,
             wire_links: vec![],
             wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_string(),
+                medium: "ieee802154".to_owned(),
                 nodes: vec![],
                 max_range_m: 10.0,
             }),

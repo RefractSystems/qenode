@@ -26,8 +26,11 @@
 
 import argparse
 import json
+import logging
 import socket
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 class QMPClient:
@@ -47,18 +50,18 @@ class QMPClient:
         try:
             self.sock.connect(self.socket_path)
         except FileNotFoundError:
-            print(f"Error: QMP socket '{self.socket_path}' not found.")
-            print("Hint: Start QEMU with '-qmp unix:qmp.sock,server,nowait'")
+            logger.error(f"Error: QMP socket '{self.socket_path}' not found.")
+            logger.info("Hint: Start QEMU with '-qmp unix:qmp.sock,server,nowait'")
             sys.exit(1)
         except ConnectionRefusedError:
-            print(f"Error: Connection refused to '{self.socket_path}'.")
-            print("Hint: Is QEMU still running?")
+            logger.error(f"Error: Connection refused to '{self.socket_path}'.")
+            logger.info("Hint: Is QEMU still running?")
             sys.exit(1)
 
         # QMP server sends a greeting on connection
         greeting = self._recv_msg()
         if not greeting or "QMP" not in greeting:
-            print("Error: Did not receive a valid QMP greeting.")
+            logger.error("Error: Did not receive a valid QMP greeting.")
             sys.exit(1)
 
         # Capabilities negotiation is mandatory before sending commands
@@ -111,7 +114,7 @@ def dump_tree(client, path="/", depth=0, visited=None):
 
     for item in resp["return"]:
         # Print with indentation to show hierarchy
-        print("  " * depth + f"{item['name']} ({item['type']})")
+        logger.info("  " * depth + f"{item['name']} ({item['type']})")
 
         # If it's a child object, recurse into it
         if item["type"].startswith("child<"):
@@ -153,7 +156,7 @@ def main():
     client.connect()
 
     if args.command == "tree":
-        print(f"--- QOM Tree (Source: {args.socket}) ---")
+        logger.info(f"--- QOM Tree (Source: {args.socket}) ---")
         dump_tree(client)
 
     elif args.command == "list":
@@ -161,18 +164,19 @@ def main():
         if "return" in resp:
             # Print a simple list of names and types
             for item in resp["return"]:
-                print(f"{item['name']:<30} ({item['type']})")
+                logger.info(f"{item['name']:<30} ({item['type']})")
         else:
-            print(f"Error: {resp.get('error', resp)}")
+            logger.error(f"Error: {resp.get('error', resp)}")
 
     elif args.command == "get":
         resp = client.execute("qom-get", {"path": args.path, "property": args.property})
         if "return" in resp:
             # Pretty-print the JSON value
-            print(json.dumps(resp["return"], indent=2))
+            logger.info(json.dumps(resp["return"], indent=2))
         else:
-            print(f"Error: {resp.get('error', resp)}")
+            logger.error(f"Error: {resp.get('error', resp)}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

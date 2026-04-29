@@ -144,7 +144,7 @@ unsafe extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void
 
     let node = s.node_id.to_string();
     let transport_name = if s.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.transport) }.to_string_lossy().into_owned()
     };

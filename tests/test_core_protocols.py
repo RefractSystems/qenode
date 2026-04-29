@@ -12,7 +12,6 @@ Run with: pytest tests/test_core_protocols.py -v
 from __future__ import annotations
 
 import heapq
-import struct
 from dataclasses import dataclass, field
 
 import pytest
@@ -22,26 +21,26 @@ import vproto
 # Constants — must match hw/rust/common/virtmcu-api/src/lib.rs exactly
 # ---------------------------------------------------------------------------
 
-VIRTMCU_PROTO_MAGIC: int = 0x564D4355
-VIRTMCU_PROTO_VERSION: int = 1
+VIRTMCU_PROTO_MAGIC: int = vproto.VIRTMCU_PROTO_MAGIC
+VIRTMCU_PROTO_VERSION: int = vproto.VIRTMCU_PROTO_VERSION
 
-MMIO_REQ_READ: int = 0
-MMIO_REQ_WRITE: int = 1
+MMIO_REQ_READ: int = vproto.MMIO_REQ_READ
+MMIO_REQ_WRITE: int = vproto.MMIO_REQ_WRITE
 
-SYSC_MSG_RESP: int = 0
-SYSC_MSG_IRQ_SET: int = 1
-SYSC_MSG_IRQ_CLEAR: int = 2
+SYSC_MSG_RESP: int = vproto.SYSC_MSG_RESP
+SYSC_MSG_IRQ_SET: int = vproto.SYSC_MSG_IRQ_SET
+SYSC_MSG_IRQ_CLEAR: int = vproto.SYSC_MSG_IRQ_CLEAR
 
 CLOCK_ERROR_OK: int = 0
 CLOCK_ERROR_STALL: int = 1
 CLOCK_ERROR_ZENOH: int = 2
 
-ZENOH_FRAME_HEADER_SIZE: int = 20  # ZenohFrameHeader: u64 + u64 + u32, packed
-CLOCK_ADVANCE_REQ_SIZE: int = 24  # ClockAdvanceReq: u64 + u64 + u64
-CLOCK_READY_RESP_SIZE: int = 24  # ClockReadyResp: u64 + u32 + u32 + u64
-MMIO_REQ_SIZE: int = 32  # MmioReq: 1+1+2+4+8+8+8
-SYSC_MSG_SIZE: int = 16  # SyscMsg: 4+4+8
-VIRTMCU_HANDSHAKE_SIZE: int = 8  # VirtmcuHandshake: u32 + u32
+ZENOH_FRAME_HEADER_SIZE: int = vproto.SIZE_ZENOH_FRAME_HEADER
+CLOCK_ADVANCE_REQ_SIZE: int = vproto.SIZE_CLOCK_ADVANCE_REQ
+CLOCK_READY_RESP_SIZE: int = vproto.SIZE_CLOCK_READY_RESP
+MMIO_REQ_SIZE: int = vproto.SIZE_MMIO_REQ
+SYSC_MSG_SIZE: int = vproto.SIZE_SYSC_MSG
+VIRTMCU_HANDSHAKE_SIZE: int = vproto.SIZE_VIRTMCU_HANDSHAKE
 
 # Topic naming (must match chardev, netdev, clock)
 CHARDEV_TOPIC_BASE: str = "sim/chardev"
@@ -63,8 +62,8 @@ def decode_zenoh_frame(data: bytes) -> tuple[int, int, int, bytes]:
     """Unpack ZenohFrameHeader. Returns (vtime, sequence, size, payload). Raises ValueError if too short."""
     if len(data) < ZENOH_FRAME_HEADER_SIZE:
         raise ValueError(f"Frame too short: {len(data)} < {ZENOH_FRAME_HEADER_SIZE}")
-    vtime, seq, size = struct.unpack_from("<QQI", data, 0)
-    return vtime, seq, size, data[ZENOH_FRAME_HEADER_SIZE:]
+    header = vproto.ZenohFrameHeader.unpack(data[:ZENOH_FRAME_HEADER_SIZE])
+    return header.delivery_vtime_ns, header.sequence_number, header.size, data[ZENOH_FRAME_HEADER_SIZE:]
 
 
 def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
@@ -74,17 +73,21 @@ def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0, quantum_num
 def decode_clock_advance_req(data: bytes) -> tuple[int, int, int]:
     if len(data) < CLOCK_ADVANCE_REQ_SIZE:
         raise ValueError(f"ClockAdvanceReq too short: {len(data)}")
-    return struct.unpack_from("<QQQ", data, 0)
+    req = vproto.ClockAdvanceReq.unpack(data[:CLOCK_ADVANCE_REQ_SIZE])
+    return req.delta_ns, req.mujoco_time_ns, req.quantum_number
 
 
-def encode_clock_ready_resp(current_vtime_ns: int, n_frames: int = 0, error_code: int = CLOCK_ERROR_OK, quantum_number: int = 0) -> bytes:
+def encode_clock_ready_resp(
+    current_vtime_ns: int, n_frames: int = 0, error_code: int = CLOCK_ERROR_OK, quantum_number: int = 0
+) -> bytes:
     return vproto.ClockReadyResp(current_vtime_ns, n_frames, error_code, quantum_number).pack()
 
 
 def decode_clock_ready_resp(data: bytes) -> tuple[int, int, int, int]:
     if len(data) < CLOCK_READY_RESP_SIZE:
         raise ValueError(f"ClockReadyResp too short: {len(data)}")
-    return struct.unpack_from("<QIIQ", data, 0)
+    resp = vproto.ClockReadyResp.unpack(data[:CLOCK_READY_RESP_SIZE])
+    return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
 def encode_mmio_req(
@@ -100,8 +103,8 @@ def encode_mmio_req(
 def decode_mmio_req(raw: bytes) -> tuple:
     if len(raw) < MMIO_REQ_SIZE:
         raise ValueError(f"MmioReq too short: {len(raw)}")
-    type_, sz, _, vtime, addr, dat = struct.unpack_from("<BBxxI QQQ", raw, 0)
-    return type_, sz, vtime, addr, dat
+    req = vproto.MmioReq.unpack(raw[:MMIO_REQ_SIZE])
+    return req.type, req.size, req.vtime_ns, req.addr, req.data
 
 
 def encode_sysc_msg(type_: int, irq_num: int, data: int) -> bytes:
@@ -111,7 +114,8 @@ def encode_sysc_msg(type_: int, irq_num: int, data: int) -> bytes:
 def decode_sysc_msg(raw: bytes) -> tuple[int, int, int]:
     if len(raw) < SYSC_MSG_SIZE:
         raise ValueError(f"SyscMsg too short: {len(raw)}")
-    return struct.unpack_from("<IIQ", raw, 0)
+    msg = vproto.SyscMsg.unpack(raw[:SYSC_MSG_SIZE])
+    return msg.type, msg.irq_num, msg.data
 
 
 def encode_handshake(magic: int = VIRTMCU_PROTO_MAGIC, version: int = VIRTMCU_PROTO_VERSION) -> bytes:
@@ -121,7 +125,8 @@ def encode_handshake(magic: int = VIRTMCU_PROTO_MAGIC, version: int = VIRTMCU_PR
 def decode_handshake(raw: bytes) -> tuple[int, int]:
     if len(raw) < VIRTMCU_HANDSHAKE_SIZE:
         raise ValueError("Handshake too short")
-    return struct.unpack_from("<II", raw, 0)
+    hs = vproto.VirtmcuHandshake.unpack(raw[:VIRTMCU_HANDSHAKE_SIZE])
+    return hs.magic, hs.version
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +135,6 @@ def decode_handshake(raw: bytes) -> tuple[int, int]:
 
 
 class TestZenohFrameHeader:
-    def test_size_constant(self):
-        assert ZENOH_FRAME_HEADER_SIZE == 20
-
     def test_encode_decode_round_trip(self):
         vtime, seq, payload = 12_345_678, 42, b"hello"
         frame = encode_zenoh_frame(vtime, payload, seq)
@@ -235,9 +237,6 @@ class TestZenohFrameHeader:
 
 
 class TestClockAdvanceReq:
-    def test_size_constant(self):
-        assert CLOCK_ADVANCE_REQ_SIZE == 24
-
     def test_round_trip(self):
         raw = encode_clock_advance_req(10_000_000, 42, 123)
         delta, mujoco, qn = decode_clock_advance_req(raw)
@@ -275,9 +274,6 @@ class TestClockAdvanceReq:
 
 
 class TestClockReadyResp:
-    def test_size_constant(self):
-        assert CLOCK_READY_RESP_SIZE == 24
-
     def test_ok_round_trip(self):
         raw = encode_clock_ready_resp(10_000_000, n_frames=50, error_code=CLOCK_ERROR_OK, quantum_number=123)
         vtime, n, err, qn = decode_clock_ready_resp(raw)
@@ -321,9 +317,6 @@ class TestClockReadyResp:
 
 
 class TestMmioReq:
-    def test_size_constant(self):
-        assert MMIO_REQ_SIZE == 32
-
     def test_read_type_is_zero(self):
         assert MMIO_REQ_READ == 0
 
@@ -361,9 +354,6 @@ class TestMmioReq:
 
 
 class TestSyscMsg:
-    def test_size_constant(self):
-        assert SYSC_MSG_SIZE == 16
-
     def test_type_constants_distinct(self):
         assert SYSC_MSG_RESP != SYSC_MSG_IRQ_SET
         assert SYSC_MSG_RESP != SYSC_MSG_IRQ_CLEAR
@@ -400,9 +390,6 @@ class TestSyscMsg:
 
 
 class TestVirtmcuHandshake:
-    def test_size_constant(self):
-        assert VIRTMCU_HANDSHAKE_SIZE == 8
-
     def test_magic_value(self):
         assert VIRTMCU_PROTO_MAGIC == 0x564D4355
 

@@ -8,6 +8,10 @@ machine:
       type: cortex-a15
 
 peripherals:
+  - name: gic
+    type: IRQControllers.ARM_GenericInterruptController
+    address: 0x08000000
+
   - name: sram
     type: Memory.MappedMemory
     address: 0x40000000
@@ -17,12 +21,10 @@ peripherals:
   - name: uart0
     type: UART.PL011
     address: 0x09000000
-    interrupts: [33]
 
   - name: radio0
     type: ieee802154
     address: 0x09001000
-    interrupts: [38]
     properties:
       node: 0
 

@@ -1,7 +1,9 @@
-import struct
+import logging
 from pathlib import Path
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -33,21 +35,24 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
         cwd=workspace_root,
     )
 
-    received_msgs = []
+    from typing import Any
+
+    received_msgs: list[dict[str, Any]] = []
 
     def on_sample(sample):
         topic = str(sample.key_expr)
         payload = sample.payload.to_bytes()
         # Use print to stderr to be sure it's seen
-        import sys
 
-        print(f"DEBUG: Received Zenoh msg on topic: {topic}, len={len(payload)}", file=sys.stderr)
+        logger.debug(f"DEBUG: Received Zenoh msg on topic: {topic}, len={len(payload)}")
         if len(payload) < 8:
             return
-        vtime_ns = struct.unpack("<Q", payload[:8])[0]
+        vtime_ns = int.from_bytes(payload[:8], "little")
         data_bytes = payload[8:]
-        n_doubles = len(data_bytes) // 8
-        vals = struct.unpack("<" + "d" * n_doubles, data_bytes)
+        import array
+
+        a = array.array("d", data_bytes)
+        vals = a.tolist()
         received_msgs.append({"topic": topic, "vtime": vtime_ns, "vals": vals})
 
     zenoh_session.declare_subscriber("firmware/control/**", on_sample)
@@ -61,8 +66,6 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     ]
 
     bridge = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
-
-
 
     await bridge.start_emulation()
 

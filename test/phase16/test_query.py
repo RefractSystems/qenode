@@ -1,9 +1,12 @@
+import logging
 import sys
 import time
 from pathlib import Path
 
 import zenoh
 from vproto import ClockAdvanceReq, ClockReadyResp
+
+logger = logging.getLogger(__name__)
 
 # Add tools/ to path
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
@@ -20,7 +23,7 @@ def main():
     session = zenoh.open(config)
 
     topic = "sim/clock/advance/0"
-    print(f"Sending query to {topic}...")
+    logger.info(f"Sending query to {topic}...")
 
     req = ClockAdvanceReq(delta_ns=1000000, mujoco_time_ns=0, quantum_number=0).pack()
 
@@ -29,18 +32,19 @@ def main():
     end = time.perf_counter()
 
     if not replies:
-        print("No replies received!")
+        logger.info("No replies received!")
     else:
         for reply in replies:
             if reply.ok:
                 resp = ClockReadyResp.unpack(reply.ok.payload.to_bytes())
-                print(f"Reply: vtime={resp.current_vtime_ns}, error={resp.error_code}")
+                logger.info(f"Reply: vtime={resp.current_vtime_ns}, error={resp.error_code}")
             else:
-                print(f"Error reply: {reply.err}")
+                logger.error(f"Error reply: {reply.err}")
 
-    print(f"Query took {end - start:.3f}s")
+    logger.info(f"Query took {end - start:.3f}s")
     session.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

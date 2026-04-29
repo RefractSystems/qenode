@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import sys
 import time
@@ -5,6 +6,8 @@ from pathlib import Path
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_DIR = "/workspace"
 
@@ -15,13 +18,13 @@ def pack_zenoh_frame(vtime_ns: int, data: bytes) -> bytes:
 
 
 def main():
-    print("Starting Zenoh router...")
+    logger.info("Starting Zenoh router...")
     router_proc = subprocess.Popen(
         [sys.executable, (Path(WORKSPACE_DIR) / "tests" / "zenoh_router_persistent.py"), "tcp/127.0.0.1:7448"]
     )
     time.sleep(2)
 
-    print("Starting QEMU...")
+    logger.info("Starting QEMU...")
     qemu_cmd = [
         Path(WORKSPACE_DIR) / "scripts" / "run.sh",
         "--dtb",
@@ -49,7 +52,7 @@ def main():
 
     rx_topic = "sim/eth/frame/0/rx"
 
-    print("Injecting 1000 packets out of order...")
+    logger.info("Injecting 1000 packets out of order...")
     base_time = 1_000_000_000  # 1 second in ns
     for i in range(1000):
         # Reverse order: first packet sent has the largest vtime
@@ -57,7 +60,7 @@ def main():
         data = f"PACKET_{i}".encode()
         session.put(rx_topic, pack_zenoh_frame(vtime, data))
 
-    print("Waiting for deliveries...")
+    logger.info("Waiting for deliveries...")
     delivered_vtimes = []
     deadline = time.time() + 15.0
     while time.time() < deadline:
@@ -78,16 +81,19 @@ def main():
     router_proc.wait()
 
     if len(delivered_vtimes) != 1000:
-        print(f"FAIL: Only delivered {len(delivered_vtimes)}/1000 packets.")
+        logger.error(f"FAIL: Only delivered {len(delivered_vtimes)}/1000 packets.")
         sys.exit(1)
 
     if delivered_vtimes == sorted(delivered_vtimes):
-        print("PASS: 1000 packets delivered in perfect virtual-time order despite being injected in reverse order!")
+        logger.info(
+            "PASS: 1000 packets delivered in perfect virtual-time order despite being injected in reverse order!"
+        )
         sys.exit(0)
     else:
-        print("FAIL: Packets delivered out of order!")
+        logger.error("FAIL: Packets delivered out of order!")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

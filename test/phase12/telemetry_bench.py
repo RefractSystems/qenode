@@ -19,6 +19,7 @@ sim/telemetry/trace/0 for MEASUREMENT_WINDOW_S seconds, then checks the
 throughput against the threshold.
 """
 
+import logging
 import subprocess
 import sys
 import threading
@@ -26,6 +27,8 @@ import time
 from pathlib import Path
 
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
 WORKSPACE_DIR = Path(Path(SCRIPT_DIR).parent.parent)
@@ -57,12 +60,12 @@ def main() -> None:
     kernel = Path(SCRIPT_DIR) / "test_irq_storm.elf"
 
     if not Path(dtb).exists():
-        print(f"ERROR: DTB not found: {dtb}")
-        print("       Run  make -C test/phase12  to build test artifacts.")
+        logger.error(f"ERROR: DTB not found: {dtb}")
+        logger.info("       Run  make -C test/phase12  to build test artifacts.")
         sys.exit(1)
     if not Path(kernel).exists():
-        print(f"ERROR: Kernel not found: {kernel}")
-        print("       Run  make -C test/phase12  to build test artifacts.")
+        logger.error(f"ERROR: Kernel not found: {kernel}")
+        logger.info("       Run  make -C test/phase12  to build test artifacts.")
         sys.exit(1)
 
     # Start an ephemeral Zenoh router so multicast scouting doesn't add noise.
@@ -129,13 +132,13 @@ def main() -> None:
         session.close()
         router_proc.terminate()
         router_proc.wait()
-        print(
+        logger.info(
             "ERROR: No telemetry events received within startup timeout — "
             "is telemetry plugin built and QEMU path correct?"
         )
         sys.exit(1)
 
-    print(f"First telemetry event received — waiting {WARMUP_S}s for steady state...")
+    logger.info(f"First telemetry event received — waiting {WARMUP_S}s for steady state...")
     time.sleep(WARMUP_S)
 
     # Reset counter and measure for MEASUREMENT_WINDOW_S.
@@ -162,19 +165,20 @@ def main() -> None:
     elapsed = t_end - t_start
     events_per_s = measured_events / elapsed
 
-    print("\n=== Telemetry Throughput Results ===")
-    print(f"  Events counted:   {measured_events:,}")
-    print(f"  Measurement time: {elapsed:.2f} s")
-    print(f"  Events/sec:       {events_per_s:,.0f}")
-    print(f"  Threshold:        {MIN_EVENTS_PER_SEC:,} events/sec")
+    logger.info("\n=== Telemetry Throughput Results ===")
+    logger.info(f"  Events counted:   {measured_events:,}")
+    logger.info(f"  Measurement time: {elapsed:.2f} s")
+    logger.info(f"  Events/sec:       {events_per_s:,.0f}")
+    logger.info(f"  Threshold:        {MIN_EVENTS_PER_SEC:,} events/sec")
 
     if events_per_s < MIN_EVENTS_PER_SEC:
-        print(f"FAIL: throughput {events_per_s:.0f} < {MIN_EVENTS_PER_SEC} events/sec")
+        logger.error(f"FAIL: throughput {events_per_s:.0f} < {MIN_EVENTS_PER_SEC} events/sec")
         sys.exit(1)
 
-    print(f"PASS: telemetry throughput {events_per_s:,.0f} events/sec ≥ {MIN_EVENTS_PER_SEC:,}")
-    print("=== Phase 12.8 PASSED ===")
+    logger.info(f"PASS: telemetry throughput {events_per_s:,.0f} events/sec ≥ {MIN_EVENTS_PER_SEC:,}")
+    logger.info("=== Phase 12.8 PASSED ===")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

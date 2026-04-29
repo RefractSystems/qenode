@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def patch_file(filepath, marker, insertion, after=False):
@@ -10,7 +13,7 @@ def patch_file(filepath, marker, insertion, after=False):
         return False
     idx = content.find(marker)
     if idx == -1:
-        print(f"Error: Could not find marker '{marker}' in {filepath}")
+        logger.error(f"Error: Could not find marker '{marker}' in {filepath}")
         sys.exit(1)
     if after:
         idx += len(marker)
@@ -22,7 +25,7 @@ def patch_file(filepath, marker, insertion, after=False):
 
 def main():
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
 
     qemu = Path(sys.argv[1]).resolve()
@@ -32,21 +35,21 @@ def main():
     marker4 = "#ifdef CONFIG_AF_XDP\n        [NET_CLIENT_DRIVER_AF_XDP]    = net_init_af_xdp,\n#endif"
     insertion4 = "\n        [NET_CLIENT_DRIVER_VIRTMCU]     = net_init_virtmcu,"
     if patch_file(net_c, marker4, insertion4, after=True):
-        print(f"  patched {net_c}")
+        logger.info(f"  patched {net_c}")
 
     marker5 = "int net_init_socket(const Netdev *netdev, const char *name,"
     insertion5 = "int net_init_virtmcu(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);\n"
 
     clients_h = Path(qemu) / "net" / "clients.h"
     if patch_file(clients_h, marker5, insertion5, after=False):
-        print(f"  patched {clients_h}")
+        logger.info(f"  patched {clients_h}")
 
     # 2. Add virtmcu.c to net/meson.build
     meson_build = Path(qemu) / "net" / "meson.build"
     marker6 = "  'checksum.c',"
     insertion6 = "\n  'virtmcu.c',"
     if patch_file(meson_build, marker6, insertion6, after=True):
-        print(f"  patched {meson_build}")
+        logger.info(f"  patched {meson_build}")
 
     # 7. Patch util/module.c to allow re-entrant module loads gracefully
     module_c = Path(qemu) / "util" / "module.c"
@@ -100,4 +103,5 @@ int net_init_virtmcu(const Netdev *netdev, const char *name, NetClientState *pee
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

@@ -4,7 +4,7 @@ Phase 8.6 — High-Baud UART Stress Test: pytest integration layer.
 These tests cover two layers:
 
 1. Unit tests for the ZenohFrameHeader wire format (pure Python, no QEMU needed).
-   Validates that the 20-byte struct encoding used by the Python test and by the
+   Validates that the 24-byte struct encoding used by the Python test and by the
    Rust chardev plugin is consistent.
 
 2. An integration smoke-test that runs uart_stress_test.sh as a subprocess and
@@ -15,7 +15,6 @@ These tests cover two layers:
 from __future__ import annotations
 
 import os
-import struct
 import subprocess
 from pathlib import Path
 
@@ -27,7 +26,7 @@ import vproto
 # hw/rust/common/virtmcu-api/src/lib.rs ZenohFrameHeader.
 # ---------------------------------------------------------------------------
 
-FRAME_HEADER_SIZE = 20  # ZenohFrameHeader: u64 + u64 + u32 (packed, no padding)
+FRAME_HEADER_SIZE = vproto.SIZE_ZENOH_FRAME_HEADER
 FRAME_VTIME_OFFSET = 0  # delivery_vtime_ns field offset
 FRAME_SEQUENCE_OFFSET = 8  # sequence_number field offset
 FRAME_SIZE_OFFSET = 16  # size field offset
@@ -48,9 +47,9 @@ def decode_frame(data: bytes) -> tuple[int, int, int, bytes]:
     """Return (delivery_vtime_ns, sequence, size, payload).  Raises ValueError if too short."""
     if len(data) < FRAME_HEADER_SIZE:
         raise ValueError(f"Frame too short: {len(data)} < {FRAME_HEADER_SIZE}")
-    vtime, seq, size = struct.unpack_from("<QQI", data, 0)
+    header = vproto.ZenohFrameHeader.unpack(data[:FRAME_HEADER_SIZE])
     payload = data[FRAME_HEADER_SIZE:]
-    return vtime, seq, size, payload
+    return header.delivery_vtime_ns, header.sequence_number, header.size, payload
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +58,8 @@ def decode_frame(data: bytes) -> tuple[int, int, int, bytes]:
 
 
 def test_frame_header_size():
-    """ZenohFrameHeader is exactly 20 bytes (u64 + u64 + u32, no padding)."""
-    assert FRAME_HEADER_SIZE == 20
+    """ZenohFrameHeader is exactly 24 bytes (FlatBuffers)."""
+    assert FRAME_HEADER_SIZE == 24
 
 
 def test_encode_decode_round_trip():
@@ -91,11 +90,11 @@ def test_encode_vtime_ordering():
 
 
 def test_decode_rejects_short_frame():
-    """Frames shorter than 20 bytes raise ValueError."""
+    """Frames shorter than expected raise ValueError."""
     import pytest
 
     with pytest.raises(ValueError, match="too short"):
-        decode_frame(b"\x00" * 19)
+        decode_frame(b"\x00" * (FRAME_HEADER_SIZE - 1))
 
 
 def test_decode_empty_payload():
@@ -150,27 +149,31 @@ def test_stress_frame_sequence():
 
 
 def test_clock_advance_packing():
-    """ClockAdvanceReq wire format: two u64 LE (delta_ns, mujoco_time_ns)."""
+    """ClockAdvanceReq wire format: three u64 LE (delta_ns, mujoco_time_ns, quantum_number)."""
     delta_ns = 10_000_000
     mujoco = 0
-    packed = vproto.ClockAdvanceReq(delta_ns, mujoco, 0).pack()
-    assert len(packed) == 16
-    out_delta, out_mujoco = struct.unpack("<QQ", packed)
-    assert out_delta == delta_ns
-    assert out_mujoco == mujoco
+    qn = 0
+    packed = vproto.ClockAdvanceReq(delta_ns, mujoco, qn).pack()
+    assert len(packed) == 24
+    req = vproto.ClockAdvanceReq.unpack(packed)
+    assert req.delta_ns == delta_ns
+    assert req.mujoco_time_ns == mujoco
+    assert req.quantum_number == qn
 
 
 def test_clock_ready_unpacking():
-    """ClockReadyResp wire format: u64 vtime + u32 n_frames + u32 error_code."""
+    """ClockReadyResp wire format: u64 vtime + u32 n_frames + u32 error_code + u64 qn."""
     vtime = 10_000_000
     n_frames = 0
     error_code = 0
-    packed = vproto.ClockReadyResp(vtime, n_frames, error_code, 0).pack()
-    assert len(packed) == 16
-    out_vtime, out_n, out_err = struct.unpack("<QII", packed)
-    assert out_vtime == vtime
-    assert out_n == n_frames
-    assert out_err == error_code
+    qn = 0
+    packed = vproto.ClockReadyResp(vtime, n_frames, error_code, qn).pack()
+    assert len(packed) == 24
+    resp = vproto.ClockReadyResp.unpack(packed)
+    assert resp.current_vtime_ns == vtime
+    assert resp.n_frames == n_frames
+    assert resp.error_code == error_code
+    assert resp.quantum_number == qn
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import json
+import logging
 import socket
 import sys
 import time
+
+logger = logging.getLogger(__name__)
 
 
 def qmp_cmd(sock, cmd, args=None):
@@ -18,7 +21,7 @@ def qmp_cmd(sock, cmd, args=None):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: qom_stress.py <qmp_socket_path>")
+        logger.info("Usage: qom_stress.py <qmp_socket_path>")
         sys.exit(1)
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -28,7 +31,7 @@ def main():
     sock.recv(4096)
     qmp_cmd(sock, "qmp_capabilities")
 
-    print("Starting QOM stress...")
+    logger.info("Starting QOM stress...")
     start_time = time.time()
     i = 0
     while time.time() - start_time < 3:  # run for 3 seconds
@@ -36,16 +39,17 @@ def main():
         # Create a secret object
         resp = qmp_cmd(sock, "object-add", {"qom-type": "secret", "id": obj_id, "data": "dummy"})
         if "error" in resp:
-            print(f"Error adding object: {resp['error']}")
+            logger.error(f"Error adding object: {resp['error']}")
             sys.exit(1)
         # Delete it immediately
         resp = qmp_cmd(sock, "object-del", {"id": obj_id})
         if "error" in resp:
-            print(f"Error deleting object: {resp['error']}")
+            logger.error(f"Error deleting object: {resp['error']}")
             sys.exit(1)
         i += 1
-    print(f"Stress test complete. Performed {i} add/del cycles.")
+    logger.info(f"Stress test complete. Performed {i} add/del cycles.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

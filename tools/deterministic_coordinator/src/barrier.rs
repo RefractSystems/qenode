@@ -1,8 +1,8 @@
 use crate::topology::Protocol;
-use std::cmp::Ordering;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use core::cmp::Ordering;
+use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use core::time::Duration;
 use std::sync::{Condvar, Mutex};
-use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordMessage {
@@ -22,13 +22,13 @@ impl PartialOrd for CoordMessage {
 
 impl Ord for CoordMessage {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.delivery_vtime_ns.cmp(&other.delivery_vtime_ns) {
-            Ordering::Equal => match self.src_node_id.cmp(&other.src_node_id) {
-                Ordering::Equal => self.sequence_number.cmp(&other.sequence_number),
-                ord => ord,
-            },
-            ord => ord,
-        }
+        self.delivery_vtime_ns
+            .cmp(&other.delivery_vtime_ns)
+            .then_with(|| self.src_node_id.cmp(&other.src_node_id))
+            .then_with(|| self.dst_node_id.cmp(&other.dst_node_id))
+            .then_with(|| self.sequence_number.cmp(&other.sequence_number))
+            .then_with(|| self.protocol.cmp(&other.protocol))
+            .then_with(|| self.payload.cmp(&other.payload))
     }
 }
 
@@ -74,16 +74,20 @@ impl QuantumBarrier {
                 got: quantum,
             });
         }
-        {
-            let mut done_nodes = self.done_nodes.lock().unwrap();
-            if node_id as usize >= self.n_nodes {
-                return Err(BarrierError::NodeIndexOutOfBounds(node_id));
-            }
-            if done_nodes[node_id as usize] {
-                return Err(BarrierError::DuplicateDone);
-            }
-            done_nodes[node_id as usize] = true;
+
+        let mut buffer = self
+            .message_buffer
+            .lock()
+            .expect("message_buffer mutex poisoned");
+        let mut done_nodes = self.done_nodes.lock().unwrap();
+
+        if node_id as usize >= self.n_nodes {
+            return Err(BarrierError::NodeIndexOutOfBounds(node_id));
         }
+        if done_nodes[node_id as usize] {
+            return Err(BarrierError::DuplicateDone);
+        }
+        done_nodes[node_id as usize] = true;
 
         // ARCH-5 Determinism Fix: We MUST sort before truncating.
         messages.sort();
@@ -100,16 +104,20 @@ impl QuantumBarrier {
             messages.truncate(self.max_messages_per_node);
         }
 
-        let mut buffer = self
-            .message_buffer
-            .lock()
-            .expect("message_buffer mutex poisoned");
         buffer.extend(messages);
 
         let count = self.done_count.fetch_add(1, AtomicOrdering::SeqCst) + 1;
         if count == self.n_nodes {
-            let mut all_msgs = std::mem::take(&mut *buffer);
+            let mut all_msgs = (*buffer).clone();
             all_msgs.sort();
+
+            // ARCH-8: Auto-reset for next quantum to avoid race condition on CI.
+            self.done_count.store(0, AtomicOrdering::SeqCst);
+            buffer.clear();
+            for d in done_nodes.iter_mut() {
+                *d = false;
+            }
+
             self.all_done_cond.notify_all();
             Ok(Some(all_msgs))
         } else {
@@ -118,13 +126,13 @@ impl QuantumBarrier {
     }
 
     pub fn reset(&self) {
-        self.done_count.store(0, AtomicOrdering::SeqCst);
         let mut buffer = self
             .message_buffer
             .lock()
             .expect("message_buffer mutex poisoned");
-        buffer.clear();
         let mut done_nodes = self.done_nodes.lock().unwrap();
+        self.done_count.store(0, AtomicOrdering::SeqCst);
+        buffer.clear();
         for d in done_nodes.iter_mut() {
             *d = false;
         }
@@ -251,11 +259,46 @@ mod tests {
             dummy_msg(0, 4, 0),
         ];
 
-        let result = barrier
-            .submit_done(0, 0, 0, msgs)
-            .unwrap()
-            .unwrap_or_else(|| std::process::abort());
+        let result = barrier.submit_done(0, 0, 0, msgs).unwrap().unwrap();
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_admission_control_deterministic_truncation_payloads() {
+        // Proves that messages with identical vtime/seq but different payloads
+        // are still truncated deterministically regardless of input order.
+        let max_msgs = 2;
+
+        let mut m1 = dummy_msg(10, 1, 0);
+        m1.payload = vec![1];
+        let mut m2 = dummy_msg(10, 1, 0);
+        m2.payload = vec![2];
+        let mut m3 = dummy_msg(10, 1, 0);
+        m3.payload = vec![3];
+
+        // Different input permutations
+        let perms = vec![
+            vec![m1.clone(), m2.clone(), m3.clone()],
+            vec![m3.clone(), m2.clone(), m1.clone()],
+            vec![m2.clone(), m3.clone(), m1.clone()],
+            vec![m1.clone(), m3.clone(), m2.clone()],
+        ];
+
+        let mut expected_result = None;
+        for msgs in perms {
+            let barrier = QuantumBarrier::new(1, max_msgs);
+            let result = barrier.submit_done(0, 0, 0, msgs).unwrap().unwrap();
+            assert_eq!(result.len(), 2);
+
+            if let Some(expected) = &expected_result {
+                assert_eq!(
+                    &result, expected,
+                    "Truncation was not deterministic across input permutations!"
+                );
+            } else {
+                expected_result = Some(result);
+            }
+        }
     }
 
     #[test]

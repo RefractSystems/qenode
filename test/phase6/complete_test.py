@@ -1,6 +1,7 @@
 import json
+import logging
 import os
-import struct
+import queue
 import sys
 import time
 from pathlib import Path
@@ -11,6 +12,8 @@ sys.path.append(Path(Path(__file__).resolve().parent))
 import flatbuffers
 import zenoh
 from virtmcu.rf import RfHeader
+
+logger = logging.getLogger(__name__)
 
 
 def pack_rf_header(vtime, size, rssi, lqi):
@@ -27,7 +30,7 @@ def pack_rf_header(vtime, size, rssi, lqi):
 
 
 def unpack_rf_header(data):
-    sz = struct.unpack("<I", data[:4])[0]
+    sz = int.from_bytes(data[:4], "little")
     hdr = RfHeader.RfHeader.GetRootAs(data[4 : 4 + sz], 0)
     return hdr.DeliveryVtimeNs(), hdr.Size(), hdr.Rssi(), hdr.Lqi(), 4 + sz
 
@@ -55,26 +58,26 @@ def main():
     }
 
     # 1. ETH test
-    rx_eth = []
-    s.declare_subscriber("sim/eth/frame/2/rx", lambda sample: rx_eth.append(sample.payload.to_bytes()))
+    rx_eth = queue.Queue()
+    s.declare_subscriber("sim/eth/frame/2/rx", lambda sample: rx_eth.put(sample.payload.to_bytes()))
     pub_eth_tx1 = s.declare_publisher("sim/eth/frame/1/tx")
     pub_eth_tx2 = s.declare_publisher("sim/eth/frame/2/tx")
 
     # 2. UART test
-    rx_uart = []
-    s.declare_subscriber("virtmcu/uart/2/rx", lambda sample: rx_uart.append(sample.payload.to_bytes()))
+    rx_uart = queue.Queue()
+    s.declare_subscriber("virtmcu/uart/2/rx", lambda sample: rx_uart.put(sample.payload.to_bytes()))
     pub_uart_tx1 = s.declare_publisher("virtmcu/uart/1/tx")
     pub_uart_tx2 = s.declare_publisher("virtmcu/uart/2/tx")
 
     # 3. SystemC test
-    rx_sysc = []
-    s.declare_subscriber("sim/systemc/frame/2/rx", lambda sample: rx_sysc.append(sample.payload.to_bytes()))
+    rx_sysc = queue.Queue()
+    s.declare_subscriber("sim/systemc/frame/2/rx", lambda sample: rx_sysc.put(sample.payload.to_bytes()))
     pub_sysc_tx1 = s.declare_publisher("sim/systemc/frame/1/tx")
     pub_sysc_tx2 = s.declare_publisher("sim/systemc/frame/2/tx")
 
     # 4. RF test (802.15.4)
-    rx_rf = []
-    s.declare_subscriber("sim/rf/ieee802154/1/rx", lambda sample: rx_rf.append(sample.payload.to_bytes()))
+    rx_rf = queue.Queue()
+    s.declare_subscriber("sim/rf/ieee802154/1/rx", lambda sample: rx_rf.put(sample.payload.to_bytes()))
     pub_rf_tx0 = s.declare_publisher("sim/rf/ieee802154/0/tx")
     pub_rf_tx1 = s.declare_publisher("sim/rf/ieee802154/1/tx")
     pub_rf_tx2 = s.declare_publisher("sim/rf/ieee802154/2/tx")
@@ -84,7 +87,7 @@ def main():
 
     time.sleep(2)
 
-    print("Making nodes known...")
+    logger.info("Making nodes known...")
     # Nodes must transmit to be known
     pub_eth_tx2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
     pub_uart_tx2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
@@ -94,156 +97,174 @@ def main():
 
     time.sleep(1)
 
-    print("Testing ETH...")
+    logger.info("Testing ETH...")
     pub_eth_tx1.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ETH1")
-    time.sleep(0.5)
-    if len(rx_eth) > 0:
-        vtime, _seq, size = struct.unpack("<QQI", rx_eth[0][:20])
+    try:
+        data = rx_eth.get(timeout=5.0)
+        logger.info(f"data len: {len(data)}")
+        hdr = vproto.ZenohFrameHeader.unpack(data)
+        vtime = hdr.delivery_vtime_ns
         if vtime == 1001000:  # default 1ms delay
             results["eth"] = True
-            print("  ETH PASS")
+            logger.info("  ETH PASS")
         else:
-            print(f"  ETH FAIL: vtime={vtime}")
-    else:
-        print("  ETH FAIL: no frame")
+            logger.info(f"  ETH FAIL: vtime={vtime}")
+    except queue.Empty:
+        logger.info("  ETH FAIL: no frame")
 
-    print("Testing UART...")
+    logger.info("Testing UART...")
     pub_uart_tx1.put(vproto.ZenohFrameHeader(2000, 0, 4).pack() + b"UART")
-    time.sleep(0.5)
-    if len(rx_uart) > 0:
-        vtime, _seq, size = struct.unpack("<QQI", rx_uart[0][:20])
+    try:
+        data = rx_uart.get(timeout=5.0)
+        logger.info(f"data len: {len(data)}")
+        hdr = vproto.ZenohFrameHeader.unpack(data)
+        vtime = hdr.delivery_vtime_ns
         if vtime == 1002000:
             results["uart"] = True
-            print("  UART PASS")
+            logger.info("  UART PASS")
         else:
-            print(f"  UART FAIL: vtime={vtime}")
-    else:
-        print("  UART FAIL: no frame")
+            logger.info(f"  UART FAIL: vtime={vtime}")
+    except queue.Empty:
+        logger.info("  UART FAIL: no frame")
 
-    print("Testing SystemC...")
+    logger.info("Testing SystemC...")
     pub_sysc_tx1.put(vproto.ZenohFrameHeader(3000, 0, 4).pack() + b"SYSC")
-    time.sleep(0.5)
-    if len(rx_sysc) > 0:
-        vtime, size = struct.unpack("<QI", rx_sysc[0][:12])
+    try:
+        data = rx_sysc.get(timeout=5.0)
+        logger.info(f"data len: {len(data)}")
+        hdr = vproto.ZenohFrameHeader.unpack(data)
+        vtime = hdr.delivery_vtime_ns
         if vtime == 1003000:
             results["sysc"] = True
-            print("  SystemC PASS")
+            logger.info("  SystemC PASS")
         else:
-            print(f"  SystemC FAIL: vtime={vtime}")
-    else:
-        print("  SystemC FAIL: no frame")
+            logger.info(f"  SystemC FAIL: vtime={vtime}")
+    except queue.Empty:
+        logger.info("  SystemC FAIL: no frame")
 
-    print("Testing RF...")
-    rx_rf.clear()
+    logger.info("Testing RF...")
+    while not rx_rf.empty():
+        rx_rf.get_nowait()
     # Node 0 to Node 1. Dist = 10m.
     # fspl = 20*log10(10) + 20*log10(2.4e9) + 20*log10(4*pi/c)
     # fspl = 20 + 187.6 - 147.5 = 60.1 dB
     # RSSI = 0 - 60.1 = -60.1 dBm
     pub_rf_tx0.put(pack_rf_header(4000, 4, 0, 0) + b"RF01")
-    time.sleep(0.5)
-    if len(rx_rf) > 0:
-        data = rx_rf[0]
+    try:
+        data = rx_rf.get(timeout=5.0)
+        data = data
         vtime, size, rssi, lqi, offset = unpack_rf_header(data)  # noqa: RUF059
-        print(f"  RF received: vtime={vtime}, rssi={rssi}")
+        logger.info(f"  RF received: vtime={vtime}, rssi={rssi}")
         if vtime >= 4000 + 1000000:  # 1ms + speed of light (33ns)
             results["rf"] = True
-            print("  RF PASS")
-    else:
-        print("  RF FAIL: no frame")
+            logger.info("  RF PASS")
+    except queue.Empty:
+        logger.info("  RF FAIL: no frame")
 
-    print("Testing Overflow...")
+    logger.info("Testing Overflow...")
     orig_vtime = 0xFFFFFFFFFFFFFFFF - 500000
-    rx_eth.clear()
+    while not rx_eth.empty():
+        rx_eth.get_nowait()
     pub_eth_tx1.put(vproto.ZenohFrameHeader(orig_vtime, 0, 4).pack() + b"OVER")
-    time.sleep(0.5)
-    if len(rx_eth) > 0:
-        vtime, _seq, size = struct.unpack("<QQI", rx_eth[0][:20])
+    try:
+        data = rx_eth.get(timeout=5.0)
+        logger.info(f"data len: {len(data)}")
+        hdr = vproto.ZenohFrameHeader.unpack(data)
+        vtime = hdr.delivery_vtime_ns
         if vtime >= orig_vtime:
             results["overflow"] = True
-            print("  Overflow PASS")
+            logger.info("  Overflow PASS")
         else:
-            print(f"  Overflow FAIL: vtime={vtime} wrapped!")
-    else:
-        print("  Overflow FAIL: no frame")
+            logger.info(f"  Overflow FAIL: vtime={vtime} wrapped!")
+    except queue.Empty:
+        logger.info("  Overflow FAIL: no frame")
 
-    print("Testing RF Sensitivity...")
+    logger.info("Testing RF Sensitivity...")
     # Node 0 (0,0,0) to Node 2 (100,0,0). Distance = 100m.
     # fspl = 20*log10(100) + 40.04 = 80.04 dB. RSSI = -80.04 dBm.
     # Default sensitivity is -90.0 dBm, so it should be received!
-    rx_rf2 = []
-    s.declare_subscriber("sim/rf/ieee802154/2/rx", lambda sample: rx_rf2.append(sample.payload.to_bytes()))
+    rx_rf2 = queue.Queue()
+    s.declare_subscriber("sim/rf/ieee802154/2/rx", lambda sample: rx_rf2.put(sample.payload.to_bytes()))
     time.sleep(0.5)
     pub_rf_tx0.put(pack_rf_header(8000, 4, 0, 0) + b"RF02")
-    time.sleep(0.5)
-    if len(rx_rf2) > 0:
-        vtime, size, rssi, _lqi, _offset = unpack_rf_header(rx_rf2[0])  # noqa: RUF059
-        print(f"  RF Sensitivity PASS: frame received with rssi={rssi}")
+    try:
+        data = rx_rf2.get(timeout=5.0)
+        vtime, size, rssi, _lqi, _offset = unpack_rf_header(data)  # noqa: RUF059
+        logger.info(f"  RF Sensitivity PASS: frame received with rssi={rssi}")
         if rssi == -80:
             results["rf_sensitivity"] = True
-    else:
-        print("  RF Sensitivity FAIL: frame dropped unexpectedly")
+    except queue.Empty:
+        logger.info("  RF Sensitivity FAIL: frame dropped unexpectedly")
 
-    print("Testing RF HCI (no RF header)...")
-    rx_hci = []
-    s.declare_subscriber("sim/rf/hci/1/rx", lambda sample: rx_hci.append(sample.payload.to_bytes()))
+    logger.info("Testing RF HCI (no RF header)...")
+    rx_hci = queue.Queue()
+    s.declare_subscriber("sim/rf/hci/1/rx", lambda sample: rx_hci.put(sample.payload.to_bytes()))
     pub_hci_tx0 = s.declare_publisher("sim/rf/hci/0/tx")
     pub_hci_tx1 = s.declare_publisher("sim/rf/hci/1/tx")
     pub_hci_tx1.put(vproto.ZenohFrameHeader(0, 0, 0).pack())  # known
     time.sleep(0.5)
     pub_hci_tx0.put(vproto.ZenohFrameHeader(7000, 0, 4).pack() + b"HCI0")
-    time.sleep(0.5)
-    if len(rx_hci) > 0:
-        data = rx_hci[0]
-        vtime, _seq, _size = struct.unpack("<QQI", data[:vproto.SIZE_ZENOH_FRAME_HEADER])
+    try:
+        data = rx_hci.get(timeout=5.0)
+        data = data
+        logger.info(f"data len: {len(data)}")
+        hdr = vproto.ZenohFrameHeader.unpack(data)
+        vtime = hdr.delivery_vtime_ns
         if vtime >= 7000 + 1000000:
-            print("  RF HCI PASS")
+            logger.info("  RF HCI PASS")
             results["rf_hci"] = True
         else:
-            print(f"  RF HCI FAIL: vtime={vtime}")
-    else:
-        print("  RF HCI FAIL: no frame")
-    print("Testing Mismatched Size (Malformed)...")
-    rx_eth.clear()
+            logger.info(f"  RF HCI FAIL: vtime={vtime}")
+    except queue.Empty:
+        logger.info("  RF HCI FAIL: no frame")
+    logger.info("Testing Mismatched Size (Malformed)...")
+    while not rx_eth.empty():
+        rx_eth.get_nowait()
     # Header says size 100, but we send only 4 bytes of data
     pub_eth_tx1.put(vproto.ZenohFrameHeader(9000, 0, 100).pack() + b"ABCD")
-    time.sleep(0.5)
-    if len(rx_eth) == 0:
-        print("  Mismatched Size PASS")
+    try:
+        rx_eth.get(timeout=1.0)
+        logger.info("  Mismatched Size FAIL: malformed packet was forwarded")
+    except queue.Empty:
+        logger.info("  Mismatched Size PASS")
         results["malformed"] = True
-    else:
-        print("  Mismatched Size FAIL: malformed packet was forwarded")
     update = {"from": "1", "to": "2", "drop_probability": 1.0}
     pub_ctrl.put(json.dumps(update))
     time.sleep(0.5)
-    rx_eth.clear()
+    while not rx_eth.empty():
+        rx_eth.get_nowait()
     pub_eth_tx1.put(vproto.ZenohFrameHeader(5000, 0, 4).pack() + b"DROP")
-    time.sleep(0.5)
-    if len(rx_eth) == 0:
-        print("  Topology (Drop) PASS")
+    try:
+        rx_eth.get(timeout=1.0)
+        logger.info("  Topology FAIL: frame not dropped")
+    except queue.Empty:
+        logger.info("  Topology (Drop) PASS")
         # Now reset
         update = {"from": "1", "to": "2", "drop_probability": 0.0}
         pub_ctrl.put(json.dumps(update))
         time.sleep(0.5)
         pub_eth_tx1.put(vproto.ZenohFrameHeader(6000, 0, 4).pack() + b"KEPT")
         time.sleep(0.5)
-        if len(rx_eth) > 0:
+        try:
+            rx_eth.get(timeout=5.0)
             results["topology"] = True
-            print("  Topology (Reset) PASS")
-        else:
-            print("  Topology FAIL: frame still dropped after reset")
-    else:
-        print("  Topology FAIL: frame not dropped")
+            logger.info("  Topology (Reset) PASS")
+        except queue.Empty:
+            logger.info("  Topology FAIL: frame still dropped after reset")
 
     s.close()
 
     all_pass = all(results.values())
     if all_pass:
-        print("\nALL PHASE 6 TESTS PASSED")
+        logger.info("\nALL PHASE 6 TESTS PASSED")
+        s.close()
         sys.exit(0)
     else:
-        print(f"\nSOME TESTS FAILED: {results}")
+        logger.info(f"\nSOME TESTS FAILED: {results}")
+        s.close()
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

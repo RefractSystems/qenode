@@ -216,7 +216,7 @@ test-unit: venv
 		tests/repl2qemu/ tests/test_yaml2qemu.py tests/test_cli_generator.py \
 		tests/test_fdt_emitter.py tests/test_qmp_bridge.py tests/test_vproto.py \
 		tests/test_telemetry_listener.py tests/test_telemetry_fbs.py tests/test_fake_adapter.py \
-		tests/test_mcp_server/ \
+		tests/test_mcp_server/ tests/test_phase14.py \
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
 
 # Alias for test-unit
@@ -344,9 +344,13 @@ lint-audit:
 	@echo "✓ Audit checks completed."
 # Run Python linting and type checking
 lint-python:
-	@echo "==> Check for manual struct.pack..."
-	@if grep -rE "struct\.pack\([\"']<(QQQ|QQI|BB)" test/ tests/ tools/; then \
-		echo "❌ ERROR: Found struct.pack for virtmcu protocols! Use vproto.py instead."; exit 1; \
+	@echo "==> Check for banned struct usage..."
+	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" test/ tests/ tools/ tutorial/ | grep -v "proto_gen.py" ; then \
+		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
+	fi
+	@echo "==> Check for banned struct in scripts (limited)..."
+	@if grep -rnE "struct\.(pack|unpack)" scripts/ | grep -v "sync-protocols.py" ; then \
+		echo "❌ ERROR: Banned struct.pack/unpack in scripts."; exit 1; \
 	fi
 	@echo "==> Check for hardcoded stall-timeout..."
 	@if grep -rE "stall-timeout=[0-9]+" tests/ tools/ ; then \
@@ -403,7 +407,7 @@ lint-actions:
 # Run yamllint on YAML configuration files
 lint-yaml:
 	@echo "==> yamllint..."
-	@uvx yamllint -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv/*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*")
+	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv/*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*")
 	@echo "✓ yamllint passed."
 
 # Run mypy static type checking
@@ -520,7 +524,7 @@ lint-rust:
 	fi
 	@echo "✓ No banned rand::thread_rng found."
 	@echo "==> Running cargo clippy..."
-	@cargo clippy --workspace
+	@cargo clippy --workspace -- -D warnings
 
 # Run meson format check
 lint-meson:

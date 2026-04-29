@@ -67,4 +67,3 @@ async def test_spi_stress_baremetal(qemu_launcher, zenoh_session, zenoh_router, 
 
     assert success, f"Firmware timed out. Received {received_queries}/10000 queries. UART: {bridge.uart_buffer!r}"
     assert received_queries == 10000, f"Expected exactly 10,000 SPI transactions, got {received_queries}"
-

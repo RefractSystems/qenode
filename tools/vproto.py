@@ -36,6 +36,7 @@ SIZE_CLOCK_READY_RESP = FBClockReadyResp.SizeOf()
 SIZE_ZENOH_FRAME_HEADER = FBZenohFrameHeader.SizeOf()
 SIZE_ZENOH_SPI_HEADER = FBZenohSPIHeader.SizeOf()
 
+
 @dataclass
 class VirtmcuHandshake:
     magic: int
@@ -52,7 +53,8 @@ class VirtmcuHandshake:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateVirtmcuHandshake(b, self.magic, self.version)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class MmioReq:
@@ -75,7 +77,8 @@ class MmioReq:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(64)
         CreateMmioReq(b, self.type, self.size, self.reserved1, self.reserved2, self.vtime_ns, self.addr, self.data)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class SyscMsg:
@@ -94,7 +97,8 @@ class SyscMsg:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateSyscMsg(b, self.type, self.irq_num, self.data)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class ClockAdvanceReq:
@@ -113,7 +117,8 @@ class ClockAdvanceReq:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateClockAdvanceReq(b, self.delta_ns, self.mujoco_time_ns, self.quantum_number)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class ClockReadyResp:
@@ -133,7 +138,8 @@ class ClockReadyResp:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateClockReadyResp(b, self.current_vtime_ns, self.n_frames, self.error_code, self.quantum_number)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class ZenohFrameHeader:
@@ -152,7 +158,8 @@ class ZenohFrameHeader:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateZenohFrameHeader(b, self.delivery_vtime_ns, self.sequence_number, self.size)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])
+
 
 @dataclass
 class ZenohSPIHeader:
@@ -173,4 +180,4 @@ class ZenohSPIHeader:
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
         CreateZenohSpiheader(b, self.delivery_vtime_ns, self.sequence_number, self.size, self.cs, self.cs_index, 0)
-        return bytes(b.Bytes[b.Head():])
+        return bytes(b.Bytes[b.Head() :])

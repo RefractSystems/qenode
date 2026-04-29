@@ -58,7 +58,7 @@ impl ResdSensor {
     }
 
     pub fn last_timestamp(&self) -> u64 {
-        self.samples.last().map(|s| s.timestamp_ns).unwrap_or(0)
+        self.samples.last().map_or(0, |s| s.timestamp_ns)
     }
 
     pub fn get_reading(&self, vtime_ns: u64) -> Vec<f64> {
@@ -113,7 +113,7 @@ impl ResdParser {
     pub fn get_last_timestamp(&self) -> u64 {
         self.sensors
             .values()
-            .map(|s| s.last_timestamp())
+            .map(ResdSensor::last_timestamp)
             .max()
             .unwrap_or(0)
     }
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_resd_interpolation() {
-        let mut s = ResdSensor::new("test".to_string(), ResdSampleType::Acceleration);
+        let mut s = ResdSensor::new("test".to_owned(), ResdSampleType::Acceleration);
         s.samples.push(ResdSample {
             timestamp_ns: 1000,
             data: vec![100, 200, 300],

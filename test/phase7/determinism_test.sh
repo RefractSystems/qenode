@@ -49,7 +49,7 @@ dtc -I dts -O dtb -o "$TMPDIR_LOCAL/dummy.dtb" "$TMPDIR_LOCAL/dummy.dts"
 
 PORT=${1:-0}
 if [ "$PORT" -eq 0 ]; then
-    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); import sys; sys.stdout.write(str(s.getsockname()[1])); s.close()')
 fi
 
 # Launch Router & QEMU

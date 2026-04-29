@@ -27,7 +27,7 @@ class ZenohUartMonitor:
         def on_sample(sample):
             payload = sample.payload.to_bytes()
             if len(payload) > 20:
-                text = payload[vproto.SIZE_ZENOH_FRAME_HEADER:].decode("utf-8", errors="replace")
+                text = payload[vproto.SIZE_ZENOH_FRAME_HEADER :].decode("utf-8", errors="replace")
                 loop.call_soon_threadsafe(self.queue.put_nowait, text)
 
         self.sub = await asyncio.to_thread(lambda: self.session.declare_subscriber(self.topic, on_sample))
@@ -172,7 +172,9 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
             if msg_byte.decode() in monitor0.buffer and msg_byte.decode() in monitor1_rx.buffer:
                 break
         else:
-            pytest.fail(f"Echo failed for {msg_byte.decode()} | mon0: {monitor0.buffer!r} | mon1_rx: {monitor1_rx.buffer!r}")
+            pytest.fail(
+                f"Echo failed for {msg_byte.decode()} | mon0: {monitor0.buffer!r} | mon1_rx: {monitor1_rx.buffer!r}"
+            )
 
         monitor0.buffer = monitor0.buffer.replace(msg_byte.decode(), "", 1)
         monitor1_rx.buffer = monitor1_rx.buffer.replace(msg_byte.decode(), "", 1)
@@ -228,6 +230,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     from tests.conftest import VirtualTimeAuthority
 
     vta = VirtualTimeAuthority(zenoh_session, [0])
+    await vta.wait_for_discovery()
 
     def _pump_monitor(mon):
         while not mon.queue.empty():
@@ -258,7 +261,7 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     def on_node1_rx(sample):
         payload = sample.payload.to_bytes()
         if len(payload) > 20:
-            received_msgs.append(payload[vproto.SIZE_ZENOH_FRAME_HEADER:])
+            received_msgs.append(payload[vproto.SIZE_ZENOH_FRAME_HEADER :])
 
     sub1_rx = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(f"{topic}/1/rx", on_node1_rx))
 
@@ -338,6 +341,7 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
     from tests.conftest import VirtualTimeAuthority
 
     vta = VirtualTimeAuthority(zenoh_session, [0])
+    await vta.wait_for_discovery()
 
     def _pump_monitor(mon):
         while not mon.queue.empty():

@@ -8,6 +8,7 @@
 # ==============================================================================
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,11 @@ import yaml
 
 from .repl2qemu.parser import parse_repl
 
+logger = logging.getLogger(__name__)
+
 
 def migrate(repl_path: str, yaml_path: str):
-    print(f"Reading Renode platform: {repl_path}")
+    logger.info(f"Reading Renode platform: {repl_path}")
     with Path(repl_path).open() as f:
         plat = parse_repl(f.read())
 
@@ -58,7 +61,7 @@ def migrate(repl_path: str, yaml_path: str):
 
         output["peripherals"].append(p)
 
-    print(f"Writing virtmcu YAML: {yaml_path}")
+    logger.info(f"Writing virtmcu YAML: {yaml_path}")
     with Path(yaml_path).open("w") as f:
         yaml.dump(output, f, sort_keys=False, default_flow_style=False)
 
@@ -75,4 +78,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

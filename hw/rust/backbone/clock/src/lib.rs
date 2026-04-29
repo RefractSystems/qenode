@@ -43,7 +43,9 @@ pub struct ZenohClockTransport {
     query_rx: Receiver<Query>,
     start_rx: Receiver<()>,
     _start_sub: Option<virtmcu_qom::sync::SafeSubscription>,
+    _start_transport: Arc<transport_zenoh::ZenohDataTransport>,
     done_pub: alloc::sync::Arc<transport_zenoh::SafePublisher>,
+    vtime_pub: alloc::sync::Arc<transport_zenoh::SafePublisher>,
     _node_id: u32,
     is_coordinated: bool,
 }
@@ -69,6 +71,12 @@ impl ClockSyncTransport for ZenohClockTransport {
             }
             Err(_) => None,
         }
+    }
+
+    fn send_vtime_heartbeat(&self, vtime_ns: u64) {
+        let mut payload = alloc::vec::Vec::new();
+        payload.extend_from_slice(&vtime_ns.to_le_bytes());
+        self.vtime_pub.send(payload);
     }
 
     fn close(&self) {
@@ -464,6 +472,8 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         }
 
         let current_vtime = backend.vtime_ns.load(Ordering::SeqCst);
+        backend.transport.send_vtime_heartbeat(current_vtime);
+
         let resp = ClockReadyResp::new(current_vtime, 0, error_code, req.quantum_number());
 
         if let Err(e) = responder.send_ready(resp) {
@@ -630,8 +640,8 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     }
 
     unsafe {
-        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = Some(clock_cpu_halt_cb);
-        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = Some(clock_cpu_tcg_hook);
+        virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(Some(clock_cpu_halt_cb));
+        virtmcu_qom::cpu::virtmcu_cpu_set_tcg_hook(Some(clock_cpu_tcg_hook));
     }
 }
 
@@ -639,8 +649,8 @@ unsafe extern "C" fn clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut VirtmcuClock);
     GLOBAL_CLOCK.store(ptr::null_mut(), Ordering::Release);
     unsafe {
-        virtmcu_qom::cpu::virtmcu_cpu_halt_hook = None;
-        virtmcu_qom::cpu::virtmcu_tcg_quantum_hook = None;
+        virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(None);
+        virtmcu_qom::cpu::virtmcu_cpu_set_tcg_hook(None);
     }
 
     if !s.rust_state.is_null() {
@@ -780,8 +790,9 @@ fn clock_init_internal(
     let (query_tx, query_rx) = crossbeam_channel::unbounded();
     let (start_tx, start_rx) = crossbeam_channel::unbounded();
     let start_topic = format!("sim/clock/start/{node_id}");
+    let start_transport = Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(&session)));
     let _start_sub = virtmcu_qom::sync::SafeSubscription::new(
-        &transport_zenoh::ZenohDataTransport::new(Arc::clone(&session)),
+        start_transport.as_ref(),
         &start_topic,
         Arc::new(AtomicU64::new(0)),
         Box::new(move |_| {
@@ -789,17 +800,24 @@ fn clock_init_internal(
         }),
     )
     .ok();
+
     let done_topic = format!("sim/coord/{node_id}/done");
     let publisher = match session.declare_publisher(done_topic).wait() {
         Ok(p) => p,
         Err(_) => return ptr::null_mut(),
     };
     let done_pub = Arc::new(transport_zenoh::SafePublisher::new(publisher));
-    let hb_topic = format!("sim/clock/liveliness/{node_id}");
-    let _liveliness = session.liveliness().declare_token(hb_topic).wait().ok();
+
+    let vtime_topic = format!("sim/clock/vtime/{node_id}");
+    let vtime_publisher = match session.declare_publisher(vtime_topic).wait() {
+        Ok(p) => p,
+        Err(_) => return ptr::null_mut(),
+    };
+    let vtime_pub = Arc::new(transport_zenoh::SafePublisher::new(vtime_publisher));
+
     let topic = format!("sim/clock/advance/{node_id}");
     let queryable = match session
-        .declare_queryable(topic)
+        .declare_queryable(topic.clone())
         .callback(move |query| {
             let _ = query_tx.send(query);
         })
@@ -808,13 +826,17 @@ fn clock_init_internal(
         Ok(q) => q,
         Err(_) => return ptr::null_mut(),
     };
+    let hb_topic = format!("sim/clock/liveliness/{node_id}");
+    let _liveliness = session.liveliness().declare_token(hb_topic).wait().ok();
     let transport = Box::new(ZenohClockTransport {
         _queryable: Mutex::new(Some(queryable)),
         _liveliness,
         query_rx,
         start_rx,
         _start_sub,
+        _start_transport: start_transport,
         done_pub,
+        vtime_pub,
         _node_id: node_id,
         is_coordinated,
     });

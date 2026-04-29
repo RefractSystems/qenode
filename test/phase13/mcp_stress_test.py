@@ -1,14 +1,18 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(WORKSPACE_DIR)
 
+logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+logger = logging.getLogger(__name__)
+
 
 async def main():
-    print("Connecting to MCP server...")
+    logger.info("Connecting to MCP server...")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -18,6 +22,16 @@ async def main():
         stderr=asyncio.subprocess.PIPE,
         cwd=WORKSPACE_DIR,
     )
+
+    async def forward_stderr():
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                break
+            sys.stderr.write(f"[server] {line.decode()}")
+            sys.stderr.flush()
+
+    _ = asyncio.create_task(forward_stderr())
 
     async def send_json(obj):
         data = json.dumps(obj) + "\n"
@@ -53,7 +67,7 @@ async def main():
 
     node_id = "stress_node"
 
-    print(f"Provisioning {node_id}...")
+    logger.info(f"Provisioning {node_id}...")
     await send_json(
         {
             "jsonrpc": "2.0",
@@ -78,7 +92,7 @@ async def main():
     await recv_json()
 
     for i in range(5):
-        print(f"Iteration {i + 1}: Starting...")
+        logger.info(f"Iteration {i + 1}: Starting...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -89,23 +103,33 @@ async def main():
         )
         res = await recv_json()
         if "error" in res:
-            print(f"Start error: {res['error']}")
+            logger.error(f"Start error: {res['error']}")
             break
+        logger.info(f"Iteration {i + 1}: Waiting deterministically for CPU state...")
+        for _ in range(50):
+            await send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 200 + i,
+                    "method": "tools/call",
+                    "params": {"name": "read_cpu_state", "arguments": {"node_id": node_id}},
+                }
+            )
+            res = await recv_json()
+            try:
+                state_text = res["result"]["content"][0]["text"]
+                # Architecture-agnostic PC check (matches R15, PC, EIP, RIP, pc)
+                import re
 
-        await asyncio.sleep(1)  # SLEEP_EXCEPTION: deliberate yielding
+                if re.search(r"(?i)\b(pc|r15|eip|rip)\b\s*(?:=|\s+)\s*[0-9a-f]+", state_text):
+                    break
+            except Exception as e:
+                logger.debug(f"Failed to parse state: {e} | Res: {res}")
+            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: RPC polling backoff
+        else:
+            logger.warning("Warning: CPU state could not be read in time.")
 
-        print(f"Iteration {i + 1}: Reading PC...")
-        await send_json(
-            {
-                "jsonrpc": "2.0",
-                "id": 200 + i,
-                "method": "tools/call",
-                "params": {"name": "read_cpu_state", "arguments": {"node_id": node_id}},
-            }
-        )
-        res = await recv_json()
-
-        print(f"Iteration {i + 1}: Stopping...")
+        logger.info(f"Iteration {i + 1}: Stopping...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -116,11 +140,9 @@ async def main():
         )
         await recv_json()
 
-        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: deliberate yielding
-
     proc.terminate()
     await proc.wait()
-    print("Stress test passed!")
+    logger.info("Stress test passed!")
 
 
 if __name__ == "__main__":

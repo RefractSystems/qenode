@@ -269,7 +269,7 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktHdr;
-        assert!((misaligned_ptr as usize) % 4 != 0, "Buffer was accidentally aligned!");
+        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
 
         let hdr_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
         let hdr_final = hdr_read.from_be();
@@ -316,7 +316,7 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktBusaccess;
-        assert!((misaligned_ptr as usize) % 4 != 0, "Buffer was accidentally aligned!");
+        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
 
         let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
         let pkt_final = pkt_read.from_be();
@@ -355,7 +355,7 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktInterrupt;
-        assert!((misaligned_ptr as usize) % 4 != 0, "Buffer was accidentally aligned!");
+        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
 
         let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
         let pkt_final = pkt_read.from_be();

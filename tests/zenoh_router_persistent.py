@@ -1,7 +1,10 @@
+import logging
 import sys
 import time
 
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
 
@@ -16,7 +19,7 @@ def main():
 
     with contextlib.suppress(Exception):
         config.insert_json5("transport/shared/task_workers", "16")
-    print(f"Starting persistent Zenoh mock router on {endpoint}...")
+    logger.info(f"Starting persistent Zenoh mock router on {endpoint}...")
     session = zenoh.open(config)
 
     # Declare a liveliness token so clients can deterministically wait for the router to be ready.

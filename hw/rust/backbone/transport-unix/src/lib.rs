@@ -20,7 +20,6 @@ impl UnixDataTransport {
             Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = unbounded::<(String, Vec<u8>)>();
 
-        let stream_clone = Arc::clone(&stream);
         let subscriptions_clone = Arc::clone(&subscriptions);
 
         // RX thread

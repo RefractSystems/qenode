@@ -1,11 +1,13 @@
 import asyncio
 import contextlib
+import logging
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from tools.testing.utils import wait_for_file_creation
 from tools.vproto import (
     SIZE_MMIO_REQ,
     SIZE_VIRTMCU_HANDSHAKE,
@@ -15,6 +17,8 @@ from tools.vproto import (
     SyscMsg,
     VirtmcuHandshake,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -90,36 +94,38 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
         cli_args = f.read().split()
 
     received_reqs = []
+    mmio_event = asyncio.Event()
 
     async def handle_mmio(reader, writer):
         try:
-            print("MMIO Server: Connection accepted!")
+            logger.info("MMIO Server: Connection accepted!")
             # Handshake
             await reader.readexactly(SIZE_VIRTMCU_HANDSHAKE)
-            print("MMIO Server: Handshake read!")
+            logger.info("MMIO Server: Handshake read!")
             hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
             writer.write(hs_out.pack())
             await writer.drain()
-            print("MMIO Server: Handshake written!")
+            logger.info("MMIO Server: Handshake written!")
 
             while True:
                 try:
                     data = await reader.readexactly(SIZE_MMIO_REQ)
                     req = MmioReq.unpack(data)
-                    print(f"MMIO Server: Received req: {req}")
+                    logger.info(f"MMIO Server: Received req: {req}")
                     received_reqs.append(req)
+                    mmio_event.set()
                     resp = SyscMsg(type=0, irq_num=0, data=0)
                     writer.write(resp.pack())
                     await writer.drain()
                 except (asyncio.IncompleteReadError, ConnectionResetError) as e:
-                    print(f"MMIO Server: Read loop exited: {e}")
+                    logger.info(f"MMIO Server: Read loop exited: {e}")
                     break
         except Exception as e:
-            print(f"MMIO Server Error: {e}")
+            logger.info(f"MMIO Server Error: {e}")
         finally:
             writer.close()
             await writer.wait_closed()
-            print("MMIO Server: Connection closed.")
+            logger.info("MMIO Server: Connection closed.")
 
     server = await asyncio.start_unix_server(handle_mmio, mmio_sock)
 
@@ -130,13 +136,10 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
     server_task = asyncio.create_task(run_server())
 
     # Deterministic socket check
-    for _ in range(50):
-        if Path(mmio_sock).exists():
-            break
-        await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: wait for mmio server socket
+    await wait_for_file_creation(mmio_sock)
 
     try:
-        await qemu_launcher(
+        bridge = await qemu_launcher(
             dtb_file,
             kernel,
             extra_args=[
@@ -145,18 +148,31 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
                 "null",
                 "-monitor",
                 "null",
+                "-S",
             ],
         )
 
+        await bridge.start_emulation()
+
         # In standalone mode, QEMU runs at wall-clock speed.
-        # Wait for at least one MMIO request to be processed
-        for _ in range(200):
-            if len(received_reqs) > 0:
-                break
-            await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: wait for guest MMIO
+        # Wait for BOTH MMIO requests to be processed.
+        from tools.testing.utils import get_time_multiplier
+
+        timeout = 10.0 * get_time_multiplier()
+        start_time = asyncio.get_running_loop().time()
+        while len(received_reqs) < 2:
+            if asyncio.get_running_loop().time() - start_time > timeout:
+                addrs = [req.addr for req in received_reqs]
+                raise TimeoutError(f"Timed out waiting for MMIO requests. Received: {addrs}")
+            try:
+                await asyncio.wait_for(mmio_event.wait(), timeout=1.0)
+                mmio_event.clear()
+            except TimeoutError:
+                continue
     finally:
-        server_task.cancel()
         server.close()
+        server_task.cancel()
+        # Do not wait for server_task or server.wait_closed() to avoid teardown hangs
 
     # Verify requests
     addrs = [req.addr for req in received_reqs]
@@ -191,32 +207,67 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
 
     # Update cli_args to include our router
     new_args = []
-    for arg in cli_args:
-        if "telemetry" in arg and "node=0" in arg:
-            new_args.append(arg + f",router={zenoh_router}")
-        else:
+    i = 0
+    while i < len(cli_args):
+        arg = cli_args[i]
+        if arg == "-device" and i + 1 < len(cli_args):
+            dev_arg = cli_args[i + 1]
+            if "telemetry" in dev_arg and "node=0" in dev_arg:
+                new_args.append("-device")
+                new_args.append(dev_arg + f",router={zenoh_router}")
+                i += 2
+                continue
+        if "null" not in arg:
             new_args.append(arg)
+        i += 1
 
     # Listener for telemetry
     received_events = []
+    telemetry_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def on_telemetry(sample):
-        received_events.append(str(sample.key_expr))
+        topic = str(sample.key_expr)
+        logger.info(f"Received telemetry on: {topic}")
+        received_events.append(topic)
+        loop.call_soon_threadsafe(telemetry_event.set)
 
+    logger.info(f"Subscribing to sim/telemetry/** on {zenoh_router}")
     sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/telemetry/**", on_telemetry))
 
     # Run QEMU
-    await qemu_launcher(
-        dtb_file, kernel, extra_args=[*new_args, "-serial", "null", "-monitor", "null", "-d", "in_asm,int,exec"]
+    bridge = await qemu_launcher(
+        dtb_file,
+        kernel,
+        extra_args=[
+            *new_args,
+            "-monitor",
+            "null",
+            "-S",  # Start paused for deterministic wait
+        ],
     )
 
-    # Wait deterministically for telemetry events (up to 15 seconds for ASan)
-    for _ in range(3000):
-        if len(received_events) > 0:
-            break
-        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: yield to Zenoh Rx task
+    await bridge.start_emulation()
 
-    await asyncio.to_thread(sub.undeclare)
+    # Wait for UART output 'X' to confirm guest is running
+    # Reduced timeout for fast-fail
+    await bridge.wait_for_line_on_uart("X", timeout=5.0)
+    logger.info("Guest confirmed running via UART!")
+
+    # test_wfi.elf immediately enters WFI, triggering a telemetry event.
+    # Wait deterministically for telemetry events.
+    # Increased timeout for ASan/slow environments.
+    from tools.testing.utils import get_time_multiplier
+    wait_timeout = 30.0 * get_time_multiplier()
+    logger.info(f"Waiting up to {wait_timeout}s for telemetry event...")
+    try:
+        await asyncio.wait_for(telemetry_event.wait(), timeout=wait_timeout)
+        logger.info("Telemetry event received!")
+    except TimeoutError:
+        logger.error("Telemetry event timeout!")
+        raise
+    finally:
+        await asyncio.to_thread(sub.undeclare)
 
     assert len(received_events) > 0
     assert any("sim/telemetry" in e for e in received_events)
@@ -254,6 +305,7 @@ async def test_phase12_coordinator_topology(zenoh_router):
     5. Topology: zenoh_coordinator must correctly link nodes via queryables [P1]
     """
     from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+
     coordinator_bin = resolve_rust_binary("zenoh_coordinator")
 
     # Start coordinator
@@ -267,7 +319,18 @@ async def test_phase12_coordinator_topology(zenoh_router):
 
     try:
         # Give it a moment to start
-        await asyncio.sleep(1.0)  # SLEEP_EXCEPTION: let coordinator initialize
+        import zenoh
+
+        from tests.conftest import wait_for_zenoh_discovery
+
+        config = zenoh.Config()
+        config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
+        config.insert_json5("mode", '"client"')
+        check_session = await asyncio.to_thread(lambda: zenoh.open(config))
+        try:
+            await wait_for_zenoh_discovery(check_session, "sim/coordinator/liveliness")
+        finally:
+            await asyncio.to_thread(check_session.close)
         assert proc.returncode is None
     finally:
         if proc.returncode is None:

@@ -104,7 +104,7 @@ struct MjSharedLayout {        /* at offset 0 in /virtmcu_mujoco_{node_id} */
 Minimal Python MuJoCo side:
 
 ```python
-import mmap, struct, ctypes, mujoco
+import mmap, ctypes, os, mujoco
 
 SHM_NAME = "/virtmcu_mujoco_0"
 shm_fd = os.open(f"/dev/shm{SHM_NAME}", os.O_RDWR)
@@ -118,16 +118,19 @@ while True:
 
     # Write mujoco_time_ns and sensordata into shared memory
     offset = 0
-    struct.pack_into('<II', buf, offset, model.nsensordata, model.nu)
+    ctypes.c_uint32.from_buffer(buf, offset).value = model.nsensordata
+    ctypes.c_uint32.from_buffer(buf, offset + 4).value = model.nu
     offset += 8
-    struct.pack_into('<Q', buf, offset, int(data.time * 1e9))
+    ctypes.c_uint64.from_buffer(buf, offset).value = int(data.time * 1e9)
     offset += 8
     for i in range(model.nsensordata):
-        struct.pack_into('<d', buf, offset, data.sensordata[i]); offset += 8
+        ctypes.c_double.from_buffer(buf, offset).value = data.sensordata[i]
+        offset += 8
 
     # Read ctrl from shared memory
     for i in range(model.nu):
-        data.ctrl[i] = struct.unpack_from('<d', buf, offset)[0]; offset += 8
+        data.ctrl[i] = ctypes.c_double.from_buffer(buf, offset).value
+        offset += 8
 ```
 
 ## C++ Abstraction Interfaces
@@ -227,7 +230,7 @@ Expected output:
 
 **Firmware reads stale sensor values**
 - Check that `resd_replay` is publishing to `sim/sensor/{node_id}/{name}`.
-  Monitor with: `python3 -c "import zenoh; s=zenoh.open(zenoh.Config()); s.declare_subscriber('sim/sensor/**', lambda s,_: print(s.key_expr))"`
+  Monitor with: `python3 -c "import zenoh, sys; s=zenoh.open(zenoh.Config()); s.declare_subscriber('sim/sensor/**', lambda s,_: sys.stdout.write(str(s.key_expr) + '\n'))"`
 - The SAL peripheral on the QEMU side must subscribe to the same topic.
 
 **`mujoco_bridge` exits with "Timeout waiting for QEMU"**

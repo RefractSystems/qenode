@@ -5,10 +5,14 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import VirtualTimeAuthority, wait_for_zenoh_discovery
+from tools.testing.utils import get_time_multiplier
 
-_STALL_TIMEOUT_MS = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_STALL_TIMEOUT_MS = int(_base_stall_timeout_ms * get_time_multiplier())
 _VTA_TIMEOUT_S: float = max(30.0, _STALL_TIMEOUT_MS / 1000.0 + 10.0)
 
+
+@pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 3, "pdes": True}], indirect=True)
 @pytest.mark.asyncio
 async def test_arch8_stress(zenoh_router, zenoh_session, zenoh_coordinator, qemu_launcher, tmp_path):
     """
@@ -62,6 +66,7 @@ peripherals:
     vta = VirtualTimeAuthority(zenoh_session, node_ids=[0, 1, 2])
 
     import logging
+
     logger = logging.getLogger(__name__)
 
     async def _stream_output(stream, name):

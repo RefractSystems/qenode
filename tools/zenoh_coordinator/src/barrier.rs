@@ -1,9 +1,9 @@
 use crate::topology::Protocol;
-use std::cmp::Ordering;
+use core::cmp::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use core::time::Duration;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Condvar, Mutex};
-use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordMessage {
@@ -24,29 +24,38 @@ impl PartialOrd for CoordMessage {
 
 impl Ord for CoordMessage {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.delivery_vtime_ns.cmp(&other.delivery_vtime_ns) {
-            Ordering::Equal => match self.src_node_id.cmp(&other.src_node_id) {
-                Ordering::Equal => self.sequence_number.cmp(&other.sequence_number),
-                ord => ord,
-            },
-            ord => ord,
-        }
+        self.delivery_vtime_ns
+            .cmp(&other.delivery_vtime_ns)
+            .then_with(|| self.src_node_id.cmp(&other.src_node_id))
+            .then_with(|| self.dst_node_id.cmp(&other.dst_node_id))
+            .then_with(|| self.sequence_number.cmp(&other.sequence_number))
+            .then_with(|| self.base_topic.cmp(&other.base_topic))
+            .then_with(|| self.protocol.cmp(&other.protocol))
+            .then_with(|| self.payload.cmp(&other.payload))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarrierError {
     Timeout,
     DuplicateDone,
+    QuantumMismatch { expected: u64, got: u64 },
 }
 
 pub struct QuantumBarrier {
     n_nodes: usize,
     max_messages_per_node: usize,
-    done_count: AtomicUsize,
-    message_buffer: Mutex<Vec<CoordMessage>>,
+    current_quantum: AtomicU64,
+    state: Mutex<BarrierState>,
     all_done_cond: Condvar,
-    done_nodes: Mutex<HashSet<String>>,
+}
+
+struct BarrierState {
+    done_count: usize,
+    message_buffer: Vec<CoordMessage>,
+    done_nodes: HashSet<String>,
+    next_quantum_buffer: Vec<CoordMessage>,
+    next_quantum_done_nodes: HashSet<String>,
 }
 
 impl QuantumBarrier {
@@ -54,48 +63,93 @@ impl QuantumBarrier {
         Self {
             n_nodes,
             max_messages_per_node,
-            done_count: AtomicUsize::new(0),
-            message_buffer: Mutex::new(Vec::new()),
+            current_quantum: AtomicU64::new(1),
+            state: Mutex::new(BarrierState {
+                done_count: 0,
+                message_buffer: Vec::new(),
+                done_nodes: HashSet::new(),
+                next_quantum_buffer: Vec::new(),
+                next_quantum_done_nodes: HashSet::new(),
+            }),
             all_done_cond: Condvar::new(),
-            done_nodes: Mutex::new(HashSet::new()),
         }
+    }
+
+    pub fn current_quantum(&self) -> u64 {
+        self.current_quantum.load(AtomicOrdering::SeqCst)
+    }
+
+    pub fn reset(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.done_count = 0;
+        state.message_buffer.clear();
+        state.done_nodes.clear();
+        state.next_quantum_buffer.clear();
+        state.next_quantum_done_nodes.clear();
     }
 
     pub fn submit_done(
         &self,
         node_id: String,
+        quantum: u64,
+        _expected_quantum: u64,
         mut messages: Vec<CoordMessage>,
     ) -> Result<Option<Vec<CoordMessage>>, BarrierError> {
-        {
-            let mut done_nodes = self.done_nodes.lock().unwrap();
-            if done_nodes.contains(&node_id) {
+        let mut state = self.state.lock().unwrap();
+        let current = self.current_quantum.load(AtomicOrdering::SeqCst);
+
+        if quantum < current {
+            // Already finished this quantum; drop stale messages.
+            return Ok(None);
+        }
+
+        if quantum > current + 1 {
+            return Err(BarrierError::QuantumMismatch {
+                expected: current,
+                got: quantum,
+            });
+        }
+
+        // Handle NEXT quantum (Lookahead)
+        if quantum == current + 1 {
+            if state.next_quantum_done_nodes.contains(&node_id) {
                 return Err(BarrierError::DuplicateDone);
             }
-            done_nodes.insert(node_id.clone());
+            state.next_quantum_done_nodes.insert(node_id.clone());
+            messages.sort();
+            if messages.len() > self.max_messages_per_node {
+                messages.truncate(self.max_messages_per_node);
+            }
+            state.next_quantum_buffer.extend(messages);
+            return Ok(None);
         }
 
-        // ARCH-5 Determinism Fix: We MUST sort before truncating.
-        messages.sort();
+        // Handle CURRENT quantum
+        if state.done_nodes.contains(&node_id) {
+            return Err(BarrierError::DuplicateDone);
+        }
+        state.done_nodes.insert(node_id.clone());
 
+        messages.sort();
         if messages.len() > self.max_messages_per_node {
-            let excess = messages.len() - self.max_messages_per_node;
-            println!(
-                "Node {} exceeded per-quantum message limit ({} > {}); dropping {} messages",
-                node_id,
-                messages.len(),
-                self.max_messages_per_node,
-                excess
-            );
             messages.truncate(self.max_messages_per_node);
         }
+        state.message_buffer.extend(messages);
+        state.done_count += 1;
 
-        let mut buffer = self.message_buffer.lock().unwrap();
-        buffer.extend(messages);
-
-        let count = self.done_count.fetch_add(1, AtomicOrdering::SeqCst) + 1;
-        if count == self.n_nodes {
-            let mut all_msgs = std::mem::take(&mut *buffer);
+        if state.done_count == self.n_nodes {
+            let mut all_msgs = state.message_buffer.clone();
             all_msgs.sort();
+
+            // Promotion Logic:
+            // 1. Increment quantum
+            self.current_quantum.fetch_add(1, AtomicOrdering::SeqCst);
+
+            // 2. Move lookahead to current
+            state.message_buffer = std::mem::take(&mut state.next_quantum_buffer);
+            state.done_nodes = std::mem::take(&mut state.next_quantum_done_nodes);
+            state.done_count = state.done_nodes.len();
+
             self.all_done_cond.notify_all();
             Ok(Some(all_msgs))
         } else {
@@ -103,27 +157,14 @@ impl QuantumBarrier {
         }
     }
 
-    pub fn reset(&self) {
-        self.done_count.store(0, AtomicOrdering::SeqCst);
-        let mut buffer = self.message_buffer.lock().unwrap();
-        buffer.clear();
-        let mut done_nodes = self.done_nodes.lock().unwrap();
-        done_nodes.clear();
-    }
-
     pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
-        let buffer = self.message_buffer.lock().unwrap();
-        if self.done_count.load(AtomicOrdering::SeqCst) == self.n_nodes {
-            let mut msgs = buffer.clone();
-            msgs.sort();
-            return Ok(msgs);
-        }
+        let state = self.state.lock().unwrap();
+        let (state, wait_result) = self.all_done_cond.wait_timeout(state, timeout).unwrap();
 
-        let (buffer, wait_result) = self.all_done_cond.wait_timeout(buffer, timeout).unwrap();
         if wait_result.timed_out() {
             Err(BarrierError::Timeout)
         } else {
-            let mut msgs = buffer.clone();
+            let mut msgs = state.message_buffer.clone();
             msgs.sort();
             Ok(msgs)
         }
@@ -137,9 +178,9 @@ mod tests {
     fn dummy_msg(vtime: u64, seq: u64, src: &str) -> CoordMessage {
         CoordMessage {
             delivery_vtime_ns: vtime,
-            src_node_id: src.to_string(),
-            dst_node_id: "1".to_string(),
-            base_topic: "virtmcu/uart".to_string(),
+            src_node_id: src.to_owned(),
+            dst_node_id: "1".to_owned(),
+            base_topic: "virtmcu/uart".to_owned(),
             sequence_number: seq,
             protocol: Protocol::Uart,
             payload: vec![],
@@ -150,15 +191,15 @@ mod tests {
     fn test_barrier_waits_for_all_3_nodes() {
         let barrier = QuantumBarrier::new(3, 1024);
         assert!(barrier
-            .submit_done("0".to_string(), vec![])
+            .submit_done("0".to_owned(), 1, 1, vec![])
             .unwrap()
             .is_none());
         assert!(barrier
-            .submit_done("1".to_string(), vec![])
+            .submit_done("1".to_owned(), 1, 1, vec![])
             .unwrap()
             .is_none());
         assert!(barrier
-            .submit_done("2".to_string(), vec![])
+            .submit_done("2".to_owned(), 1, 1, vec![])
             .unwrap()
             .is_some());
     }
@@ -167,13 +208,13 @@ mod tests {
     fn test_canonical_sort_same_vtime() {
         let barrier = QuantumBarrier::new(3, 1024);
         barrier
-            .submit_done("2".to_string(), vec![dummy_msg(10, 0, "2")])
+            .submit_done("2".to_owned(), 1, 1, vec![dummy_msg(10, 0, "2")])
             .unwrap();
         barrier
-            .submit_done("0".to_string(), vec![dummy_msg(10, 0, "0")])
+            .submit_done("0".to_owned(), 1, 1, vec![dummy_msg(10, 0, "0")])
             .unwrap();
         let sorted = barrier
-            .submit_done("1".to_string(), vec![dummy_msg(10, 0, "1")])
+            .submit_done("1".to_owned(), 1, 1, vec![dummy_msg(10, 0, "1")])
             .unwrap()
             .unwrap();
 
@@ -187,13 +228,13 @@ mod tests {
     fn test_canonical_sort_different_vtime() {
         let barrier = QuantumBarrier::new(3, 1024);
         barrier
-            .submit_done("0".to_string(), vec![dummy_msg(30, 0, "0")])
+            .submit_done("0".to_owned(), 1, 1, vec![dummy_msg(30, 0, "0")])
             .unwrap();
         barrier
-            .submit_done("1".to_string(), vec![dummy_msg(10, 0, "1")])
+            .submit_done("1".to_owned(), 1, 1, vec![dummy_msg(10, 0, "1")])
             .unwrap();
         let sorted = barrier
-            .submit_done("2".to_string(), vec![dummy_msg(20, 0, "2")])
+            .submit_done("2".to_owned(), 1, 1, vec![dummy_msg(20, 0, "2")])
             .unwrap()
             .unwrap();
 
@@ -206,17 +247,17 @@ mod tests {
     #[test]
     fn test_barrier_reset_allows_next_quantum() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done("0".to_string(), vec![]).unwrap();
-        barrier.submit_done("1".to_string(), vec![]).unwrap();
+        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
+        barrier.submit_done("1".to_owned(), 1, 1, vec![]).unwrap();
 
         barrier.reset();
 
         assert!(barrier
-            .submit_done("0".to_string(), vec![])
+            .submit_done("0".to_owned(), 2, 2, vec![])
             .unwrap()
             .is_none());
         assert!(barrier
-            .submit_done("1".to_string(), vec![])
+            .submit_done("1".to_owned(), 2, 2, vec![])
             .unwrap()
             .is_some());
     }
@@ -224,11 +265,34 @@ mod tests {
     #[test]
     fn test_barrier_duplicate_done_rejected() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done("0".to_string(), vec![]).unwrap();
+        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
         assert!(matches!(
-            barrier.submit_done("0".to_string(), vec![]),
+            barrier.submit_done("0".to_owned(), 1, 1, vec![]),
             Err(BarrierError::DuplicateDone)
         ));
+    }
+
+    #[test]
+    fn test_quantum_transition_race() {
+        // This test simulates a node sending 'done' for the NEXT quantum
+        // before the coordinator has explicitly called reset().
+        // With auto-reset in submit_done, this should now pass.
+        let barrier = QuantumBarrier::new(2, 1024);
+
+        // Quantum 1
+        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
+        let res = barrier.submit_done("1".to_owned(), 1, 1, vec![]).unwrap();
+        assert!(res.is_some()); // Quantum 1 finished
+
+        // Node 0 is fast and sends 'done' for Quantum 2 immediately.
+        // Even if the coordinator loop hasn't reached its own b.reset() call,
+        // the barrier is already fresh.
+        let res2 = barrier.submit_done("0".to_owned(), 2, 2, vec![]).unwrap();
+
+        assert!(
+            res2.is_none(),
+            "Expected Ok(None) for the first node of the new quantum"
+        );
     }
 
     #[test]
@@ -242,8 +306,52 @@ mod tests {
             dummy_msg(0, 4, "0"),
         ];
 
-        let result = barrier.submit_done("0".to_string(), msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done("0".to_owned(), 1, 1, msgs)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_admission_control_deterministic_truncation_payloads() {
+        // Proves that messages with identical vtime/seq but different payloads
+        // are still truncated deterministically regardless of input order.
+        let max_msgs = 2;
+
+        let mut m1 = dummy_msg(10, 1, "0");
+        m1.payload = vec![1];
+        let mut m2 = dummy_msg(10, 1, "0");
+        m2.payload = vec![2];
+        let mut m3 = dummy_msg(10, 1, "0");
+        m3.payload = vec![3];
+
+        // Different input permutations
+        let perms = vec![
+            vec![m1.clone(), m2.clone(), m3.clone()],
+            vec![m3.clone(), m2.clone(), m1.clone()],
+            vec![m2.clone(), m3.clone(), m1.clone()],
+            vec![m1.clone(), m3.clone(), m2.clone()],
+        ];
+
+        let mut expected_result = None;
+        for msgs in perms {
+            let barrier = QuantumBarrier::new(1, max_msgs);
+            let result = barrier
+                .submit_done("0".to_owned(), 1, 1, msgs)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.len(), 2);
+
+            if let Some(expected) = &expected_result {
+                assert_eq!(
+                    &result, expected,
+                    "Truncation was not deterministic across input permutations!"
+                );
+            } else {
+                expected_result = Some(result);
+            }
+        }
     }
 
     #[test]
@@ -257,7 +365,10 @@ mod tests {
             dummy_msg(15, 5, "0"),
         ];
 
-        let result = barrier.submit_done("0".to_string(), msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done("0".to_owned(), 1, 1, msgs)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].delivery_vtime_ns, 5);
@@ -279,7 +390,10 @@ mod tests {
             dummy_msg(0, 2, "0"),
         ];
 
-        let result = barrier.submit_done("0".to_string(), msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done("0".to_owned(), 1, 1, msgs)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.len(), 3);
     }
 
@@ -287,7 +401,7 @@ mod tests {
     fn test_admission_control_zero_messages() {
         let barrier = QuantumBarrier::new(1, 3);
         let result = barrier
-            .submit_done("0".to_string(), vec![])
+            .submit_done("0".to_owned(), 1, 1, vec![])
             .unwrap()
             .unwrap();
         assert_eq!(result.len(), 0);
@@ -304,7 +418,10 @@ mod tests {
             msgs.push(dummy_msg(i as u64, (10_000 - i) as u64, "0"));
         }
 
-        let result = barrier.submit_done("0".to_string(), msgs).unwrap().unwrap();
+        let result = barrier
+            .submit_done("0".to_owned(), 1, 1, msgs)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(result.len(), max_msgs);
         assert_eq!(result[0].delivery_vtime_ns, 0);

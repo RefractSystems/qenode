@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -178,11 +179,11 @@ sysbus:
         assert dev.name != "sysbus"
 
 
-def test_parser_missing_using(capsys):
+def test_parser_missing_using(caplog):
     repl = 'using "non_existent.repl"\n'
     parse_repl(repl)
-    captured = capsys.readouterr()
-    assert "Warning: Included file not found" in captured.out
+    caplog.set_level(logging.INFO)
+    assert "Warning: Included file not found" in caplog.text
 
 
 def test_parser_sysbus_registration():

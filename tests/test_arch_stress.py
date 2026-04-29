@@ -4,7 +4,6 @@ Architectural hardening stress tests.
 2. Sequence number tie-breaking: UART bytes at same vtime.
 """
 
-import struct
 import subprocess
 from pathlib import Path
 
@@ -21,18 +20,17 @@ def _ensure_phase1_built():
         subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
     return dtb, kernel
 
+
 @pytest.mark.asyncio
 async def test_quantum_sync_stress(qemu_launcher, zenoh_router):
     """Run 100 quanta and verify no stalls or state machine failures."""
     dtb, kernel = _ensure_phase1_built()
-    node_id = 42 # Unique ID for this test
-    quantum_ns = 1_000_000 # 1ms
+    node_id = 42  # Unique ID for this test
+    quantum_ns = 1_000_000  # 1ms
     total_quanta = 100
 
     # Start with node=0 (bypass mode) to allow QMP to start
-    extra_args = [
-        "-device", f"virtmcu-clock,node=0,router={zenoh_router}"
-    ]
+    extra_args = ["-device", f"virtmcu-clock,node=0,router={zenoh_router}"]
 
     bridge = await qemu_launcher(dtb_path=dtb, kernel_path=kernel, extra_args=extra_args, ignore_clock_check=True)
 
@@ -60,25 +58,24 @@ async def test_quantum_sync_stress(qemu_launcher, zenoh_router):
     for i in range(total_quanta):
         # Advance clock
         replies = session.get(
-            f"sim/clock/advance/{node_id}",
-            payload=vproto.ClockAdvanceReq(quantum_ns, 0, 0).pack(),
-            timeout=10.0
+            f"sim/clock/advance/{node_id}", payload=vproto.ClockAdvanceReq(quantum_ns, 0, 0).pack(), timeout=10.0
         )
 
         found_reply = False
         for reply in replies:
             if reply.ok:
-                vtime, _n_frames, err = struct.unpack("<QII", reply.ok.payload.to_bytes())
-                assert err == 0, f"Quantum {i} failed with error {err}"
+                resp = vproto.ClockReadyResp.unpack(reply.ok.payload.to_bytes())
+                assert resp.error_code == 0, f"Quantum {i} failed with error {resp.error_code}"
                 # Since we start mid-stream, just ensure forward progress
-                assert vtime > current_vtime
-                current_vtime = vtime
+                assert resp.current_vtime_ns > current_vtime
+                current_vtime = resp.current_vtime_ns
                 found_reply = True
                 break
 
         assert found_reply, f"No reply received for quantum {i}"
 
     session.close()
+
 
 @pytest.mark.asyncio
 async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
@@ -87,10 +84,13 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
     node_id = 43
 
     extra_args = [
-        "-device", f"virtmcu-clock,node=0,router={zenoh_router}",
-        "-chardev", f"virtmcu,id=char0,node={node_id},router={zenoh_router}",
-        "-serial", "chardev:char0",
-        "-S" # Start frozen
+        "-device",
+        f"virtmcu-clock,node=0,router={zenoh_router}",
+        "-chardev",
+        f"virtmcu,id=char0,node={node_id},router={zenoh_router}",
+        "-serial",
+        "chardev:char0",
+        "-S",  # Start frozen
     ]
 
     bridge = await qemu_launcher(dtb_path=dtb, kernel_path=kernel, extra_args=extra_args, ignore_clock_check=True)
@@ -126,6 +126,8 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router):
         pub.put(header + bytes([char]))
 
     for _ in range(10):
-        session.get(f"sim/clock/advance/{node_id}", payload=vproto.ClockAdvanceReq(1_000_000, 0, 0).pack(), timeout=10.0)
+        session.get(
+            f"sim/clock/advance/{node_id}", payload=vproto.ClockAdvanceReq(1_000_000, 0, 0).pack(), timeout=10.0
+        )
 
     session.close()

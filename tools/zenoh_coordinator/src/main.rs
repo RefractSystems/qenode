@@ -141,10 +141,10 @@ fn parse_topic_with_prefix(topic: &str) -> Option<(String, String, String)> {
     let (base, nid) = if topic.ends_with("/tx") && parts.len() >= 2 {
         (
             parts[..parts.len() - 2].join("/"),
-            parts[parts.len() - 2].to_string(),
+            parts[parts.len() - 2].to_owned(),
         )
     } else {
-        (topic.to_string(), String::new())
+        (topic.to_owned(), String::new())
     };
     Some((prefix, base, nid))
 }
@@ -236,7 +236,7 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
                     msgs.push(CoordMessage {
                         src_node_id: src.to_string(),
                         dst_node_id: dst.to_string(),
-                        base_topic: "sim/coord".to_string(),
+                        base_topic: "sim/coord".to_owned(),
                         delivery_vtime_ns: vt,
                         sequence_number: seq,
                         protocol: parse_protocol(pr),
@@ -686,6 +686,11 @@ async fn main() {
             .unwrap();
     }
     let session = zenoh::open(config).await.unwrap();
+    let _liveliness = session
+        .liveliness()
+        .declare_token("sim/coordinator/liveliness")
+        .await
+        .unwrap();
 
     let eth_sub = session
         .declare_subscriber("**/sim/eth/frame/**/tx")
@@ -738,27 +743,27 @@ async fn main() {
     let node_positions: Arc<RwLock<HashMap<(String, String), NodeInfo>>> = {
         let mut m = HashMap::new();
         m.insert(
-            ("".to_string(), "0".to_string()),
+            ("".to_owned(), "0".to_owned()),
             NodeInfo {
-                id: "0".to_string(),
+                id: "0".to_owned(),
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
             },
         );
         m.insert(
-            ("".to_string(), "1".to_string()),
+            ("".to_owned(), "1".to_owned()),
             NodeInfo {
-                id: "1".to_string(),
+                id: "1".to_owned(),
                 x: 10.0,
                 y: 0.0,
                 z: 0.0,
             },
         );
         m.insert(
-            ("".to_string(), "2".to_string()),
+            ("".to_owned(), "2".to_owned()),
             NodeInfo {
-                id: "2".to_string(),
+                id: "2".to_owned(),
                 x: 100.0,
                 y: 0.0,
                 z: 0.0,
@@ -785,7 +790,7 @@ async fn main() {
         if args.pdes {
             format!("ENABLED ({} nodes)", args.nodes.unwrap())
         } else {
-            "DISABLED".to_string()
+            "DISABLED".to_owned()
         }
     );
 
@@ -795,7 +800,7 @@ async fn main() {
                 if let Ok(s) = res {
                     let tg = tg_ref.read().await;
                     let msgs = handle_eth_msg(s, &mut k_eth, &topology, args.delay_ns, &mut rng, &tg).await;
-                    base_topics.insert(Protocol::Ethernet, "sim/eth/frame".to_string());
+                    base_topics.insert(Protocol::Ethernet, "sim/eth/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -811,7 +816,7 @@ async fn main() {
                 if let Ok(s) = res {
                     let tg = tg_ref.read().await;
                     let msgs = handle_uart_msg(s, &mut k_uart, &topology, args.delay_ns, &mut rng, &tg).await;
-                    base_topics.insert(Protocol::Uart, "virtmcu/uart".to_string());
+                    base_topics.insert(Protocol::Uart, "virtmcu/uart".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -827,7 +832,7 @@ async fn main() {
                 if let Ok(s) = res {
                     let tg = tg_ref.read().await;
                     let msgs = handle_sysc_msg(s, &mut k_sysc, &topology, args.delay_ns, &tg).await;
-                    base_topics.insert(Protocol::Spi, "sim/systemc/frame".to_string());
+                    base_topics.insert(Protocol::Spi, "sim/systemc/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -844,7 +849,7 @@ async fn main() {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
                     let msgs = handle_rf_msg(s, &mut k_rf, &ps, &args, true, &obstacles, &tg).await;
-                    base_topics.insert(Protocol::Rf802154, "sim/rf/ieee802154".to_string());
+                    base_topics.insert(Protocol::Rf802154, "sim/rf/ieee802154".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -861,7 +866,7 @@ async fn main() {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
                     let msgs = handle_rf_msg(s, &mut k_rf, &ps, &args, false, &obstacles, &tg).await;
-                    base_topics.insert(Protocol::RfHci, "sim/rf/hci".to_string());
+                    base_topics.insert(Protocol::RfHci, "sim/rf/hci".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -877,7 +882,7 @@ async fn main() {
                 if let Ok(s) = res {
                     let tg = tg_ref.read().await;
                     let msgs = handle_lin_msg(s, &mut k_lin, &topology, args.delay_ns, &tg).await;
-                    base_topics.insert(Protocol::Lin, "sim/lin".to_string());
+                    base_topics.insert(Protocol::Lin, "sim/lin".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -893,7 +898,7 @@ async fn main() {
                 if let Ok(s) = res {
                     let ps = s.key_expr().as_str().split('/').collect::<Vec<_>>();
                     if ps.len() >= 4 {
-                        let nid = ps[2].to_string();
+                        let nid = ps[2].to_owned();
                         let mut ms = decode_batch(&s.payload().to_bytes());
                         if barrier.is_some() {
                             batches.entry(nid).or_default().append(&mut ms);
@@ -910,32 +915,40 @@ async fn main() {
                     if let Some(ref b) = barrier {
                         let ps = s.key_expr().as_str().split('/').collect::<Vec<_>>();
                         if ps.len() >= 4 {
-                            let nid = ps[2].to_string();
+                            let nid = ps[2].to_owned();
                             let payload = s.payload().to_bytes();
+                            let mut quantum = u64::MAX;
                             if payload.len() >= 8 {
                                 let mut cursor = Cursor::new(&payload);
-                                let quantum = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                quantum = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
                                 if quantum != current_quantum {
                                     tracing::error!("Quantum mismatch for node {}: expected {}, got {}", nid, current_quantum, quantum);
                                 }
                             }
                             let msgs = batches.remove(&nid).unwrap_or_default();
-                            if let Ok(Some(sorted)) = b.submit_done(nid, msgs) {
-                                for m in sorted {
-                                    encode_protocol_msg(&session, &m).await;
-                                }
+                            match b.submit_done(nid.clone(), quantum, current_quantum, msgs) {
+                                Ok(Some(sorted)) => {
+                                    for m in sorted {
+                                        encode_protocol_msg(&session, &m).await;
+                                    }
 
-                                // ARCH-8: Send start to all nodes for NEXT quantum
-                                current_quantum += 1;
-                                for i in 0..args.nodes.unwrap_or(0) {
-                                    let start_topic = format!("sim/clock/start/{}", i);
-                                    let mut start_payload = Vec::new();
-                                    start_payload.write_u64::<LittleEndian>(current_quantum).expect("Vec write failed");
-                                    let _ = session.put(&start_topic, start_payload).await;
-                                }
+                                    // ARCH-8: Send start to all nodes for NEXT quantum
+                                    current_quantum += 1;
+                                    for i in 0..args.nodes.unwrap_or(0) {
+                                        let start_topic = format!("sim/clock/start/{}", i);
+                                        let mut start_payload = Vec::new();
+                                        start_payload
+                                            .write_u64::<LittleEndian>(current_quantum)
+                                            .expect("Vec write failed");
+                                        let _ = session.put(&start_topic, start_payload).await;
+                                    }
 
-                                let _ = session.put("sim/coord/all/start", vec![1]).await;
-                                b.reset();
+                                    let _ = session.put("sim/coord/all/start", vec![1]).await;
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    tracing::error!("Barrier error for node {}: {:?}", nid, e);
+                                }
                             }
                         }
                     }

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
+import logging
 import re
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: apply_rust_asan_fix.py <qemu_dir>")
+        logger.info("Usage: apply_rust_asan_fix.py <qemu_dir>")
         sys.exit(1)
 
     qemu_dir = Path(sys.argv[1])
     meson_build = qemu_dir / "meson.build"
 
     if not meson_build.exists():
-        print(f"  -> {meson_build} not found, skipping Rust ASan patch")
+        logger.info(f"  -> {meson_build} not found, skipping Rust ASan patch")
         sys.exit(0)
 
     content = meson_build.read_text()
@@ -36,7 +39,7 @@ def main():
             target_line = match.group(0)
             insertion = f"\n{indent}if have_rust\n{indent}  {asan_injection}\n{indent}endif"
             content = content.replace(target_line, target_line + insertion)
-            print("  -> Added ASan flags for Rust in meson.build")
+            logger.info("  -> Added ASan flags for Rust in meson.build")
             changed = True
 
     # 2. Patch UndefinedBehaviorSanitizer (ubsan)
@@ -55,19 +58,20 @@ def main():
             target_line = match.group(0)
             insertion = f"\n{indent}if have_rust\n{indent}  {ubsan_injection}\n{indent}endif"
             content = content.replace(target_line, target_line + insertion)
-            print("  -> Added UBSan flags for Rust in meson.build")
+            logger.info("  -> Added UBSan flags for Rust in meson.build")
             changed = True
 
     if changed:
         meson_build.write_text(content)
-        print("✓ Patched meson.build for Rust ASan/UBSan support")
+        logger.info("✓ Patched meson.build for Rust ASan/UBSan support")
     else:
         # Check if they were already present (to avoid confusing output)
         if asan_injection in content and ubsan_injection in content:
-            print("  -> Rust ASan/UBSan support already present in meson.build")
+            logger.info("  -> Rust ASan/UBSan support already present in meson.build")
         else:
-            print("  -> WARNING: Could not find ASan/UBSan targets in meson.build to patch")
+            logger.info("  -> WARNING: Could not find ASan/UBSan targets in meson.build to patch")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

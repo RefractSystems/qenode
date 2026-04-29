@@ -15,12 +15,20 @@ Scenarios covered:
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
 from tools.testing.qmp_bridge import QmpBridge
+from tools.testing.utils import yield_now
+
+
+@pytest.fixture(autouse=True)
+def mock_multiplier():
+    with patch("tools.testing.qmp_bridge.get_time_multiplier", return_value=1.0):
+        yield
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,7 +127,7 @@ async def test_wait_for_line_match_before_timeout():
     bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
 
     async def populate_buffer():
-        await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: deliberate yielding
+        await yield_now()
         bridge.uart_buffer = "boot complete\n"
 
     asyncio.create_task(populate_buffer())  # noqa: RUF006

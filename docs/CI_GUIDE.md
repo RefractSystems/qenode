@@ -360,12 +360,12 @@ Tests never use hardcoded ports. Every parallel worker gets its own ephemeral Ze
 
 To maintain deterministic co-simulation, `clock` enforces a **Stall Timeout**. If QEMU fails to reach a virtual-time boundary within a certain wall-clock window, it reports a STALL (error code 1).
 
-### Enterprise Policy: Environment-Driven Timeouts
-We avoid hardcoding `stall-timeout` in test files. Instead, the system uses a centralized scaling policy:
+### Enterprise Policy: Centralized Timeout Multiplier (INFRA-6)
+We never hardcode arbitrary, massive `stall-timeout` or Python `asyncio.wait_for` limits in test files to appease slow runners. Instead, the system uses a centralized `get_time_multiplier()`:
 
-1. **Default**: 5 seconds (`VIRTMCU_STALL_TIMEOUT_MS=5000`).
-2. **ASan/UBSan**: 300 seconds (5 minutes). This is automatically injected by `tests/conftest.py` when `VIRTMCU_USE_ASAN=1` is detected.
-3. **Manual Override**: You can override this globally by setting the `VIRTMCU_STALL_TIMEOUT_MS` environment variable.
+1. **Logical Timeouts**: Developers write the test logic assuming a fast, ideal host (e.g., `timeout=2.0` seconds).
+2. **ASan/TSan Scaling**: If `VIRTMCU_USE_ASAN=1` is detected, `conftest_core.py` sets the multiplier to `5.0`. The framework transparently scales the 2.0s limit to 10.0s, and automatically multiplies the QEMU `stall-timeout` argument.
+3. **Fail-Fast**: Because timeouts dynamically stretch only when mathematically required, standard runs fail *instantly* upon deadlock rather than waiting 5 minutes.
 
 ### Why we don't hardcode in tests
 - **Portability**: Different runners have different performance profiles.
@@ -379,6 +379,11 @@ If you encounter a `RuntimeError: Node X reported CLOCK STALL`, it means QEMU st
 ## 13. Known Limitations and Future Improvements
 
 These are real gaps in the current design, documented here so they are not forgotten and not re-invented from scratch.
+
+### 13.7 Test Observability and Hang Detection (INFRA-7 / INFRA-8)
+
+- **Automated Flight Recorder (INFRA-7)**: In the future, the CI pipeline will automatically output a `.pcap` or `.json` Zenoh transcript for any failing test. This will eliminate the need to read thousands of lines of logs by providing an immediate, replayable artifact.
+- **Host vs. Guest Hang Detection (INFRA-8)**: Global pytest-timeouts currently catch all deadlocks. We plan to implement an out-of-band watchdog that queries `get_virtual_time_ns()`. If virtual time stalls but wall-clock time continues, the runner will explicitly fail with "Guest OS deadlocked," separating firmware logic bugs from QEMU Host deadlocks.
 
 ### 13.1 Workflow duplication (`workflow_call`)
 

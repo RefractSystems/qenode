@@ -1,7 +1,10 @@
+import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def test_handshake_fail():
@@ -9,7 +12,9 @@ def test_handshake_fail():
 
     # Adapter sends wrong magic
     cat_cmd = f"""
-import os, socket, struct
+import os, socket, struct, sys
+sys.path.append("/workspace/tools")
+import vproto
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.bind("{sock_path}")
 s.listen(1)
@@ -69,8 +74,9 @@ conn.close()
     )
     qemu_proc.terminate()
     adapter_proc.terminate()
-    print("Handshake test finished.")
+    logger.info("Handshake test finished.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_handshake_fail()

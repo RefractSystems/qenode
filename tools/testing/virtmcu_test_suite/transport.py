@@ -1,16 +1,21 @@
 import abc
 import asyncio
+import logging
+import random
 import shutil
 import socket
-import struct
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 import vproto
 
+logger = logging.getLogger(__name__)
+
 
 class SimulationTransport(abc.ABC):
+    @abc.abstractmethod
+    def dump_flight_recorder(self) -> list[dict]: ...
     @abc.abstractmethod
     async def start(self): ...
 
@@ -37,12 +42,17 @@ class SimulationTransport(abc.ABC):
 
 
 class ZenohTransportImpl(SimulationTransport):
+    def dump_flight_recorder(self) -> list[dict]:
+        return getattr(self, "history", [])
+
     def __init__(self, router_endpoint, session):
         self.router_endpoint = router_endpoint
         self.session = session
         self.subs = []
         from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
-        self.vta = VirtualTimeAuthority(session, [0]) # Assumes single node 0 for basic tests
+
+        self.vta = VirtualTimeAuthority(session, [0])  # Assumes single node 0 for basic tests
+        self.history = []
 
     async def start(self):
         pass
@@ -61,11 +71,19 @@ class ZenohTransportImpl(SimulationTransport):
         return self.router_endpoint
 
     async def publish(self, topic: str, payload: bytes):
+        import time
+
+        self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "tx"})
         await asyncio.to_thread(lambda: self.session.put(topic, payload))
 
     async def subscribe(self, topic: str, callback: Callable[[bytes], None]):
+        import time
+
         def _cb(sample):
-            callback(sample.payload.to_bytes())
+            p = sample.payload.to_bytes()
+            self.history.append({"time": time.time(), "topic": topic, "payload": p.hex(), "direction": "rx"})
+            callback(p)
+
         sub = await asyncio.to_thread(lambda: self.session.declare_subscriber(topic, _cb))
         self.subs.append(sub)
 
@@ -74,6 +92,9 @@ class ZenohTransportImpl(SimulationTransport):
 
 
 class UnixTransportImpl(SimulationTransport):
+    def dump_flight_recorder(self) -> list[dict]:
+        return getattr(self, "history", [])
+
     def __init__(self):
         self.tmpdir = tempfile.mkdtemp(prefix="virtmcu-unix-transport-")
         self.clock_sock = str(Path(self.tmpdir) / "clock.sock")
@@ -89,6 +110,7 @@ class UnixTransportImpl(SimulationTransport):
         self._data_server_task = None
         self._clock_accept_task: asyncio.Task | None = None
         self.vtime_ns = 0
+        self.history = []
 
     async def start(self):
         self.server = await asyncio.start_unix_server(self._handle_data_conn, self.data_sock)
@@ -117,14 +139,17 @@ class UnixTransportImpl(SimulationTransport):
         try:
             while True:
                 topic_len_b = await reader.readexactly(4)
-                topic_len = struct.unpack("<I", topic_len_b)[0]
+                topic_len = int.from_bytes(topic_len_b, "little")
                 topic = (await reader.readexactly(topic_len)).decode()
 
                 payload_len_b = await reader.readexactly(4)
-                payload_len = struct.unpack("<I", payload_len_b)[0]
+                payload_len = int.from_bytes(payload_len_b, "little")
                 payload = await reader.readexactly(payload_len)
-                print(f"UnixTransportImpl rx: {topic}")
+                logger.info(f"UnixTransportImpl rx: {topic}")
 
+                import time
+
+                self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "rx"})
                 for sub_topic, cb in self.data_subs:
                     if topic == sub_topic or topic.startswith(sub_topic):
                         cb(payload)
@@ -143,10 +168,18 @@ class UnixTransportImpl(SimulationTransport):
         return self.data_sock  # Unix sockets don't use TCP endpoints in DTB for standalone run
 
     async def publish(self, topic: str, payload: bytes):
-        msg = struct.pack("<I", len(topic)) + topic.encode() + struct.pack("<I", len(payload)) + payload
+        msg = len(topic).to_bytes(4, "little") + topic.encode() + len(payload).to_bytes(4, "little") + payload
+        import time
+
+        self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "tx"})
         for w in self.data_conns:
             w.write(msg)
             await w.drain()
+
+        # Simulate loopback for local tests
+        for sub_topic, cb in self.data_subs:
+            if topic == sub_topic or topic.startswith(sub_topic):
+                cb(payload)
 
     async def subscribe(self, topic: str, callback: Callable[[bytes], None]):
         self.data_subs.append((topic, callback))
@@ -169,8 +202,62 @@ class UnixTransportImpl(SimulationTransport):
                 raise RuntimeError("Clock connection closed")
             resp_data += chunk
 
-        vtime, _n_frames, err, _qn = struct.unpack("<QIIQ", resp_data)
-        if err != 0:
-            raise RuntimeError(f"Clock stall error: {err}")
-        self.vtime_ns = vtime
+        resp = vproto.ClockReadyResp.unpack(resp_data)
+        if resp.error_code != 0:
+            raise RuntimeError(f"Clock stall error: {resp.error_code}")
+        return resp.current_vtime_ns, resp.quantum_number
 
+
+class FaultInjectingTransport(SimulationTransport):
+    """
+    DET-3: Wraps an existing SimulationTransport to introduce artificial
+    packet loss and latency (Chaos Engineering) for deterministic robustness testing.
+    """
+
+    def __init__(self, inner: SimulationTransport, drop_prob: float = 0.0, delay_s: float = 0.0):
+        self.inner = inner
+        self.drop_prob = drop_prob
+        self.delay_s = delay_s
+
+    async def start(self):
+        await self.inner.start()
+
+    async def stop(self):
+        await self.inner.stop()
+
+    def get_clock_device_str(self, node_id: int) -> str:
+        return self.inner.get_clock_device_str(node_id)
+
+    def get_peripheral_props(self) -> str:
+        return self.inner.get_peripheral_props()
+
+    def dtb_router_endpoint(self) -> str:
+        return self.inner.dtb_router_endpoint()
+
+    async def publish(self, topic: str, payload: bytes):
+        if self.drop_prob > 0.0 and random.random() < self.drop_prob:
+            # Deliberately drop packet
+            if hasattr(self.inner, "history"):
+                self.inner.history.append(
+                    {
+                        "time": __import__("time").time(),
+                        "topic": topic,
+                        "payload": payload.hex(),
+                        "direction": "tx_dropped",
+                    }
+                )
+            return
+
+        if self.delay_s > 0.0:
+            await asyncio.sleep(self.delay_s)  # SLEEP_EXCEPTION: Chaos Engineering delay injection
+
+        await self.inner.publish(topic, payload)
+
+    async def subscribe(self, topic: str, callback):
+        await self.inner.subscribe(topic, callback)
+
+    async def step_clock(self, delta_ns: int):
+        await self.inner.step_clock(delta_ns)
+
+    def dump_flight_recorder(self) -> list[dict]:
+        return getattr(self.inner, "dump_flight_recorder", lambda: [])()
