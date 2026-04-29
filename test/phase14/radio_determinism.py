@@ -1,12 +1,12 @@
-import struct
+import logging
 import sys
 import time
 from pathlib import Path
 
 import zenoh
 
-# Protocol: 8 bytes vtime, 4 bytes size, 1 byte RSSI, 1 byte LQI
-RF_HEADER_FORMAT = "<QIBB"
+logger = logging.getLogger(__name__)
+
 RF_HEADER_SIZE = 14
 
 session = None
@@ -20,13 +20,15 @@ def on_sample(sample):
     if len(payload) < RF_HEADER_SIZE:
         return
 
-    header = struct.unpack(RF_HEADER_FORMAT, payload[:RF_HEADER_SIZE])
-    vtime, size, rssi, lqi = header
+    vtime = int.from_bytes(payload[:8], "little")
+    size = int.from_bytes(payload[8:12], "little")
+    rssi = payload[12]
+    lqi = payload[13]
     data = payload[RF_HEADER_SIZE:]
 
     # 802.15.4 FCF: bits 0-2 are frame type. Type 2 is ACK.
     if size >= 2:
-        fcf = struct.unpack("<H", data[:2])[0]
+        fcf = int.from_bytes(data[:2], "little")
         if (fcf & 0x07) == 0x02:
             return
 
@@ -34,20 +36,48 @@ def on_sample(sample):
         return
     ping_responded = True
 
-    print(f"[{vtime}] Received RF packet: size={size} RSSI={rssi} LQI={lqi}")
+    logger.info(f"[{vtime}] Received RF packet: size={size} RSSI={rssi} LQI={lqi}")
 
     # 1. Respond with WRONG address after 1ms virtual time
     resp1_vtime = vtime + 1000000
-    resp1_data = struct.pack("<HBH HH H", 0x8841, 0x02, 0xABCD, 0x5678, 0x1234, 0) + b"MISMATCHED ACK"
-    msg1 = struct.pack(RF_HEADER_FORMAT, resp1_vtime, len(resp1_data), 0xCE, 0xFF) + resp1_data
-    print(f"[{resp1_vtime}] Sending MISMATCHED response...")
+    resp1_data = (
+        (0x8841).to_bytes(2, "little")
+        + (0x02).to_bytes(1, "little")
+        + (0xABCD).to_bytes(2, "little")
+        + (0x5678).to_bytes(2, "little")
+        + (0x1234).to_bytes(2, "little")
+        + (0).to_bytes(2, "little")
+        + b"MISMATCHED ACK"
+    )
+    msg1 = (
+        resp1_vtime.to_bytes(8, "little")
+        + len(resp1_data).to_bytes(4, "little")
+        + (0xCE).to_bytes(1, "little")
+        + (0xFF).to_bytes(1, "little")
+        + resp1_data
+    )
+    logger.info(f"[{resp1_vtime}] Sending MISMATCHED response...")
     session.put("sim/rf/ieee802154/0/rx", msg1)
 
     # 2. Respond with CORRECT address after 2ms virtual time
     resp2_vtime = vtime + 2000000
-    resp2_data = struct.pack("<HBH HH H", 0x8861, 0x03, 0xABCD, 0x1234, 0x5678, 0) + b"MATCHED ACK"
-    msg2 = struct.pack(RF_HEADER_FORMAT, resp2_vtime, len(resp2_data), 0xCE, 0xFF) + resp2_data
-    print(f"[{resp2_vtime}] Sending MATCHED response...")
+    resp2_data = (
+        (0x8861).to_bytes(2, "little")
+        + (0x03).to_bytes(1, "little")
+        + (0xABCD).to_bytes(2, "little")
+        + (0x1234).to_bytes(2, "little")
+        + (0x5678).to_bytes(2, "little")
+        + (0).to_bytes(2, "little")
+        + b"MATCHED ACK"
+    )
+    msg2 = (
+        resp2_vtime.to_bytes(8, "little")
+        + len(resp2_data).to_bytes(4, "little")
+        + (0xCE).to_bytes(1, "little")
+        + (0xFF).to_bytes(1, "little")
+        + resp2_data
+    )
+    logger.info(f"[{resp2_vtime}] Sending MATCHED response...")
     session.put("sim/rf/ieee802154/0/rx", msg2)
 
 
@@ -56,12 +86,12 @@ def on_tx_sample(sample):
     if len(payload) < RF_HEADER_SIZE:
         return
 
-    header = struct.unpack(RF_HEADER_FORMAT, payload[:RF_HEADER_SIZE])
-    vtime, size, _rssi, _lqi = header
+    vtime = int.from_bytes(payload[:8], "little")
+    size = int.from_bytes(payload[8:12], "little")
     data = payload[RF_HEADER_SIZE:]
 
     if size == 3 and (data[0] & 0x07) == 0x02:
-        print(f"[{vtime}] RECEIVED AUTO-ACK for seq {data[2]}")
+        logger.info(f"[{vtime}] RECEIVED AUTO-ACK for seq {data[2]}")
         with (Path(script_dir) / "ack_received.tmp").open("w") as f:
             f.write("OK")
 
@@ -76,7 +106,7 @@ def main():
     session = zenoh.open(conf)
 
     sub_topic = f"sim/rf/ieee802154/{node_id}/tx"
-    print(f"Listening on {sub_topic}...")
+    logger.info(f"Listening on {sub_topic}...")
     session.declare_subscriber(sub_topic, on_sample)
     session.declare_subscriber(sub_topic, on_tx_sample)
 
@@ -88,4 +118,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

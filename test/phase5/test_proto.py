@@ -14,6 +14,7 @@ Usage:
     python3 test/phase5/test_proto.py <adapter_binary>
 """
 
+import logging
 import signal
 import socket
 import subprocess
@@ -22,6 +23,7 @@ import tempfile
 import time
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(Path(__file__).resolve().parent)
 TOOLS_DIR = Path(Path(Path(SCRIPT_DIR).parent.parent)) / "tools"
 if str(TOOLS_DIR) not in sys.path:
@@ -93,7 +95,7 @@ def run_tests(adapter_bin):
             s.sendall(hs_out.pack())
             hs_in_data = s.recv(SIZE_VIRTMCU_HANDSHAKE)
             if len(hs_in_data) != SIZE_VIRTMCU_HANDSHAKE:
-                print(f"Handshake failed, got {len(hs_in_data)} bytes")
+                logger.info(f"Handshake failed, got {len(hs_in_data)} bytes")
                 return False
 
             failures = []
@@ -104,7 +106,7 @@ def run_tests(adapter_bin):
             if got != 0xDEADBEEF:
                 failures.append(f"T1 FAIL: wrote 0xdeadbeef, read back 0x{got:08x}")
             else:
-                print("T1 PASS: write/read round-trip")
+                logger.info("T1 PASS: write/read round-trip")
 
             # ── T2: write to a different register, verify independence ────────
             send_req(s, MMIO_REQ_WRITE, 4, addr=4, data=0x12345678)
@@ -115,7 +117,7 @@ def run_tests(adapter_bin):
             elif got1 != 0x12345678:
                 failures.append(f"T2 FAIL: reg1 readback wrong: 0x{got1:08x}")
             else:
-                print("T2 PASS: register independence")
+                logger.info("T2 PASS: register independence")
 
             # ── T3: overwrite and verify new value ────────────────────────────
             send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x00000001)
@@ -123,7 +125,7 @@ def run_tests(adapter_bin):
             if got != 0x00000001:
                 failures.append(f"T3 FAIL: expected 0x1, got 0x{got:08x}")
             else:
-                print("T3 PASS: overwrite")
+                logger.info("T3 PASS: overwrite")
 
             # ── T4: zero write ────────────────────────────────────────────────
             send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x0)
@@ -131,7 +133,7 @@ def run_tests(adapter_bin):
             if got != 0:
                 failures.append(f"T4 FAIL: expected 0, got 0x{got:08x}")
             else:
-                print("T4 PASS: zero write")
+                logger.info("T4 PASS: zero write")
 
             # ── T5: last valid register (index 255) ───────────────────────────
             send_req(s, MMIO_REQ_WRITE, 4, addr=255 * 4, data=0xFEEDFACE)
@@ -139,10 +141,10 @@ def run_tests(adapter_bin):
             if got != 0xFEEDFACE:
                 failures.append(f"T5 FAIL: last reg readback wrong: 0x{got:08x}")
             else:
-                print("T5 PASS: last register")
+                logger.info("T5 PASS: last register")
 
             # ── T7: Asynchronous IRQ test ─────────────────────────────────────
-            print("T7: Testing asynchronous IRQ...")
+            logger.info("T7: Testing asynchronous IRQ...")
             # Writing non-zero to reg 255 should trigger IRQ SET
             # We use sock.sendall directly because send_req expects a RESP
             req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=1)
@@ -159,7 +161,7 @@ def run_tests(adapter_bin):
 
                 if msg.type == SYSC_MSG_IRQ_SET and msg.irq_num == 0:
                     irq_set_received = True
-                    print("T7: Received IRQ_SET(0)")
+                    logger.info("T7: Received IRQ_SET(0)")
                 elif msg.type == SYSC_MSG_RESP:
                     resp_received = True
 
@@ -168,7 +170,7 @@ def run_tests(adapter_bin):
             elif not resp_received:
                 failures.append("T7 FAIL: did not receive RESP after IRQ write")
             else:
-                print("T7 PASS: Asynchronous IRQ SET")
+                logger.info("T7 PASS: Asynchronous IRQ SET")
 
             # Writing zero to reg 255 should trigger IRQ CLEAR
             req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=0)
@@ -183,14 +185,14 @@ def run_tests(adapter_bin):
 
                 if msg.type == SYSC_MSG_IRQ_CLEAR and msg.irq_num == 0:
                     irq_clear_received = True
-                    print("T7: Received IRQ_CLEAR(0)")
+                    logger.info("T7: Received IRQ_CLEAR(0)")
                 elif msg.type == SYSC_MSG_RESP:
                     resp_received = True
 
             if not irq_clear_received:
                 failures.append("T7 FAIL: did not receive IRQ_CLEAR(0)")
             else:
-                print("T7 PASS: Asynchronous IRQ CLEAR")
+                logger.info("T7 PASS: Asynchronous IRQ CLEAR")
 
             # ── T6: throughput / latency benchmark ────────────────────────────
             N = 1000  # noqa: N806
@@ -200,16 +202,16 @@ def run_tests(adapter_bin):
             t1 = time.monotonic()
             elapsed = t1 - t0
             us_per_op = (elapsed / N) * 1e6
-            print(f"T6 BENCH: {N} writes in {elapsed * 1000:.1f} ms ({us_per_op:.1f} µs/op)")
+            logger.info(f"T6 BENCH: {N} writes in {elapsed * 1000:.1f} ms ({us_per_op:.1f} µs/op)")
             if us_per_op > 5000:
                 failures.append(f"T6 WARN: {us_per_op:.0f} µs/op exceeds 5 ms threshold — socket latency regression?")
 
         if failures:
-            print("\nFAILURES:")
+            logger.info("\nFAILURES:")
             for f in failures:
-                print(" ", f)
+                logger.info(" ", f)
             return False
-        print("\nAll protocol tests PASSED")
+        logger.info("\nAll protocol tests PASSED")
         return True
 
     finally:
@@ -223,8 +225,9 @@ def run_tests(adapter_bin):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <adapter_binary>")
+        logger.info(f"Usage: {sys.argv[0]} <adapter_binary>")
         sys.exit(1)
     ok = run_tests(sys.argv[1])
     sys.exit(0 if ok else 1)

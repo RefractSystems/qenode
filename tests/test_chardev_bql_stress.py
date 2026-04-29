@@ -1,19 +1,18 @@
 import asyncio
-import struct
 from pathlib import Path
 
 import pytest
+import vproto
 import zenoh
 
 # Paths
 WORKSPACE_DIR = Path(__file__).parent.parent.resolve()
 
-# Header format for chardev: [vtime(8) | len(4)]
-HEADER_FORMAT = "<QI"
-HEADER_SIZE = 12
 
-def encode_chardev_packet(vtime_ns: int, data: bytes) -> bytes:
-    return struct.pack(HEADER_FORMAT, vtime_ns, len(data)) + data
+def encode_frame(vtime_ns: int, data: bytes) -> bytes:
+    # 24-byte ZenohFrameHeader (u64 delivery_vtime_ns, u64 sequence_number, u32 size + 4 padding)
+    return vproto.ZenohFrameHeader(vtime_ns, 0, len(data)).pack() + data
+
 
 @pytest.mark.asyncio
 async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
@@ -41,9 +40,12 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
 
     # Start QEMU with zenoh chardev and clock in slaved-suspend mode
     extra_args = [
-        "-device", f"virtmcu-clock,node={node_id},mode=slaved-suspend,router={router_endpoint}",
-        "-chardev", f"virtmcu,id=char0,node={node_id},router={router_endpoint}",
-        "-serial", "chardev:char0"
+        "-device",
+        f"virtmcu-clock,node={node_id},mode=slaved-suspend,router={router_endpoint}",
+        "-chardev",
+        f"virtmcu,id=char0,node={node_id},router={router_endpoint}",
+        "-serial",
+        "chardev:char0",
     ]
 
     bridge = await qemu_launcher(dtb, kernel, extra_args, ignore_clock_check=True)
@@ -59,9 +61,8 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
 
     def on_tx(sample):
         data = sample.payload.to_bytes()
-        # Header is [vtime(8) | len(4)]
-        if len(data) > HEADER_SIZE:
-            payload = data[HEADER_SIZE:]
+        if len(data) > vproto.SIZE_ZENOH_FRAME_HEADER:
+            payload = data[vproto.SIZE_ZENOH_FRAME_HEADER :]
             received_data.extend(payload)
             if len(received_data) >= expected_count:
                 received_event.set()
@@ -73,20 +74,23 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
 
     # Time authority to drive the clock
     from tests.conftest import VirtualTimeAuthority
+
     vta = VirtualTimeAuthority(session, [node_id])
 
     # Flood with data. Send in one large packet to avoid overwhelming the Zenoh thread in QEMU.
-    start_vtime = 1_000_000 # 1ms
+    start_vtime = 1_000_000  # 1ms
 
     payload_data = bytes([i % 256 for i in range(expected_count)])
-    packet = encode_chardev_packet(start_vtime, payload_data)
+    packet = encode_frame(start_vtime, payload_data)
     pub.put(packet)
 
     # Final time advancement to ensure all data is processed
-    timeout = 60
+    from tools.testing.utils import get_time_multiplier
+
+    timeout = 60 * get_time_multiplier()
     start_time = asyncio.get_event_loop().time()
     while len(received_data) < expected_count:
-        await vta.step(10_000_000, timeout=300.0) # 10ms steps
+        await vta.step(10_000_000, timeout=300.0)  # 10ms steps
         if asyncio.get_event_loop().time() - start_time > timeout:
             break
         try:
@@ -95,7 +99,9 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
         except TimeoutError:
             pass
 
-    assert len(received_data) == expected_count, f"Dropped data: got {len(received_data)} bytes, expected {expected_count}"
+    assert len(received_data) == expected_count, (
+        f"Dropped data: got {len(received_data)} bytes, expected {expected_count}"
+    )
 
     # Verify data integrity
     for i in range(expected_count):

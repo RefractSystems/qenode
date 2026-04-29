@@ -234,13 +234,17 @@ cargo run --release
 
 **Injecting a frame directly for testing (no Node 1 QEMU needed):**
 ```python
-import zenoh, struct
+import zenoh
 
 s = zenoh.open(zenoh.Config())
 pub = s.declare_publisher("sim/systemc/frame/node2/rx")
 
 # CanWireFrame: delivery_vtime_ns(8) + size(4) + can_id(4) + can_data(4) = 20 bytes
-frame = struct.pack("<QIII", 1_000_000, 8, 0x42, 0xDEADBEEF)
+vtime = 1_000_000
+sz = 8
+can_id = 0x42
+can_data = 0xDEADBEEF
+frame = vtime.to_bytes(8, 'little') + sz.to_bytes(4, 'little') + can_id.to_bytes(4, 'little') + can_data.to_bytes(4, 'little')
 pub.put(frame)
 s.close()
 ```

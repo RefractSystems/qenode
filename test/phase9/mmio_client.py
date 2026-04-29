@@ -1,5 +1,4 @@
 import socket
-import struct
 
 import vproto
 
@@ -26,22 +25,23 @@ class MMIOClient:
         # Handshake
         hs_out = vproto.VirtmcuHandshake(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION).pack()
         self.sock.sendall(hs_out)
-        hs_in = self.sock.recv(8)
-        if len(hs_in) < 8:
+        hs_in = self.sock.recv(vproto.SIZE_VIRTMCU_HANDSHAKE)
+        if len(hs_in) < vproto.SIZE_VIRTMCU_HANDSHAKE:
             raise Exception("Failed to read handshake")
-        magic, version = struct.unpack("<II", hs_in)
-        if magic != VIRTMCU_PROTO_MAGIC or version != VIRTMCU_PROTO_VERSION:
-            raise Exception(f"Handshake failed: {hex(magic)}, {version}")
+        hs = vproto.VirtmcuHandshake.unpack(hs_in)
+        if hs.magic != VIRTMCU_PROTO_MAGIC or hs.version != VIRTMCU_PROTO_VERSION:
+            raise Exception(f"Handshake failed: {hex(hs.magic)}, {hs.version}")
 
     def _read_msg(self):
         # sysc_msg is 16 bytes: type(4), irq_num(4), data(8)
         data = b""
-        while len(data) < 16:
-            chunk = self.sock.recv(16 - len(data))
+        while len(data) < vproto.SIZE_SYSC_MSG:
+            chunk = self.sock.recv(vproto.SIZE_SYSC_MSG - len(data))
             if not chunk:
                 raise EOFError("Socket closed")
             data += chunk
-        return struct.unpack("<IIQ", data)
+        msg = vproto.SyscMsg.unpack(data)
+        return msg.type, msg.irq_num, msg.data
 
     def write(self, addr, data, size=4, vtime_ns=0):
         # struct mmio_req { uint8_t type; uint8_t size; uint16_t res1; uint32_t res2; uint64_t vtime_ns; uint64_t addr; uint64_t data; }

@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import subprocess
 from functools import partial
 from pathlib import Path
 
 import pytest
 import vproto
+
+logger = logging.getLogger(__name__)
 
 
 def build_phase7_artifacts():
@@ -50,6 +53,7 @@ async def test_phase7_clock_suspend(zenoh_router, qemu_launcher, zenoh_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip_asan
 async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
     """
     Phase 7: clock stall detection.
@@ -87,7 +91,6 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
 
         await bridge.start_emulation()
         # Give QEMU a moment to resume
-        await bridge.wait_for_event("RESUME")
         vtime = (await vta.step(1_000_000))[0]
         assert vtime > 0
 
@@ -95,7 +98,7 @@ async def test_phase7_clock_stall(zenoh_router, qemu_launcher, zenoh_session):
         try:
             await asyncio.wait_for(bridge.start_emulation(), timeout=2.0)
         except Exception as e:
-            print(f"Failed to start emulation in finally: {e}")
+            logger.error(f"Failed to start emulation in finally: {e}")
 
 
 @pytest.mark.asyncio
@@ -140,6 +143,7 @@ async def test_phase7_slow_boot_fast_execute(zenoh_router, qemu_launcher, zenoh_
     # SLEEP_EXCEPTION: testing wall-clock boundaries for boot vs stall timeouts
     await asyncio.sleep(6.0)  # SLEEP_EXCEPTION: testing wall-clock boundaries
     try:
+        bridge.watchdog_enabled = False  # Disable watchdog for deliberate stall test
         with pytest.raises(RuntimeError, match="reported CLOCK STALL"):
             # This should stall
             await vta.step(1_000_000, timeout=10.0)

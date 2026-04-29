@@ -167,6 +167,9 @@ pub trait ClockSyncTransport: Send + Sync {
         timeout: core::time::Duration,
     ) -> Option<(ClockAdvanceReq, Box<dyn ClockSyncResponder>)>;
 
+    /// Sends a virtual time heartbeat signal to external listeners.
+    fn send_vtime_heartbeat(&self, _vtime_ns: u64) {}
+
     /// Closes the transport, unblocking any pending `recv_advance` calls.
     fn close(&self) {}
 }
@@ -430,7 +433,7 @@ pub trait DataTransport: Send + Sync {
 
     /// Performs a synchronous query (Request/Response) on the given topic.
     fn query(&self, _topic: &str, _payload: &[u8]) -> Result<Vec<u8>, String> {
-        Err("Query not supported by this transport".to_string())
+        Err("Query not supported by this transport".to_owned())
     }
 
     /// Closes the transport.

@@ -32,6 +32,11 @@ extern "C" {
     pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>;
     /// A static
     pub static mut virtmcu_cpu_halt_hook: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>;
+
+    /// A setter
+    pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
+    /// A setter
+    pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(cpu: *mut CPUState)>);
     /// A static
     pub static mut virtmcu_get_quantum_timing:
         Option<extern "C" fn(timing: *mut VirtmcuQuantumTiming)>;

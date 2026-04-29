@@ -635,7 +635,7 @@ unsafe fn parse_chardev_options(
     let node = CStr::from_ptr((*opts).node).to_string_lossy().into_owned();
 
     let transport = if (*opts).transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         CStr::from_ptr((*opts).transport).to_string_lossy().into_owned()
     };
@@ -644,7 +644,7 @@ unsafe fn parse_chardev_options(
         if (*opts).router.is_null() { ptr::null() } else { (*opts).router.cast_const() };
 
     let base_topic = if (*opts).topic.is_null() {
-        "virtmcu/uart".to_string()
+        "virtmcu/uart".to_owned()
     } else {
         CStr::from_ptr((*opts).topic).to_string_lossy().into_owned()
     };

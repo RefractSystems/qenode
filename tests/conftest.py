@@ -11,12 +11,14 @@ async def _sim_transport_zenoh(zenoh_router, zenoh_session):
     yield transport
     await transport.stop()
 
+
 @pytest_asyncio.fixture
 async def _sim_transport_unix():
     transport = UnixTransportImpl()
     await transport.start()
     yield transport
     await transport.stop()
+
 
 @pytest_asyncio.fixture(params=["zenoh", "unix"])
 async def sim_transport(request, _sim_transport_zenoh, _sim_transport_unix):

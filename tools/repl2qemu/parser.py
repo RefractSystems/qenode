@@ -1,7 +1,10 @@
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,6 +22,66 @@ class ReplDevice:
     parent: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     interrupts: list[ReplInterrupt] = field(default_factory=list)
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        type_name: str,
+        address_str: str | None = None,
+        parent: str | None = None,
+        properties: dict[str, Any] | None = None,
+        interrupts: list[ReplInterrupt] | None = None,
+    ):
+        """Factory method to create strongly-typed devices based on type_name."""
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "type_name": type_name,
+            "address_str": address_str,
+            "parent": parent,
+        }
+        if properties is not None:
+            kwargs["properties"] = properties
+        if interrupts is not None:
+            kwargs["interrupts"] = interrupts
+
+        if type_name in ("IRQControllers.GIC", "IRQControllers.ARM_GenericInterruptController"):
+            return GicDevice(**kwargs)
+
+        if type_name == "IRQControllers.NVIC":
+            return NvicDevice(**kwargs)
+
+        if type_name == "Memory.MappedMemory":
+            return MemoryDevice(**kwargs)
+
+        if type_name == "mmio-socket-bridge":
+            return MmioBridgeDevice(**kwargs)
+
+        if type_name in ("ieee802154", "telemetry"):
+            return WirelessDevice(**kwargs)
+
+        return ReplDevice(**kwargs)
+
+
+@dataclass
+class GicDevice(ReplDevice):
+    interrupt_cells: int = 3
+
+@dataclass
+class NvicDevice(ReplDevice):
+    interrupt_cells: int = 1
+
+@dataclass
+class MemoryDevice(ReplDevice):
+    pass # we'll migrate size parsing here
+
+@dataclass
+class MmioBridgeDevice(ReplDevice):
+    pass
+
+@dataclass
+class WirelessDevice(ReplDevice):
+    pass
 
 
 @dataclass
@@ -64,7 +127,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
                     included_platform = parse_repl(f.read(), str(Path(full_path).parent))
                     platform.devices.extend(included_platform.devices)
             else:
-                print(f"Warning: Included file not found: {full_path}")
+                logger.warning(f"Warning: Included file not found: {full_path}")
             continue
 
         # Start of a new device block (no leading whitespace)
@@ -80,7 +143,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
                     if addr.lower() == "sysbus":
                         addr = None
 
-                current_device = ReplDevice(name, type_name, addr)
+                current_device = ReplDevice.create(name, type_name, addr)
                 platform.devices.append(current_device)
             else:
                 # Could be a generic sysbus block or tag block, ignore
@@ -142,12 +205,13 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
 if __name__ == "__main__":
     import sys
 
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
     with Path(filename).open() as f:
         plat = parse_repl(f.read())
         for dev in plat.devices:
-            print(f"{dev.name} ({dev.type_name}) @ {dev.address_str}")
+            logger.info(f"{dev.name} ({dev.type_name}) @ {dev.address_str}")
             for k, v in dev.properties.items():
-                print(f"  {k}: {v}")
+                logger.info(f"  {k}: {v}")
             for irq in dev.interrupts:
-                print(f"  IRQ {irq.source_range} -> {irq.target_device}@{irq.target_range}")
+                logger.info(f"  IRQ {irq.source_range} -> {irq.target_device}@{irq.target_range}")

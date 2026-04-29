@@ -1,14 +1,18 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(WORKSPACE_DIR)
 
+logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+logger = logging.getLogger(__name__)
+
 
 async def main():
-    print("Connecting to MCP server...")
+    logger.info("Connecting to MCP server...")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -24,7 +28,8 @@ async def main():
             line = await proc.stderr.readline()
             if not line:
                 break
-            print(f"Server stderr: {line.decode().strip()}", file=sys.stderr)
+            sys.stderr.write(f"[server] {line.decode()}")
+            sys.stderr.flush()
 
     asyncio.create_task(log_stderr())  # noqa: RUF006
 
@@ -56,7 +61,7 @@ async def main():
     await send_json({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     # Provision invalid board
-    print("Provisioning invalid board (should fail)...")
+    logger.info("Provisioning invalid board (should fail)...")
     await send_json(
         {
             "jsonrpc": "2.0",
@@ -71,11 +76,11 @@ async def main():
     res = await recv_json()
     content = res["result"]["content"][0]["text"]
     assert "error" in content or "Error" in content
-    print(f"Received expected error: {content}")
+    logger.info(f"Received expected error: {content}")
 
     proc.terminate()
     await proc.wait()
-    print("Validation test passed!")
+    logger.info("Validation test passed!")
 
 
 if __name__ == "__main__":

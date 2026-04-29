@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -6,6 +7,8 @@ sys.path.append(str(Path(SCRIPT_DIR) / "telemetry_fbs"))
 
 import zenoh  # noqa: E402
 from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def on_sample(sample):
@@ -37,9 +40,9 @@ def on_sample(sample):
             type_str = "UNKNOWN"
             id_str = f"id={ev_id}"
 
-        print(f"[{ts:15}] {type_str:10} {id_str} val={val:3}")
+        logger.info(f"[{ts:15}] {type_str:10} {id_str} val={val:3}")
     except Exception as e:
-        print(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
+        logger.warning(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
 
 
 def main():
@@ -51,7 +54,7 @@ def main():
     args = parser.parse_args()
 
     topic = f"sim/telemetry/trace/{args.node_id}"
-    print(f"Listening on {topic}...")
+    logger.info(f"Listening on {topic}...")
 
     conf = zenoh.Config()
     if args.router:

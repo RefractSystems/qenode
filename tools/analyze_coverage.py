@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-import struct
+import logging
 import sys
 from bisect import bisect_left, bisect_right
 from pathlib import Path
@@ -8,10 +8,12 @@ from pathlib import Path
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 
+logger = logging.getLogger(__name__)
+
 
 def parse_drcov(filename):
     if not Path(filename).exists():
-        print(f"Error: Coverage file {filename} not found")
+        logger.error(f"Error: Coverage file {filename} not found")
         return []
 
     with Path(filename).open("rb") as f:
@@ -21,7 +23,7 @@ def parse_drcov(filename):
     marker = b"BB Table: "
     idx = content.find(marker)
     if idx == -1:
-        print("Error: Could not find BB Table in drcov file")
+        logger.error("Error: Could not find BB Table in drcov file")
         return []
 
     # Find number of BBs
@@ -30,7 +32,7 @@ def parse_drcov(filename):
     try:
         count = int(count_str.split()[0])
     except Exception:
-        print(f"Error: Could not parse BB count: {count_str}")
+        logger.error(f"Error: Could not parse BB count: {count_str}")
         return []
 
     data = content[end_idx + 1 :]
@@ -41,7 +43,9 @@ def parse_drcov(filename):
         entry = data[i * entry_size : (i + 1) * entry_size]
         if len(entry) < entry_size:
             break
-        start, size, _mod_id = struct.unpack("<IHH", entry)
+        start = int.from_bytes(entry[0:4], "little")
+        size = int.from_bytes(entry[4:6], "little")
+        _mod_id = int.from_bytes(entry[6:8], "little")
         bbs.append((start, start + size))
 
     return bbs
@@ -66,7 +70,7 @@ def merge_intervals(intervals):
 def get_elf_symbols(elf_path):
     symbols = []
     if not Path(elf_path).exists():
-        print(f"Error: ELF file {elf_path} not found")
+        logger.error(f"Error: ELF file {elf_path} not found")
         return []
 
     with Path(elf_path).open("rb") as f:
@@ -133,21 +137,21 @@ def main():
 
     bb_intervals = parse_drcov(args.drcov)
     if not bb_intervals:
-        print("No execution data found.")
+        logger.info("No execution data found.")
         sys.exit(1)
 
     executed_intervals = merge_intervals(bb_intervals)
 
     symbols = get_elf_symbols(args.elf)
     if not symbols:
-        print("No symbols found to analyze.")
+        logger.info("No symbols found to analyze.")
         sys.exit(1)
 
-    print(f"Coverage Report for {args.elf}")
-    print(f"BBs: {len(bb_intervals)}, Functions: {len(symbols)}")
-    print("-" * 60)
-    print(f"{'Function Name':<30} {'Executed?':<10} {'Coverage':<10}")
-    print("-" * 60)
+    logger.info(f"Coverage Report for {args.elf}")
+    logger.info(f"BBs: {len(bb_intervals)}, Functions: {len(symbols)}")
+    logger.info("-" * 60)
+    logger.info(f"{'Function Name':<30} {'Executed?':<10} {'Coverage':<10}")
+    logger.info("-" * 60)
 
     total_func_size = 0
     total_exec_size = 0
@@ -173,19 +177,20 @@ def main():
 
     # Print top functions or all if verbose
     for name, exec_status, cov in results:
-        print(f"{name:<30} {exec_status:<10} {cov:>8.1f}%")
+        logger.info(f"{name:<30} {exec_status:<10} {cov:>8.1f}%")
 
-    print("-" * 60)
+    logger.info("-" * 60)
     total_coverage = (total_exec_size / total_func_size * 100) if total_func_size > 0 else 0
-    print(f"{'TOTAL':<30} {'':<10} {total_coverage:>8.1f}%")
-    print("-" * 60)
+    logger.info(f"{'TOTAL':<30} {'':<10} {total_coverage:>8.1f}%")
+    logger.info("-" * 60)
 
     if args.fail_under and total_coverage < args.fail_under:
-        print(f"FAILED: Coverage {total_coverage:.1f}% is below required {args.fail_under:.1f}%")
+        logger.error(f"FAILED: Coverage {total_coverage:.1f}% is below required {args.fail_under:.1f}%")
         sys.exit(1)
 
-    print("Coverage check passed.")
+    logger.info("Coverage check passed.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

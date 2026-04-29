@@ -168,8 +168,8 @@ docker run --rm ghcr.io/refractsystems/virtmcu/builder:dev-amd64 bash -c "
 # runtime
 docker run --rm ghcr.io/refractsystems/virtmcu/runtime:dev-amd64 bash -c "
     qemu-system-arm --version
-    python3 -c 'import zenoh; print(zenoh.__version__)'
-    python3 -c 'import flatbuffers; print(flatbuffers.__version__)'
+    python3 -c 'import zenoh, sys; sys.stdout.write(zenoh.__version__ + "\\n")'
+    python3 -c 'import flatbuffers, sys; sys.stdout.write(flatbuffers.__version__ + "\\n")'
 "
 ```
 
@@ -249,7 +249,7 @@ node --version
 
 # Confirm the workspace virtual environment is active
 which python                # should be /workspace/.venv/bin/python
-python -c "import zenoh; print(zenoh.__version__)"
+python -c "import zenoh, sys; sys.stdout.write(zenoh.__version__ + '\n')"
 ```
 
 ---

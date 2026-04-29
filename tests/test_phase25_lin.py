@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmwa
 sys.path.append(str(Path.cwd() / "tools/lin_fbs"))
 
 from virtmcu.lin import LinFrame, LinMessageType
+
+logger = logging.getLogger(__name__)
 
 
 def create_lin_frame(vtime_ns, msg_type, data):
@@ -37,11 +40,7 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
 
     # 1. Build ELF
     kernel = Path(tmpdir) / "lin_echo.elf"
-    compile_firmware(
-        [Path("test/phase25/lin_echo.S")],
-        kernel,
-        linker_script=Path("test/phase25/lin_echo.ld")
-    )
+    compile_firmware([Path("test/phase25/lin_echo.S")], kernel, linker_script=Path("test/phase25/lin_echo.ld"))
 
     # Use unique topic to avoid interference
     import uuid
@@ -53,11 +52,8 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
     dtb = Path(tmpdir) / "lin_test.dtb"
     compile_dtb(
         Path("test/phase25/lin_test.dts"),
-        {
-            "tcp/127.0.0.1:7447": sim_transport.dtb_router_endpoint(),
-            '"sim/lin"': f'"{lin_topic}"'
-        },
-        dtb
+        {"tcp/127.0.0.1:7447": sim_transport.dtb_router_endpoint(), '"sim/lin"': f'"{lin_topic}"'},
+        dtb,
     )
     extra_args = [
         "-cpu",
@@ -84,31 +80,31 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
             msg_type = frame.Type()
             data_len = frame.DataLength()
             data = bytes([frame.Data(i) for i in range(data_len)])
-            print(f"Received from QEMU: type={msg_type}, data={data!r}")
+            logger.info(f"Received from QEMU: type={msg_type}, data={data!r}")
             received.append((msg_type, data))
         except Exception as e:
-            print(f"Callback error: {e}")
+            logger.error(f"Callback error: {e}")
 
     tx_topic = f"{lin_topic}/0/tx"
     rx_topic = f"{lin_topic}/0/rx"
 
     await sim_transport.subscribe(tx_topic, on_msg)
 
-    print(f"Starting QEMU with topic {lin_topic}...")
+    logger.info(f"Starting QEMU with topic {lin_topic}...")
     await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
     try:
         # Initial clock sync
         await sim_transport.step_clock(0)
 
-        print("Sending 'X' to QEMU RX...")
+        logger.info("Sending 'X' to QEMU RX...")
         frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
         await sim_transport.publish(rx_topic, frame)
 
         # Advance clock to process 'X'
         await sim_transport.step_clock(5_000_000)
 
-        print("Sending Break to QEMU RX...")
+        logger.info("Sending Break to QEMU RX...")
         frame = create_lin_frame(6_000_000, LinMessageType.LinMessageType.Break, None)
         await sim_transport.publish(rx_topic, frame)
 
@@ -116,7 +112,7 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
         await sim_transport.step_clock(5_000_000)
 
         # Deterministic check for responses
-        print("Checking responses...")
+        logger.info("Checking responses...")
         found_x = False
         found_b = False
         for _ in range(10):
@@ -133,7 +129,7 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
         assert found_x, f"Failed to receive Echo for 'X', received: {received}"
         assert found_b, f"Failed to receive Echo for Break, received: {received}"
 
-        print("SUCCESS: Phase 25 LIN UART verified.")
+        logger.info("SUCCESS: Phase 25 LIN UART verified.")
 
     finally:
         shutil.rmtree(tmpdir)

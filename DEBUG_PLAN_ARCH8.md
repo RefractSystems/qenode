@@ -15,7 +15,7 @@ To avoid getting stuck on ARCH-8 or similar architectural synchronization tasks,
 ## 2. Visibility & Observability
 - **Rust Debug Logging**: Use `virtmcu_qom::sim_info!` or `sim_trace!` with an `ARCH-8:` prefix in the Rust code to track internal state transitions.
   - Key points: Sending 'done' signal, waiting for 'start', receiving 'start'.
-- **Python Debug Logging**: Use `print(f"DEBUG: ...")` in the test's `coordinator_loop` and main body.
+- **Python Debug Logging**: Use `logger.debug("...")` in the test's `coordinator_loop` and main body.
   - Key points: Receiving 'done', sleeping (delivery delay), sending 'start', VTA step timing.
 - **QEMU STDERR Monitoring**: ALWAYS check the first few lines of QEMU output for "failed to open module" or "undefined symbol". These errors prevent the device from ever being realized, leading to confusing EOF errors in QMP.
 

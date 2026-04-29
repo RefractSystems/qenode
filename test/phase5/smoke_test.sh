@@ -256,7 +256,9 @@ try:
     s.sendall(b"{\"execute\": \"query-status\"}\n")
     data = s.recv(4096).decode("utf-8")
     if "return" not in data:
-        print("Missing return", file=sys.stderr)
+        import logging
+        logging.basicConfig(level=logging.ERROR, stream=sys.stderr, format="%(message)s")
+        logging.getLogger().error("Missing return")
         sys.exit(1)
 except Exception as e:
     import traceback

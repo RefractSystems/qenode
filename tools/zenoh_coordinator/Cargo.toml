@@ -27,3 +27,6 @@ virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
 flatbuffers = "25.12.19"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[lints.clippy]
+str_to_string = "deny"

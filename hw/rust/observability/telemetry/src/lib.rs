@@ -18,13 +18,6 @@ use virtmcu_qom::qom::{
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, define_prop_string, define_prop_uint32, device_class};
 
-/* ── FFI Types ────────────────────────────────────────────────────────────── */
-
-extern "C" {
-    static mut virtmcu_cpu_halt_hook: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>;
-    static mut virtmcu_irq_hook: Option<extern "C" fn(opaque: *mut c_void, n: c_int, level: c_int)>;
-}
-
 /* ── QOM Object ───────────────────────────────────────────────────────────── */
 
 /// Virtmcu telemetry device.
@@ -147,7 +140,7 @@ unsafe extern "C" fn telemetry_realize(dev: *mut c_void, errp: *mut *mut c_void)
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
     let transport_name = if s.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
     };
@@ -165,8 +158,8 @@ unsafe extern "C" fn telemetry_realize(dev: *mut c_void, errp: *mut *mut c_void)
             Some(cache_irq_paths_cb),
             ptr::null_mut(),
         );
-        virtmcu_cpu_halt_hook = Some(telemetry_cpu_halt_cb);
-        virtmcu_irq_hook = Some(telemetry_irq_cb);
+        virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(Some(telemetry_cpu_halt_cb));
+        virtmcu_qom::irq::virtmcu_set_irq_hook(Some(telemetry_irq_cb));
     }
 }
 
@@ -175,8 +168,8 @@ unsafe extern "C" fn telemetry_instance_finalize(obj: *mut Object) {
 
     if core::ptr::eq(s, GLOBAL_TELEMETRY.load(Ordering::Acquire)) {
         unsafe {
-            virtmcu_cpu_halt_hook = None;
-            virtmcu_irq_hook = None;
+            virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(None);
+            virtmcu_qom::irq::virtmcu_set_irq_hook(None);
             GLOBAL_TELEMETRY.store(ptr::null_mut(), Ordering::Release);
         }
     }

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -6,7 +7,15 @@ import sys
 import time
 from pathlib import Path
 
-import vproto
+# Add tools directory to sys.path to allow importing vproto
+SCRIPT_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = SCRIPT_DIR.parent.parent / "tools"
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.append(str(TOOLS_DIR))
+
+import vproto  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -109,40 +118,41 @@ def main():
             continue
 
     if not conn:
-        print("QEMU did not connect")
+        logger.info("QEMU did not connect")
         qemu_proc.terminate()
         sys.exit(1)
 
     hs = conn.recv(8)
     conn.sendall(hs)
 
-    print("Starting IRQ stress test...", flush=True)
+    logger.info("Starting IRQ stress test...", flush=True)
     NUM_IRQS = 1000  # noqa: N806
     start_time = time.time()
     for i in range(NUM_IRQS):
         conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
         conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
         if i % 100 == 0:
-            print(f"Sent {i} IRQs...", flush=True)
+            logger.info(f"Sent {i} IRQs...", flush=True)
             # Periodically check QMP responsiveness
             resp = run_qmp_cmd(qmp_path, {"execute": "query-status"})
             if "return" not in resp:
-                print(f"QMP unresponsive at {i} IRQs", flush=True)
+                logger.info(f"QMP unresponsive at {i} IRQs", flush=True)
                 break
         # time.sleep(0.0001) # Very small sleep to allow QEMU to breathe if needed
 
     end_time = time.time()
-    print(f"Finished {NUM_IRQS} IRQ pairs in {end_time - start_time:.2f}s")
+    logger.info(f"Finished {NUM_IRQS} IRQ pairs in {end_time - start_time:.2f}s")
 
     # Verify final state
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
-    print("Final PIC state:\n", resp.get("return", ""))
+    logger.info("Final PIC state:\n", resp.get("return", ""))
 
     qemu_proc.terminate()
     conn.close()
     server.close()
-    print("Stress test PASSED!")
+    logger.info("Stress test PASSED!")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

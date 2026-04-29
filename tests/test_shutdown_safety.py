@@ -1,9 +1,12 @@
 import asyncio
 import contextlib
+import logging
+import typing
 from pathlib import Path
 
 import pytest
 
+from tools.testing.utils import wait_for_file_creation
 from tools.vproto import (
     SIZE_MMIO_REQ,
     SIZE_VIRTMCU_HANDSHAKE,
@@ -12,6 +15,8 @@ from tools.vproto import (
     MmioReq,
     VirtmcuHandshake,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
@@ -51,7 +56,7 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
         except asyncio.IncompleteReadError:
             pass
         except Exception as e:
-            print(f"MMIO Server Error: {e}")
+            logger.error(f"MMIO Server Error: {e}")
         finally:
             writer.close()
             with contextlib.suppress(Exception):
@@ -60,19 +65,18 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
     server = await asyncio.start_unix_server(handle_mmio, mmio_sock)
     server_task = asyncio.create_task(server.serve_forever())
 
-    # Wait for socket
-    for _ in range(50):
-        if Path(mmio_sock).exists():
-            break
-        await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: waiting for server socket
+    # Wait for socket deterministically
+    await wait_for_file_creation(mmio_sock)
 
     try:
         # Launch QEMU
         qemu = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
         # Wait for the first MMIO request to be received by our server
+        from tools.testing.utils import get_time_multiplier
+
         try:
-            await asyncio.wait_for(req_received.wait(), timeout=10.0)
+            await asyncio.wait_for(req_received.wait(), timeout=10.0 * get_time_multiplier())
         except TimeoutError:
             pytest.fail("Firmware did not perform expected MMIO operation")
 
@@ -99,13 +103,47 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
         f"remote-port-bridge,id=rp0,socket-path={rp_sock},region-size=4096,base-addr=0x10000000",
     ]
 
-    # Remote Port Hello packet
-    from struct import Struct
+    import ctypes
 
-    rp_pkt_hdr_struct = Struct(">IIIII")  # cmd, len, id, flags, dev
-    rp_version_struct = Struct(">HH")
-    rp_caps_struct = Struct(">IHH")
-    rp_pkt_hello_size = rp_pkt_hdr_struct.size + rp_version_struct.size + rp_caps_struct.size
+    class RpPktHdr(ctypes.BigEndianStructure):
+        _pack_ = 1
+        _fields_: typing.ClassVar = [
+            ("cmd", ctypes.c_uint32),
+            ("len", ctypes.c_uint32),
+            ("id", ctypes.c_uint32),
+            ("flags", ctypes.c_uint32),
+            ("dev", ctypes.c_uint32),
+        ]
+
+    class RpVersion(ctypes.BigEndianStructure):
+        _pack_ = 1
+        _fields_: typing.ClassVar = [
+            ("major", ctypes.c_uint16),
+            ("minor", ctypes.c_uint16),
+        ]
+
+    class RpCaps(ctypes.BigEndianStructure):
+        _pack_ = 1
+        _fields_: typing.ClassVar = [
+            ("cap", ctypes.c_uint32),
+            ("len", ctypes.c_uint16),
+            ("res", ctypes.c_uint16),
+        ]
+
+    class RpPktBusaccess(ctypes.BigEndianStructure):
+        _pack_ = 1
+        _fields_: typing.ClassVar = [
+            ("hdr", RpPktHdr),
+            ("timestamp", ctypes.c_uint64),
+            ("attrs", ctypes.c_uint64),
+            ("addr", ctypes.c_uint64),
+            ("len", ctypes.c_uint32),
+            ("width", ctypes.c_uint32),
+            ("stream_width", ctypes.c_uint32),
+            ("master_id", ctypes.c_uint16),
+        ]
+
+    rp_pkt_hello_size = ctypes.sizeof(RpPktHdr) + ctypes.sizeof(RpVersion) + ctypes.sizeof(RpCaps)
 
     req_received = asyncio.Event()
 
@@ -118,15 +156,13 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
             await writer.drain()
 
             # Read first bus access request but DO NOT respond
-            # RpPktBusaccess header is RP_PKT_HDR_STRUCT + timestamp(Q) + attrs(Q) + addr(Q) + len(I) + width(I) + stream_width(I) + master_id(H)
-            rp_pkt_busaccess_size = rp_pkt_hdr_struct.size + 8 + 8 + 8 + 4 + 4 + 4 + 2
-            await reader.readexactly(rp_pkt_busaccess_size)
+            await reader.readexactly(ctypes.sizeof(RpPktBusaccess))
             req_received.set()
 
             # ... we just wait
             await asyncio.sleep(60)  # SLEEP_EXCEPTION: block vCPU intentionally
         except Exception as e:
-            print(f"RP Server Error: {e}")
+            logger.error(f"RP Server Error: {e}")
         finally:
             writer.close()
 
@@ -136,8 +172,10 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
     try:
         qemu = await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
+        from tools.testing.utils import get_time_multiplier
+
         try:
-            await asyncio.wait_for(req_received.wait(), timeout=10.0)
+            await asyncio.wait_for(req_received.wait(), timeout=10.0 * get_time_multiplier())
         except TimeoutError:
             pytest.fail("Firmware did not perform expected RP operation")
 

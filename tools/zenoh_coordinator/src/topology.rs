@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Ethernet,
@@ -57,16 +57,16 @@ pub enum TopologyError {
     YamlError(serde_yaml::Error),
 }
 
-impl std::fmt::Display for TopologyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TopologyError::IoError(e) => write!(f, "IO Error: {}", e),
-            TopologyError::YamlError(e) => write!(f, "YAML Error: {}", e),
+            TopologyError::IoError(e) => write!(f, "IO Error: {e}"),
+            TopologyError::YamlError(e) => write!(f, "YAML Error: {e}"),
         }
     }
 }
 
-impl std::error::Error for TopologyError {}
+impl core::error::Error for TopologyError {}
 
 impl From<std::io::Error> for TopologyError {
     fn from(err: std::io::Error) -> Self {
@@ -211,8 +211,8 @@ topology:
         let topo = world.topology.unwrap();
         assert_eq!(topo.global_seed, Some(42));
         assert_eq!(topo.links.len(), 2);
-        assert_eq!(topo.links[0].nodes, vec!["0".to_string(), "1".to_string()]);
-        assert_eq!(topo.links[1].nodes, vec!["2".to_string(), "3".to_string()]);
+        assert_eq!(topo.links[0].nodes, vec!["0".to_owned(), "1".to_owned()]);
+        assert_eq!(topo.links[1].nodes, vec!["2".to_owned(), "3".to_owned()]);
     }
 
     #[test]
@@ -221,7 +221,7 @@ topology:
             global_seed: None,
             wire_links: vec![WireLink {
                 protocol: Protocol::Uart,
-                nodes: vec!["0".to_string(), "1".to_string()],
+                nodes: vec!["0".to_owned(), "1".to_owned()],
                 baud: None,
             }],
             wireless_medium: None,
@@ -253,7 +253,7 @@ topology:
             global_seed: None,
             wire_links: vec![],
             wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_string(),
+                medium: "ieee802154".to_owned(),
                 nodes: vec![],
                 max_range_m: 10.0,
             }),
@@ -264,10 +264,10 @@ topology:
         };
 
         tg.update_positions(vec![
-            ("0".to_string(), [0.0, 0.0, 0.0]),
-            ("1".to_string(), [5.0, 0.0, 0.0]),  // Dist 5
-            ("2".to_string(), [10.0, 0.0, 0.0]), // Dist 10 (on boundary)
-            ("3".to_string(), [11.0, 0.0, 0.0]), // Dist 11 (out of range)
+            ("0".to_owned(), [0.0, 0.0, 0.0]),
+            ("1".to_owned(), [5.0, 0.0, 0.0]),  // Dist 5
+            ("2".to_owned(), [10.0, 0.0, 0.0]), // Dist 10 (on boundary)
+            ("3".to_owned(), [11.0, 0.0, 0.0]), // Dist 11 (out of range)
         ]);
 
         let n0 = tg.rf_neighbors("0");

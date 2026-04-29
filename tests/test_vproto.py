@@ -112,6 +112,7 @@ def test_clock_ready_resp_unpack_error():
     with pytest.raises(ValueError, match="Expected 24 bytes"):
         ClockReadyResp.unpack(b"wrongsize")
 
+
 def test_zenoh_frame_header_pack_unpack():
     hdr = ZenohFrameHeader(delivery_vtime_ns=1000, sequence_number=42, size=1024)
     packed = hdr.pack()
@@ -121,8 +122,15 @@ def test_zenoh_frame_header_pack_unpack():
     assert unpacked.sequence_number == 42
     assert unpacked.size == 1024
 
+
 def test_spi_header_pack_unpack():
-    hdr = ZenohSPIHeader(delivery_vtime_ns=5000, sequence_number=17, size=4, cs=True, cs_index=1, )
+    hdr = ZenohSPIHeader(
+        delivery_vtime_ns=5000,
+        sequence_number=17,
+        size=4,
+        cs=True,
+        cs_index=1,
+    )
     packed = hdr.pack()
     assert len(packed) == 24
     unpacked = ZenohSPIHeader.unpack(packed)
@@ -131,4 +139,3 @@ def test_spi_header_pack_unpack():
     assert unpacked.size == 4
     assert unpacked.cs is True
     assert unpacked.cs_index == 1
-

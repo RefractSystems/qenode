@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import os
-import struct
+import subprocess
 import time
 from pathlib import Path
 
@@ -9,8 +9,10 @@ import pytest
 import zenoh
 
 from tests.conftest import VirtualTimeAuthority, wait_for_zenoh_discovery
+from tools.testing.utils import get_time_multiplier
 
-_STALL_TIMEOUT_MS = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_STALL_TIMEOUT_MS = int(_base_stall_timeout_ms * get_time_multiplier())
 # VTA timeout must exceed the QEMU stall timeout so QEMU can reply before Python gives up.
 _VTA_TIMEOUT_S: float = max(30.0, _STALL_TIMEOUT_MS / 1000.0 + 10.0)
 
@@ -151,7 +153,7 @@ peripherals:
             done_events[2].clear()
 
             quantum += 1
-            start_payload = struct.pack("<Q", quantum)
+            start_payload = quantum.to_bytes(8, "little")
 
             def put_start_1(p: bytes = start_payload) -> None:
                 zenoh_session.put("sim/clock/start/1", p)
@@ -192,4 +194,67 @@ peripherals:
             await coord_task
         await asyncio.to_thread(done_sub.undeclare)
         await asyncio.to_thread(uart_sub.undeclare)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_fast_node_race(zenoh_router):
+    """
+    ARCH-8 / Postmortem: Proves that a node can immediately send 'done' the moment it
+    receives 'start', without the coordinator dropping it due to a race condition with
+    QuantumBarrier.reset().
+    """
+    cmd = [
+        "target/debug/zenoh_coordinator",
+        "--pdes",
+        "--nodes",
+        "1",
+        "--connect",
+        zenoh_router,
+    ]
+    coord_task = asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = await coord_task
+
+    s = zenoh.open(zenoh.Config())
+    # Give coordinator a moment to start and declare liveliness
+    from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
+    await wait_for_zenoh_discovery(s, "sim/coordinator/liveliness")
+
+    done_topic = "sim/coord/0/done"
+    start_topic = "sim/clock/start/0"
+
+    quanta_completed = 0
+    max_quanta = 100
+
+    start_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def on_start(sample):
+        nonlocal quanta_completed
+        # INSTANTLY reply 'done' with the same quantum
+        # If the coordinator reset race exists, it drops this because it hasn't reset yet!
+        s.put(done_topic, sample.payload.to_bytes())
+        quanta_completed += 1
+        loop.call_soon_threadsafe(start_event.set)
+
+    sub = s.declare_subscriber(start_topic, on_start)
+
+    # Kickstart the coordinator
+    s.put("sim/coord/0/done", (0).to_bytes(8, "little"))
+
+    try:
+        # Wait for 100 quanta to fly by. If race condition exists, this will hang infinitely.
+        async with asyncio.timeout(5.0):
+            while quanta_completed < max_quanta:
+                await start_event.wait()
+                start_event.clear()
+    except TimeoutError:
+        proc.terminate()
+        await proc.wait()
+        pytest.fail(f"Coordinator stalled after {quanta_completed} quanta. Race condition likely triggered.")
+
+
+    proc.terminate()
+    await proc.wait()
+    sub.undeclare()
+    s.close()
 

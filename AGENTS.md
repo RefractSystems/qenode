@@ -56,10 +56,9 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 - `2` ZENOH_ERROR: transport layer failure.
 
 ### Stall-Timeout Contract
-- **Never hardcode `stall-timeout=<ms>` in test `extra_args`** unless the test validates stall detection (e.g., `test_phase7_clock_stall`). Short values cause spurious ASan stalls.
-- `clock` reads `VIRTMCU_STALL_TIMEOUT_MS` when no explicit value is set (CI: 120 000 ms; ASan CI: 300 000 ms; default: 5 000 ms).
-- Python `VirtualTimeAuthority.step(timeout=...)` must exceed the QEMU stall timeout. `conftest.py` computes this automatically — do not pass a shorter explicit value.
-- Under ASan/UBSan, large quanta (e.g., 100 ms) can take several minutes of wall time. Do NOT "fix" by increasing `stall-timeout` inline or catching `RuntimeError` silently.
+- **Never hardcode `stall-timeout=<ms>` in test `extra_args`** unless validating stall detection explicitly.
+- **INFRA-6 (Timeout Multiplier)**: Timeouts dynamically scale based on the environment (e.g., 5.0x under ASan). The `qemu_launcher` automatically injects the appropriately scaled `stall-timeout` via `conftest_core.py::get_time_multiplier()`.
+- **Logical Timeouts**: In test code, pass ideal *logical* timeouts to `vta.step(timeout=10.0)` or `bridge.wait_for_line(timeout=10.0)`. The framework will mathematically stretch these into real-world bounds transparently. Do NOT use massive arbitrary timeouts like `timeout=500` to fix slow CI runners.
 
 ---
 
@@ -146,7 +145,7 @@ virtmcu/
 | Layer | Language | Framework | Purpose |
 | :--- | :--- | :--- | :--- |
 | **White-Box Internals** | **Rust** | `cargo test` | State machines, layout validation, protocol parsing, FFI boundaries. |
-| **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration, QMP, UART verification, end-to-end regression. |
+| **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration, QMP, UART verification, end-to-end regression. Uses `SimulationTransport` (ARCH-19) for transport agnosticism. |
 | **Thin CI Wrappers** | **Bash** | `make test` / `.sh` | 2-3 line entry points only — invoke `pytest` or `cargo test`. |
 
 ### Parallel Execution Rules (`pytest -n auto` — all tests MUST comply)
@@ -221,9 +220,20 @@ Sharing `target/` between host and container corrupts Cargo fingerprints. See `d
 - Agents MUST NOT lower lint strictness, coverage, or security gates without explicit written human consent.
 - In `--yolo` mode: only *increase* quality. Never suppress warnings (`#[allow(...)]`, `noqa`) or bypass the type system.
 
-### 9. No Polling / Sleep Avoidance
+### 9. Logging Strictness (No Print Statements)
+- BANNED: `print()` in Python (outside of explicit CLI tools excluded in `pyproject.toml`) and `println!`/`eprintln!` in Rust.
+- REQUIRED: Use structured logging (`logger.debug`, `logger.info`, etc. via the `logging` module in Python) and VirtMCU simulation log macros (`sim_info!`, `sim_err!`, etc. from `virtmcu_qom` in Rust).
+- CI enforcement: The `T201` Ruff rule enforces no `print()` statements in Python.
+
+### 10. Protocol Serialization (No Manual Struct Packing)
+- BANNED: Manual `struct.pack()`, `struct.unpack()`, or `struct.unpack_from()` for core simulation protocols (`MmioReq`, `ClockAdvanceReq`, `ZenohFrameHeader`, etc.).
+- REQUIRED: Use `vproto.py` (which uses FlatBuffers) for all core protocol serialization and deserialization.
+- CI enforcement: `Makefile` `lint-python` target greps for forbidden `struct` calls.
+
+### 11. No Polling / Sleep Avoidance
 - BANNED: `std::thread::sleep`, `time.sleep()`, or `asyncio.sleep()` in hot paths, MMIO, network callbacks, or tests. All test synchronization MUST be deterministic (e.g., using `vta.step()`, QMP events, or Zenoh `recv_async()`).
 - CI enforcement: `grep -r "thread::sleep" hw/rust/` and `grep -r "asyncio.sleep" tests/` must be zero. Exception: `# SLEEP_EXCEPTION: <reason>`.
+- Use `bridge.wait_for_line(..., timeout=...)` or `bridge.wait_for_event(...)` which leverage `asyncio.Event` signaling rather than busy-wait spinloops (ARCH-20).
 - Rust: use `condvar.wait_timeout()` keyed on `shutdown: Arc<AtomicBool>`.
 - Python tests: use `TimeAuthority` for virtual time; Zenoh Pub/Sub for signaling.
 

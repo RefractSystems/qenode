@@ -17,7 +17,7 @@ async fn main() {
 
     let mut parser = cyber_bridge::resd_parser::ResdParser::new(resd_file);
     if !parser.init() {
-        eprintln!("[RESD Replay] Failed to parse {}", resd_file);
+        eprintln!("[RESD Replay] Failed to parse {resd_file}");
         std::process::exit(1);
     }
 
@@ -25,7 +25,7 @@ async fn main() {
     let last_ts_ns = parser.get_last_timestamp();
 
     if all_sensors.is_empty() {
-        eprintln!("[RESD Replay] No sensor channels found in {}", resd_file);
+        eprintln!("[RESD Replay] No sensor channels found in {resd_file}");
         std::process::exit(1);
     }
 
@@ -44,12 +44,9 @@ async fn main() {
     let session = zenoh::open(config).await.unwrap();
 
     println!("Zenoh session opened successfully.");
-    let topic_prefix = env::var("ZENOH_TOPIC_PREFIX").unwrap_or_else(|_| "sim/clock".to_string());
-    let advance_topic = format!("{}/advance/{}", topic_prefix, node_id);
-    println!(
-        "[RESD Replay] Node {}: Advance topic: {}",
-        node_id, advance_topic
-    );
+    let topic_prefix = env::var("ZENOH_TOPIC_PREFIX").unwrap_or_else(|_| "sim/clock".to_owned());
+    let advance_topic = format!("{topic_prefix}/advance/{node_id}");
+    println!("[RESD Replay] Node {node_id}: Advance topic: {advance_topic}");
     let mut current_vtime_ns = 0;
 
     // Simulate stepping until last_ts_ns
@@ -87,8 +84,7 @@ async fn main() {
 
         if !got_reply {
             eprintln!(
-                "[RESD Replay] Node {}: Did not receive ClockReadyPayload for vtime {}",
-                node_id, current_vtime_ns
+                "[RESD Replay] Node {node_id}: Did not receive ClockReadyPayload for vtime {current_vtime_ns}"
             );
             std::process::exit(1);
         }
@@ -112,8 +108,5 @@ async fn main() {
         }
     }
 
-    println!(
-        "[RESD Replay] Reached end of simulation ({} ns). Terminating.",
-        current_vtime_ns
-    );
+    println!("[RESD Replay] Reached end of simulation ({current_vtime_ns} ns). Terminating.");
 }

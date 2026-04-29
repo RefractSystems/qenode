@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 import time
@@ -5,12 +6,14 @@ import time
 import vproto
 import zenoh
 
+logger = logging.getLogger(__name__)
+
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
 config = zenoh.Config()
 config.insert_json5("mode", '"client"')
 config.insert_json5("connect/endpoints", f'["{router}"]')
 session = zenoh.open(config)
-print("[Stress] Connected to Zenoh.")
+logger.info("[Stress] Connected to Zenoh.")
 
 
 def publish_chardev():
@@ -40,5 +43,5 @@ t2.start()
 t1.join()
 t2.join()
 
-print("[Stress] Finished publishing 2000 events.")
+logger.info("[Stress] Finished publishing 2000 events.")
 session.close()

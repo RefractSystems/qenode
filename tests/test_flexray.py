@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -6,6 +7,8 @@ import pytest
 import zenoh
 
 from tests.conftest import TimeAuthority
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
@@ -165,7 +168,7 @@ async def test_flexray_zenoh_tx(zenoh_router, qemu_launcher, zenoh_session):
         frame = FlexRayFrame.GetRootAs(buf, 0)
 
         data = bytes(frame.Data(i) for i in range(frame.DataLength()))
-        print(f"[flexray] Received Zenoh frame: ID={frame.FrameId()}, Data={data.hex()}")
+        logger.info(f"[flexray] Received Zenoh frame: ID={frame.FrameId()}, Data={data.hex()}")
 
         assert frame.FrameId() == 10
         assert b"\xde\xad\xc0\xde" in data
@@ -248,7 +251,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
         # Check wrhs3 property for success signal
         wrhs3 = await bridge.qmp.execute("qom-get", {"path": qom_path, "property": "wrhs3"})
         if wrhs3 == 0x12345678:
-            print(f"[flexray] Success signal detected at {vta.current_vtimes[0]}ns: 0x{wrhs3:08x}")
+            logger.info(f"[flexray] Success signal detected at {vta.current_vtimes[0]}ns: 0x{wrhs3:08x}")
             success = True
             break
 

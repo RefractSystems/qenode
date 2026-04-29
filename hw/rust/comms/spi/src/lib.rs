@@ -133,7 +133,7 @@ pub unsafe extern "C" fn spi_realize(dev: *mut SSIPeripheral, errp: *mut *mut c_
     };
 
     let transport_name = if s.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
     };

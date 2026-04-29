@@ -1,10 +1,13 @@
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from .cli_generator import generate_cli
 from .fdt_emitter import FdtEmitter, compile_dtb
 from .parser import parse_repl
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -20,13 +23,13 @@ def main():
         with Path(args.input).open() as f:
             content = f.read()
     except FileNotFoundError:
-        print(f"Error: File '{args.input}' not found.", file=sys.stderr)
+        logger.error(f"Error: File '{args.input}' not found.")
         sys.exit(1)
 
-    print(f"Parsing REPL: {args.input}...")
+    logger.info(f"Parsing REPL: {args.input}...")
     platform = parse_repl(content)
 
-    print(f"Generating Device Tree for {len(platform.devices)} devices...")
+    logger.info(f"Generating Device Tree for {len(platform.devices)} devices...")
     emitter = FdtEmitter(platform)
     dts = emitter.generate_dts()
 
@@ -34,19 +37,20 @@ def main():
         with Path(args.out_arch).open("w") as f:
             f.write(emitter.arch)
 
-    print(f"Compiling into '{args.out_dtb}'...")
+    logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):
-        print("✓ Success.")
+        logger.info("✓ Success.")
     else:
-        print("FAILED.")
+        logger.error("FAILED.")
         sys.exit(1)
 
     if args.print_cmd:
         cli_args, arch = generate_cli(platform, args.out_dtb)
         qemu_bin = "qemu-system-arm" if arch == "arm" else "qemu-system-riscv64"
-        print("\nRecommended QEMU command:")
-        print(f"{qemu_bin} {' '.join(cli_args)}")
+        logger.info("\nRecommended QEMU command:")
+        logger.info(f"{qemu_bin} {' '.join(cli_args)}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

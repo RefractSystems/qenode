@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import subprocess
 import threading
 import time
@@ -7,6 +8,8 @@ from pathlib import Path
 import vproto
 import zenoh
 from mmio_client import MMIOClient
+
+logger = logging.getLogger(__name__)
 
 ADAPTER_PATH = "./tools/systemc_adapter/build/adapter"
 SOCKET_PATH = "/tmp/stress_test.sock"
@@ -47,11 +50,11 @@ def connect_to_adapter(path, timeout=10):
 
 
 def test_rapid_mmio():
-    print("--- Testing Rapid MMIO ---")
+    logger.info("--- Testing Rapid MMIO ---")
     with run_adapter("mmio"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
-            print("Adapter failed to create socket or handshake failed")
+            logger.info("Adapter failed to create socket or handshake failed")
             return
 
         try:
@@ -59,26 +62,26 @@ def test_rapid_mmio():
             count = 100
             for i in range(count):
                 if i % 10 == 0:
-                    print(f"  MMIO {i}/{count}...")
+                    logger.info(f"  MMIO {i}/{count}...")
                 client.write(i % 256 * 4, i, vtime_ns=i * 100)
                 val = client.read(i % 256 * 4, vtime_ns=i * 100 + 50)
                 if val != i:
-                    print(f"Mismatch at {i}: {val} != {i}")
+                    logger.info(f"Mismatch at {i}: {val} != {i}")
                     break
 
             end_time = time.time()
-            print(f"Finished {count} MMIO R/W cycles in {end_time - start_time:.2f}s")
+            logger.info(f"Finished {count} MMIO R/W cycles in {end_time - start_time:.2f}s")
         finally:
             if client:
                 client.close()
 
 
 def test_rapid_can():
-    print("--- Testing Rapid CAN ---")
+    logger.info("--- Testing Rapid CAN ---")
     with run_adapter("can", "stress-node"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
-            print("Adapter failed to create socket")
+            logger.info("Adapter failed to create socket")
             return False
 
         try:
@@ -112,7 +115,7 @@ def test_rapid_can():
                     received_count += 1
                     last_found_time = time.time()
                     if received_count % 10 == 0:
-                        print(f"  CAN RX {received_count}/{count} at vtime={current_vtime}...")
+                        logger.info(f"  CAN RX {received_count}/{count} at vtime={current_vtime}...")
                     status = client.read(0x0C, vtime_ns=current_vtime)
 
                 if received_count < count:
@@ -122,7 +125,7 @@ def test_rapid_can():
                         last_found_time = time.time()
                     time.sleep(0.02)
 
-            print(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
+            logger.info(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
 
             t.join()
             z_session.close()
@@ -131,17 +134,17 @@ def test_rapid_can():
                 client.close()
 
         if received_count != count:
-            print("CAN Stress test FAILED")
+            logger.info("CAN Stress test FAILED")
             return False
         return True
 
 
 def test_can_tx():
-    print("--- Testing CAN TX ---")
+    logger.info("--- Testing CAN TX ---")
     with run_adapter("can_tx", "tx-node"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
-            print("Adapter failed to create socket")
+            logger.info("Adapter failed to create socket")
             return False
 
         try:
@@ -163,46 +166,47 @@ def test_can_tx():
                 client.write(0x08, 1, vtime_ns=vtime + 200)
                 time.sleep(0.1)
 
-            print(f"Waiting for {count} TX frames via Zenoh...")
+            logger.info(f"Waiting for {count} TX frames via Zenoh...")
             start_time = time.time()
             while len(z_sub_data) < count and time.time() - start_time < 5:
                 time.sleep(0.1)
 
-            print(f"Received {len(z_sub_data)}/{count} TX frames")
+            logger.info(f"Received {len(z_sub_data)}/{count} TX frames")
             z_session.close()
         finally:
             if client:
                 client.close()
 
         if len(z_sub_data) != count:
-            print("CAN TX test FAILED")
+            logger.info("CAN TX test FAILED")
             return False
         return True
 
 
 def test_causality_regression():
-    print("--- Testing Causality Regression ---")
+    logger.info("--- Testing Causality Regression ---")
     with run_adapter("causality"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
-            print("Adapter failed to create socket")
+            logger.info("Adapter failed to create socket")
             return
 
         try:
             client.write(0, 0x1234, vtime_ns=1000)
-            print("Attempting write with regressed vtime...")
+            logger.info("Attempting write with regressed vtime...")
             client.write(4, 0x5678, vtime_ns=500)
 
             val1 = client.read(0, vtime_ns=1100)
             val2 = client.read(4, vtime_ns=1200)
 
-            print(f"Vals: {hex(val1)}, {hex(val2)}")
+            logger.info(f"Vals: {hex(val1)}, {hex(val2)}")
         finally:
             if client:
                 client.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_rapid_mmio()
     can_ok = test_rapid_can()
     tx_ok = test_can_tx()

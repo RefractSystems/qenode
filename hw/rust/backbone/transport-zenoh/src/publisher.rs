@@ -200,7 +200,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Assert total wall-clock < 1ms for 1000 sends (proves non-blocking behavior)
-        assert!(elapsed < Duration::from_millis(1), "send() blocked too long: {:?}", elapsed);
+        assert!(elapsed < Duration::from_millis(1), "send() blocked too long: {elapsed:?}");
 
         drop(safe_pub);
         Ok(())
@@ -226,7 +226,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Assert drop completes within 500ms
-        assert!(elapsed < Duration::from_millis(500), "drop() took too long: {:?}", elapsed);
+        assert!(elapsed < Duration::from_millis(500), "drop() took too long: {elapsed:?}");
         Ok(())
     }
 
@@ -253,7 +253,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete almost instantly because it drops packets
-        assert!(elapsed < Duration::from_millis(10), "send() blocked on full queue: {:?}", elapsed);
+        assert!(elapsed < Duration::from_millis(10), "send() blocked on full queue: {elapsed:?}");
 
         // The background thread continues processing. Ensure drop also handles it cleanly.
         drop(safe_pub);

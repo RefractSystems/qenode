@@ -16,9 +16,12 @@
 # zenoh token before modifying the file.
 # ==============================================================================
 
+import logging
 import os
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def patch_file(path, marker, insertion, guard, after=True):
@@ -33,7 +36,7 @@ def patch_file(path, marker, insertion, guard, after=True):
     if guard in content:
         return False  # already applied
     if marker not in content:
-        print(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
+        logger.info(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
         return False
     if after:
         content = content.replace(marker, marker + insertion, 1)
@@ -41,13 +44,13 @@ def patch_file(path, marker, insertion, guard, after=True):
         content = content.replace(marker, insertion + marker, 1)
     with Path(path).open("w") as f:
         f.write(content)
-    print(f"  patched {os.path.relpath(path)}")
+    logger.info(f"  patched {os.path.relpath(path)}")
     return True
 
 
 def main():
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
 
     qemu = Path(sys.argv[1]).resolve()
@@ -57,7 +60,7 @@ def main():
 
     for p in (net_json, char_json, qom_json):
         if not Path(p).exists():
-            print(f"ERROR: {p} not found")
+            logger.error(f"ERROR: {p} not found")
             sys.exit(1)
 
     # ── qapi/net.json ─────────────────────────────────────────────────────────
@@ -197,7 +200,7 @@ def main():
         after=False,
     )
 
-    print("apply_zenoh_qapi.py: done")
+    logger.info("apply_zenoh_qapi.py: done")
 
     # ── qapi/qom.json ─────────────────────────────────────────────────────────
 
@@ -254,4 +257,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

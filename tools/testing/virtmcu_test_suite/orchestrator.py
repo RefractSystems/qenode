@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from tools.testing.qmp_bridge import QmpBridge
+from tools.testing.utils import yield_now
 from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
 
 
@@ -19,10 +20,12 @@ class SimNode:
         class UartAccessor:
             def __init__(self, parent):
                 self._parent = parent
+
             @property
             def buffer(self):
                 # Returns the accumulated UART bytes from the bridge
                 return self._parent.bridge.uart_buffer
+
         return UartAccessor(self)
 
 
@@ -31,6 +34,7 @@ class VirtMcuOrchestrator:
     High-level declarative API for multi-node VirtMCU simulations.
     Manages QEMU processes, Zenoh coordinators, and Time Authority clock stepping.
     """
+
     def __init__(self, zenoh_session, zenoh_router: str, qemu_launcher_fixture):
         self.session = zenoh_session
         self.router = zenoh_router
@@ -105,7 +109,7 @@ class VirtMcuOrchestrator:
             if self.vta:
                 await self.vta.step(step_ns)
             self._vtime_ns += step_ns
-            await asyncio.sleep(0.001)  # SLEEP_EXCEPTION: deliberate yielding
+            await yield_now()
 
         if not condition():
             raise TimeoutError(f"Condition not met within {timeout}s. Current vtime: {self._vtime_ns}ns")

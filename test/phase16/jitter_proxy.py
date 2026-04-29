@@ -133,7 +133,7 @@ class JitterProxy:
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print(__doc__)
+        logger.info(__doc__)
         sys.exit(1)
 
     upstream_url = sys.argv[1]
@@ -148,4 +148,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

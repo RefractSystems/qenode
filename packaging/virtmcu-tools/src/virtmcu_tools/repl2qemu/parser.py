@@ -1,7 +1,10 @@
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,7 +66,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
                     included_platform = parse_repl(f.read(), Path(full_path).parent)
                     platform.devices.extend(included_platform.devices)
             else:
-                print(f"Warning: Included file not found: {full_path}")
+                logger.warning(f"Warning: Included file not found: {full_path}")
             continue
 
         # Start of a new device block (no leading whitespace)
@@ -139,14 +142,15 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     import sys
 
     filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
     with Path(filename).open() as f:
         plat = parse_repl(f.read())
         for dev in plat.devices:
-            print(f"{dev.name} ({dev.type_name}) @ {dev.address_str}")
+            logger.info(f"{dev.name} ({dev.type_name}) @ {dev.address_str}")
             for k, v in dev.properties.items():
-                print(f"  {k}: {v}")
+                logger.info(f"  {k}: {v}")
             for irq in dev.interrupts:
-                print(f"  IRQ {irq.source_range} -> {irq.target_device}@{irq.target_range}")
+                logger.info(f"  IRQ {irq.source_range} -> {irq.target_device}@{irq.target_range}")

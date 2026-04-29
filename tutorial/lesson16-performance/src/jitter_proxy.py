@@ -21,6 +21,7 @@ Usage:
     max_jitter_us: max random delay in microseconds (default: 200)
 """
 
+import logging
 import random
 import socket
 import sys
@@ -28,6 +29,8 @@ import threading
 import time
 
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 # Maximum random jitter added per forwarded reply (microseconds).
 DEFAULT_MAX_JITTER_US = 200
@@ -75,7 +78,9 @@ class JitterProxy:
 
     def run(self) -> None:
         proxy_listen = f"tcp/127.0.0.1:{self.proxy_port}"
-        print(f"[jitter_proxy] upstream={self.upstream_url}  listen={proxy_listen}  max_jitter={self.max_jitter_us} µs")
+        logger.info(
+            f"[jitter_proxy] upstream={self.upstream_url}  listen={proxy_listen}  max_jitter={self.max_jitter_us} µs"
+        )
 
         # Upstream session: used to forward queries to the actual TimeAuthority.
         upstream = self._make_session()
@@ -111,7 +116,7 @@ class JitterProxy:
             handle_query,
         )
 
-        print("[jitter_proxy] ready — press Ctrl+C to stop")
+        logger.info("[jitter_proxy] ready — press Ctrl+C to stop")
         try:
             while True:
                 time.sleep(1)
@@ -121,7 +126,7 @@ class JitterProxy:
             queryable.undeclare()
             proxy_session.close()
             upstream.close()
-            print(
+            logger.info(
                 f"[jitter_proxy] injected {len(self.injected_delays_us)} delays, "
                 f"mean={sum(self.injected_delays_us) / max(1, len(self.injected_delays_us)):.1f} µs"
             )
@@ -129,7 +134,7 @@ class JitterProxy:
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print(__doc__)
+        logger.info(__doc__)
         sys.exit(1)
 
     upstream_url = sys.argv[1]
@@ -141,4 +146,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

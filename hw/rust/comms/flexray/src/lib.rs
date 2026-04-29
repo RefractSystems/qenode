@@ -129,13 +129,13 @@ pub unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_vo
 
     let router = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
     let transport_name = if s.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
     };
 
     let topic = if s.topic.is_null() {
-        "sim/flexray/frame".to_string()
+        "sim/flexray/frame".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() }
     };
@@ -478,52 +478,6 @@ static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(FLEXRAY_TYPE_INIT, FLEXRAY_TYPE_INFO);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_flexray_qom_layout() {
-        assert_eq!(
-            core::mem::offset_of!(VirtmcuFlexRay, parent_obj),
-            0,
-            "SysBusDevice must be the first field"
-        );
-    }
-
-    #[test]
-    fn test_packet_min_heap_ordering() {
-        let mut heap = BinaryHeap::new();
-        heap.push(OrderedFlexRayPacket {
-            vtime: 500,
-            frame_id: 1,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        heap.push(OrderedFlexRayPacket {
-            vtime: 100,
-            frame_id: 2,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        heap.push(OrderedFlexRayPacket {
-            vtime: 300,
-            frame_id: 3,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        assert_eq!(heap.pop().unwrap().vtime, 100);
-        assert_eq!(heap.pop().unwrap().vtime, 300);
-        assert_eq!(heap.pop().unwrap().vtime, 500);
-    }
-}
-
 extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*(opaque as *mut VirtmcuFlexRayState) };
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
@@ -639,4 +593,50 @@ fn flexray_init_internal(
     state.cycle_timer = Some(cycle_timer);
 
     Box::into_raw(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flexray_qom_layout() {
+        assert_eq!(
+            core::mem::offset_of!(VirtmcuFlexRay, parent_obj),
+            0,
+            "SysBusDevice must be the first field"
+        );
+    }
+
+    #[test]
+    fn test_packet_min_heap_ordering() {
+        let mut heap = BinaryHeap::new();
+        heap.push(OrderedFlexRayPacket {
+            vtime: 500,
+            frame_id: 1,
+            cycle_count: 0,
+            channel: 0,
+            flags: 0,
+            data: vec![],
+        });
+        heap.push(OrderedFlexRayPacket {
+            vtime: 100,
+            frame_id: 2,
+            cycle_count: 0,
+            channel: 0,
+            flags: 0,
+            data: vec![],
+        });
+        heap.push(OrderedFlexRayPacket {
+            vtime: 300,
+            frame_id: 3,
+            cycle_count: 0,
+            channel: 0,
+            flags: 0,
+            data: vec![],
+        });
+        assert_eq!(heap.pop().unwrap().vtime, 100);
+        assert_eq!(heap.pop().unwrap().vtime, 300);
+        assert_eq!(heap.pop().unwrap().vtime, 500);
+    }
 }

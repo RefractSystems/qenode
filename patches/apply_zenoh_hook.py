@@ -13,9 +13,12 @@
 # ==============================================================================
 
 import hashlib
+import logging
 import os
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def write_if_changed(path, content):
@@ -27,7 +30,7 @@ def write_if_changed(path, content):
                 return False
     with Path(path).open("w") as f:
         f.write(content)
-    print(f"  wrote {os.path.relpath(path)}")
+    logger.info(f"  wrote {os.path.relpath(path)}")
     return True
 
 
@@ -43,7 +46,7 @@ def patch_file(path, marker, insertion, after=True):
         return True
 
     if marker not in content:
-        print(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
+        logger.info(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
         return False
 
     if after:
@@ -54,13 +57,13 @@ def patch_file(path, marker, insertion, after=True):
     with Path(path).open("w") as f:
         f.write(new_content)
 
-    print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
+    logger.info(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
     return True
 
 
 def main():
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
 
     qemu = Path(sys.argv[1]).resolve()
@@ -75,6 +78,12 @@ def main():
 #include "hw/core/cpu.h"
 #include "net/net.h"
 
+#if defined(_WIN32)
+#define VIRTMCU_EXPORT __declspec(dllexport)
+#else
+#define VIRTMCU_EXPORT __attribute__((visibility("default")))
+#endif
+
 /*
  * Timing constraints exported to Sensor/Actuator Abstraction Layers (SAL/AAL).
  * Used to align physics interpolation with virtual execution time.
@@ -86,21 +95,27 @@ typedef struct {
 } VirtmcuQuantumTiming;
 
 /* Global function pointers used for guest synchronization */
-extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
-extern int (*virtmcu_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
-extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
-extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
+VIRTMCU_EXPORT extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
+VIRTMCU_EXPORT extern int (*virtmcu_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+VIRTMCU_EXPORT extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
+VIRTMCU_EXPORT extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
 
 /* Hook setters used by external QOM plugins (DSOs) */
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
+VIRTMCU_EXPORT void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
+VIRTMCU_EXPORT void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
+VIRTMCU_EXPORT void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level));
 
 /* Global helpers for guest synchronization (called from DSOs) */
-void virtmcu_kick_first_cpu_for_quantum(void);
-bool virtmcu_vcpu_should_yield(void);
+VIRTMCU_EXPORT void virtmcu_kick_first_cpu_for_quantum(void);
+VIRTMCU_EXPORT bool virtmcu_vcpu_should_yield(void);
+VIRTMCU_EXPORT bool virtmcu_is_bql_locked(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_unlock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_lock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_unlock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_lock(void);
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
-extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
+VIRTMCU_EXPORT extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
 #endif
 """
@@ -109,21 +124,14 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
     cpu_exec_c = Path(qemu) / "accel" / "tcg" / "cpu-exec.c"
 
-    # 2. Add include and definitions to cpu-exec.c
+    # 2. Add include to cpu-exec.c
     marker0 = '#include "internal-common.h"'
     insertion0 = """
 #include "virtmcu/hooks.h"
-
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
-    virtmcu_tcg_quantum_hook = cb;
-}
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
-    virtmcu_cpu_halt_hook = cb;
-}
 """
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Patch hw/core/irq.c to define the global pointers
+    # 3. Patch hw/core/irq.c to define the global pointers and setters
     irq_c = Path(qemu) / "hw/core/irq.c"
     irq_patch = """
 #include "virtmcu/hooks.h"
@@ -133,6 +141,16 @@ void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;
 void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;
 void (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;
 void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
+
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
+    virtmcu_tcg_quantum_hook = cb;
+}
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
+    virtmcu_cpu_halt_hook = cb;
+}
+void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level)) {
+    virtmcu_irq_hook = cb;
+}
 """
     patch_file(irq_c, '#include "hw/core/irq.h"', irq_patch, after=True)
 
@@ -178,7 +196,7 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
         patch_file(
             main_loop_h,
             "bool bql_locked(void);",
-            "\nbool virtmcu_is_bql_locked(void);\nvoid virtmcu_safe_bql_unlock(void);\nvoid virtmcu_safe_bql_lock(void);\nvoid virtmcu_safe_bql_force_unlock(void);\nvoid virtmcu_safe_bql_force_lock(void);\n",
+            '\n#include "virtmcu/hooks.h"\n',
             after=True,
         )
 
@@ -197,4 +215,5 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

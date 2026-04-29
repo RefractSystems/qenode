@@ -25,4 +25,15 @@ extern "C" {
     pub static mut virtmcu_irq_hook: Option<
         extern "C" fn(opaque: *mut core::ffi::c_void, n: core::ffi::c_int, level: core::ffi::c_int),
     >;
+
+    /// A setter
+    pub fn virtmcu_set_irq_hook(
+        cb: Option<
+            extern "C" fn(
+                opaque: *mut core::ffi::c_void,
+                n: core::ffi::c_int,
+                level: core::ffi::c_int,
+            ),
+        >,
+    );
 }

@@ -195,7 +195,7 @@ def test_mmio_socket_bridge_property_mapping():
     from tools.repl2qemu.parser import ReplDevice, ReplPlatform
 
     platform = ReplPlatform()
-    dev = ReplDevice(
+    dev = ReplDevice.create(
         name="bridge0",
         type_name="mmio-socket-bridge",
         address_str="0x10000000",
@@ -225,13 +225,14 @@ def test_mmio_socket_bridge_no_double_mapping():
     from tools.repl2qemu.parser import ReplDevice, ReplPlatform
 
     platform = ReplPlatform()
-    dev = ReplDevice(
+    dev = ReplDevice.create(
         name="bridge0",
         type_name="mmio-socket-bridge",
         address_str="0x10000000",
         properties={
             "region-size": 0x2000,
             "base-addr": 0x20000000,
+            "socket-path": "/tmp/test.sock",
         },
     )
     platform.devices.append(dev)

@@ -172,17 +172,17 @@ def main() -> None:
                 if hasattr(reply, "ok") and reply.ok is not None:
                     vtime = unpack_rep(reply.ok.payload.to_bytes())
                     if vtime < DELTA_NS:
-                        print(f"FAIL: vtime {vtime} < expected {DELTA_NS}", file=sys.stderr)
+                        sys.stderr.write(f"FAIL: vtime {vtime} < expected {DELTA_NS}\n")
                         session.close()
                         sys.exit(1)
-                    print(f"PASS: TCP clock-advance vtime={vtime} ns")
+                    sys.stdout.write(f"PASS: TCP clock-advance vtime={vtime} ns\n")
                     session.close()
                     sys.exit(0)
         except Exception as exc:
-            print(f"Retry: {exc}")
+            sys.stdout.write(f"Retry: {exc}\n")
         time.sleep(0.5)
 
-    print("TIMEOUT: QEMU did not connect via TCP router", file=sys.stderr)
+    sys.stderr.write("TIMEOUT: QEMU did not connect via TCP router\n")
     session.close()
     sys.exit(1)
 

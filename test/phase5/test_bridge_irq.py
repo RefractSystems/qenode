@@ -1,8 +1,11 @@
+import logging
 import os
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def test_irq():
@@ -11,7 +14,9 @@ def test_irq():
 
     # 1. Start Mock Adapter
     cat_cmd = f"""
-import os, socket, struct, time
+import os, socket, struct, time, sys
+sys.path.append("/workspace/tools")
+import vproto
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 SYSC_MSG_IRQ_SET = 1
@@ -80,8 +85,9 @@ conn.close()
     qemu_proc.terminate()
     adapter_proc.terminate()
 
-    print("IRQ test finished. Check coverage.")
+    logger.info("IRQ test finished. Check coverage.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_irq()

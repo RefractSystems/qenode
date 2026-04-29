@@ -19,7 +19,7 @@ def test_recvall():
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_fail(mock_socket_cls, capsys, tmp_path):
+def test_start_server_hs_fail(mock_socket_cls, caplog, tmp_path):
     mock_server = MagicMock()
     mock_socket_cls.return_value = mock_server
     mock_conn = MagicMock()
@@ -31,12 +31,13 @@ def test_start_server_hs_fail(mock_socket_cls, capsys, tmp_path):
     sock_path = str(tmp_path / "fake_mmio.sock")
     start_server(sock_path)
 
-    out, _ = capsys.readouterr()
+    caplog.set_level("DEBUG", logger="tools.fake_adapter")
+    out = caplog.text
     assert "Failed to receive handshake" in out
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_mismatch(mock_socket_cls, capsys, tmp_path):
+def test_start_server_hs_mismatch(mock_socket_cls, caplog, tmp_path):
     mock_server = MagicMock()
     mock_socket_cls.return_value = mock_server
     mock_conn = MagicMock()
@@ -48,14 +49,15 @@ def test_start_server_hs_mismatch(mock_socket_cls, capsys, tmp_path):
     sock_path = str(tmp_path / "fake_mmio.sock")
     start_server(sock_path)
 
-    out, _ = capsys.readouterr()
+    caplog.set_level("DEBUG", logger="tools.fake_adapter")
+    out = caplog.text
     assert "Handshake mismatch" in out
 
 
 @patch("tools.fake_adapter.socket.socket")
 @patch("pathlib.Path.unlink")
 @patch("pathlib.Path.exists")
-def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, capsys, tmp_path):
+def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, caplog, tmp_path):
     mock_exists.return_value = True
 
     mock_server = MagicMock()
@@ -85,5 +87,6 @@ def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, capsys,
     # Check that it sent a handshake and then a response to the MMIO req
     assert mock_conn.sendall.call_count == 2
 
-    out, _ = capsys.readouterr()
+    caplog.set_level("DEBUG", logger="tools.fake_adapter")
+    out = caplog.text
     assert "REQ: type=1, size=4, vtime=1000, addr=0x1000, data=0xabcd" in out

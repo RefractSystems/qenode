@@ -1,10 +1,12 @@
-import struct
+import logging
 import sys
 import threading
 import time
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 # 10 Mbps = 800 ns interval
 BAUD_10MBPS_INTERVAL_NS = 800
@@ -17,7 +19,8 @@ def pack_clock_advance(delta_ns, mujoco_time_ns=0, quantum_number=0):
 
 
 def unpack_clock_ready(data):
-    return struct.unpack("<QIIQ", data)
+    resp = vproto.ClockReadyResp.unpack(data)
+    return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
@@ -26,7 +29,7 @@ conf.insert_json5("mode", '"client"')
 conf.insert_json5("connect/endpoints", f'["{router}"]')
 session = zenoh.open(conf)
 
-print(f"[Multi-Node UART] Connected to Zenoh router at {router}")
+logger.info(f"[Multi-Node UART] Connected to Zenoh router at {router}")
 
 received_0 = bytearray()
 received_1 = bytearray()
@@ -38,7 +41,7 @@ def on_tx_0(sample):
     if len(data) >= 12:
         received_0.extend(data[12:])
         if len(received_0) >= TOTAL_BYTES:
-            print("[Multi-Node UART] Node 0 received all bytes.")
+            logger.info("[Multi-Node UART] Node 0 received all bytes.")
             done_event.set()
 
 
@@ -54,10 +57,10 @@ sub1 = session.declare_subscriber(f"{TOPIC_BASE}/1/tx", on_tx_1)
 
 pub0 = session.declare_publisher(f"{TOPIC_BASE}/0/rx")
 
-print("[Multi-Node UART] Waiting for discovery...")
+logger.info("[Multi-Node UART] Waiting for discovery...")
 time.sleep(2)
 
-print(f"[Multi-Node UART] Injecting {TOTAL_BYTES} bytes into Node 0...")
+logger.info(f"[Multi-Node UART] Injecting {TOTAL_BYTES} bytes into Node 0...")
 # These will be echoed by Node 0, then routed by coordinator to Node 1,
 # Node 1 echoes them back, routed by coordinator to Node 0.
 # So we expect Node 0 to see its own bytes echoed back twice?
@@ -77,7 +80,7 @@ for i in range(TOTAL_BYTES):
     header = vproto.ZenohFrameHeader(vtime, 0, 1).pack()
     pub0.put(header + b"S")
 
-print("[Multi-Node UART] Starting Time Authority for both nodes...")
+logger.info("[Multi-Node UART] Starting Time Authority for both nodes...")
 
 
 def ta_loop(node_id):
@@ -97,10 +100,12 @@ t0.start()
 t1.start()
 
 if done_event.wait(timeout=30):
-    print(f"[Multi-Node UART] SUCCESS: Received {len(received_0)} bytes back at Node 0")
+    logger.info(f"[Multi-Node UART] SUCCESS: Received {len(received_0)} bytes back at Node 0")
     session.close()
     sys.exit(0)
 else:
-    print(f"[Multi-Node UART] FAILED: Node 0 received {len(received_0)} bytes, Node 1 received {len(received_1)} bytes")
+    logger.info(
+        f"[Multi-Node UART] FAILED: Node 0 received {len(received_0)} bytes, Node 1 received {len(received_1)} bytes"
+    )
     session.close()
     sys.exit(1)

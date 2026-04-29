@@ -8,9 +8,12 @@ Output: tools/python/virtmcu_api/protocols.py
 """
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Mapping from Rust types to struct.pack format characters
 TYPE_MAP = {
@@ -28,6 +31,7 @@ from typing import ClassVar
 
 """
 
+
 def parse_rust_structs(content):
     """
     More robust parser for #[repr(C, packed)] structs in Rust.
@@ -36,10 +40,7 @@ def parse_rust_structs(content):
 
     # Match structs with #[repr(C, packed)]
     # This regex is more permissive about what's between #[repr...] and pub struct
-    struct_pattern = re.compile(
-        r"#\[repr\(C, packed\)\]\s+.*?pub struct (\w+) \{(.*?)\}",
-        re.DOTALL
-    )
+    struct_pattern = re.compile(r"#\[repr\(C, packed\)\]\s+.*?pub struct (\w+) \{(.*?)\}", re.DOTALL)
 
     # Match fields, ignoring comments
     # Matches: pub name: type,
@@ -71,6 +72,7 @@ def parse_rust_structs(content):
 
     return structs
 
+
 def generate_python(structs):
     output = [STRUCT_HEADER]
 
@@ -85,7 +87,7 @@ def generate_python(structs):
 
         fmt = "".join(fmt_parts)
         if "X" in fmt:
-            print(f"Warning: Unknown type in struct {name}, skipping.")
+            logger.warning(f"Warning: Unknown type in struct {name}, skipping.")
             continue
 
         output.append("@dataclass(frozen=True)")
@@ -110,6 +112,7 @@ def generate_python(structs):
 
     return "\n".join(output)
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="Check if generated file is up to date")
@@ -120,31 +123,33 @@ def main():
     py_dst = workspace / "tools/python/virtmcu_api/protocols.py"
 
     if not rust_src.exists():
-        print(f"Error: Could not find {rust_src}")
+        logger.error(f"Error: Could not find {rust_src}")
         sys.exit(1)
 
     content = rust_src.read_text()
     structs = parse_rust_structs(content)
 
     if not structs:
-        print("Warning: No structs found in Rust source.")
+        logger.warning("Warning: No structs found in Rust source.")
         sys.exit(0)
 
     generated = generate_python(structs)
 
     if args.check:
         if not py_dst.exists():
-            print(f"Error: {py_dst} does not exist.")
+            logger.error(f"Error: {py_dst} does not exist.")
             sys.exit(1)
         current = py_dst.read_text()
         if current != generated:
-            print(f"Error: {py_dst} is out of sync with Rust source. Run scripts/sync-protocols.py")
+            logger.error(f"Error: {py_dst} is out of sync with Rust source. Run scripts/sync-protocols.py")
             sys.exit(1)
-        print("✅ Protocols are in sync.")
+        logger.info("✅ Protocols are in sync.")
     else:
         py_dst.parent.mkdir(parents=True, exist_ok=True)
         py_dst.write_text(generated)
-        print(f"✅ Generated {py_dst}")
+        logger.info(f"✅ Generated {py_dst}")
+
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

@@ -22,11 +22,10 @@ async def test_telemetry_stress_queue(qemu_launcher, zenoh_router: str, tmp_path
 
     bridge = await qemu_launcher(
         dtb,
-        extra_args=["-S"]  # Start paused
+        extra_args=["-S"],  # Start paused
     )
 
     await bridge.start_emulation()
-    await bridge.wait_for_event("RESUME")
 
     status = await bridge.qmp.execute("query-status")
     assert status["running"] is True

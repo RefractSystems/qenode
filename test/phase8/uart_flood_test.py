@@ -1,8 +1,11 @@
+import logging
 import sys
 import threading
 import time
 
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
 conf = zenoh.Config()
@@ -10,7 +13,7 @@ conf.insert_json5("mode", '"client"')
 conf.insert_json5("connect/endpoints", f'["{router}"]')
 session = zenoh.open(conf)
 
-print("[UART Flood] Connected to Zenoh.")
+logger.info("[UART Flood] Connected to Zenoh.")
 
 
 def publish_chardev():
@@ -20,10 +23,10 @@ def publish_chardev():
     # The expected result is hardware-accurate byte dropping, but NO CRASH in QEMU.
     payload = b"X" * 50000
 
-    print(f"[UART Flood] Blasting {len(payload)} bytes into UART RX...")
+    logger.info(f"[UART Flood] Blasting {len(payload)} bytes into UART RX...")
     pub.put(payload)
 
-    print("[UART Flood] Blast complete. Awaiting crash or stability...")
+    logger.info("[UART Flood] Blast complete. Awaiting crash or stability...")
     time.sleep(2)
 
 
@@ -31,5 +34,5 @@ t1 = threading.Thread(target=publish_chardev)
 t1.start()
 t1.join()
 
-print("[UART Flood] Test completed.")
+logger.info("[UART Flood] Test completed.")
 session.close()

@@ -1,8 +1,8 @@
-import asyncio
 from pathlib import Path
 
 import pytest
 
+from tools.testing.utils import wait_for_file_creation
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
 
@@ -53,11 +53,8 @@ async def test_phase10_mujoco_bridge_shm():
 
     # Start bridge
     async with AsyncManagedProcess(str(bridge_bin), str(node_id), "2", "6"):
-        # Wait for SHM to appear
-        for _ in range(20):
-            if Path(shm_path).exists():
-                break
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: wait for shm file creation
+        # Wait for SHM to appear deterministically
+        await wait_for_file_creation(shm_path)
 
         assert Path(shm_path).exists(), "Shared memory segment not created"
 

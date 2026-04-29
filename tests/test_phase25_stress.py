@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -11,6 +12,8 @@ sys.path.append(str(Path.cwd() / "tools/lin_fbs"))
 
 import flatbuffers
 from virtmcu.lin import LinFrame, LinMessageType
+
+logger = logging.getLogger(__name__)
 
 
 def create_lin_frame(vtime_ns, msg_type, data):
@@ -40,11 +43,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     # Build ELF
     kernel = Path(tmpdir) / "lin_echo.elf"
-    compile_firmware(
-        [Path("test/phase25/lin_echo.S")],
-        kernel,
-        linker_script=Path("test/phase25/lin_echo.ld")
-    )
+    compile_firmware([Path("test/phase25/lin_echo.S")], kernel, linker_script=Path("test/phase25/lin_echo.ld"))
 
     # Use unique topic to avoid interference
     import uuid
@@ -55,12 +54,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
     compile_dtb(
-        Path("test/phase25/lin_test.dts"),
-        {
-            "tcp/127.0.0.1:7447": router_endpoint,
-            '"sim/lin"': f'"{lin_topic}"'
-        },
-        dtb
+        Path("test/phase25/lin_test.dts"), {"tcp/127.0.0.1:7447": router_endpoint, '"sim/lin"': f'"{lin_topic}"'}, dtb
     )
 
     extra_args = [
@@ -103,7 +97,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
     sub = await asyncio.to_thread(lambda: session.declare_subscriber(tx_topic, on_bus_msg))
     pub = await asyncio.to_thread(lambda: session.declare_publisher(rx_topic))
 
-    print(f"Starting QEMU with topic {lin_topic}...")
+    logger.info(f"Starting QEMU with topic {lin_topic}...")
     await qemu_launcher(dtb, kernel, extra_args=extra_args, ignore_clock_check=True)
 
     from conftest import TimeAuthority
@@ -114,7 +108,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
         # Initial clock sync
         await ta.step(0)
 
-        print("Starting staggered frame injection...")
+        logger.info("Starting staggered frame injection...")
         step_ns = 1_000_000  # 1ms steps
         total_steps = 100
 
@@ -128,9 +122,9 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
             # Advance clock by 1ms
             await ta.step(step_ns)
 
-        print(f"Received {received_count} echo responses, {errors} errors.")
+        logger.info(f"Received {received_count} echo responses, {errors} errors.")
         assert received_count > 0, "No responses received!"
-        print(f"SUCCESS: Received {received_count} responses.")
+        logger.info(f"SUCCESS: Received {received_count} responses.")
 
     finally:
         await asyncio.to_thread(sub.undeclare)

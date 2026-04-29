@@ -31,7 +31,12 @@ rust_modules = [
         'extra_c': 'int get_chardev_backend_kind_virtmcu(void); int get_chardev_backend_kind_virtmcu(void) { return CHARDEV_BACKEND_KIND_VIRTMCU; }',
         'extra_inc': '#include "qapi/qapi-types-char.h"',
     },
-    {'pkg': 'telemetry', 'lib': 'libtelemetry.a', 'obj': 'telemetry'},
+    {
+        'pkg': 'telemetry',
+        'lib': 'libtelemetry.a',
+        'obj': 'telemetry',
+        'extra_inc': '#include "virtmcu/hooks.h"',
+    },
     {'pkg': 'actuator', 'lib': 'libactuator.a', 'obj': 'actuator'},
     {'pkg': 'ieee802154', 'lib': 'libieee802154.a', 'obj': 'ieee802154'},
     {'pkg': 'ui', 'lib': 'libui.a', 'obj': 'ui'},

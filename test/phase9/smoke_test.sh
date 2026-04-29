@@ -261,9 +261,9 @@ QEMU_PID=$!
 # Python script to send Zenoh frame
 cat > "$ZENOH_TX_PY" <<'PY_EOF'
 import zenoh
-import struct
 import time
 import os
+import sys
 
 config = zenoh.Config()
 if "ZENOH_CONNECT" in os.environ:
@@ -278,7 +278,7 @@ pub = session.declare_publisher("sim/systemc/frame/p9-test/rx")
 # so the adapter receives at least one frame in its "future".
 for i in range(1, 50):
     vtime_ns = i * 1000000000 # i seconds
-    payload = vproto.MmioReq(1, 8, 0, 0, vtime_ns, 0x123, 0x456).pack()
+    payload = vtime_ns.to_bytes(8, "little") + (4).to_bytes(4, "little") + (0x123).to_bytes(4, "little") + (0x456).to_bytes(4, "little")
     pub.put(payload)
     time.sleep(0.5)
 

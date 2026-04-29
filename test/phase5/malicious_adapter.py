@@ -1,9 +1,17 @@
+import logging
 import socket
-import struct
 import sys
 from pathlib import Path
 
-import vproto
+# Add tools directory to sys.path to allow importing vproto
+SCRIPT_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = SCRIPT_DIR.parent.parent / "tools"
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.append(str(TOOLS_DIR))
+
+import vproto  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # From virtmcu_proto.h
 VIRTMCU_PROTO_MAGIC = 0x564D4355
@@ -12,8 +20,8 @@ VIRTMCU_PROTO_VERSION = 1
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: malicious_adapter.py <socket_path> <mode>")
-        print("Modes: hang, crash")
+        logger.info("Usage: malicious_adapter.py <socket_path> <mode>")
+        logger.info("Modes: hang, crash")
         sys.exit(1)
 
     sock_path = sys.argv[1]
@@ -26,21 +34,21 @@ def main():
     server.bind(sock_path)
     server.listen(1)
 
-    print(f"Malicious adapter ({mode}) listening on {sock_path}", flush=True)
+    logger.info(f"Malicious adapter ({mode}) listening on {sock_path}", flush=True)
     conn, _ = server.accept()
-    print("Connection accepted", flush=True)
+    logger.info("Connection accepted", flush=True)
 
     # 1. Handshake
     data = conn.recv(8)
     if not data:
-        print("No data received for handshake", flush=True)
+        logger.info("No data received for handshake", flush=True)
         return
-    magic, version = struct.unpack("<II", data)
-    print(f"Received handshake: magic=0x{magic:X}, version={version}", flush=True)
+    hs = vproto.VirtmcuHandshake.unpack(data)
+    logger.info(f"Received handshake: magic=0x{hs.magic:X}, version={hs.version}", flush=True)
 
     hs_out = vproto.VirtmcuHandshake(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION).pack()
     conn.sendall(hs_out)
-    print("Sent handshake", flush=True)
+    logger.info("Sent handshake", flush=True)
 
     # 2. Wait for first MMIO request
     # req_data = conn.recv(32) # mmio_req is 32 bytes
@@ -53,10 +61,10 @@ def main():
 
     if len(req_data) == 32:
         req_type = req_data[0]
-        print(f"Received MMIO request: type={req_type}", flush=True)
+        logger.info(f"Received MMIO request: type={req_type}", flush=True)
 
         if mode == "hang":
-            print("Ignoring request to trigger timeout in QEMU...")
+            logger.info("Ignoring request to trigger timeout in QEMU...")
             # Keep the connection open but do nothing
             while True:
                 try:
@@ -65,14 +73,15 @@ def main():
                 except Exception:
                     break
         elif mode == "crash":
-            print("Closing connection immediately to simulate crash...")
+            logger.info("Closing connection immediately to simulate crash...")
             conn.close()
         else:
-            print(f"Unknown mode: {mode}")
+            logger.info(f"Unknown mode: {mode}")
 
     conn.close()
     server.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

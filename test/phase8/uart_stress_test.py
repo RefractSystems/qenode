@@ -1,10 +1,12 @@
-import struct
+import logging
 import sys
 import threading
 import time
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 # 10 Mbps = 1,250,000 bytes per second
 # Interval between bytes = 1 / 1,250,000 = 800 ns
@@ -39,8 +41,8 @@ def _pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: 
 
 
 def _unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:
-    # current_vtime_ns (Q), n_frames (I), error_code (I), quantum_number (Q)
-    return struct.unpack("<QIIQ", data)
+    resp = vproto.ClockReadyResp.unpack(data)
+    return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
 def _open_session(router: str) -> zenoh.Session:
@@ -52,7 +54,7 @@ def _open_session(router: str) -> zenoh.Session:
 
 router = sys.argv[1] if len(sys.argv) > 1 else "tcp/127.0.0.1:7447"
 session = _open_session(router)
-print(f"[UART Stress] Connected to Zenoh router at {router}")
+logger.info(f"[UART Stress] Connected to Zenoh router at {router}")
 
 # Thread-safe echo counter.  We only count TEST_BYTE_VAL ('X') to isolate echo
 # bytes from firmware startup noise (welcome message).
@@ -65,10 +67,10 @@ received_all_event = threading.Event()
 def on_tx_sample(sample: zenoh.Sample) -> None:
     global _x_count, _first_logged
     raw = sample.payload.to_bytes()
-    if len(raw) < 24:
+    if len(raw) < vproto.SIZE_ZENOH_FRAME_HEADER:
         return
-    # Skip 20-byte ZenohFrameHeader (vtime:u64 + seq:u64 + size:u32)
-    payload = raw[vproto.SIZE_ZENOH_FRAME_HEADER:]
+    # Skip ZenohFrameHeader
+    payload = raw[vproto.SIZE_ZENOH_FRAME_HEADER :]
     if not payload:
         return
 
@@ -78,7 +80,7 @@ def on_tx_sample(sample: zenoh.Sample) -> None:
 
     with _lock:
         if not _first_logged:
-            print(f"[UART Stress] First echo bytes received: {bytes(payload[:8])}")
+            logger.info(f"[UART Stress] First echo bytes received: {bytes(payload[:8])}")
             _first_logged = True
         _x_count += new_x
         if _x_count >= TOTAL_BYTES:
@@ -88,22 +90,22 @@ def on_tx_sample(sample: zenoh.Sample) -> None:
 _sub = session.declare_subscriber(f"{TOPIC_BASE}/{NODE_ID}/tx", on_tx_sample)
 _pub = session.declare_publisher(f"{TOPIC_BASE}/{NODE_ID}/rx")
 
-print("[UART Stress] Waiting 2 s for Zenoh discovery...")
+logger.info("[UART Stress] Waiting 2 s for Zenoh discovery...")
 time.sleep(2)
 
-print(f"[UART Stress] Pre-publishing {TOTAL_BYTES} bytes at 10 Mbps equivalent...")
+logger.info(f"[UART Stress] Pre-publishing {TOTAL_BYTES} bytes at 10 Mbps equivalent...")
 
 for i in range(0, TOTAL_BYTES, CHUNK_SIZE):
     chunk_end = min(i + CHUNK_SIZE, TOTAL_BYTES)
     for j in range(i, chunk_end):
         vtime = START_VTIME_NS + (j * BAUD_10MBPS_INTERVAL_NS)
-        # ZenohFrameHeader: delivery_vtime_ns (u64 LE) + sequence_number (u64 LE) + size (u32 LE)
+        # ZenohFrameHeader: delivery_vtime_ns, sequence_number, size
         # Using sequence number 0 for pre-published bytes as they have distinct vtimes.
         header = vproto.ZenohFrameHeader(vtime, 0, 1).pack()
         _pub.put(header + TEST_BYTE)
     time.sleep(CHUNK_SLEEP_S)
 
-print("[UART Stress] Pre-publish complete. Starting Time Authority...")
+logger.info("[UART Stress] Pre-publish complete. Starting Time Authority...")
 
 
 def _time_authority_loop() -> None:
@@ -125,19 +127,19 @@ if received_all_event.wait(timeout=RX_TIMEOUT_S):
     with _lock:
         final_count = _x_count
 
-    print(f"[UART Stress] Received {final_count} echo bytes (expected {TOTAL_BYTES})")
+    logger.info(f"[UART Stress] Received {final_count} echo bytes (expected {TOTAL_BYTES})")
 
     if final_count != TOTAL_BYTES:
-        print(f"[UART Stress] FAIL: byte count mismatch ({final_count} != {TOTAL_BYTES})")
+        logger.info(f"[UART Stress] FAIL: byte count mismatch ({final_count} != {TOTAL_BYTES})")
         session.close()
         sys.exit(1)
 
-    print("[UART Stress] Data integrity verified.")
+    logger.info("[UART Stress] Data integrity verified.")
     session.close()
     sys.exit(0)
 else:
     with _lock:
         final_count = _x_count
-    print(f"[UART Stress] FAIL: timeout after {RX_TIMEOUT_S} s — received {final_count}/{TOTAL_BYTES} echo bytes")
+    logger.info(f"[UART Stress] FAIL: timeout after {RX_TIMEOUT_S} s — received {final_count}/{TOTAL_BYTES} echo bytes")
     session.close()
     sys.exit(1)

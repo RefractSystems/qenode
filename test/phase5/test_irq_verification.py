@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -6,7 +7,15 @@ import sys
 import time
 from pathlib import Path
 
-import vproto
+# Add tools directory to sys.path to allow importing vproto
+SCRIPT_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = SCRIPT_DIR.parent.parent / "tools"
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.append(str(TOOLS_DIR))
+
+import vproto  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -95,7 +104,7 @@ def main():
             continue
 
     if not conn:
-        print("QEMU did not connect")
+        logger.info("QEMU did not connect")
         qemu_proc.terminate()
         sys.exit(1)
 
@@ -104,32 +113,33 @@ def main():
     conn.sendall(hs)
 
     # 3. Trigger IRQ and verify
-    print("Triggering IRQ 5...")
+    logger.info("Triggering IRQ 5...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
     time.sleep(0.5)
 
     # Check NVIC state via HMP (through QMP)
     # We use human-monitor-command "info irq" or "info pic"
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
-    print("NVIC state (IRQ SET):\n", resp.get("return", ""))
+    logger.info("NVIC state (IRQ SET):\n", resp.get("return", ""))
 
     if "5: 1" not in resp.get("return", "") and "5:  1" not in resp.get("return", ""):
         # Cortex-A15 GIC might show differently. "info pic" output varies.
         # Let's check for any indication of IRQ 5 being active.
         pass  # We will refine the check based on output
 
-    print("Clearing IRQ 5...")
+    logger.info("Clearing IRQ 5...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
     time.sleep(0.5)
 
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
-    print("NVIC state (IRQ CLEAR):\n", resp.get("return", ""))
+    logger.info("NVIC state (IRQ CLEAR):\n", resp.get("return", ""))
 
     qemu_proc.terminate()
     conn.close()
     server.close()
-    print("Test passed!")
+    logger.info("Test passed!")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

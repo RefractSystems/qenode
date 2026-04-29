@@ -1,8 +1,10 @@
+import logging
 import subprocess
-import sys
 from pathlib import Path
 
-from .parser import ReplDevice, ReplPlatform
+from .parser import GicDevice, MemoryDevice, MmioBridgeDevice, ReplDevice, ReplPlatform, WirelessDevice
+
+logger = logging.getLogger(__name__)
 
 # Mapping from Renode peripheral types to QEMU device tree compatible strings (QOM type names)
 COMPAT_MAP = {
@@ -26,6 +28,8 @@ COMPAT_MAP = {
     "SPI.PL022": "pl022",
     "SPI.ZenohBridge": "spi",
     "SPI.Echo": "spi-echo",
+    "telemetry": "telemetry",
+    "ieee802154": "ieee802154",
 }
 
 # Devices that act as interrupt controllers
@@ -43,6 +47,35 @@ class FdtEmitter:
         self.phandles: dict[str, int] = {}
         self.next_phandle = 1
         self._assign_phandles()
+
+    def validate_platform(self):
+        """
+        ARCH-14: Validate that all devices have mandatory properties.
+        Throws ValueError if a device is missing required fields.
+        """
+        for dev in self.platform.devices:
+            if isinstance(dev, MemoryDevice):
+                if "size" not in dev.properties:
+                    raise ValueError(f"Memory node '{dev.name}' is missing mandatory 'size' property")
+
+            elif isinstance(dev, WirelessDevice):
+                if "transport" not in dev.properties:
+                    raise ValueError(f"Wireless node '{dev.name}' is missing mandatory 'transport' property")
+                if "node" not in dev.properties:
+                    raise ValueError(f"Wireless node '{dev.name}' is missing mandatory 'node' property")
+
+            elif isinstance(dev, MmioBridgeDevice):
+                # Check for either the legacy keys or the modern ones
+                has_size = "size" in dev.properties or "region-size" in dev.properties
+                has_addr = (
+                    "address" in dev.properties or "base-addr" in dev.properties or dev.address_str != "sysbus"
+                )
+                if not has_size:
+                    raise ValueError(f"mmio-socket-bridge '{dev.name}' is missing mandatory 'region-size' property")
+                if not has_addr:
+                    raise ValueError(f"mmio-socket-bridge '{dev.name}' is missing mandatory 'base-addr' property")
+                if "socket-path" not in dev.properties:
+                    raise ValueError(f"mmio-socket-bridge '{dev.name}' is missing mandatory 'socket-path' property")
 
     def _detect_arch(self) -> str:
         for dev in self.platform.devices:
@@ -83,6 +116,7 @@ class FdtEmitter:
             return 0, 0
 
     def generate_dts(self) -> str:
+        self.validate_platform()
         lines = []
         lines.append("/dts-v1/;")
         lines.append("")
@@ -94,6 +128,17 @@ class FdtEmitter:
             lines.append('    compatible = "arm,generic-fdt";')
         lines.append("    #address-cells = <2>;")
         lines.append("    #size-cells = <2>;")
+
+        # Global interrupt parent for the root node if GIC/NVIC is present
+        intc_dev = None
+        for dev in self.platform.devices:
+            if dev.type_name in INT_CONTROLLERS:
+                intc_dev = dev
+                break
+
+        if intc_dev:
+            lines.append(f"    interrupt-parent = <{self._get_phandle(intc_dev.name)}>;")
+
         lines.append("")
         lines.append("    qemu_sysmem: qemu_sysmem {")
         lines.append('        compatible = "qemu:system-memory";')
@@ -176,20 +221,17 @@ class FdtEmitter:
 
         is_native = dev.type_name not in COMPAT_MAP and "." not in dev.type_name
         if dev.type_name not in COMPAT_MAP and not is_native:
-            print(
-                f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)",
-                file=sys.stderr,
-            )
+            logger.warning(f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)")
             return []
 
         compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
 
-        # Node name: Use simple name for top-level devices to support QEMU instance binding.
-        # Standard FDT uses name@address, but QEMU IDs (used for binding) do not support '@'.
-        if dev.parent:
-            lines.append(f"{indent}{dev.name}@{base:x} {{")
-        else:
+        # Node name: Use name@address to satisfy DTC unit_address_vs_reg checks.
+        if compat_str == "armv8-timer":
             lines.append(f"{indent}{dev.name} {{")
+        else:
+            lines.append(f"{indent}{dev.name}@{base:x} {{")
+
         lines.append(f'{indent}    compatible = "{compat_str}";')
         lines.append(f"{indent}    phandle = <{self._get_phandle(dev.name)}>;")
 
@@ -211,33 +253,51 @@ class FdtEmitter:
             # Find interrupt parent
             target_name = dev.interrupts[0].target_device
             parent_phandle = self._get_phandle(target_name)
+
+            # Detect if parent is GIC or NVIC
+            is_gic = False
+
             if parent_phandle:
                 lines.append(f"{indent}    interrupt-parent = <{parent_phandle}>;")
+                # Look up the target device in the platform to see if it's a GicDevice
+                for i_dev in self.platform.devices:
+                    if i_dev.name == target_name and isinstance(i_dev, GicDevice):
+                        is_gic = True
+                        break
+            else:
+                # Search for any interrupt controller in the platform as fallback
+                for i_dev in self.platform.devices:
+                    if i_dev.type_name in INT_CONTROLLERS:
+                        lines.append(f"{indent}    interrupt-parent = <{self._get_phandle(i_dev.name)}>;")
+                        if isinstance(i_dev, GicDevice):
+                            is_gic = True
+                        break
 
             # simplistic mapping: SPI, ID, level/edge
-            irqs = []
+            irq_cells = []
             for irq in dev.interrupts:
                 target_irq = irq.target_range
                 if "-" not in target_irq:
-                    # TODO: Detect if parent is GIC or NVIC
-                    # GIC expects <type id flags>, NVIC expects <id>
-                    is_gic = any(
-                        ic in target_name.upper() or (i_dev.name == target_name and "GIC" in i_dev.type_name.upper())
-                        for ic in ["GIC", "DISTRIBUTOR"]
-                        for i_dev in self.platform.devices
-                    )
-
                     if is_gic:
-                        # Renode often uses SPI index (0+) for GIC interrupts.
-                        # QEMU's GIC expects absolute IRQ number (32+) for SPIs.
                         irq_num = int(target_irq)
                         if irq_num < 32:
                             irq_num += 32
-                        irqs.append(f"<0 {irq_num} 4>")
+                        irq_cells.extend(["0", str(irq_num), "4"])
                     else:
-                        irqs.append(f"<{target_irq}>")
-            if irqs:
-                lines.append(f"{indent}    interrupts = {', '.join(irqs)};")
+                        irq_cells.append(str(target_irq))
+                else:
+                    parts = target_irq.split("-")
+                    start = int(parts[0])
+                    end = int(parts[1])
+                    for i in range(start, end + 1):
+                        if is_gic:
+                            num = i + 32 if i < 32 else i
+                            irq_cells.extend(["0", str(num), "4"])
+                        else:
+                            irq_cells.append(str(i))
+
+            if irq_cells:
+                lines.append(f"{indent}    interrupts = <{' '.join(irq_cells)}>;")
 
         if dev.type_name in INT_CONTROLLERS:
             lines.append(f"{indent}    interrupt-controller;")
@@ -283,7 +343,7 @@ class FdtEmitter:
 
         # Only add container for memory regions, or if explicitly requested (not for standard SysBus devices)
         if not dev.parent and (dev.type_name == "Memory.MappedMemory" or compat_str == "mmio-socket-bridge"):
-            print(f"DEBUG: Adding container for {dev.name} (type={dev.type_name}, compat={compat_str})")
+            logger.info(f"DEBUG: Adding container for {dev.name} (type={dev.type_name}, compat={compat_str})")
             lines.append(f"{indent}    container = <{self._get_phandle('qemu_sysmem')}>;")
 
         # Emit children
@@ -296,15 +356,22 @@ class FdtEmitter:
 
 
 def compile_dtb(dts_content: str, out_path: str) -> bool:
-    """Compiles the DTS string into a DTB file using dtc."""
+    """Compiles the DTS string into a DTB file using dtc. Fails on warnings."""
     dts_path = out_path + ".dts"
     try:
         with Path(dts_path).open("w") as f:
             f.write(dts_content)
-        subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True, capture_output=True)
+        res = subprocess.run(
+            ["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if "Warning" in res.stderr:
+            logger.warning(f"DTC Warnings detected:\n{res.stderr}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error compiling DTB: {e.stderr.decode()}", file=sys.stderr)
+        logger.error(f"Error compiling DTB: {e.stderr}")
         return False
     finally:
         if Path(dts_path).exists():

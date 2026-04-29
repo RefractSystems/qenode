@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -5,9 +6,10 @@ import pytest
 
 from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
 
+logger = logging.getLogger(__name__)
+
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(600)
 async def test_phase6_coordinator(zenoh_router, zenoh_coordinator, zenoh_session):  # noqa: ARG001
     """
     Phase 6 smoke test: Zenoh Multi-Node Coordinator.
@@ -17,10 +19,16 @@ async def test_phase6_coordinator(zenoh_router, zenoh_coordinator, zenoh_session
 
     env = os.environ.copy()
     env["ZENOH_ROUTER"] = zenoh_router
-    env["PYTHONPATH"] = str(Path(workspace_root) / "tools") + ":" + str(Path(workspace_root) / "test" / "phase6") + ":" + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(Path(workspace_root) / "tools")
+        + ":"
+        + str(Path(workspace_root) / "test" / "phase6")
+        + ":"
+        + env.get("PYTHONPATH", "")
+    )
 
     # 1. Run comprehensive test suite
-    print("Running complete_test.py...")
+    logger.info("Running complete_test.py...")
     async with AsyncManagedProcess(
         "python3",
         (Path(workspace_root) / "test/phase6/complete_test.py"),
@@ -30,7 +38,7 @@ async def test_phase6_coordinator(zenoh_router, zenoh_coordinator, zenoh_session
         assert proc.returncode == 0, f"complete_test.py failed:\nSTDOUT: {proc.stdout_text}\nSTDERR: {proc.stderr_text}"
 
     # 2. Run malformed packet survival test
-    print("Running repro_crash.py...")
+    logger.info("Running repro_crash.py...")
     async with AsyncManagedProcess(
         "python3",
         (Path(workspace_root) / "test/phase6/repro_crash.py"),
@@ -41,7 +49,7 @@ async def test_phase6_coordinator(zenoh_router, zenoh_coordinator, zenoh_session
 
     # 3. Run stress test
     # Note: stress test might be slow
-    print("Running stress_test.py...")
+    logger.info("Running stress_test.py...")
     async with AsyncManagedProcess(
         "python3",
         (Path(workspace_root) / "test/phase6/stress_test.py"),

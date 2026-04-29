@@ -1,4 +1,5 @@
 import json
+import logging
 import socket
 import sys
 import threading
@@ -14,6 +15,8 @@ if TOOLS_DIR not in sys.path:
     sys.path.append(TOOLS_DIR)
 
 from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 QMP_SOCK = sys.argv[1]
 TOPIC = "sim/clock/advance/0"
@@ -109,12 +112,12 @@ def main():
             time.sleep(1.0)
 
             if qmp_thread.error:
-                print(f"FAIL: QMP Thread Error: {qmp_thread.error}", file=sys.stderr)
+                logger.error(f"FAIL: QMP Thread Error: {qmp_thread.error}")
                 sys.exit(1)
 
-            print(f"Sending clock advance {i + 1}...")
+            logger.info(f"Sending clock advance {i + 1}...")
             send_query(session, 1_000_000, f"Q{i + 1}")
-            print(f"Clock advance {i + 1} OK")
+            logger.info(f"Clock advance {i + 1} OK")
 
     finally:
         qmp_thread.running = False
@@ -122,11 +125,12 @@ def main():
         session.close()
 
     if qmp_thread.error:
-        print(f"FAIL: QMP Thread Error: {qmp_thread.error}", file=sys.stderr)
+        logger.error(f"FAIL: QMP Thread Error: {qmp_thread.error}")
         sys.exit(1)
 
-    print("PASS")
+    logger.info("PASS")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

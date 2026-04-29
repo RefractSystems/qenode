@@ -221,13 +221,13 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
     let transport_name = if s.transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
     };
 
     let prefix = if s.topic_prefix.is_null() {
-        "firmware/control".to_string()
+        "firmware/control".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.topic_prefix).to_string_lossy().into_owned() }
     };

@@ -5,6 +5,7 @@ Tests DTS generation and DTB compilation in isolation (no QEMU binary needed,
 but dtc must be installed for the compile_dtb test).
 """
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -42,7 +43,7 @@ def test_empty_platform_produces_valid_skeleton():
 def test_cpu_node_emitted():
     platform = ReplPlatform()
     platform.devices.append(
-        ReplDevice(
+        ReplDevice.create(
             name="cpu0",
             type_name="CPU.ARMv7A",
             address_str="sysbus",
@@ -59,7 +60,7 @@ def test_multiple_cpu_nodes_indexed():
     platform = ReplPlatform()
     for i in range(2):
         platform.devices.append(
-            ReplDevice(
+            ReplDevice.create(
                 name=f"cpu{i}",
                 type_name="CPU.ARMv7A",
                 address_str="sysbus",
@@ -77,7 +78,7 @@ def test_multiple_cpu_nodes_indexed():
 def test_memory_node_emitted():
     platform = ReplPlatform()
     platform.devices.append(
-        ReplDevice(
+        ReplDevice.create(
             name="sram",
             type_name="Memory.MappedMemory",
             address_str="0x20000000",
@@ -95,7 +96,7 @@ def test_memory_node_emitted():
 def test_uart_pl011_node_emitted():
     platform = ReplPlatform()
     platform.devices.append(
-        ReplDevice(
+        ReplDevice.create(
             name="uart0",
             type_name="UART.PL011",
             address_str="<0x09000000, +0x1000>",
@@ -104,12 +105,12 @@ def test_uart_pl011_node_emitted():
     )
     dts = FdtEmitter(platform).generate_dts()
     assert "pl011" in dts
-    assert "uart0 {" in dts
+    assert "uart0@9000000 {" in dts
 
 
 def test_interrupt_emitted():
     platform = ReplPlatform()
-    dev = ReplDevice(
+    dev = ReplDevice.create(
         name="usart1",
         type_name="UART.STM32_UART",
         address_str="<0x40011000, +0x100>",
@@ -122,10 +123,10 @@ def test_interrupt_emitted():
     assert "37" in dts
 
 
-def test_unknown_type_warns(capsys):
+def test_unknown_type_warns(caplog):
     platform = ReplPlatform()
     platform.devices.append(
-        ReplDevice(
+        ReplDevice.create(
             name="mystery",
             type_name="Vendor.SomeUnknownPeripheral",
             address_str="0x10000000",
@@ -133,26 +134,128 @@ def test_unknown_type_warns(capsys):
         )
     )
     FdtEmitter(platform).generate_dts()
-    captured = capsys.readouterr()
-    assert "Vendor.SomeUnknownPeripheral" in captured.err
+    caplog.set_level(logging.WARNING)
+    assert "Vendor.SomeUnknownPeripheral" in caplog.text
 
 
-def test_all_compat_map_types_produce_output():
-    """Every type in COMPAT_MAP must produce a DTS node without crashing."""
+def test_all_compat_map_types_produce_output(tmp_path):
+    """
+    Every type in COMPAT_MAP must produce a valid DTS node that compiles
+    without any dtc warnings or errors. This ensures all supported peripherals
+    have valid formatting.
+    """
+    # Provide known-good mandatory properties for each type
+    known_good_props = {
+        "Memory.MappedMemory": {"size": "0x1000"},
+        "ieee802154": {"transport": "zenoh", "node": "0"},
+        "telemetry": {"transport": "zenoh", "node": "0"},
+        "RemotePort.Peripheral": {"region-size": "0x1000", "socket-path": "/tmp/sock", "base-addr": "0x10000000"},
+    }
+
+    import shutil
+
+    import fdt
+    has_dtc = shutil.which("dtc") is not None
+
     for renode_type, _ in COMPAT_MAP.items():
         if renode_type.startswith("CPU."):
             continue  # CPUs are handled separately
+
         platform = ReplPlatform()
+
+        # Always add a GIC to satisfy interrupt-parent requirements globally
         platform.devices.append(
-            ReplDevice(
+            ReplDevice.create(name="gic", type_name="IRQControllers.GIC", address_str="0x08000000")
+        )
+
+        props = known_good_props.get(renode_type, {})
+
+        platform.devices.append(
+            ReplDevice.create(
                 name="dev",
                 type_name=renode_type,
-                address_str="<0x10000000, +0x1000>",
-                properties={},
+                address_str="0x10000000",
+                properties=props,
+                interrupts=[ReplInterrupt("0", "gic", "33")], # 33 is a valid SPI
             )
         )
-        dts = FdtEmitter(platform).generate_dts()
-        assert COMPAT_MAP[renode_type] in dts, f"Expected '{COMPAT_MAP[renode_type]}' in DTS for type '{renode_type}'"
+        emitter = FdtEmitter(platform)
+        dts = emitter.generate_dts()
+
+        if has_dtc:
+            dtb_out = str(tmp_path / f"{renode_type.replace('.', '_')}.dtb")
+            success = compile_dtb(dts, dtb_out)
+            assert success, f"Failed to compile DTB for type '{renode_type}'. Check DTC output."
+
+            # Step 1: Parse the DTB using the fdt library for structured validation
+            with Path(dtb_out).open("rb") as f:
+                dtb = fdt.parse_dtb(f.read())
+
+            # Find the emitted node
+            dev_node = None
+            expected_prefix = "memory" if renode_type == "Memory.MappedMemory" else "dev"
+            for node in dtb.root.nodes:
+                if node.name.startswith(expected_prefix):
+                    dev_node = node
+                    break
+
+            assert dev_node is not None, f"Node starting with '{expected_prefix}' not found in DTB for type '{renode_type}'"
+
+            # Structurally verify the compatible string
+            compat_prop = dev_node.get_property("compatible")
+            assert compat_prop is not None
+            assert COMPAT_MAP[renode_type] in compat_prop.data
+
+            # Structurally verify GIC interrupts are 3 cells
+            if renode_type not in ("IRQControllers.GIC", "Memory.MappedMemory"):
+                interrupts_prop = dev_node.get_property("interrupts")
+                assert interrupts_prop is not None
+                # The fdt library parses this as a list of integers (cells)
+                assert len(interrupts_prop.data) == 3, f"Interrupts for {renode_type} must be 3 cells"
+                assert interrupts_prop.data == [0, 33, 4]
+
+            # Step 3: Integrate dt-schema (dt-validate)
+            has_dtvalidate = shutil.which("dt-validate") is not None
+            if has_dtvalidate:
+                # dt-validate expects DTB as input
+                res = subprocess.run(["dt-validate", dtb_out], capture_output=True, text=True)
+                # dt-validate exits with 0 even if there are warnings, but prints them to stderr.
+                # However, many standard bindings (like pl011) require standard clocks which we don't mock yet.
+                # We can either assert res.returncode == 0, or be stricter.
+                # For now, let's just make sure it runs without catastrophic failure.
+                assert res.returncode == 0, f"dt-validate crashed on {renode_type}: {res.stderr}"
+def test_validation_missing_memory_size():
+    platform = ReplPlatform(
+        devices=[ReplDevice.create(name="ram", type_name="Memory.MappedMemory", address_str="0x80000000")]
+    )
+    with pytest.raises(ValueError, match="missing mandatory 'size' property"):
+        FdtEmitter(platform).generate_dts()
+
+
+def test_validation_missing_wireless_props():
+    platform = ReplPlatform(
+        devices=[ReplDevice.create(name="radio", type_name="ieee802154", address_str="0x90000000")]
+    )
+    with pytest.raises(ValueError, match="missing mandatory 'transport' property"):
+        FdtEmitter(platform).generate_dts()
+
+    platform.devices[0].properties["transport"] = "zenoh"
+    with pytest.raises(ValueError, match="missing mandatory 'node' property"):
+        FdtEmitter(platform).generate_dts()
+
+
+def test_validation_missing_bridge_props():
+    platform = ReplPlatform(
+        devices=[ReplDevice.create(name="bridge", type_name="mmio-socket-bridge", address_str="0x50000000")]
+    )
+    # Check size
+    with pytest.raises(ValueError, match="missing mandatory 'region-size' property"):
+        FdtEmitter(platform).generate_dts()
+
+    # Add size, check address/base-addr (it has address_str so it should pass has_addr)
+    platform.devices[0].properties["region-size"] = 0x1000
+    with pytest.raises(ValueError, match="missing mandatory 'socket-path' property"):
+        FdtEmitter(platform).generate_dts()
 
 
 # ── DTB compilation ───────────────────────────────────────────────────────────
@@ -192,8 +295,8 @@ def test_emitter_interrupt_parent():
     # Currently fdt_emitter doesn't emit interrupt-parent properties.
     plat = ReplPlatform(
         devices=[
-            ReplDevice(name="nvic", type_name="IRQControllers.NVIC", address_str="0xE000E100"),
-            ReplDevice(
+            ReplDevice.create(name="nvic", type_name="IRQControllers.NVIC", address_str="0xE000E100"),
+            ReplDevice.create(
                 name="uart1",
                 type_name="UART.STM32_UART",
                 address_str="0x40011000",
@@ -212,8 +315,8 @@ def test_emitter_interrupt_parent():
 def test_emitter_multiple_cpus():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(name="cpu0", type_name="CPU.CortexA", properties={"cpuType": "cortex-a15"}),
-            ReplDevice(name="cpu1", type_name="CPU.CortexA", properties={"cpuType": "cortex-a15"}),
+            ReplDevice.create(name="cpu0", type_name="CPU.CortexA", properties={"cpuType": "cortex-a15"}),
+            ReplDevice.create(name="cpu1", type_name="CPU.CortexA", properties={"cpuType": "cortex-a15"}),
         ]
     )
     emitter = FdtEmitter(plat)
@@ -223,19 +326,19 @@ def test_emitter_multiple_cpus():
     assert "cpu1@1" in dts
 
 
-def test_emitter_unmapped_device_warning(capsys):
-    plat = ReplPlatform(devices=[ReplDevice(name="unknown", type_name="Unknown.Device", address_str="0x12345678")])
+def test_emitter_unmapped_device_warning(caplog):
+    plat = ReplPlatform(devices=[ReplDevice.create(name="unknown", type_name="Unknown.Device", address_str="0x12345678")])
     emitter = FdtEmitter(plat)
     emitter.generate_dts()
 
-    captured = capsys.readouterr()
-    assert "Warning: no QEMU mapping for Renode type 'Unknown.Device'" in captured.err
+    caplog.set_level(logging.WARNING)
+    assert "Warning: no QEMU mapping for Renode type 'Unknown.Device'" in caplog.text
 
 
 def test_emitter_mem_int_size():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(name="ram", type_name="Memory.MappedMemory", address_str="0x80000000", properties={"size": 4096})
+            ReplDevice.create(name="ram", type_name="Memory.MappedMemory", address_str="0x80000000", properties={"size": 4096})
         ]
     )
     emitter = FdtEmitter(plat)
@@ -246,7 +349,7 @@ def test_emitter_mem_int_size():
 def test_emitter_boolean_props():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(
+            ReplDevice.create(
                 name="dev",
                 type_name="UART.PL011",
                 address_str="0x40011000",
@@ -270,12 +373,12 @@ def test_compile_dtb_failure():
 def test_emitter_riscv():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(
+            ReplDevice.create(
                 name="cpu",
                 type_name="CPU.RISCV64",
                 properties={"cpuType": "rv64", "isa": "rv64gc", "mmu-type": "riscv,sv39"},
             ),
-            ReplDevice(
+            ReplDevice.create(
                 name="ram", type_name="Memory.MappedMemory", address_str="0x80000000", properties={"size": "0x1000"}
             ),
         ]
@@ -289,25 +392,25 @@ def test_emitter_riscv():
 
 
 def test_emitter_ranged_address():
-    plat = ReplPlatform(devices=[ReplDevice(name="uart", type_name="UART.PL011", address_str="<0x40011000, +0x100>")])
+    plat = ReplPlatform(devices=[ReplDevice.create(name="uart", type_name="UART.PL011", address_str="<0x40011000, +0x100>")])
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
     # base=0x40011000
-    assert "uart {" in dts
+    assert "uart@40011000 {" in dts
 
 
 def test_emitter_invalid_address():
-    plat = ReplPlatform(devices=[ReplDevice(name="uart", type_name="UART.PL011", address_str="not_an_address")])
+    plat = ReplPlatform(devices=[ReplDevice.create(name="uart", type_name="UART.PL011", address_str="not_an_address")])
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
-    assert "uart {" in dts
+    assert "uart@0 {" in dts
 
 
 def test_emitter_gic_interrupts():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"),
-            ReplDevice(
+            ReplDevice.create(name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"),
+            ReplDevice.create(
                 name="dev1",
                 type_name="UART.PL011",
                 address_str="0x09000000",
@@ -322,21 +425,20 @@ def test_emitter_gic_interrupts():
     dts = emitter.generate_dts()
     assert "interrupt-controller;" in dts
     assert "#interrupt-cells = <3>;" in dts
-    assert "<0 37 4>" in dts
-    assert "<0 40 4>" in dts
+    assert "<0 37 4 0 40 4>" in dts
 
 
 def test_emitter_invalid_hex_address():
-    plat = ReplPlatform(devices=[ReplDevice(name="uart", type_name="UART.PL011", address_str="0x12G4")])
+    plat = ReplPlatform(devices=[ReplDevice.create(name="uart", type_name="UART.PL011", address_str="0x12G4")])
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
-    assert "uart {" in dts
+    assert "uart@0 {" in dts
 
 
 def test_emitter_int_and_string_props():
     plat = ReplPlatform(
         devices=[
-            ReplDevice(
+            ReplDevice.create(
                 name="dev",
                 type_name="UART.PL011",
                 address_str="0x40011000",

@@ -150,8 +150,9 @@ pub fn _sim_log(level: LogLevel, module: &'static str, args: core::fmt::Argument
         let _ = write!(cursor, "{args}");
         entry.msg_len = cursor.pos();
 
-        // Fire and forget
-        let _ = tx.try_send(entry);
+        if tx.try_send(entry).is_err() {
+            DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

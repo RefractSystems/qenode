@@ -1,11 +1,14 @@
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 qemu_dir = sys.argv[1]
 filepath = Path(qemu_dir) / "hw/core/sysbus.c"
 
 if not Path(filepath).exists():
-    print(f"File {filepath} not found, skipping.")
+    logger.info(f"File {filepath} not found, skipping.")
     sys.exit(0)
 
 with Path(filepath).open() as f:
@@ -65,13 +68,13 @@ new_logic = """static bool sysbus_parse_reg(FDTGenericMMap *obj, FDTGenericRegPr
 
 if old_logic in text:
     text = text.replace(old_logic, new_logic)
-    print("Applied sysbus_parse_reg ASan fix.")
+    logger.info("Applied sysbus_parse_reg ASan fix.")
 else:
     # Check if already applied (partially or fully)
     if "SysBusDevice *sbd =" in text:
-        print("sysbus_parse_reg ASan fix already applied.")
+        logger.info("sysbus_parse_reg ASan fix already applied.")
     else:
-        print("WARNING: Could not find sysbus_parse_reg to patch!")
+        logger.warning("WARNING: Could not find sysbus_parse_reg to patch!")
 
 with Path(filepath).open("w") as f:
     f.write(text)

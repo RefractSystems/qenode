@@ -1,11 +1,14 @@
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 qemu_dir = sys.argv[1]
 filepath = Path(qemu_dir) / "hw/core/fdt_generic_util.c"
 
 if not Path(filepath).exists():
-    print(f"File {filepath} not found, skipping.")
+    logger.info(f"File {filepath} not found, skipping.")
     sys.exit(0)
 
 with Path(filepath).open() as f:
@@ -50,9 +53,9 @@ new_bus_logic = """        if (object_dynamic_cast(dev, TYPE_DEVICE)) {
 
 if old_bus_logic in text:
     text = text.replace(old_bus_logic, new_bus_logic)
-    print("Applied Task 21.7.1 bus assignment hardening.")
+    logger.info("Applied Task 21.7.1 bus assignment hardening.")
 else:
-    print("Task 21.7.1 bus logic already applied or match not found.")
+    logger.info("Task 21.7.1 bus logic already applied or match not found.")
 
 # Fix 3: Fix 8-byte integer truncation in get_int_be
 text = text.replace(
@@ -107,4 +110,4 @@ text = text.replace("dp->node_path = strdup(node_path);", "dp->node_path = g_str
 
 with Path(filepath).open("w") as f:
     f.write(text)
-print("Finished applying fdt_generic_util fixes.")
+logger.info("Finished applying fdt_generic_util fixes.")

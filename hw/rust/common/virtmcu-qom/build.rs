@@ -20,7 +20,7 @@ fn main() {
     }
 
     let qemu_dir =
-        std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_string());
+        std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_owned());
     let build_dir = if std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1" {
         "build-virtmcu-asan"
     } else {

@@ -6,7 +6,7 @@ from tools.testing.virtmcu_test_suite.factory import compile_c_snippet, compile_
 
 def test_compile_dtb(tmp_path):
     base_dts = tmp_path / "base.dts"
-    base_dts.write_text("/dts-v1/;\n/ {\n    my_node {\n        prop = \"REPLACE_ME\";\n    };\n};")
+    base_dts.write_text('/dts-v1/;\n/ {\n    my_node {\n        prop = "REPLACE_ME";\n    };\n};')
 
     out_dtb = tmp_path / "out.dtb"
 

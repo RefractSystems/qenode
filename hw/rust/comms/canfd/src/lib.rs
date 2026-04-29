@@ -259,7 +259,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
     let node = unsafe { CStr::from_ptr((*zch).node).to_string_lossy().into_owned() };
     let topic_str = unsafe { CStr::from_ptr((*zch).topic).to_string_lossy().into_owned() };
     let transport_name = if (*zch).transport.is_null() {
-        "zenoh".to_string()
+        "zenoh".to_owned()
     } else {
         unsafe { CStr::from_ptr((*zch).transport).to_string_lossy().into_owned() }
     };

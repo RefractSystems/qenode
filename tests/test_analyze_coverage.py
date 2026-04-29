@@ -37,12 +37,11 @@ def test_parse_drcov_bad_count(tmp_path, capsys):
 def test_parse_drcov_valid(tmp_path):
     f = tmp_path / "good.drcov"
     # Create valid drcov data: "BB Table: 2\n" + 2 entries of 8 bytes
-    import struct
 
     content = b"BB Table: 2\n"
     # bb_entry_t: uint32 start, uint16 size, uint16 mod_id
-    content += struct.pack("<IHH", 0x1000, 16, 0)
-    content += struct.pack("<IHH", 0x1010, 8, 0)
+    content += (0x1000).to_bytes(4, "little") + (16).to_bytes(2, "little") + (0).to_bytes(2, "little")
+    content += (0x1010).to_bytes(4, "little") + (8).to_bytes(2, "little") + (0).to_bytes(2, "little")
     f.write_bytes(content)
 
     bbs = parse_drcov(str(f))

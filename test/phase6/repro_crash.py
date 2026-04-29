@@ -1,8 +1,12 @@
+import logging
 import os
+import queue
 import time
 
 import vproto
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -16,15 +20,17 @@ def main():
     s = zenoh.open(conf)
     pub = s.declare_publisher("sim/eth/frame/malicious/tx")
 
-    print("Sending malformed packet (too short)...")
+    logger.info("Sending malformed packet (too short)...")
     pub.put(b"\x00\x01\x02")  # Only 3 bytes, header expects 12
 
-    time.sleep(1)
+    time.sleep(0.5)
 
     # If coordinator is still alive, this should work
-    print("Sending valid packet to check if coordinator is alive...")
+    logger.info("Sending valid packet to check if coordinator is alive...")
     pub_valid = s.declare_publisher("sim/eth/frame/1/tx")
-    s.declare_subscriber("sim/eth/frame/2/rx", lambda s: print("Received valid packet"))  # noqa: ARG005
+
+    rx_valid = queue.Queue()
+    s.declare_subscriber("sim/eth/frame/2/rx", lambda s: rx_valid.put(s.payload.to_bytes()))
 
     # Node 2 must be "known"
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
@@ -33,10 +39,18 @@ def main():
 
     pub_valid.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ABCD")
 
-    time.sleep(1)
-    print("Test finished. Check coordinator logs.")
+    try:
+        rx_valid.get(timeout=5.0)
+        logger.info("Received valid packet")
+    except queue.Empty:
+        logger.info("Timeout waiting for valid packet, coordinator might have crashed")
+        s.close()
+        exit(1)
+
+    logger.info("Test finished. Check coordinator logs.")
     s.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

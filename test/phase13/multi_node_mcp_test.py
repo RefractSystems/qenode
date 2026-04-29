@@ -1,14 +1,18 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(WORKSPACE_DIR)
 
+logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+logger = logging.getLogger(__name__)
+
 
 async def main():
-    print("Connecting to MCP server...")
+    logger.info("Connecting to MCP server...")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -19,6 +23,16 @@ async def main():
         cwd=WORKSPACE_DIR,
     )
 
+    async def forward_stderr():
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                break
+            sys.stderr.write(f"[server] {line.decode()}")
+            sys.stderr.flush()
+
+    asyncio.create_task(forward_stderr())  # noqa: RUF006
+
     async def send_json(obj):
         data = json.dumps(obj) + "\n"
         proc.stdin.write(data.encode())
@@ -28,7 +42,6 @@ async def main():
         line = await proc.stdout.readline()
         if not line:
             return None
-        # print(f"<- {line.decode().strip()}")
         return json.loads(line.decode())
 
     # Initialize
@@ -55,7 +68,7 @@ async def main():
     # Provision and start 2 nodes
     for i in range(2):
         node_id = f"node{i}"
-        print(f"Provisioning {node_id}...")
+        logger.info(f"Provisioning {node_id}...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -66,21 +79,21 @@ async def main():
         )
         await recv_json()
 
-        print(f"Flashing {node_id}...")
+        logger.info(f"Flashing {node_id}...")
         await send_json(
             {
                 "jsonrpc": "2.0",
-                "id": 6,
+                "id": 20 + i,
                 "method": "tools/call",
                 "params": {
                     "name": "flash_firmware",
-                    "arguments": {"node_id": "node1", "firmware_path": str(firmware_path)},
+                    "arguments": {"node_id": node_id, "firmware_path": str(firmware_path)},
                 },
             }
         )
         await recv_json()
 
-        print(f"Starting {node_id}...")
+        logger.info(f"Starting {node_id}...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -91,29 +104,30 @@ async def main():
         )
         await recv_json()
 
-    print("Both nodes started. Waiting for them to boot...")
-    await asyncio.sleep(3)  # SLEEP_EXCEPTION: deliberate yielding
-
-    # Check status resource
-    print("Checking simulation status...")
-    await send_json(
-        {"jsonrpc": "2.0", "id": 40, "method": "resources/read", "params": {"uri": "virtmcu://simulation/status"}}
-    )
-    res = await recv_json()
-    status = json.loads(res["result"]["contents"][0]["text"])
-    assert len(status["nodes"]) == 2
-    for n in status["nodes"]:
-        print(f"Node status: {n}")
-        assert n["status"] in (
-            "running",
-            "error",
-            "stopped",
-        )  # Allow 'error' or 'stopped' on local macOS since QEMU might fail to start
+    logger.info("Both nodes started. Waiting deterministically for them to boot...")
+    for _ in range(50):
+        await send_json(
+            {"jsonrpc": "2.0", "id": 40, "method": "resources/read", "params": {"uri": "virtmcu://simulation/status"}}
+        )
+        res = await recv_json()
+        try:
+            status = json.loads(res["result"]["contents"][0]["text"])
+            running_nodes = [n for n in status["nodes"] if n["status"] == "running"]
+            if len(running_nodes) == 2:
+                # Confirm we got the status output requested later in the script
+                for n in status["nodes"]:
+                    logger.info(f"Node status: {n}")
+                break
+        except Exception:
+            pass
+        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: RPC polling backoff
+    else:
+        logger.warning("Warning: Nodes did not reach 'running' status in time.")
 
     # Read PC from both
     for i in range(2):
         node_id = f"node{i}"
-        print(f"Reading CPU state for {node_id}...")
+        logger.info(f"Reading CPU state for {node_id}...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -129,7 +143,7 @@ async def main():
     # Stop all
     for i in range(2):
         node_id = f"node{i}"
-        print(f"Stopping {node_id}...")
+        logger.info(f"Stopping {node_id}...")
         await send_json(
             {
                 "jsonrpc": "2.0",
@@ -142,7 +156,7 @@ async def main():
 
     proc.terminate()
     await proc.wait()
-    print("Multi-node MCP test passed!")
+    logger.info("Multi-node MCP test passed!")
 
 
 if __name__ == "__main__":

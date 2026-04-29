@@ -23,7 +23,7 @@ fn stress_barrier() {
                     msgs.push(CoordMessage {
                         src_node_id: node_id.to_string(),
                         dst_node_id: ((node_id + 1) % n_nodes).to_string(),
-                        base_topic: "test_topic".to_string(),
+                        base_topic: "test_topic".to_owned(),
                         delivery_vtime_ns: (10 - m) as u64, // out of order
                         sequence_number: m as u64,
                         protocol: Protocol::Uart,
@@ -31,7 +31,7 @@ fn stress_barrier() {
                     });
                 }
                 barrier_clone
-                    .submit_done(node_id.to_string(), msgs)
+                    .submit_done(node_id.to_string(), round as u64, round as u64, msgs)
                     .unwrap()
             }));
         }

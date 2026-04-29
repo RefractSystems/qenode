@@ -19,4 +19,6 @@ def get_free_port():
 
 
 if __name__ == "__main__":
-    print(get_free_port())
+    import sys
+
+    sys.stdout.write(str(get_free_port()) + "\n")

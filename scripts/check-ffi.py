@@ -12,10 +12,13 @@ they match. Run with `--fix` to automatically synchronize the Rust code.
 """
 
 import argparse
+import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # List of structs to verify
 STRUCTS_TO_CHECK = [
@@ -86,7 +89,7 @@ def check_rust_file(file_path, probed_layouts, fix=False):
             if field_name in probed:
                 actual_offset = probed[field_name]
                 if actual_offset != current_offset:
-                    print(
+                    logger.info(
                         f"Mismatch in {struct_name}.{field_name}: Rust expects {current_offset}, binary has {actual_offset}"
                     )
                     success = False
@@ -105,7 +108,9 @@ def check_rust_file(file_path, probed_layouts, fix=False):
             if "__size__" in probed:
                 actual_size = probed["__size__"]
                 if actual_size != current_size:
-                    print(f"Mismatch in {struct_name} size: Rust expects {current_size}, binary has {actual_size}")
+                    logger.info(
+                        f"Mismatch in {struct_name} size: Rust expects {current_size}, binary has {actual_size}"
+                    )
                     success = False
                     if fix:
                         fixes_count += 1
@@ -117,7 +122,7 @@ def check_rust_file(file_path, probed_layouts, fix=False):
 
     if fix and fixes_count > 0:
         p.write_text(new_content)
-        print(f"Applied {fixes_count} fixes to {file_path}")
+        logger.info(f"Applied {fixes_count} fixes to {file_path}")
         return True, fixes_count
 
     return success, fixes_count
@@ -133,7 +138,7 @@ def main():
     qemu_bin = args.bin
 
     probed_layouts = {}
-    print("==> Probing QEMU binary for struct layouts...")
+    logger.info("==> Probing QEMU binary for struct layouts...")
     for struct in STRUCTS_TO_CHECK:
         cmd = [probe_script, struct]
         if qemu_bin:
@@ -143,7 +148,7 @@ def main():
         if result.returncode == 0:
             probed_layouts[struct] = parse_pahole(result.stdout)
         else:
-            print(f"Warning: Could not probe struct {struct}")
+            logger.warning(f"Warning: Could not probe struct {struct}")
 
     rust_files = [
         "hw/rust/common/virtmcu-qom/src/qom.rs",
@@ -163,14 +168,15 @@ def main():
         total_fixes += fixes
 
     if not overall_success and not args.fix:
-        print("\n❌ FFI layout mismatch detected! Run './scripts/check-ffi.py --fix' to sync.")
+        logger.info("\n❌ FFI layout mismatch detected! Run './scripts/check-ffi.py --fix' to sync.")
         sys.exit(1)
 
     if total_fixes > 0:
-        print(f"\n✅ Synced {total_fixes} FFI layout assertions.")
+        logger.info(f"\n✅ Synced {total_fixes} FFI layout assertions.")
     else:
-        print("\n✅ FFI layouts are in sync.")
+        logger.info("\n✅ FFI layouts are in sync.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

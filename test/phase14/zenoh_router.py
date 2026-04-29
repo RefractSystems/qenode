@@ -1,7 +1,10 @@
+import logging
 import sys
 import time
 
 import zenoh
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -10,10 +13,10 @@ def main():
     config.insert_json5("listen/endpoints", f'["tcp/127.0.0.1:{port}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
 
-    print(f"Starting Zenoh router on tcp/127.0.0.1:{port}...")
+    logger.info(f"Starting Zenoh router on tcp/127.0.0.1:{port}...")
     session = zenoh.open(config)
 
-    print("Router running. Press Ctrl+C to exit.")
+    logger.info("Router running. Press Ctrl+C to exit.")
     try:
         while True:
             time.sleep(1)
@@ -23,4 +26,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

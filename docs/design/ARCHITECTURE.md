@@ -268,6 +268,11 @@ the inter-cluster transport changes.
 
 ---
 
+
+### Hardware Jitter Profile Injection (DET-3)
+
+While determinism guarantees stability, enterprise quality requires verifying resilience. Through the `DataTransport` abstraction, virtmcu supports **Chaos Engineering**. The framework can wrap transport layers in fault-injecting profiles to deliberately drop Zenoh frames, introduce asymmetric latency, or simulate physical bus degradation without violating the formal deterministic causality of the simulation loop.
+
 ### Pillar 5 — Co-Simulation with External Hardware Models
 
 For projects with Verilated C++ hardware models or real FPGA hardware:

@@ -38,7 +38,7 @@ log_pass() { echo "PASS: $1"; }
 log_fail() { echo "FAIL: $1" >&2; exit 1; }
 
 free_port() {
-    python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()"
+    python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); import sys; sys.stdout.write(str(s.getsockname()[1])); s.close()"
 }
 
 # ─── build bench firmware ────────────────────────────────────────────────────
@@ -136,7 +136,8 @@ while time.perf_counter() < deadline:
 if not ready:
     proc.terminate(); proc.wait()
     session.close()
-    print("0")
+    import sys
+    sys.stdout.write("0\n")
     sys.exit(0)
 
 current_q = q_num
@@ -161,7 +162,8 @@ try:
 except subprocess.TimeoutExpired:
     proc.kill()
 session.close()
-print(exit_vtime[0])
+import sys
+sys.stdout.write(str(exit_vtime[0]) + "\n")
 PYEOF
     )
 

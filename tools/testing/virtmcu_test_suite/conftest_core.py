@@ -3,7 +3,6 @@ import contextlib
 import logging
 import os
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -16,6 +15,7 @@ import vproto
 import zenoh
 
 from tools.testing.qmp_bridge import QmpBridge
+from tools.testing.utils import get_time_multiplier, wait_for_file_creation, yield_now
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +26,8 @@ def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: i
 
 
 def unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:
-    return struct.unpack("<QIIQ", data)
+    resp = vproto.ClockReadyResp.unpack(data)
+    return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
 async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_count: int = 1, timeout: float = 30.0):
@@ -34,6 +35,9 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
     Blocks until Zenoh discovery confirms the network mesh is established.
     Uses the Zenoh Liveliness API for deterministic signaling without polling or sleeps.
     """
+    if timeout is not None:
+        timeout *= get_time_multiplier()
+
     logger.info(f"Zenoh: waiting for liveliness on {topic} (expected={expected_count})...")
 
     event = asyncio.Event()
@@ -46,9 +50,7 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
             loop.call_soon_threadsafe(event.set)
 
     # 1. Subscribe to liveliness changes
-    sub = await asyncio.to_thread(
-        lambda: session.liveliness().declare_subscriber(topic, on_liveliness)
-    )
+    sub = await asyncio.to_thread(lambda: session.liveliness().declare_subscriber(topic, on_liveliness))
 
     try:
         # 2. Check if it's already alive
@@ -66,51 +68,18 @@ async def wait_for_zenoh_discovery(session: zenoh.Session, topic: str, expected_
         # 3. Wait for the event with a timeout
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
-            await asyncio.sleep(0.1) # SLEEP_EXCEPTION: yield for Zenoh routing tables
-            # Give a tiny bit of breathing room for the internal routing table update,
-            # but we've eliminated the multi-second ASan grace period.
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
         except TimeoutError as err:
             raise TimeoutError(f"Zenoh discovery timeout for {topic} after {timeout}s") from err
     finally:
         await asyncio.to_thread(sub.undeclare)
 
 
-
 # VTA step timeout: always longer than the QEMU stall-timeout so QEMU can reply
 # with STALL before Python gives up. VIRTMCU_STALL_TIMEOUT_MS drives both sides:
 # QEMU reads it directly; Python adds a 10-second buffer on top.
-if os.environ.get("VIRTMCU_USE_ASAN") == "1" and "VIRTMCU_STALL_TIMEOUT_MS" not in os.environ:
-    os.environ["VIRTMCU_STALL_TIMEOUT_MS"] = "300000"
-
-_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+_stall_timeout_ms = int(_base_stall_timeout_ms * get_time_multiplier())
 _DEFAULT_VTA_STEP_TIMEOUT_S: float = max(60.0, _stall_timeout_ms / 1000.0 + 10.0)
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Scale pytest-timeout's global threshold when VIRTMCU_STALL_TIMEOUT_MS is elevated.
-
-    The pyproject.toml default (120 s) suits non-ASan runs. Under ASan/UBSan
-    QEMU executes TCG blocks much more slowly; a 100 ms virtual-time step can
-    legitimately take several minutes of wall-clock time. We raise the per-test
-    limit to _DEFAULT_VTA_STEP_TIMEOUT_S + 60 s so pytest-timeout never kills a
-    test that is still making forward progress toward the QEMU stall boundary.
-
-    pytest-timeout caches the resolved timeout in config._env_timeout during its
-    own pytest_configure (which runs before conftest hooks).  Setting
-    config.option.timeout afterwards has no effect — we must update _env_timeout
-    directly.
-    """
-    computed = _DEFAULT_VTA_STEP_TIMEOUT_S + 60.0
-    # pytest-timeout caches its resolved timeout in config._env_timeout during its
-    # own pytest_configure (which runs before conftest hooks).  Modifying
-    # config.option.timeout afterwards has no effect on the cached value.  We update
-    # _env_timeout through __dict__ to avoid both the ruff B010 (setattr constant)
-    # and mypy attr-defined errors while remaining lint-clean.
-    config_dict = vars(config)
-    current_timeout = float(config_dict.get("_env_timeout") or 0.0)
-    if computed > current_timeout:
-        config_dict["_env_timeout"] = computed
 
 
 class VirtualTimeAuthority:
@@ -121,12 +90,46 @@ class VirtualTimeAuthority:
     def __init__(self, session: zenoh.Session, node_ids: list[int]):
         self.session = session
         self.node_ids = node_ids
+        self.pacing_multiplier = float(os.environ.get("VIRTMCU_PACING_MULTIPLIER", "0.0"))
+        self.start_wall_time = None
+        self.start_vtime_ns = None
         self.current_vtimes = dict.fromkeys(node_ids, 0)
         self._expected_vtime_ns = dict.fromkeys(node_ids, 0)
         self._overshoot_ns = dict.fromkeys(node_ids, 0)
         self.quantum_number = 0
 
+    async def wait_for_discovery(self, timeout: float = 15.0):
+        """
+        Blocks until Zenoh discovery confirms the network mesh is established for all nodes.
+        Uses wait_for_zenoh_discovery for deterministic signaling.
+        """
+        if timeout is not None:
+            timeout *= get_time_multiplier()
+
+        for nid in self.node_ids:
+            # First wait for the node to signal it is ready via its liveliness token.
+            # In VirtMCU, the clock plugin declares this AFTER the queryable is ready.
+            hb_topic = f"sim/clock/liveliness/{nid}"
+            await wait_for_zenoh_discovery(self.session, hb_topic, timeout=timeout)
+
+            # Now perform a single check to sync the initial vtime
+            topic = f"sim/clock/advance/{nid}"
+            payload = pack_clock_advance(0, self._expected_vtime_ns[nid], self.quantum_number + 1)
+
+            reply = await self._get_reply(nid, topic, payload, timeout=timeout)
+            if not reply:
+                raise TimeoutError(f"Node {nid} failed to respond to initial clock GET within {timeout}s")
+
+            # Acknowledge the response
+            vtime, _, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
+            self.current_vtimes[nid] = vtime
+
+        # We incremented quantum_number implicitly in the payloads, so sync it up
+        self.quantum_number += 1
+
     async def step(self, delta_ns: int, timeout: float = _DEFAULT_VTA_STEP_TIMEOUT_S) -> Any:
+        if timeout is not None:
+            timeout *= get_time_multiplier()
         """
         Advances the clock of all managed nodes.
         Timeout scales with VIRTMCU_STALL_TIMEOUT_MS so ASan builds get enough headroom.
@@ -159,7 +162,9 @@ class VirtualTimeAuthority:
                     f"QEMU failed to reach TB boundary within its stall-timeout."
                 )
             if qn != self.quantum_number:
-                raise RuntimeError(f"Node {nid} returned wrong quantum_number: expected {self.quantum_number}, got {qn}")
+                raise RuntimeError(
+                    f"Node {nid} returned wrong quantum_number: expected {self.quantum_number}, got {qn}"
+                )
 
             self.current_vtimes[nid] = vtime
             self._expected_vtime_ns[nid] += delta_ns
@@ -242,25 +247,24 @@ async def zenoh_router():
         asyncio.create_task(_stream_router_output(proc.stderr, "STDERR")),
     ]
 
-    # Wait for router to bind the socket
-    import socket
-
-    host = "127.0.0.1"
-    for _ in range(50):
-        try:
-            with socket.create_connection((host, port), timeout=0.1):
-                break
-        except (TimeoutError, ConnectionRefusedError):
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
-    else:
-        raise RuntimeError(f"Zenoh Router failed to bind to {endpoint}")
-
     # Wait for router to be ready internally
     config = zenoh.Config()
     config.insert_json5("connect/endpoints", f'["{endpoint}"]')
     config.insert_json5("mode", '"client"')
 
-    check_session = await asyncio.to_thread(lambda: zenoh.open(config))
+    # zenoh.open() in client mode with connect/endpoints may throw ZError
+    # if the TCP port is not yet open. We retry with a small yield.
+    check_session = None
+    for _ in range(int(100 * get_time_multiplier())):
+        try:
+            check_session = await asyncio.to_thread(lambda: zenoh.open(config))
+            break
+        except Exception:
+            # TCP port opening is non-deterministic; backoff and retry.
+            await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for Zenoh router TCP port
+    else:
+        raise RuntimeError(f"Zenoh Router failed to listen on {endpoint}")
+
     try:
         await wait_for_zenoh_discovery(check_session, "sim/router/check")
     finally:
@@ -297,18 +301,12 @@ async def zenoh_session(zenoh_router):
         config.insert_json5("transport/shared/task_workers", "16")
     session = await asyncio.to_thread(lambda: zenoh.open(config))
 
-    # Wait for session to connect to the router (either as a router or a peer)
-    connected = False
-    for _ in range(100):
-        info = session.info
-        if list(info.routers_zid()) or list(info.peers_zid()):
-            connected = True
-            break
-        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
-
-    if not connected:
+    # Wait for session to connect to the router by waiting for the router's liveliness token
+    try:
+        await wait_for_zenoh_discovery(session, "sim/router/check")
+    except TimeoutError:
         await asyncio.to_thread(session.close)
-        raise RuntimeError(f"Failed to connect Zenoh session to {zenoh_router}")
+        raise RuntimeError(f"Failed to connect Zenoh session to {zenoh_router}") from None
 
     yield session
     await asyncio.to_thread(session.close)
@@ -342,21 +340,19 @@ async def zenoh_coordinator(zenoh_router, request):
         lock_file = workspace_root / "tools/zenoh_coordinator/build.lock"
         import fcntl
 
-        with lock_file.open("w") as f:
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        def _blocking_build():
+            with lock_file.open("w") as f:
+                # This blocks until the lock is acquired
+                fcntl.flock(f, fcntl.LOCK_EX)
                 if not coord_bin.exists():
                     logger.info("Building zenoh_coordinator...")
-                    proc = await asyncio.create_subprocess_exec(
-                        "cargo", "build", "--release", cwd=(workspace_root / "tools/zenoh_coordinator")
+                    subprocess.run(
+                        ["cargo", "build", "--release"],
+                        cwd=(workspace_root / "tools/zenoh_coordinator"),
+                        check=True,
                     )
-                    await proc.wait()
-            except BlockingIOError:
-                logger.info("Waiting for zenoh_coordinator build...")
-                for _ in range(60):
-                    if coord_bin.exists():
-                        break
-                    await asyncio.sleep(1.0)  # SLEEP_EXCEPTION: deliberate yielding
+
+        await asyncio.to_thread(_blocking_build)
 
         # Refresh location after build
         coord_bin = get_rust_binary_path("zenoh_coordinator")
@@ -375,7 +371,15 @@ async def zenoh_coordinator(zenoh_router, request):
         env=os.environ.copy(),
     )
 
-    await asyncio.sleep(1.0)  # SLEEP_EXCEPTION: deliberate yielding
+    # Wait for session to connect to the router
+    check_config = zenoh.Config()
+    check_config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
+    check_config.insert_json5("mode", '"client"')
+    check_session = await asyncio.to_thread(lambda: zenoh.open(check_config))
+    try:
+        await wait_for_zenoh_discovery(check_session, "sim/coordinator/liveliness")
+    finally:
+        await asyncio.to_thread(check_session.close)
 
     yield proc
 
@@ -390,7 +394,7 @@ async def zenoh_coordinator(zenoh_router, request):
 
 
 @pytest_asyncio.fixture
-async def qemu_launcher():
+async def qemu_launcher(request):
     """
     Fixture that returns a function to launch QEMU instances.
     Ensures all instances are cleaned up after the test.
@@ -470,7 +474,7 @@ async def qemu_launcher():
                 decoded = line.decode()
                 if capture_list is not None:
                     capture_list.append(decoded)
-                logger.info(f"QEMU {name}: {decoded.strip()}")
+                logger.debug(f"QEMU {name}: {decoded.strip()}")
 
         # Task 4.2d: Stream QEMU output in background for better debuggability.
         # We store task references to prevent them from being garbage collected.
@@ -480,47 +484,103 @@ async def qemu_launcher():
         ]
 
         # Wait for sockets to be created by QEMU.
-        retries = 100
-        while retries > 0:
-            if proc.returncode is not None:
-                # The stream tasks might still be draining
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+        try:
+            # Task 4.2d: Use deterministic file discovery for IPC sockets.
+            # gather(wait_for_file_creation) wakes up instantly on the inotify event.
+            wait_tasks = [wait_for_file_creation(qmp_sock)]
+            if not has_serial:
+                wait_tasks.append(wait_for_file_creation(uart_sock))
+
+            files_task = asyncio.ensure_future(asyncio.gather(*wait_tasks))
+            exit_task = asyncio.create_task(proc.wait())
+
+            done, pending = await asyncio.wait(
+                [files_task, exit_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=10.0 * get_time_multiplier(),
+            )
+
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+            if exit_task in done:
+                # Process exited before sockets were created
+                await yield_now()
                 stderr_text = "".join(captured_stderr)
-                if "failed to open module" in stderr_text or "undefined symbol" in stderr_text or "not a valid device model name" in stderr_text:
+                if (
+                    "failed to open module" in stderr_text
+                    or "undefined symbol" in stderr_text
+                    or "not a valid device model name" in stderr_text
+                ):
                     raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{stderr_text}")
                 raise RuntimeError(
-                    f"QEMU exited unexpectedly (rc={proc.returncode}) before sockets appeared.\n"
-                    f"STDERR: {stderr_text}"
+                    f"QEMU exited unexpectedly (rc={proc.returncode}) before sockets appeared.\nSTDERR: {stderr_text}"
                 )
-            if Path(qmp_sock).exists() and (has_serial or Path(uart_sock).exists()):
-                break
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
-            retries -= 1
-        else:
-            proc.terminate()
+
+            if not done:
+                raise TimeoutError()
+
+            files_task.result()
+
+        except (TimeoutError, RuntimeError) as e:
+            if proc.returncode is None:
+                proc.terminate()
             stderr_text = "".join(captured_stderr)
             logger.error(f"QEMU failed to start. STDERR: {stderr_text}")
-            raise TimeoutError("QEMU QMP/UART sockets did not appear in time")
+            if isinstance(e, TimeoutError):
+                raise TimeoutError("QEMU QMP/UART sockets did not appear in time") from e
+            raise
 
         bridge = QmpBridge()
         bridge.pid = proc.pid
         try:
-            await bridge.connect(str(qmp_sock), None if has_serial else str(uart_sock))
+            # Task: Deterministic signaling
+            # Extract node_id from extra_args if available
+            node_id = None
+            if extra_args:
+                for arg in extra_args:
+                    if "node=" in str(arg):
+                        try:
+                            # Parse node=N from something like "-device virtmcu-clock,node=1,..."
+                            import re
+
+                            match = re.search(r"node=(\d+)", str(arg))
+                            if match:
+                                node_id = int(match.group(1))
+                                break
+                        except Exception:
+                            pass
+
+            # Cleanly retrieve zenoh_session if the current test is using it
+            active_zenoh_session = None
+            if "zenoh_session" in request.fixturenames:
+                active_zenoh_session = request.getfixturevalue("zenoh_session")
+
+            await bridge.connect(
+                str(qmp_sock),
+                None if has_serial else str(uart_sock),
+                zenoh_session=active_zenoh_session,
+                node_id=node_id,
+            )
         except Exception as e:
             # Check if QEMU died immediately after socket creation (e.g. during QMP negotiation)
             if proc.returncode is not None:
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: deliberate yielding
+                await yield_now()
                 stderr_text = "".join(captured_stderr)
-                if "failed to open module" in stderr_text or "undefined symbol" in stderr_text or "not a valid device model name" in stderr_text:
+                if (
+                    "failed to open module" in stderr_text
+                    or "undefined symbol" in stderr_text
+                    or "not a valid device model name" in stderr_text
+                ):
                     raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{stderr_text}") from e
                 raise RuntimeError(
-                    f"QEMU exited unexpectedly (rc={proc.returncode}) during QMP connect.\n"
-                    f"STDERR: {stderr_text}"
+                    f"QEMU exited unexpectedly (rc={proc.returncode}) during QMP connect.\nSTDERR: {stderr_text}"
                 ) from e
 
             logger.error(f"QEMU failed to establish connection: {e}")
             raise e
-
 
         instance = {"proc": proc, "bridge": bridge, "tmpdir": tmpdir, "cmd": cmd, "output_tasks": output_tasks}
         instances.append(instance)
@@ -581,3 +641,36 @@ class TimeAuthority(VirtualTimeAuthority):
     async def step(self, delta_ns: int, timeout: float = 60.0) -> Any:
         res = await super().step(delta_ns, timeout)
         return res[self.node_ids[0]]
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001
+    computed_timeout = _DEFAULT_VTA_STEP_TIMEOUT_S + 60.0
+    for item in items:
+        item.add_marker(pytest.mark.timeout(computed_timeout))
+
+    if os.environ.get("VIRTMCU_USE_ASAN") == "1" or os.environ.get("VIRTMCU_USE_TSAN") == "1":
+        skip_asan = pytest.mark.skip(reason="Too timing sensitive for ASan/TSan")
+        for item in items:
+            if "skip_asan" in item.keywords:
+                item.add_marker(skip_asan)
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):  # noqa: ARG001
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" and rep.failed and "sim_transport" in item.funcargs:
+        # Check if the test has a flight recorder transport
+        t = item.funcargs["sim_transport"]
+        if hasattr(t, "dump_flight_recorder"):
+            import json
+
+            log_dir = Path("test-results/flight_recorder")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"{item.name}.json"
+            try:
+                with log_file.open("w") as f2:
+                    json.dump(t.dump_flight_recorder(), f2, indent=2)
+                logger.info(f"\n✈️ FLIGHT RECORDER DUMPED TO: {log_file}\n")
+            except Exception as e:
+                logger.info(f"\n❌ Failed to dump flight recorder: {e}\n")

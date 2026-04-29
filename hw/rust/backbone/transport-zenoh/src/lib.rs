@@ -6,7 +6,6 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::ffi::{c_char, CStr};
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use core::time::Duration;
 use std::sync::OnceLock;
 use virtmcu_qom::sync::Bql;
 use zenoh::pubsub::Subscriber;
@@ -57,7 +56,7 @@ impl DataTransport for ZenohDataTransport {
                 return Ok(sample.payload().to_bytes().to_vec());
             }
         }
-        Err("No reply received".to_string())
+        Err("No reply received".to_owned())
     }
 }
 
@@ -251,8 +250,6 @@ impl Drop for SafeSubscriber {
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
-    const ZENOH_CONN_TIMEOUT: Duration = Duration::from_secs(10);
-
     let mut config = Config::default();
     let mut has_router = false;
 
@@ -277,70 +274,10 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     let session = zenoh::open(config)
         .wait()
         .map_err(|e| zenoh::Error::from(format!("Failed to open Zenoh session: {e}")))?;
-    virtmcu_qom::sim_info!(":open.wait().");
+    virtmcu_qom::vlog!("transport-zenoh: zenoh::open() finished. has_router={}", has_router);
 
-    // If a router was provided, verify we can actually reach it.
+    // If a router was provided, log it.
     if has_router {
-        let pair = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-        let pair_c = Arc::clone(&pair);
-
-        // Zenoh 1.0+: Liveliness events notify on topology changes (members joining).
-        // We use a callback to signal the condvar as soon as a discovery event occurs.
-        let _watcher = session
-            .liveliness()
-            .declare_subscriber("**")
-            .callback(move |_| {
-                let (lock, cvar) = &*pair_c;
-                if let Ok(mut connected) = lock.lock() {
-                    *connected = true;
-                    cvar.notify_all();
-                }
-            })
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
-
-        let (lock, cvar) = &*pair;
-        let mut connected_guard = lock
-            .lock()
-            .map_err(|_| zenoh::Error::from("Zenoh connection mutex poisoned".to_string()))?;
-
-        // Deterministic state-check helper.
-        let check_connected = |s: &Session| -> bool {
-            let info = s.info();
-            // Check if we already have any routers or peers in our view.
-            info.routers_zid().wait().count() > 0 || info.peers_zid().wait().count() > 0
-        };
-
-        if check_connected(&session) {
-            *connected_guard = true;
-        }
-
-        // Wait for discovery event or safety timeout.
-        // We wake up IMMEDIATELY when Zenoh signals a liveliness change, avoiding assumption-based delays.
-        while !*connected_guard {
-            let (new_guard, timeout_res) =
-                cvar.wait_timeout(connected_guard, ZENOH_CONN_TIMEOUT).map_err(|_| {
-                    zenoh::Error::from("Zenoh connection condvar wait failed".to_string())
-                })?;
-            connected_guard = new_guard;
-            if timeout_res.timed_out() {
-                break;
-            }
-            // Re-verify actual Zenoh state.
-            if check_connected(&session) {
-                *connected_guard = true;
-            }
-        }
-
-        if !*connected_guard {
-            virtmcu_qom::sim_err!(
-                "Failed to connect to explicit router after {}s.",
-                ZENOH_CONN_TIMEOUT.as_secs()
-            );
-            let _ = session.close().wait();
-            return Err(zenoh::Error::from("Failed to connect to explicit router".to_string()));
-        }
-
         virtmcu_qom::sim_info!("Connected to Zenoh topology.");
     }
 
@@ -351,6 +288,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU64, AtomicUsize};
+    use core::time::Duration;
 
     // Mocks for BQL functions normally provided by QEMU.
     // These are needed because virtmcu-qom/src/ffi.c calls them when UNIT_TEST is not defined.
@@ -362,7 +300,7 @@ mod tests {
 
     #[no_mangle]
     extern "C" fn virtmcu_is_bql_locked() -> bool {
-        BQL_HELD_BY_ME.with(|b| b.get())
+        BQL_HELD_BY_ME.with(std::cell::Cell::get)
     }
     #[no_mangle]
     extern "C" fn virtmcu_safe_bql_lock() {
