@@ -55,11 +55,11 @@ async def test_phase8_interactive_echo(qemu_launcher, tmp_path):
     Phase 8: Interactive UART Echo test (Unix Sockets).
     """
     workspace_root = Path(__file__).parent.parent
-    kernel = workspace_root / "test/phase8/echo.elf"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     dtb = tmp_path / "minimal.dtb"
     import shutil
 
-    shutil.copy(workspace_root / "test/phase1/minimal.dtb", dtb)
+    shutil.copy(workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb", dtb)
 
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
@@ -78,11 +78,11 @@ async def test_phase8_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_laun
     Uses echo.elf on Node 1 to avoid WFI stall and manual bridging to prevent hub storms.
     """
     workspace_root = Path(__file__).parent.parent
-    kernel = workspace_root / "test/phase8/echo.elf"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     dtb = tmp_path / "minimal.dtb"
     import shutil
 
-    shutil.copy(workspace_root / "test/phase1/minimal.dtb", dtb)
+    shutil.copy(workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb", dtb)
 
     topic0 = f"virtmcu/uart/n0_{uuid.uuid4().hex[:8]}"
     topic1 = f"virtmcu/uart/n1_{uuid.uuid4().hex[:8]}"
@@ -193,11 +193,11 @@ async def test_phase8_coordinator_topology(zenoh_router, zenoh_coordinator, zeno
     Uses the Marker Packet pattern to empirically prove a drop occurred.
     """
     workspace_root = Path(__file__).parent.parent
-    kernel = workspace_root / "test/phase8/echo.elf"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     dtb = tmp_path / "minimal.dtb"
     import shutil
 
-    shutil.copy(workspace_root / "test/phase1/minimal.dtb", dtb)
+    shutil.copy(workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb", dtb)
 
     topic = f"virtmcu/uart/top_{uuid.uuid4().hex[:8]}"
 
@@ -312,11 +312,11 @@ async def test_phase8_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tm
     Verifies that the chardev flow control fix works.
     """
     workspace_root = Path(__file__).parent.parent
-    kernel = workspace_root / "test/phase8/echo.elf"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     dtb = tmp_path / "minimal.dtb"
     import shutil
 
-    shutil.copy(workspace_root / "test/phase1/minimal.dtb", dtb)
+    shutil.copy(workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb", dtb)
 
     topic = f"virtmcu/uart/stress_{uuid.uuid4().hex[:8]}"
 

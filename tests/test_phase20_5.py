@@ -18,16 +18,16 @@ async def test_spi_echo_baremetal(qemu_launcher, zenoh_session, zenoh_router, tm
     transactions against a Zenoh-backed SPI bridge.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    yaml_path = Path(workspace_root) / "test/phase20_5/spi_test.yaml"
+    yaml_path = Path(workspace_root) / "tests/fixtures/guest_apps/phase20_5/spi_test.yaml"
     dtb_path = tmp_path / "spi_test.dtb"
-    kernel_path = Path(workspace_root) / "test/phase20_5/spi_echo.elf"
+    kernel_path = Path(workspace_root) / "tests/fixtures/guest_apps/phase20_5/spi_echo.elf"
 
     # Get the actual router endpoint from the fixture
     router_endpoint = zenoh_router
 
     # 1. Build firmware if missing
     if not Path(kernel_path).exists():
-        subprocess.run(["make", "-C", "test/phase20_5"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase20_5"], check=True, cwd=workspace_root)
 
     # 2. Generate DTB using yaml2qemu
     # Create a temporary yaml with Zenoh SPI Bridge

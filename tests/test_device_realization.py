@@ -10,7 +10,7 @@ def test_dynamic_devices_realization():
     """
     Verifies that the YAML tooling and QEMU C/Rust models are synchronized.
     """
-    yaml_path = "test/phase12/test_bridge.yaml"
+    yaml_path = "tests/fixtures/guest_apps/phase12/test_bridge.yaml"
     if not Path(yaml_path).exists():
         pytest.skip(f"{yaml_path} not found")
 

@@ -3,7 +3,7 @@
 In this lesson you will learn how QEMU's MMIO subsystem can be extended to
 communicate with an external hardware model — specifically a **SystemC TLM-2.0**
 register file — over a Unix domain socket.  This is the *Path A* co-simulation
-strategy described in `docs/ARCHITECTURE.md §9`.
+strategy described in `docs/architecture/01-system-overview.md §9`.
 
 ## Concepts
 
@@ -153,8 +153,8 @@ make -C tools/systemc_adapter
 tools/systemc_adapter/build/adapter /tmp/sc.sock
 
 # 3. In terminal B — start QEMU with a test firmware
-#    (see test/phase5/smoke_test.sh for a complete example)
-scripts/run.sh --dtb test/phase1/minimal.dtb \
+#    (see tests/fixtures/guest_apps/phase5/smoke_test.sh for a complete example)
+scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
     --kernel /tmp/phase5_fw.elf \
     -device mmio-socket-bridge,socket-path=/tmp/sc.sock,region-size=4096,base-addr=0x50000000 \
     -nographic

@@ -51,7 +51,7 @@ Sensor Data files) and integrated (lock-step with MuJoCo via shared memory). A
 **QMP-backed Robot Framework library** provides test automation parity with Renode's
 keyword suite.
 
-See [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md) for the full technical deep-dive and [`docs/BUILD_ARCHITECTURE.md`](docs/BUILD_ARCHITECTURE.md) for build system details.
+See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-overview.md) for the full technical deep-dive and [`docs/guide/01-build-system.md`](docs/guide/01-build-system.md) for build system details.
 
 ---
 
@@ -141,33 +141,34 @@ virtmcu/
 │   ├── Dockerfile              # Multi-stage: toolchain / devenv / builder / runtime
 │   └── docker-compose.yml      # Standalone test environment
 │
-├── test/                       # End-to-end integration and smoke tests per subsystem
+├── tests/fixtures/guest_apps/                       # End-to-end integration and smoke tests per subsystem
 │
 └── docs/
-    ├── ARCHITECTURE.md         # Deep-dive: design pillars, timing, prior art, ADRs
-    └── TIME_MANAGEMENT_DESIGN.md # Detailed guide to BQL mechanics and physics sync
+    ├── architecture/           # The Virtmcu Specification: core design, temporal sync, PDES, ADRs
+    ├── guide/                  # User & developer guides (build system, containers, CI)
+    └── postmortem/             # Historical critiques and CI issue RCAs
 ```
 
 ---
 
 ## Where to Start
 
-**Read the architecture first**: [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md).
+**Read the architecture first**: [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-overview.md).
 Sections 1–3 cover the design rationale and the five implementation pillars. Section 5
 covers the timing design and BQL constraints. Section 6 covers prior art (qbox, MINRES).
 
-**For a deep dive on clock modes and BQL mechanics**: [`docs/design/TIME_MANAGEMENT_DESIGN.md`](docs/design/TIME_MANAGEMENT_DESIGN.md).
+**For a deep dive on clock modes and BQL mechanics**: [`docs/architecture/02-temporal-core.md`](docs/architecture/02-temporal-core.md).
 
 **Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
-./scripts/run.sh --dtb test/phase1/minimal.dtb -device your-device-name -nographic
+./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb -device your-device-name -nographic
 ```
 
 **Run the repl2qemu tool**:
 ```bash
 source .venv/bin/activate
-./scripts/run.sh --repl test/phase3/test_board.repl --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --repl tests/fixtures/guest_apps/phase3/test_board.repl --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
 ```
 
 **Run with FirmwareStudio** (external time master, Phase 7+):
@@ -195,7 +196,7 @@ docker compose -f docker/docker-compose.yml up
 
 ### Dev Container (recommended)
 
-Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically. For detailed instructions on setting up SSH/Git credentials inside the container, see [**docs/CONTAINER_DEV_GUIDE.md**](docs/CONTAINER_DEV_GUIDE.md).
+Open in VS Code and accept **"Reopen in Container"**. Everything runs automatically. For detailed instructions on setting up SSH/Git credentials inside the container, see [**docs/guide/02-containerized-development.md**](docs/guide/02-containerized-development.md).
 
 ### Manual (Native Linux Only)
 
@@ -216,7 +217,7 @@ make run           # smoke-test
 
 > **macOS note**: Native builds work for Phases 1–3. Phase 4+ requires Docker — a
 > GLib conflict (`--enable-modules` + `--enable-plugins`, GitLab #516) breaks module
-> loading on macOS. See `docs/design/ARCHITECTURE.md §6`.
+> loading on macOS. See `docs/architecture/01-system-overview.md §6`.
 
 ---
 

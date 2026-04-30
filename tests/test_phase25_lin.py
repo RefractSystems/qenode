@@ -40,7 +40,7 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
 
     # 1. Build ELF
     kernel = Path(tmpdir) / "lin_echo.elf"
-    compile_firmware([Path("test/phase25/lin_echo.S")], kernel, linker_script=Path("test/phase25/lin_echo.ld"))
+    compile_firmware([Path("tests/fixtures/guest_apps/phase25/lin_echo.S")], kernel, linker_script=Path("tests/fixtures/guest_apps/phase25/lin_echo.ld"))
 
     # Use unique topic to avoid interference
     import uuid
@@ -51,7 +51,7 @@ async def test_lin_lpuart(qemu_launcher, sim_transport):
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
     compile_dtb(
-        Path("test/phase25/lin_test.dts"),
+        Path("tests/fixtures/guest_apps/phase25/lin_test.dts"),
         {"tcp/127.0.0.1:7447": sim_transport.dtb_router_endpoint(), '"sim/lin"': f'"{lin_topic}"'},
         dtb,
     )

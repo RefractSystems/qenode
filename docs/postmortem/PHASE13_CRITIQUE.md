@@ -22,11 +22,11 @@
 
 ### 5. Multi-Node Support
 **Issue**: No integration tests covered multi-node scenarios via MCP.
-**Fix**: Added `test/phase13/multi_node_mcp_test.py`.
+**Fix**: Added `tests/fixtures/guest_apps/phase13/multi_node_mcp_test.py`.
 
 ## Test Coverage Improvements
-- Added `test/phase13/mcp_stress_test.py` for rapid start/stop stability.
-- Added `test/phase13/validation_test.py` for config validation verification.
+- Added `tests/fixtures/guest_apps/phase13/mcp_stress_test.py` for rapid start/stop stability.
+- Added `tests/fixtures/guest_apps/phase13/validation_test.py` for config validation verification.
 - Increased `tools/mcp_server/server.py` coverage from ~58% to **91%**.
 - Increased `tools/mcp_server/node_manager.py` coverage from ~58% to **69%** (limited by QEMU process mocks).
 - Overall Phase 13 coverage increased from **54%** to **74%**.

@@ -17,6 +17,7 @@ use virtmcu_qom::qom::{
 };
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, define_prop_string, define_prop_uint32, device_class};
+use zenoh::Wait;
 
 /* ── QOM Object ───────────────────────────────────────────────────────────── */
 
@@ -52,6 +53,7 @@ pub struct VirtmcuTelemetryBackend {
     _node_id: u32,
     last_halted: Arc<[AtomicBool; 32]>,
     irq_slots: virtmcu_qom::sync::BqlGuarded<Vec<IrqSlot>>,
+    _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 // SAFETY: VirtmcuTelemetryBackend encapsulates cross-thread channel sender and atomic state.
@@ -252,12 +254,25 @@ fn telemetry_init_internal(
         telemetry_worker(rx, transport_clone, topic);
     });
 
+    let liveliness = if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/telemetry/liveliness/{node_id}");
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
     Box::into_raw(Box::new(VirtmcuTelemetryBackend {
         _transport: transport,
         sender: tx,
         _node_id: node_id,
         last_halted: Arc::new(core::array::from_fn(|_| AtomicBool::new(false))),
         irq_slots: virtmcu_qom::sync::BqlGuarded::new(Vec::with_capacity(64)),
+        _liveliness: liveliness,
     }))
 }
 

@@ -1,3 +1,10 @@
+"""
+fake_adapter.py - A mock MMIO socket peripheral for protocol testing.
+
+This script implements a minimal Unix Domain Socket server that speaks the
+virtmcu MMIO protocol. It is used to verify that QEMU's mmio-socket-bridge
+can correctly connect, perform handshakes, and send MMIO requests.
+"""
 import logging
 import socket
 import sys

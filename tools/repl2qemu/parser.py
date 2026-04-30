@@ -67,17 +67,21 @@ class ReplDevice:
 class GicDevice(ReplDevice):
     interrupt_cells: int = 3
 
+
 @dataclass
 class NvicDevice(ReplDevice):
     interrupt_cells: int = 1
 
+
 @dataclass
 class MemoryDevice(ReplDevice):
-    pass # we'll migrate size parsing here
+    pass  # we'll migrate size parsing here
+
 
 @dataclass
 class MmioBridgeDevice(ReplDevice):
     pass
+
 
 @dataclass
 class WirelessDevice(ReplDevice):

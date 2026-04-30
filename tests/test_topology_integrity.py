@@ -44,9 +44,9 @@ peripherals:
     bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
 
     # Find my_spi_echo. In arm-generic-fdt it's likely a child of its parent node.
-    # Root nodes are named <name>.
+    # Root nodes are named <name>@<address>.
     # spi0 is at root.
-    spi0_path = "/spi0"
+    spi0_path = "/spi0@10000000"
     echo_path = f"{spi0_path}/my_spi_echo@0"
 
     # Verify paths exist

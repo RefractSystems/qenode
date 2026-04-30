@@ -99,7 +99,7 @@ jobs:
           name: asan-test-logs
           path: |
             test-results/
-            test/*/results/
+            tests/fixtures/guest_apps/*/results/
             **/*.log
 
       - name: Restore workspace permissions

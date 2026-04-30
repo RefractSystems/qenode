@@ -23,53 +23,80 @@ def main():
     changed = False
 
     # 1. Patch AddressSanitizer (asan)
-    # Target: qemu_ldflags = ['-fsanitize=address'] + qemu_ldflags
-    # Injection:
-    #     if have_rust
-    #       add_project_arguments('-C', 'link-arg=-fsanitize=address', language: 'rust')
-    #     endif
-
-    asan_injection = "add_project_arguments('-C', 'link-arg=-fsanitize=address', language: 'rust')"
-    if asan_injection not in content:
-        # Match the line regardless of indentation
-        pattern = r"(\s+)(qemu_ldflags\s+=\s+\['-fsanitize=address'\]\s+\+\s+qemu_ldflags)"
-        match = re.search(pattern, content)
-        if match:
-            indent = match.group(1)
-            target_line = match.group(0)
-            insertion = f"\n{indent}if have_rust\n{indent}  {asan_injection}\n{indent}endif"
-            content = content.replace(target_line, target_line + insertion)
-            logger.info("  -> Added ASan flags for Rust in meson.build")
+    rust_asan = "add_project_arguments('-C', 'link-arg=-fsanitize=address', language: 'rust')"
+    if "get_option('b_sanitize').contains('address')" not in content:
+        pattern_c = r"(\s+)(qemu_cflags\s+=\s+\['-fsanitize=address'\]\s+\+\s+qemu_cflags\n\s+qemu_ldflags\s+=\s+\['-fsanitize=address'\]\s+\+\s+qemu_ldflags)"
+        match_c = re.search(pattern_c, content)
+        if match_c:
+            indent = match_c.group(1)
+            original_c = match_c.group(2)
+            new_c = f"if not get_option('b_sanitize').contains('address')\n{indent}  {original_c}\n{indent}endif"
+            content = content.replace(original_c, new_c)
             changed = True
+            logger.info("  -> Wrapped C ASan flags")
+
+        pattern_rust = r"(\s+)if have_rust\s*\n\s*" + re.escape(rust_asan) + r"\s*\n\s*endif"
+        match_rust = re.search(pattern_rust, content)
+        if match_rust:
+            indent = match_rust.group(1)
+            new_rust = f"{indent}if have_rust and not get_option('b_sanitize').contains('address')\n{indent}  {rust_asan}\n{indent}endif"
+            content = content.replace(match_rust.group(0), new_rust)
+            changed = True
+            logger.info("  -> Wrapped Rust ASan flags")
+        elif rust_asan not in content:
+            pattern_insert = r"(if not get_option\('b_sanitize'\)\.contains\('address'\)\n\s+qemu_cflags.*\n\s+qemu_ldflags.*\n\s+endif)"
+            match_insert = re.search(pattern_insert, content)
+            if match_insert:
+                insertion = f"\n\n    if have_rust and not get_option('b_sanitize').contains('address')\n      {rust_asan}\n    endif"
+                content = content.replace(match_insert.group(1), match_insert.group(1) + insertion)
+                changed = True
+                logger.info("  -> Added Rust ASan flags with check")
 
     # 2. Patch UndefinedBehaviorSanitizer (ubsan)
-    # Target: qemu_ldflags += ['-fsanitize=undefined']
-    # Injection:
-    #     if have_rust
-    #       add_project_arguments('-C', 'link-arg=-fsanitize=undefined', language: 'rust')
-    #     endif
-
-    ubsan_injection = "add_project_arguments('-C', 'link-arg=-fsanitize=undefined', language: 'rust')"
-    if ubsan_injection not in content:
-        pattern = r"(\s+)(qemu_ldflags\s+=\s+\['-fsanitize=undefined'\]|qemu_ldflags\s+=\s+qemu_ldflags\s+\+\s+\['-fsanitize=undefined'\]|qemu_ldflags\s+\+=\s+\['-fsanitize=undefined'\])"
-        match = re.search(pattern, content)
-        if match:
-            indent = match.group(1)
-            target_line = match.group(0)
-            insertion = f"\n{indent}if have_rust\n{indent}  {ubsan_injection}\n{indent}endif"
-            content = content.replace(target_line, target_line + insertion)
-            logger.info("  -> Added UBSan flags for Rust in meson.build")
+    rust_ubsan = "add_project_arguments('-C', 'link-arg=-fsanitize=undefined', language: 'rust')"
+    if "get_option('b_sanitize').contains('undefined')" not in content:
+        pattern_c = r"(\s+)(qemu_cflags\s+\+=\s+\['-fsanitize=undefined'\]\n\s+qemu_ldflags\s+\+=\s+\['-fsanitize=undefined'\])"
+        match_c = re.search(pattern_c, content)
+        if match_c:
+            indent = match_c.group(1)
+            original_c = match_c.group(2)
+            new_c = f"if not get_option('b_sanitize').contains('undefined')\n{indent}  {original_c}\n{indent}endif"
+            content = content.replace(original_c, new_c)
             changed = True
+            logger.info("  -> Wrapped C UBSan flags")
+
+        pattern_rust = r"(\s+)if have_rust\s*\n\s*" + re.escape(rust_ubsan) + r"\s*\n\s*endif"
+        match_rust = re.search(pattern_rust, content)
+        if match_rust:
+            indent = match_rust.group(1)
+            new_rust = f"{indent}if have_rust and not get_option('b_sanitize').contains('undefined')\n{indent}  {rust_ubsan}\n{indent}endif"
+            content = content.replace(match_rust.group(0), new_rust)
+            changed = True
+            logger.info("  -> Wrapped Rust UBSan flags")
+        elif rust_ubsan not in content:
+            pattern_insert = r"(if not get_option\('b_sanitize'\)\.contains\('undefined'\)\n\s+qemu_cflags.*\n\s+qemu_ldflags.*\n\s+endif)"
+            match_insert = re.search(pattern_insert, content)
+            if match_insert:
+                insertion = f"\n\n    if have_rust and not get_option('b_sanitize').contains('undefined')\n      {rust_ubsan}\n    endif"
+                content = content.replace(match_insert.group(1), match_insert.group(1) + insertion)
+                changed = True
+                logger.info("  -> Added Rust UBSan flags with check")
+
+    # 3. Patch ThreadSanitizer (tsan)
+    if "get_option('b_sanitize').contains('thread')" not in content:
+        pattern_c = r"(\s+)(qemu_cflags\s+=\s+\['-fsanitize=thread'\]\s+\+\s+tsan_warn_suppress\s+\+\s+qemu_cflags\n\s+qemu_ldflags\s+=\s+\['-fsanitize=thread'\]\s+\+\s+qemu_ldflags)"
+        match_c = re.search(pattern_c, content)
+        if match_c:
+            indent = match_c.group(1)
+            original_c = match_c.group(2)
+            new_c = f"if not get_option('b_sanitize').contains('thread')\n{indent}  {original_c}\n{indent}endif"
+            content = content.replace(original_c, new_c)
+            changed = True
+            logger.info("  -> Wrapped C TSan flags")
 
     if changed:
         meson_build.write_text(content)
-        logger.info("✓ Patched meson.build for Rust ASan/UBSan support")
-    else:
-        # Check if they were already present (to avoid confusing output)
-        if asan_injection in content and ubsan_injection in content:
-            logger.info("  -> Rust ASan/UBSan support already present in meson.build")
-        else:
-            logger.info("  -> WARNING: Could not find ASan/UBSan targets in meson.build to patch")
+        logger.info("✓ Patched meson.build for Rust ASan/UBSan/TSan support (with b_sanitize awareness)")
 
 
 if __name__ == "__main__":

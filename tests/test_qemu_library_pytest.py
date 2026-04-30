@@ -16,8 +16,8 @@ def test_qemu_library_launch_and_close():
     lib = QemuLibrary()
     try:
         # Use a minimal DTB for launching
-        dtb = "test/phase1/minimal.dtb"
-        kernel = "test/phase1/hello.elf"
+        dtb = "tests/fixtures/guest_apps/phase1/minimal.dtb"
+        kernel = "tests/fixtures/guest_apps/phase1/hello.elf"
         if not Path(dtb).exists():
             pytest.skip("Minimal DTB not found")
 
@@ -43,8 +43,8 @@ def test_qemu_library_launch_and_close():
 def test_qemu_library_pc_assertion():
     lib = QemuLibrary()
     try:
-        dtb = "test/phase1/minimal.dtb"
-        kernel = "test/phase1/hello.elf"
+        dtb = "tests/fixtures/guest_apps/phase1/minimal.dtb"
+        kernel = "tests/fixtures/guest_apps/phase1/hello.elf"
         if not Path(dtb).exists():
             pytest.skip("Minimal DTB not found")
 
@@ -70,8 +70,8 @@ def test_qemu_library_pc_assertion():
 def test_qemu_library_uart_wait_fail():
     lib = QemuLibrary()
     try:
-        dtb = "test/phase1/minimal.dtb"
-        kernel = "test/phase1/hello.elf"
+        dtb = "tests/fixtures/guest_apps/phase1/minimal.dtb"
+        kernel = "tests/fixtures/guest_apps/phase1/hello.elf"
         if not Path(dtb).exists():
             pytest.skip("Minimal DTB not found")
 

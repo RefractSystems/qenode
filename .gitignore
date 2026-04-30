@@ -77,3 +77,7 @@ test-results/
 \n# Compiled test binaries\nprint_rust_sizes\nprint_sizes
 .venv-docker/
 build.lock
+
+# Hypothesis testing cache
+.hypothesis/
+.pytest_cache/

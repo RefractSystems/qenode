@@ -11,12 +11,12 @@ async def test_phase1_boot(qemu_launcher):
     Verify that the minimal kernel prints 'HI'.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
-    kernel = Path(workspace_root) / "test/phase1/hello.elf"
+    dtb = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     # 1. Build if missing
     if not Path(dtb).exists() or not Path(kernel).exists():
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
 
     # 2. Boot and check UART
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])

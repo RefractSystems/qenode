@@ -17,7 +17,7 @@ async def test_canfd_plugin_loads():
         "bash",
         "scripts/run.sh",
         "--dtb",
-        "test/phase1/minimal.dtb",
+        "tests/fixtures/guest_apps/phase1/minimal.dtb",
         "-object",
         "can-bus,id=canbus0",
         "-object",

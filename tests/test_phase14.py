@@ -8,7 +8,7 @@ def test_phase14_parsing(tmp_path):
     Verify that wireless devices are correctly parsed and emitted.
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    yaml_file = workspace_root / "test/phase14/board.yaml"
+    yaml_file = workspace_root / "tests/fixtures/guest_apps/phase14/board.yaml"
     dtb_out = tmp_path / "test.dtb"
     cli_out = tmp_path / "test.cli"
 
@@ -35,5 +35,3 @@ def test_phase14_parsing(tmp_path):
     assert "radio0@9001000 {" in dtc_output
 
     assert 'transport = "zenoh";' in dtc_output
-
-

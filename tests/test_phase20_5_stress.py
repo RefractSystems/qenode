@@ -13,14 +13,14 @@ async def test_spi_stress_baremetal(qemu_launcher, zenoh_session, zenoh_router, 
     and throughput stability.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    yaml_path = Path(workspace_root) / "test/phase20_5/spi_test.yaml"
+    yaml_path = Path(workspace_root) / "tests/fixtures/guest_apps/phase20_5/spi_test.yaml"
     dtb_path = tmp_path / "spi_stress.dtb"
-    kernel_path = Path(workspace_root) / "test/phase20_5/spi_stress.elf"
+    kernel_path = Path(workspace_root) / "tests/fixtures/guest_apps/phase20_5/spi_stress.elf"
 
     router_endpoint = zenoh_router
 
     if not Path(kernel_path).exists():
-        subprocess.run(["make", "-C", "test/phase20_5"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase20_5"], check=True, cwd=workspace_root)
 
     with Path(yaml_path).open() as f:
         config = f.read()

@@ -97,6 +97,20 @@ endif
 message(
     'Configuring Rust virtmcu modules with QEMU_SRC_DIR=' + meson.project_source_root(),
 )
+
+rust_libs_env = {
+    'QEMU_SRC_DIR': meson.project_source_root(),
+    'QEMU_BUILD_DIR': meson.project_build_root(),
+}
+
+if get_option('asan')
+    rust_libs_env += {'VIRTMCU_USE_ASAN': '1'}
+endif
+
+if get_option('tsan')
+    rust_libs_env += {'VIRTMCU_USE_TSAN': '1'}
+endif
+
 rust_libs = custom_target(
     'rust_virtmcu_libs',
     input: rust_sources + [
@@ -105,10 +119,7 @@ rust_libs = custom_target(
     ],
     output: rust_libs_outputs,
     build_by_default: true,
-    env: {
-        'QEMU_SRC_DIR': meson.project_source_root(),
-        'QEMU_BUILD_DIR': meson.project_build_root(),
-    },
+    env: rust_libs_env,
     command: [
         meson.current_source_dir() / 'rust/build.sh',
         meson.current_source_dir() / 'rust',

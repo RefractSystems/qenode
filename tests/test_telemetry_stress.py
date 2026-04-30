@@ -7,7 +7,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_telemetry_stress_queue(qemu_launcher, zenoh_router: str, tmp_path):
     workspace_root = Path(__file__).resolve().parent.parent
-    yaml_file = workspace_root / "test/actuator/board.yaml"
+    yaml_file = workspace_root / "tests/fixtures/guest_apps/actuator/board.yaml"
     tmp_yaml = tmp_path / "board.yaml"
     dtb = tmp_path / "board.dtb"
 

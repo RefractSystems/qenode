@@ -15,7 +15,7 @@ RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 
 REPL_FILE="$SCRIPT_DIR/src/test_board.repl"
 OUT_DTB="$SCRIPT_DIR/test_board_out.dtb"
-KERNEL="$WORKSPACE_DIR/test/phase1/hello.elf"
+KERNEL="$WORKSPACE_DIR/tests/fixtures/guest_apps/phase1/hello.elf"
 
 if [ ! -f "$REPL_FILE" ]; then
     echo "FAILED: Test .repl file not found at $REPL_FILE"
@@ -24,7 +24,7 @@ fi
 
 if [ ! -f "$KERNEL" ]; then
     echo "Kernel not found. Building Phase 1 first..."
-    make -C "$WORKSPACE_DIR/test/phase1"
+    make -C "$WORKSPACE_DIR/tests/fixtures/guest_apps/phase1"
 fi
 
 echo "Running Lesson 3 smoke test (repl2qemu parser)..."
@@ -45,7 +45,13 @@ fi
 echo "2. Booting QEMU with generated DTB..."
 
 # We run with the Phase 1 kernel which prints "HI" to the PL011 UART
-timeout 2s "$RUN_SH" --dtb "$OUT_DTB" \
+# Under ASan, QEMU is significantly slower. Scale the timeout accordingly.
+TIMEOUT="2s"
+if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+    TIMEOUT="20s"
+fi
+
+timeout "$TIMEOUT" "$RUN_SH" --dtb "$OUT_DTB" \
     --kernel "$KERNEL" \
     -nographic \
     -monitor none \

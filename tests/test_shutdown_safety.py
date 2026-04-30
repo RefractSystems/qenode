@@ -27,8 +27,8 @@ async def test_bridge_shutdown_safety_mmio(qemu_launcher, tmp_path):
     """
     workspace_root = Path(__file__).resolve().parent.parent
     mmio_sock = str(tmp_path / "mmio_shutdown.sock")
-    dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
-    kernel = Path(workspace_root) / "test/phase12/test_mmio.elf"
+    dtb = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_mmio.elf"
 
     extra_args = [
         "-device",
@@ -95,8 +95,8 @@ async def test_bridge_shutdown_safety_remote_port(qemu_launcher, tmp_path):
     """
     workspace_root = Path(__file__).resolve().parent.parent
     rp_sock = str(tmp_path / "rp_shutdown.sock")
-    dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
-    kernel = Path(workspace_root) / "test/phase12/test_mmio.elf"
+    dtb = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_mmio.elf"
 
     extra_args = [
         "-device",

@@ -66,6 +66,6 @@ Cortex-A15 Echo Firmware Runs Unmodified
     ...    for silicon validation status and instructions.
     [Tags]    binary-fidelity    cortex-a15    virtmcu-baseline
     Verify Binary Fidelity
-    ...    dtb=${CURDIR}/../test/phase1/minimal.dtb
+    ...    dtb=${CURDIR}/../tests/fixtures/guest_apps/phase1/minimal.dtb
     ...    elf=${FIRMWARE_DIR}/cortex-a15-virt/echo.elf
     ...    golden=${FIRMWARE_DIR}/cortex-a15-virt/golden_uart.txt

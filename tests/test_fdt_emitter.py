@@ -155,6 +155,7 @@ def test_all_compat_map_types_produce_output(tmp_path):
     import shutil
 
     import fdt
+
     has_dtc = shutil.which("dtc") is not None
 
     for renode_type, _ in COMPAT_MAP.items():
@@ -164,9 +165,7 @@ def test_all_compat_map_types_produce_output(tmp_path):
         platform = ReplPlatform()
 
         # Always add a GIC to satisfy interrupt-parent requirements globally
-        platform.devices.append(
-            ReplDevice.create(name="gic", type_name="IRQControllers.GIC", address_str="0x08000000")
-        )
+        platform.devices.append(ReplDevice.create(name="gic", type_name="IRQControllers.GIC", address_str="0x08000000"))
 
         props = known_good_props.get(renode_type, {})
 
@@ -176,7 +175,7 @@ def test_all_compat_map_types_produce_output(tmp_path):
                 type_name=renode_type,
                 address_str="0x10000000",
                 properties=props,
-                interrupts=[ReplInterrupt("0", "gic", "33")], # 33 is a valid SPI
+                interrupts=[ReplInterrupt("0", "gic", "33")],  # 33 is a valid SPI
             )
         )
         emitter = FdtEmitter(platform)
@@ -199,7 +198,9 @@ def test_all_compat_map_types_produce_output(tmp_path):
                     dev_node = node
                     break
 
-            assert dev_node is not None, f"Node starting with '{expected_prefix}' not found in DTB for type '{renode_type}'"
+            assert dev_node is not None, (
+                f"Node starting with '{expected_prefix}' not found in DTB for type '{renode_type}'"
+            )
 
             # Structurally verify the compatible string
             compat_prop = dev_node.get_property("compatible")
@@ -224,6 +225,8 @@ def test_all_compat_map_types_produce_output(tmp_path):
                 # We can either assert res.returncode == 0, or be stricter.
                 # For now, let's just make sure it runs without catastrophic failure.
                 assert res.returncode == 0, f"dt-validate crashed on {renode_type}: {res.stderr}"
+
+
 def test_validation_missing_memory_size():
     platform = ReplPlatform(
         devices=[ReplDevice.create(name="ram", type_name="Memory.MappedMemory", address_str="0x80000000")]
@@ -233,9 +236,7 @@ def test_validation_missing_memory_size():
 
 
 def test_validation_missing_wireless_props():
-    platform = ReplPlatform(
-        devices=[ReplDevice.create(name="radio", type_name="ieee802154", address_str="0x90000000")]
-    )
+    platform = ReplPlatform(devices=[ReplDevice.create(name="radio", type_name="ieee802154", address_str="0x90000000")])
     with pytest.raises(ValueError, match="missing mandatory 'transport' property"):
         FdtEmitter(platform).generate_dts()
 
@@ -327,7 +328,9 @@ def test_emitter_multiple_cpus():
 
 
 def test_emitter_unmapped_device_warning(caplog):
-    plat = ReplPlatform(devices=[ReplDevice.create(name="unknown", type_name="Unknown.Device", address_str="0x12345678")])
+    plat = ReplPlatform(
+        devices=[ReplDevice.create(name="unknown", type_name="Unknown.Device", address_str="0x12345678")]
+    )
     emitter = FdtEmitter(plat)
     emitter.generate_dts()
 
@@ -338,7 +341,9 @@ def test_emitter_unmapped_device_warning(caplog):
 def test_emitter_mem_int_size():
     plat = ReplPlatform(
         devices=[
-            ReplDevice.create(name="ram", type_name="Memory.MappedMemory", address_str="0x80000000", properties={"size": 4096})
+            ReplDevice.create(
+                name="ram", type_name="Memory.MappedMemory", address_str="0x80000000", properties={"size": 4096}
+            )
         ]
     )
     emitter = FdtEmitter(plat)
@@ -392,7 +397,9 @@ def test_emitter_riscv():
 
 
 def test_emitter_ranged_address():
-    plat = ReplPlatform(devices=[ReplDevice.create(name="uart", type_name="UART.PL011", address_str="<0x40011000, +0x100>")])
+    plat = ReplPlatform(
+        devices=[ReplDevice.create(name="uart", type_name="UART.PL011", address_str="<0x40011000, +0x100>")]
+    )
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
     # base=0x40011000
@@ -409,7 +416,9 @@ def test_emitter_invalid_address():
 def test_emitter_gic_interrupts():
     plat = ReplPlatform(
         devices=[
-            ReplDevice.create(name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"),
+            ReplDevice.create(
+                name="gic", type_name="IRQControllers.ARM_GenericInterruptController", address_str="0x08000000"
+            ),
             ReplDevice.create(
                 name="dev1",
                 type_name="UART.PL011",

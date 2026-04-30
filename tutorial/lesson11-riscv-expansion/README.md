@@ -16,11 +16,11 @@ The `run.sh` script automatically detects the target architecture from the hardw
 
 ## Building the RISC-V Firmware
 
-We've provided a minimal "Hello World" assembly firmware for RISC-V in `test/riscv/hello.S`. It interacts with the NS16550 UART (standard on the RISC-V `virt` machine) located at `0x10000000`.
+We've provided a minimal "Hello World" assembly firmware for RISC-V in `tests/fixtures/guest_apps/riscv/hello.S`. It interacts with the NS16550 UART (standard on the RISC-V `virt` machine) located at `0x10000000`.
 
 ```bash
 # Build the firmware and the Device Tree
-make -C test/riscv
+make -C tests/fixtures/guest_apps/riscv
 ```
 
 ## Running the Simulation
@@ -28,7 +28,7 @@ make -C test/riscv
 You can run the RISC-V simulation using the same `run.sh` script used for ARM:
 
 ```bash
-./scripts/run.sh --dts test/riscv/minimal.dts --kernel test/riscv/hello.elf -nographic
+./scripts/run.sh --dts tests/fixtures/guest_apps/riscv/minimal.dts --kernel tests/fixtures/guest_apps/riscv/hello.elf -nographic
 ```
 
 You should see the output:

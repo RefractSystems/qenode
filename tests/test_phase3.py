@@ -11,13 +11,13 @@ async def test_phase3_repl2qemu(qemu_launcher, tmp_path):
     Verify that a .repl file can be translated to DTB and booted.
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    repl_file = Path(workspace_root) / "test/phase3/test_board.repl"
+    repl_file = Path(workspace_root) / "tests/fixtures/guest_apps/phase3/test_board.repl"
     out_dtb = tmp_path / "test_board_out.dtb"
-    kernel = Path(workspace_root) / "test/phase1/hello.elf"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     # 1. Build kernel if missing
     if not Path(kernel).exists():
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
 
     # 2. Run parser
     subprocess.run(

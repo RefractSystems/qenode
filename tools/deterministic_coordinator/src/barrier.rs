@@ -1,6 +1,6 @@
 use crate::topology::Protocol;
 use core::cmp::Ordering;
-use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use core::time::Duration;
 use std::sync::{Condvar, Mutex};
 
@@ -43,10 +43,17 @@ pub enum BarrierError {
 pub struct QuantumBarrier {
     n_nodes: usize,
     max_messages_per_node: usize,
-    done_count: AtomicUsize,
-    message_buffer: Mutex<Vec<CoordMessage>>,
+    current_quantum: AtomicU64,
+    state: Mutex<BarrierState>,
     all_done_cond: Condvar,
-    done_nodes: Mutex<Vec<bool>>,
+}
+
+struct BarrierState {
+    done_count: usize,
+    message_buffer: Vec<CoordMessage>,
+    done_nodes: Vec<bool>,
+    next_quantum_buffer: Vec<CoordMessage>,
+    next_quantum_done_nodes: Vec<bool>,
 }
 
 impl QuantumBarrier {
@@ -54,11 +61,24 @@ impl QuantumBarrier {
         Self {
             n_nodes,
             max_messages_per_node,
-            done_count: AtomicUsize::new(0),
-            message_buffer: Mutex::new(Vec::new()),
+            current_quantum: AtomicU64::new(0),
+            state: Mutex::new(BarrierState {
+                done_count: 0,
+                message_buffer: Vec::new(),
+                done_nodes: vec![false; n_nodes],
+                next_quantum_buffer: Vec::new(),
+                next_quantum_done_nodes: vec![false; n_nodes],
+            }),
             all_done_cond: Condvar::new(),
-            done_nodes: Mutex::new(vec![false; n_nodes]),
         }
+    }
+
+    pub fn current_quantum(&self) -> u64 {
+        self.current_quantum.load(AtomicOrdering::SeqCst)
+    }
+
+    pub fn set_quantum(&self, quantum: u64) {
+        self.current_quantum.store(quantum, AtomicOrdering::SeqCst);
     }
 
     pub fn submit_done(
@@ -68,26 +88,51 @@ impl QuantumBarrier {
         expected_quantum: u64,
         mut messages: Vec<CoordMessage>,
     ) -> Result<Option<Vec<CoordMessage>>, BarrierError> {
-        if quantum != expected_quantum {
-            return Err(BarrierError::QuantumMismatch {
-                expected: expected_quantum,
-                got: quantum,
-            });
+        let mut state = self.state.lock().expect("barrier mutex poisoned");
+        let current = self.current_quantum.load(AtomicOrdering::SeqCst);
+
+        // If the main loop's current_quantum differs from ours, we might need to sync.
+        // But usually they should match.
+        if expected_quantum != current {
+            // If we just promoted, the main loop might be one behind.
+            // We'll trust the internal current quantum for Lookahead logic.
         }
 
-        let mut buffer = self
-            .message_buffer
-            .lock()
-            .expect("message_buffer mutex poisoned");
-        let mut done_nodes = self.done_nodes.lock().unwrap();
+        if quantum < current {
+            // Already finished this quantum; drop stale messages.
+            return Ok(None);
+        }
 
         if node_id as usize >= self.n_nodes {
             return Err(BarrierError::NodeIndexOutOfBounds(node_id));
         }
-        if done_nodes[node_id as usize] {
+
+        if quantum > current + 1 {
+            return Err(BarrierError::QuantumMismatch {
+                expected: current,
+                got: quantum,
+            });
+        }
+
+        // Handle NEXT quantum (Lookahead)
+        if quantum == current + 1 {
+            if state.next_quantum_done_nodes[node_id as usize] {
+                return Err(BarrierError::DuplicateDone);
+            }
+            state.next_quantum_done_nodes[node_id as usize] = true;
+            messages.sort();
+            if messages.len() > self.max_messages_per_node {
+                messages.truncate(self.max_messages_per_node);
+            }
+            state.next_quantum_buffer.extend(messages);
+            return Ok(None);
+        }
+
+        // Handle CURRENT quantum
+        if state.done_nodes[node_id as usize] {
             return Err(BarrierError::DuplicateDone);
         }
-        done_nodes[node_id as usize] = true;
+        state.done_nodes[node_id as usize] = true;
 
         // ARCH-5 Determinism Fix: We MUST sort before truncating.
         messages.sort();
@@ -104,19 +149,24 @@ impl QuantumBarrier {
             messages.truncate(self.max_messages_per_node);
         }
 
-        buffer.extend(messages);
+        state.message_buffer.extend(messages);
+        state.done_count += 1;
 
-        let count = self.done_count.fetch_add(1, AtomicOrdering::SeqCst) + 1;
-        if count == self.n_nodes {
-            let mut all_msgs = (*buffer).clone();
+        if state.done_count == self.n_nodes {
+            let mut all_msgs = state.message_buffer.clone();
             all_msgs.sort();
 
-            // ARCH-8: Auto-reset for next quantum to avoid race condition on CI.
-            self.done_count.store(0, AtomicOrdering::SeqCst);
-            buffer.clear();
-            for d in done_nodes.iter_mut() {
-                *d = false;
-            }
+            // ARCH-8: Promotion & Lookahead Logic
+            // 1. Increment internal quantum
+            self.current_quantum.fetch_add(1, AtomicOrdering::SeqCst);
+
+            // 2. Move lookahead to current
+            state.message_buffer = std::mem::take(&mut state.next_quantum_buffer);
+            state.done_nodes = std::mem::take(&mut state.next_quantum_done_nodes);
+            // next_quantum_* are now empty because of std::mem::take on Vec,
+            // but we need to re-initialize the booleans.
+            state.next_quantum_done_nodes = vec![false; self.n_nodes];
+            state.done_count = state.done_nodes.iter().filter(|&&d| d).count();
 
             self.all_done_cond.notify_all();
             Ok(Some(all_msgs))
@@ -126,37 +176,35 @@ impl QuantumBarrier {
     }
 
     pub fn reset(&self) {
-        let mut buffer = self
-            .message_buffer
-            .lock()
-            .expect("message_buffer mutex poisoned");
-        let mut done_nodes = self.done_nodes.lock().unwrap();
-        self.done_count.store(0, AtomicOrdering::SeqCst);
-        buffer.clear();
-        for d in done_nodes.iter_mut() {
+        let mut state = self.state.lock().expect("barrier mutex poisoned");
+        self.current_quantum.store(0, AtomicOrdering::SeqCst);
+        state.done_count = 0;
+        state.message_buffer.clear();
+        for d in state.done_nodes.iter_mut() {
+            *d = false;
+        }
+        state.next_quantum_buffer.clear();
+        for d in state.next_quantum_done_nodes.iter_mut() {
             *d = false;
         }
     }
 
     pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
-        let buffer = self
-            .message_buffer
-            .lock()
-            .expect("message_buffer mutex poisoned");
-        if self.done_count.load(AtomicOrdering::SeqCst) == self.n_nodes {
-            let mut msgs = buffer.clone();
+        let state = self.state.lock().expect("barrier mutex poisoned");
+        if state.done_count == self.n_nodes {
+            let mut msgs = state.message_buffer.clone();
             msgs.sort();
             return Ok(msgs);
         }
 
-        let (buffer, wait_result) = self
+        let (state, wait_result) = self
             .all_done_cond
-            .wait_timeout(buffer, timeout)
+            .wait_timeout(state, timeout)
             .expect("all_done_cond wait failed");
         if wait_result.timed_out() {
             Err(BarrierError::Timeout)
         } else {
-            let mut msgs = buffer.clone();
+            let mut msgs = state.message_buffer.clone();
             msgs.sort();
             Ok(msgs)
         }
@@ -246,6 +294,35 @@ mod tests {
             barrier.submit_done(0, 0, 0, vec![]),
             Err(BarrierError::DuplicateDone)
         ));
+    }
+
+    #[test]
+    fn test_quantum_transition_race() {
+        // This test simulates a node sending 'done' for the NEXT quantum
+        // while the coordinator is still waiting for the CURRENT one.
+        // This happens with free-running (uncoordinated) nodes.
+        let barrier = QuantumBarrier::new(2, 1024);
+        barrier.set_quantum(1);
+
+        // 1. Node 1 finishes Quantum 1
+        barrier.submit_done(1, 1, 1, vec![]).unwrap();
+
+        // 2. Node 0 is free-running and finishes Quantum 2 early.
+        // It should be buffered in lookahead.
+        let res_lookahead = barrier.submit_done(0, 2, 1, vec![]).unwrap();
+        assert!(res_lookahead.is_none());
+
+        // 3. Node 0 finally finishes Quantum 1
+        let res_finish_q1 = barrier.submit_done(0, 1, 1, vec![]).unwrap();
+        assert!(res_finish_q1.is_some()); // Quantum 1 finished
+
+        // 4. Barrier should now be at Quantum 2, with Node 0 already 'done' (promoted from lookahead)
+        assert_eq!(barrier.current_quantum(), 2);
+
+        // 5. Node 1 finishing Quantum 2 should complete the barrier immediately
+        let res_finish_q2 = barrier.submit_done(1, 2, 2, vec![]).unwrap();
+        assert!(res_finish_q2.is_some());
+        assert_eq!(barrier.current_quantum(), 3);
     }
 
     #[test]

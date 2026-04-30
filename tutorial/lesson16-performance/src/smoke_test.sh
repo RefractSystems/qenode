@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test/phase16/smoke_test.sh — Performance & Determinism CI
+# tests/fixtures/guest_apps/phase16/smoke_test.sh — Performance & Determinism CI
 set -euo pipefail
 
 echo "=============================================================================="

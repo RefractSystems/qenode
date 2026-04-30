@@ -14,10 +14,10 @@ import zenoh
 
 def _ensure_phase1_built():
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb = workspace_root / "test/phase1/minimal.dtb"
-    kernel = workspace_root / "test/phase1/hello.elf"
+    dtb = workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
     if not dtb.exists() or not kernel.exists():
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
     return dtb, kernel
 
 

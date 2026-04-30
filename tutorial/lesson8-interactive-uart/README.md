@@ -6,7 +6,7 @@ In this lesson, we explore how to interact directly with a running `virtmcu` ins
 
 Up until now, our test firmware (like `hello.elf`) has simply printed a message and halted. In a real development scenario, you often need interactive access to the firmware (e.g., a CLI shell, debugging menu, or sensor polling).
 
-We have developed a basic "Interactive UART Echo" firmware in `test/phase8/echo.S`. 
+We have developed a basic "Interactive UART Echo" firmware in `tests/fixtures/guest_apps/phase8/echo.S`. 
 
 ### Key Concepts:
 1. **Hardware Initialization:** Before a bare-metal program can print, it must enable the UART peripheral by writing to its Control Register (e.g., setting the `UARTEN`, `TXE`, and `RXE` bits on the ARM PL011).
@@ -18,10 +18,10 @@ You can boot this firmware and interact with it directly in your terminal using 
 
 ```bash
 # Compile the firmware
-make -C test/phase8
+make -C tests/fixtures/guest_apps/phase8
 
 # Run virtmcu with stdio mapped to the primary serial port
-./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase8/echo.elf -nographic
+./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase8/echo.elf -nographic
 ```
 
 Once booted, you will see:
@@ -82,14 +82,14 @@ Now that Phase 8 is complete, you can map the emulated UART directly to the Zeno
 
 2. **Start Node 1 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase8/echo.elf -nographic \
+   ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase8/echo.elf -nographic \
        -chardev zenoh,id=chr0,node=node1 \
        -serial chardev:chr0
    ```
 
 3. **Start Node 2 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase8/echo.elf -nographic \
+   ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase8/echo.elf -nographic \
        -chardev zenoh,id=chr0,node=node2 \
        -serial chardev:chr0
    ```

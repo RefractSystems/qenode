@@ -34,7 +34,7 @@ exclude = [
     "**/__pycache__/",
     "tools/virtmcu/",
     "**/*_fbs/",
-    "test/phase6/virtmcu/rf/",
+    "tests/fixtures/guest_apps/phase6/virtmcu/rf/",
 ]
 
 [tool.ruff.lint]
@@ -51,13 +51,38 @@ select = [
     "PTH",    # flake8-use-pathlib
     "RUF",    # ruff-specific rules
     "T20",    # flake8-print
+    "G",      # flake8-logging-format
+    "PLE",    # pylint-error
+    "S",      # flake8-bandit
+    "ANN",    # flake8-annotations
 ]
 ignore = [
     "E501",   # line-too-long — acceptable in a C/embedded project with long strings
+    "G003",   # logging-string-concat
+    "G004",   # logging-f-string — f-strings are widely used in this project
+    "S101",   # assert — used extensively in tests and tools
+    "S108",   # hardcoded-temp-file — used for orchestration sockets
+    "S110",   # try-except-pass
+    "S306",   # suspicious-mktemp-usage
+    "S311",   # suspicious-non-cryptographic-random-usage
+    "S324",   # hashlib-insecure-hash-function — used for stable patch markers
+    "S603",   # subprocess-without-shell-equals-true
+    "S607",   # start-process-with-partial-path
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore type annotations in tests, auxiliary scripts, and core tools for now to unblock migration
+"tests/**" = ["ANN"]
+"tests/fixtures/guest_apps/**" = ["ANN"]
+"scripts/**" = ["ANN"]
+"tutorial/**" = ["ANN"]
+"tools/**" = ["ANN"]
+"packaging/**" = ["ANN"]
+"patches/**" = ["ANN"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["fixtures"]
 pythonpath = [
     ".",
     "tools/lin_fbs",
@@ -93,6 +118,7 @@ exclude = [
     "^tools/systemc_adapter/build/",
     "^third_party/",
     "build/",
+    "^tests/fixtures/guest_apps/",
 ]
 
 

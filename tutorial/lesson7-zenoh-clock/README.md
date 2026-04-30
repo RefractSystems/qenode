@@ -116,7 +116,7 @@ not acquire BQL in the suspend path.
 ### Quick test (both modes)
 
 ```bash
-bash test/phase7/smoke_test.sh
+bash tests/fixtures/guest_apps/phase7/smoke_test.sh
 ```
 
 ### Manual walkthrough
@@ -131,12 +131,12 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
     -Wl,--section-start=.text=0x40000000 \
     /tmp/spin.S -o /tmp/spin.elf
 
-# Generate a minimal DTB (see test/phase7/smoke_test.sh for full DTS)
+# Generate a minimal DTB (see tests/fixtures/guest_apps/phase7/smoke_test.sh for full DTS)
 # ...
 
 # Start QEMU in suspend mode
 scripts/run.sh \
-    --dtb test/phase1/minimal.dtb \
+    --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
     -kernel /tmp/spin.elf \
     -device virtmcu-clock,mode=suspend,node=0 \
     -nographic -monitor none &
@@ -212,4 +212,4 @@ protocol.  The other half is the `TimeAuthority` in `cyber/src/time_authority.py
 (MuJoCo container).  Together they guarantee that firmware never runs ahead of the
 physics simulation, giving causally consistent sensor readings and actuator responses.
 
-See `docs/ARCHITECTURE.md` §"FirmwareStudio Integration" for the full picture.
+See `docs/architecture/01-system-overview.md` §"FirmwareStudio Integration" for the full picture.

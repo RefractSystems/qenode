@@ -1,7 +1,7 @@
 # Phase 18 & 19 Combined Critique (Rust Migration)
 
 ## 1. What went wrong / What was missed?
-- **Silently Broken Sub-systems:** The `ieee802154` device was entirely stubbed out during the Phase 19 port because its C shim was complex, but the integration test `test/phase14/smoke_test.sh` only tests `yaml2qemu` CLI output, not runtime behavior.
+- **Silently Broken Sub-systems:** The `ieee802154` device was entirely stubbed out during the Phase 19 port because its C shim was complex, but the integration test `tests/fixtures/guest_apps/phase14/smoke_test.sh` only tests `yaml2qemu` CLI output, not runtime behavior.
 - **Race Conditions across FFI:** The Zenoh async worker threads do not inherently hold the QEMU Big QEMU Lock (BQL). Devices like `chardev` and `ui` had their subscribers ported naively, triggering QEMU MMIO or state changes directly from the Zenoh worker without `virtmcu_bql_lock()`.
 - **Determinism Jitter:** In `slaved-suspend` mode, the `clock` QEMU Mutex/Condvar handshake added sub-millisecond context switch latencies that accumulated, breaking perfect cycle-accuracy across repeated test runs.
 
@@ -14,4 +14,4 @@
 ## 3. What should be done better?
 - **OOM Prevention**: The lock-free MPSC channel in `netdev` must be changed from `unbounded` to `bounded` (e.g., `1024` packets) to backpressure Zenoh workers instead of crashing QEMU on network floods.
 - **Improved Coverage**: Add explicit Rust unit tests (`#[cfg(test)]`) inside the `hw/rust/*` crates to test the internal logic, like quantum bounds in `clock` or packet sorting in `netdev`, avoiding reliance entirely on `make test-integration`.
-- **Flood Testing**: Implement a stress test (`test/phase19/netdev_flood_test.py`) to actively try and crash QEMU by flooding the network interface.
+- **Flood Testing**: Implement a stress test (`tests/fixtures/guest_apps/phase19/netdev_flood_test.py`) to actively try and crash QEMU by flooding the network interface.

@@ -62,4 +62,4 @@ The code being patched exists only in the `arm-generic-fdt` patch set (Xilinx/Re
 
 ## Discovery & Verification
 - **Discovered by**: Gemini CLI during `make ci-asan` loop.
-- **Verification**: Verified via `make ci-local` and manual targeted runs of `test/actuator/smoke_test.sh` inside the `devenv-base` container.
+- **Verification**: Verified via `make ci-local` and manual targeted runs of `tests/fixtures/guest_apps/actuator/smoke_test.sh` inside the `devenv-base` container.

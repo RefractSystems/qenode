@@ -4,8 +4,8 @@ Resource         ${CURDIR}/../tools/testing/qemu_keywords.robot
 Test Teardown    Terminate All
 
 *** Variables ***
-${DTB_PATH}      ${CURDIR}/../test/phase1/minimal.dtb
-${FIRMWARE}      ${CURDIR}/../test/phase8/echo.elf
+${DTB_PATH}      ${CURDIR}/../tests/fixtures/guest_apps/phase1/minimal.dtb
+${FIRMWARE}      ${CURDIR}/../tests/fixtures/guest_apps/phase8/echo.elf
 
 *** Keywords ***
 Terminate All

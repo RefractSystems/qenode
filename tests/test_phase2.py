@@ -12,12 +12,12 @@ async def test_phase2_dynamic_plugin(qemu_launcher):
     import subprocess
 
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
-    kernel = Path(workspace_root) / "test/phase1/hello.elf"
+    dtb = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     # 1. Build if missing (crucial for CI robustness)
     if not Path(dtb).exists() or not Path(kernel).exists():
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
 
     bridge = await qemu_launcher(dtb, extra_args=["-device", "rust-dummy", "-device", "dummy-device"])
 
