@@ -69,19 +69,10 @@ else
   JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 endif
 
-.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi check-protocols test test-unit test-python test-integration test-robot test-all build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-smoke ci-full perf-bench perf-check perf-baseline tag
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-smoke ci-full perf-bench perf-check perf-baseline tag
 
 # By default, perform an incremental build
 all: build
-
-# ------------------------------------------------------------------------------
-# Protocol Verification
-# ------------------------------------------------------------------------------
-
-# Verify that Python protocol definitions are in sync with Rust source of truth.
-check-protocols:
-	@echo "==> Verifying protocol synchronization..."
-	@python3 scripts/sync-protocols.py --check
 
 # ------------------------------------------------------------------------------
 # FFI Layout Verification
@@ -311,7 +302,7 @@ test-integration-docker:
 # ------------------------------------------------------------------------------
 
 # Run all linting and static analysis checks
-lint: venv check-versions check-protocols check-ffi lint-exports lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
+lint: venv check-versions check-ffi lint-exports lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
 	@echo "All linting and static analysis checks passed!"
 
 # Verify that plugins export required unmangled FFI symbols
@@ -349,7 +340,7 @@ lint-python:
 		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
-	@if grep -rnE "struct\.(pack|unpack)" scripts/ | grep -v "sync-protocols.py" ; then \
+	@if grep -rnE "struct\.(pack|unpack)" scripts/ ; then \
 		echo "❌ ERROR: Banned struct.pack/unpack in scripts."; exit 1; \
 	fi
 	@echo "==> Check for hardcoded stall-timeout..."

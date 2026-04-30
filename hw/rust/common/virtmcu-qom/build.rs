@@ -20,7 +20,7 @@ fn main() {
     }
 
     let qemu_dir =
-        std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../third_party/qemu".to_owned());
+        std::env::var("QEMU_SRC_DIR").unwrap_or_else(|_| "../../../../third_party/qemu".to_owned());
     let build_dir = if std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1" {
         "build-virtmcu-asan"
     } else {
@@ -28,12 +28,12 @@ fn main() {
     };
 
     let qemu_build_dir = std::env::var("QEMU_BUILD_DIR")
-        .unwrap_or_else(|_| format!("../../../third_party/qemu/{build_dir}"));
+        .unwrap_or_else(|_| format!("../../../../third_party/qemu/{build_dir}"));
 
     // Check if QEMU headers are present
     let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
     if !osdep_h.exists() {
-        if std::env::var("VIRTMUC_SKIP_QEMU_HEADERS_WARNING").is_err() {
+        if std::env::var("VIRTMCU_SKIP_QEMU_HEADERS_WARNING").is_err() {
             println!(
                 "cargo:warning=QEMU headers not found at {}. Skipping binding and FFI generation.",
                 osdep_h.display()
