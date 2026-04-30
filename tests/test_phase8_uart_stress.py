@@ -22,7 +22,7 @@ import pytest
 import vproto
 
 # ---------------------------------------------------------------------------
-# Constants — must match test/phase8/uart_stress_test.py and
+# Constants — must match tests/fixtures/guest_apps/phase8/uart_stress_test.py and
 # hw/rust/common/virtmcu-api/src/lib.rs ZenohFrameHeader.
 # ---------------------------------------------------------------------------
 
@@ -195,7 +195,7 @@ def _get_qemu_bin():
 
 
 _QEMU_BIN = _get_qemu_bin()
-_STRESS_SCRIPT = Path(__file__).parent / ".." / "test" / "phase8" / "uart_stress_test.sh"
+_STRESS_SCRIPT = Path(__file__).parent / ".." / "tests" / "fixtures" / "guest_apps" / "phase8" / "uart_stress_test.sh"
 
 
 @pytest.mark.skipif(

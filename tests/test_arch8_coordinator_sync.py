@@ -31,9 +31,9 @@ async def test_arch8_coordinator_sync(zenoh_router, zenoh_session, qemu_launcher
     assertion checks that the VTA step wall-clock time reflects this delay.
     """
     workspace_root = Path(__file__).parent.parent
-    firmware_path = workspace_root / "test/phase8/echo.elf"
+    firmware_path = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     if not firmware_path.exists():
-        pytest.fail("echo.elf not found — run 'make -C test/phase8' first")
+        pytest.fail("echo.elf not found — run 'make -C tests/fixtures/guest_apps/phase8' first")
 
     board_yaml = tmp_path / "board.yaml"
     board_yaml.write_text(
@@ -217,6 +217,7 @@ async def test_coordinator_fast_node_race(zenoh_router):
     s = zenoh.open(zenoh.Config())
     # Give coordinator a moment to start and declare liveliness
     from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
+
     await wait_for_zenoh_discovery(s, "sim/coordinator/liveliness")
 
     done_topic = "sim/coord/0/done"
@@ -252,9 +253,7 @@ async def test_coordinator_fast_node_race(zenoh_router):
         await proc.wait()
         pytest.fail(f"Coordinator stalled after {quanta_completed} quanta. Race condition likely triggered.")
 
-
     proc.terminate()
     await proc.wait()
     sub.undeclare()
     s.close()
-

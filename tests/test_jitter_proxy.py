@@ -9,7 +9,7 @@ import zenoh
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(WORKSPACE_DIR / "tools"))
-sys.path.append(str(WORKSPACE_DIR / "test" / "phase16"))
+sys.path.append(str(WORKSPACE_DIR / "tests" / "fixtures" / "guest_apps" / "phase16"))
 
 from jitter_proxy import CLOCK_ADVANCE_PREFIX, JitterProxy  # noqa: E402
 

@@ -13,15 +13,15 @@ async def test_actuator_zenoh_publish(qemu_launcher, zenoh_router, zenoh_session
     """
     workspace_root = Path(__file__).resolve().parent.parent
 
-    yaml_file = workspace_root / "test/actuator/board.yaml"
+    yaml_file = workspace_root / "tests/fixtures/guest_apps/actuator/board.yaml"
     tmp_yaml = tmp_path / "board.yaml"
     dtb = tmp_path / "board.dtb"
-    kernel = workspace_root / "test/actuator/actuator.elf"
+    kernel = workspace_root / "tests/fixtures/guest_apps/actuator/actuator.elf"
 
     if not kernel.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "test/actuator"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/actuator"], check=True, cwd=workspace_root)
 
     import subprocess
 

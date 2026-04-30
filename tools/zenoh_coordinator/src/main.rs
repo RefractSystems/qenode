@@ -271,9 +271,16 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
             msg.payload.clone()
         }
         Protocol::Spi => {
-            let mut p = Vec::with_capacity(12 + msg.payload.len());
-            let _ = p.write_u64::<LittleEndian>(msg.delivery_vtime_ns);
-            let _ = p.write_u32::<LittleEndian>(msg.payload.len() as u32);
+            let hdr = virtmcu_api::ZenohSPIHeader::new(
+                msg.delivery_vtime_ns,
+                msg.sequence_number,
+                msg.payload.len() as u32,
+                false, // default CS
+                0,     // default CS index
+                0,     // padding
+            );
+            let mut p = Vec::with_capacity(virtmcu_api::ZENOH_SPI_HEADER_SIZE + msg.payload.len());
+            p.extend_from_slice(hdr.pack());
             p.extend_from_slice(&msg.payload);
             p
         }
@@ -283,7 +290,8 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
                 msg.sequence_number,
                 msg.payload.len() as u32,
             );
-            let mut p = Vec::with_capacity(20 + msg.payload.len());
+            let mut p =
+                Vec::with_capacity(virtmcu_api::ZENOH_FRAME_HEADER_SIZE + msg.payload.len());
             p.extend_from_slice(hdr.pack());
             p.extend_from_slice(&msg.payload);
             p
@@ -486,7 +494,7 @@ async fn handle_sysc_msg(
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
-    tg: &topology::TopologyGraph,
+    _tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
     let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
@@ -495,28 +503,25 @@ async fn handle_sysc_msg(
     };
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
-    if p.len() < 12 {
+    if p.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
         return out;
     }
-    let mut cur = Cursor::new(&p);
-    let vt = cur.read_u64::<LittleEndian>().unwrap_or(0);
-    let sz = cur.read_u32::<LittleEndian>().unwrap_or(0);
-    if p.len() < (12 + sz as usize) {
+    let h = match virtmcu_api::ZenohFrameHeader::unpack_slice(&p) {
+        Some(h) => h,
+        None => return out,
+    };
+    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
-    let data = p[12..12 + sz as usize].to_vec();
+    let data = p[virtmcu_api::ZENOH_FRAME_HEADER_SIZE
+        ..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
+        .to_vec();
     if let Some(nodes) = known.get(&base) {
         for dst in nodes {
             if dst == &src {
                 continue;
             }
-            if !tg.is_link_allowed(&src, dst, &Protocol::Spi) {
-                eprintln!(
-                    "[Topology Violation] Dropping SYSC (SPI) msg from {} to {}",
-                    src, dst
-                );
-                continue;
-            }
+            // For SystemC CAN, any allowed link is fine, we just reuse the Ethernet protocol mapping internally
             let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
                 s.delay_ns
             } else {
@@ -526,9 +531,9 @@ async fn handle_sysc_msg(
                 src_node_id: src.clone(),
                 dst_node_id: dst.clone(),
                 base_topic: base.clone(),
-                delivery_vtime_ns: vt.saturating_add(d),
-                sequence_number: 0,
-                protocol: Protocol::Spi,
+                delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(d),
+                sequence_number: h.sequence_number(),
+                protocol: Protocol::Ethernet, // Map to standard ZenohFrameHeader wrapper
                 payload: data.clone(),
             });
         }

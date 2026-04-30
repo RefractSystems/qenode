@@ -42,7 +42,7 @@ Let's test our new peripheral. We will use the `run.sh` script, which automatica
 We will boot the empty `arm-generic-fdt` machine and plug our device into it via the command line:
 
 ```bash
-../../scripts/run.sh --dtb ../../test/phase1/minimal.dtb -device dummy-device -nographic
+../../scripts/run.sh --dtb ../../tests/fixtures/guest_apps/phase1/minimal.dtb -device dummy-device -nographic
 ```
 
 *Note: Since we are not passing a kernel, the CPU will likely fault immediately after boot because there is no code to execute, but the emulator will successfully load the module!*
@@ -105,7 +105,7 @@ The `priv_state` parameter is the key to stateful devices.  See the doc-comments
 ### Testing the Rust Plugin
 
 ```bash
-../../scripts/run.sh --dtb ../../test/phase1/minimal.dtb \
+../../scripts/run.sh --dtb ../../tests/fixtures/guest_apps/phase1/minimal.dtb \
     -device rust-dummy,base-addr=0x60000000 \
     -nographic
 ```

@@ -10,13 +10,13 @@ async def test_yaml_platform_boot(qemu_launcher, tmp_path):
     Verify that a platform defined in YAML can boot and print "HI".
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    yaml_file = workspace_root / "test/phase3/test_board.yaml"
-    kernel = workspace_root / "test/phase1/hello.elf"
+    yaml_file = workspace_root / "tests/fixtures/guest_apps/phase3/test_board.yaml"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     if not kernel.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
 
     dtb = tmp_path / "test_board.dtb"
     import subprocess

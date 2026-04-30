@@ -18,11 +18,11 @@ async def test_arch13_clock_priority_isolation(zenoh_router, zenoh_session, qemu
     STRESS TEST for ARCH-13: Clock Session Priority Isolation.
     """
     workspace_root = Path(__file__).parent.parent
-    firmware_path = workspace_root / "test/phase1/hello.elf"
+    firmware_path = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
     if not firmware_path.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "test/phase1", "hello.elf"], check=True)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1", "hello.elf"], check=True)
 
     coordinator_bin = workspace_root / "target/release/deterministic_coordinator"
     if not coordinator_bin.exists():

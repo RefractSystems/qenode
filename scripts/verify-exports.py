@@ -26,6 +26,7 @@ QEMU_REQUIRED_EXPORTS = [
     "virtmcu_safe_bql_force_lock",
 ]
 
+
 def check_symbols(so_path: Path, required: list[str], is_executable: bool = False) -> bool:
     target_type = "executable" if is_executable else "plugin"
     logger.info(f"Checking {target_type} {so_path.name} for required FFI symbols...")
@@ -34,7 +35,11 @@ def check_symbols(so_path: Path, required: list[str], is_executable: bool = Fals
         result = subprocess.run(["nm", "-D", str(so_path)], capture_output=True, text=True, check=True)
 
         # In executables, some symbols might be B (BSS) rather than T (Text) if they are just pointers.
-        exported_symbols = [line.split()[-1] for line in result.stdout.splitlines() if any(t in line for t in [" T ", " B ", " D ", " W "])]
+        exported_symbols = [
+            line.split()[-1]
+            for line in result.stdout.splitlines()
+            if any(t in line for t in [" T ", " B ", " D ", " W "])
+        ]
 
         missing = [s for s in required if s not in exported_symbols]
         if missing:

@@ -113,7 +113,7 @@ msg:  .byte 'R','E','G','-','O','K',0,0
 
 ```bash
 arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
-    -T test/phase9/link.ld firmware/reg_irq.S -o /tmp/reg_irq.elf
+    -T tests/fixtures/guest_apps/phase9/link.ld firmware/reg_irq.S -o /tmp/reg_irq.elf
 ```
 
 ### Step 3 — Create the Device Tree
@@ -132,7 +132,7 @@ bridge: bridge@50000000 {
 };
 ```
 
-See `test/phase9/smoke_test.sh` for the full DTS that also adds a CPU, RAM, GIC, and
+See `tests/fixtures/guest_apps/phase9/smoke_test.sh` for the full DTS that also adds a CPU, RAM, GIC, and
 UART — or run the smoke test directly (Step 5 below).
 
 ### Step 4 — Run the single-node scenario manually
@@ -169,7 +169,7 @@ REG-OK
 The Phase 9 smoke test exercises both scenarios (RegisterFile IRQ and CAN Zenoh RX):
 
 ```bash
-bash test/phase9/smoke_test.sh
+bash tests/fixtures/guest_apps/phase9/smoke_test.sh
 ```
 
 Expected output:

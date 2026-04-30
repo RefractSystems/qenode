@@ -617,10 +617,10 @@ async def qemu_launcher(request):
 
 @pytest_asyncio.fixture
 async def qmp_bridge(qemu_launcher):
-    dtb = "test/phase1/minimal.dtb"
-    kernel = "test/phase1/hello.elf"
+    dtb = "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = "tests/fixtures/guest_apps/phase1/hello.elf"
     if not Path(dtb).exists():
-        subprocess.run(["make", "-C", "test/phase1", "minimal.dtb"], check=True)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1", "minimal.dtb"], check=True)
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
     return bridge

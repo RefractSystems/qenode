@@ -113,7 +113,7 @@ the right QEMU binary.
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash
-   ./scripts/run.sh --dtb test/phase1/minimal.dtb \
+   ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
                     -device <your-device-name> -nographic
    ```
 6. Verify the type appears in `-device help` output.
@@ -167,7 +167,7 @@ Before opening a PR or pushing code to `main`, you should run our local CI valid
 *   **Static Analyzers & Memory Sanitizers:** Run `make ci-miri` (for Rust Undefined Behavior) and `make ci-asan` (for Memory Sanitizers).
 *   **Full Pipeline Validation (~40 mins cold, fast if cached):** Run `make ci-full` to execute the complete matrix of smoke tests exactly as they run on GitHub Actions inside the isolated builder container. This also includes the Miri and ASan checks. Passing this guarantees GitHub CI will pass.
 
-**For a detailed breakdown of how our CI pipeline works, how it uses Docker layer caching via GHCR, and how to debug specific failures, please read the [CI/CD Guide](docs/CI_GUIDE.md).**
+**For a detailed breakdown of how our CI pipeline works, how it uses Docker layer caching via GHCR, and how to debug specific failures, please read the [CI/CD Guide](docs/guide/04-continuous-integration.md).**
 
 ---
 
@@ -185,7 +185,7 @@ We split testing into two categories:
 
 ### 1. Emulator-Level Smoke Tests
 These are raw `bash` scripts combined with small Python scripts (using QMP) to verify the emulator works at a low level.
-They are located in `test/phaseX/smoke_test.sh`.
+They are located in `tests/fixtures/guest_apps/phaseX/smoke_test.sh`.
 
 **To run all integration smoke tests locally:**
 The Makefile automatically handles building required test artifacts (like ELFs) and setting up the Python environment before running the tests.
@@ -206,14 +206,14 @@ docker run --rm \
   -w /workspace \
   -e PYTHONPATH=/workspace \
   virtmcu-builder \
-  bash -c "make -C test/phase1 && bash test/phase1/smoke_test.sh"
+  bash -c "make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase1/smoke_test.sh"
 ```
 
 ### Debugging Failed Smoke Tests
 *   **Inspect the Logs:** Many tests capture QEMU output to a log file (e.g., `smoke_test_output.log` in the test directory). Always read this file if the test fails.
 *   **Run Interactively:** If a smoke test times out or fails, run the QEMU command interactively without the `-monitor none` or `-serial file:...` flags so you can see what QEMU prints to the terminal.
     ```bash
-    ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
+    ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
     ```
     *(To exit an interactive QEMU session, press `Ctrl+A` followed by `X`)*
 *   **Add Debug Flags:** You can append `-d exec,cpu_reset` or `-trace "zenoh_*"` to the `run.sh` command to trace execution blocks and see exactly where the firmware or QEMU is hanging.
@@ -246,7 +246,7 @@ We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, s
     *   **Why:** Python handles complex multi-process orchestration, asynchronous teardowns, and string matching much better than Rust or Bash.
 
 3.  **Thin CI Wrappers (Bash)**
-    *   **Rule:** Bash (`test/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
+    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
     *   **Never** write complex background process setup/teardown loops in Bash. Just call `pytest` or `cargo test`.
 
 ---

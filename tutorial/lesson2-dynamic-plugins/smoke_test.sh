@@ -16,11 +16,11 @@ RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
 CHECK_SCRIPT="$SCRIPT_DIR/check_dummy_qmp.py"
 
 # Use the DTB from phase 1 as a base
-DTB="$WORKSPACE_DIR/test/phase1/minimal.dtb"
+DTB="$WORKSPACE_DIR/tests/fixtures/guest_apps/phase1/minimal.dtb"
 
 if [ ! -f "$DTB" ]; then
     echo "DTB not found. Building Phase 1 first..."
-    make -C "$WORKSPACE_DIR/test/phase1"
+    make -C "$WORKSPACE_DIR/tests/fixtures/guest_apps/phase1"
 fi
 
 echo "Running Lesson 2 smoke test (Dynamic Plugins)..."

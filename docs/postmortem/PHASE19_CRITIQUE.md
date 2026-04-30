@@ -1,7 +1,7 @@
 # Phase 19 Critique
 
 ## 1. What went wrong / What was missed?
-- **Silently Broken Sub-systems:** The `ieee802154` device was entirely stubbed out during the Phase 19 port because its C shim was complex, but the integration test `test/phase14/smoke_test.sh` only tests `yaml2qemu` CLI output, not runtime behavior. This allowed the stub to slip into `main` undetected.
+- **Silently Broken Sub-systems:** The `ieee802154` device was entirely stubbed out during the Phase 19 port because its C shim was complex, but the integration test `tests/fixtures/guest_apps/phase14/smoke_test.sh` only tests `yaml2qemu` CLI output, not runtime behavior. This allowed the stub to slip into `main` undetected.
 - **Race Conditions across FFI:** The Zenoh async worker threads do not inherently hold the QEMU Big QEMU Lock (BQL). Devices like `chardev` and `ui` had their subscribers ported naively, triggering QEMU MMIO or state changes directly from the Zenoh worker without `virtmcu_bql_lock()`.
 
 ## 2. Un-tested Assumptions & Assertions

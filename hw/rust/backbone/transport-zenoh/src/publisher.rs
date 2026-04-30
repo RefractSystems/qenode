@@ -152,7 +152,7 @@ mod tests {
     fn test_safe_publisher_sends_payload() -> Result<(), zenoh::Error> {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let topic = "test/safe/pub/payload";
+        let topic = "tests/fixtures/guest_apps/safe/pub/payload";
 
         let pub_ = session
             .declare_publisher(topic)
@@ -184,7 +184,7 @@ mod tests {
     fn test_safe_publisher_non_blocking_under_load() -> Result<(), zenoh::Error> {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let topic = "test/safe/pub/load";
+        let topic = "tests/fixtures/guest_apps/safe/pub/load";
 
         let pub_ = session
             .declare_publisher(topic)
@@ -211,7 +211,7 @@ mod tests {
     fn test_safe_publisher_drop_joins_thread() -> Result<(), zenoh::Error> {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let topic = "test/safe/pub/drop";
+        let topic = "tests/fixtures/guest_apps/safe/pub/drop";
 
         let pub_ = session
             .declare_publisher(topic)
@@ -235,7 +235,7 @@ mod tests {
     fn test_safe_publisher_drops_when_full() -> Result<(), zenoh::Error> {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let topic = "test/safe/pub/overflow";
+        let topic = "tests/fixtures/guest_apps/safe/pub/overflow";
 
         let pub_ = session
             .declare_publisher(topic)

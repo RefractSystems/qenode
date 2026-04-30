@@ -17,10 +17,10 @@ async def test_infra9_faster_than_real_time(zenoh_router, qemu_launcher, zenoh_s
     from pathlib import Path
 
     workspace_root = Path(__file__).resolve().parent.parent
-    kernel_path = workspace_root / "test/phase1/hello.elf"
-    dtb_path = workspace_root / "test/phase1/minimal.dtb"
+    kernel_path = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
+    dtb_path = workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb"
     if not kernel_path.exists():
-        subprocess.run(["make", "-C", "test/phase1"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1"], check=True, cwd=workspace_root)
 
     # Launch node in slaved-icount mode so we strictly govern its virtual clock
     extra_args = [

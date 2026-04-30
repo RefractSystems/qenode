@@ -72,7 +72,7 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
     # Read the original yaml and update the socket path
     import yaml
 
-    orig_yaml = Path(workspace_root) / "test/phase12/test_bridge.yaml"
+    orig_yaml = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_bridge.yaml"
     with orig_yaml.open() as f:
         yaml_data = yaml.safe_load(f)
     for p in yaml_data.get("peripherals", []):
@@ -82,7 +82,7 @@ async def test_phase12_mmio_bridge_offsets(qemu_launcher, tmp_path):
     with Path(yaml_file).open("w") as f:
         yaml.dump(yaml_data, f)
 
-    kernel = Path(workspace_root) / "test/phase12/test_mmio.elf"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_mmio.elf"
     # Generate DTB and CLI
     subprocess.run(
         ["python3", "-m", "tools.yaml2qemu", yaml_file, "--out-dtb", dtb_file, "--out-cli", cli_file],
@@ -190,13 +190,14 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
     3. Telemetry Test: Verify Zenoh telemetry events are emitted.
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    yaml_file = Path(workspace_root) / "test/phase12/test_telemetry.yaml"
+    yaml_file = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_telemetry.yaml"
     dtb_file = tmp_path / "test_telemetry.dtb"
     cli_file = tmp_path / "test_telemetry.cli"
-    kernel = Path(workspace_root) / "test/phase12/test_wfi.elf"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase12/test_wfi.elf"
 
     # Generate DTB and CLI
     import os
+
     env = os.environ.copy()
     env["VIRTMCU_ZENOH_ROUTER"] = zenoh_router
     subprocess.run(
@@ -238,6 +239,11 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
         ],
     )
 
+    # Wait for telemetry to be discovered to avoid race on first WFI event
+    from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
+
+    await wait_for_zenoh_discovery(zenoh_session, "sim/telemetry/liveliness/0", timeout=10.0)
+
     await bridge.start_emulation()
 
     # Wait for UART output 'X' to confirm guest is running
@@ -249,6 +255,7 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
     # Wait deterministically for telemetry events.
     # Increased timeout for ASan/slow environments.
     from tools.testing.utils import get_time_multiplier
+
     wait_timeout = 30.0 * get_time_multiplier()
     logger.info(f"Waiting up to {wait_timeout}s for telemetry event...")
     try:
@@ -270,8 +277,8 @@ async def test_phase12_clock_error(qemu_launcher):
     4. clock: Verify error code 2 (ZENOH_ERROR) reporting [P2]
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb = Path(workspace_root) / "test/phase1/minimal.dtb"
-    kernel = Path(workspace_root) / "test/phase1/hello.elf"
+    dtb = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = Path(workspace_root) / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     # Invalid router to trigger Zenoh error
     extra_args = [

@@ -10,14 +10,14 @@ async def test_riscv_boot(qemu_launcher):
     Verify that RISC-V firmware boots and prints "HI RV".
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    riscv_test_dir = workspace_root / "test/riscv"
+    riscv_test_dir = workspace_root / "tests/fixtures/guest_apps/riscv"
     dts = riscv_test_dir / "minimal.dts"
     kernel = riscv_test_dir / "hello.elf"
 
     if not dts.exists() or not kernel.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "test/riscv"], check=True, cwd=workspace_root)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/riscv"], check=True, cwd=workspace_root)
 
     bridge = await qemu_launcher(dts, kernel, extra_args=["-S"])
     await bridge.start_emulation()

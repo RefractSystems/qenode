@@ -12,8 +12,8 @@ async def test_qemu_crash_handling(qemu_launcher):
     Test how the bridge handles QEMU crashing mid-execution.
     """
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb = workspace_root / "test/phase1/minimal.dtb"
-    kernel = workspace_root / "test/phase1/hello.elf"
+    dtb = workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
 
     # Use qemu_launcher for robust process management
     bridge = await qemu_launcher(dtb, kernel, ignore_clock_check=True)

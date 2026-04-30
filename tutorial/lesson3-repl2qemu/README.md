@@ -41,19 +41,19 @@ The `run.sh` script is "polymorphic"—it automatically detects the file type yo
 ### 1. Booting via REPL
 Pass the `.repl` file directly, and `run.sh` will call the translator for you:
 ```bash
-./scripts/run.sh --repl tutorial/lesson3-repl2qemu/src/test_board.repl --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --repl tutorial/lesson3-repl2qemu/src/test_board.repl --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
 ```
 
 ### 2. Booting via Native Device Tree (DTS)
 If you aren't a Renode user, you can pass a standard Linux Device Tree source. `run.sh` will call the `dtc` compiler automatically:
 ```bash
-./scripts/run.sh --dts test/phase1/minimal.dts --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --dts tests/fixtures/guest_apps/phase1/minimal.dts --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
 ```
 
 ### 3. Booting via Binary Blob (DTB)
 Finally, if you have a pre-compiled blob, it can be loaded directly with no overhead:
 ```bash
-./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
 ```
 
 In all three cases, you should see `HI` printed to the console!
@@ -73,7 +73,7 @@ python3 -m tools.repl2yaml tutorial/lesson3-repl2qemu/src/test_board.repl --out 
 ### 2. Booting via YAML
 Just like other formats, `run.sh` supports YAML natively:
 ```bash
-./scripts/run.sh --yaml test_board.yaml --kernel test/phase1/hello.elf -nographic
+./scripts/run.sh --yaml test_board.yaml --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
 ```
 
 **Note on Validation:** Starting in Phase 12, `yaml2qemu` performs a **post-compilation validation** step. It disassembles the generated `.dtb` and verifies that every device defined in your YAML has a corresponding memory mapping in the Device Tree. This prevents silent "Data Abort" crashes that previously occurred when a device was accidentally omitted from the memory map.

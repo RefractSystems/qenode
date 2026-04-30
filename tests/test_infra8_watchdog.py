@@ -11,10 +11,10 @@ def build_phase1_artifacts():
     from pathlib import Path
 
     workspace_root = Path(__file__).resolve().parent.parent
-    dtb_path = workspace_root / "test/phase1/minimal.dtb"
-    kernel_path = workspace_root / "test/phase1/hello.elf"
+    dtb_path = workspace_root / "tests/fixtures/guest_apps/phase1/minimal.dtb"
+    kernel_path = workspace_root / "tests/fixtures/guest_apps/phase1/hello.elf"
     if not dtb_path.exists() or not kernel_path.exists():
-        subprocess.run(["make", "-C", "test/phase1", "all"], check=True)
+        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/phase1", "all"], check=True)
     return dtb_path, kernel_path
 
 

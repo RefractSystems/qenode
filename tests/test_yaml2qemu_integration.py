@@ -28,7 +28,16 @@ def run_yaml2qemu(yaml_data: dict, tmp_path: Path):
 
     # Run the tool
     subprocess.run(
-        [sys.executable, "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb_file), "--out-cli", str(cli_file)],
+        [
+            sys.executable,
+            "-m",
+            "tools.yaml2qemu",
+            str(yaml_file),
+            "--out-dtb",
+            str(dtb_file),
+            "--out-cli",
+            str(cli_file),
+        ],
         check=True,
         capture_output=True,
         text=True,

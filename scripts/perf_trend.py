@@ -2,8 +2,8 @@
 """
 perf_trend.py — Performance trend tracking for virtmcu (Phase 16.5).
 
-Reads the benchmark results produced by test/phase16/bench.py
-(test/phase16/last_results.json) and compares them against a saved baseline.
+Reads the benchmark results produced by tests/fixtures/guest_apps/phase16/bench.py
+(tests/fixtures/guest_apps/phase16/last_results.json) and compares them against a saved baseline.
 
 Usage:
     python3 scripts/perf_trend.py --save-baseline    # persist current results as baseline

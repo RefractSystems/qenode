@@ -230,14 +230,14 @@ if [ "$VIRTMCU_USE_CCACHE" = "1" ]; then
 fi
 
 if [ "$VIRTMCU_USE_ASAN" = "1" ]; then
-    echo "ASAN/UBSAN enabled: adding --enable-asan --enable-ubsan to QEMU build"
-    CONFIGURE_ARGS+=(--enable-asan --enable-ubsan)
+    echo "ASAN/UBSAN enabled: adding --enable-asan --enable-ubsan -Db_sanitize=address,undefined to QEMU build"
+    CONFIGURE_ARGS+=(--enable-asan --enable-ubsan "-Db_sanitize=address,undefined")
     export VIRTMCU_USE_ASAN
     # Ensure all Rust targets (including QEMU's own and our plugins) link with sanitizers
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined"
 elif [ "$VIRTMCU_USE_TSAN" = "1" ]; then
-    echo "TSAN enabled: adding --enable-tsan to QEMU build"
-    CONFIGURE_ARGS+=(--enable-tsan)
+    echo "TSAN enabled: adding --enable-tsan -Db_sanitize=thread to QEMU build"
+    CONFIGURE_ARGS+=(--enable-tsan -Db_sanitize=thread)
     export VIRTMCU_USE_TSAN
     # ThreadSanitizer in Rust requires nightly or RUSTC_BOOTSTRAP=1 with unstable flags
     export RUSTC_BOOTSTRAP=1

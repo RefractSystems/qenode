@@ -202,7 +202,7 @@ the SAL model reads from the same address the firmware writes to.
 ## Running the Smoke Test
 
 ```bash
-bash test/phase10/smoke_test.sh
+bash tests/fixtures/guest_apps/phase10/smoke_test.sh
 ```
 
 Expected output:

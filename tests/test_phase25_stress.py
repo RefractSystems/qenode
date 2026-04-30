@@ -43,7 +43,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
 
     # Build ELF
     kernel = Path(tmpdir) / "lin_echo.elf"
-    compile_firmware([Path("test/phase25/lin_echo.S")], kernel, linker_script=Path("test/phase25/lin_echo.ld"))
+    compile_firmware([Path("tests/fixtures/guest_apps/phase25/lin_echo.S")], kernel, linker_script=Path("tests/fixtures/guest_apps/phase25/lin_echo.ld"))
 
     # Use unique topic to avoid interference
     import uuid
@@ -54,7 +54,7 @@ async def test_lin_stress(zenoh_router, qemu_launcher, zenoh_session):
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
     compile_dtb(
-        Path("test/phase25/lin_test.dts"), {"tcp/127.0.0.1:7447": router_endpoint, '"sim/lin"': f'"{lin_topic}"'}, dtb
+        Path("tests/fixtures/guest_apps/phase25/lin_test.dts"), {"tcp/127.0.0.1:7447": router_endpoint, '"sim/lin"': f'"{lin_topic}"'}, dtb
     )
 
     extra_args = [

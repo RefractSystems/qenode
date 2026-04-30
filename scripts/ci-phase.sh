@@ -33,7 +33,7 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
     mkdir -p target
     if [ ! -f target/.ci_marker_uv_synced ]; then
         echo "==> Syncing Python dependencies inside container..."
-        uv pip install --link-mode=copy --system --break-system-packages -r pyproject.toml >/dev/null
+        uv pip install --link-mode=copy --system --break-system-packages . >/dev/null
         touch target/.ci_marker_uv_synced
     fi
 
@@ -55,69 +55,89 @@ run_phase() {
 
     case "$p" in
         1)
-            make -C test/phase1 && bash test/phase1/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase1/smoke_test.sh
             ;;
         2)
-            bash test/phase2/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase2/smoke_test.sh
             ;;
         3)
-            bash test/phase3/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase3/smoke_test.sh
             ;;
         3.5)
-            make -C test/phase1 && bash test/phase3.5/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase3.5/smoke_test.sh
             ;;
         4)
-            make -C test/phase1 && bash test/phase4/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase4/smoke_test.sh
             ;;
         5)
-            bash test/phase5/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase5/smoke_test.sh
             ;;
         6)
-            bash test/phase6/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase6/smoke_test.sh
             ;;
         7)
-            bash test/phase7/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase7/smoke_test.sh
             ;;
         8)
-            make -C test/phase1 && make -C test/phase8 && bash test/phase8/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && make -C tests/fixtures/guest_apps/phase8 && bash tests/fixtures/guest_apps/phase8/smoke_test.sh
             ;;
         9)
-            make -C test/phase1 && bash test/phase9/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase9/smoke_test.sh
             ;;
         10)
-            make -C test/phase1 && bash test/phase10/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase10/smoke_test.sh
             ;;
         11)
-            make -C test/riscv && bash test/phase11/smoke_test.sh
+            make -C tests/fixtures/guest_apps/riscv && bash tests/fixtures/guest_apps/phase11/smoke_test.sh
             ;;
         11_3)
             cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release >/dev/null
             make -C tools/systemc_adapter/build rp_adapter >/dev/null
-            bash test/phase11_3/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase11_3/smoke_test.sh
             ;;
         12)
-            make -C test/phase1 && make -C test/phase12 && bash test/phase12/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && make -C tests/fixtures/guest_apps/phase12 && bash tests/fixtures/guest_apps/phase12/smoke_test.sh
             ;;
         13)
-            bash test/phase13/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase13/smoke_test.sh
             ;;
         14)
-            bash test/phase14/smoke_test.sh
+            bash tests/fixtures/guest_apps/phase14/smoke_test.sh
+            ;;
+        15)
+            bash tests/fixtures/guest_apps/phase15/smoke_test.sh
             ;;
         16)
-            make -C test/phase1 && make -C test/phase16 && bash test/phase16/smoke_test.sh
+            make -C tests/fixtures/guest_apps/phase1 && make -C tests/fixtures/guest_apps/phase16 && bash tests/fixtures/guest_apps/phase16/smoke_test.sh
+            ;;
+        18)
+            bash tests/fixtures/guest_apps/phase18/bql_deadlock_test.sh
+            ;;
+        19)
+            bash tests/fixtures/guest_apps/phase19/bql_stress_test.sh
+            bash tests/fixtures/guest_apps/phase19/netdev_flood_test.sh
+            bash tests/fixtures/guest_apps/phase19/qom_registration_test.sh
             ;;
         actuator)
-            bash test/actuator/smoke_test.sh
+            bash tests/fixtures/guest_apps/actuator/smoke_test.sh
             ;;
         27)
             PYTHONPATH=$(pwd) pytest tests/test_flexray.py -v --tb=short
             ;;
+        20.5)
+            pytest tests/test_phase20_5.py -v --tb=short
+            ;;
+        21)
+            pytest tests/test_phase21_prereq.py tests/test_phase21_stress.py -v --tb=short
+            ;;
+        25)
+            pytest tests/test_phase25_lin.py tests/test_phase25_multi_node.py tests/test_phase25_stress.py -v --tb=short
+            ;;
         qmp)
-            make -C test/phase1 && make -C test/phase8 && pytest tools/testing/test_qmp.py -v --tb=short
+            make -C tests/fixtures/guest_apps/phase1 && make -C tests/fixtures/guest_apps/phase8 && pytest tools/testing/test_qmp.py -v --tb=short
             ;;
         robot)
-            make -C test/phase1 && make -C test/phase8 && robot --outputdir test-results/robot --xunit test-results/robot.xml tests/test_qmp_keywords.robot tests/test_interactive_echo.robot
+            make -C tests/fixtures/guest_apps/phase1 && make -C tests/fixtures/guest_apps/phase8 && robot --outputdir test-results/robot --xunit test-results/robot.xml tests/test_qmp_keywords.robot tests/test_interactive_echo.robot
             ;;
         *)
             echo "ERROR: Unknown phase '$p'"
@@ -129,7 +149,7 @@ run_phase() {
 if [ "$PHASE" = "all" ]; then
     # The authoritative list of phases that MUST pass
     # (Matches the matrix in .github/workflows/ci.yml)
-    for p in 1 2 3 3.5 4 5 6 7 8 9 10 11 11_3 12 13 14 16 actuator 27 qmp robot; do
+    for p in 1 2 3 3.5 4 5 6 7 8 9 10 11 11_3 12 13 14 15 16 18 19 actuator 20.5 21 25 27 qmp robot; do
         run_phase "$p"
     done
 else

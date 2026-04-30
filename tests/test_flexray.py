@@ -14,7 +14,7 @@ WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
 
 def build_flexray_artifacts(router_endpoint="tcp/127.0.0.1:7447"):
-    phase27_dir = Path(WORKSPACE_DIR) / "test/phase27"
+    phase27_dir = Path(WORKSPACE_DIR) / "tests/fixtures/guest_apps/phase27"
     import subprocess
 
     firmware_s = """
@@ -243,7 +243,7 @@ async def test_flexray_zenoh_rx(zenoh_router, qemu_launcher, zenoh_session):
     await asyncio.to_thread(lambda: zenoh_session.put(topic, payload))
 
     # Advance time and poll for success signal
-    qom_path = "/flexray"
+    qom_path = "/flexray@9003000"
     success = False
     target_vtime = 50_000_000
     while vta.current_vtimes[0] < target_vtime:
@@ -328,6 +328,6 @@ async def test_flexray_stress(zenoh_router, qemu_launcher, zenoh_session):
         await ta.step(1_000_000)
 
     # If QEMU didn't crash or deadlock, the test passes
-    qom_path = "/flexray"
+    qom_path = "/flexray@9003000"
     wrhs3 = await bridge.qmp.execute("qom-get", {"path": qom_path, "property": "wrhs3"})
     assert isinstance(wrhs3, int)

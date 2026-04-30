@@ -32,7 +32,7 @@ cargo build --release
 
 Start Node 1 (transmitting):
 ```bash
-./scripts/run.sh --dtb test/phase1/minimal.dtb \
+./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
     -netdev zenoh,node=1,id=n1 \
     -device virtio-net-device,netdev=n1 \
     -kernel firmware_node1.elf -nographic
@@ -40,7 +40,7 @@ Start Node 1 (transmitting):
 
 Start Node 2 (receiving):
 ```bash
-./scripts/run.sh --dtb test/phase1/minimal.dtb \
+./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
     -netdev zenoh,node=2,id=n2 \
     -device virtio-net-device,netdev=n2 \
     -kernel firmware_node2.elf -nographic

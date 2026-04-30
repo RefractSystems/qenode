@@ -20,9 +20,9 @@ async def test_arch8_stress(zenoh_router, zenoh_session, zenoh_coordinator, qemu
     Runs for 50 quanta to ensure the barrier logic does not deadlock or drop signals under load.
     """
     workspace_root = Path(__file__).parent.parent
-    firmware_path = workspace_root / "test/phase8/echo.elf"
+    firmware_path = workspace_root / "tests/fixtures/guest_apps/phase8/echo.elf"
     if not firmware_path.exists():
-        pytest.fail("echo.elf not found — run 'make -C test/phase8' first")
+        pytest.fail("echo.elf not found — run 'make -C tests/fixtures/guest_apps/phase8' first")
 
     board_yaml = tmp_path / "board.yaml"
     board_yaml.write_text(

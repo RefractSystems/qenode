@@ -143,7 +143,7 @@ The smoke test compiles a minimal ARM firmware, starts the SystemC adapter, boot
 and asserts that the adapter received the expected MMIO writes:
 
 ```bash
-bash test/phase11_3/smoke_test.sh
+bash tests/fixtures/guest_apps/phase11_3/smoke_test.sh
 ```
 
 Expected output (abbreviated):

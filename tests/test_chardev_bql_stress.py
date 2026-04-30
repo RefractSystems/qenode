@@ -24,9 +24,9 @@ async def test_chardev_flow_control_stress(qemu_launcher, zenoh_router):
     router_endpoint = zenoh_router
 
     # Use the echo firmware from phase8
-    phase8_dir = Path(WORKSPACE_DIR) / "test/phase8"
+    phase8_dir = Path(WORKSPACE_DIR) / "tests/fixtures/guest_apps/phase8"
     kernel = phase8_dir / "echo.elf"
-    dtb = Path(WORKSPACE_DIR) / "test/phase1/minimal.dtb"
+    dtb = Path(WORKSPACE_DIR) / "tests/fixtures/guest_apps/phase1/minimal.dtb"
 
     if not kernel.exists():
         pytest.fail(f"Kernel {kernel} not found")

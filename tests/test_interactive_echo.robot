@@ -5,8 +5,8 @@ Test Setup       Launch And Connect
 Test Teardown    Terminate Emulation
 
 *** Variables ***
-${DTB_PATH}      ${CURDIR}/../test/phase1/minimal.dtb
-${FIRMWARE}      ${CURDIR}/../test/phase8/echo.elf
+${DTB_PATH}      ${CURDIR}/../tests/fixtures/guest_apps/phase1/minimal.dtb
+${FIRMWARE}      ${CURDIR}/../tests/fixtures/guest_apps/phase8/echo.elf
 
 *** Keywords ***
 Launch And Connect

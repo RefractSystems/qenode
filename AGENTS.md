@@ -15,7 +15,7 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 - Peripherals mapped at the **exact** base addresses the real MCU datasheet specifies.
 - Register layouts, reset values, and interrupt numbers must match physical silicon.
 - `clock` and all co-simulation infrastructure are **invisible to the firmware** — QEMU-level only, no guest MMIO exposure.
-- Any feature requiring firmware modification is a VirtMCU bug. See [ADR-006](docs/ADR-006-binary-fidelity.md).
+- Any feature requiring firmware modification is a VirtMCU bug. See [ADR-006](docs/architecture/adr/ADR-006-binary-fidelity.md).
 
 ---
 
@@ -28,7 +28,7 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 - **Per-quantum barrier**: coordinator withholds quantum-Q messages until ALL nodes signal "quantum Q complete" (PDES barrier pattern).
 - **Stochastic seeding**: derive per-node PRNG as `seed_for_quantum(global_seed, node_id, quantum_number)`. `rand::thread_rng()` and wall-clock seeding are BANNED.
 - **Mobile nodes**: topology changes pushed by physics engine before each quantum step, never discovered at runtime.
-- Any feature producing different output across identical runs is a VirtMCU bug. See [ADR-014](docs/design/ADR-014-global-determinism.md).
+- Any feature producing different output across identical runs is a VirtMCU bug. See [ADR-014](docs/architecture/09-determinism-and-chaos.md).
 
 ---
 
@@ -117,7 +117,10 @@ virtmcu/
 │       └── common/            # Shared APIs and QOM helpers
 ├── tools/
 │   └── yaml2qemu.py            # YAML -> DTB transpiler with validation
-└── docs/                       # Architectural documentation (ADRs)
+└── docs/
+    ├── architecture/           # The Virtmcu Specification: core design, temporal sync, PDES, ADRs
+    ├── guide/                  # User & developer guides (build system, containers, CI)
+    └── postmortem/             # Historical critiques and CI issue RCAs
 ```
 
 ## Dependency & Version Control
@@ -154,7 +157,7 @@ virtmcu/
 2. **NO Hardcoded Paths**: BANNED: shared temp paths (e.g., `/tmp/phase3/out.dtb`). REQUIRED: `pytest` `tmp_path` fixture or `mktemp -d`.
 3. **NO Random Collisions**: BANNED: `random.randint()` / generic UUIDs for node IDs. REQUIRED: deterministic uniqueness via `os.getpid()`, `worker_id`, or `tmp_path`.
 4. **NO Manual Process Management**: BANNED: spawning daemons (e.g., `zenoh_coordinator`) in test bodies. REQUIRED: centralized `pytest` fixtures with automated teardown.
-5. **Test Scope**: `pytest` scoped to `tests/` via `pyproject.toml`. Do NOT place test files in `test/phase*/`.
+5. **Test Scope**: `pytest` scoped to `tests/` via `pyproject.toml`. Do NOT place test files in `tests/fixtures/guest_apps/phase*/`.
 6. **Binary Resolution**: check both `target/release/` and `tools/<tool_name>/target/release/` for Rust tool binaries.
 
 **Mandates**: complex orchestration (QEMU + background process) → Python `pytest` fixture only. Internal logic → `#[test]` in Rust, no QEMU boot.
@@ -214,7 +217,7 @@ Every deployment change must be revertable. Add logging on critical paths (not i
 -e CARGO_TARGET_DIR=/tmp/ci-target
 -v ci-cargo-registry:/usr/local/cargo/registry
 ```
-Sharing `target/` between host and container corrupts Cargo fingerprints. See `docs/CI_GUIDE.md`.
+Sharing `target/` between host and container corrupts Cargo fingerprints. See `docs/guide/04-continuous-integration.md`.
 
 ### 8. Enterprise-Ready Quality (No Regression)
 - Agents MUST NOT lower lint strictness, coverage, or security gates without explicit written human consent.

@@ -67,9 +67,7 @@ class FdtEmitter:
             elif isinstance(dev, MmioBridgeDevice):
                 # Check for either the legacy keys or the modern ones
                 has_size = "size" in dev.properties or "region-size" in dev.properties
-                has_addr = (
-                    "address" in dev.properties or "base-addr" in dev.properties or dev.address_str != "sysbus"
-                )
+                has_addr = "address" in dev.properties or "base-addr" in dev.properties or dev.address_str != "sysbus"
                 if not has_size:
                     raise ValueError(f"mmio-socket-bridge '{dev.name}' is missing mandatory 'region-size' property")
                 if not has_addr:

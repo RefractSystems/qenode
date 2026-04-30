@@ -53,7 +53,7 @@ async def test_qemu_launcher_injects_stall_timeout(qemu_launcher):
         mock_exec.return_value = mock_proc_obj
 
         # We must use ignore_clock_check=True because we're passing virtmcu-clock directly
-        await qemu_launcher("test/phase1/minimal.dtb", extra_args=["-device", "virtmcu-clock"], ignore_clock_check=True)
+        await qemu_launcher("tests/fixtures/guest_apps/phase1/minimal.dtb", extra_args=["-device", "virtmcu-clock"], ignore_clock_check=True)
 
         # Check what was passed to create_subprocess_exec
         assert mock_exec.called

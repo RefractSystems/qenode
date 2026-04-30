@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-proto_gen.py - Auto-generates Python struct bindings from virtmcu_proto.h
+proto_gen.py - (LEGACY) Auto-generates Python struct bindings from virtmcu_proto.h
 
-This script ensures that Python consumers of the virtmcu bridge protocols
-stay exactly in sync with the C structs, preventing "version drift" and
-struct.unpack alignment bugs.
+WARNING: This tool is largely obsolete as the project has moved to FlatBuffers.
+It remains for reference or for specialized cases where raw C struct packing
+is still required. Modern code should use vproto.py and FlatBuffers.
 """
 
 import logging

@@ -117,8 +117,8 @@ build:
 # Launch the emulator using the test DTB and default arguments.
 run:
 	@bash scripts/run.sh \
-	  $(if $(wildcard test/phase1/minimal.dtb),--dtb test/phase1/minimal.dtb) \
-	  $(if $(wildcard test/phase1/hello.elf),--kernel test/phase1/hello.elf) \
+	  $(if $(wildcard tests/fixtures/guest_apps/phase1/minimal.dtb),--dtb tests/fixtures/guest_apps/phase1/minimal.dtb) \
+	  $(if $(wildcard tests/fixtures/guest_apps/phase1/hello.elf),--kernel tests/fixtures/guest_apps/phase1/hello.elf) \
 	  -nographic \
 	  -m 128M \
 	  $(EXTRA_ARGS)
@@ -127,8 +127,8 @@ run:
 # (ignores local build directory).
 run-installed:
 	@VIRTMCU_SKIP_BUILD_DIR=1 bash scripts/run.sh \
-	  $(if $(wildcard test/phase1/minimal.dtb),--dtb test/phase1/minimal.dtb) \
-	  $(if $(wildcard test/phase1/hello.elf),--kernel test/phase1/hello.elf) \
+	  $(if $(wildcard tests/fixtures/guest_apps/phase1/minimal.dtb),--dtb tests/fixtures/guest_apps/phase1/minimal.dtb) \
+	  $(if $(wildcard tests/fixtures/guest_apps/phase1/hello.elf),--kernel tests/fixtures/guest_apps/phase1/hello.elf) \
 	  -nographic \
 	  -m 128M \
 	  $(EXTRA_ARGS)
@@ -160,10 +160,10 @@ test-integration: venv
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
 	@echo "==> Running Legacy Integration Tests (Bash scripts)..."
 
-	@for test_script in test/phase11_3/smoke_test.sh test/phase11/smoke_test.sh \
-		test/phase13/smoke_test.sh test/phase14/smoke_test.sh test/phase15/smoke_test.sh \
-		test/phase16/smoke_test.sh test/phase3.5/smoke_test.sh test/phase5/smoke_test.sh \
-		test/phase9/smoke_test.sh test/actuator/smoke_test.sh; do \
+	@for test_script in tests/fixtures/guest_apps/phase11_3/smoke_test.sh tests/fixtures/guest_apps/phase11/smoke_test.sh \
+		tests/fixtures/guest_apps/phase13/smoke_test.sh tests/fixtures/guest_apps/phase14/smoke_test.sh tests/fixtures/guest_apps/phase15/smoke_test.sh \
+		tests/fixtures/guest_apps/phase16/smoke_test.sh tests/fixtures/guest_apps/phase3.5/smoke_test.sh tests/fixtures/guest_apps/phase5/smoke_test.sh \
+		tests/fixtures/guest_apps/phase9/smoke_test.sh tests/fixtures/guest_apps/actuator/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
 		uv run --active bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
 		bash scripts/cleanup-sim.sh --quiet; \
@@ -172,7 +172,6 @@ test-integration: venv
 
 # Run integration tests compiled with C/C++ memory sanitizers (ASan/UBSan)
 test-asan: venv
-	uv run --active $(MAKE) build-test-artifacts
 	@echo "==> Building QEMU with ASan/UBSan enabled..."
 	VIRTMCU_USE_ASAN=1 bash scripts/setup-qemu.sh --force
 	@bash scripts/cleanup-sim.sh --quiet
@@ -229,14 +228,15 @@ test-coverage-guest:
 	@docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
+		-e CI=true \
 		$(BUILDER_IMG) \
-		bash -c "make -C test/phase1 && \
+		bash -c "make -C tests/fixtures/guest_apps/phase1 && \
 			 DRCOV_SO=\$$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
-			 qemu-system-arm -M arm-generic-fdt,hw-dtb=test/phase1/minimal.dtb \
-			   -kernel test/phase1/hello.elf -nographic -m 128M -display none \
+			 qemu-system-arm -M arm-generic-fdt,hw-dtb=tests/fixtures/guest_apps/phase1/minimal.dtb \
+			   -kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic -m 128M -display none \
 			   -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin & \
 			 sleep 2 && kill -INT \$$! && wait \$$! || true; \
-			 python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80"
+			 python3 tools/analyze_coverage.py hello.drcov tests/fixtures/guest_apps/phase1/hello.elf --fail-under 80"
 	@echo "✓ Guest coverage check passed."
 
 # Generate host-side C/Rust coverage report (requires lcov)
@@ -263,17 +263,17 @@ coverage-report:
 
 # Builds all test artifacts across all phases
 build-test-artifacts:
-	@$(MAKE) -C test/phase1 -j$(JOBS)
-	@$(MAKE) -C test/phase8 -j$(JOBS)
-	@$(MAKE) -C test/phase12 -j$(JOBS)
-	@$(MAKE) -C test/actuator -j$(JOBS)
-	@$(MAKE) -C test/riscv -j$(JOBS)
-	@$(MAKE) -C test/phase27 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/phase1 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/phase8 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/phase12 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/actuator -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/riscv -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/phase27 -j$(JOBS)
 	@if [ "$$CI" = "true" ] && command -v zenoh_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
 		echo "==> Building test tools (zenoh_coordinator, deterministic_coordinator, cyber_bridge)..."; \
-		cargo build --release -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge; \
+		cargo build --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge; \
 	fi
 
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
@@ -287,6 +287,7 @@ test-integration-docker:
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
+		-e CI=true \
 		-e CARGO_TARGET_DIR=/tmp/ci-target \
 		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
 		-v "$(CURDIR):/workspace" -w /workspace \
@@ -336,7 +337,7 @@ lint-audit:
 # Run Python linting and type checking
 lint-python:
 	@echo "==> Check for banned struct usage..."
-	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" test/ tests/ tools/ tutorial/ | grep -v "proto_gen.py" ; then \
+	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ tutorial/ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
 		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
@@ -353,6 +354,10 @@ lint-python:
 	        echo "❌ ERROR: Banned asyncio.sleep found in tests/tools (use vta.step or transport signaling instead):"; \
 	        echo "$$violations"; \
 	        exit 1; \
+	fi
+	@echo "==> Check for hardcoded FDT QOM paths..."
+	@if grep -rnE '["'\'']/(flexray|spi[0-9]|wifi[0-9]|uart[0-9]|memory)["'\'']' tests/ ; then \
+		echo "❌ ERROR: Hardcoded QOM path without unit address detected. Root FDT devices must use '/device@address' format."; exit 1; \
 	fi
 	@echo "==> ruff check..."
 	@uv run --active ruff check .
@@ -578,10 +583,10 @@ install-hooks:
 # Performance Benchmarking & Trend Tracking (Phase 16)
 # ------------------------------------------------------------------------------
 
-# Run the full performance benchmark and save results to test/phase16/last_results.json.
+# Run the full performance benchmark and save results to tests/fixtures/guest_apps/phase16/last_results.json.
 perf-bench: venv
-	@$(MAKE) -C test/phase16 bench.elf
-	PYTHONPATH=$(CURDIR) uv run --active python3 test/phase16/bench.py
+	@$(MAKE) -C tests/fixtures/guest_apps/phase16 bench.elf
+	PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/phase16/bench.py
 
 # Save the current benchmark results as the performance baseline.
 perf-baseline: perf-bench
@@ -590,8 +595,8 @@ perf-baseline: perf-bench
 
 # Check current benchmark results against the saved baseline; exit 1 on regression.
 perf-check: venv
-	@if [ ! -f test/phase16/last_results.json ]; then \
-		$(MAKE) -C test/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 test/phase16/bench.py; \
+	@if [ ! -f tests/fixtures/guest_apps/phase16/last_results.json ]; then \
+		$(MAKE) -C tests/fixtures/guest_apps/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/phase16/bench.py; \
 	fi
 	uv run --active python3 scripts/perf_trend.py --check
 
@@ -659,6 +664,7 @@ ci-local:
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
+		-e CI=true \
 		-e CARGO_TARGET_DIR=/tmp/ci-target \
 		-e VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
 		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
@@ -677,6 +683,7 @@ test-coverage-peripheral:
 	@mkdir -p test-results
 	@docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
+		-e CI=true \
 		$(BUILDER_IMG) \
 		bash -c "gcovr -r /build/qemu/hw/virtmcu \
 			--gcov-executable gcov \
@@ -703,12 +710,14 @@ ci-full: ci-local ci-asan ci-miri
 	docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
+		-e CI=true \
 		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
 		-e GCOV_PREFIX=/workspace/coverage-data \
 		-e GCOV_PREFIX_STRIP=3 \
 		-e VIRTMCU_SKIP_BUILD_DIR=1 \
 		$(BUILDER_IMG) \
-		bash scripts/ci-phase.sh all	@echo ""
+		bash scripts/ci-phase.sh all
+	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
 	@echo "════════════════════════════════════════════════════"
@@ -732,6 +741,7 @@ ci-smoke:
 	docker run --rm \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		-e PYTHONPATH=/workspace \
+		-e CI=true \
 		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
 		-e GCOV_PREFIX=/workspace/coverage-data \
 		-e GCOV_PREFIX_STRIP=3 \
@@ -755,6 +765,7 @@ ci-asan:
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
+		-e CI=true \
 		-e CARGO_TARGET_DIR=/tmp/ci-target \
 		-e VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
 		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
@@ -782,6 +793,7 @@ ci-miri:
 		--user $$(id -u):$$(id -g) \
 		-e HOME=/tmp \
 		-e USER=vscode \
+		-e CI=true \
 		-e CARGO_TARGET_DIR=/tmp/ci-target \
 		-v "$(CURDIR):/workspace" \
 		-v ci-cargo-registry:/usr/local/cargo/registry \
@@ -889,7 +901,7 @@ clean:
 	rm -f .coverage
 	rm -rf .pytest_cache .ruff_cache
 	rm -rf test-results/
-	rm -rf test/*/results/
+	rm -rf tests/fixtures/guest_apps/*/results/
 	rm -rf install/
 	rm -f *_output.txt
 	rm -f log.html report.html output.xml

@@ -13,7 +13,7 @@ async def test_phase10_usd_metadata():
     TEST 1: OpenUSD Metadata Tool
     """
     workspace_root = Path(Path(Path(__file__).parent.resolve().parent))
-    yaml_file = Path(workspace_root) / "test/phase3/test_board.yaml"
+    yaml_file = Path(workspace_root) / "tests/fixtures/guest_apps/phase3/test_board.yaml"
     tool = Path(workspace_root) / "tools/usd_to_virtmcu.py"
 
     async with AsyncManagedProcess("python3", tool, yaml_file) as proc:

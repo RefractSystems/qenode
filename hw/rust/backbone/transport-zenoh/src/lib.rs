@@ -341,7 +341,7 @@ mod tests {
         let counter_clone = Arc::clone(&counter);
         let generation = Arc::new(AtomicU64::new(0));
 
-        let topic = "test/safe/sub";
+        let topic = "tests/fixtures/guest_apps/safe/sub";
 
         {
             let _sub =
@@ -382,7 +382,7 @@ mod tests {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let counter = Arc::new(AtomicUsize::new(0));
-        let topic = "test/stress/drain";
+        let topic = "tests/fixtures/guest_apps/stress/drain";
         let generation = Arc::new(AtomicU64::new(0));
 
         // Create a SafeSubscriber whose callback has a slight delay to simulate load
@@ -433,7 +433,7 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
         let generation = Arc::new(AtomicU64::new(0));
-        let topic = "test/gen/stale";
+        let topic = "tests/fixtures/guest_apps/gen/stale";
 
         // Create subscriber with gen 0
         let _sub = SafeSubscriber::new_with_generation(
@@ -464,7 +464,7 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
         let generation = Arc::new(AtomicU64::new(2));
-        let topic = "test/gen/current";
+        let topic = "tests/fixtures/guest_apps/gen/current";
 
         // Create subscriber with gen 2
         let _sub = SafeSubscriber::new_with_generation(
@@ -508,7 +508,7 @@ mod tests {
         let config = Config::default();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let generation = Arc::new(AtomicU64::new(0));
-        let topic = "test/gen/stress";
+        let topic = "tests/fixtures/guest_apps/gen/stress";
 
         let _sub = SafeSubscriber::new_with_generation(
             &session,

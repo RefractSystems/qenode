@@ -1,5 +1,11 @@
 # =============================================================================
-# vproto.py - FlatBuffers backend for virtmcu-api core protocols.
+# vproto.py - Pythonic wrappers for VirtMCU FlatBuffers core protocols.
+#
+# This module provides @dataclass wrappers around the auto-generated FlatBuffers
+# classes. It simplifies packing and unpacking of messages used in the
+# mmio-socket-bridge and Zenoh coordination layers.
+#
+# Prefer using this module over manual struct packing and unpacking.
 # =============================================================================
 
 from dataclasses import dataclass

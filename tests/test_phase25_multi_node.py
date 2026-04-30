@@ -11,7 +11,7 @@ sys.path.append(str(Path.cwd() / "tools/lin_fbs"))
 from virtmcu.lin import LinFrame, LinMessageType
 
 from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
-from tools.testing.virtmcu_test_suite.orchestrator import VirtMcuOrchestrator
+from tools.testing.virtmcu_test_suite.orchestrator import SimulationOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     master_kernel = Path(tmpdir) / "lin_master.elf"
     slave_kernel = Path(tmpdir) / "lin_slave.elf"
 
-    compile_firmware([Path("test/phase25/lin_master.S")], master_kernel, linker_script=Path("test/phase25/lin_echo.ld"))
-    compile_firmware([Path("test/phase25/lin_slave.S")], slave_kernel, linker_script=Path("test/phase25/lin_echo.ld"))
+    compile_firmware([Path("tests/fixtures/guest_apps/phase25/lin_master.S")], master_kernel, linker_script=Path("tests/fixtures/guest_apps/phase25/lin_echo.ld"))
+    compile_firmware([Path("tests/fixtures/guest_apps/phase25/lin_slave.S")], slave_kernel, linker_script=Path("tests/fixtures/guest_apps/phase25/lin_echo.ld"))
 
     # Use unique topic to avoid interference
     import uuid
@@ -41,7 +41,7 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     # Generate Master DTB in tmpdir
     master_dtb = Path(tmpdir) / "lin_master.dtb"  # Replace router and compile
     compile_dtb(
-        Path("test/phase25/lin_test.dts"),
+        Path("tests/fixtures/guest_apps/phase25/lin_test.dts"),
         {"tcp/127.0.0.1:7447": router_endpoint, '"sim/lin"': f'"{lin_topic}"'},
         master_dtb,
     )
@@ -61,7 +61,7 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     # Generate Slave DTB
     slave_dtb = Path(tmpdir) / "lin_slave.dtb"
     compile_dtb(
-        Path("test/phase25/lin_test.dts"),
+        Path("tests/fixtures/guest_apps/phase25/lin_test.dts"),
         {"node = <0>;": "node = <1>;", "tcp/127.0.0.1:7447": router_endpoint, '"sim/lin"': f'"{lin_topic}"'},
         slave_dtb,
     )
@@ -100,7 +100,7 @@ async def test_multi_node_lin(zenoh_router, qemu_launcher, zenoh_coordinator, ze
     sub1 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/1/tx", on_bus_msg))
 
     try:
-        async with VirtMcuOrchestrator(session, router_endpoint, qemu_launcher) as sim:
+        async with SimulationOrchestrator(session, router_endpoint, qemu_launcher) as sim:
             logger.info("Launching Master and Slave via Orchestrator...")
             sim.add_node(node_id=0, dtb_path=str(master_dtb), kernel_path=str(master_kernel), extra_args=master_args)
             sim.add_node(node_id=1, dtb_path=str(slave_dtb), kernel_path=str(slave_kernel), extra_args=slave_args)

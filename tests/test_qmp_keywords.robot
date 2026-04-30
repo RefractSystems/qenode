@@ -4,8 +4,8 @@ Resource        ../tools/testing/qemu_keywords.robot
 Test Teardown   Terminate Emulation
 
 *** Variables ***
-${DTB}          ${CURDIR}/../test/phase1/minimal.dtb
-${KERNEL}       ${CURDIR}/../test/phase1/hello.elf
+${DTB}          ${CURDIR}/../tests/fixtures/guest_apps/phase1/minimal.dtb
+${KERNEL}       ${CURDIR}/../tests/fixtures/guest_apps/phase1/hello.elf
 
 *** Test Cases ***
 Should Boot And Print HI
