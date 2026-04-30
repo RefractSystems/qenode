@@ -369,9 +369,9 @@ lint-spelling:
 lint-shell:
 	@echo "==> shellcheck..."
 	@shellcheck --version >/dev/null 2>&1 || { echo "❌ Error: shellcheck is not installed. Install with: sudo apt-get install shellcheck"; exit 1; }
-	@find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv/*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 shellcheck --severity=warning
+	@find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 shellcheck --severity=warning
 	@echo "==> Checking bash safety flags (set -euo pipefail)..."
-	@MISSING=$$(find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv/*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 grep -rL "set -euo pipefail" 2>/dev/null || true); \
+	@MISSING=$$(find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 grep -rL "set -euo pipefail" 2>/dev/null || true); \
 	if [ -n "$$MISSING" ]; then \
 		echo "❌ Error: Missing 'set -euo pipefail' in:"; \
 		echo "$$MISSING"; \
@@ -398,7 +398,7 @@ lint-actions:
 # Run yamllint on YAML configuration files
 lint-yaml:
 	@echo "==> yamllint..."
-	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv/*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*")
+	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*")
 	@echo "✓ yamllint passed."
 
 # Run mypy static type checking
@@ -415,7 +415,7 @@ lint-c:
 		-not -path "*/remote-port/*" \
 		-not -path "*/third_party/*" \
 		-not -path "*/build/*" \
-		-not -path "*/.venv/*" \
+		-not -path "*/.venv*" \
 		-not -path "*/target/*" \
 		-print0 | xargs -0 clang-format -Werror --dry-run
 	@echo "✓ clang-format passed."
@@ -560,7 +560,7 @@ fmt-c:
 # Format YAML files (strip trailing whitespace)
 fmt-yaml:
 	@echo "==> stripping trailing whitespace from YAMLs..."
-	@find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv/*" -print0 | xargs -0 sed -i 's/[[:space:]]*$$//'
+	@find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -print0 | xargs -0 sed -i 's/[[:space:]]*$$//'
 
 # Install pre-commit and pre-push git hooks
 install-hooks:

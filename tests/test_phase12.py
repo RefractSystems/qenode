@@ -196,30 +196,21 @@ async def test_phase12_telemetry(zenoh_router, qemu_launcher, zenoh_session, tmp
     kernel = Path(workspace_root) / "test/phase12/test_wfi.elf"
 
     # Generate DTB and CLI
+    import os
+    env = os.environ.copy()
+    env["VIRTMCU_ZENOH_ROUTER"] = zenoh_router
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", yaml_file, "--out-dtb", dtb_file, "--out-cli", cli_file],
+        ["python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb_file), "--out-cli", str(cli_file)],
         check=True,
         cwd=workspace_root,
+        env=env,
     )
 
     with Path(cli_file).open() as f:
         cli_args = f.read().split()
 
-    # Update cli_args to include our router
-    new_args = []
-    i = 0
-    while i < len(cli_args):
-        arg = cli_args[i]
-        if arg == "-device" and i + 1 < len(cli_args):
-            dev_arg = cli_args[i + 1]
-            if "telemetry" in dev_arg and "node=0" in dev_arg:
-                new_args.append("-device")
-                new_args.append(dev_arg + f",router={zenoh_router}")
-                i += 2
-                continue
-        if "null" not in arg:
-            new_args.append(arg)
-        i += 1
+    # Filter out nulls and handle other args if needed
+    new_args = [arg for arg in cli_args if "null" not in arg]
 
     # Listener for telemetry
     received_events = []

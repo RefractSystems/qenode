@@ -8,6 +8,7 @@
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -275,13 +276,14 @@ def main():
     # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
+    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
     for dev in platform.devices:
         if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
             logger.error("Missing mandatory property: socket-path")
             sys.exit(1)
         if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
-            router = dev.properties.get("router")
+            router = dev.properties.get("router") or env_router
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
 
@@ -298,6 +300,8 @@ def main():
         elif dev.type_name in ("telemetry", "ieee802154"):
             # These are now handled via DTB but need transport hint
             dev.properties["transport"] = transport
+            if env_router and "router" not in dev.properties:
+                dev.properties["router"] = env_router
             filtered_devices.append(dev)
         elif dev.type_name == "mmio-socket-bridge":
             # Handled via DTB (both memory map and instantiation).
