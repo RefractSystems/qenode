@@ -1,27 +1,29 @@
 [workspace]
 members = [
-    "hw/rust/rust-dummy",
-    "hw/rust/virtmcu-zenoh",
-    "hw/rust/virtmcu-api",
-    "hw/rust/zenoh-clock",
-    "hw/rust/virtmcu-qom",
-    "hw/rust/zenoh-netdev",
-    "hw/rust/zenoh-chardev",
-    "hw/rust/zenoh-telemetry",
-    "hw/rust/zenoh-actuator",
-    "hw/rust/zenoh-802154",
-    "hw/rust/zenoh-ui",
-    "hw/rust/zenoh-flexray",
-    "hw/rust/test-qom-device",
-    "hw/rust/virtmcu-test-devices",
-    "hw/rust/mmio-socket-bridge",
-    "hw/rust/remote-port",
-    "hw/rust/zenoh-canfd",
-    "hw/rust/s32k144-lpuart",
-    "hw/rust/virtmcu-wifi",
-    "hw/rust/zenoh-spi",
+    "hw/rust/common/rust-dummy",
+    "hw/rust/backbone/transport-zenoh",
+    "hw/rust/backbone/transport-unix",
+    "hw/rust/common/virtmcu-api",
+    "hw/rust/backbone/clock",
+    "hw/rust/common/virtmcu-qom",
+    "hw/rust/comms/netdev",
+    "hw/rust/comms/chardev",
+    "hw/rust/observability/telemetry",
+    "hw/rust/observability/actuator",
+    "hw/rust/comms/ieee802154",
+    "hw/rust/observability/ui",
+    "hw/rust/comms/flexray",
+    "hw/rust/common/test-qom-device",
+    "hw/rust/common/virtmcu-test-devices",
+    "hw/rust/backbone/mmio-socket-bridge",
+    "hw/rust/backbone/remote-port",
+    "hw/rust/comms/canfd",
+    "hw/rust/mcu/s32k144-lpuart",
+    "hw/rust/comms/wifi",
+    "hw/rust/comms/spi",
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
+    "tools/deterministic_coordinator", "tools/stress_adapter",
 ]
 resolver = "2"
 
@@ -38,9 +40,10 @@ libc = "0.2"
 flatbuffers = "25.12.19"
 crossbeam-channel = "0.5"
 byteorder = "1.5"
-virtmcu-api = { path = "hw/rust/virtmcu-api" }
-virtmcu-qom = { path = "hw/rust/virtmcu-qom" }
-virtmcu-zenoh = { path = "hw/rust/virtmcu-zenoh" }
+virtmcu-api = { path = "hw/rust/common/virtmcu-api" }
+virtmcu-qom = { path = "hw/rust/common/virtmcu-qom" }
+transport-zenoh = { path = "hw/rust/backbone/transport-zenoh" }
+transport-unix = { path = "hw/rust/backbone/transport-unix" }
 
 [profile.release]
 panic = "abort"
@@ -53,9 +56,20 @@ unsafe_code = "allow" # We need unsafe for QOM/FFI
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+str_to_string = "deny"
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "deny"
-expect_used = "deny"
+undocumented_unsafe_blocks = "allow"
+missing_safety_doc = "allow"
+std_instead_of_core = "deny"
+std_instead_of_alloc = "deny"
+alloc_instead_of_core = "deny"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
+unwrap_used = "allow"
+expect_used = "allow"
 panic = "deny"
 clone_on_ref_ptr = "deny"
 # Specific pedantic lints to allow (too noisy or not applicable)

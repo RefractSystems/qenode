@@ -4,16 +4,24 @@ import logging
 import os
 import sys
 import tempfile
+import typing
 from contextlib import redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import zenoh
+
+if TYPE_CHECKING:
+    import zenoh
 
 from tools.testing.qmp_bridge import QmpBridge
+from tools.testing.utils import wait_for_file_creation, yield_now
 
 logger = logging.getLogger(__name__)
 
 
 class NodeContext:
-    def __init__(self, node_id: str, base_tmpdir: Path):
+    def __init__(self, node_id: str, base_tmpdir: Path) -> None:
         self.node_id = node_id
         self.process: asyncio.subprocess.Process | None = None
         self.qmp_bridge = QmpBridge()
@@ -24,23 +32,23 @@ class NodeContext:
 
 
 class NodeManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.nodes: dict[str, NodeContext] = {}
-        self._zenoh_session = None
+        self._zenoh_session: zenoh.Session | None = None
         self.base_tmpdir = Path(tempfile.mkdtemp(prefix="virtmcu-mcp-"))
 
-    def get_zenoh_session(self):
+    def get_zenoh_session(self) -> zenoh.Session:
         import zenoh
 
         if self._zenoh_session is None:
             self._zenoh_session = zenoh.open(zenoh.Config())
         return self._zenoh_session
 
-    async def close(self):
+    async def close(self) -> None:
         for node in self.nodes.values():
             await self.stop_node(node.node_id)
         if self._zenoh_session:
-            self._zenoh_session.close()
+            typing.cast(typing.Any, self._zenoh_session).close()
             self._zenoh_session = None
 
         # Cleanup base tmpdir
@@ -53,7 +61,7 @@ class NodeManager:
             self.nodes[node_id] = NodeContext(node_id, self.base_tmpdir)
         return self.nodes[node_id]
 
-    async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml"):
+    async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml") -> None:
         node = self.get_node(node_id)
 
         # Save to temporary file for validation
@@ -111,7 +119,7 @@ class NodeManager:
             Path(node.yaml_path).unlink()
         node.yaml_path = path
 
-    def flash_firmware(self, node_id: str, firmware_path: str):
+    def flash_firmware(self, node_id: str, firmware_path: str) -> None:
         node = self.get_node(node_id)
         if not Path(firmware_path).is_absolute():
             firmware_path = str(Path(firmware_path).resolve())
@@ -119,7 +127,7 @@ class NodeManager:
             raise FileNotFoundError(f"Firmware file not found: {firmware_path}")
         node.firmware_path = firmware_path
 
-    async def start_node(self, node_id: str):
+    async def start_node(self, node_id: str) -> None:
         node = self.get_node(node_id)
         if node.process and node.process.returncode is None:
             raise RuntimeError(f"Node {node_id} is already running.")
@@ -159,31 +167,58 @@ class NodeManager:
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
 
-        # Wait a bit for QEMU to create the sockets
-        for _ in range(50):
-            if Path(node.qmp_socket_path).exists() and Path(node.uart_socket_path).exists():
-                break
-            # Check if process exited early
-            if node.process and node.process.returncode is not None:
+        # Wait for QEMU to create the sockets deterministically
+        try:
+            wait_tasks = [wait_for_file_creation(node.qmp_socket_path), wait_for_file_creation(node.uart_socket_path)]
+
+            files_task = asyncio.ensure_future(asyncio.gather(*wait_tasks))
+            exit_task = asyncio.create_task(node.process.wait())
+
+            done, pending = await asyncio.wait(  # type: ignore[type-var]
+                [files_task, exit_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=10.0,
+            )
+
+            for task in pending:
+                typing.cast(asyncio.Task[typing.Any], task).cancel()
+                with suppress(asyncio.CancelledError):
+                    await typing.cast(asyncio.Task[typing.Any], task)
+
+            if exit_task in done:
+                await yield_now()
                 stderr_data = b""
                 if node.process.stderr:
                     stderr_data = await node.process.stderr.read()
                 raise RuntimeError(
                     f"QEMU process exited early with code {node.process.returncode}: {stderr_data.decode()}"
                 )
-            await asyncio.sleep(0.1)
 
-        if not Path(node.qmp_socket_path).exists():
+            if not done:
+                raise TimeoutError()
+
+            files_task.result()
+
+        except (TimeoutError, RuntimeError) as e:
             if node.process and node.process.returncode is None:
                 node.process.terminate()
-                stderr_data = b""
-                if node.process.stderr:
-                    stderr_data = await node.process.stderr.read()
-                raise RuntimeError(f"QEMU failed to create QMP socket for {node_id}. stderr: {stderr_data.decode()}")
-            raise RuntimeError(f"QEMU failed to start or create QMP socket for {node_id}")
+            stderr_data = b""
+            if node.process and node.process.stderr:
+                stderr_data = await node.process.stderr.read()
+            logger.error(f"QEMU failed to start. STDERR: {stderr_data.decode()}")
+            if isinstance(e, TimeoutError):
+                raise RuntimeError(f"QEMU QMP/UART sockets did not appear in time for {node_id}") from e
+            raise
 
         try:
-            await node.qmp_bridge.connect(node.qmp_socket_path, node.uart_socket_path)
+            import re
+
+            match = re.search(r"node(\d+)", node_id)
+            n_id = int(match.group(1)) if match else None
+
+            await node.qmp_bridge.connect(
+                node.qmp_socket_path, node.uart_socket_path, zenoh_session=self.get_zenoh_session(), node_id=n_id
+            )
         except Exception as e:
             if node.process and node.process.returncode is None:
                 node.process.terminate()
@@ -192,7 +227,7 @@ class NodeManager:
                 stderr_data = await node.process.stderr.read()
             raise RuntimeError(f"QMP connection failed: {e}. QEMU stderr: {stderr_data.decode()}") from e
 
-    async def stop_node(self, node_id: str):
+    async def stop_node(self, node_id: str) -> None:
         if node_id not in self.nodes:
             return
         node = self.nodes[node_id]

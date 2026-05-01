@@ -1,7 +1,7 @@
 # Postmortem: SystemC Warning W571 (No Activity) and TSAN Data Races
 
 ## Overview
-During the execution of the Phase 5 smoke tests and ASan/TSan CI pipelines, the SystemC adapter generated massive amounts of console spam with the following warning:
+During the execution of the irq_stress smoke tests and ASan/TSan CI pipelines, the SystemC adapter generated massive amounts of console spam with the following warning:
 `Warning: (W571) no activity or clock movement for sc_start() invocation`
 
 Simultaneously, ThreadSanitizer (TSAN) flagged data races during the adapter's teardown sequence.

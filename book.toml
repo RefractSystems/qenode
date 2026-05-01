@@ -1,0 +1,8 @@
+[book]
+authors = ["VirtMCU Developers"]
+language = "en"
+src = "docs"
+title = "VirtMCU Documentation"
+
+[build]
+build-dir = "target/book"

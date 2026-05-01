@@ -1,0 +1,49 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+peripherals:
+  - name: memory
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x01000000
+  - name: spi0
+    type: SPI.PL022
+    address: 0x10000000
+    properties:
+      size: 0x1000
+  - name: echo_0_0
+    type: spi-echo
+    parent: spi0
+    address: 0
+  - name: spi1
+    type: SPI.PL022
+    address: 0x10001000
+    properties:
+      size: 0x1000
+  - name: echo_1_0
+    type: spi-echo
+    parent: spi1
+    address: 0
+  - name: spi2
+    type: SPI.PL022
+    address: 0x10002000
+    properties:
+      size: 0x1000
+  - name: echo_2_0
+    type: spi-echo
+    parent: spi2
+    address: 0
+  - name: spi3
+    type: SPI.PL022
+    address: 0x10003000
+    properties:
+      size: 0x1000
+  - name: echo_3_0
+    type: spi-echo
+    parent: spi3
+    address: 0
+
+topology:
+  links: []

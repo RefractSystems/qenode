@@ -57,6 +57,15 @@ qmp-timeout*
 !.claude/settings.json
 *.swp
 *~
+
+# Reference Materials (Untracked)
+# We ignore the heavy contents (SDKs, PDFs) but track the directory structure and READMEs.
+third_party/golden_references/**/*
+!third_party/golden_references/**/
+!third_party/golden_references/**/README.md
+!third_party/golden_references/.gitkeep
+
+# legacy catch-all
 third_party/
 
 target/
@@ -68,3 +77,9 @@ test-results/
 \n# Compiled test binaries\nprint_rust_sizes\nprint_sizes
 .venv-docker/
 build.lock
+
+# Hypothesis testing cache
+.hypothesis/
+.pytest_cache/
+
+temp/

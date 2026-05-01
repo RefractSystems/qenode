@@ -2,7 +2,6 @@
 
 # namespace: lin
 
-
 class LinMessageType:
     Data = 0
     Break = 1

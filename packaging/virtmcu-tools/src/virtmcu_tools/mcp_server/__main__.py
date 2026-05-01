@@ -4,7 +4,6 @@ Entry point for the virtmcu MCP server.
 
 import asyncio
 import logging
-import sys
 
 from .server import create_mcp_server
 
@@ -14,7 +13,7 @@ logging.basicConfig(
 )
 
 
-async def main():
+async def main() -> None:
     server = create_mcp_server()
     # Run the server using stdio streams
     # We must use stdio as per standard MCP usage for local clients
@@ -26,14 +25,14 @@ async def main():
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-def run_server():
+def run_server() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
     except Exception as e:
         logging.error(f"MCP server crashed: {e}")
-        sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":

@@ -9,16 +9,19 @@
 # (like the zenoh clock sync from FirmwareStudio) to cooperatively halt QEMU
 # at translation block boundaries, we must inject a global function pointer.
 #
-# This pointer is then set by the `zenoh-clock` QOM device in FirmWareStudio.
+# This pointer is then set by the `clock` QOM device in FirmWareStudio.
 # ==============================================================================
 
 import hashlib
+import logging
 import os
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
-def write_if_changed(path, content):
+
+def write_if_changed(path: str | Path, content: str) -> bool:
     """Write content to path only if it differs. Returns True if written."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     if Path(path).exists():
@@ -27,15 +30,15 @@ def write_if_changed(path, content):
                 return False
     with Path(path).open("w") as f:
         f.write(content)
-    print(f"  wrote {os.path.relpath(path)}")
+    logger.info(f"  wrote {os.path.relpath(path)}")
     return True
 
 
-def patch_file(path, marker, insertion, after=True):
+def patch_file(path: str | Path, marker: str, insertion: str, after: bool = True) -> bool:
     with Path(path).open() as f:
         content = f.read()
 
-    marker_hash = hashlib.md5(marker.encode()).hexdigest()[:8]
+    marker_hash = hashlib.sha256(marker.encode()).hexdigest()[:8]
     guard = f"/* virtmcu-patch-{marker_hash} */"
 
     if guard in content:
@@ -43,7 +46,7 @@ def patch_file(path, marker, insertion, after=True):
         return True
 
     if marker not in content:
-        print(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
+        logger.info(f"  WARNING: marker not found in {os.path.relpath(path)}: {marker!r}")
         return False
 
     if after:
@@ -54,13 +57,13 @@ def patch_file(path, marker, insertion, after=True):
     with Path(path).open("w") as f:
         f.write(new_content)
 
-    print(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
+    logger.info(f"  patched {os.path.relpath(path)} (marker={marker_hash})")
     return True
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <qemu-source-dir>")
+        logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
 
     qemu = Path(sys.argv[1]).resolve()
@@ -75,6 +78,12 @@ def main():
 #include "hw/core/cpu.h"
 #include "net/net.h"
 
+#if defined(_WIN32)
+#define VIRTMCU_EXPORT __declspec(dllexport)
+#else
+#define VIRTMCU_EXPORT __attribute__((visibility("default")))
+#endif
+
 /*
  * Timing constraints exported to Sensor/Actuator Abstraction Layers (SAL/AAL).
  * Used to align physics interpolation with virtual execution time.
@@ -86,17 +95,28 @@ typedef struct {
 } VirtmcuQuantumTiming;
 
 /* Global function pointers used for guest synchronization */
-extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
-extern int (*virtmcu_zenoh_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
-extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
-extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
+VIRTMCU_EXPORT extern void (*virtmcu_tcg_quantum_hook)(CPUState *cpu);
+VIRTMCU_EXPORT extern int (*virtmcu_netdev_hook)(const Netdev *netdev, const char *name, NetClientState *peer, Error **errp);
+VIRTMCU_EXPORT extern void (*virtmcu_irq_hook)(void *opaque, int n, int level);
+VIRTMCU_EXPORT extern void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted);
 
 /* Hook setters used by external QOM plugins (DSOs) */
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
+VIRTMCU_EXPORT void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu));
+VIRTMCU_EXPORT void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted));
+VIRTMCU_EXPORT void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level));
+
+/* Global helpers for guest synchronization (called from DSOs) */
+VIRTMCU_EXPORT void virtmcu_kick_first_cpu_for_quantum(void);
+VIRTMCU_EXPORT bool virtmcu_vcpu_should_yield(void);
+VIRTMCU_EXPORT bool virtmcu_is_bql_locked(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_unlock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_lock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_unlock(void);
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_lock(void);
+VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer);
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
-extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
+VIRTMCU_EXPORT extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
 #endif
 """
@@ -105,21 +125,14 @@ extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
 
     cpu_exec_c = Path(qemu) / "accel" / "tcg" / "cpu-exec.c"
 
-    # 2. Add include and definitions to cpu-exec.c
+    # 2. Add include to cpu-exec.c
     marker0 = '#include "internal-common.h"'
     insertion0 = """
 #include "virtmcu/hooks.h"
-
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
-    virtmcu_tcg_quantum_hook = cb;
-}
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
-    virtmcu_cpu_halt_hook = cb;
-}
 """
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Patch hw/core/irq.c to define the global pointers
+    # 3. Patch hw/core/irq.c to define the global pointers and setters
     irq_c = Path(qemu) / "hw/core/irq.c"
     irq_patch = """
 #include "virtmcu/hooks.h"
@@ -129,6 +142,23 @@ void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;
 void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;
 void (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;
 void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
+
+void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
+    virtmcu_tcg_quantum_hook = cb;
+}
+void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
+    virtmcu_cpu_halt_hook = cb;
+}
+void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level)) {
+    virtmcu_irq_hook = cb;
+}
+
+VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer) {
+    if (timer) {
+        timer_mod_ns(timer, 0);
+        qemu_notify_event();
+    }
+}
 """
     patch_file(irq_c, '#include "hw/core/irq.h"', irq_patch, after=True)
 
@@ -160,10 +190,11 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
     # return the authoritative value.
     cpus_c = Path(qemu) / "system" / "cpus.c"
     if Path(cpus_c).exists():
+        patch_file(cpus_c, '#include "qemu/osdep.h"', '\n#include "virtmcu/hooks.h"', after=True)
         patch_file(
             cpus_c,
             "void bql_unlock(void)\n{\n    g_assert(bql_locked());\n    g_assert(!bql_unlock_blocked);\n    qemu_mutex_unlock(&bql);\n}",
-            "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_safe_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_safe_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n",
+            "\nbool virtmcu_is_bql_locked(void) { return bql_locked(); }\nvoid virtmcu_safe_bql_unlock(void) { if (bql_locked()) bql_unlock(); }\nvoid virtmcu_safe_bql_lock(void) { if (!bql_locked()) bql_lock(); }\n\n/* These helpers allow DSOs to correctly manage BQL even if TLS is broken */\nvoid virtmcu_safe_bql_force_unlock(void) { \n    if (bql_locked()) { \n        bql_unlock(); \n    } \n}\nvoid virtmcu_safe_bql_force_lock(void) { \n    if (!bql_locked()) { \n        bql_lock(); \n    } \n}\n\n/* virtmcu: vCPU yield and kick helpers in main binary to avoid DSO TLS Trap */\nstatic void virtmcu_quantum_vcpu_work(CPUState *cpu, run_on_cpu_data data) {\n    if (virtmcu_cpu_halt_hook) {\n        virtmcu_cpu_halt_hook(cpu, false);\n    }\n}\n\nvoid virtmcu_kick_first_cpu_for_quantum(void) {\n    CPUState *cpu = first_cpu;\n    if (cpu) {\n        async_run_on_cpu(cpu, virtmcu_quantum_vcpu_work, RUN_ON_CPU_NULL);\n    }\n}\n\nbool virtmcu_vcpu_should_yield(void) {\n    if (current_cpu) {\n        return current_cpu->stop || current_cpu->unplug || qatomic_read(&current_cpu->exit_request);\n    }\n    return false;\n}\n",
             after=True,
         )
 
@@ -173,7 +204,7 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
         patch_file(
             main_loop_h,
             "bool bql_locked(void);",
-            "\nbool virtmcu_is_bql_locked(void);\nvoid virtmcu_safe_bql_unlock(void);\nvoid virtmcu_safe_bql_lock(void);\nvoid virtmcu_safe_bql_force_unlock(void);\nvoid virtmcu_safe_bql_force_lock(void);\n",
+            '\n#include "virtmcu/hooks.h"\n',
             after=True,
         )
 
@@ -192,4 +223,5 @@ void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

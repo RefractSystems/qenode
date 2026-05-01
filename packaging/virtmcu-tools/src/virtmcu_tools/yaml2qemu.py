@@ -7,6 +7,7 @@
 # ==============================================================================
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+
+logger = logging.getLogger(__name__)
 
 
 def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
@@ -76,20 +79,25 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
     return platform, {}
 
 
-def validate_dtb(dtb_path, devices):
+def validate_dtb(dtb_path: str, devices: list[ReplDevice]) -> None:
     """
     Task 2: Validate DTB contains all expected peripherals.
     Decompiles the DTB back to DTS and ensures each peripheral is present.
     """
     try:
-        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
+        import shutil
+
+        dtc_path = shutil.which("dtc")
+        if not dtc_path:
+            raise RuntimeError("dtc executable not found in PATH")
+        res = subprocess.run([dtc_path, "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
         dts = res.stdout
 
         missing = []
         for dev in devices:
             if "CPU" in dev.type_name:
                 continue
-            if dev.type_name in ("zenoh-chardev", "zenoh-telemetry"):
+            if dev.type_name in ("chardev", "telemetry"):
                 continue  # CLI-only, no DTB node
 
             # Check for name@address (DTS node format), e.g. "uart0@9000000".
@@ -107,31 +115,31 @@ def validate_dtb(dtb_path, devices):
                 missing.append(dev.name)
 
         if missing:
-            print(
+            logger.info(
                 f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}",
                 file=sys.stderr,
             )
-            print(
+            logger.info(
                 "This usually means the device type is unknown to FdtEmitter or the address mapping failed.",
                 file=sys.stderr,
             )
-            print("FAILED: DTB validation failed.")
+            logger.error("FAILED: DTB validation failed.")
             sys.exit(1)
-        print("✓ Validation successful.")
+        logger.info("✓ Validation successful.")
     except subprocess.CalledProcessError as e:
-        print(f"⚠️ Warning: dtc failed during validation: {e.stderr}", file=sys.stderr)
+        logger.error(f"⚠️ Warning: dtc failed during validation: {e.stderr}")
     except FileNotFoundError:
-        print(
+        logger.info(
             "ERROR: 'dtc' (device-tree-compiler) not found — DTB validation skipped. "
             "Install dtc to enable post-build validation.",
             file=sys.stderr,
         )
         sys.exit(1)
-    except Exception as e:
-        print(f"⚠️ Warning: Could not validate DTB: {e}", file=sys.stderr)
+    except (ValueError, TypeError, OSError) as e:
+        logger.error(f"⚠️ Warning: Could not validate DTB: {e}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert virtmcu YAML to Device Tree")
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
@@ -141,10 +149,10 @@ def main():
     args = parser.parse_args()
 
     if not Path(args.input).exists():
-        print(f"Error: Input file '{args.input}' not found.")
+        logger.error(f"Error: Input file '{args.input}' not found.")
         sys.exit(1)
 
-    print(f"Parsing YAML: {args.input}...")
+    logger.info(f"Parsing YAML: {args.input}...")
     platform, _ = parse_yaml_platform(args.input)
     original_devices = list(platform.devices)
 
@@ -156,13 +164,13 @@ def main():
             f.write(arch)
 
     # Extract devices that require explicit CLI instantiation.
-    # zenoh-chardev: CLI-only (no DTB node).
-    # zenoh-telemetry: CLI-only (no DTB node).
+    # chardev: CLI-only (no DTB node).
+    # telemetry: CLI-only (no DTB node).
     # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
     for dev in platform.devices:
-        if dev.type_name == "zenoh-chardev":
+        if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
@@ -178,19 +186,19 @@ def main():
             cli_args.append(chardev_arg)
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
-        elif dev.type_name == "zenoh-telemetry":
+        elif dev.type_name == "telemetry":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
-            device_arg = f"zenoh-telemetry,node={node}"
+            device_arg = f"telemetry,node={node}"
             if router:
                 device_arg += f",router={router}"
             cli_args.append("-device")
             cli_args.append(device_arg)
-        elif dev.type_name == "zenoh-802154":
+        elif dev.type_name == "ieee802154":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router")
             topic = dev.properties.get("topic")
-            device_arg = f"zenoh-802154,node={node}"
+            device_arg = f"ieee802154,node={node}"
             if router:
                 device_arg += f",router={router}"
             if topic:
@@ -203,7 +211,7 @@ def main():
 
     platform.devices = filtered_devices
 
-    print(f"Generating Device Tree for {len(platform.devices)} devices...")
+    logger.info(f"Generating Device Tree for {len(platform.devices)} devices...")
     dts = emitter.generate_dts()
 
     if args.out_cli:
@@ -211,14 +219,15 @@ def main():
             for arg in cli_args:
                 f.write(arg + "\n")
 
-    print(f"Compiling into '{args.out_dtb}'...")
+    logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):
-        print("✓ Compilation Success.")
+        logger.info("✓ Compilation Success.")
         validate_dtb(args.out_dtb, original_devices)
     else:
-        print("FAILED.")
+        logger.error("FAILED.")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

@@ -1,0 +1,19 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+peripherals:
+  - name: sram
+    type: Memory.MappedMemory
+    address: "0x40000000"
+    properties:
+      size: "0x01000000"
+  - name: flexray
+    type: flexray
+    address: "0x09003000"
+    properties:
+      node: 0
+      router: "ZENOH_ROUTER_ENDPOINT"
+
+topology:
+  links: []

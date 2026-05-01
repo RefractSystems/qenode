@@ -1,0 +1,24 @@
+[package]
+name = "netdev"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[lints] 
+workspace = true 
+
+[dependencies]
+virtmcu-api.workspace = true
+transport-unix.workspace = true
+zenoh.workspace = true
+virtmcu-qom.workspace = true
+transport-zenoh.workspace = true
+crossbeam-channel.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["zenoh", "transport-zenoh", "transport-unix", "serde", "serde_json", "tracing", "virtmcu-qom"]
+

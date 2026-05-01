@@ -16,28 +16,30 @@ hw_virtmcu_inc = include_directories('.', 'misc')
 
 rust_modules = [
     {'pkg': 'rust-dummy', 'lib': 'librust_dummy.a', 'obj': 'rust-dummy'},
-    {'pkg': 'zenoh-clock', 'lib': 'libzenoh_clock.a', 'obj': 'zenoh-clock'},
-    {'pkg': 'zenoh-netdev', 'lib': 'libzenoh_netdev.a', 'obj': 'zenoh-netdev'},
-    {'pkg': 'zenoh-canfd', 'lib': 'libzenoh_canfd.a', 'obj': 'can-host-zenoh'},
     {
-        'pkg': 'zenoh-chardev',
-        'lib': 'libzenoh_chardev.a',
-        'obj': 'chardev-zenoh',
-        'extra_c': 'int get_chardev_backend_kind_zenoh(void); int get_chardev_backend_kind_zenoh(void) { return CHARDEV_BACKEND_KIND_ZENOH; }',
+        'pkg': 'clock',
+        'lib': 'libclock.a',
+        'obj': 'virtmcu-clock',
+        'extra_inc': '#include "virtmcu/hooks.h"',
+    },
+    {'pkg': 'netdev', 'lib': 'libnetdev.a', 'obj': 'netdev'},
+    {'pkg': 'canfd', 'lib': 'libcanfd.a', 'obj': 'can-host-virtmcu'},
+    {
+        'pkg': 'chardev',
+        'lib': 'libchardev.a',
+        'obj': 'chardev-virtmcu',
+        'extra_c': 'int get_chardev_backend_kind_virtmcu(void); int get_chardev_backend_kind_virtmcu(void) { return CHARDEV_BACKEND_KIND_VIRTMCU; }',
         'extra_inc': '#include "qapi/qapi-types-char.h"',
     },
     {
-        'pkg': 'zenoh-telemetry',
-        'lib': 'libzenoh_telemetry.a',
-        'obj': 'zenoh-telemetry',
+        'pkg': 'telemetry',
+        'lib': 'libtelemetry.a',
+        'obj': 'telemetry',
+        'extra_inc': '#include "virtmcu/hooks.h"',
     },
-    {
-        'pkg': 'zenoh-actuator',
-        'lib': 'libzenoh_actuator.a',
-        'obj': 'zenoh-actuator',
-    },
-    {'pkg': 'zenoh-802154', 'lib': 'libzenoh_802154.a', 'obj': 'zenoh-802154'},
-    {'pkg': 'zenoh-ui', 'lib': 'libzenoh_ui.a', 'obj': 'zenoh-ui'},
+    {'pkg': 'actuator', 'lib': 'libactuator.a', 'obj': 'actuator'},
+    {'pkg': 'ieee802154', 'lib': 'libieee802154.a', 'obj': 'ieee802154'},
+    {'pkg': 'ui', 'lib': 'libui.a', 'obj': 'ui'},
     {
         'pkg': 'test-qom-device',
         'lib': 'libtest_qom_device.a',
@@ -54,17 +56,17 @@ rust_modules = [
         'obj': 'remote-port-bridge',
     },
     {
-        'pkg': 'zenoh-flexray',
-        'lib': 'libzenoh_flexray.a',
-        'obj': 'zenoh-flexray',
+        'pkg': 'flexray',
+        'lib': 'libflexray.a',
+        'obj': 'flexray',
     },
     {
         'pkg': 's32k144-lpuart',
         'lib': 'libs32k144_lpuart.a',
         'obj': 's32k144-lpuart',
     },
-    {'pkg': 'virtmcu-wifi', 'lib': 'libvirtmcu_wifi.a', 'obj': 'virtmcu-wifi'},
-    {'pkg': 'zenoh-spi', 'lib': 'libzenoh_spi.a', 'obj': 'zenoh-spi'},
+    {'pkg': 'wifi', 'lib': 'libwifi.a', 'obj': 'wifi'},
+    {'pkg': 'spi', 'lib': 'libspi.a', 'obj': 'spi'},
 ]
 
 rust_libs_outputs = []
@@ -99,6 +101,20 @@ endif
 message(
     'Configuring Rust virtmcu modules with QEMU_SRC_DIR=' + meson.project_source_root(),
 )
+
+rust_libs_env = {
+    'QEMU_SRC_DIR': meson.project_source_root(),
+    'QEMU_BUILD_DIR': meson.project_build_root(),
+}
+
+if get_option('asan')
+    rust_libs_env += {'VIRTMCU_USE_ASAN': '1'}
+endif
+
+if get_option('tsan')
+    rust_libs_env += {'VIRTMCU_USE_TSAN': '1'}
+endif
+
 rust_libs = custom_target(
     'rust_virtmcu_libs',
     input: rust_sources + [
@@ -107,10 +123,7 @@ rust_libs = custom_target(
     ],
     output: rust_libs_outputs,
     build_by_default: true,
-    env: {
-        'QEMU_SRC_DIR': meson.project_source_root(),
-        'QEMU_BUILD_DIR': meson.project_build_root(),
-    },
+    env: rust_libs_env,
     command: [
         meson.current_source_dir() / 'rust/build.sh',
         meson.current_source_dir() / 'rust',
@@ -126,7 +139,6 @@ foreach m : rust_modules
     i += 1
 
     message('Registering Rust module: ' + m['pkg'])
-    # Generate trigger .c file separately per module
     trigger_c = custom_target(
         m['pkg'] + '_trigger_c',
         output: m['pkg'] + '_trigger.c',

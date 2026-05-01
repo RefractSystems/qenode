@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+import flatbuffers
+
+type uoffset = flatbuffers.number_types.UOffsetTFlags.py_type
+
+class VirtmcuHandshake:
+  @classmethod
+  def SizeOf(cls) -> int: ...
+
+  def Init(self, buf: bytes, pos: int) -> None: ...
+  def Magic(self) -> int: ...
+  def Version(self) -> int: ...
+
+def CreateVirtmcuHandshake(builder: flatbuffers.Builder, magic: int, version: int) -> uoffset: ...
+

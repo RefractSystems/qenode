@@ -114,7 +114,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential meson ninja-build python3 python3-venv pkg-config \
+    build-essential meson ninja-build python3 python3-venv python3-dev pkg-config \
     libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
     libslirp-dev libclang-dev libssl-dev libstdc++6 b4 gdb gdb-multiarch strace \
     lcov gcovr patchelf clang-format clang ccache dwarves \
@@ -225,7 +225,8 @@ WORKDIR /build
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
 COPY patches/ /build/patches/
-COPY scripts/apply-qemu-patches.sh /build/scripts/apply-qemu-patches.sh
+COPY scripts/ /build/scripts/
+COPY BUILD_DEPS VERSION /build/
 
 # Apply all patches using the centralized script
 RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu
