@@ -295,7 +295,8 @@ def create_mcp_server() -> Server:
 
             else:
                 raise ValueError(f"Unknown tool: {name}")
-        except (Exception, BaseException) as e:
+        except Exception as e:  # noqa: BLE001
+            # Prevent the whole server from crashing if a tool execution fails
             logger.error(f"Error executing tool {name}: {e}")
             from mcp.types import CallToolResult
 
@@ -344,6 +345,7 @@ def create_mcp_server() -> Server:
             node_id = parts[3]
             if node_id in server.node_manager.nodes:
                 node = server.node_manager.nodes[node_id]
+                assert node.qmp_bridge is not None
                 return node.qmp_bridge.uart_buffer
             raise ValueError(f"Node {node_id} not found")
 

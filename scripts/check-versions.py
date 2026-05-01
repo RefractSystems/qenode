@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import logging
 import re
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
-def get_versions():
+
+def get_versions() -> dict[str, str]:
     versions = {}
     with Path("BUILD_DEPS").open() as f:
         for line in f:
@@ -14,7 +17,7 @@ def get_versions():
     return versions
 
 
-def check():
+def check() -> None:
     versions = get_versions()
     errors = []
 
@@ -93,28 +96,67 @@ def check():
             elif match.group(1) != fb_ver:
                 errors.append(f"{req_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
-    # 4. Check ci.yml hardcoded PYTHON_VERSION matches BUILD_DEPS
-    ci_path = ".github/workflows/ci.yml"
-    if Path(ci_path).exists():
-        with Path(ci_path).open() as f:
+    # 4. Check ci workflows hardcoded PYTHON_VERSION matches BUILD_DEPS
+    py_ver = versions.get("PYTHON_VERSION")
+    if py_ver:
+        for ci_path in [
+            ".github/workflows/ci-main.yml",
+            ".github/workflows/ci-pr.yml",
+            ".github/workflows/ci-asan.yml",
+        ]:
+            if Path(ci_path).exists():
+                with Path(ci_path).open() as f:
+                    content = f.read()
+                match = re.search(r'PYTHON_VERSION:\s*"([^"]+)"', content)
+                if not match:
+                    errors.append(f"{ci_path}: Could not find hardcoded PYTHON_VERSION env var")
+                elif match.group(1) != py_ver:
+                    errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
+
+    # 5. Check Cargo.toml (workspace)
+    cargo_path = "Cargo.toml"
+    if Path(cargo_path).exists():
+        with Path(cargo_path).open() as f:
             content = f.read()
-        py_ver = versions.get("PYTHON_VERSION")
-        if py_ver:
-            match = re.search(r'PYTHON_VERSION:\s*"([^"]+)"', content)
+
+        zenoh_ver = versions.get("ZENOH_VERSION")
+        if zenoh_ver:
+            match = re.search(r'zenoh = "([^"]+)"', content)
             if not match:
-                errors.append(f"{ci_path}: Could not find hardcoded PYTHON_VERSION env var")
-            elif match.group(1) != py_ver:
-                errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
+                errors.append(f"{cargo_path}: Could not find zenoh dependency")
+            elif match.group(1) != zenoh_ver:
+                errors.append(f"{cargo_path}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
+
+        fb_ver = versions.get("FLATBUFFERS_VERSION")
+        if fb_ver:
+            match = re.search(r'flatbuffers = "([^"]+)"', content)
+            if not match:
+                errors.append(f"{cargo_path}: Could not find flatbuffers dependency")
+            elif match.group(1) != fb_ver:
+                errors.append(f"{cargo_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
+
+    # 6. Check tools/*/Cargo.toml
+    for child_cargo in ["tools/zenoh_coordinator/Cargo.toml"]:
+        if Path(child_cargo).exists():
+            with Path(child_cargo).open() as f:
+                content = f.read()
+            if zenoh_ver and "zenoh =" in content:
+                match = re.search(r'zenoh = "([^"]+)"', content)
+                if not match:
+                    errors.append(f"{child_cargo}: Could not parse zenoh dependency")
+                elif match.group(1) != zenoh_ver:
+                    errors.append(f"{child_cargo}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
 
     if errors:
-        print("Version check FAILED:")
+        logger.info("Version check FAILED:")
         for err in errors:
-            print(f"  - {err}")
-        print("\nRun 'make sync-versions' to fix.")
+            logger.info(f"  - {err}")
+        logger.info("\nRun 'make sync-versions' to fix.")
         sys.exit(1)
     else:
-        print("Version check PASSED")
+        logger.info("Version check PASSED")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     check()

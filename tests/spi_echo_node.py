@@ -1,13 +1,30 @@
-import struct
+"""
+SOTA Test Module: spi_echo_node
+
+Context:
+This module implements tests for the spi_echo_node subsystem.
+
+Objective:
+Ensure correct functionality, performance, and deterministic execution of spi_echo_node.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
 import sys
-import time
+import typing
 
 import zenoh
 
+from tools import vproto
 
-def main():
+logger = logging.getLogger(__name__)
+
+
+def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: spi_echo_node.py <router_endpoint>")
+        logger.info("Usage: spi_echo_node.py <router_endpoint>")
         sys.exit(1)
 
     router = sys.argv[1]
@@ -15,31 +32,37 @@ def main():
     config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
 
-    print(f"Connecting to Zenoh on {router}...")
+    logger.info(f"Connecting to Zenoh on {router}...")
     session = zenoh.open(config)
 
     topic = "sim/spi/spi0/0"
 
-    def on_query(query):
+    def on_query(query: zenoh.Query) -> None:
+        if query.payload is None:
+            return
         payload = query.payload.to_bytes()
-        if len(payload) >= 16 + 4:
-            # Header is 16 bytes, data is 4 bytes
-            data = payload[16:20]
-            val = struct.unpack("<I", data)[0]
-            print(f"Received SPI transfer: 0x{val:08x}")
+        header_size = vproto.SIZE_ZENOH_SPI_HEADER
+        if len(payload) >= header_size + 4:
+            # Parse header using vproto
+            header = vproto.ZenohSPIHeader.unpack(payload[:header_size])
+            data = payload[header_size : header_size + 4]
+            val = int.from_bytes(data, "little")
+            logger.info(f"Received SPI transfer: 0x{val:08x} at vtime {header.delivery_vtime_ns}")
             # Echo back
-            query.reply(zenoh.Sample(topic, data))  # type: ignore[call-arg]
+            query.reply(topic, data)
 
-    print(f"Declaring queryable on {topic}...")
+    logger.info(f"Declaring queryable on {topic}...")
     _ = session.declare_queryable(topic, on_query)
 
     try:
-        while True:
-            time.sleep(1)
+        # Keepalive loop using asyncio event (better than sleep)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(asyncio.Event().wait())
     except KeyboardInterrupt:
         pass
     finally:
-        session.close()
+        typing.cast(typing.Any, session).close()
 
 
 if __name__ == "__main__":

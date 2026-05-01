@@ -1,0 +1,15 @@
+[package]
+name = "wifi"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[lints] 
+workspace = true 
+
+[dependencies]
+virtmcu-qom.workspace = true

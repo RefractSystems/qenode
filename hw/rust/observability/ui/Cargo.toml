@@ -1,0 +1,17 @@
+[package]
+name = "ui"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[lints] 
+workspace = true 
+
+[dependencies]
+zenoh.workspace = true
+virtmcu-qom.workspace = true
+transport-zenoh.workspace = true

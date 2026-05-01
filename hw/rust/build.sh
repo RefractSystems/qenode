@@ -22,6 +22,9 @@ fi
 
 if [ "${VIRTMCU_USE_ASAN:-}" = "1" ]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined"
+elif [ "${VIRTMCU_USE_TSAN:-}" = "1" ]; then
+    export RUSTC_BOOTSTRAP=1
+    export RUSTFLAGS="${RUSTFLAGS:-} -Z sanitizer=thread"
 fi
 
 echo "Building Rust workspace in $RUST_DIR with target-dir $TARGET_DIR"

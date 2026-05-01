@@ -1,0 +1,41 @@
+/dts-v1/;
+
+/ {
+    model = "lin-test-arm-generic-fdt";
+    compatible = "arm,generic-fdt";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    qemu_sysmem: qemu_sysmem {
+        compatible = "qemu:system-memory";
+        phandle = <0x01>;
+    };
+
+    memory@40000000 {
+        device_type = "memory";
+        compatible = "qemu-memory-region";
+        qemu,ram = <0x01>;
+        container = <0x01>;
+        reg = <0x0 0x40000000 0x0 0x1000000>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "cortex-a15-arm-cpu";
+            reg = <0>;
+            memory = <0x01>;
+        };
+    };
+
+    lpuart0@4006a000 {
+        compatible = "s32k144-lpuart";
+        reg = <0x0 0x4006a000 0x0 0x1000>;
+        node = <0>;
+        topic = "sim/lin";
+        router = "ZENOH_ROUTER_ENDPOINT";
+    };
+};

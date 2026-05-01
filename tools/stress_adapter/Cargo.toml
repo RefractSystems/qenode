@@ -1,0 +1,9 @@
+[package]
+name = "stress_adapter"
+version = "0.1.0"
+edition = "2021"
+authors = ["virtmcu developers"]
+license = "Apache-2.0"
+
+[dependencies]
+virtmcu-api = { workspace = true }

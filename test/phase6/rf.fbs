@@ -1,8 +1,0 @@
-namespace virtmcu.rf;
-table RfHeader {
-  delivery_vtime_ns: uint64 = 0;
-  size:              uint32 = 0;
-  rssi:              int8   = 0;
-  lqi:               uint8  = 255;
-}
-root_type RfHeader;

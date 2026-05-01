@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import logging
 import re
-from typing import Any
 
 from qemu.qmp import QMPClient
 
@@ -17,14 +16,24 @@ class QmpBridge:
     functionality found in Renode's Robot Framework keywords.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.qmp = QMPClient("virtmcu-tester")
         self.uart_reader: asyncio.StreamReader | None = None
         self.uart_writer: asyncio.StreamWriter | None = None
+        assert self is not None
         self.uart_buffer = ""
         self._read_task: asyncio.Task | None = None
+        self.vtime_condition = asyncio.Condition()
+        self.current_vtime_ns = 0
+        self._vtime_sub = None
 
-    async def connect(self, qmp_socket_path: str, uart_socket_path: str | None = None):
+    async def connect(
+        self,
+        qmp_socket_path: str,
+        uart_socket_path: str | None = None,
+        zenoh_session: object = None,
+        node_id: int | None = None,
+    ) -> None:
         """
         Connects to the QMP socket and optionally the UART socket.
         """
@@ -36,7 +45,24 @@ class QmpBridge:
             self.uart_reader, self.uart_writer = await asyncio.open_unix_connection(uart_socket_path)
             self._read_task = asyncio.create_task(self._read_uart())
 
-    async def _read_uart(self):
+        if zenoh_session and node_id is not None:
+            topic = f"sim/clock/vtime/{node_id}"
+            loop = asyncio.get_running_loop()
+
+            def on_vtime(sample: object) -> None:
+                # Assuming sample has payload attribute
+                vtime = int.from_bytes(sample.payload.to_bytes(), "little")
+
+                async def update() -> None:
+                    async with self.vtime_condition:
+                        self.current_vtime_ns = vtime
+                        self.vtime_condition.notify_all()
+
+                loop.call_soon_threadsafe(lambda: loop.create_task(update()))
+
+            self._vtime_sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(topic, on_vtime))
+
+    async def _read_uart(self) -> None:
         """
         Background task to continuously read from the UART socket.
         """
@@ -45,20 +71,23 @@ class QmpBridge:
                 data = await self.uart_reader.read(4096)
                 if not data:
                     break
+                assert self is not None
                 self.uart_buffer += data.decode("utf-8", errors="replace")
+                async with self.vtime_condition:
+                    self.vtime_condition.notify_all()
         except asyncio.CancelledError:
             pass
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.error(f"UART read error: {e}")
 
-    async def execute(self, cmd: str, args: dict[str, Any] | None = None) -> Any:
+    async def execute(self, cmd: str, args: dict[str, object] | None = None) -> object:
         """
         Executes a QMP command and returns the result.
         """
         # qemu.qmp.execute returns the 'return' object directly if successful
         return await self.qmp.execute(cmd, args)
 
-    async def wait_for_event(self, event_name: str, timeout: float = 10.0) -> Any:
+    async def wait_for_event(self, event_name: str, timeout: float = 10.0) -> object:
         """
         Waits for a specific QMP event to occur.
 
@@ -70,7 +99,7 @@ class QmpBridge:
         start_vtime = await self.get_virtual_time_ns()
         start_wall = asyncio.get_running_loop().time()
 
-        async def poll_timeout():
+        async def poll_timeout() -> None:
             while True:
                 current_vtime = await self.get_virtual_time_ns()
                 if current_vtime > start_vtime:
@@ -81,9 +110,12 @@ class QmpBridge:
                     # Standalone mode or VM paused at startup — fall back to wall clock.
                     if asyncio.get_running_loop().time() - start_wall > timeout:
                         raise TimeoutError()
-                await asyncio.sleep(0.1)
 
-        async def get_event():
+                async with self.vtime_condition:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
+
+        async def get_event() -> dict[str, object] | None:
             from qemu.qmp.events import EventListener
 
             listener = EventListener()
@@ -131,6 +163,7 @@ class QmpBridge:
         regex = re.compile(pattern)
 
         while True:
+            assert self is not None
             if regex.search(self.uart_buffer):
                 return True
 
@@ -144,15 +177,18 @@ class QmpBridge:
                 if loop.time() - start_wall_time > timeout:
                     return False
 
-            await asyncio.sleep(0.1)
+            async with self.vtime_condition:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
-    def clear_uart_buffer(self):
+    def clear_uart_buffer(self) -> None:
         """
         Clears the accumulated UART buffer.
         """
+        assert self is not None
         self.uart_buffer = ""
 
-    async def write_to_uart(self, text: str):
+    async def write_to_uart(self, text: str) -> None:
         """
         Writes text to the UART socket, simulating user typing or external device input.
         """
@@ -162,13 +198,13 @@ class QmpBridge:
         self.uart_writer.write(text.encode("utf-8"))
         await self.uart_writer.drain()
 
-    async def start_emulation(self):
+    async def start_emulation(self) -> None:
         """
         Starts or resumes the emulation.
         """
         await self.execute("cont")
 
-    async def pause_emulation(self):
+    async def pause_emulation(self) -> None:
         """
         Pauses the emulation.
         """
@@ -211,11 +247,11 @@ class QmpBridge:
         try:
             res = await self.execute("query-replay")
             return res.get("icount", 0)
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             logger.debug(f"get_virtual_time_ns: query-replay failed: {e}")
             return 0
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Closes all connections and background tasks.
         """

@@ -170,16 +170,16 @@ jobs:
       matrix: ${{ steps.gen.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
-      - name: Build matrix from smoke-phases.json
+      - name: Build matrix from smoke-domains.json
         id: gen
         run: |
-          PHASES=$(cat .github/smoke-phases.json)
+          DOMAINS=$(cat .github/smoke-domains.json)
           MATRIX=$(jq -nc \
-            --argjson phases "$PHASES" \
+            --argjson domains "$DOMAINS" \
             '{
               arch: ["amd64","arm64"],
-              phase: [$phases[].phase],
-              include: ([{arch: "amd64", os: "ubuntu-latest"}, {arch: "arm64", os: "ubuntu-24.04-arm"}] + $phases)
+              domain: ($domains | map(.domain)),
+              include: ([{arch: "amd64", os: "ubuntu-latest"}, {arch: "arm64", os: "ubuntu-24.04-arm"}] + $domains)
             }')
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
@@ -487,13 +487,13 @@ jobs:
             -e GCOV_PREFIX_STRIP=3 \
             -e USER=vscode \
             ${{ env.BUILDER_IMAGE }}:${{ github.sha }} \
-            bash scripts/ci-phase.sh ${{ matrix.phase }}
+            bash scripts/ci-integration-tier.sh ${{ matrix.domain }}
 
       - name: Upload results and coverage
         uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: results-phase-${{ matrix.phase }}-${{ matrix.arch }}
+          name: results-domain-${{ matrix.domain }}-${{ matrix.arch }}
           path: |
             test-results/
             coverage-data/
@@ -537,7 +537,7 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           path: all-coverage
-          pattern: results-phase-*-amd64
+          pattern: results-domain-*-amd64
           merge-multiple: true
 
       - name: Generate unified peripheral coverage
@@ -590,7 +590,7 @@ jobs:
           done
           docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
 
-      - name: Run coverage analysis (Phase 1)
+      - name: Run coverage analysis
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \

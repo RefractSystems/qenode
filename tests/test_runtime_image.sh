@@ -61,7 +61,7 @@ docker run -i --rm \
     python3 -m tools.yaml2qemu --help > /dev/null 2>&1 || (echo "❌ tools.yaml2qemu failed to run" && exit 1)
 
     echo "2. Verifying QOM Plugin Existence..."
-    for plugin in hw-virtmcu-zenoh-clock.so hw-virtmcu-mmio-socket-bridge.so hw-virtmcu-zenoh-netdev.so hw-virtmcu-zenoh-chardev.so; do
+    for plugin in hw-virtmcu-clock.so hw-virtmcu-mmio-socket-bridge.so hw-virtmcu-netdev.so hw-virtmcu-chardev.so; do
         PLUGIN_PATH=$(find /opt /usr /build -name "$plugin" | head -n 1)
         if [ -n "$PLUGIN_PATH" ]; then
             echo "   ✅ Found $plugin at: $PLUGIN_PATH"
@@ -93,10 +93,10 @@ peripherals:
 YML
     python3 -m tools.yaml2qemu "$TMP_YAML" --out-dtb "$TMP_DTB" > /dev/null
 
-    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    ENDPOINT=$(python3 "$WS/scripts/get-free-port.py" --endpoint --proto "tcp/")
     
     # Start the mock router (TCP-only, no multicast)
-    python3 -u "$WS/tests/zenoh_router_persistent.py" "tcp/127.0.0.1:$PORT" &
+    python3 -u "$WS/tests/zenoh_router_persistent.py" "$ENDPOINT" &
     ROUTER_PID=$!
     sleep 2
 
@@ -104,13 +104,13 @@ YML
     # This proves they all cooperate on the same Zenoh session and respect the router endpoint.
     qemu-system-arm \
         -M arm-generic-fdt,hw-dtb="$TMP_DTB" \
-        -device zenoh-clock,node=0,router=tcp/127.0.0.1:$PORT \
-        -netdev zenoh,node=0,id=n0,router=tcp/127.0.0.1:$PORT \
-        -chardev zenoh,node=0,id=c0,router=tcp/127.0.0.1:$PORT \
+        -device virtmcu-clock,node=0,router=$ENDPOINT \
+        -netdev virtmcu,node=0,id=n0,router=$ENDPOINT \
+        -chardev virtmcu,node=0,id=c0,router=$ENDPOINT \
         -display none -daemonize
 
     # Verify the clock queryable is reachable via the TCP router
-    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"tcp/127.0.0.1:$PORT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('sim/clock/advance/0', payload=struct.pack('<QQ', 0, 0), timeout=5.0)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
+    if python3 -c "import zenoh, sys, struct; c=zenoh.Config(); c.insert_json5('connect/endpoints', '[\"$ENDPOINT\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); s=zenoh.open(c); r=list(s.get('sim/clock/advance/0', payload=vproto.ClockAdvanceReq(0, 0, 0).pack(), timeout=5.0)); s.close(); sys.exit(0 if r else 1)" 2>/dev/null; then
         echo "   ✅ Full-System Federation Contract verified (Clock + Net + UART)."
         rm -f "$TMP_YAML" "$TMP_DTB"
     else

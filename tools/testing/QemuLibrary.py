@@ -1,40 +1,38 @@
+"""
+Robot Framework library for controlling QEMU via QMP.
+Provides a synchronous interface to the asynchronous QmpBridge.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import os
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
-import time
+import typing
+from collections.abc import Awaitable
 from pathlib import Path
 
-# Ensure workspace root is in sys.path for Robot Framework environments
-workspace_root = Path(__file__).resolve().parent / "../../"
-if str(workspace_root) not in sys.path:
-    sys.path.insert(0, str(workspace_root))
-
-from tools.testing.qmp_bridge import QmpBridge  # noqa: E402
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.qmp_bridge import QmpBridge
 
 
 class QemuLibrary:
-    """
-    Robot Framework library for controlling QEMU via QMP.
-    Provides a synchronous interface to the asynchronous QmpBridge.
-    """
-
     ROBOT_LIBRARY_SCOPE = "GLOBAL"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.bridge = QmpBridge()
         # Robot Framework is synchronous; create a dedicated event loop for the session.
         # Never use get_event_loop() here — it is deprecated in Python 3.10+ when no
         # running loop exists, and raises RuntimeError in 3.12.
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.proc: subprocess.Popen | None = None
+        self.proc: subprocess.Popen[bytes] | None = None
         self.tmpdir: str | None = None
 
-    def _run(self, coro):
+    def _run(self, coro: Awaitable[object]) -> object:
         if self.loop.is_closed():
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
@@ -50,8 +48,7 @@ class QemuLibrary:
         qmp_sock = Path(tmpdir) / "qmp.sock"
         uart_sock = Path(tmpdir) / "uart.sock"
 
-        workspace_root = Path.cwd()
-        run_script = workspace_root / "scripts/run.sh"
+        run_script = WORKSPACE_DIR / "scripts/run.sh"
 
         cmd = [str(run_script), "--dtb", str(Path(dtb_path).resolve())]
         if kernel_path:
@@ -84,18 +81,37 @@ class QemuLibrary:
         )
         self.tmpdir = tmpdir
 
-        # Wait for sockets
-        for _ in range(100):
-            if self.proc.poll() is not None:
-                stdout, stderr = self.proc.communicate()
-                raise RuntimeError(
-                    f"QEMU exited unexpectedly (rc={self.proc.returncode}) before sockets appeared.\n"
-                    f"STDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
-                )
-            if Path(qmp_sock).exists() and Path(uart_sock).exists():
-                break
-            time.sleep(0.1)
-        else:
+        # Wait for sockets deterministically using inotify
+        async def _wait_for_sockets() -> str:
+            from tools.testing.utils import wait_for_file_creation
+
+            files_task = asyncio.ensure_future(
+                asyncio.gather(wait_for_file_creation(qmp_sock), wait_for_file_creation(uart_sock))
+            )
+
+            # Poll proc status while waiting for the deterministic inotify event
+            while not files_task.done():
+                if self.proc is None or self.proc.poll() is not None:
+                    files_task.cancel()
+                    return "exited"
+                await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: background polling of proc exit status
+
+            return "ready"
+
+        try:
+            from tools.testing.utils import get_time_multiplier
+
+            status = self._run(asyncio.wait_for(_wait_for_sockets(), timeout=20.0 * get_time_multiplier()))
+        except TimeoutError:
+            status = "timeout"
+
+        if status == "exited":
+            stdout, stderr = self.proc.communicate()
+            raise RuntimeError(
+                f"QEMU exited unexpectedly (rc={self.proc.returncode}) before sockets appeared.\n"
+                f"STDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            )
+        if status == "timeout":
             self.proc.terminate()
             stdout, stderr = self.proc.communicate()
             raise RuntimeError(
@@ -104,62 +120,63 @@ class QemuLibrary:
 
         return str(qmp_sock), str(uart_sock)
 
-    def connect_to_qemu(self, qmp_socket_path: str, uart_socket_path: str | None = None):
+    def connect_to_qemu(self, qmp_socket_path: str, uart_socket_path: str | None = None) -> None:
         """
         Connects to the QEMU QMP and UART sockets.
         """
         self._run(self.bridge.connect(qmp_socket_path, uart_socket_path))
 
-    def start_emulation(self):
+    def start_emulation(self) -> None:
         """
         Starts or resumes the emulation.
         """
         self._run(self.bridge.start_emulation())
 
-    def pause_emulation(self):
+    def pause_emulation(self) -> None:
         """
         Pauses the emulation.
         """
         self._run(self.bridge.pause_emulation())
 
-    def reset_emulation(self):
+    def reset_emulation(self) -> None:
         """
         Resets the emulation.
         """
         self._run(self.bridge.execute("system_reset"))
 
-    def wait_for_line_on_uart(self, pattern: str, timeout: float | str = 10.0):
+    def wait_for_line_on_uart(self, pattern: str, timeout: float | str = 10.0) -> None:
         """
         Waits for a specific pattern to appear on the UART.
         """
+        assert self.bridge is not None
         found = self._run(self.bridge.wait_for_line_on_uart(pattern, float(timeout)))
         if not found:
             raise AssertionError(
                 f"Pattern '{pattern}' not found on UART within {timeout}s. Current buffer: {self.bridge.uart_buffer!r}"
             )
 
-    def write_to_uart(self, text: str):
+    def write_to_uart(self, text: str) -> None:
         """
         Writes text to the UART socket.
         """
         self._run(self.bridge.write_to_uart(text))
 
-    def pc_should_be_equal(self, expected_pc: int | str):
+    def pc_should_be_equal(self, expected_pc: int | str) -> None:
         """
         Asserts that the current Program Counter is equal to the expected value.
         """
-        actual_pc = self._run(self.bridge.get_pc())
+        actual_pc = int(typing.cast(int, self._run(self.bridge.get_pc())))
         expected = int(expected_pc, 0) if isinstance(expected_pc, str) else expected_pc
         if actual_pc != expected:
-            raise AssertionError(f"PC expected to be {hex(expected)}, but was {hex(actual_pc)}")
+            raise AssertionError(f"PC expected to be {hex(expected)}, but was {hex(int(actual_pc))}")
 
     def execute_monitor_command(self, command: str) -> str:
         """
         Executes a Human Monitor Command (HMP) and returns the output.
         """
-        return self._run(self.bridge.execute("human-monitor-command", {"command-line": command}))
+        return self._run(self.bridge.execute("human-monitor-command", {"command-line": command}))  # type: ignore[return-value]
 
-    def close_all_connections(self):
+    def close_all_connections(self) -> None:
         """
         Closes all QMP and UART connections and cleans up the QEMU process.
         """
@@ -168,7 +185,7 @@ class QemuLibrary:
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
                 self.proc.wait(timeout=5)
-            except Exception:
+            except (OSError, subprocess.TimeoutExpired):
                 if self.proc:
                     self.proc.kill()
             self.proc = None

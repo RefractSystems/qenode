@@ -1,0 +1,35 @@
+
+/dts-v1/;
+/ {
+    compatible = "arm,generic-fdt";
+    #address-cells = <2>;
+    #size-cells = <2>;
+    qemu_sysmem {
+        compatible = "qemu:system-memory";
+        phandle = <0x01>;
+    };
+    memory@40000000 {
+        compatible = "qemu-memory-region";
+        qemu,ram = <1>;
+        container = <1>;
+        reg = <0x0 0x40000000 0x0 0x10000000>;
+    };
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "cortex-a15-arm-cpu";
+            reg = <0>;
+            memory = <0x01>;
+        };
+    };
+    flexray@09003000 {
+        compatible = "flexray";
+        reg = <0x0 0x09003000 0x0 0x4000>;
+    };
+    uart@09000000 {
+        compatible = "pl011";
+        reg = <0x0 0x09000000 0x0 0x1000>;
+    };
+};

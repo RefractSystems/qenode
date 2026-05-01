@@ -1,4 +1,25 @@
+"""
+Parses our modern YAML schema and returns (ReplPlatform, hints_dict).
+hints_dict is reserved for future metadata (e.g. default clock rates); callers
+that don't need it can unpack with ``platform, _ = parse_yaml_platform(path)``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+
+import fdt
+import yaml
+
+from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
+from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+
 #!/usr/bin/env python3
+
 # ==============================================================================
 # yaml2qemu.py
 #
@@ -6,31 +27,61 @@
 # QEMU Device Tree (.dtb). This drives the FdtEmitter using the modern schema.
 # ==============================================================================
 
-import argparse
-import subprocess
-import sys
-from pathlib import Path
+logger = logging.getLogger(__name__)
 
-import yaml
-
-from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
-from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+# Basic logging configuration for standalone CLI usage
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
-    """
-    Parses our modern YAML schema and returns (ReplPlatform, hints_dict).
-    hints_dict is reserved for future metadata (e.g. default clock rates); callers
-    that don't need it can unpack with ``platform, _ = parse_yaml_platform(path)``.
-    """
+def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, object]]:
+
     with Path(yaml_path).open() as f:
         data = yaml.safe_load(f)
 
     # Hardening: Check for unknown top-level keys to prevent silent failures
-    KNOWN_KEYS = {"machine", "peripherals", "memory", "include"}  # noqa: N806
+    known_keys = {"machine", "peripherals", "memory", "include", "nodes", "topology"}
     for key in data:
-        if key not in KNOWN_KEYS:
-            print(f"Warning: Unknown top-level key '{key}' in {yaml_path}. It will be ignored.", file=sys.stderr)
+        if key not in known_keys:
+            logger.warning(f"Warning: Unknown top-level key '{key}' in {yaml_path}. It will be ignored.")
+
+    # Validate topology if present
+    topology = data.get("topology")
+    if topology:
+        nodes = data.get("nodes", [])
+        valid_node_ids = set()
+
+        # If nodes is a list of dicts, extract 'id' or 'name'. If it's a list of ints/strings, use them.
+        for node in nodes:
+            if isinstance(node, dict) and "id" in node:
+                valid_node_ids.add(str(node["id"]))
+            elif isinstance(node, (int, str)):
+                valid_node_ids.add(str(node))
+
+        # Validate global_seed
+        seed = topology.get("global_seed", 0)
+        if not isinstance(seed, int) or seed < 0:
+            raise ValueError(f"Topology validation failed: global_seed must be a non-negative integer, got {seed}")
+
+        # Validate max_messages_per_node_per_quantum
+        max_msgs = topology.get("max_messages_per_node_per_quantum", 1024)
+        if not isinstance(max_msgs, int) or max_msgs < 1:
+            raise ValueError(
+                f"Topology validation failed: max_messages_per_node_per_quantum must be a positive integer, got {max_msgs}"
+            )
+
+        # Validate links
+        for link in topology.get("links", []):
+            for node_id in link.get("nodes", []):
+                if str(node_id) not in valid_node_ids:
+                    raise ValueError(f"Topology validation failed: node ID {node_id} in links not found in nodes:")
+
+        # Validate wireless
+        wireless = topology.get("wireless", {})
+        for w_node in wireless.get("nodes", []):
+            node_id = w_node.get("id")
+            if str(node_id) not in valid_node_ids:
+                raise ValueError(f"Topology validation failed: node ID {node_id} in wireless nodes not found in nodes:")
 
     platform = ReplPlatform()
 
@@ -41,12 +92,12 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
         if "riscv" in cpu_type.lower():
             internal_type = "CPU.RISCV64"
 
-        dev = ReplDevice(
+        dev = ReplDevice.create(
             name=cpu["name"],
             type_name=internal_type,
             address_str="sysbus",
-            properties={"cpuType": cpu_type},
         )
+        dev.properties["cpuType"] = cpu_type
         if internal_type == "CPU.RISCV64":
             if "isa" in cpu:
                 dev.properties["isa"] = cpu["isa"]
@@ -65,12 +116,12 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
         size = m.get("size", 0)
         size_str = hex(size) if isinstance(size, int) else str(size)
 
-        dev = ReplDevice(
+        dev = ReplDevice.create(
             name=m["name"],
             type_name="Memory.MappedMemory",
             address_str=address_str,
-            properties={"size": size_str},
         )
+        dev.properties["size"] = size_str
         platform.devices.append(dev)
 
     # 3. Map Peripherals
@@ -81,13 +132,13 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
         addr_val = p.get("address", "none")
         address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
-        dev = ReplDevice(
+        dev = ReplDevice.create(
             name=p["name"],
             type_name=type_name,
             address_str=address_str,
             parent=p.get("parent"),
-            properties=p.get("properties", {}),
         )
+        dev.properties = p.get("properties", {})
 
         # Parse interrupts if they exist
         for irq_entry in p.get("interrupts", []):
@@ -104,99 +155,105 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
     return platform, {}
 
 
-def validate_dtb(dtb_path, devices):
+def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
     """
     Task 2: Validate DTB contains all expected peripherals.
-    Decompiles the DTB back to DTS and ensures each peripheral is present.
+    Uses the fdt library to parse the DTB directly for structured validation.
     """
     try:
-        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
-        dts = res.stdout
+        with Path(dtb_path).open("rb") as f:
+            dtb = fdt.parse_dtb(f.read())
 
         missing = []
+
+        def find_node_recursive(parent: fdt.Node, prefix: str) -> fdt.Node | None:
+            """Recursively finds a node that matches the prefix exactly or matches prefix@address."""
+            for node in parent.nodes:
+                if node.name == prefix or node.name.startswith(prefix + "@"):
+                    return node
+                # Recurse into children
+                found = find_node_recursive(node, prefix)
+                if found:
+                    return found
+            return None
+
         for dev in devices:
             if "CPU" in dev.type_name:
+                # CPUs are typically under /cpus/
+                cpus_node = dtb.root.get_subnode("cpus")
+                if not cpus_node:
+                    logger.error("ERROR: No 'cpus' node found in DTB!")
+                    missing.append("cpus")
+                    continue
+
+                cpu_node = find_node_recursive(cpus_node, dev.name)
+                if cpu_node:
+                    if not cpu_node.get_property("memory"):
+                        logger.error(f"ERROR: CPU node '{dev.name}' is missing 'memory' property!")
+                        missing.append(f"{dev.name} (missing memory binding)")
+                else:
+                    missing.append(dev.name)
                 continue
-            if dev.type_name in ("zenoh-chardev", "zenoh-telemetry"):
+
+            if dev.type_name == "chardev":
                 continue  # CLI-only, no DTB node
 
-            # Check for name@address (DTS node format), e.g. "uart0@9000000".
-            # Memory nodes are special: FdtEmitter always names them "memory@..."
-            try:
-                addr_int = int(dev.address_str, 0)
-                if dev.type_name == "Memory.MappedMemory":
-                    dts_node = f"memory@{addr_int:x}"
-                else:
-                    dts_node = f"{dev.name}@{addr_int:x}"
-            except (ValueError, TypeError):
-                dts_node = dev.name  # fallback for non-numeric address strings
+            # Check for name or name@address
+            prefix = "memory" if dev.type_name == "Memory.MappedMemory" else dev.name
+            dev_node = find_node_recursive(dtb.root, prefix)
 
-            if dts_node not in dts and dev.name not in dts:
+            if not dev_node:
                 missing.append(dev.name)
-            elif (
-                (dts_node in dts or dev.name in dts)
-                and dev.type_name == "Memory.MappedMemory"
-                and "size" in dev.properties
-            ):
-                # Task: Verify memory size matches
-                try:
-                    target_node = dts_node if dts_node in dts else dev.name
-                    expected_size = int(dev.properties["size"], 0)
-                    # Simple heuristic: find the node block and check reg property
-                    node_start = dts.find(target_node)
-                    node_end = dts.find("};", node_start)
-                    node_content = dts[node_start:node_end]
+            elif dev.type_name == "Memory.MappedMemory" and "size" in dev.properties:
+                # Verify memory size matches
+                reg_prop = dev_node.get_property("reg")
+                if reg_prop:
+                    try:
+                        # VirtMCU uses #address-cells = 2, #size-cells = 2
+                        # reg = <base_hi base_lo size_hi size_lo>
+                        cells = reg_prop.data
+                        if len(cells) >= 4:
+                            size_hi = cells[2]
+                            size_lo = cells[3]
+                            actual_size = (size_hi << 32) | size_lo
 
-                    import re
+                            size_val = dev.properties["size"]
+                            if isinstance(size_val, str):
+                                expected_size = int(size_val, 0)
+                            elif isinstance(size_val, int):
+                                expected_size = size_val
+                            else:
+                                raise TypeError(f"Invalid size property type: {type(size_val)}")
 
-                    # Robust regex: handle 0x or decimal, and varying whitespace
-                    reg_match = re.search(
-                        r"reg = <((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)>",
-                        node_content,
-                    )
-                    if reg_match:
-
-                        def to_int(s):
-                            return int(s, 16) if s.startswith("0x") else int(s)
-
-                        size_hi = to_int(reg_match.group(3))
-                        size_lo = to_int(reg_match.group(4))
-                        actual_size = (size_hi << 32) | size_lo
-                        if actual_size != expected_size:
-                            print(
-                                f"ERROR: Memory node '{dev.name}' size mismatch! Expected {hex(expected_size)}, found {hex(actual_size)}",
-                                file=sys.stderr,
+                            if actual_size != expected_size:
+                                logger.error(
+                                    f"ERROR: Memory node '{dev.name}' size mismatch! Expected {hex(expected_size)}, found {hex(actual_size)}"
+                                )
+                                missing.append(f"{dev.name} (size mismatch)")
+                        else:
+                            logger.warning(
+                                f"⚠️ Warning: Memory node '{dev.name}' has unexpected reg property length: {len(cells)}"
                             )
-                            missing.append(f"{dev.name} (size mismatch)")
-                except Exception as e:
-                    print(f"⚠️ Warning: Could not verify size for {dev.name}: {e}", file=sys.stderr)
+                    except (ValueError, TypeError, IndexError) as e:
+                        logger.warning(f"⚠️ Warning: Could not verify size for {dev.name}: {e}")
+                else:
+                    logger.error(f"ERROR: Memory node '{dev.name}' is missing 'reg' property!")
+                    missing.append(f"{dev.name} (missing reg)")
 
         if missing:
-            print(
-                f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}",
-                file=sys.stderr,
+            logger.error(
+                f"ERROR: The following peripherals from YAML are missing in the generated DTB: {', '.join(missing)}"
             )
-            print(
-                "This usually means the device type is unknown to FdtEmitter or the address mapping failed.",
-                file=sys.stderr,
-            )
-            print("FAILED: DTB validation failed.")
+            logger.error("This usually means the device type is unknown to FdtEmitter or the address mapping failed.")
+            logger.error("FAILED: DTB validation failed.")
             sys.exit(1)
-        print("✓ Validation successful.")
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ Warning: dtc failed during validation: {e.stderr}", file=sys.stderr)
-    except FileNotFoundError:
-        print(
-            "ERROR: 'dtc' (device-tree-compiler) not found — DTB validation skipped. "
-            "Install dtc to enable post-build validation.",
-            file=sys.stderr,
-        )
+        logger.info("✓ Validation successful.")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"ERROR: Could not validate DTB: {e}")
         sys.exit(1)
-    except Exception as e:
-        print(f"⚠️ Warning: Could not validate DTB: {e}", file=sys.stderr)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert virtmcu YAML to Device Tree")
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)
@@ -206,11 +263,16 @@ def main():
     args = parser.parse_args()
 
     if not Path(args.input).exists():
-        print(f"Error: Input file '{args.input}' not found.")
+        logger.error(f"Error: Input file '{args.input}' not found.")
         sys.exit(1)
 
-    print(f"Parsing YAML: {args.input}...")
-    platform, _ = parse_yaml_platform(args.input)
+    logger.info(f"Parsing YAML: {args.input}...")
+    try:
+        platform, _ = parse_yaml_platform(args.input)
+    except ValueError as e:
+        logger.error(f"ERROR: {e}")
+        sys.exit(1)
+
     original_devices = list(platform.devices)
 
     # Extract architecture
@@ -220,23 +282,28 @@ def main():
         with Path(args.out_arch).open("w") as f:
             f.write(arch)
 
+    # Extract transport from topology
+    topology: dict[str, str] = {}  # topology is parsed in coordinator instead
+    transport = topology.get("transport", "zenoh")
+
     # Extract devices that require explicit CLI instantiation.
-    # zenoh-chardev: CLI-only (no DTB node).
-    # zenoh-telemetry: CLI-only (no DTB node).
+    # chardev: CLI-only (no DTB node).
+    # telemetry: Handled via DTB + CLI-only side effects (not anymore, DTB only now).
     # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
+    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
     for dev in platform.devices:
         if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
-            print("Missing mandatory property: socket-path", file=sys.stderr)
+            logger.error("Missing mandatory property: socket-path")
             sys.exit(1)
-        if dev.type_name == "zenoh-chardev":
+        if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
-            router = dev.properties.get("router")
+            router = dev.properties.get("router") or env_router
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
 
-            chardev_arg = f"zenoh,id={chardev_id},node={node}"
+            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport}"
             if router:
                 chardev_arg += f",router={router}"
             if topic:
@@ -246,49 +313,23 @@ def main():
             cli_args.append(chardev_arg)
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
-        elif dev.type_name == "zenoh-telemetry":
-            node = dev.properties.get("node", "0")
-            router = dev.properties.get("router")
-            # Force module load early via -device with id matching DTB node name
-            device_arg = f"zenoh-telemetry,id={dev.name},node={node}"
-            if router:
-                device_arg += f",router={router}"
-            cli_args.append("-device")
-            cli_args.append(device_arg)
-            filtered_devices.append(dev)  # Keep in DTB for machine awareness
-        elif dev.type_name == "zenoh-802154":
-            node = dev.properties.get("node", "0")
-            router = dev.properties.get("router")
-            topic = dev.properties.get("topic")
-            device_arg = f"zenoh-802154,node={node}"
-            if router:
-                device_arg += f",router={router}"
-            if topic:
-                device_arg += f",topic={topic}"
-            cli_args.append("-device")
-            cli_args.append(device_arg)
-            filtered_devices.append(dev)  # Keep in DTB
+        elif dev.type_name in ("telemetry", "ieee802154"):
+            # These are now handled via DTB but need transport hint
+            dev.properties["transport"] = transport
+            if env_router and "router" not in dev.properties:
+                dev.properties["router"] = env_router
+            filtered_devices.append(dev)
         elif dev.type_name == "mmio-socket-bridge":
-            socket_path = dev.properties.get("socket-path", "/tmp/mmio.sock")
-            region_size = dev.properties.get("region-size", 0x1000)
-            reconnect_ms = dev.properties.get("reconnect-ms", 0)
-            # Map via base-addr property to ensure it's mapped even if DTB init fails to load module
-            base_addr = int(dev.address_str, 16) if dev.address_str and dev.address_str != "none" else 0
-            device_arg = (
-                f"mmio-socket-bridge,id={dev.name},socket-path={socket_path},region-size={region_size},"
-                f"reconnect-ms={reconnect_ms},base-addr={base_addr}"
-            )
-            cli_args.append("-device")
-            cli_args.append(device_arg)
-            filtered_devices.append(dev)  # Handled via DTB (memory map)
+            # Handled via DTB (both memory map and instantiation).
+            filtered_devices.append(dev)
         else:
             if dev.type_name == "zenoh-wifi":
-                dev.type_name = "virtmcu-wifi"
+                dev.type_name = "wifi"
             filtered_devices.append(dev)
 
     platform.devices = filtered_devices
 
-    print(f"Generating Device Tree for {len(platform.devices)} devices...")
+    logger.info(f"Generating Device Tree for {len(platform.devices)} devices...")
     dts = emitter.generate_dts()
 
     if args.out_cli:
@@ -296,12 +337,12 @@ def main():
             for arg in cli_args:
                 f.write(arg + "\n")
 
-    print(f"Compiling into '{args.out_dtb}'...")
+    logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):
-        print("✓ Compilation Success.")
+        logger.info("✓ Compilation Success.")
         validate_dtb(args.out_dtb, original_devices)
     else:
-        print("FAILED.")
+        logger.error("FAILED.")
         sys.exit(1)
 
 

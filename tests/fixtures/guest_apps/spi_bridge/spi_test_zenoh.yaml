@@ -1,0 +1,28 @@
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+peripherals:
+  - name: memory
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x01000000
+  - name: uart0
+    type: UART.PL011
+    address: 0x09000000
+    interrupts: [33]
+  - name: spi0
+    type: SPI.PL022
+    address: 0x09005000
+    properties:
+      size: 0x1000
+  - name: spi_echo
+    type: SPI.ZenohBridge
+    properties:
+      router: tcp/localhost:51929
+    parent: spi0
+    address: 0
+
+topology:
+  links: []

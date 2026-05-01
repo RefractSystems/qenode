@@ -179,8 +179,8 @@ smoke_runtime() {
         echo '  --- QEMU binary ---'
         qemu-system-arm --version
         echo '  --- Python tooling ---'
-        python3 -c 'import zenoh; print(\"zenoh:\", zenoh.__version__)'
-        python3 -c 'import flatbuffers; print(\"flatbuffers:\", flatbuffers.__version__)'
+        python3 -c 'import zenoh, sys; sys.stdout.write(\"zenoh: \" + zenoh.__version__ + \"\\n\")'
+        python3 -c 'import flatbuffers, sys; sys.stdout.write(\"flatbuffers: \" + flatbuffers.__version__ + \"\\n\")'
         echo '  --- tools ---'
         ls /app/tools/
     "

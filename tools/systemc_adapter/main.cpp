@@ -395,9 +395,15 @@ void RegisterFile::b_transport(tlm::tlm_generic_payload &trans,
 
 // --- Educational CAN-lite Model ---
 
-struct CanWireFrame {
+struct ZenohFrameHeaderFB {
   uint64_t delivery_vtime_ns;
+  uint64_t sequence_number;
   uint32_t size;
+  uint32_t padding;
+} __attribute__((packed));
+
+struct CanWireFrame {
+  ZenohFrameHeaderFB header;
   uint32_t can_id;
   uint32_t can_data;
 } __attribute__((packed));
@@ -490,7 +496,8 @@ public:
     CanWireFrame wire;
     if (z_bytes_reader_read(&reader, reinterpret_cast<uint8_t *>(&wire),
                             sizeof(wire)) == sizeof(wire)) {
-      CanInternalFrame internal = {.delivery_vtime_ns = wire.delivery_vtime_ns,
+      CanInternalFrame internal = {.delivery_vtime_ns =
+                                       wire.header.delivery_vtime_ns,
                                    .frame = {wire.can_id, wire.can_data}};
       {
         std::lock_guard<std::mutex> lock(self->rx_mtx);
@@ -538,11 +545,13 @@ public:
   void self_deliver(CanFrame frame);
 
   void transmit(CanFrame frame) {
-    CanWireFrame wire = {.delivery_vtime_ns =
-                             (uint64_t)sc_time_stamp().to_double(),
-                         .size = 8,
-                         .can_id = frame.id,
-                         .can_data = frame.data};
+    CanWireFrame wire = {
+        .header = {.delivery_vtime_ns = (uint64_t)sc_time_stamp().to_double(),
+                   .sequence_number = 0,
+                   .size = 8,
+                   .padding = 0},
+        .can_id = frame.id,
+        .can_data = frame.data};
     {
       std::lock_guard<std::mutex> lock(tx_mtx);
       tx_queue.push(wire);

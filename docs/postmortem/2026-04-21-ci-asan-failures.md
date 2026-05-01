@@ -13,7 +13,7 @@ This incident involved multiple distinct but overlapping issues across the local
 
 While the local environment correctly enabled Rust support, the Dockerfile omitted the `--enable-rust` flag. Consequently, the QEMU binary built in GitHub Actions lacked the necessary symbols to load our Rust-based dynamic QOM plugins (like `rust-dummy` and `zenoh-*`). When smoke tests attempted to load these plugins, QEMU crashed immediately, resulting in `EOFError`s during QMP (QEMU Machine Protocol) negotiation.
 
-Simultaneously, local ASan/UBSan builds were failing due to missing sanitizer flags in QEMU's Rust components, and the Phase 5 (SystemC Bridge) test failed due to an upstream breaking change in a tracked dependency.
+Simultaneously, local ASan/UBSan builds were failing due to missing sanitizer flags in QEMU's Rust components, and the irq_stress (SystemC Bridge) test failed due to an upstream breaking change in a tracked dependency.
 
 ---
 
@@ -23,9 +23,9 @@ Simultaneously, local ASan/UBSan builds were failing due to missing sanitizer fl
 2. **ASan Linking Investigation:** Discovered that running `make test-asan` failed with `undefined symbol: __ubsan_handle_type_mismatch_v1`. Identified that QEMU's `meson.build` did not pass `-fsanitize=address` to Rust components.
 3. **ASan Patch Created:** Authored `patches/apply_rust_asan_fix.py` to dynamically inject sanitizer flags into QEMU's Rust targets when ASan is enabled.
 4. **BQL Helper Conflicts Identified:** While fixing ASan, encountered C compilation errors regarding `virtmcu_bql_locked`. Discovered infinite recursion in the FFI C wrappers and naming collisions between QEMU-injected BQL helpers and DSO wrappers.
-5. **Phase 5 (SystemC) Compilation Error:** During a `ci-full` run, Phase 5 failed to build the SystemC adapter. Found a C++ inheritance error (`cannot convert remoteport_tlm_memory_master* to remoteport_tlm_dev*`).
+5. **SystemC Adapter Compilation Error:** During a `ci-full` run, the irq_stress domain failed to build the SystemC adapter. Found a C++ inheritance error (`cannot convert remoteport_tlm_memory_master* to remoteport_tlm_dev*`).
 6. **"Works on My Machine" Anomaly:** User noted that `make ci-full` passed locally (after caching/environment fixes), but the exact same run on GitHub failed catastrophically.
-7. **GitHub CI Log Analysis:** Inspected the remote CI logs. Noted that Phase 1 (Minimal Boot) passed, but Phases 2-27 failed with `Negotiation failed: EOFError`. This indicated QEMU was crashing immediately upon startup *only* when plugins were loaded.
+7. **GitHub CI Log Analysis:** Inspected the remote CI logs. Noted that boot_arm (Minimal Boot) passed, but advanced domains failed with `Negotiation failed: EOFError`. This indicated QEMU was crashing immediately upon startup *only* when plugins were loaded.
 8. **Dockerfile vs. Local Script Drift Discovered:** Compared `scripts/setup-qemu.sh` with `docker/Dockerfile`. Found that Stage 5 (`qemu-builder`) in the Dockerfile was missing the `--enable-rust` configure flag. 
 9. **Final Resolution:** Patched the Dockerfile, pinned the broken SystemC dependency, fixed C++ include orders, and deployed the changes.
 
@@ -42,7 +42,7 @@ Simultaneously, local ASan/UBSan builds were failing due to missing sanitizer fl
 * **What Happened:** `make test-asan` failed to link `rust-util-tests`.
 * **Root Cause:** QEMU's Meson build system natively passes `-fsanitize=address` to C compilers but lacks the logic to pass `-C link-arg=-fsanitize=address` to `rustc`. Therefore, Rust static libraries were uninstrumented, causing linker failures when combined with instrumented C libraries.
 
-### C. SystemC Adapter Compilation Failure (Phase 5)
+### C. SystemC Adapter Compilation Failure (SystemC)
 * **What Happened:** `make -C tools/systemc_adapter` failed with class definition and conversion errors.
 * **Root Cause:** `CMakeLists.txt` was tracking the `master` branch of Xilinx's `libsystemctlm-soc`. An upstream change altered the class hierarchy. Compounding this, `remote_port_adapter.cpp` had an include-order bug where `remote-port-tlm.h` (the base class definition) was included *after* the headers for derived classes.
 
@@ -80,4 +80,4 @@ Simultaneously, local ASan/UBSan builds were failing due to missing sanitizer fl
 
 * **Avoid `master` tags in FetchContent:** Always pin external dependencies (like `libsystemctlm-soc`) to specific Git SHAs or release tags to prevent unannounced upstream breaks.
 * **Single Source of Truth for Builds:** The configuration flags for QEMU were duplicated between `scripts/setup-qemu.sh` and `docker/Dockerfile`. In the future, we should source a shared `.env` or configuration file to prevent environment drift.
-* **Trust the Pipeline Breakdown:** The fact that Phase 1 passed while Phase 2 failed was the exact clue needed to diagnose a dynamic plugin loading issue rather than a fundamental QEMU compilation failure.
+* **Trust the Pipeline Breakdown:** The fact that boot_arm passed while dynamic_plugin failed was the exact clue needed to diagnose a dynamic plugin loading issue rather than a fundamental QEMU compilation failure.

@@ -15,6 +15,7 @@
     "source=virtmcu-cargo-target,target=/workspace/target,type=volume",
     "source=virtmcu-cargo-registry,target=/usr/local/cargo/registry,type=volume"
   ],
+  "forwardPorts": [8080],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
   "postCreateCommand": "bash .devcontainer/post-create.sh",

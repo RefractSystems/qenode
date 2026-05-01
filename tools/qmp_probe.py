@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+A minimal synchronous QMP client for scriptable inspection.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    pass
+
+
 # ==============================================================================
 # qmp_probe.py
 #
@@ -16,56 +28,54 @@
 #
 # Usage examples:
 #   # Start QEMU with a QMP socket first:
-#   ./scripts/run.sh --dtb test/phase1/minimal.dtb -qmp unix:qmp.sock,server,nowait
+#   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -qmp unix:qmp.sock,server,nowait
 #
 #   # Then in another terminal:
 #   python3 tools/qmp_probe.py tree             # Visualize the entire object hierarchy
 #   python3 tools/qmp_probe.py list /machine     # List immediate children/properties of /machine
 #   python3 tools/qmp_probe.py get /memory size  # Fetch the value of a specific property
 # ==============================================================================
-
 import argparse
 import json
+import logging
 import socket
 import sys
 
+logger = logging.getLogger(__name__)
+
 
 class QMPClient:
-    """
-    A minimal synchronous QMP client for scriptable inspection.
-    """
-
-    def __init__(self, socket_path="qmp.sock"):
+    def __init__(self, socket_path: str = "qmp.sock") -> None:
         self.socket_path = socket_path
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.buffer = b""
 
-    def connect(self):
+    def connect(self) -> None:
         """
         Connects to the QMP socket and performs the initial negotiation.
         """
         try:
             self.sock.connect(self.socket_path)
         except FileNotFoundError:
-            print(f"Error: QMP socket '{self.socket_path}' not found.")
-            print("Hint: Start QEMU with '-qmp unix:qmp.sock,server,nowait'")
+            logger.error(f"Error: QMP socket '{self.socket_path}' not found.")
+            logger.info("Hint: Start QEMU with '-qmp unix:qmp.sock,server,nowait'")
             sys.exit(1)
         except ConnectionRefusedError:
-            print(f"Error: Connection refused to '{self.socket_path}'.")
-            print("Hint: Is QEMU still running?")
+            logger.error(f"Error: Connection refused to '{self.socket_path}'.")
+            logger.info("Hint: Is QEMU still running?")
             sys.exit(1)
 
         # QMP server sends a greeting on connection
         greeting = self._recv_msg()
         if not greeting or "QMP" not in greeting:
-            print("Error: Did not receive a valid QMP greeting.")
+            logger.error("Error: Did not receive a valid QMP greeting.")
             sys.exit(1)
 
         # Capabilities negotiation is mandatory before sending commands
         # We send an empty set of capabilities to enter command mode.
         self.execute("qmp_capabilities")
 
-    def _recv_msg(self):
+    def _recv_msg(self) -> dict[str, object] | None:
         """
         Reads one complete JSON message from the socket.
         """
@@ -75,13 +85,13 @@ class QMPClient:
                 return None
             self.buffer += data
         line, self.buffer = self.buffer.split(b"\n", 1)
-        return json.loads(line.decode("utf-8"))
+        return cast(dict[str, object] | None, json.loads(line.decode("utf-8")))
 
-    def execute(self, cmd, args=None):
+    def execute(self, cmd: str, args: dict[str, object] | None = None) -> dict[str, object]:
         """
         Executes a QMP command and returns the JSON response.
         """
-        req = {"execute": cmd}
+        req: dict[str, object] = {"execute": cmd}
         if args:
             req["arguments"] = args
 
@@ -89,14 +99,13 @@ class QMPClient:
         self.sock.send(json.dumps(req).encode("utf-8") + b"\n")
 
         # Wait for the response (which is also a single JSON object on one line)
-        return self._recv_msg()
+        resp = self._recv_msg()
+        return resp if resp is not None else {}
 
 
-def dump_tree(client, path="/", depth=0, visited=None):
+def dump_tree(client: QMPClient, path: str = "/", depth: int = 0, visited: set[str] | None = None) -> None:
     """
     Recursively traverses the QOM tree and prints it in a human-readable format.
-
-    Similar to the 'info qom-tree' command in the QEMU monitor.
     """
     if visited is None:
         visited = set()
@@ -109,9 +118,9 @@ def dump_tree(client, path="/", depth=0, visited=None):
     if "return" not in resp:
         return
 
-    for item in resp["return"]:
+    for item in resp["return"]:  # type: ignore[attr-defined]
         # Print with indentation to show hierarchy
-        print("  " * depth + f"{item['name']} ({item['type']})")
+        logger.info("  " * depth + f"{item['name']} ({item['type']})")
 
         # If it's a child object, recurse into it
         if item["type"].startswith("child<"):
@@ -120,7 +129,8 @@ def dump_tree(client, path="/", depth=0, visited=None):
             dump_tree(client, next_path, depth + 1, visited)
 
 
-def main():
+def main() -> None:
+    """Main entry point."""
     parser = argparse.ArgumentParser(
         description="virtmcu QMP Probing Utility",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -153,26 +163,27 @@ def main():
     client.connect()
 
     if args.command == "tree":
-        print(f"--- QOM Tree (Source: {args.socket}) ---")
+        logger.info(f"--- QOM Tree (Source: {args.socket}) ---")
         dump_tree(client)
 
     elif args.command == "list":
         resp = client.execute("qom-list", {"path": args.path})
         if "return" in resp:
             # Print a simple list of names and types
-            for item in resp["return"]:
-                print(f"{item['name']:<30} ({item['type']})")
+            for item in resp["return"]:  # type: ignore[attr-defined]
+                logger.info(f"{item['name']:<30} ({item['type']})")
         else:
-            print(f"Error: {resp.get('error', resp)}")
+            logger.error(f"Error: {resp.get('error', resp)}")
 
     elif args.command == "get":
         resp = client.execute("qom-get", {"path": args.path, "property": args.property})
         if "return" in resp:
             # Pretty-print the JSON value
-            print(json.dumps(resp["return"], indent=2))
+            logger.info(json.dumps(resp["return"], indent=2))
         else:
-            print(f"Error: {resp.get('error', resp)}")
+            logger.error(f"Error: {resp.get('error', resp)}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

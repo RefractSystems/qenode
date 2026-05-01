@@ -11,13 +11,16 @@ compiler. This serves as the backend for the FFI validation suite.
 """
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
-def get_qemu_bin():
+
+def get_qemu_bin() -> str | None:
     # Priority:
     # 1. Environment variable
     # 2. Local build directory
@@ -42,12 +45,18 @@ def get_qemu_bin():
     return None
 
 
-def probe_struct(qemu_bin, struct_name):
+def probe_struct(qemu_bin: str, struct_name: str) -> str:
     """Probes a struct layout using pahole."""
+    import shutil
+
+    pahole_path = shutil.which("pahole")
+    if not pahole_path:
+        raise RuntimeError("pahole not found")
+
     try:
         # pahole -C <struct_name> <binary>
         result = subprocess.run(
-            ["pahole", "-C", struct_name, qemu_bin],
+            [pahole_path, "-C", struct_name, qemu_bin],
             capture_output=True,
             text=True,
             check=True,
@@ -58,12 +67,18 @@ def probe_struct(qemu_bin, struct_name):
         return probe_struct_gdb(qemu_bin, struct_name)
 
 
-def probe_struct_gdb(qemu_bin, struct_name):
+def probe_struct_gdb(qemu_bin: str, struct_name: str) -> str:
     """Fallback to gdb for probing struct layout."""
     gdb_cmd = f"ptype /o struct {struct_name}"
+    import shutil
+
+    gdb_path = shutil.which("gdb")
+    if not gdb_path:
+        raise RuntimeError("gdb not found")
+
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-ex", gdb_cmd, qemu_bin],
+            [gdb_path, "-batch", "-ex", gdb_cmd, qemu_bin],
             capture_output=True,
             text=True,
             check=True,
@@ -73,13 +88,19 @@ def probe_struct_gdb(qemu_bin, struct_name):
         return f"Error: Could not find struct {struct_name} in {qemu_bin}"
 
 
-def probe_enum(qemu_bin, enum_name):
+def probe_enum(qemu_bin: str, enum_name: str) -> str:
     """Probes an enum using gdb."""
     # Enums are harder with pahole, use gdb directly
     gdb_cmd = f"ptype enum {enum_name}"
+    import shutil
+
+    gdb_path = shutil.which("gdb")
+    if not gdb_path:
+        raise RuntimeError("gdb not found")
+
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-ex", gdb_cmd, qemu_bin],
+            [gdb_path, "-batch", "-ex", gdb_cmd, qemu_bin],
             capture_output=True,
             text=True,
             check=True,
@@ -89,7 +110,7 @@ def probe_enum(qemu_bin, enum_name):
         return f"Error: Could not find enum {enum_name} in {qemu_bin}"
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Probe QEMU binary for struct layouts and enums.")
     parser.add_argument("name", help="Name of the struct or enum to probe")
     parser.add_argument(
@@ -104,14 +125,15 @@ def main():
 
     qemu_bin = args.bin or get_qemu_bin()
     if not qemu_bin:
-        print("Error: QEMU binary not found. Build QEMU or set QEMU_BIN.", file=sys.stderr)
+        logger.error("Error: QEMU binary not found. Build QEMU or set QEMU_BIN.")
         sys.exit(1)
 
     if args.type == "struct":
-        print(probe_struct(qemu_bin, args.name))
+        logger.info(probe_struct(qemu_bin, args.name))
     else:
-        print(probe_enum(qemu_bin, args.name))
+        logger.info(probe_enum(qemu_bin, args.name))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()
