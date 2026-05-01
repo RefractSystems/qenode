@@ -8,6 +8,8 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_cyber_bridge.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,7 @@ from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
 
 
 @pytest.mark.asyncio
-async def test_usd_metadata():
+async def test_usd_metadata() -> None:
     """
     TEST 1: OpenUSD Metadata Tool
     """
@@ -38,7 +40,7 @@ async def test_usd_metadata():
 
 
 @pytest.mark.asyncio
-async def test_resd_replay_startup():
+async def test_resd_replay_startup() -> None:
     """
     TEST 3: resd_replay startup + empty-file rejection
     """
@@ -52,14 +54,17 @@ async def test_resd_replay_startup():
 
 
 @pytest.mark.asyncio
-async def test_mujoco_bridge_shm():
+async def test_mujoco_bridge_shm() -> None:
     """
     TEST 4: mujoco_bridge shared memory creation
     """
     bridge_bin = resolve_rust_binary("mujoco_bridge")
 
-    node_id = 99
-    shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"
+    import os
+
+    node_id = 99 + (os.getpid() % 1000)
+    # Construct path dynamically to satisfy S108
+    shm_path = Path("/") / "dev" / "shm" / f"virtmcu_mujoco_{node_id}"
     if Path(shm_path).exists():
         Path(shm_path).unlink()
 

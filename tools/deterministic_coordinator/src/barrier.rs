@@ -134,7 +134,7 @@ impl QuantumBarrier {
         }
         state.done_nodes[node_id as usize] = true;
 
-        // ARCH-5 Determinism Fix: We MUST sort before truncating.
+        // Determinism Fix: We MUST sort before truncating.
         messages.sort();
 
         if messages.len() > self.max_messages_per_node {
@@ -156,7 +156,7 @@ impl QuantumBarrier {
             let mut all_msgs = state.message_buffer.clone();
             all_msgs.sort();
 
-            // ARCH-8: Promotion & Lookahead Logic
+            // Promotion & Lookahead Logic
             // 1. Increment internal quantum
             self.current_quantum.fetch_add(1, AtomicOrdering::SeqCst);
 

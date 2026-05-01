@@ -9,8 +9,9 @@ Ensure correct functionality, performance, and deterministic execution of mmio_c
 """
 
 import socket
+import typing
 
-import vproto
+from tools import vproto
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
@@ -24,12 +25,12 @@ SYSC_MSG_IRQ_CLEAR = 2
 
 
 class MMIOClient:
-    def __init__(self, socket_path):
+    def __init__(self, socket_path: str) -> None:
         self.socket_path = socket_path
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.irqs = {}
+        self.irqs: dict[int, typing.Any] = {}
 
-    def connect(self):
+    def connect(self) -> None:
         self.sock.settimeout(2.0)
         self.sock.connect(self.socket_path)
         # Handshake
@@ -42,7 +43,7 @@ class MMIOClient:
         if hs.magic != VIRTMCU_PROTO_MAGIC or hs.version != VIRTMCU_PROTO_VERSION:
             raise Exception(f"Handshake failed: {hex(hs.magic)}, {hs.version}")
 
-    def _read_msg(self):
+    def _read_msg(self) -> tuple[int, int, int]:
         # sysc_msg is 16 bytes: type(4), irq_num(4), data(8)
         data = b""
         while len(data) < vproto.SIZE_SYSC_MSG:
@@ -53,7 +54,7 @@ class MMIOClient:
         msg = vproto.SyscMsg.unpack(data)
         return msg.type, msg.irq_num, msg.data
 
-    def write(self, addr, data, size=4, vtime_ns=0):
+    def write(self, addr: int, data: int, size: int = 4, vtime_ns: int = 0) -> None:
         # struct mmio_req { uint8_t type; uint8_t size; uint16_t res1; uint32_t res2; uint64_t vtime_ns; uint64_t addr; uint64_t data; }
         req = vproto.MmioReq(MMIO_REQ_WRITE, size, 0, 0, vtime_ns, addr, data).pack()
         self.sock.sendall(req)
@@ -68,18 +69,18 @@ class MMIOClient:
             elif msg_type == SYSC_MSG_IRQ_CLEAR:
                 self.irqs[irq_num] = False
 
-    def read(self, addr, size=4, vtime_ns=0):
+    def read(self, addr: int, size: int = 4, vtime_ns: int = 0) -> None:
         req = vproto.MmioReq(MMIO_REQ_READ, size, 0, 0, vtime_ns, addr, 0).pack()
         self.sock.sendall(req)
 
         while True:
             msg_type, irq_num, msg_data = self._read_msg()
             if msg_type == SYSC_MSG_RESP:
-                return msg_data
+                return msg_data  # type: ignore[return-value]
             if msg_type == SYSC_MSG_IRQ_SET:
                 self.irqs[irq_num] = True
             elif msg_type == SYSC_MSG_IRQ_CLEAR:
                 self.irqs[irq_num] = False
 
-    def close(self):
+    def close(self) -> None:
         self.sock.close()

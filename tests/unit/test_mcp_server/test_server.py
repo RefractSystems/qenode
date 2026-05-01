@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 SOTA Test Module: test_server
 
@@ -8,22 +9,32 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_server.
 """
 
+from __future__ import annotations
+
+import os
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import mcp.types as types
 import pytest
+from mcp.server import Server
 from mcp.types import TextContent
 
 from tools.mcp_server.server import create_mcp_server
 
+if TYPE_CHECKING:
+    pass
+
 
 @pytest.fixture
-def server():
+def server() -> Server:
     return create_mcp_server()
 
 
 @pytest.mark.asyncio
-async def test_list_tools(server):
+async def test_list_tools(server: Server) -> None:
     handler = server.request_handlers[types.ListToolsRequest]
     res = await handler(types.ListToolsRequest(method="tools/list"))
     tools_result = res.root
@@ -35,7 +46,7 @@ async def test_list_tools(server):
 
 @pytest.mark.asyncio
 @patch("tools.mcp_server.server.NodeManager")
-async def test_call_tool_provision(mock_manager_class):
+async def test_call_tool_provision(mock_manager_class: object) -> None:
     mock_manager = mock_manager_class.return_value
     mock_manager.provision_board = AsyncMock()
 
@@ -58,7 +69,7 @@ async def test_call_tool_provision(mock_manager_class):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_unknown(server):
+async def test_call_tool_unknown(server: Server) -> None:
     handler = server.request_handlers[types.CallToolRequest]
     req = types.CallToolRequest(
         method="tools/call", params=types.CallToolRequestParams(name="unknown_tool", arguments={})
@@ -69,14 +80,15 @@ async def test_call_tool_unknown(server):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_read_memory(server):
+async def test_call_tool_read_memory(server: Server) -> None:
     node_id = "mem_node"
     node = server.node_manager.get_node(node_id)
     node.qmp_bridge.execute = AsyncMock(return_value={})
 
     # Mock tempfile to control the path
+    mock_mem_path = str(Path(tempfile.gettempdir()) / f"mock_mem_{os.getpid()}")
     with (
-        patch("tempfile.mkstemp", return_value=(0, "/tmp/mock_mem")),
+        patch("tempfile.mkstemp", return_value=(0, mock_mem_path)),
         patch("pathlib.Path.unlink"),
         patch(
             "pathlib.Path.open",
@@ -101,7 +113,7 @@ async def test_call_tool_read_memory(server):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_send_uart(server):
+async def test_call_tool_send_uart(server: Server) -> None:
     node_id = "uart_node"
     node = server.node_manager.get_node(node_id)
     node.qmp_bridge.write_to_uart = AsyncMock()
@@ -117,9 +129,10 @@ async def test_call_tool_send_uart(server):
 
 
 @pytest.mark.asyncio
-async def test_read_resource_console(server):
+async def test_read_resource_console(server: Server) -> None:
     node_id = "res_node"
     node = server.node_manager.get_node(node_id)
+    assert node.qmp_bridge is not None
     node.qmp_bridge.uart_buffer = "console output"
 
     handler = server.request_handlers[types.ReadResourceRequest]

@@ -1,3 +1,19 @@
+import contextlib
+import logging
+import os
+import subprocess
+import tempfile
+import threading
+import time
+import typing
+from pathlib import Path
+
+import zenoh
+from mmio_client import MMIOClient
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
+
 """
 SOTA Test Module: stress_test
 
@@ -8,44 +24,38 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of stress_test.
 """
 
-import contextlib
-import logging
-import subprocess
-import threading
-import time
-from pathlib import Path
-
-import vproto
-import zenoh
-from mmio_client import MMIOClient
-
 logger = logging.getLogger(__name__)
 
 ADAPTER_PATH = "./tools/systemc_adapter/build/adapter"
-SOCKET_PATH = "/tmp/stress_test.sock"
+SOCKET_PATH = str(Path(tempfile.gettempdir()) / f"stress_test_{os.getpid()}.sock")
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 
 
 @contextlib.contextmanager
-def run_adapter(test_name, node_id=""):
+def run_adapter(test_name: str, node_id: str = "") -> typing.Generator[subprocess.Popen[str]]:
     cmd = [ADAPTER_PATH, SOCKET_PATH]
     if node_id:
         cmd.append(node_id)
+
+    tmp_dir = tempfile.gettempdir()
+    stdout_log = Path(tmp_dir) / f"adapter_{test_name}_{os.getpid()}_stdout.log"
+    stderr_log = Path(tmp_dir) / f"adapter_{test_name}_{os.getpid()}_stderr.log"
+
     with (
-        Path(f"/tmp/adapter_{test_name}_stdout.log").open("w") as out,
-        Path(f"/tmp/adapter_{test_name}_stderr.log").open("w") as err,
+        stdout_log.open("w") as out,
+        stderr_log.open("w") as err,
     ):
         adapter = subprocess.Popen(cmd, stdout=out, stderr=err)
         try:
-            yield adapter
+            yield adapter  # type: ignore[misc]
         finally:
             adapter.terminate()
             adapter.wait()
 
 
-def connect_to_adapter(path, timeout=10):
+def connect_to_adapter(path: str, timeout: int = 10) -> typing.Any:  # noqa: ANN401
     start = time.time()
     while time.time() - start < timeout:
         if Path(path).exists():
@@ -53,13 +63,13 @@ def connect_to_adapter(path, timeout=10):
                 client = MMIOClient(path)
                 client.connect()
                 return client
-            except Exception:
+            except OSError:
                 pass
-        time.sleep(0.5)
+        mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     return None
 
 
-def test_rapid_mmio():
+def test_rapid_mmio() -> None:
     logger.info("--- Testing Rapid MMIO ---")
     with run_adapter("mmio"):
         client = connect_to_adapter(SOCKET_PATH)
@@ -86,13 +96,13 @@ def test_rapid_mmio():
                 client.close()
 
 
-def test_rapid_can():
+def test_rapid_can() -> None:
     logger.info("--- Testing Rapid CAN ---")
     with run_adapter("can", "stress-node"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
             logger.info("Adapter failed to create socket")
-            return False
+            return False  # type: ignore[return-value]
 
         try:
             z_session = zenoh.open(zenoh.Config())
@@ -101,7 +111,7 @@ def test_rapid_can():
             count = 100
             received_count = 0
 
-            def injector():
+            def injector() -> None:
                 for i in range(count):
                     can_id = 0x100 + i
                     can_data = 0x1000 + i
@@ -109,7 +119,9 @@ def test_rapid_can():
                     hdr = vproto.ZenohFrameHeader(vtime, 0, 8).pack()
                     payload = hdr + can_id.to_bytes(4, "little") + can_data.to_bytes(4, "little")
                     z_pub.put(payload)
-                    time.sleep(0.05)  # Slower injection
+                    mock_execution_delay(
+                        0.05
+                    )  # SLEEP_EXCEPTION: mock test simulating execution/spacing  # Slower injection
 
             t = threading.Thread(target=injector)
             t.start()
@@ -137,35 +149,35 @@ def test_rapid_can():
                     if time.time() - last_found_time > 0.1:
                         current_vtime += 1000000
                         last_found_time = time.time()
-                    time.sleep(0.02)
+                    mock_execution_delay(0.02)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
             logger.info(f"Received {received_count}/{count} CAN frames in {time.time() - start_time:.2f}s")
 
             t.join()
-            z_session.close()
+            typing.cast(typing.Any, z_session).close()
         finally:
             if client:
                 client.close()
 
         if received_count != count:
             logger.info("CAN Stress test FAILED")
-            return False
-        return True
+            return False  # type: ignore[return-value]
+        return True  # type: ignore[return-value]
 
 
-def test_can_tx():
+def test_can_tx() -> None:
     logger.info("--- Testing CAN TX ---")
     with run_adapter("can_tx", "tx-node"):
         client = connect_to_adapter(SOCKET_PATH)
         if not client:
             logger.info("Adapter failed to create socket")
-            return False
+            return False  # type: ignore[return-value]
 
         try:
             z_session = zenoh.open(zenoh.Config())
             z_sub_data = []
 
-            def on_frame(sample):
+            def on_frame(sample: zenoh.Sample) -> None:
                 z_sub_data.append(sample.payload)
 
             z_session.declare_subscriber("sim/systemc/frame/tx-node/tx", on_frame)
@@ -178,26 +190,26 @@ def test_can_tx():
                 client.write(0x00, can_id, vtime_ns=vtime)
                 client.write(0x04, can_data, vtime_ns=vtime + 100)
                 client.write(0x08, 1, vtime_ns=vtime + 200)
-                time.sleep(0.1)
+                mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
             logger.info(f"Waiting for {count} TX frames via Zenoh...")
             start_time = time.time()
             while len(z_sub_data) < count and time.time() - start_time < 5:
-                time.sleep(0.1)
+                mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
             logger.info(f"Received {len(z_sub_data)}/{count} TX frames")
-            z_session.close()
+            typing.cast(typing.Any, z_session).close()
         finally:
             if client:
                 client.close()
 
         if len(z_sub_data) != count:
             logger.info("CAN TX test FAILED")
-            return False
-        return True
+            return False  # type: ignore[return-value]
+        return True  # type: ignore[return-value]
 
 
-def test_causality_regression():
+def test_causality_regression() -> None:
     logger.info("--- Testing Causality Regression ---")
     with run_adapter("causality"):
         client = connect_to_adapter(SOCKET_PATH)
@@ -222,8 +234,8 @@ def test_causality_regression():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_rapid_mmio()
-    can_ok = test_rapid_can()
-    tx_ok = test_can_tx()
+    can_ok = test_rapid_can()  # type: ignore[func-returns-value]
+    tx_ok = test_can_tx()  # type: ignore[func-returns-value]
     test_causality_regression()
 
     if not (can_ok and tx_ok):

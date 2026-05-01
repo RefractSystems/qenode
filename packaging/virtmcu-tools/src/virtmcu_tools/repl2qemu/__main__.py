@@ -10,7 +10,7 @@ from .parser import parse_repl
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert Renode .repl to QEMU Device Tree")
     parser.add_argument("input", help="Path to .repl file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)

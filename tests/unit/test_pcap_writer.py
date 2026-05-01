@@ -8,12 +8,19 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_pcap_writer.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from tools.testing.virtmcu_test_suite.pcap_writer import write_pcap
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def test_write_pcap_empty(tmp_path: Path):
+    pass
+
+
+def test_write_pcap_empty(tmp_path: Path) -> None:
     out_file = tmp_path / "test.pcap"
     write_pcap(out_file, [])
     assert out_file.exists()
@@ -22,7 +29,7 @@ def test_write_pcap_empty(tmp_path: Path):
     assert content[:4] == (0xA1B2C3D4).to_bytes(4, "little")
 
 
-def test_write_pcap_valid_entries(tmp_path: Path):
+def test_write_pcap_valid_entries(tmp_path: Path) -> None:
     out_file = tmp_path / "test.pcap"
     history = [
         {"vtime_ns": 1_000_000, "topic": "test/1", "payload": "deadbeef", "direction": "tx"},
@@ -51,7 +58,7 @@ def test_write_pcap_valid_entries(tmp_path: Path):
     assert content[24 + 16 : 24 + 16 + orig_len] == pcap_payload
 
 
-def test_write_pcap_malformed_entries(tmp_path: Path):
+def test_write_pcap_malformed_entries(tmp_path: Path) -> None:
     out_file = tmp_path / "test.pcap"
     history = [
         {"vtime_ns": None, "topic": None, "payload": "not hex!", "direction": None},  # Should handle gracefully
@@ -61,7 +68,7 @@ def test_write_pcap_malformed_entries(tmp_path: Path):
     assert len(content) > 24
 
 
-def test_write_pcap_truncation(tmp_path: Path):
+def test_write_pcap_truncation(tmp_path: Path) -> None:
     out_file = tmp_path / "test.pcap"
     long_hex = "00" * 70000  # 70000 bytes > 65535 snaplen
     history = [{"vtime_ns": 0, "topic": "big", "payload": long_hex, "direction": "tx"}]

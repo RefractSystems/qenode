@@ -8,15 +8,21 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_timeout.
 """
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Any, Never, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tools.testing.utils import get_time_multiplier
 
+if TYPE_CHECKING:
+    pass
 
-def test_get_time_multiplier_scaling():
+
+def test_get_time_multiplier_scaling() -> None:
     # Test local / unscaled
     with patch.dict(os.environ, {}, clear=True):
         assert get_time_multiplier() == 1.0
@@ -35,7 +41,7 @@ def test_get_time_multiplier_scaling():
 
 
 @pytest.mark.asyncio
-async def test_qemu_launcher_injects_stall_timeout(qemu_launcher):
+async def test_qemu_launcher_injects_stall_timeout(qemu_launcher: object) -> None:
     """
     Assert that QEMU's stall-timeout parameter is dynamically multiplied
     via qemu_launcher before QEMU instantiation.
@@ -59,6 +65,7 @@ async def test_qemu_launcher_injects_stall_timeout(qemu_launcher):
 
         mock_proc_obj.returncode = None
         import asyncio
+
         exit_event = asyncio.Event()
         mock_proc_obj.wait = AsyncMock(side_effect=exit_event.wait)
         mock_proc_obj.terminate = exit_event.set
@@ -66,7 +73,7 @@ async def test_qemu_launcher_injects_stall_timeout(qemu_launcher):
         mock_exec.return_value = mock_proc_obj
 
         # We must use ignore_clock_check=True because we're passing virtmcu-clock directly
-        await qemu_launcher(
+        await cast(Any, qemu_launcher)(
             "tests/fixtures/guest_apps/boot_arm/minimal.dtb",
             extra_args=["-device", "virtmcu-clock"],
             ignore_clock_check=True,
@@ -87,7 +94,7 @@ async def test_qemu_launcher_injects_stall_timeout(qemu_launcher):
 
 
 @pytest.mark.asyncio
-async def test_wait_for_line_scales_timeout():
+async def test_wait_for_line_scales_timeout() -> None:
     """
     Verify that tests using `timeout=2.0` automatically wait `10.0` seconds under ASan.
     We test this by mocking loop.time() and verifying the time delta checked within wait_for_line_on_uart.
@@ -113,14 +120,15 @@ async def test_wait_for_line_scales_timeout():
         # Mock wait_for to just immediately raise TimeoutError to simulate 0.1s yielding
         with patch("asyncio.wait_for") as mock_wait:
 
-            async def fake_wait_for(aw, *args, **kwargs):
+            async def fake_wait_for(aw: object, *args: object, **kwargs: object) -> Never:
                 _, _ = args, kwargs
-                aw.close()  # prevent unawaited coroutine warning
+                cast(Any, aw).close()  # prevent unawaited coroutine warning
                 raise TimeoutError()
 
             mock_wait.side_effect = fake_wait_for
 
             # This should timeout and return False after loop.time() exceeds 10.0
+            assert bridge is not None
             result = await bridge.wait_for_line_on_uart("NEVER_APPEARS", timeout=2.0)
 
             assert result is False

@@ -12,23 +12,25 @@ import logging
 import os
 import threading
 import time
+import typing
 
-import vproto
 import zenoh
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def node_thread(node_id, num_messages, session):
+def node_thread(node_id: int, num_messages: int, session: zenoh.Session) -> None:
     pub = session.declare_publisher(f"sim/eth/frame/{node_id}/tx")
     for i in range(num_messages):
         vtime = i * 1000
         payload = b"X" * 64
         pub.put(vproto.ZenohFrameHeader(vtime, 0, len(payload)).pack() + payload)
-        # time.sleep(0.001)
 
 
-def main():
+def main() -> None:
     conf = zenoh.Config()
 
     router = os.environ.get("ZENOH_ROUTER")
@@ -48,7 +50,7 @@ def main():
         p.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
         pubs.append(p)
 
-    time.sleep(2)
+    mock_execution_delay(2)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     threads = []
     start_time = time.time()
@@ -63,8 +65,8 @@ def main():
     end_time = time.time()
     logger.info(f"Sent {num_nodes * msgs_per_node} messages in {end_time - start_time:.2f} seconds")
 
-    time.sleep(2)
-    s.close()
+    mock_execution_delay(2)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    typing.cast(typing.Any, s).close()
     logger.info("Stress test finished.")
 
 

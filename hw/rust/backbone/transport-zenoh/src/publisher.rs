@@ -147,6 +147,11 @@ mod tests {
     use std::time::Instant;
     use zenoh::Config;
 
+    const TEST_RECV_TIMEOUT: Duration = Duration::from_millis(50);
+    const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(1);
+    const TEST_DROP_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
+    const TEST_OVERFLOW_THRESHOLD: Duration = Duration::from_millis(10);
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_sends_payload() -> Result<(), zenoh::Error> {
@@ -170,7 +175,7 @@ mod tests {
 
         // Let background thread process and Zenoh router route.
         let msg = sub
-            .recv_timeout(Duration::from_millis(50))
+            .recv_timeout(TEST_RECV_TIMEOUT)
             .map_err(|e| zenoh::Error::from(e.to_string()))?
             .expect("No message received");
         assert_eq!(msg.payload().to_bytes().as_ref(), b"hello");
@@ -200,7 +205,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Assert total wall-clock < 1ms for 1000 sends (proves non-blocking behavior)
-        assert!(elapsed < Duration::from_millis(1), "send() blocked too long: {elapsed:?}");
+        assert!(elapsed < TEST_LOAD_THRESHOLD, "send() blocked too long: {elapsed:?}");
 
         drop(safe_pub);
         Ok(())
@@ -226,7 +231,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Assert drop completes within 500ms
-        assert!(elapsed < Duration::from_millis(500), "drop() took too long: {elapsed:?}");
+        assert!(elapsed < TEST_DROP_JOIN_TIMEOUT, "drop() took too long: {elapsed:?}");
         Ok(())
     }
 
@@ -253,7 +258,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete almost instantly because it drops packets
-        assert!(elapsed < Duration::from_millis(10), "send() blocked on full queue: {elapsed:?}");
+        assert!(elapsed < TEST_OVERFLOW_THRESHOLD, "send() blocked on full queue: {elapsed:?}");
 
         // The background thread continues processing. Ensure drop also handles it cleanly.
         drop(safe_pub);

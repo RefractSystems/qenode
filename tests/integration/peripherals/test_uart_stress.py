@@ -15,11 +15,15 @@ These tests cover two layers:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-import vproto
+
+from tools import vproto
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import get_time_multiplier
 
 # ---------------------------------------------------------------------------
 # Constants — must match tests/fixtures/guest_apps/uart_echo/uart_stress_test.py and
@@ -57,12 +61,12 @@ def decode_frame(data: bytes) -> tuple[int, int, int, bytes]:
 # ---------------------------------------------------------------------------
 
 
-def test_frame_header_size():
+def test_frame_header_size() -> None:
     """ZenohFrameHeader is exactly 24 bytes (FlatBuffers)."""
     assert FRAME_HEADER_SIZE == 24
 
 
-def test_encode_decode_round_trip():
+def test_encode_decode_round_trip() -> None:
     """Encoding then decoding returns the original values."""
     vtime = 10_000_800
     seq = 42
@@ -78,7 +82,7 @@ def test_encode_decode_round_trip():
     assert decoded_payload == payload
 
 
-def test_encode_vtime_ordering():
+def test_encode_vtime_ordering() -> None:
     """Frames with higher vtime sort later — priority queue delivers in order."""
     earlier = encode_frame(10_000_000, b"X")
     later = encode_frame(10_000_800, b"X")
@@ -89,7 +93,7 @@ def test_encode_vtime_ordering():
     assert vtime_a < vtime_b
 
 
-def test_decode_rejects_short_frame():
+def test_decode_rejects_short_frame() -> None:
     """Frames shorter than expected raise ValueError."""
     import pytest
 
@@ -97,7 +101,7 @@ def test_decode_rejects_short_frame():
         decode_frame(b"\x00" * (FRAME_HEADER_SIZE - 1))
 
 
-def test_decode_empty_payload():
+def test_decode_empty_payload() -> None:
     """A frame with zero-length payload is valid (size=0)."""
     frame = encode_frame(999, b"")
     vtime, seq, size, payload = decode_frame(frame)
@@ -107,7 +111,7 @@ def test_decode_empty_payload():
     assert payload == b""
 
 
-def test_multi_byte_payload():
+def test_multi_byte_payload() -> None:
     """size field matches the actual payload length for multi-byte payloads."""
     payload = b"hello world"
     frame = encode_frame(12345, payload)
@@ -116,7 +120,7 @@ def test_multi_byte_payload():
     assert decoded == payload
 
 
-def test_vtime_max_u64():
+def test_vtime_max_u64() -> None:
     """delivery_vtime_ns handles u64 max without overflow."""
     max_u64 = (1 << 64) - 1
     frame = encode_frame(max_u64, b"X")
@@ -124,14 +128,14 @@ def test_vtime_max_u64():
     assert vtime == max_u64
 
 
-def test_baud_10mbps_interval():
+def test_baud_10mbps_interval() -> None:
     """800 ns interval at 10 Mbps — spot-check the constant used in the test."""
     # 10 Mbps = 10_000_000 bits/s → 1_250_000 bytes/s → 800 ns/byte
     baud_ns = 1_000_000_000 // 1_250_000
     assert baud_ns == 800
 
 
-def test_stress_frame_sequence():
+def test_stress_frame_sequence() -> None:
     """50_000 frames encode/decode correctly with monotonically increasing vtimes."""
     start_vtime = 10_000_000
     interval = 800
@@ -148,7 +152,7 @@ def test_stress_frame_sequence():
         assert payload == b"X"
 
 
-def test_clock_advance_packing():
+def test_clock_advance_packing() -> None:
     """ClockAdvanceReq wire format: three u64 LE (delta_ns, mujoco_time_ns, quantum_number)."""
     delta_ns = 10_000_000
     mujoco = 0
@@ -161,7 +165,7 @@ def test_clock_advance_packing():
     assert req.quantum_number == qn
 
 
-def test_clock_ready_unpacking():
+def test_clock_ready_unpacking() -> None:
     """ClockReadyResp wire format: u64 vtime + u32 n_frames + u32 error_code + u64 qn."""
     vtime = 10_000_000
     n_frames = 0
@@ -181,11 +185,11 @@ def test_clock_ready_unpacking():
 # ---------------------------------------------------------------------------
 
 
-def _get_qemu_bin():
+def _get_qemu_bin() -> str:
     build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
     paths = [
-        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
-        f"/workspace/third_party/qemu/{build_dir}/qemu-system-arm",
+        str(WORKSPACE_DIR / f"third_party/qemu/{build_dir}/install/bin/qemu-system-arm"),
+        str(WORKSPACE_DIR / f"third_party/qemu/{build_dir}/qemu-system-arm"),
         "/opt/virtmcu/bin/qemu-system-arm",
     ]
     for p in paths:
@@ -195,14 +199,15 @@ def _get_qemu_bin():
 
 
 _QEMU_BIN = _get_qemu_bin()
-_STRESS_SCRIPT = Path(__file__).parent / ".." / "tests" / "fixtures" / "guest_apps" / "uart_echo" / "uart_stress_test.sh"
+_STRESS_SCRIPT = WORKSPACE_DIR / "tests/fixtures/guest_apps/uart_echo/uart_stress_test.sh"
 
 
+@pytest.mark.timeout(600 * get_time_multiplier())
 @pytest.mark.skipif(
     not Path(_QEMU_BIN).exists(),
     reason="QEMU binary not found — skipping integration test",
 )
-def test_uart_stress_integration():
+def test_uart_stress_integration() -> None:
     """
     Full end-to-end: start QEMU + Zenoh router, pre-publish 50k bytes at 10 Mbps
     virtual baud, verify all echoes arrive with correct data.
@@ -211,9 +216,8 @@ def test_uart_stress_integration():
     that the same test works both locally and in CI.
     """
     result = subprocess.run(
-        ["bash", Path(_STRESS_SCRIPT).resolve()],
+        [shutil.which("bash") or "bash", Path(_STRESS_SCRIPT).resolve()],
         capture_output=False,
-        timeout=120,
     )
     assert result.returncode == 0, (
         "uart_stress_test.sh exited with non-zero status — check QEMU logs in /tmp/uart_stress_*/qemu.log"

@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+A minimal synchronous QMP client for scriptable inspection.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    pass
+
+
 # ==============================================================================
 # qmp_probe.py
 #
@@ -23,7 +35,6 @@
 #   python3 tools/qmp_probe.py list /machine     # List immediate children/properties of /machine
 #   python3 tools/qmp_probe.py get /memory size  # Fetch the value of a specific property
 # ==============================================================================
-
 import argparse
 import json
 import logging
@@ -34,16 +45,12 @@ logger = logging.getLogger(__name__)
 
 
 class QMPClient:
-    """
-    A minimal synchronous QMP client for scriptable inspection.
-    """
-
-    def __init__(self, socket_path="qmp.sock"):
+    def __init__(self, socket_path: str = "qmp.sock") -> None:
         self.socket_path = socket_path
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.buffer = b""
 
-    def connect(self):
+    def connect(self) -> None:
         """
         Connects to the QMP socket and performs the initial negotiation.
         """
@@ -68,7 +75,7 @@ class QMPClient:
         # We send an empty set of capabilities to enter command mode.
         self.execute("qmp_capabilities")
 
-    def _recv_msg(self):
+    def _recv_msg(self) -> dict[str, object] | None:
         """
         Reads one complete JSON message from the socket.
         """
@@ -78,13 +85,13 @@ class QMPClient:
                 return None
             self.buffer += data
         line, self.buffer = self.buffer.split(b"\n", 1)
-        return json.loads(line.decode("utf-8"))
+        return cast(dict[str, object] | None, json.loads(line.decode("utf-8")))
 
-    def execute(self, cmd, args=None):
+    def execute(self, cmd: str, args: dict[str, object] | None = None) -> dict[str, object]:
         """
         Executes a QMP command and returns the JSON response.
         """
-        req = {"execute": cmd}
+        req: dict[str, object] = {"execute": cmd}
         if args:
             req["arguments"] = args
 
@@ -92,14 +99,13 @@ class QMPClient:
         self.sock.send(json.dumps(req).encode("utf-8") + b"\n")
 
         # Wait for the response (which is also a single JSON object on one line)
-        return self._recv_msg()
+        resp = self._recv_msg()
+        return resp if resp is not None else {}
 
 
-def dump_tree(client, path="/", depth=0, visited=None):
+def dump_tree(client: QMPClient, path: str = "/", depth: int = 0, visited: set[str] | None = None) -> None:
     """
     Recursively traverses the QOM tree and prints it in a human-readable format.
-
-    Similar to the 'info qom-tree' command in the QEMU monitor.
     """
     if visited is None:
         visited = set()
@@ -112,7 +118,7 @@ def dump_tree(client, path="/", depth=0, visited=None):
     if "return" not in resp:
         return
 
-    for item in resp["return"]:
+    for item in resp["return"]:  # type: ignore[attr-defined]
         # Print with indentation to show hierarchy
         logger.info("  " * depth + f"{item['name']} ({item['type']})")
 
@@ -123,7 +129,8 @@ def dump_tree(client, path="/", depth=0, visited=None):
             dump_tree(client, next_path, depth + 1, visited)
 
 
-def main():
+def main() -> None:
+    """Main entry point."""
     parser = argparse.ArgumentParser(
         description="virtmcu QMP Probing Utility",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -163,7 +170,7 @@ def main():
         resp = client.execute("qom-list", {"path": args.path})
         if "return" in resp:
             # Print a simple list of names and types
-            for item in resp["return"]:
+            for item in resp["return"]:  # type: ignore[attr-defined]
                 logger.info(f"{item['name']:<30} ({item['type']})")
         else:
             logger.error(f"Error: {resp.get('error', resp)}")

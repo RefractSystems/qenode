@@ -17,7 +17,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription};
+use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
@@ -37,6 +37,7 @@ pub struct Virtmcu802154QEMU {
     pub transport: *mut c_char,
     pub router: *mut c_char,
     pub topic: *mut c_char,
+    pub debug: bool,
 
     /* Rust state */
     pub rust_state: *mut Virtmcu802154State,
@@ -60,10 +61,11 @@ enum RadioState {
 }
 
 pub struct Virtmcu802154State {
+    parent_ptr: *mut Virtmcu802154QEMU,
     irq: QemuIrq,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     topic_tx: String,
-    subscription: Option<SafeSubscription>,
+    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: SafeSubscription ensures thread safety for Zenoh callbacks
 
     rx_timer: Option<QomTimer>,
     backoff_timer: Option<QomTimer>,
@@ -101,20 +103,22 @@ struct Virtmcu802154Inner {
     tx_sequence: u64,
 }
 
-unsafe extern "C" fn ieee802154_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
+extern "C" fn ieee802154_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
     let s = unsafe { &mut *(opaque as *mut Virtmcu802154QEMU) };
     if s.rust_state.is_null() {
         return 0;
     }
-    unsafe { ieee802154_read_internal(&mut *s.rust_state, offset) }
+    let rust_state = unsafe { &mut *s.rust_state };
+    ieee802154_read_internal(rust_state, offset)
 }
 
-unsafe extern "C" fn ieee802154_write(opaque: *mut c_void, offset: u64, value: u64, _size: c_uint) {
+extern "C" fn ieee802154_write(opaque: *mut c_void, offset: u64, value: u64, _size: c_uint) {
     let s = unsafe { &mut *(opaque as *mut Virtmcu802154QEMU) };
     if s.rust_state.is_null() {
         return;
     }
-    unsafe { ieee802154_write_internal(&mut *s.rust_state, offset, value) };
+    let rust_state = unsafe { &mut *s.rust_state };
+    ieee802154_write_internal(rust_state, offset, value);
 }
 
 static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -139,7 +143,7 @@ static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-unsafe extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = unsafe { &mut *(dev as *mut Virtmcu802154QEMU) };
 
     let node = s.node_id.to_string();
@@ -157,13 +161,13 @@ unsafe extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void
     };
 
     s.rust_state =
-        ieee802154_init_internal(s.irq, s.node_id, &node, transport_name, router_ptr, topic);
+        ieee802154_init_internal(s, s.irq, s.node_id, &node, transport_name, router_ptr, topic);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust Virtmcu 802.15.4");
     }
 }
 
-unsafe extern "C" fn ieee802154_instance_finalize(obj: *mut Object) {
+extern "C" fn ieee802154_instance_finalize(obj: *mut Object) {
     let s = unsafe { &mut *(obj as *mut Virtmcu802154QEMU) };
     if !s.rust_state.is_null() {
         ieee802154_cleanup_internal(s.rust_state);
@@ -171,7 +175,7 @@ unsafe extern "C" fn ieee802154_instance_finalize(obj: *mut Object) {
     }
 }
 
-unsafe extern "C" fn ieee802154_instance_init(obj: *mut Object) {
+extern "C" fn ieee802154_instance_init(obj: *mut Object) {
     let s = unsafe { &mut *(obj as *mut Virtmcu802154QEMU) };
 
     unsafe {
@@ -183,7 +187,11 @@ unsafe extern "C" fn ieee802154_instance_init(obj: *mut Object) {
             c"ieee802154".as_ptr(),
             0x100,
         );
+    }
+    unsafe {
         sysbus_init_mmio(obj as *mut SysBusDevice, &raw mut s.iomem);
+    }
+    unsafe {
         sysbus_init_irq(obj as *mut SysBusDevice, &raw mut s.irq);
     }
 }
@@ -195,10 +203,11 @@ define_properties!(
         define_prop_string!(c"transport".as_ptr(), Virtmcu802154QEMU, transport),
         define_prop_string!(c"router".as_ptr(), Virtmcu802154QEMU, router),
         define_prop_string!(c"topic".as_ptr(), Virtmcu802154QEMU, topic),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), Virtmcu802154QEMU, debug, false),
     ]
 );
 
-unsafe extern "C" fn ieee802154_reset(dev: *mut c_void) {
+extern "C" fn ieee802154_reset(dev: *mut c_void) {
     let s = unsafe { &mut *(dev as *mut Virtmcu802154QEMU) };
     if s.rust_state.is_null() {
         return;
@@ -231,11 +240,15 @@ unsafe extern "C" fn ieee802154_reset(dev: *mut c_void) {
     }
 }
 
-unsafe extern "C" fn ieee802154_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+extern "C" fn ieee802154_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     unsafe {
         (*dc).realize = Some(ieee802154_realize);
+    }
+    unsafe {
         (*dc).legacy_reset = Some(ieee802154_reset);
+    }
+    unsafe {
         (*dc).user_creatable = true;
     }
     virtmcu_qom::device_class_set_props!(dc, VIRTM_802154_PROPERTIES);
@@ -250,7 +263,7 @@ static VIRTM_802154_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(ieee802154_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(ieee802154_class_init),
     class_base_init: None,
     class_data: ptr::null(),
@@ -262,6 +275,7 @@ declare_device_type!(VIRTM_802154_TYPE_INIT, VIRTM_802154_TYPE_INFO);
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 fn ieee802154_init_internal(
+    parent: *mut Virtmcu802154QEMU,
     irq: QemuIrq,
     node_id: u32,
     node: &str,
@@ -313,7 +327,7 @@ fn ieee802154_init_internal(
 
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
     let subscription =
-        virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback)
+        virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) // BQL_EXCEPTION: Safe Zenoh integration
             .ok();
 
     let rx_timer =
@@ -350,6 +364,7 @@ fn ieee802154_init_internal(
     };
 
     let state = Virtmcu802154State {
+        parent_ptr: parent,
         irq,
         transport,
         topic_tx,
@@ -383,7 +398,13 @@ fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
         0x24 => u64::from(inner.short_addr),
         0x28 => inner.ext_addr & 0xFFFFFFFF,
         0x2C => inner.ext_addr >> 32,
-        _ => 0,
+        _ => {
+            let parent = unsafe { &*s.parent_ptr };
+            if parent.debug {
+                virtmcu_qom::sim_warn!("ieee802154_read: unhandled offset 0x{:x}", offset);
+            }
+            0
+        }
     }
 }
 
@@ -434,7 +455,16 @@ fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64
         0x2C => {
             inner.ext_addr = (inner.ext_addr & 0x00000000FFFFFFFF) | ((value & 0xFFFFFFFF) << 32);
         }
-        _ => {}
+        _ => {
+            let parent = unsafe { &*s.parent_ptr };
+            if parent.debug {
+                virtmcu_qom::sim_warn!(
+                    "ieee802154_write: unhandled offset 0x{:x} val=0x{:x}",
+                    offset,
+                    value
+                );
+            }
+        }
     }
 }
 

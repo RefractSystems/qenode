@@ -1,5 +1,11 @@
 # Chapter 1: System Overview
 
+## Learning Objectives
+After this chapter, you can:
+1. Define "Binary Fidelity" and explain its importance in firmware validation.
+2. Identify the three core pillars of the VirtMCU architecture.
+3. Distinguish between the Control Plane and the Data Plane in a multi-node simulation.
+
 ## 1. What VirtMCU Is
 
 VirtMCU is a **deterministic multi-node firmware simulation framework** built on the high-performance QEMU engine. It acts as the cyber-emulation layer of **FirmwareStudio**, a digital twin platform where a physics engine (such as MuJoCo) simulates the physical world and serves as the master clock for all nodes.
@@ -60,3 +66,9 @@ In a distributed simulation, messages must be delivered in the order they were s
 VirtMCU utilizes two distinct communication planes:
 1.  **The Control Plane (Clock Sync)**: A high-frequency, low-latency 1:1 channel for time synchronization.
 2.  **The Data Plane (Emulated Comms)**: A coordinated bus for all inter-node traffic (Ethernet, UART, CAN, RF), ensuring deterministic delivery.
+
+---
+
+## See Also
+*   **[PDES and Virtual Time](../fundamentals/08-pdes-and-virtual-time.md)**: The theoretical foundation of Pillar 3.
+*   **[The FlexRay Case Study](../postmortem/2026-05-01-flexray-rc-11-segfault.md)**: An example of how complex multi-node interactions can fail.

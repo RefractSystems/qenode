@@ -10,21 +10,23 @@ Ensure correct functionality, performance, and deterministic execution of test_h
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
+from tools.testing.env import WORKSPACE_DIR
+
 logger = logging.getLogger(__name__)
 
 
-def test_handshake_fail():
-    sock_path = tempfile.mktemp(suffix=".sock")
+def test_handshake_fail() -> None:
+    sock_path = tempfile.mkstemp(suffix=".sock")[1]
 
     # Adapter sends wrong magic
-    cat_cmd = f"""
-import os, socket, struct, sys
-sys.path.append("/workspace/tools")
-import vproto
+    cat_cmd = """
+import os, socket, struct, sys, pathlib
+import tools.vproto as vproto
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.bind("{sock_path}")
 s.listen(1)
@@ -33,8 +35,11 @@ hs = conn.recv(8)
 # Send wrong magic
 conn.sendall(vproto.VirtmcuHandshake(0xDEADBEEF, 1).pack())
 conn.close()
-"""
-    adapter_proc = subprocess.Popen(["python3", "-c", cat_cmd])
+""".replace("{sock_path}", sock_path)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(WORKSPACE_DIR)
+    adapter_proc = subprocess.Popen([shutil.which("python3") or "python3", "-c", cat_cmd], env=env)
 
     dts = f"""
 /dts-v1/;
@@ -48,21 +53,32 @@ conn.close()
     bridge@50000000 {{ compatible = "mmio-socket-bridge"; reg = <0x0 0x70000000 0x0 0x1000>; socket-path = "{sock_path}"; region-size = <0x1000>; reconnect-ms = <1000>; }};
 }};
 """
-    with Path("/tmp/handshake.dts").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "handshake.dts")).open("w") as f:
         f.write(dts)
-    subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", "/tmp/handshake.dtb", "/tmp/handshake.dts"])
+    subprocess.run(
+        [
+            shutil.which("dtc") or "dtc",
+            "-I",
+            "dts",
+            "-O",
+            "dtb",
+            "-o",
+            str(Path(tempfile.gettempdir()) / "handshake.dtb"),
+            str(Path(tempfile.gettempdir()) / "handshake.dts"),
+        ]
+    )
 
-    with Path("/tmp/dummy.S").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "dummy.S")).open("w") as f:
         f.write(".global _start\n_start: b _start\n")
     subprocess.run(
         [
-            "arm-none-eabi-gcc",
+            shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc",
             "-mcpu=cortex-a15",
             "-nostdlib",
             "-Ttext=0x40000000",
-            "/tmp/dummy.S",
+            str(Path(tempfile.gettempdir()) / "dummy.S"),
             "-o",
-            "/tmp/dummy.elf",
+            str(Path(tempfile.gettempdir()) / "dummy.elf"),
         ]
     )
 
@@ -72,7 +88,7 @@ conn.close()
         "-M",
         "arm-generic-fdt,hw-dtb=/tmp/handshake.dtb",
         "-kernel",
-        "/tmp/dummy.elf",
+        str(Path(tempfile.gettempdir()) / "dummy.elf"),
         "-nographic",
         "-monitor",
         "none",

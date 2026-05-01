@@ -1,0 +1,70 @@
+diff --git a/qom/object.c b/qom/object.c
+index 7e16765..729bb1c 100644
+--- a/qom/object.c
++++ b/qom/object.c
+@@ -209,7 +209,21 @@ static TypeImpl *type_get_or_load_by_name(const char *name, Error **errp)
+         if (rv > 0) {
+             type = type_get_by_name_noload(name);
+         } else {
+-            error_prepend(errp, "could not load a module for type '%s'", name);
++            /*
++             * VIRTMCU-PATCH: error_prepend() crashes (NULL deref in
++             * error_vprepend) when the underlying loader returned 0 without
++             * setting *errp -- the common case being "module file missing
++             * from QEMU_MODULE_DIR". Use error_setg() when no error has been
++             * set yet so the user sees a real diagnostic instead of SIGSEGV.
++             */
++            if (errp && *errp) {
++                error_prepend(errp, "could not load a module for type '%s'",
++                              name);
++            } else {
++                error_setg(errp, "could not load a module for type '%s' "
++                           "(module file missing or failed to dlopen; "
++                           "check QEMU_MODULE_DIR)", name);
++            }
+             return NULL;
+         }
+     }
+diff --git a/util/module.c b/util/module.c
+index 09dc43f..d0ce8e4 100644
+--- a/util/module.c
++++ b/util/module.c
+@@ -162,7 +162,12 @@ static bool module_load_dso(const char *fname, bool export_symbols,
+     ModuleEntry *e, *next;
+     int flags;
+ 
+-    assert(QTAILQ_EMPTY(&dso_init_list));
++    /* assert(QTAILQ_EMPTY(&dso_init_list)); */
++    if (!QTAILQ_EMPTY(&dso_init_list)) {
++        error_setg(errp, "module_load_dso: re-entrant call detected loading %s"
++                   " — skipping to avoid corruption", fname);
++        return false;
++    }
+ 
+     flags = 0;
+     if (!export_symbols) {
+@@ -301,6 +306,24 @@ int module_load(const char *prefix, const char *name, Error **errp)
+         g_free(fname);
+         goto out;
+     }
++    /*
++     * VIRTMCU-PATCH: previously returned 0 with no error set, which causes
++     * downstream callers (e.g. type_get_or_load_by_name -> error_prepend) to
++     * NULL-deref when given &error_fatal. Set a clear error so the failure is
++     * actionable.
++     */
++    if (errp) {
++        GString *searched = g_string_new(NULL);
++        for (i = 0; i < n_dirs; i++) {
++            if (i) {
++                g_string_append(searched, ":");
++            }
++            g_string_append(searched, dirs[i]);
++        }
++        error_setg(errp, "module '%s%s' not found in any of: %s",
++                   prefix, name, searched->str);
++        g_string_free(searched, TRUE);
++    }
+     rv = 0; /* module not found */
+ 
+ out:

@@ -15,14 +15,14 @@ def get_time_multiplier() -> float:
     return 1.0  # Local developer machine
 
 
-async def yield_now():
+async def yield_now() -> None:
     """
     SOTA Enterprise Grade yield: explicitly relinquishes control to the asyncio event loop.
     """
     await asyncio.sleep(0)
 
 
-async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0):
+async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0) -> None:
     """
     Deterministic wait for a file to appear on the filesystem using watchdog (inotify).
     """
@@ -39,7 +39,7 @@ async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0)
     event = asyncio.Event()
 
     class Handler(FileSystemEventHandler):
-        def on_created(self, e):
+        def on_created(self, e: object) -> None:
             if isinstance(e, FileCreatedEvent) and Path(e.src_path).resolve() == path.resolve():
                 loop.call_soon_threadsafe(event.set)
 

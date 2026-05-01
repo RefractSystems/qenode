@@ -8,25 +8,24 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_analyze_coverage.
 """
 
-import sys
+from __future__ import annotations
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Import functions from analyze_coverage
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
 from tools.analyze_coverage import get_elf_symbols, main, parse_drcov
 
 
-def test_parse_drcov_not_found(caplog):
+def test_parse_drcov_not_found(caplog: pytest.LogCaptureFixture) -> None:
     bbs = parse_drcov("nonexistent_file.drcov")
     assert bbs == []
 
     assert "Error: Coverage file nonexistent_file.drcov not found" in caplog.text
 
 
-def test_parse_drcov_no_bb_table(tmp_path, caplog):
+def test_parse_drcov_no_bb_table(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     f = tmp_path / "bad.drcov"
     f.write_bytes(b"some bad data without marker\n")
     bbs = parse_drcov(str(f))
@@ -35,7 +34,7 @@ def test_parse_drcov_no_bb_table(tmp_path, caplog):
     assert "Error: Could not find BB Table in drcov file" in caplog.text
 
 
-def test_parse_drcov_bad_count(tmp_path, caplog):
+def test_parse_drcov_bad_count(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     f = tmp_path / "bad.drcov"
     f.write_bytes(b"BB Table: NaN\n")
     bbs = parse_drcov(str(f))
@@ -44,7 +43,7 @@ def test_parse_drcov_bad_count(tmp_path, caplog):
     assert "Error: Could not parse BB count: NaN" in caplog.text
 
 
-def test_parse_drcov_valid(tmp_path):
+def test_parse_drcov_valid(tmp_path: Path) -> None:
     f = tmp_path / "good.drcov"
     # Create valid drcov data: "BB Table: 2\n" + 2 entries of 8 bytes
 
@@ -60,7 +59,7 @@ def test_parse_drcov_valid(tmp_path):
     assert bbs[1] == (0x1010, 0x1018)
 
 
-def test_get_elf_symbols_not_found(caplog):
+def test_get_elf_symbols_not_found(caplog: pytest.LogCaptureFixture) -> None:
     syms = get_elf_symbols("nonexistent_file.elf")
     assert syms == []
 
@@ -68,7 +67,7 @@ def test_get_elf_symbols_not_found(caplog):
 
 
 @patch("tools.analyze_coverage.ELFFile")
-def test_get_elf_symbols_valid(mock_elf_file_cls, tmp_path):
+def test_get_elf_symbols_valid(mock_elf_file_cls: MagicMock, tmp_path: Path) -> None:
     f = tmp_path / "dummy.elf"
     f.touch()
 
@@ -108,8 +107,11 @@ def test_get_elf_symbols_valid(mock_elf_file_cls, tmp_path):
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
-def test_main_no_bbs(mock_get_elf_symbols, mock_parse_drcov, caplog):  # noqa: ARG001
+def test_main_no_bbs(
+    mock_get_elf_symbols: MagicMock, mock_parse_drcov: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
     mock_parse_drcov.return_value = []
+    _ = mock_get_elf_symbols
     with pytest.raises(SystemExit) as e:
         main()
     assert e.value.code == 1
@@ -120,7 +122,9 @@ def test_main_no_bbs(mock_get_elf_symbols, mock_parse_drcov, caplog):  # noqa: A
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
-def test_main_no_symbols(mock_get_elf_symbols, mock_parse_drcov, caplog):
+def test_main_no_symbols(
+    mock_get_elf_symbols: MagicMock, mock_parse_drcov: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
     mock_parse_drcov.return_value = [(0x1000, 16)]
     mock_get_elf_symbols.return_value = []
     with pytest.raises(SystemExit) as e:
@@ -133,7 +137,9 @@ def test_main_no_symbols(mock_get_elf_symbols, mock_parse_drcov, caplog):
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf", "--fail-under", "100"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
-def test_main_coverage_success_and_failure(mock_get_elf_symbols, mock_parse_drcov, caplog):
+def test_main_coverage_success_and_failure(
+    mock_get_elf_symbols: MagicMock, mock_parse_drcov: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
     mock_parse_drcov.return_value = [(0x1000, 0x1008)]  # Only half of func1 covered
 
     mock_get_elf_symbols.return_value = [{"name": "func1", "address": 0x1000, "size": 16}]
@@ -149,7 +155,9 @@ def test_main_coverage_success_and_failure(mock_get_elf_symbols, mock_parse_drco
 @patch("sys.argv", ["analyze_coverage.py", "dummy.drcov", "dummy.elf"])
 @patch("tools.analyze_coverage.parse_drcov")
 @patch("tools.analyze_coverage.get_elf_symbols")
-def test_main_coverage_pass(mock_get_elf_symbols, mock_parse_drcov, caplog):
+def test_main_coverage_pass(
+    mock_get_elf_symbols: MagicMock, mock_parse_drcov: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
     mock_parse_drcov.return_value = [(0x1000, 0x1010)]
     mock_get_elf_symbols.return_value = [{"name": "func1", "address": 0x1000, "size": 16}]
 

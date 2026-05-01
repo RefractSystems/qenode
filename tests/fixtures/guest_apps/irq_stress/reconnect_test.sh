@@ -138,7 +138,7 @@ def run():
     # Trigger IRQ
     logger.info("Sending IRQ SET...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
-    time.sleep(0.1)
+    mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     logger.info("Sending IRQ CLEAR...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
 

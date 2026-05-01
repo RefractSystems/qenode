@@ -7,7 +7,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def patch_file(filepath, marker_pattern, insertion, after=False):
+def patch_file(filepath: str | Path, marker_pattern: str, insertion: str, after: bool = False) -> bool:
     with Path(filepath).open() as f:
         content = f.read()
     if insertion in content:
@@ -28,7 +28,7 @@ def patch_file(filepath, marker_pattern, insertion, after=False):
     return True
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
@@ -53,6 +53,9 @@ def main():
         },{
             .name = "max-backlog",
             .type = QEMU_OPT_SIZE,
+        },{
+            .name = "baud-rate-ns",
+            .type = QEMU_OPT_NUMBER,
         },{
             """
     # Use a more specific check for the whole block to avoid double patching

@@ -39,3 +39,10 @@ The simulation orchestrator (e.g., Python `VirtualTimeAuthority`) is responsible
 VirtMCU assumes a reliable underlying transport. If a Zenoh router or Unix socket disconnects during a simulation:
 - **Immediate Failure**: The node will typically panic or report a catastrophic `TRANSPORT_ERROR`.
 - **No Silent Drops**: We prioritize stopping the simulation over continuing with potentially corrupt or missing data, ensuring that every result is either perfectly deterministic or explicitly failed.
+
+---
+
+## See Also
+*   **[Communication Protocols](./04-communication-protocols.md)**: The logical layer built upon this transport foundation.
+*   **[PDES and Virtual Time](../fundamentals/08-pdes-and-virtual-time.md)**: How transport latency affects simulation performance.
+stic or explicitly failed.

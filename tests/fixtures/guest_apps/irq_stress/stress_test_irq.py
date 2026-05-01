@@ -1,3 +1,16 @@
+import json
+import logging
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+from tools import vproto
+
 """
 SOTA Test Module: stress_test_irq
 
@@ -8,31 +21,6 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of stress_test_irq.
 """
 
-import json
-import logging
-import os
-import socket
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-import vproto  # noqa: E402
-
 logger = logging.getLogger(__name__)
 
 VIRTMCU_PROTO_MAGIC = 0x564D4355
@@ -42,7 +30,7 @@ SYSC_MSG_IRQ_SET = 1
 SYSC_MSG_IRQ_CLEAR = 2
 
 
-def run_qmp_cmd(sock_path, cmd):
+def run_qmp_cmd(sock_path: str, cmd: str) -> str:
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(5.0)
     s.connect(sock_path)
@@ -57,14 +45,14 @@ def run_qmp_cmd(sock_path, cmd):
             break
         resp += chunk
     s.close()
-    return json.loads(resp.decode())
+    return json.loads(resp.decode())  # type: ignore[no-any-return]
 
 
-def main():
-    sock_path = "/tmp/stress_irq.sock"
-    qmp_path = "/tmp/stress_irq_qmp.sock"
-    dtb_path = "/tmp/stress_irq.dtb"
-    elf_path = "/tmp/stress_irq.elf"
+def main() -> None:
+    sock_path = str(Path(tempfile.gettempdir()) / "stress_irq.sock")
+    qmp_path = str(Path(tempfile.gettempdir()) / "stress_irq_qmp.sock")
+    dtb_path = str(Path(tempfile.gettempdir()) / "stress_irq.dtb")
+    elf_path = str(Path(tempfile.gettempdir()) / "stress_irq.elf")
 
     if Path(sock_path).exists():
         Path(sock_path).unlink()
@@ -95,15 +83,34 @@ def main():
     }};
 }};
 """
-    with Path("/tmp/stress_irq.dts").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "stress_irq.dts")).open("w") as f:
         f.write(dts)
-    subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", dtb_path, "/tmp/stress_irq.dts"])
+    subprocess.run(
+        [
+            shutil.which("dtc") or "dtc",
+            "-I",
+            "dts",
+            "-O",
+            "dtb",
+            "-o",
+            dtb_path,
+            str(Path(tempfile.gettempdir()) / "stress_irq.dts"),
+        ]
+    )
 
     # Firmware that just spins
-    with Path("/tmp/stress_irq.S").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "stress_irq.S")).open("w") as f:
         f.write(".global _start\n_start:\nb _start\n")
     subprocess.run(
-        ["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-Ttext=0x40000000", "/tmp/stress_irq.S", "-o", elf_path]
+        [
+            shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc",
+            "-mcpu=cortex-a15",
+            "-nostdlib",
+            "-Ttext=0x40000000",
+            str(Path(tempfile.gettempdir()) / "stress_irq.S"),
+            "-o",
+            elf_path,
+        ]
     )
 
     build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
@@ -152,18 +159,17 @@ def main():
         if i % 100 == 0:
             logger.info(f"Sent {i} IRQs...")
             # Periodically check QMP responsiveness
-            resp = run_qmp_cmd(qmp_path, {"execute": "query-status"})
+            resp = run_qmp_cmd(qmp_path, {"execute": "query-status"})  # type: ignore[arg-type]
             if "return" not in resp:
                 logger.info(f"QMP unresponsive at {i} IRQs")
                 break
-        # time.sleep(0.0001) # Very small sleep to allow QEMU to breathe if needed
 
     end_time = time.time()
     logger.info(f"Finished {NUM_IRQS} IRQ pairs in {end_time - start_time:.2f}s")
 
     # Verify final state
-    resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})
-    logger.info(f"Final PIC state:\n{resp.get('return', '')}")
+    resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})  # type: ignore[arg-type]
+    logger.info(f"Final PIC state:\n{resp.get('return', '')}")  # type: ignore[attr-defined]
 
     qemu_proc.terminate()
     conn.close()

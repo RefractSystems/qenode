@@ -8,18 +8,24 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_main.
 """
 
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "../../"))
+if TYPE_CHECKING:
+    from _pytest.logging import LogCaptureFixture
+
+
 from tools.repl2qemu.__main__ import main
 
 
-def test_main_cli(tmp_path):
+def test_main_cli(tmp_path: Path) -> None:
     repl_file = tmp_path / "test.repl"
     dtb_file = tmp_path / "test.dtb"
     repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n    size: 0x1000\n")
@@ -31,7 +37,7 @@ def test_main_cli(tmp_path):
     assert not Path(str(dtb_file) + ".dts").exists()  # cleaned up
 
 
-def test_main_file_not_found(caplog):
+def test_main_file_not_found(caplog: LogCaptureFixture) -> None:
     test_args = ["repl2qemu", "does_not_exist.repl", "--out-dtb", "out.dtb"]
     with patch.object(sys, "argv", test_args):
         with pytest.raises(SystemExit) as e:
@@ -40,7 +46,7 @@ def test_main_file_not_found(caplog):
     assert "Error: File 'does_not_exist.repl' not found" in caplog.text
 
 
-def test_main_compile_fails(tmp_path, caplog):
+def test_main_compile_fails(tmp_path: Path, caplog: LogCaptureFixture) -> None:
     repl_file = tmp_path / "test.repl"
     dtb_file = tmp_path / "test.dtb"
     repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n    size: 0x1000\n")
@@ -53,7 +59,7 @@ def test_main_compile_fails(tmp_path, caplog):
     assert "FAILED." in caplog.text
 
 
-def test_main_out_arch(tmp_path):
+def test_main_out_arch(tmp_path: Path) -> None:
     repl_file = tmp_path / "test.repl"
     dtb_file = tmp_path / "test.dtb"
     arch_file = tmp_path / "test.arch"
@@ -66,12 +72,14 @@ def test_main_out_arch(tmp_path):
     assert arch_file.read_text() == "arm"  # default arch
 
 
-def test_main_module():
+def test_main_module() -> None:
+    from tools.testing.env import WORKSPACE_DIR
+
     result = subprocess.run(
         [sys.executable, "-m", "tools.repl2qemu", "--help"],
         capture_output=True,
         text=True,
-        cwd=Path(Path(Path(__file__).resolve().parent) / "../../"),
+        cwd=WORKSPACE_DIR,
     )
     assert result.returncode == 0
     assert "Convert Renode .repl to QEMU Device Tree" in result.stdout

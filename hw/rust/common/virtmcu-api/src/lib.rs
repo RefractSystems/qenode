@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -21,7 +21,7 @@ use alloc::vec::Vec;
     clippy::extra_unused_lifetimes
 )]
 pub mod can_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -30,7 +30,7 @@ pub mod can_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod core_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -39,7 +39,7 @@ pub mod core_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod flexray_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -48,7 +48,7 @@ pub mod flexray_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod lin_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -57,7 +57,7 @@ pub mod lin_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -66,7 +66,7 @@ pub mod rf_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod telemetry_generated;
-#[allow(
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
     clippy::unwrap_used,
@@ -286,7 +286,7 @@ const _: () = assert!(
 );
 
 // Minimal manual generation of FlatBuffer bindings for TraceEvent
-#[allow(dead_code, non_snake_case, clippy::undocumented_unsafe_blocks)]
+#[allow(dead_code, non_snake_case, clippy::undocumented_unsafe_blocks)] // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
 /// A module
 pub mod telemetry_fb {
     use flatbuffers::{FlatBufferBuilder, WIPOffset};

@@ -57,7 +57,7 @@ new_logic = """static bool sysbus_parse_reg(FDTGenericMMap *obj, FDTGenericRegPr
         }
 
         mr = sysbus_mmio_get_region(sbd, i);
-        if (mr) {
+        if (mr && !mr->container) {
             memory_region_add_subregion_overlap(mr_parent, reg.a[i],
                                      mr,
                                      reg.p[i]);

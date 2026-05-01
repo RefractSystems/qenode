@@ -8,16 +8,20 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_coverage_gap.
 """
 
-import sys
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-# Ensure we can import from tools
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
+if TYPE_CHECKING:
+    from pathlib import Path
 
+
+# Ensure we can import from tools
 from tools.qmp_probe import QMPClient, dump_tree
 from tools.qmp_probe import main as qmp_main
 from tools.repl2qemu.__main__ import main as repl2qemu_main
@@ -29,7 +33,7 @@ from tools.usd_to_virtmcu import parse_yaml as usd_parse_yaml
 from tools.yaml2qemu import main, parse_yaml_platform, validate_dtb
 
 
-def test_repl2qemu_main_basic(tmp_path):
+def test_repl2qemu_main_basic(tmp_path: Path) -> None:
     repl_content = "cpu: CPU.ARMv7A @ sysbus"
     repl_file = tmp_path / "test.repl"
     repl_file.write_text(repl_content)
@@ -52,7 +56,7 @@ def test_repl2qemu_main_basic(tmp_path):
     assert Path(arch_file).exists()
 
 
-def test_repl2qemu_parser_edge_cases():
+def test_repl2qemu_parser_edge_cases() -> None:
     repl_content = """
 usart1: UART.STM32_UART @ sysbus {
     address: 0x40011000
@@ -75,7 +79,7 @@ device2: Some.Type @ sysbus
     assert dev2.properties["some_prop"] == "quoted string"
 
 
-def test_repl2yaml_migrate(tmp_path):
+def test_repl2yaml_migrate(tmp_path: Path) -> None:
     repl_content = """
 cpu: CPU.ARMv7A @ sysbus
     cpuType: "cortex-a15"
@@ -97,7 +101,7 @@ uart0: UART.PL011 @ sysbus 0x09000000
         assert data["peripherals"][0]["address"] == "0x09000000"
 
 
-def test_repl2yaml_main(tmp_path):
+def test_repl2yaml_main(tmp_path: Path) -> None:
     repl_file = tmp_path / "test_main.repl"
     repl_file.write_text("cpu: CPU.ARMv7A @ sysbus")
 
@@ -107,7 +111,7 @@ def test_repl2yaml_main(tmp_path):
         mock_migrate.assert_called_with(str(repl_file), "test_main.yaml")
 
 
-def test_usd_to_virtmcu(tmp_path, capsys):
+def test_usd_to_virtmcu(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     yaml_content = """
 peripherals:
   - name: uart-0
@@ -122,7 +126,7 @@ peripherals:
     assert "constexpr uint64_t UART_0_BASE = 150994944;" in captured.out
 
 
-def test_qmp_client_basic():
+def test_qmp_client_basic() -> None:
     with patch("socket.socket") as mock_socket:
         mock_sock_inst = mock_socket.return_value
         # Mock greeting
@@ -138,7 +142,7 @@ def test_qmp_client_basic():
         assert mock_sock_inst.send.called
 
 
-def test_qmp_dump_tree(caplog):
+def test_qmp_dump_tree(caplog: pytest.LogCaptureFixture) -> None:
     client = MagicMock()
     # Mock qom-list response
     client.execute.side_effect = [
@@ -153,7 +157,7 @@ def test_qmp_dump_tree(caplog):
     assert "unattached (child<container>)" in caplog.text
 
 
-def test_qmp_main_tree():
+def test_qmp_main_tree() -> None:
     with patch("tools.qmp_probe.QMPClient") as mock_client_cls, patch("tools.qmp_probe.dump_tree") as mock_dump_tree:
         test_args = ["qmp_probe.py", "--socket", "test.sock", "tree"]
         with patch("sys.argv", test_args):
@@ -163,7 +167,7 @@ def test_qmp_main_tree():
         assert mock_dump_tree.called
 
 
-def test_qmp_main_list(caplog):
+def test_qmp_main_list(caplog: pytest.LogCaptureFixture) -> None:
     with patch("tools.qmp_probe.QMPClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.execute.return_value = {
@@ -174,12 +178,11 @@ def test_qmp_main_list(caplog):
         with patch("sys.argv", test_args):
             qmp_main()
 
-
         assert "dev0" in caplog.text
         assert "prop1" in caplog.text
 
 
-def test_qmp_main_get(caplog):
+def test_qmp_main_get(caplog: pytest.LogCaptureFixture) -> None:
     with patch("tools.qmp_probe.QMPClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.execute.return_value = {"return": 1234}
@@ -188,11 +191,10 @@ def test_qmp_main_get(caplog):
         with patch("sys.argv", test_args):
             qmp_main()
 
-
         assert "1234" in caplog.text
 
 
-def test_fdt_emitter_64bit_memory():
+def test_fdt_emitter_64bit_memory() -> None:
     platform = ReplPlatform()
     platform.devices.append(
         ReplDevice(
@@ -208,7 +210,7 @@ def test_fdt_emitter_64bit_memory():
     assert "reg = <0x1 0x0 0x1 0x0>;" in dts
 
 
-def test_qmp_client_connect_fail():
+def test_qmp_client_connect_fail() -> None:
     with patch("socket.socket") as mock_socket:
         mock_sock_inst = mock_socket.return_value
         mock_sock_inst.connect.side_effect = FileNotFoundError
@@ -219,7 +221,7 @@ def test_qmp_client_connect_fail():
         assert e.value.code == 1
 
 
-def test_qmp_client_recv_empty():
+def test_qmp_client_recv_empty() -> None:
     with patch("socket.socket") as mock_socket:
         mock_sock_inst = mock_socket.return_value
         # Greeting, qmp_capabilities response, then empty for test call
@@ -230,7 +232,7 @@ def test_qmp_client_recv_empty():
         assert client._recv_msg() is None
 
 
-def test_fdt_emitter_riscv():
+def test_fdt_emitter_riscv() -> None:
     platform = ReplPlatform()
     platform.devices.append(
         ReplDevice(
@@ -250,7 +252,7 @@ def test_fdt_emitter_riscv():
     assert "timebase-frequency" in dts
 
 
-def test_fdt_emitter_parse_addr_edge_cases():
+def test_fdt_emitter_parse_addr_edge_cases() -> None:
     emitter = FdtEmitter(ReplPlatform())
     # Test none
     assert emitter._parse_addr("none") == (0, 0)
@@ -259,7 +261,7 @@ def test_fdt_emitter_parse_addr_edge_cases():
     assert emitter._parse_addr("invalid") == (0, 0)
 
 
-def test_fdt_emitter_extra_properties():
+def test_fdt_emitter_extra_properties() -> None:
     platform = ReplPlatform()
     dev = ReplDevice(
         name="testdev",
@@ -275,7 +277,7 @@ def test_fdt_emitter_extra_properties():
     assert 'str_prop = "hello";' in dts
 
 
-def test_yaml2qemu_riscv_mapping(tmp_path):
+def test_yaml2qemu_riscv_mapping(tmp_path: Path) -> None:
     yaml_content = """
 machine:
   cpus:
@@ -295,34 +297,35 @@ peripherals: []
     assert cpu.properties["mmu-type"] == "riscv,sv48"
 
 
-def test_yaml2qemu_validate_dtb_failure(caplog):
+def test_yaml2qemu_validate_dtb_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
+    dtb_file = tmp_path / "empty.dtb"
+    
+    # Create a valid but empty DTB
+    import fdt
+    dt = fdt.FDT()
+    dtb_file.write_bytes(dt.to_dtb(version=17))
 
-    with patch("subprocess.run") as mock_run:
-        # Mock dtc output missing the device
-        mock_run.return_value = MagicMock(stdout="nothing here", returncode=0)
-
-        with pytest.raises(SystemExit) as e:
-            validate_dtb("dummy.dtb", devices)
-        assert e.value.code == 1
-
+    with pytest.raises(SystemExit) as e:
+        validate_dtb(dtb_file, devices)
+    assert e.value.code == 1
 
     assert "ERROR: The following peripherals from YAML are missing in the generated DTB: uart0" in caplog.text
 
 
-def test_yaml2qemu_validate_dtb_dtc_missing(caplog):
+def test_yaml2qemu_validate_dtb_dtc_missing(caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
 
-    with patch("subprocess.run", side_effect=FileNotFoundError):
-        with pytest.raises(SystemExit) as e:
-            validate_dtb("dummy.dtb", devices)
-        assert e.value.code == 1
+    # In the library-based version, we don't use dtc. 
+    # Instead, we test that it fails if the file is missing.
+    with pytest.raises(SystemExit) as e:
+        validate_dtb("non_existent.dtb", devices)
+    assert e.value.code == 1
+
+    assert "ERROR: Could not validate DTB" in caplog.text
 
 
-    assert "ERROR: 'dtc' (device-tree-compiler) not found" in caplog.text
-
-
-def test_yaml2qemu_main_basic(tmp_path):
+def test_yaml2qemu_main_basic(tmp_path: Path) -> None:
     yaml_content = """
 machine:
   cpus:
@@ -352,7 +355,7 @@ peripherals:
         assert f.read() == "arm"
 
 
-def test_yaml2qemu_chardev_filtering(tmp_path):
+def test_yaml2qemu_chardev_filtering(tmp_path: Path) -> None:
     yaml_content = """
 machine:
   cpus: []

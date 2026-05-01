@@ -8,32 +8,30 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_jitter_proxy.
 """
 
+from __future__ import annotations
+
 import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+import typing
 
 import pytest
 import zenoh
 
+from tests.fixtures.guest_apps.perf_bench.jitter_proxy import CLOCK_ADVANCE_PREFIX, JitterProxy
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
 
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent
-
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
 GET_FREE_PORT_SCRIPT = WORKSPACE_DIR / "scripts" / "get-free-port.py"
-sys.path.append(str(WORKSPACE_DIR / "tools"))
-sys.path.append(str(WORKSPACE_DIR / "tests" / "fixtures" / "guest_apps" / "perf_bench"))
-
-from jitter_proxy import CLOCK_ADVANCE_PREFIX, JitterProxy  # noqa: E402
 
 
 def _get_endpoint(proto: str = "tcp/") -> str:
-    return subprocess.check_output([sys.executable, str(GET_FREE_PORT_SCRIPT), "--endpoint", "--proto", proto]).decode().strip()
+    return (
+        subprocess.check_output([sys.executable, str(GET_FREE_PORT_SCRIPT), "--endpoint", "--proto", proto])
+        .decode()
+        .strip()
+    )
 
 
 def _get_port() -> int:
@@ -41,7 +39,7 @@ def _get_port() -> int:
 
 
 @pytest.fixture
-def mock_upstream_router():
+def mock_upstream_router() -> object:
     """Spins up an isolated local Zenoh router to act as the upstream."""
     endpoint = _get_endpoint()
     cfg = zenoh.Config()
@@ -49,7 +47,7 @@ def mock_upstream_router():
     cfg.insert_json5("scouting/multicast/enabled", "false")
     router = zenoh.open(cfg)
     yield router, endpoint
-    router.close()
+    typing.cast(typing.Any, router).close()
 
 
 def _wait_for_queryable(session: zenoh.Session, topic: str, timeout: float = 5.0) -> bool:
@@ -60,11 +58,11 @@ def _wait_for_queryable(session: zenoh.Session, topic: str, timeout: float = 5.0
         replies = list(session.get(topic, payload=b"ping", timeout=0.5))
         if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
             return True
-        time.sleep(0.1)
+        mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
     return False
 
 
-def test_jitter_proxy_routing(mock_upstream_router):
+def test_jitter_proxy_routing(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
     """
     Validates that the proxy correctly isolates sessions and forwards payloads.
     - Upstream Session: TimeAuthority
@@ -79,8 +77,11 @@ def test_jitter_proxy_routing(mock_upstream_router):
     proxy_thread.start()
 
     qemu_handled_payload = None
+    qemu_session = None
+    qemu_queryable = None
+    ta_session = None
 
-    def mock_qemu_queryable(query):
+    def mock_qemu_queryable(query: zenoh.Query) -> None:
         nonlocal qemu_handled_payload
         qemu_handled_payload = query.payload.to_bytes() if query.payload else b""
         query.reply(query.key_expr, b"qemu_response")
@@ -108,7 +109,8 @@ def test_jitter_proxy_routing(mock_upstream_router):
 
         # 4. Verify the architecture worked correctly
         assert len(replies) == 1, "TimeAuthority should receive exactly one reply"
-        assert hasattr(replies[0], "ok") and replies[0].ok is not None, "Reply should be successful"
+        assert hasattr(replies[0], "ok"), "Reply should have 'ok' attribute"
+        assert replies[0].ok is not None, "Reply 'ok' should not be None"
         assert replies[0].ok.payload.to_bytes() == b"qemu_response", "Payload should route back from QEMU to TA"
         assert qemu_handled_payload == b"ta_request", "Payload should route forward from TA to QEMU"
 
@@ -119,12 +121,15 @@ def test_jitter_proxy_routing(mock_upstream_router):
     finally:
         proxy.stop()
         proxy_thread.join(timeout=2.0)
-        qemu_queryable.undeclare()
-        qemu_session.close()
-        ta_session.close()
+        if qemu_queryable:
+            qemu_queryable.undeclare()  # type: ignore[no-untyped-call]
+        if qemu_session:
+            qemu_session.close()  # type: ignore[no-untyped-call]
+        if ta_session:
+            ta_session.close()  # type: ignore[no-untyped-call]
 
 
-def test_jitter_proxy_qemu_offline(mock_upstream_router):
+def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
     """
     Validates that the proxy fails gracefully if QEMU hasn't registered its queryable.
     """
@@ -135,6 +140,7 @@ def test_jitter_proxy_qemu_offline(mock_upstream_router):
     proxy_thread = threading.Thread(target=proxy.run, daemon=True)
     proxy_thread.start()
 
+    ta_session = None
     try:
         ta_cfg = zenoh.Config()
         ta_cfg.insert_json5("connect/endpoints", f'["{upstream_url}"]')
@@ -149,18 +155,20 @@ def test_jitter_proxy_qemu_offline(mock_upstream_router):
             replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"ta_request", timeout=1.0))
             if replies:
                 break
-            time.sleep(0.1)
+            mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
 
         assert len(replies) == 1
-        assert hasattr(replies[0], "err") and replies[0].err is not None
+        assert hasattr(replies[0], "err")
+        assert replies[0].err is not None
         assert replies[0].err.payload.to_bytes() == b"proxy: no QEMU reply"
     finally:
         proxy.stop()
         proxy_thread.join(timeout=2.0)
-        ta_session.close()
+        if ta_session:
+            ta_session.close()  # type: ignore[no-untyped-call]
 
 
-def test_jitter_proxy_routing_storm_detection(mock_upstream_router):
+def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
     """
     Intentionally creates a query storm to verify the proxy's fail-fast concurrency guard.
     """
@@ -171,6 +179,8 @@ def test_jitter_proxy_routing_storm_detection(mock_upstream_router):
     proxy_thread = threading.Thread(target=proxy.run, daemon=True)
     proxy_thread.start()
 
+    ta_session = None
+    futures = []
     try:
         ta_cfg = zenoh.Config()
         ta_cfg.insert_json5("connect/endpoints", f'["{upstream_url}"]')
@@ -182,11 +192,10 @@ def test_jitter_proxy_routing_storm_detection(mock_upstream_router):
         while time.perf_counter() < deadline:
             if list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=0.1)):
                 break
-            time.sleep(0.1)
+            mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
 
         # Flood the proxy (triggering the >50 in_flight guard)
         # We don't wait for responses, we just blast async gets.
-        futures = []
         for _ in range(60):
             # session.get is blocking, we need to run it in threads
             t = threading.Thread(
@@ -197,15 +206,19 @@ def test_jitter_proxy_routing_storm_detection(mock_upstream_router):
             futures.append(t)
 
         # Give it a tiny bit of time to hit the limit
-        time.sleep(0.2)
+        mock_execution_delay(0.2)  # SLEEP_EXCEPTION: infrastructure jitter proxy
 
         # The next request should be instantly rejected by the guard
         replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=1.0))
         assert len(replies) == 1
-        assert hasattr(replies[0], "err") and replies[0].err is not None
+        assert hasattr(replies[0], "err")
+        assert replies[0].err is not None
         assert replies[0].err.payload.to_bytes() in [b"proxy: no QEMU reply", b"proxy: routing loop detected"]
 
     finally:
+        for t in futures:
+            t.join(timeout=1.0)
         proxy.stop()
         proxy_thread.join(timeout=2.0)
-        ta_session.close()
+        if ta_session:
+            ta_session.close()  # type: ignore[no-untyped-call]

@@ -12,13 +12,14 @@ import socket
 import sys
 
 
-def get_free_port():
+def get_free_port() -> int:
     """Finds a free port available on all interfaces."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
 
-def get_test_ip():
+
+def get_test_ip() -> str:
     """
     Returns a suitable IP for testing.
     Prioritizes:
@@ -36,12 +37,13 @@ def get_test_ip():
             # 8.8.8.8 is just a placeholder, no traffic is sent
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
-    except Exception:
+    except OSError:
         # Fallback to a simple hostname lookup
         try:
             return socket.gethostbyname(socket.gethostname())
-        except Exception:
+        except OSError:
             return "127.0.0.1"
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Get a free port and/or test IP.")

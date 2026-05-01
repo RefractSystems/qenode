@@ -79,13 +79,18 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
     return platform, {}
 
 
-def validate_dtb(dtb_path, devices):
+def validate_dtb(dtb_path: str, devices: list[ReplDevice]) -> None:
     """
     Task 2: Validate DTB contains all expected peripherals.
     Decompiles the DTB back to DTS and ensures each peripheral is present.
     """
     try:
-        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
+        import shutil
+
+        dtc_path = shutil.which("dtc")
+        if not dtc_path:
+            raise RuntimeError("dtc executable not found in PATH")
+        res = subprocess.run([dtc_path, "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
         dts = res.stdout
 
         missing = []
@@ -130,11 +135,11 @@ def validate_dtb(dtb_path, devices):
             file=sys.stderr,
         )
         sys.exit(1)
-    except Exception as e:
+    except (ValueError, TypeError, OSError) as e:
         logger.error(f"⚠️ Warning: Could not validate DTB: {e}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert virtmcu YAML to Device Tree")
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)

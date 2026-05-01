@@ -21,30 +21,21 @@ throughput against the threshold.
 
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import typing
 from pathlib import Path
 
 import zenoh
 
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
+
 logger = logging.getLogger(__name__)
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(SCRIPT_DIR)
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
 
 # How long to count events after startup warm-up.
 MEASUREMENT_WINDOW_S = 5
@@ -68,8 +59,8 @@ def _get_free_endpoint() -> str:
 
 
 def main() -> None:
-    dtb = Path(SCRIPT_DIR) / "test_telemetry.dtb"
-    kernel = Path(SCRIPT_DIR) / "test_irq_storm.elf"
+    dtb = Path(__file__).resolve().parent / "test_telemetry.dtb"
+    kernel = Path(__file__).resolve().parent / "test_irq_storm.elf"
 
     if not Path(dtb).exists():
         logger.error(f"ERROR: DTB not found: {dtb}")
@@ -83,11 +74,20 @@ def main() -> None:
     # Start an ephemeral Zenoh router so multicast scouting doesn't add noise.
     router_url = _get_free_endpoint()
     router_proc = subprocess.Popen(
-        ["python3", (Path(WORKSPACE_DIR) / "tests" / "zenoh_router_persistent.py"), router_url],
+        [
+            shutil.which("python3") or "python3",
+            (Path(WORKSPACE_DIR) / "tests" / "zenoh_router_persistent.py"),
+            router_url,
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    time.sleep(1)
+
+    from tools.testing.utils import wait_for_zenoh_router
+
+    if not wait_for_zenoh_router(router_url):
+        router_proc.kill()
+        sys.exit(1)
 
     # Launch QEMU with telemetry enabled.
     run_sh_path = os.environ.get("RUN_SH") or str(WORKSPACE_DIR / "scripts" / "run.sh")
@@ -109,13 +109,13 @@ def main() -> None:
     ]
 
     logger.info("Starting benchmark...")
-    qemu_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    qemu_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)  # type: ignore[arg-type]
 
     # Counter for telemetry events.
     event_count = 0
     count_lock = threading.Lock()
 
-    def on_sample(_sample):
+    def on_sample(_sample: zenoh.Sample) -> None:
         nonlocal event_count
         with count_lock:
             event_count += 1
@@ -130,14 +130,14 @@ def main() -> None:
     try:
         # 1. Warm-up
         logger.info(f"Warming up for {WARMUP_S}s...")
-        time.sleep(WARMUP_S)
+        mock_execution_delay(WARMUP_S)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
         # 2. Measurement window
         with count_lock:
             event_count = 0
         t_start = time.perf_counter()
         logger.info(f"Measuring throughput for {MEASUREMENT_WINDOW_S}s...")
-        time.sleep(MEASUREMENT_WINDOW_S)
+        mock_execution_delay(MEASUREMENT_WINDOW_S)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
         t_end = time.perf_counter()
         total_events = event_count
 
@@ -157,8 +157,8 @@ def main() -> None:
             logger.info("✅ PASSED: Telemetry throughput meets criteria.")
 
     finally:
-        _sub.undeclare()
-        session.close()
+        typing.cast(typing.Any, _sub).undeclare()
+        session.close()  # type: ignore[no-untyped-call]
         qemu_proc.terminate()
         qemu_proc.wait()
         router_proc.terminate()

@@ -62,3 +62,10 @@ All data sent over the simulation bus must be deterministic and cross-platform.
 - **Explicit Endianness**: Always use `.to_le_bytes()`.
 - **FlatBuffers**: Use the core schema (`core.fbs`) for all inter-process messages.
 - **Zero-Copy**: Telemetry and high-volume data use zero-copy FlatBuffers construction to minimize host overhead.
+
+---
+
+## See Also
+*   **[BQL and Concurrency](../fundamentals/10-bql-and-concurrency.md)**: The locking rules every peripheral developer must follow.
+*   **[MMIO and Registers](../fundamentals/02-mmio-and-registers.md)**: The guest-facing side of these peripheral models.
+*   **[The FlexRay Case Study](../postmortem/2026-05-01-flexray-rc-11-segfault.md)**: A postmortem on complex peripheral state synchronization.

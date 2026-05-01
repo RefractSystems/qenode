@@ -2,17 +2,17 @@
 
 # namespace: flexray
 
+
 import flatbuffers
 from flatbuffers.compat import import_numpy
 
 np = import_numpy()
 
-
 class FlexRayFrame:
-    __slots__ = ["_tab"]
+    __slots__ = ['_tab']
 
     @classmethod
-    def GetRootAs(cls, buf, offset=0):
+    def GetRootAs(cls, buf, offset: int = 0):
         n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
         x = FlexRayFrame()
         x.Init(buf, n + offset)
@@ -22,9 +22,8 @@ class FlexRayFrame:
     def GetRootAsFlexRayFrame(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
-
     # FlexRayFrame
-    def Init(self, buf, pos):
+    def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # FlexRayFrame
@@ -63,13 +62,11 @@ class FlexRayFrame:
         return 0
 
     # FlexRayFrame
-    def Data(self, j):
+    def Data(self, j: int):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         if o != 0:
             a = self._tab.Vector(o)
-            return self._tab.Get(
-                flatbuffers.number_types.Uint8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1)
-            )
+            return self._tab.Get(flatbuffers.number_types.Uint8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1))
         return 0
 
     # FlexRayFrame
@@ -80,85 +77,67 @@ class FlexRayFrame:
         return 0
 
     # FlexRayFrame
-    def DataLength(self):
+    def DataLength(self) -> int:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FlexRayFrame
-    def DataIsNone(self):
+    def DataIsNone(self) -> bool:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         return o == 0
 
-
-def FlexRayFrameStart(builder):
+def FlexRayFrameStart(builder: flatbuffers.Builder):
     builder.StartObject(6)
 
-
-def Start(builder):
+def Start(builder: flatbuffers.Builder):
     FlexRayFrameStart(builder)
 
-
-def FlexRayFrameAddDeliveryVtimeNs(builder, deliveryVtimeNs):
+def FlexRayFrameAddDeliveryVtimeNs(builder: flatbuffers.Builder, deliveryVtimeNs: int):
     builder.PrependUint64Slot(0, deliveryVtimeNs, 0)
 
-
-def AddDeliveryVtimeNs(builder, deliveryVtimeNs):
+def AddDeliveryVtimeNs(builder: flatbuffers.Builder, deliveryVtimeNs: int):
     FlexRayFrameAddDeliveryVtimeNs(builder, deliveryVtimeNs)
 
-
-def FlexRayFrameAddFrameId(builder, frameId):
+def FlexRayFrameAddFrameId(builder: flatbuffers.Builder, frameId: int):
     builder.PrependUint16Slot(1, frameId, 0)
 
-
-def AddFrameId(builder, frameId):
+def AddFrameId(builder: flatbuffers.Builder, frameId: int):
     FlexRayFrameAddFrameId(builder, frameId)
 
-
-def FlexRayFrameAddCycleCount(builder, cycleCount):
+def FlexRayFrameAddCycleCount(builder: flatbuffers.Builder, cycleCount: int):
     builder.PrependUint8Slot(2, cycleCount, 0)
 
-
-def AddCycleCount(builder, cycleCount):
+def AddCycleCount(builder: flatbuffers.Builder, cycleCount: int):
     FlexRayFrameAddCycleCount(builder, cycleCount)
 
-
-def FlexRayFrameAddChannel(builder, channel):
+def FlexRayFrameAddChannel(builder: flatbuffers.Builder, channel: int):
     builder.PrependUint8Slot(3, channel, 0)
 
-
-def AddChannel(builder, channel):
+def AddChannel(builder: flatbuffers.Builder, channel: int):
     FlexRayFrameAddChannel(builder, channel)
 
-
-def FlexRayFrameAddFlags(builder, flags):
+def FlexRayFrameAddFlags(builder: flatbuffers.Builder, flags: int):
     builder.PrependUint16Slot(4, flags, 0)
 
-
-def AddFlags(builder, flags):
+def AddFlags(builder: flatbuffers.Builder, flags: int):
     FlexRayFrameAddFlags(builder, flags)
 
-
-def FlexRayFrameAddData(builder, data):
+def FlexRayFrameAddData(builder: flatbuffers.Builder, data: int):
     builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(data), 0)
 
-
-def AddData(builder, data):
+def AddData(builder: flatbuffers.Builder, data: int):
     FlexRayFrameAddData(builder, data)
 
-
-def FlexRayFrameStartDataVector(builder, numElems):
+def FlexRayFrameStartDataVector(builder, numElems: int) -> int:
     return builder.StartVector(1, numElems, 1)
 
-
-def StartDataVector(builder, numElems):
+def StartDataVector(builder, numElems: int) -> int:
     return FlexRayFrameStartDataVector(builder, numElems)
 
-
-def FlexRayFrameEnd(builder):
+def FlexRayFrameEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
-
-def End(builder):
+def End(builder: flatbuffers.Builder) -> int:
     return FlexRayFrameEnd(builder)

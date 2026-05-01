@@ -8,20 +8,29 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_topology.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import yaml
 
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import zenoh
+
+
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_topology_enforcement(zenoh_router, zenoh_session, tmp_path):
+async def test_topology_enforcement(zenoh_router: str, zenoh_session: zenoh.Session, tmp_path: Path) -> None:
     """
     Test Topology-First YAML Loading.
     The coordinator enforces the static topology and drops packets not in the graph.
@@ -63,13 +72,13 @@ async def test_topology_enforcement(zenoh_router, zenoh_session, tmp_path):
             received_eth_node2 = []
             rx_event = asyncio.Event()
 
-            def on_uart_rx(sample):
+            def on_uart_rx(sample: object) -> None:
                 # parse the CoordMessage
-                received_uart_node1.append(sample.payload.to_bytes())
+                received_uart_node1.append(cast(Any, sample).payload.to_bytes())
                 rx_event.set()
 
-            def on_eth_rx(sample):
-                received_eth_node2.append(sample.payload.to_bytes())
+            def on_eth_rx(sample: object) -> None:
+                received_eth_node2.append(cast(Any, sample).payload.to_bytes())
                 rx_event.set()
 
             _sub1 = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/coord/1/rx", on_uart_rx))
@@ -103,7 +112,7 @@ async def test_topology_enforcement(zenoh_router, zenoh_session, tmp_path):
                 + msg_payload_uart
             )
 
-            def _send():
+            def _send() -> None:
                 zenoh_session.put("sim/coord/0/tx", msg_eth)
                 zenoh_session.put("sim/coord/0/tx", msg_uart)
                 # Send done signals to advance barrier

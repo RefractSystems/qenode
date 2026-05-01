@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #!/usr/bin/env python3
 # ==============================================================================
 # repl2yaml.py
@@ -6,7 +8,6 @@
 # format. This ensures that we can transition to an OpenUSD-aligned schema
 # without losing existing board definitions.
 # ==============================================================================
-
 import argparse
 import logging
 from pathlib import Path
@@ -19,7 +20,7 @@ from .repl2qemu.parser import parse_repl
 logger = logging.getLogger(__name__)
 
 
-def migrate(repl_path: str, yaml_path: str):
+def migrate(repl_path: str, yaml_path: str) -> None:
     logger.info(f"Reading Renode platform: {repl_path}")
     with Path(repl_path).open() as f:
         plat = parse_repl(f.read())
@@ -66,7 +67,7 @@ def migrate(repl_path: str, yaml_path: str):
         yaml.dump(output, f, sort_keys=False, default_flow_style=False)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert Renode .repl to virtmcu YAML")
     parser.add_argument("input", help="Path to .repl file")
     parser.add_argument("--out", help="Path to output .yaml file (default: same name)")

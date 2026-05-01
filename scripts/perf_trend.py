@@ -21,9 +21,11 @@ import logging
 import sys
 from pathlib import Path
 
+from tools.testing.env import WORKSPACE_DIR
+
 logger = logging.getLogger(__name__)
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+WORKSPACE = WORKSPACE_DIR
 
 RESULTS_PATH = Path(WORKSPACE) / "tests" / "fixtures" / "guest_apps" / "perf_bench" / "last_results.json"
 BASELINE_PATH = Path(WORKSPACE) / "tests" / "fixtures" / "guest_apps" / "perf_bench" / "baseline.json"

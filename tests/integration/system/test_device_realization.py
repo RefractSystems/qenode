@@ -1,25 +1,28 @@
+"""
+Verifies that the YAML tooling and QEMU C/Rust models are synchronized.
+"""
+
+from __future__ import annotations
+
 import os
+import signal
+import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tools.testing.QemuLibrary import QemuLibrary
 
 
-def test_dynamic_devices_realization():
-    """
-    Verifies that the YAML tooling and QEMU C/Rust models are synchronized.
-    """
+def test_dynamic_devices_realization() -> None:
+
     yaml_path = "tests/fixtures/guest_apps/telemetry_wfi/test_bridge.yaml"
     if not Path(yaml_path).exists():
         pytest.skip(f"{yaml_path} not found")
 
     # Modifying the yaml to remove the mmio-socket-bridge for this test
     # because it blocks realization if it can't connect.
-    import tempfile
-
-    import yaml
-
     with Path(yaml_path).open() as f:
         data = yaml.safe_load(f)
 
@@ -28,18 +31,18 @@ def test_dynamic_devices_realization():
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_yaml:
         yaml.dump(data, tmp_yaml)
-        tmp_yaml_path = tmp_yaml.name
+        tmp_yaml_path = Path(tmp_yaml.name)
 
     lib = QemuLibrary()
     try:
         # Use -S to prevent execution
-        qmp_sock, uart_sock = lib.launch_qemu(tmp_yaml_path, kernel_path=None, extra_args=["-S"])
+        qmp_sock, uart_sock = lib.launch_qemu(str(tmp_yaml_path), kernel_path=None, extra_args=["-S"])
         assert Path(qmp_sock).exists()
         try:
             lib.connect_to_qemu(qmp_sock, uart_sock)
         except Exception as e:
             if lib.proc and lib.proc.poll() is not None:
-                out, err = lib.proc.communicate(timeout=5)  # noqa: RUF059
+                _out, err = lib.proc.communicate(timeout=5)
                 pytest.fail(f"QEMU crashed during startup. STDERR: {err.decode('utf-8')}")
             raise e
 
@@ -49,17 +52,24 @@ def test_dynamic_devices_realization():
         if lib.proc is not None:
             # Gracefully close QMP connection first to avoid asyncio logging errors
             lib._run(lib.bridge.close())
-            # Now terminate to extract stderr
-            import signal
 
-            os.killpg(os.getpgid(lib.proc.pid), signal.SIGTERM)
+            # Now terminate to extract stderr
+            try:
+                pgid = os.getpgid(lib.proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, AttributeError):
+                # Process already dead, that's fine
+                pass
+
             _out, err = lib.proc.communicate(timeout=5)
             err_str = err.decode("utf-8")
 
         # BQL warning check (the other issue reported)
-        assert "WARNING: BQL held entering quantum_wait" not in err_str
+        assert "WARNING: BQL held entering quantum_wait" not in err_str, f"BQL warning found in STDERR: {err_str}"
         # Property not found check
-        assert "Property not found" not in err_str
+        assert "Property not found" not in err_str, f"'Property not found' error found in STDERR: {err_str}"
 
     finally:
         lib.close_all_connections()
+        if tmp_yaml_path.exists():
+            tmp_yaml_path.unlink()

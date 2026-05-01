@@ -4,8 +4,15 @@ import logging
 import os
 import sys
 import tempfile
+import typing
 from contextlib import redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import zenoh
+
+if TYPE_CHECKING:
+    import zenoh
 
 from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import wait_for_file_creation, yield_now
@@ -14,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class NodeContext:
-    def __init__(self, node_id: str, base_tmpdir: Path):
+    def __init__(self, node_id: str, base_tmpdir: Path) -> None:
         self.node_id = node_id
         self.process: asyncio.subprocess.Process | None = None
         self.qmp_bridge = QmpBridge()
@@ -25,23 +32,23 @@ class NodeContext:
 
 
 class NodeManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.nodes: dict[str, NodeContext] = {}
-        self._zenoh_session = None
+        self._zenoh_session: zenoh.Session | None = None
         self.base_tmpdir = Path(tempfile.mkdtemp(prefix="virtmcu-mcp-"))
 
-    def get_zenoh_session(self):
+    def get_zenoh_session(self) -> zenoh.Session:
         import zenoh
 
         if self._zenoh_session is None:
             self._zenoh_session = zenoh.open(zenoh.Config())
         return self._zenoh_session
 
-    async def close(self):
+    async def close(self) -> None:
         for node in self.nodes.values():
             await self.stop_node(node.node_id)
         if self._zenoh_session:
-            self._zenoh_session.close()
+            typing.cast(typing.Any, self._zenoh_session).close()
             self._zenoh_session = None
 
         # Cleanup base tmpdir
@@ -54,7 +61,7 @@ class NodeManager:
             self.nodes[node_id] = NodeContext(node_id, self.base_tmpdir)
         return self.nodes[node_id]
 
-    async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml"):
+    async def provision_board(self, node_id: str, board_config: str, config_type: str = "yaml") -> None:
         node = self.get_node(node_id)
 
         # Save to temporary file for validation
@@ -112,7 +119,7 @@ class NodeManager:
             Path(node.yaml_path).unlink()
         node.yaml_path = path
 
-    def flash_firmware(self, node_id: str, firmware_path: str):
+    def flash_firmware(self, node_id: str, firmware_path: str) -> None:
         node = self.get_node(node_id)
         if not Path(firmware_path).is_absolute():
             firmware_path = str(Path(firmware_path).resolve())
@@ -120,7 +127,7 @@ class NodeManager:
             raise FileNotFoundError(f"Firmware file not found: {firmware_path}")
         node.firmware_path = firmware_path
 
-    async def start_node(self, node_id: str):
+    async def start_node(self, node_id: str) -> None:
         node = self.get_node(node_id)
         if node.process and node.process.returncode is None:
             raise RuntimeError(f"Node {node_id} is already running.")
@@ -167,16 +174,16 @@ class NodeManager:
             files_task = asyncio.ensure_future(asyncio.gather(*wait_tasks))
             exit_task = asyncio.create_task(node.process.wait())
 
-            done, pending = await asyncio.wait(
+            done, pending = await asyncio.wait(  # type: ignore[type-var]
                 [files_task, exit_task],
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=10.0,
             )
 
             for task in pending:
-                task.cancel()
+                typing.cast(asyncio.Task[typing.Any], task).cancel()
                 with suppress(asyncio.CancelledError):
-                    await task
+                    await typing.cast(asyncio.Task[typing.Any], task)
 
             if exit_task in done:
                 await yield_now()
@@ -220,7 +227,7 @@ class NodeManager:
                 stderr_data = await node.process.stderr.read()
             raise RuntimeError(f"QMP connection failed: {e}. QEMU stderr: {stderr_data.decode()}") from e
 
-    async def stop_node(self, node_id: str):
+    async def stop_node(self, node_id: str) -> None:
         if node_id not in self.nodes:
             return
         node = self.nodes[node_id]

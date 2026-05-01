@@ -66,3 +66,14 @@ All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a si
 | `FFI Layout Mismatch` | C/Rust struct drift | Run `scripts/check-ffi.py --fix` and commit the updated offsets. |
 | `can't find crate` | Cargo cache corruption | Run `docker volume rm ci-cargo-registry`. |
 | `SIGSEGV` in plugin | Unmangled symbols | Ensure FFI hooks are wrapped in `VirtMCU_export!`. |
+
+---
+
+## 6. Testing Dockerfile Changes Locally
+
+When making changes to `docker/Dockerfile`, you should verify them locally before pushing to GitHub to avoid breaking the CI pipeline (such as the `EOFError` crashes caused by missing configure flags).
+
+1.  **Syntax Check**: Run `make lint-docker` to use `hadolint` for basic syntax and best-practice checks.
+2.  **Version Drift Check**: Run `make check-versions` to ensure all `ARG` versions in the Dockerfile match the single source of truth in `BUILD_DEPS`.
+3.  **Fast Smoke Test**: Run `make docker-dev`. This builds the `base`, `toolchain`, and `devenv` stages and executes bash smoke tests to ensure essential tools (compilers, python, etc.) are actually installed and functional. This is much faster than a full build.
+4.  **Full Parity Build**: If you touch critical QEMU flags or SystemC dependencies, run `make ci-full` to execute the full test matrix inside the newly built Docker image.

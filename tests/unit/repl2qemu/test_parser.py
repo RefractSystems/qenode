@@ -8,15 +8,21 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_parser.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "../../"))
+if TYPE_CHECKING:
+    from _pytest.logging import LogCaptureFixture
+
+
 from tools.repl2qemu.parser import parse_repl
 
 
-def test_parse_simple_memory():
+def test_parse_simple_memory() -> None:
     repl = """
 sram: Memory.MappedMemory @ sysbus 0x20000000
     size: 0x00040000
@@ -31,7 +37,7 @@ sram: Memory.MappedMemory @ sysbus 0x20000000
     assert len(dev.interrupts) == 0
 
 
-def test_parse_device_with_irq():
+def test_parse_device_with_irq() -> None:
     repl = """
 usart1: UART.STM32_UART @ sysbus <0x40011000, +0x100>
     -> nvic@37
@@ -48,7 +54,7 @@ usart1: UART.STM32_UART @ sysbus <0x40011000, +0x100>
     assert irq.target_range == "37"
 
 
-def test_parse_ranged_irq():
+def test_parse_ranged_irq() -> None:
     repl = """
 can1: CAN.STMCAN @ sysbus <0x40006400, +0x400>
     [0-3] -> nvic@[19-22]
@@ -63,7 +69,7 @@ can1: CAN.STMCAN @ sysbus <0x40006400, +0x400>
     assert irq.target_range == "19-22"
 
 
-def test_parse_inline_block():
+def test_parse_inline_block() -> None:
     repl = """
 flash_controller: MTD.STM32F4_FlashController @ {
         sysbus 0x40023C00;
@@ -80,7 +86,7 @@ flash_controller: MTD.STM32F4_FlashController @ {
     assert dev.properties["flash"] == "flash"
 
 
-def test_parse_comments():
+def test_parse_comments() -> None:
     repl = """
 // This is a comment
 usart1: UART.STM32_UART @ sysbus 0x40011000 // Inline comment
@@ -93,7 +99,7 @@ usart1: UART.STM32_UART @ sysbus 0x40011000 // Inline comment
     assert dev.properties["size"] == "0x100"
 
 
-def test_parse_multiline_properties():
+def test_parse_multiline_properties() -> None:
     # Renode properties can sometimes span multiple lines or be in blocks
     repl = """
 cpu: CPU.CortexM @ sysbus
@@ -108,7 +114,7 @@ cpu: CPU.CortexM @ sysbus
     assert dev.properties["nvic"] == "nvic"
 
 
-def test_parse_using_statement(tmp_path):
+def test_parse_using_statement(tmp_path: Path) -> None:
     child_repl = tmp_path / "child.repl"
     child_repl.write_text("usart1: UART.STM32_UART @ sysbus 0x40011000\n")
 
@@ -120,7 +126,7 @@ def test_parse_using_statement(tmp_path):
     assert platform.devices[0].name == "usart1"
 
 
-def test_parse_recursive_using(tmp_path):
+def test_parse_recursive_using(tmp_path: Path) -> None:
     a_repl = tmp_path / "a.repl"
     b_repl = tmp_path / "b.repl"
     c_repl = tmp_path / "c.repl"
@@ -135,7 +141,7 @@ def test_parse_recursive_using(tmp_path):
     assert set(names) == {"devA", "devB", "devC"}
 
 
-def test_stress_test_parser():
+def test_stress_test_parser() -> None:
     lines = []
     for i in range(1000):
         lines.append(f"dev{i}: CPU.CortexM @ sysbus {hex(0x1000 * i)}")
@@ -148,8 +154,10 @@ def test_stress_test_parser():
     assert platform.devices[999].name == "dev999"
 
 
-def test_parser_main(tmp_path):
+def test_parser_main(tmp_path: Path) -> None:
     import subprocess
+
+    from tools.testing.env import WORKSPACE_DIR
 
     repl_file = tmp_path / "test.repl"
     repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n")
@@ -158,13 +166,13 @@ def test_parser_main(tmp_path):
         [sys.executable, "-m", "tools.repl2qemu.parser", str(repl_file)],
         capture_output=True,
         text=True,
-        cwd=Path(Path(Path(__file__).resolve().parent) / "../../"),
+        cwd=WORKSPACE_DIR,
     )
     assert result.returncode == 0
     assert "sram" in result.stdout
 
 
-def test_parse_complex_attributes():
+def test_parse_complex_attributes() -> None:
     repl = """
 button: Miscellaneous.Button @ gpioPortA 0
     -> gpioPortA@0
@@ -177,7 +185,7 @@ button: Miscellaneous.Button @ gpioPortA 0
     assert dev.address_str == "gpioPortA 0"
 
 
-def test_parse_nested_blocks():
+def test_parse_nested_blocks() -> None:
     repl = """
 sysbus:
     init:
@@ -189,14 +197,14 @@ sysbus:
         assert dev.name != "sysbus"
 
 
-def test_parser_missing_using(caplog):
+def test_parser_missing_using(caplog: LogCaptureFixture) -> None:
     repl = 'using "non_existent.repl"\n'
     parse_repl(repl)
     caplog.set_level(logging.INFO)
     assert "Warning: Included file not found" in caplog.text
 
 
-def test_parser_sysbus_registration():
+def test_parser_sysbus_registration() -> None:
     # Test the multi-line block parsing for address:
     repl = """
 flash_controller: MTD.STM32F4_FlashController @ {
@@ -209,14 +217,14 @@ flash_controller: MTD.STM32F4_FlashController @ {
     assert platform.devices[0].address_str == "0x1FFFC000"
 
 
-def test_parser_addr_trailing_at():
+def test_parser_addr_trailing_at() -> None:
     # Hit line 78
     repl = "usart1: UART.STM32_UART @ sysbus 0x40011000@"
     platform = parse_repl(repl)
     assert platform.devices[0].address_str == "0x40011000"
 
 
-def test_parser_standalone_block_start():
+def test_parser_standalone_block_start() -> None:
     # Hit line 96-97
     repl = """
 usart1: UART.STM32_UART @ sysbus 0x40011000

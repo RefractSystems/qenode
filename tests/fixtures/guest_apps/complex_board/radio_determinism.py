@@ -10,10 +10,11 @@ Ensure correct functionality, performance, and deterministic execution of radio_
 
 import logging
 import sys
-import time
 from pathlib import Path
 
 import zenoh
+
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,9 @@ RF_HEADER_SIZE = 14
 
 session = None
 ping_responded = False
-script_dir = Path(Path(__file__).resolve().parent)
 
 
-def on_sample(sample):
+def on_sample(sample: zenoh.Sample) -> None:
     global session, ping_responded
     payload = sample.payload.to_bytes()
     if len(payload) < RF_HEADER_SIZE:
@@ -67,7 +67,7 @@ def on_sample(sample):
         + resp1_data
     )
     logger.info(f"[{resp1_vtime}] Sending MISMATCHED response...")
-    session.put("sim/rf/ieee802154/0/rx", msg1)
+    session.put("sim/rf/ieee802154/0/rx", msg1)  # type: ignore[attr-defined]
 
     # 2. Respond with CORRECT address after 2ms virtual time
     resp2_vtime = vtime + 2000000
@@ -88,10 +88,10 @@ def on_sample(sample):
         + resp2_data
     )
     logger.info(f"[{resp2_vtime}] Sending MATCHED response...")
-    session.put("sim/rf/ieee802154/0/rx", msg2)
+    session.put("sim/rf/ieee802154/0/rx", msg2)  # type: ignore[attr-defined]
 
 
-def on_tx_sample(sample):
+def on_tx_sample(sample: zenoh.Sample) -> None:
     payload = sample.payload.to_bytes()
     if len(payload) < RF_HEADER_SIZE:
         return
@@ -102,11 +102,11 @@ def on_tx_sample(sample):
 
     if size == 3 and (data[0] & 0x07) == 0x02:
         logger.info(f"[{vtime}] RECEIVED AUTO-ACK for seq {data[2]}")
-        with (Path(script_dir) / "ack_received.tmp").open("w") as f:
+        with (Path(__file__).resolve().parent / "ack_received.tmp").open("w") as f:
             f.write("OK")
 
 
-def main():
+def main() -> None:
     global session
     node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
     if len(sys.argv) <= 2:
@@ -125,7 +125,7 @@ def main():
 
     try:
         while True:
-            time.sleep(1)
+            mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
     except KeyboardInterrupt:
         pass
 

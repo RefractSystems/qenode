@@ -8,9 +8,13 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_priority.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+import shutil
 import time
+from typing import TYPE_CHECKING
 
 import pytest
 import zenoh
@@ -18,11 +22,25 @@ import zenoh
 from tests.conftest import VirtualTimeAuthority
 from tools.testing.utils import yield_now
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from pathlib import Path
+
+    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+
+
 logger = logging.getLogger(__name__)
 
 
+async def _flood(noise_count: int, pub: zenoh.Publisher, noise_data: bytes) -> None:
+    for _ in range(noise_count):
+        await asyncio.to_thread(lambda: pub.put(noise_data))
+
+
 @pytest.mark.asyncio
-async def test_clock_priority_isolation(zenoh_router, zenoh_session, qemu_launcher, tmp_path):
+async def test_clock_priority_isolation(
+    zenoh_router: str, zenoh_session: zenoh.Session, qemu_launcher: Callable[..., Awaitable[QmpBridge]], tmp_path: Path
+) -> None:
     """
     STRESS TEST for Clock Session Priority Isolation.
     """
@@ -33,14 +51,17 @@ async def test_clock_priority_isolation(zenoh_router, zenoh_session, qemu_launch
     if not firmware_path.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/boot_arm", "hello.elf"], check=True)
+        subprocess.run(
+            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm", "hello.elf"], check=True
+        )
 
     coordinator_bin = workspace_root / "target/release/deterministic_coordinator"
     if not coordinator_bin.exists():
         pytest.fail("deterministic_coordinator not found")
 
     board_yaml = tmp_path / "board.yaml"
-    board_yaml.write_text("""
+    board_yaml.write_text(
+        """
 machine:
   name: priority_test
   type: arm-generic-fdt
@@ -73,7 +94,8 @@ topology:
     - id: 0
       name: node0
   links: []
-""")
+"""
+    )
 
     # Launch Coordinator
     coord_proc = await asyncio.create_subprocess_exec(
@@ -105,7 +127,9 @@ topology:
 
     bridge = await qemu_launcher(str(board_yaml), firmware_path, ignore_clock_check=True, extra_args=extra_args)
 
-    ta_session = await asyncio.to_thread(lambda: zenoh.open(zenoh.Config()))
+    config = zenoh.Config()
+    config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
+    ta_session = await asyncio.to_thread(lambda: zenoh.open(config))
     vta = VirtualTimeAuthority(ta_session, node_ids=[0])
 
     async with VirtmcuSimulation(bridge, vta):
@@ -131,11 +155,7 @@ topology:
 
             logger.info(f"Starting flood of {noise_count} packets on shared session...")
 
-            async def flood():
-                for _ in range(noise_count):
-                    await asyncio.to_thread(lambda: pub.put(noise_data))
-
-            flood_task = asyncio.create_task(flood())
+            flood_task = asyncio.create_task(_flood(noise_count, pub, noise_data))
 
             # Measure RTT WITH load
             rtts_stress = []

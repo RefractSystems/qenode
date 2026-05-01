@@ -36,5 +36,5 @@ fn test_stress_telemetry_serialization() {
         assert_eq!(parsed_event.id(), i as u32);
     }
     let duration = start.elapsed();
-    println!("Serialized and deserialized {num_events} events in {duration:?}");
+    virtmcu_qom::sim_info!("Serialized and deserialized {num_events} events in {duration:?}");
 }

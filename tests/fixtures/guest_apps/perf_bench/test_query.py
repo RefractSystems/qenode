@@ -11,29 +11,16 @@ Ensure correct functionality, performance, and deterministic execution of test_q
 import logging
 import sys
 import time
-from pathlib import Path
 
 import zenoh
-from vproto import ClockAdvanceReq, ClockReadyResp
+
+from tools.vproto import ClockAdvanceReq, ClockReadyResp
 
 logger = logging.getLogger(__name__)
 
+
 # Add tools/ to path
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-
-def main():
+def main() -> None:
     if len(sys.argv) <= 1:
         logger.error(f"Usage: {sys.argv[0]} <router_endpoint>")
         sys.exit(1)
@@ -42,7 +29,8 @@ def main():
     config = zenoh.Config()
     config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
-    session = zenoh.open(config)
+    from typing import Any
+    session: Any = zenoh.open(config)
 
     topic = "sim/clock/advance/0"
     logger.info(f"Sending query to {topic}...")

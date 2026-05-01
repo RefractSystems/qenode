@@ -11,15 +11,17 @@ Ensure correct functionality, performance, and deterministic execution of repro_
 import logging
 import os
 import queue
-import time
+import typing
 
-import vproto
 import zenoh
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     conf = zenoh.Config()
 
     router = os.environ.get("ZENOH_ROUTER")
@@ -33,19 +35,19 @@ def main():
     logger.info("Sending malformed packet (too short)...")
     pub.put(b"\x00\x01\x02")  # Only 3 bytes, header expects 12
 
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     # If coordinator is still alive, this should work
     logger.info("Sending valid packet to check if coordinator is alive...")
     pub_valid = s.declare_publisher("sim/eth/frame/1/tx")
 
-    rx_valid = queue.Queue()
+    rx_valid = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/eth/frame/2/rx", lambda s: rx_valid.put(s.payload.to_bytes()))
 
     # Node 2 must be "known"
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
     pub2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     pub_valid.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ABCD")
 
@@ -58,11 +60,11 @@ def main():
         logger.info("Received valid packet")
     except queue.Empty:
         logger.info("Timeout waiting for valid packet, coordinator might have crashed")
-        s.close()
+        typing.cast(typing.Any, s).close()
         exit(1)
 
     logger.info("Test finished. Check coordinator logs.")
-    s.close()
+    s.close()  # type: ignore[no-untyped-call]
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # =============================================================================
 # vproto.py - Pythonic wrappers for VirtMCU FlatBuffers core protocols.
 #
@@ -7,24 +9,24 @@
 #
 # Prefer using this module over manual struct packing and unpacking.
 # =============================================================================
-
 from dataclasses import dataclass
 
 import flatbuffers
-from virtmcu.core.ClockAdvanceReq import ClockAdvanceReq as FBClockAdvanceReq
-from virtmcu.core.ClockAdvanceReq import CreateClockAdvanceReq
-from virtmcu.core.ClockReadyResp import ClockReadyResp as FBClockReadyResp
-from virtmcu.core.ClockReadyResp import CreateClockReadyResp
-from virtmcu.core.MmioReq import CreateMmioReq
-from virtmcu.core.MmioReq import MmioReq as FBMmioReq
-from virtmcu.core.SyscMsg import CreateSyscMsg
-from virtmcu.core.SyscMsg import SyscMsg as FBSyscMsg
-from virtmcu.core.VirtmcuHandshake import CreateVirtmcuHandshake
-from virtmcu.core.VirtmcuHandshake import VirtmcuHandshake as FBHandshake
-from virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
-from virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
-from virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
-from virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
+
+from tools.virtmcu.core.ClockAdvanceReq import ClockAdvanceReq as FBClockAdvanceReq
+from tools.virtmcu.core.ClockAdvanceReq import CreateClockAdvanceReq
+from tools.virtmcu.core.ClockReadyResp import ClockReadyResp as FBClockReadyResp
+from tools.virtmcu.core.ClockReadyResp import CreateClockReadyResp
+from tools.virtmcu.core.MmioReq import CreateMmioReq
+from tools.virtmcu.core.MmioReq import MmioReq as FBMmioReq
+from tools.virtmcu.core.SyscMsg import CreateSyscMsg
+from tools.virtmcu.core.SyscMsg import SyscMsg as FBSyscMsg
+from tools.virtmcu.core.VirtmcuHandshake import CreateVirtmcuHandshake
+from tools.virtmcu.core.VirtmcuHandshake import VirtmcuHandshake as FBHandshake
+from tools.virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
+from tools.virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
+from tools.virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
+from tools.virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
 
 VIRTMCU_PROTO_MAGIC = 1447904085
 VIRTMCU_PROTO_VERSION = 1
@@ -49,7 +51,7 @@ class VirtmcuHandshake:
     version: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "VirtmcuHandshake":
+    def unpack(cls, data: bytes) -> VirtmcuHandshake:
         if len(data) < SIZE_VIRTMCU_HANDSHAKE:
             raise ValueError(f"Expected {SIZE_VIRTMCU_HANDSHAKE} bytes")
         fb = FBHandshake()
@@ -73,7 +75,7 @@ class MmioReq:
     data: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "MmioReq":
+    def unpack(cls, data: bytes) -> MmioReq:
         if len(data) < SIZE_MMIO_REQ:
             raise ValueError(f"Expected {SIZE_MMIO_REQ} bytes")
         fb = FBMmioReq()
@@ -93,7 +95,7 @@ class SyscMsg:
     data: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "SyscMsg":
+    def unpack(cls, data: bytes) -> SyscMsg:
         if len(data) < SIZE_SYSC_MSG:
             raise ValueError(f"Expected {SIZE_SYSC_MSG} bytes")
         fb = FBSyscMsg()
@@ -113,7 +115,7 @@ class ClockAdvanceReq:
     quantum_number: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "ClockAdvanceReq":
+    def unpack(cls, data: bytes) -> ClockAdvanceReq:
         if len(data) < SIZE_CLOCK_ADVANCE_REQ:
             raise ValueError(f"Expected {SIZE_CLOCK_ADVANCE_REQ} bytes")
         fb = FBClockAdvanceReq()
@@ -134,7 +136,7 @@ class ClockReadyResp:
     quantum_number: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "ClockReadyResp":
+    def unpack(cls, data: bytes) -> ClockReadyResp:
         if len(data) < SIZE_CLOCK_READY_RESP:
             raise ValueError(f"Expected {SIZE_CLOCK_READY_RESP} bytes")
         fb = FBClockReadyResp()
@@ -154,7 +156,7 @@ class ZenohFrameHeader:
     size: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "ZenohFrameHeader":
+    def unpack(cls, data: bytes) -> ZenohFrameHeader:
         if len(data) < SIZE_ZENOH_FRAME_HEADER:
             raise ValueError(f"Expected {SIZE_ZENOH_FRAME_HEADER} bytes")
         fb = FBZenohFrameHeader()
@@ -176,7 +178,7 @@ class ZenohSPIHeader:
     cs_index: int
 
     @classmethod
-    def unpack(cls, data: bytes) -> "ZenohSPIHeader":
+    def unpack(cls, data: bytes) -> ZenohSPIHeader:
         if len(data) < SIZE_ZENOH_SPI_HEADER:
             raise ValueError(f"Expected {SIZE_ZENOH_SPI_HEADER} bytes")
         fb = FBZenohSPIHeader()

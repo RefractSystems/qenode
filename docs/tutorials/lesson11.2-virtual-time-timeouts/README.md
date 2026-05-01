@@ -103,7 +103,7 @@ When writing tests that boot firmware:
 - Use `timeout=10.0` (seconds) as a rule of thumb.  In standalone mode this is 10
   wall-clock seconds; in slaved-icount mode this is 10 *virtual* seconds, which may
   correspond to 50–70 wall-clock seconds depending on host load.
-- Do not manually call `asyncio.sleep()` for timing inside tests — use `wait_for_line_on_uart`
+- Do not manually call `asyncio.sleep` for timing inside tests — use `wait_for_line_on_uart`
   with an appropriate pattern instead.
 - If you need to assert that something happens within a *virtual* time budget (e.g.
   "the RTOS task must run within 1 ms of virtual time"), pass `timeout=0.001`.

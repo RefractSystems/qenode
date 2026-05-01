@@ -2,17 +2,17 @@
 
 # namespace: lin
 
+
 import flatbuffers
 from flatbuffers.compat import import_numpy
 
 np = import_numpy()
 
-
 class LinFrame:
-    __slots__ = ["_tab"]
+    __slots__ = ['_tab']
 
     @classmethod
-    def GetRootAs(cls, buf, offset=0):
+    def GetRootAs(cls, buf, offset: int = 0):
         n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
         x = LinFrame()
         x.Init(buf, n + offset)
@@ -22,9 +22,8 @@ class LinFrame:
     def GetRootAsLinFrame(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
-
     # LinFrame
-    def Init(self, buf, pos):
+    def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # LinFrame
@@ -42,13 +41,11 @@ class LinFrame:
         return 0
 
     # LinFrame
-    def Data(self, j):
+    def Data(self, j: int):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             a = self._tab.Vector(o)
-            return self._tab.Get(
-                flatbuffers.number_types.Uint8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1)
-            )
+            return self._tab.Get(flatbuffers.number_types.Uint8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1))
         return 0
 
     # LinFrame
@@ -59,61 +56,49 @@ class LinFrame:
         return 0
 
     # LinFrame
-    def DataLength(self):
+    def DataLength(self) -> int:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # LinFrame
-    def DataIsNone(self):
+    def DataIsNone(self) -> bool:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
-
-def LinFrameStart(builder):
+def LinFrameStart(builder: flatbuffers.Builder):
     builder.StartObject(3)
 
-
-def Start(builder):
+def Start(builder: flatbuffers.Builder):
     LinFrameStart(builder)
 
-
-def LinFrameAddDeliveryVtimeNs(builder, deliveryVtimeNs):
+def LinFrameAddDeliveryVtimeNs(builder: flatbuffers.Builder, deliveryVtimeNs: int):
     builder.PrependUint64Slot(0, deliveryVtimeNs, 0)
 
-
-def AddDeliveryVtimeNs(builder, deliveryVtimeNs):
+def AddDeliveryVtimeNs(builder: flatbuffers.Builder, deliveryVtimeNs: int):
     LinFrameAddDeliveryVtimeNs(builder, deliveryVtimeNs)
 
-
-def LinFrameAddType(builder, type):
+def LinFrameAddType(builder: flatbuffers.Builder, type: int):
     builder.PrependUint8Slot(1, type, 0)
 
-
-def AddType(builder, type):
+def AddType(builder: flatbuffers.Builder, type: int):
     LinFrameAddType(builder, type)
 
-
-def LinFrameAddData(builder, data):
+def LinFrameAddData(builder: flatbuffers.Builder, data: int):
     builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(data), 0)
 
-
-def AddData(builder, data):
+def AddData(builder: flatbuffers.Builder, data: int):
     LinFrameAddData(builder, data)
 
-
-def LinFrameStartDataVector(builder, numElems):
+def LinFrameStartDataVector(builder, numElems: int) -> int:
     return builder.StartVector(1, numElems, 1)
 
-
-def StartDataVector(builder, numElems):
+def StartDataVector(builder, numElems: int) -> int:
     return LinFrameStartDataVector(builder, numElems)
 
-
-def LinFrameEnd(builder):
+def LinFrameEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
-
-def End(builder):
+def End(builder: flatbuffers.Builder) -> int:
     return LinFrameEnd(builder)

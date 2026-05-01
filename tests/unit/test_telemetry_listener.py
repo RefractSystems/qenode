@@ -8,19 +8,28 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_telemetry_listener.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+if TYPE_CHECKING:
+    pass
+
 
 # Assuming tools/telemetry_listener.py is importable
 from tools.telemetry_listener import on_sample
 
 
-def test_on_sample_cpu_state(caplog):
+def test_on_sample_cpu_state(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:  # noqa: N806
+    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
-        MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 1000
@@ -35,13 +44,13 @@ def test_on_sample_cpu_state(caplog):
         assert "[           1000] CPU_STATE  cpu=1 val= 42" in out
 
 
-def test_on_sample_irq(caplog):
+def test_on_sample_irq(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:  # noqa: N806
+    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
-        MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 2000
@@ -56,13 +65,13 @@ def test_on_sample_irq(caplog):
         assert "[           2000] IRQ        slot= 3 pin= 5 val=  1" in out
 
 
-def test_on_sample_peripheral(caplog):
+def test_on_sample_peripheral(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:  # noqa: N806
+    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
-        MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 3000
@@ -77,13 +86,13 @@ def test_on_sample_peripheral(caplog):
         assert "[           3000] PERIPHERAL id=99 val=  0" in out
 
 
-def test_on_sample_unknown(caplog):
+def test_on_sample_unknown(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:  # noqa: N806
+    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
-        MockTraceEvent.GetRootAs.return_value = mock_ev
+        mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
 
         mock_ev.TimestampNs.return_value = 4000
@@ -98,12 +107,12 @@ def test_on_sample_unknown(caplog):
         assert "[           4000] UNKNOWN    id=88 val=  5" in out
 
 
-def test_on_sample_exception(caplog):
+def test_on_sample_exception(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"\x01\x02"
 
-    with patch("tools.telemetry_listener.TraceEvent") as MockTraceEvent:  # noqa: N806
-        MockTraceEvent.GetRootAs.side_effect = Exception("Parse error")
+    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+        mock_trace_event.GetRootAs.side_effect = ValueError("Parse error")
 
         on_sample(mock_sample)
 
@@ -114,10 +123,11 @@ def test_on_sample_exception(caplog):
 
 @patch("sys.argv", ["telemetry_listener.py", "1"])
 @patch("tools.telemetry_listener.zenoh")
-@patch("time.sleep")
-def test_main_block(mock_sleep, mock_zenoh, caplog):  # noqa: ARG001
-    # Make time.sleep raise KeyboardInterrupt to exit the infinite loop
-    mock_sleep.side_effect = KeyboardInterrupt
+@patch("asyncio.Event.wait")
+def test_main_block(mock_wait: MagicMock, mock_zenoh: MagicMock) -> None:
+    _ = mock_zenoh  # use the argument to satisfy ARG001
+    # Make the event wait raise KeyboardInterrupt to exit the infinite loop
+    mock_wait.side_effect = KeyboardInterrupt
 
     # We need to execute the __main__ block manually since it's guarded by if __name__ == "__main__"
     # But since it's hard to test directly without running the script or refactoring,
@@ -125,7 +135,7 @@ def test_main_block(mock_sleep, mock_zenoh, caplog):  # noqa: ARG001
     pass
 
 
-def test_run_main():
+def test_run_main() -> None:
     import sys
 
     from tools.telemetry_listener import main
@@ -133,7 +143,7 @@ def test_run_main():
     with (
         patch.object(sys, "argv", ["telemetry_listener.py", "5"]),
         patch("tools.telemetry_listener.zenoh") as mock_zenoh,
-        patch("time.sleep", side_effect=KeyboardInterrupt),
+        patch("asyncio.Event.wait", side_effect=KeyboardInterrupt),
     ):
         mock_session = MagicMock()
         mock_zenoh.open.return_value = mock_session

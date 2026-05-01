@@ -1,12 +1,22 @@
+"""
+High-level declarative API for multi-node VirtMCU simulations.
+Manages QEMU processes, Zenoh coordinators, and Time Authority clock stepping.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import yield_now
 from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
 from tools.testing.virtmcu_test_suite.transport import SimulationTransport
+
+if TYPE_CHECKING:
+    import zenoh
 
 
 class SimNode:
@@ -15,11 +25,11 @@ class SimNode:
         self.bridge = bridge
 
     @property
-    def uart(self) -> Any:
+    def uart(self) -> object:
         # QmpBridge has a read_uart_buffer() and wait_for_line() if we need,
         # but for direct buffer inspection we can expose it.
         class UartAccessor:
-            def __init__(self, parent: "SimNode") -> None:
+            def __init__(self, parent: SimNode) -> None:
                 self._parent = parent
 
             @property
@@ -33,12 +43,7 @@ class SimNode:
 
 
 class SimulationOrchestrator:
-    """
-    High-level declarative API for multi-node VirtMCU simulations.
-    Manages QEMU processes, Zenoh coordinators, and Time Authority clock stepping.
-    """
-
-    def __init__(self, zenoh_session: Any, zenoh_router: str, qemu_launcher_fixture: Any) -> None:
+    def __init__(self, zenoh_session: zenoh.Session, zenoh_router: str, qemu_launcher_fixture: object) -> None:
         self.session = zenoh_session
         self.router = zenoh_router
         self._qemu_launcher = qemu_launcher_fixture
@@ -80,7 +85,7 @@ class SimulationOrchestrator:
         self._nodes[node_id] = node
         return node
 
-    async def __aenter__(self) -> "SimulationOrchestrator":
+    async def __aenter__(self) -> SimulationOrchestrator:
         return self
 
     async def start(self) -> None:
@@ -89,7 +94,7 @@ class SimulationOrchestrator:
         for config in self._nodes_config:
             node_ids.append(config["id"])
             tasks.append(
-                self._qemu_launcher(
+                self._qemu_launcher(  # type: ignore[operator]
                     dtb_path=config["dtb_path"],
                     kernel_path=config["kernel_path"],
                     extra_args=config["extra_args"],
@@ -103,9 +108,10 @@ class SimulationOrchestrator:
             await bridge.start_emulation()
 
         if self.transport:
-            self.vta = self.transport.get_vta(node_ids)
+            self.vta = self.transport.get_vta(node_ids)  # type: ignore[assignment]
         else:
             self.vta = VirtualTimeAuthority(self.session, node_ids)
+        assert self.vta is not None
         await self.vta.init()
 
     async def run_until(self, condition: Callable[[], bool], timeout: float = 5.0, step_ns: int = 1_000_000) -> None:
@@ -125,7 +131,7 @@ class SimulationOrchestrator:
         if not condition():
             raise TimeoutError(f"Condition not met within {timeout}s. Current vtime: {self._vtime_ns}ns")
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         # qemu_launcher automatically registers processes with an AsyncManagedProcess or similar cleanup
         # within its own fixture scope (it's using an async generator in conftest).
         pass

@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 import yaml
 
 
-def generate_large_yaml(num_peripherals=1000):
+def generate_large_yaml(num_peripherals: int = 1000) -> str:
     """
     Generates a YAML with many peripherals to stress test the emitter.
     """
@@ -15,13 +16,13 @@ def generate_large_yaml(num_peripherals=1000):
             {"name": f"uart{i}", "type": "UART.PL011", "address": 0x10000000 + (i * 0x1000), "interrupts": [i % 32]}
         )
 
-    return {
+    return {  # type: ignore[return-value]
         "machine": {"name": "stress_board", "cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
         "peripherals": peripherals,
     }
 
 
-def test_yaml2qemu_stress():
+def test_yaml2qemu_stress() -> None:
     """
     Stress test yaml2qemu with a large number of peripherals.
     """
@@ -35,7 +36,9 @@ def test_yaml2qemu_stress():
 
     try:
         # Run yaml2qemu
-        result = subprocess.run(["yaml2qemu", yaml_path, "--out-dtb", dtb_path], capture_output=True, text=True)
+        result = subprocess.run(
+            [shutil.which("yaml2qemu") or "yaml2qemu", yaml_path, "--out-dtb", dtb_path], capture_output=True, text=True
+        )
 
         assert result.returncode == 0
         assert Path(dtb_path).exists()
@@ -48,7 +51,7 @@ def test_yaml2qemu_stress():
             Path(dtb_path).unlink()
 
 
-def test_yaml2qemu_invalid_interrupt():
+def test_yaml2qemu_invalid_interrupt() -> None:
     """
     Test yaml2qemu with an invalid interrupt format.
     """
@@ -71,7 +74,9 @@ def test_yaml2qemu_invalid_interrupt():
     dtb_path = yaml_path.replace(".yaml", ".dtb")
 
     try:
-        subprocess.run(["yaml2qemu", yaml_path, "--out-dtb", dtb_path], capture_output=True, text=True)
+        subprocess.run(
+            [shutil.which("yaml2qemu") or "yaml2qemu", yaml_path, "--out-dtb", dtb_path], capture_output=True, text=True
+        )
 
         # It might still succeed if it just warns, but let's see current behavior
         # Actually, yaml2qemu.py doesn't validate much, it might crash or produce bad DTS

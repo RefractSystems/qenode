@@ -8,16 +8,29 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_actuator.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+import shutil
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Any
+
+    import zenoh
+
+    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
+
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_actuator_zenoh_publish(simulation, zenoh_router, tmp_path):
+async def test_actuator_zenoh_publish(simulation: SimulationCreator, zenoh_router: str, tmp_path: Path) -> None:
     """
     Test that the actuator device correctly publishes to Zenoh.
     """
@@ -33,7 +46,9 @@ async def test_actuator_zenoh_publish(simulation, zenoh_router, tmp_path):
     if not kernel.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/actuator"], check=True, cwd=workspace_root)
+        subprocess.run(
+            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/actuator"], check=True, cwd=workspace_root
+        )
 
     # Copy and substitute the router endpoint in the YAML
     yaml_content = yaml_file.read_text().replace("ZENOH_ROUTER_ENDPOINT", zenoh_router)
@@ -42,14 +57,14 @@ async def test_actuator_zenoh_publish(simulation, zenoh_router, tmp_path):
     import subprocess
 
     subprocess.run(
-        ["uv", "run", "python3", "-m", "tools.yaml2qemu", str(tmp_yaml), "--out-dtb", str(dtb)],
+        [shutil.which("uv") or "uv", "run", "python3", "-m", "tools.yaml2qemu", str(tmp_yaml), "--out-dtb", str(dtb)],
         check=True,
         cwd=workspace_root,
     )
 
     received_msgs: list[dict[str, Any]] = []
 
-    def on_sample(sample):
+    def on_sample(sample: zenoh.Sample) -> None:
         topic = str(sample.key_expr)
         payload = sample.payload.to_bytes()
         if len(payload) < 8:
@@ -69,6 +84,7 @@ async def test_actuator_zenoh_publish(simulation, zenoh_router, tmp_path):
         "virtmcu-clock,node=0,mode=slaved-icount",
     ]
 
+    sim: VirtmcuSimulation
     async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
         sim.vta.session.declare_subscriber("firmware/control/**", on_sample)
 

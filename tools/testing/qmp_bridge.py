@@ -1,46 +1,56 @@
+"""
+An asynchronous bridge to QEMU via QMP and UART chardev sockets.
+
+This class provides a high-level API for test automation, mirroring
+functionality found in Renode's Robot Framework keywords.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 from qemu.qmp import QMPClient
 
 from tools.testing.utils import get_time_multiplier
 
+if TYPE_CHECKING:
+    import zenoh
+
+
 logger = logging.getLogger(__name__)
 
 
 class QmpBridge:
-    """
-    An asynchronous bridge to QEMU via QMP and UART chardev sockets.
-
-    This class provides a high-level API for test automation, mirroring
-    functionality found in Renode's Robot Framework keywords.
-    """
-
-    def __init__(self):
-        self.qmp = QMPClient("virtmcu-tester")
+    def __init__(self) -> None:
+        self.qmp: QMPClient = QMPClient("virtmcu-tester")
         self.pid: int | None = None
         self.uart_reader: asyncio.StreamReader | None = None
         self.uart_writer: asyncio.StreamWriter | None = None
-        self.uart_buffer = ""
-        self._read_task: asyncio.Task | None = None
-        self.uart_event = asyncio.Event()
-        self._watchdog_task: asyncio.Task | None = None
+        assert self is not None
+        self.uart_buffer: str = ""
+        assert self is not None
+        self.uart_buffer_raw: bytes = b""
+        self._read_task: asyncio.Task[None] | None = None
+        self.uart_event: asyncio.Event = asyncio.Event()
+        self._watchdog_task: asyncio.Task[None] | None = None
         # Task: Deterministic signaling
-        self.vtime_condition = asyncio.Condition()
-        self.current_vtime_ns = 0
-        self._vtime_sub = None
+        self.vtime_condition: asyncio.Condition = asyncio.Condition()
+        self.current_vtime_ns: int = 0
+        self._vtime_sub: object | None = None
 
     @property
     def is_connected(self) -> bool:
+        """Check if the session is established."""
         # Check if the session is established. runstate is populated after greeting.
         return self.qmp.runstate is not None
 
-    async def _hang_watchdog(self):
+    async def _hang_watchdog(self) -> None:
         """
         Monitors virtual time advancement. If wall clock advances significantly but
         virtual time is completely stalled, fails fast.
@@ -48,8 +58,6 @@ class QmpBridge:
         stall_count = 0
         last_vtime = -1
         # Use a generous threshold: at least 30s or 2x the base stall timeout if detectable.
-        # This prevents the watchdog from killing the test during slow multi-node transitions
-        # or heavy CI load where neighbors might be temporarily slow.
         base_timeout = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "15000"))
         max_stalls = max(15, (base_timeout // 1000) // 2 + 5)
 
@@ -75,16 +83,21 @@ class QmpBridge:
                         if task is not asyncio.current_task():
                             task.cancel("Guest OS deadlocked!")
                     break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 break
 
-    def start_hang_watchdog(self):
+    def start_hang_watchdog(self) -> None:
+        """Starts the hang watchdog task."""
         if not self._watchdog_task:
             self._watchdog_task = asyncio.create_task(self._hang_watchdog())
 
     async def connect(
-        self, qmp_socket_path: str, uart_socket_path: str | None = None, zenoh_session=None, node_id: int | None = None
-    ):
+        self,
+        qmp_socket_path: str,
+        uart_socket_path: str | None = None,
+        zenoh_session: zenoh.Session | None = None,
+        node_id: int | None = None,
+    ) -> None:
         """
         Connects to the QMP socket and optionally the UART socket.
         """
@@ -100,10 +113,10 @@ class QmpBridge:
             topic = f"sim/clock/vtime/{node_id}"
             loop = asyncio.get_running_loop()
 
-            def on_vtime(sample):
+            def on_vtime(sample: zenoh.Sample) -> None:
                 vtime = int.from_bytes(sample.payload.to_bytes(), "little")
 
-                async def update():
+                async def update() -> None:
                     async with self.vtime_condition:
                         self.current_vtime_ns = vtime
                         self.vtime_condition.notify_all()
@@ -112,7 +125,7 @@ class QmpBridge:
 
             self._vtime_sub = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(topic, on_vtime))
 
-    async def _read_uart(self):
+    async def _read_uart(self) -> None:
         """
         Background task to continuously read from the UART socket.
         """
@@ -123,6 +136,9 @@ class QmpBridge:
                     if not data:
                         logger.debug("UART socket reached EOF.")
                         break
+                    assert self is not None
+                    self.uart_buffer_raw += data
+                    assert self is not None
                     self.uart_buffer += data.decode("utf-8", errors="replace")
                     self.uart_event.set()
                     # Wake up any waiters on vtime_condition too for UART polling
@@ -133,33 +149,29 @@ class QmpBridge:
                     break
         except asyncio.CancelledError:
             pass
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.error(f"UART read error: {e}")
         finally:
             self.uart_event.set()
 
-    async def execute(self, cmd: str, args: dict[str, Any] | None = None) -> Any:
+    async def execute(self, cmd: str, args: dict[str, object] | None = None) -> object:
         """
         Executes a QMP command and returns the result.
         """
         # qemu.qmp.execute returns the 'return' object directly if successful
         return await self.qmp.execute(cmd, args)
 
-    async def wait_for_event(self, event_name: str, timeout: float = 10.0) -> Any:
-        if timeout is not None:
-            timeout *= get_time_multiplier()
+    async def wait_for_event(self, event_name: str, timeout: float = 10.0) -> object:
         """
         Waits for a specific QMP event to occur.
-
-        Uses virtual time (instruction count via query-replay) when the VM is
-        running in slaved-icount mode so that CI tests do not time out
-        prematurely under heavy co-simulation load.  Falls back to wall-clock
-        time in standalone mode where virtual time is not advancing.
         """
+        if timeout is not None:
+            timeout *= get_time_multiplier()
+
         start_vtime = await self.get_virtual_time_ns()
         start_wall = asyncio.get_running_loop().time()
 
-        async def poll_timeout():
+        async def poll_timeout() -> None:
             while True:
                 current_vtime = await self.get_virtual_time_ns()
                 if current_vtime > start_vtime:
@@ -178,13 +190,13 @@ class QmpBridge:
                         # Wait with a short timeout as a safety fallback for standalone mode
                         await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
-        async def get_event():
+        async def get_event() -> object:
             from qemu.qmp.events import EventListener
 
             listener = EventListener()
             with self.qmp.listen(listener):
                 async for event in listener:
-                    if event["event"] == event_name:
+                    if isinstance(event, dict) and event.get("event") == event_name:
                         return event
             return None
 
@@ -214,20 +226,19 @@ class QmpBridge:
         raise TimeoutError(f"Timed out waiting for event: {event_name}")
 
     async def wait_for_line_on_uart(self, pattern: str, timeout: float = 10.0) -> bool:
-        if timeout is not None:
-            timeout *= get_time_multiplier()
         """
         Waits until a pattern appears in the UART buffer.
-
-        Returns True on match, False on timeout.  Uses virtual time when the VM
-        runs in slaved-icount mode; falls back to wall clock in standalone mode.
         """
+        if timeout is not None:
+            timeout *= get_time_multiplier()
+
         loop = asyncio.get_running_loop()
         start_wall_time = loop.time()
         start_vtime = await self.get_virtual_time_ns()
         regex = re.compile(pattern)
 
         while True:
+            assert self is not None
             if regex.search(self.uart_buffer):
                 return True
 
@@ -244,12 +255,13 @@ class QmpBridge:
                 if loop.time() - start_wall_time > timeout:
                     return False
 
-    async def wait_for_virtual_time(self, target_vtime_ns: int, timeout_wall: float = 30.0):
-        if timeout_wall is not None:
-            timeout_wall *= get_time_multiplier()
+    async def wait_for_virtual_time(self, target_vtime_ns: int, timeout_wall: float = 30.0) -> int:
         """
         Waits until the virtual clock reaches the target nanoseconds.
         """
+        if timeout_wall is not None:
+            timeout_wall *= get_time_multiplier()
+
         loop = asyncio.get_running_loop()
         start_wall = loop.time()
 
@@ -266,13 +278,16 @@ class QmpBridge:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self.vtime_condition.wait(), timeout=0.1)
 
-    def clear_uart_buffer(self):
+    def clear_uart_buffer(self) -> None:
         """
         Clears the accumulated UART buffer.
         """
+        assert self is not None
         self.uart_buffer = ""
+        assert self is not None
+        self.uart_buffer_raw = b""
 
-    async def write_to_uart(self, text: str):
+    async def write_to_uart(self, text: str) -> None:
         """
         Writes text to the UART socket, simulating user typing or external device input.
         """
@@ -282,7 +297,7 @@ class QmpBridge:
         self.uart_writer.write(text.encode("utf-8"))
         await self.uart_writer.drain()
 
-    async def start_emulation(self):
+    async def start_emulation(self) -> None:
         """
         Starts or resumes the emulation.
         """
@@ -291,7 +306,7 @@ class QmpBridge:
         self.start_hang_watchdog()
         logger.info("cont returned")
 
-    async def pause_emulation(self):
+    async def pause_emulation(self) -> None:
         """
         Pauses the emulation.
         """
@@ -318,13 +333,10 @@ class QmpBridge:
     async def get_pc(self) -> int:
         """
         Returns the current Program Counter of the first CPU.
-
-        query-cpus-fast (CpuInfoFast) does not expose register values — it only
-        carries cpu-index, qom-path, thread-id, and target-arch. We read PC via
-        HMP 'info registers', which works for all ARM variants (AArch32: R15,
-        AArch64: PC).
         """
         hmp_res = await self.execute("human-monitor-command", {"command-line": "info registers"})
+        if not isinstance(hmp_res, str):
+            raise RuntimeError(f"Unexpected result type from 'info registers': {type(hmp_res)}")
         # AArch32 shows "R15=40000020 ...", AArch64 shows "PC=0000000040000020"
         match = re.search(r"\bR15\s*=\s*([0-9a-fA-F]+)|\bPC\s*=\s*([0-9a-fA-F]+)", hmp_res)
         if match:
@@ -335,28 +347,17 @@ class QmpBridge:
     async def get_virtual_time_ns(self) -> int:
         """
         Returns the current virtual time in nanoseconds.
-
-        Uses the ``query-replay`` QMP command, which returns a ``ReplayInfo``
-        struct whose ``icount`` field is the current instruction count.  In
-        slaved-icount mode (``-icount shift=0,align=off,sleep=off``), QEMU
-        increments icount by exactly 1 per instruction and each instruction
-        represents 1 virtual nanosecond, so icount == virtual_time_ns.
-
-        In standalone mode (no ``-icount``), ``query-replay`` still succeeds
-        and returns ``mode: "none"`` with ``icount: 0``, allowing callers to
-        detect that virtual time is not advancing and fall back to wall-clock
-        time (see ``wait_for_line_on_uart`` and ``wait_for_event``).
-
-        Returns 0 on any QMP error (e.g. QEMU not yet fully initialised).
         """
         try:
             res = await self.execute("query-replay")
-            return res.get("icount", 0)
-        except Exception as e:
+            if isinstance(res, dict):
+                return cast(int, res.get("icount", 0))
+            return 0
+        except (OSError, RuntimeError) as e:
             logger.debug(f"get_virtual_time_ns: query-replay failed: {e}")
             return 0
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Closes all connections and background tasks.
         """
@@ -377,4 +378,5 @@ class QmpBridge:
             self._watchdog_task = None
 
         if self.is_connected:
-            await self.qmp.disconnect()
+            with contextlib.suppress(EOFError):
+                await self.qmp.disconnect()

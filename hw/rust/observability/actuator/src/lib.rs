@@ -34,6 +34,7 @@ pub struct VirtmcuActuatorQEMU {
     pub transport: *mut c_char,
     pub router: *mut c_char,
     pub topic_prefix: *mut c_char,
+    pub debug: bool,
 
     /* Registers */
     pub actuator_id: u32,
@@ -142,6 +143,9 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
         }
         ret
     } else {
+        if s.debug {
+            virtmcu_qom::sim_warn!("actuator_read: unhandled offset 0x{:x}", addr);
+        }
         0
     }
 }
@@ -176,6 +180,8 @@ pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64
                 );
             }
         }
+    } else if s.debug {
+        virtmcu_qom::sim_warn!("actuator_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
     }
 }
 
@@ -267,6 +273,7 @@ define_properties!(
         define_prop_string!(c"transport".as_ptr(), VirtmcuActuatorQEMU, transport),
         define_prop_string!(c"router".as_ptr(), VirtmcuActuatorQEMU, router),
         define_prop_string!(c"topic-prefix".as_ptr(), VirtmcuActuatorQEMU, topic_prefix),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuActuatorQEMU, debug, false),
     ]
 );
 
@@ -279,7 +286,7 @@ pub unsafe extern "C" fn actuator_class_init(klass: *mut ObjectClass, _data: *co
         (*dc).realize = Some(actuator_realize);
         (*dc).user_creatable = true;
     }
-    virtmcu_qom::device_class_set_props!(dc, VIRTMCU_ACTUATOR_PROPERTIES);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, VIRTMCU_ACTUATOR_PROPERTIES.as_ptr(), 5);
 }
 
 static VIRTMCU_ACTUATOR_TYPE_INFO: TypeInfo = TypeInfo {
@@ -291,7 +298,7 @@ static VIRTMCU_ACTUATOR_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(actuator_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(actuator_class_init),
     class_base_init: None,
     class_data: ptr::null(),

@@ -10,12 +10,13 @@ import json
 import logging
 import socket
 import sys
-import time
+
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def check_dummy():
+def check_dummy() -> None:
     """
     Main function to connect to QEMU and verify the dummy-device presence.
     """
@@ -27,8 +28,8 @@ def check_dummy():
         try:
             s.connect("qmp.sock")
             break
-        except Exception:
-            time.sleep(0.5)
+        except OSError:
+            mock_execution_delay(0.5)  # SLEEP_EXCEPTION: waiting for infrastructure
     else:
         logger.error("FAILED: Could not connect to QEMU QMP socket")
         sys.exit(1)
@@ -41,7 +42,7 @@ def check_dummy():
 
     visited = set()
 
-    def find_dummy(path):
+    def find_dummy(path: str) -> bool:
         """
         Recursively searches the QOM tree for 'dummy-device'.
         """

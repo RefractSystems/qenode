@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 SOTA Test Module: test_server_extra
 
@@ -8,22 +9,31 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_server_extra.
 """
 
+from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import mcp.types as types
 import pytest
+from mcp.server import Server
 
 from tools.mcp_server.server import create_mcp_server
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    pass
+
 
 @pytest.fixture
-def server():
+def server() -> Server:
     return create_mcp_server()
 
 
 @pytest.mark.asyncio
-async def test_call_tool_pause_resume(server):
+async def test_call_tool_pause_resume(server: Server) -> None:
     node_id = "p_r_node"
     node = server.node_manager.get_node(node_id)
     node.qmp_bridge.pause_emulation = AsyncMock()
@@ -47,7 +57,7 @@ async def test_call_tool_pause_resume(server):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_disassemble(server):
+async def test_call_tool_disassemble(server: Server) -> None:
     node_id = "dis_node"
     node = server.node_manager.get_node(node_id)
     node.qmp_bridge.execute = AsyncMock(return_value="0x1000: mov r0, #0")
@@ -65,7 +75,7 @@ async def test_call_tool_disassemble(server):
 
 @pytest.mark.asyncio
 @patch("zenoh.open")
-async def test_call_tool_set_network_latency(mock_zenoh_open, server):
+async def test_call_tool_set_network_latency(mock_zenoh_open: object, server: Server) -> None:
     mock_session = MagicMock()
     mock_zenoh_open.return_value = mock_session
 
@@ -87,7 +97,7 @@ async def test_call_tool_set_network_latency(mock_zenoh_open, server):
 
 
 @pytest.mark.asyncio
-async def test_list_resources(server):
+async def test_list_resources(server: Server) -> None:
     node_id = "node_res"
     node = server.node_manager.get_node(node_id)
     node.process = MagicMock()
@@ -102,7 +112,7 @@ async def test_list_resources(server):
 
 
 @pytest.mark.asyncio
-async def test_read_resource_status(server):
+async def test_read_resource_status(server: Server) -> None:
     node_id = "node_status"
     node = server.node_manager.get_node(node_id)
     node.process = MagicMock()
@@ -120,23 +130,24 @@ async def test_read_resource_status(server):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_flash_firmware(server):
+async def test_call_tool_flash_firmware(server: Server, tmp_path: Path) -> None:
     node_id = "flash_node"
+    firmware_path = str(tmp_path / "test.elf")
     with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.is_absolute", return_value=True):
         handler = server.request_handlers[types.CallToolRequest]
         req = types.CallToolRequest(
             method="tools/call",
             params=types.CallToolRequestParams(
-                name="flash_firmware", arguments={"node_id": node_id, "firmware_path": "/tmp/test.elf"}
+                name="flash_firmware", arguments={"node_id": node_id, "firmware_path": firmware_path}
             ),
         )
         res = await handler(req)
         assert "associated with node" in res.root.content[0].text
-        assert server.node_manager.get_node(node_id).firmware_path == "/tmp/test.elf"
+        assert server.node_manager.get_node(node_id).firmware_path == firmware_path
 
 
 @pytest.mark.asyncio
-async def test_call_tool_read_cpu_state(server):
+async def test_call_tool_read_cpu_state(server: Server) -> None:
     node_id = "cpu_node"
     node = server.node_manager.get_node(node_id)
     node.qmp_bridge.execute = AsyncMock(return_value="R0=00000000 R1=00000000")

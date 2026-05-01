@@ -9,7 +9,7 @@ This file serves as a historical record of completed milestones and tasks in the
 **Status**: Done
 
 ### Tasks
-- [x] **Hardened ARCH-8 Barrier**: Identified and fixed a non-deterministic race where fast nodes could finish quantum N+1 before the coordinator processed N.
+- [x] **Hardened Synchronization Barrier**: Identified and fixed a non-deterministic race where fast nodes could finish quantum N+1 before the coordinator processed N.
 - [x] **Unified State Lock**: Refactored `QuantumBarrier` to use a single `Mutex<BarrierState>` for all atomic transitions, eliminating deadlock risks.
 - [x] **Lookahead Buffer**: Implemented 1-quantum lookahead in the barrier to safely buffer fast-arriving messages without manual resets.
 - [x] **Stress Testing**: Added `barrier_race_stress.rs` integration test, verified with 100x local loop stability.
@@ -281,31 +281,31 @@ This file serves as a historical record of completed milestones and tasks in the
 
 ---
 
-## 2026 Multi-Node Determinism & Migration (DET Series) ✅
+## 2026 Multi-Node Determinism & Migration ✅
 
 **Status**: Done (Milestones 1-4, 7-8)
 
 ### Tasks
-- [x] **DET-1**: Safe Teardown.
-- [x] **DET-2**: Session Pool.
-- [x] **DET-3**: Hardware Jitter Profile Injection (Chaos Engineering).
-- [x] **DET-4**: Unix Sockets.
-- [x] **DET-5**: Coordinator Barrier.
-- [x] **DET-6**: Wireless Topology.
-- [x] **DET-7**: Deterministic Seeding.
-- [x] **DET-8**: Unified PCAP.
+- [x] **Safe Teardown**.
+- [x] **Session Pool**.
+- [x] **Hardware Jitter Profile Injection (Chaos Engineering)**.
+- [x] **Unix Sockets**.
+- [x] **Coordinator Barrier**.
+- [x] **Wireless Topology**.
+- [x] **Deterministic Seeding**.
+- [x] **Unified PCAP**.
 
 ---
 
 ## Architectural Hardening — Quantum 2026 ✅
 
 ### Tasks
-- [x] **ARCH-1**: GLOBAL_CLOCK TOCTOU.
-- [x] **ARCH-2**: RAII BQL.
-- [x] **ARCH-3**: Atomic State Machine.
-- [x] **ARCH-4**: Sequence Numbers.
-- [x] **ARCH-5**: Admission Control.
-- [x] **ARCH-6**: Overshoot Compensation.
+- [x] **GLOBAL_CLOCK TOCTOU**.
+- [x] **RAII BQL**.
+- [x] **Atomic State Machine**.
+- [x] **Sequence Numbers**.
+- [x] **Admission Control**.
+- [x] **Overshoot Compensation**.
 
 ---
 
@@ -333,18 +333,18 @@ This file serves as a historical record of completed milestones and tasks in the
 ## Miscellaneous Hardening & Infrastructure ✅
 
 ### Tasks
-- [x] **INFRA-7**: Automated Flight Recorder (Record & Replay).
-- [x] **INFRA-8**: Watchdog.
-- [x] **INFRA-6**: Multiplier.
+- [x] **Automated Flight Recorder (Record & Replay)**.
+- [x] **Watchdog**.
+- [x] **Multiplier**.
 - [x] **P10-Part 2.1**: Zenoh Liveliness.
 - [x] **R19**: Fatal Audit.
 - [x] **30.6**: remote-port Rust.
-- [x] **ARCH-9**: Backlog Admission Control.
-- [x] **ARCH-16**: Std cleanup.
-- [x] **ARCH-8**: Sync Protocol.
-- [x] **ARCH-13**: Session Isolation.
-- [x] **ARCH-18**: Quantum Alignment.
-- [x] **INFRA-1** to **INFRA-5**: Test Infrastructure Consolidation.
-- [x] **ARCH-10**: Watchdog.
-- [x] **ARCH-19**: Transport Agnostic organizes.
+- [x] **Backlog Admission Control**.
+- [x] **Std cleanup**.
+- [x] **Sync Protocol**.
+- [x] **Session Isolation**.
+- [x] **Quantum Alignment**.
+- [x] **Test Infrastructure Consolidation**.
+- [x] **Watchdog**.
+- [x] **Transport Agnostic organizes**.
 - [x] **Fixed Miri tests**

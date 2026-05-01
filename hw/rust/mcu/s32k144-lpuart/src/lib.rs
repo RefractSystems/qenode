@@ -42,6 +42,8 @@ pub struct S32K144LpuartQemu {
     pub router: *mut c_char,
     /// Optional base topic
     pub topic: *mut c_char,
+    /// Enable debug logging
+    pub debug: bool,
 
     /* Rust state */
     /// Opaque pointer to the Rust backend state
@@ -167,7 +169,12 @@ pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_
         REG_MODIR => u64::from(state.modir),
         REG_FIFO => u64::from(state.fifo),
         REG_WATER => u64::from(state.water),
-        _ => 0,
+        _ => {
+            if s.debug {
+                virtmcu_qom::sim_warn!("lpuart_read: unhandled offset 0x{:x}", offset);
+            }
+            0
+        }
     }
 }
 
@@ -217,7 +224,15 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
         REG_MODIR => state.modir = val,
         REG_FIFO => state.fifo = val,
         REG_WATER => state.water = val,
-        _ => {}
+        _ => {
+            if s.debug {
+                virtmcu_qom::sim_warn!(
+                    "lpuart_write: unhandled offset 0x{:x} val=0x{:x}",
+                    offset,
+                    value
+                );
+            }
+        }
     }
 }
 
@@ -452,6 +467,7 @@ define_properties!(
         define_prop_string!(c"transport".as_ptr(), S32K144LpuartQemu, transport),
         define_prop_string!(c"router".as_ptr(), S32K144LpuartQemu, router),
         define_prop_string!(c"topic".as_ptr(), S32K144LpuartQemu, topic),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), S32K144LpuartQemu, debug, false),
     ]
 );
 
@@ -504,7 +520,7 @@ static LPUART_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(lpuart_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(lpuart_class_init),
     class_base_init: None,
     class_data: ptr::null(),
@@ -513,59 +529,48 @@ static LPUART_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(LPUART_TYPE_INIT, LPUART_TYPE_INFO);
 
-fn lpuart_init_internal(
-    irq: QemuIrq,
-    node_id: u32,
-    transport_name: String,
+fn create_transport(
+    transport_name: &str,
     router: *const c_char,
-    topic: Option<String>,
-) -> *mut LpuartState {
-    virtmcu_qom::sim_info!("TRANSPORT NAME IS: {:?}", transport_name);
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
+) -> Option<Arc<dyn virtmcu_api::DataTransport>> {
+    if transport_name == "unix" {
         let path = unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() };
         virtmcu_qom::sim_info!("LPUART path = {}", path);
         match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
+            Ok(t) => Some(Arc::new(t)),
             Err(e) => {
                 virtmcu_qom::sim_err!("UNIX DATA TRANSPORT ERROR: {}", e);
-                return ptr::null_mut();
+                None
             }
         }
     } else {
         match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
+            Ok(s) => Some(Arc::new(transport_zenoh::ZenohDataTransport::new(s))),
             Err(e) => {
                 virtmcu_qom::sim_err!("UNIX DATA TRANSPORT ERROR: {}", e);
-                return ptr::null_mut();
+                None
             }
         }
-    };
+    }
+}
 
-    let base_topic = topic.unwrap_or_else(|| "sim/lin".to_owned());
-    let tx_topic = format!("{base_topic}/{node_id}/tx");
-    let rx_topic = format!("{base_topic}/{node_id}/rx");
+fn create_subscription(
+    transport: &Arc<dyn virtmcu_api::DataTransport>,
+    rx_topic: &str,
+    rx_timer: &Arc<QomTimer>,
+    earliest_vtime: &Arc<AtomicU64>,
+    tx_sender: Sender<OrderedLinFrame>,
+) -> Option<SafeSubscription> {
+    let rx_timer_clone = Arc::clone(rx_timer);
+    let earliest_clone = Arc::clone(earliest_vtime);
 
-    let (tx, rx) = bounded(1024);
-    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-    let earliest_clone = Arc::clone(&earliest_vtime);
-
-    let state_ptr_raw: *mut LpuartState =
-        Box::into_raw(Box::<core::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
-
-    let rx_timer = Arc::new(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
-    });
-    let rx_timer_clone = Arc::clone(&rx_timer);
-
-    let tx_timer = unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_tx_timer_cb, state_ptr_raw as *mut c_void)
-    };
-
-    let tx_clone = tx.clone();
     let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
         let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data) {
             Ok(f) => f,
-            Err(_) => return,
+            Err(e) => {
+                virtmcu_qom::sim_warn!("Failed to parse LinFrame: {:?}", e);
+                return;
+            }
         };
 
         let vtime = frame.delivery_vtime_ns();
@@ -574,7 +579,7 @@ fn lpuart_init_internal(
 
         let packet = OrderedLinFrame { vtime, msg_type, data };
 
-        if tx_clone.send(packet).is_ok() {
+        if tx_sender.send(packet).is_ok() {
             let mut current = earliest_clone.load(AtomicOrdering::Relaxed);
             while vtime < current {
                 if earliest_clone
@@ -595,9 +600,42 @@ fn lpuart_init_internal(
     });
 
     let generation = Arc::new(AtomicU64::new(0));
+    SafeSubscription::new(&**transport, rx_topic, generation, sub_callback).ok()
+}
+
+fn lpuart_init_internal(
+    irq: QemuIrq,
+    node_id: u32,
+    transport_name: String,
+    router: *const c_char,
+    topic: Option<String>,
+) -> *mut LpuartState {
+    virtmcu_qom::sim_info!("TRANSPORT NAME IS: {:?}", transport_name);
+    let transport = match create_transport(&transport_name, router) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+
+    let base_topic = topic.unwrap_or_else(|| "sim/lin".to_owned());
+    let tx_topic = format!("{base_topic}/{node_id}/tx");
+    let rx_topic = format!("{base_topic}/{node_id}/rx");
+
+    let (tx, rx) = bounded(1024);
+    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
+
+    let state_ptr_raw: *mut LpuartState =
+        Box::into_raw(Box::<core::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
+
+    let rx_timer = Arc::new(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
+    });
+
+    let tx_timer = unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_tx_timer_cb, state_ptr_raw as *mut c_void)
+    };
+
     let subscription =
-        virtmcu_qom::sync::SafeSubscription::new(&*transport, &rx_topic, generation, sub_callback)
-            .ok();
+        create_subscription(&transport, &rx_topic, &rx_timer, &earliest_vtime, tx.clone());
 
     let state = LpuartState {
         irq,

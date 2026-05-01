@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-def test_repl2qemu_standard():
+def test_repl2qemu_standard() -> None:
     """
     Test repl2qemu with a standard test repl.
     """
@@ -17,7 +18,9 @@ def test_repl2qemu_standard():
         dtb_path = f.name
 
     try:
-        result = subprocess.run(["repl2qemu", repl_path, "--out-dtb", dtb_path], capture_output=True, text=True)
+        result = subprocess.run(
+            [shutil.which("repl2qemu") or "repl2qemu", repl_path, "--out-dtb", dtb_path], capture_output=True, text=True
+        )
 
         assert result.returncode == 0
         assert Path(dtb_path).exists()
@@ -27,12 +30,19 @@ def test_repl2qemu_standard():
             Path(dtb_path).unlink()
 
 
-def test_repl2qemu_missing_file():
+def test_repl2qemu_missing_file() -> None:
     """
     Test repl2qemu with a missing file.
     """
     result = subprocess.run(
-        ["repl2qemu", "/tmp/non_existent.repl", "--out-dtb", "/tmp/test.dtb"], capture_output=True, text=True
+        [
+            shutil.which("repl2qemu") or "repl2qemu",
+            str(Path(tempfile.gettempdir()) / "non_existent.repl"),
+            "--out-dtb",
+            str(Path(tempfile.gettempdir()) / "test.dtb"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0
     assert "not found" in result.stderr.lower()

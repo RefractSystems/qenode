@@ -2,17 +2,17 @@
 
 # namespace: Telemetry
 
+
 import flatbuffers
 from flatbuffers.compat import import_numpy
 
 np = import_numpy()
 
-
 class TraceEvent:
-    __slots__ = ["_tab"]
+    __slots__ = ['_tab']
 
     @classmethod
-    def GetRootAs(cls, buf, offset=0):
+    def GetRootAs(cls, buf, offset: int = 0):
         n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
         x = TraceEvent()
         x.Init(buf, n + offset)
@@ -22,9 +22,8 @@ class TraceEvent:
     def GetRootAsTraceEvent(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
-
     # TraceEvent
-    def Init(self, buf, pos):
+    def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # TraceEvent
@@ -56,64 +55,50 @@ class TraceEvent:
         return 0
 
     # TraceEvent
-    def DeviceName(self):
+    def DeviceName(self) -> str | None:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
 
-
-def TraceEventStart(builder):
+def TraceEventStart(builder: flatbuffers.Builder):
     builder.StartObject(5)
 
+def Start(builder: flatbuffers.Builder):
+    TraceEventStart(builder)
 
-def Start(builder):
-    return TraceEventStart(builder)
-
-
-def TraceEventAddTimestampNs(builder, timestampNs):
+def TraceEventAddTimestampNs(builder: flatbuffers.Builder, timestampNs: int):
     builder.PrependUint64Slot(0, timestampNs, 0)
 
+def AddTimestampNs(builder: flatbuffers.Builder, timestampNs: int):
+    TraceEventAddTimestampNs(builder, timestampNs)
 
-def AddTimestampNs(builder, timestampNs):
-    return TraceEventAddTimestampNs(builder, timestampNs)
-
-
-def TraceEventAddType(builder, type):
+def TraceEventAddType(builder: flatbuffers.Builder, type: int):
     builder.PrependInt8Slot(1, type, 0)
 
+def AddType(builder: flatbuffers.Builder, type: int):
+    TraceEventAddType(builder, type)
 
-def AddType(builder, type):
-    return TraceEventAddType(builder, type)
-
-
-def TraceEventAddId(builder, id):
+def TraceEventAddId(builder: flatbuffers.Builder, id: int):
     builder.PrependUint32Slot(2, id, 0)
 
+def AddId(builder: flatbuffers.Builder, id: int):
+    TraceEventAddId(builder, id)
 
-def AddId(builder, id):
-    return TraceEventAddId(builder, id)
-
-
-def TraceEventAddValue(builder, value):
+def TraceEventAddValue(builder: flatbuffers.Builder, value: int):
     builder.PrependUint32Slot(3, value, 0)
 
+def AddValue(builder: flatbuffers.Builder, value: int):
+    TraceEventAddValue(builder, value)
 
-def AddValue(builder, value):
-    return TraceEventAddValue(builder, value)
-
-
-def TraceEventAddDeviceName(builder, deviceName):
+def TraceEventAddDeviceName(builder: flatbuffers.Builder, deviceName: int):
     builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(deviceName), 0)
 
+def AddDeviceName(builder: flatbuffers.Builder, deviceName: int):
+    TraceEventAddDeviceName(builder, deviceName)
 
-def AddDeviceName(builder, deviceName):
-    return TraceEventAddDeviceName(builder, deviceName)
-
-
-def TraceEventEnd(builder):
+def TraceEventEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
-
-def End(builder):
+def End(builder: flatbuffers.Builder) -> int:
     return TraceEventEnd(builder)

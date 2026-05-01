@@ -1,14 +1,19 @@
+"""
+Writes a PCAP file from the recorded history.
+Uses DLT_USER0 (147) as the link layer type.
+"""
+
+from __future__ import annotations
+
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def write_pcap(path: Path, history: list[dict]) -> None:
-    """
-    Writes a PCAP file from the recorded history.
-    Uses DLT_USER0 (147) as the link layer type.
-    """
+def write_pcap(path: Path, history: list[dict[str, Any]]) -> None:
+
     try:
         with path.open("wb") as f:
             # Global Header (24 bytes)
@@ -70,8 +75,8 @@ def write_pcap(path: Path, history: list[dict]) -> None:
                     f.write(orig_len.to_bytes(4, "little"))
 
                     f.write(pcap_payload[:incl_len])
-                except Exception as pkt_e:
+                except Exception as pkt_e:  # noqa: BLE001
                     logger.warning(f"Failed to write PCAP packet: {pkt_e}")
                     continue
-    except Exception as e:
+    except OSError as e:
         logger.error(f"Failed to open/write PCAP file {path}: {e}")

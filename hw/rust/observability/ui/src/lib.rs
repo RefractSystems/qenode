@@ -26,6 +26,7 @@ pub struct ZenohUiQEMU {
     /* Properties */
     pub node_id: u32,
     pub router: *mut c_char,
+    pub debug: bool,
 
     /* Registers */
     pub active_led_id: u32,
@@ -59,6 +60,9 @@ const REG_BTN_STATE: u64 = 0x14;
 pub unsafe extern "C" fn ui_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
     // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
     let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
+    if s.debug {
+        virtmcu_qom::sim_warn!("ui_read: addr=0x{:x}", addr);
+    }
     if addr == REG_LED_ID {
         return u64::from(s.active_led_id);
     }
@@ -81,6 +85,9 @@ pub unsafe extern "C" fn ui_read(opaque: *mut c_void, addr: u64, _size: c_uint) 
 pub unsafe extern "C" fn ui_write(opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
     // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
     let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
+    if s.debug {
+        virtmcu_qom::sim_warn!("ui_write: addr=0x{:x} val=0x{:x}", addr, val);
+    }
     if addr == REG_LED_ID {
         s.active_led_id = val as u32;
     } else if addr == REG_LED_STATE {
@@ -176,6 +183,7 @@ define_properties!(
     [
         define_prop_uint32!(c"node".as_ptr(), ZenohUiQEMU, node_id, 0),
         define_prop_string!(c"router".as_ptr(), ZenohUiQEMU, router),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), ZenohUiQEMU, debug, false),
     ]
 );
 
@@ -189,7 +197,7 @@ pub unsafe extern "C" fn ui_class_init(klass: *mut ObjectClass, _data: *const c_
         (*dc).realize = Some(ui_realize);
         (*dc).user_creatable = true;
     }
-    virtmcu_qom::device_class_set_props!(dc, ZENOH_UI_PROPERTIES);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, ZENOH_UI_PROPERTIES.as_ptr(), 3);
 }
 
 static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
@@ -201,7 +209,7 @@ static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(ui_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(ui_class_init),
     class_base_init: None,
     class_data: ptr::null(),

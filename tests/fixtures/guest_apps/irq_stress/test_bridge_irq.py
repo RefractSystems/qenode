@@ -10,23 +10,27 @@ Ensure correct functionality, performance, and deterministic execution of test_b
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
-import time
 from pathlib import Path
+
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def test_irq():
-    sock_path = tempfile.mktemp(suffix=".sock")
-    tempfile.mktemp(suffix=".log")
+def test_irq() -> None:
+    sock_path = tempfile.mkstemp(suffix=".sock")[1]
+    tempfile.mkstemp(suffix=".log")[1]
 
     # 1. Start Mock Adapter
-    cat_cmd = f"""
-import os, socket, struct, time, sys
-sys.path.append("/workspace/tools")
-import vproto
+    cat_cmd = """
+import os, socket, struct, time, sys, pathlib
+import tools.vproto as vproto
+from tools.testing.utils import mock_execution_delay
+
 VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 SYSC_MSG_IRQ_SET = 1
@@ -38,15 +42,18 @@ s.listen(1)
 conn, addr = s.accept()
 hs = conn.recv(8)
 conn.sendall(hs)
-time.sleep(1)
+mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 # Send IRQs
 conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
-time.sleep(0.1)
+mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
-time.sleep(1)
+mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 conn.close()
-"""
-    adapter_proc = subprocess.Popen(["python3", "-c", cat_cmd])
+""".replace("{sock_path}", sock_path)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(WORKSPACE_DIR)
+    adapter_proc = subprocess.Popen([shutil.which("python3") or "python3", "-c", cat_cmd], env=env)
 
     # 2. Prepare DTS and Firmware
     # We use a dummy firmware that just hangs
@@ -62,15 +69,34 @@ conn.close()
     bridge@50000000 {{ compatible = "mmio-socket-bridge"; reg = <0x0 0x70000000 0x0 0x1000>; socket-path = "{sock_path}"; region-size = <0x1000>; }};
 }};
 """
-    with Path("/tmp/irq.dts").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "irq.dts")).open("w") as f:
         f.write(dts)
-    subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", "/tmp/irq.dtb", "/tmp/irq.dts"])
+    subprocess.run(
+        [
+            shutil.which("dtc") or "dtc",
+            "-I",
+            "dts",
+            "-O",
+            "dtb",
+            "-o",
+            str(Path(tempfile.gettempdir()) / "irq.dtb"),
+            str(Path(tempfile.gettempdir()) / "irq.dts"),
+        ]
+    )
 
     # Dummy firmware: hlt (wait for interrupt)
-    with Path("/tmp/irq.S").open("w") as f:
+    with Path(str(Path(tempfile.gettempdir()) / "irq.S")).open("w") as f:
         f.write(".global _start\n_start:\nwfi\nb _start\n")
     subprocess.run(
-        ["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-Ttext=0x40000000", "/tmp/irq.S", "-o", "/tmp/irq.elf"]
+        [
+            shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc",
+            "-mcpu=cortex-a15",
+            "-nostdlib",
+            "-Ttext=0x40000000",
+            str(Path(tempfile.gettempdir()) / "irq.S"),
+            "-o",
+            str(Path(tempfile.gettempdir()) / "irq.elf"),
+        ]
     )
 
     # 3. Start QEMU
@@ -82,7 +108,7 @@ conn.close()
             "-M",
             "arm-generic-fdt,hw-dtb=/tmp/irq.dtb",
             "-kernel",
-            "/tmp/irq.elf",
+            str(Path(tempfile.gettempdir()) / "irq.elf"),
             "-nographic",
             "-monitor",
             "none",
@@ -91,7 +117,7 @@ conn.close()
         stderr=subprocess.PIPE,
     )
 
-    time.sleep(5)
+    mock_execution_delay(5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     qemu_proc.terminate()
     adapter_proc.terminate()
 

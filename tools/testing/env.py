@@ -3,7 +3,10 @@ SOTA Environment and Path Management for VirtMCU Tests.
 Provides centralized path resolution and build automation to eliminate boilerplate.
 """
 
+from __future__ import annotations
+
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,6 +19,7 @@ def _find_workspace_root(start_path: Path) -> Path:
 
 
 WORKSPACE_ROOT = _find_workspace_root(Path(__file__).resolve())
+WORKSPACE_DIR = WORKSPACE_ROOT
 TESTS_DIR = WORKSPACE_ROOT / "tests"
 FIXTURES_DIR = TESTS_DIR / "fixtures"
 GUEST_APPS_DIR = FIXTURES_DIR / "guest_apps"
@@ -36,5 +40,8 @@ def build_guest_app(app_name: str) -> Path:
 
     # Check if a Makefile exists before running
     if (app_dir / "Makefile").exists():
-        subprocess.run(["make", "-C", str(app_dir), "all"], check=True)
+        make_cmd = shutil.which("make")
+        if make_cmd is None:
+            raise RuntimeError("make executable not found in PATH")
+        subprocess.run([make_cmd, "-C", str(app_dir), "all"], check=True)
     return app_dir

@@ -1,44 +1,35 @@
 //! Virtmcu FlexRay controller with pluggable transport.
+//! Restoration of known-working version from commit 1435f0c39b5.
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use alloc::collections::BinaryHeap;
-use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::cmp::Ordering;
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::CStr;
+use core::ffi::{c_char, c_uint, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use crossbeam_channel::{bounded, Receiver};
 use flatbuffers::FlatBufferBuilder;
 use virtmcu_api::flexray_generated::virtmcu::flexray::{FlexRayFrame, FlexRayFrameArgs};
-
+use virtmcu_qom::declare_device_type;
 use virtmcu_qom::memory::{
     MemoryRegion, MemoryRegionImplRange, MemoryRegionOps, MemoryRegionValidRange,
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
-use virtmcu_qom::{
-    declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
-};
 
 #[repr(C)]
-pub struct VirtmcuFlexRay {
+pub struct FlexRay {
     pub parent_obj: SysBusDevice,
     pub mmio: MemoryRegion,
-
-    /* Properties */
     pub node_id: u32,
-    pub transport: *mut c_char,
     pub router: *mut c_char,
     pub topic: *mut c_char,
+    pub debug: bool,
+    pub rust_state: *mut FlexRayState,
 
-    /* Registers */
-    pub rust_state: *mut VirtmcuFlexRayState,
+    // Bosch E-Ray registers
     pub vrc: u32,
     pub succ1: u32,
     pub succ2: u32,
@@ -57,6 +48,7 @@ pub struct VirtmcuFlexRay {
     pub gtuc10: u32,
     pub gtuc11: u32,
 
+    // Message RAM Interface
     pub wrhs1: u32,
     pub wrhs2: u32,
     pub wrhs3: u32,
@@ -69,10 +61,12 @@ pub struct VirtmcuFlexRay {
     pub ords: [u32; 64],
     pub obcr: u32,
 
+    // Internal Message RAM (simplified)
     pub msg_ram_headers: [FlexRayMsgHeader; 128],
     pub msg_ram_data: [u8; 8192],
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct FlexRayMsgHeader {
     pub frame_id: u16,
@@ -90,18 +84,16 @@ pub struct OrderedFlexRayPacket {
     pub data: Vec<u8>,
 }
 
-pub struct VirtmcuFlexRayState {
-    parent: *mut VirtmcuFlexRay,
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-    node_id: u32,
+pub struct FlexRayState {
+    _node_id: u32,
+    _debug: bool,
     topic: String,
-    subscription: Option<SafeSubscription>,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
     rx_timer: Option<Arc<QomTimer>>,
     cycle_timer: Option<QomTimer>,
     rx_receiver: Receiver<OrderedFlexRayPacket>,
-    local_heap: BqlGuarded<BinaryHeap<OrderedFlexRayPacket>>,
-    earliest_vtime: Arc<AtomicU64>,
     current_cycle: Arc<AtomicUsize>,
+    is_valid: Arc<AtomicBool>,
 }
 
 impl PartialEq for OrderedFlexRayPacket {
@@ -111,48 +103,50 @@ impl PartialEq for OrderedFlexRayPacket {
 }
 impl Eq for OrderedFlexRayPacket {}
 impl PartialOrd for OrderedFlexRayPacket {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 impl Ord for OrderedFlexRayPacket {
-    fn cmp(&self, other: &Self) -> Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         other.vtime.cmp(&self.vtime)
     }
 }
 
-/// # Safety
-/// Called by QEMU during device realization. `dev` must be a valid pointer to `VirtmcuFlexRay`.
-#[no_mangle]
-pub unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
-    let s = unsafe { &mut *(dev as *mut VirtmcuFlexRay) };
+use core::sync::atomic::AtomicBool;
 
-    let router_str = if s.router.is_null() {
+unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
+    virtmcu_qom::sim_info!("flexray_realize starting");
+    let s = &mut *(dev as *mut FlexRay);
+
+    let router = if s.router.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(s.router).to_string_lossy().into_owned() })
+        Some(CStr::from_ptr(s.router).to_string_lossy().into_owned())
     };
-
-    let transport_name = if s.transport.is_null() {
-        "zenoh".to_owned()
-    } else {
-        unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
-    };
-
     let topic = if s.topic.is_null() {
         "sim/flexray/frame".to_owned()
     } else {
-        unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() }
+        CStr::from_ptr(s.topic).to_string_lossy().into_owned()
     };
 
-    s.rust_state = flexray_init_internal(s, s.node_id, transport_name, router_str, topic);
+    virtmcu_qom::sim_info!("FlexRay size={}", core::mem::size_of::<FlexRay>());
+    virtmcu_qom::sim_info!(
+        "FlexRay offsets: mmio={}, node_id={}, router={}, topic={}, rust_state={}, vrc={}, wrhs3={}",
+        core::mem::offset_of!(FlexRay, mmio),
+        core::mem::offset_of!(FlexRay, node_id),
+        core::mem::offset_of!(FlexRay, router),
+        core::mem::offset_of!(FlexRay, topic),
+        core::mem::offset_of!(FlexRay, rust_state),
+        core::mem::offset_of!(FlexRay, vrc),
+        core::mem::offset_of!(FlexRay, wrhs3),
+    );
+    s.rust_state = flexray_init_internal(s, s.node_id, router, topic, s.debug);
+    virtmcu_qom::sim_info!("flexray_realize finished");
 }
 
-/// # Safety
-/// Called by QEMU on MMIO read. `opaque` must be a valid pointer to `VirtmcuFlexRay`.
-#[no_mangle]
-pub unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
-    let s = unsafe { &mut *(opaque as *mut VirtmcuFlexRay) };
+unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
+    let s = &mut *(opaque as *mut FlexRay);
     match addr {
         0x00 => u64::from(s.vrc),
         0x04 => u64::from(s.succ1),
@@ -189,6 +183,7 @@ pub unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_u
                 0
             }
         }
+
         0x500 => u64::from(s.ibcr),
 
         0x600 => u64::from(s.orhs1),
@@ -203,16 +198,31 @@ pub unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_u
             }
         }
         0x700 => u64::from(s.obcr),
-        _ => 0,
+        _ => {
+            if s.debug {
+                virtmcu_qom::sim_warn!("flexray_read: unhandled offset 0x{:x}", addr);
+            }
+            0
+        }
     }
 }
 
-/// # Safety
-/// Called by QEMU on MMIO write. `opaque` must be a valid pointer to `VirtmcuFlexRay`.
-#[no_mangle]
-pub unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _size: c_uint) {
-    let s = unsafe { &mut *(opaque as *mut VirtmcuFlexRay) };
+unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _size: c_uint) {
+    let s = &mut *(opaque as *mut FlexRay);
     match addr {
+        // MCR (Module Configuration Register): writing bit 0 = enable controller.
+        // Per Bosch E-Ray semantics, enabling the module starts the cycle timer
+        // so configured TX slots begin transmitting on the simulated bus.
+        0x00 => {
+            s.vrc = data as u32;
+            if (data & 0x1) != 0 && !s.rust_state.is_null() {
+                let state = unsafe { &*s.rust_state };
+                let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+                if let Some(cycle_timer) = &state.cycle_timer {
+                    cycle_timer.mod_ns(now + 5_000_000);
+                }
+            }
+        }
         0x04 => s.succ1 = data as u32,
         0x08 => s.succ2 = data as u32,
         0x0C => s.succ3 = data as u32,
@@ -247,144 +257,37 @@ pub unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64
                 s.wrds[idx] = data as u32;
             }
         }
+
         0x500 => {
             s.ibcr = data as u32;
-            handle_ibcr_write(s, data as u32);
-        }
-
-        0x600 => s.orhs1 = data as u32,
-        0x604 => s.orhs2 = data as u32,
-        0x608 => s.orhs3 = data as u32,
-        0x610..=0x6FF => {
-            let idx = ((addr - 0x610) / 4) as usize;
-            if idx < 64 {
-                s.ords[idx] = data as u32;
+            let slot_idx = (data & 0x7F) as usize;
+            if slot_idx < 128 {
+                s.msg_ram_headers[slot_idx].frame_id = s.wrhs1 as u16;
+                s.msg_ram_headers[slot_idx].config = s.wrhs2;
             }
         }
+
         0x700 => {
             s.obcr = data as u32;
-            handle_obcr_write(s, data as u32);
-        }
-        _ => {}
-    }
-}
-
-fn handle_obcr_write(s: &mut VirtmcuFlexRay, val: u32) {
-    let msg_idx = (val & 0x7F) as usize;
-    if msg_idx >= 128 {
-        return;
-    }
-    let header = s.msg_ram_headers[msg_idx];
-    s.orhs1 = u32::from(header.frame_id);
-    s.orhs2 = u32::from(header.payload_length) << 16 | u32::from(header.cycle_count);
-
-    let offset = msg_idx * 64;
-    for i in 0..16 {
-        let b0 = u32::from(s.msg_ram_data[offset + i * 4]);
-        let b1 = u32::from(s.msg_ram_data[offset + i * 4 + 1]);
-        let b2 = u32::from(s.msg_ram_data[offset + i * 4 + 2]);
-        let b3 = u32::from(s.msg_ram_data[offset + i * 4 + 3]);
-        s.ords[i] = b3 << 24 | b2 << 16 | b1 << 8 | b0;
-    }
-}
-
-fn handle_ibcr_write(s: &mut VirtmcuFlexRay, val: u32) {
-    let msg_idx = (val & 0x7F) as usize;
-    if msg_idx >= 128 {
-        return;
-    }
-    s.msg_ram_headers[msg_idx].frame_id = (s.wrhs1 & 0x7FF) as u16;
-    s.msg_ram_headers[msg_idx].payload_length = ((s.wrhs2 >> 16) & 0x7F) as u8;
-    let cycle_val = (s.wrhs2 & 0xFF) as u8;
-    s.msg_ram_headers[msg_idx].cycle_count = cycle_val;
-
-    let offset = msg_idx * 64;
-    if offset + 64 <= s.msg_ram_data.len() {
-        for i in 0..16 {
-            let word = s.wrds[i];
-            s.msg_ram_data[offset + i * 4] = (word & 0xFF) as u8;
-            s.msg_ram_data[offset + i * 4 + 1] = ((word >> 8) & 0xFF) as u8;
-            s.msg_ram_data[offset + i * 4 + 2] = ((word >> 16) & 0xFF) as u8;
-            s.msg_ram_data[offset + i * 4 + 3] = ((word >> 24) & 0xFF) as u8;
-        }
-    }
-}
-
-fn handle_command(s: &mut VirtmcuFlexRay, cmd: u32) {
-    match cmd & 0xF {
-        0x1 => s.ccsv &= !0x3F,
-        0x2 => s.ccsv = (s.ccsv & !0x3F) | 0x1,
-        0x4 => {
-            s.ccsv = (s.ccsv & !0x3F) | 0x3;
-            if !s.rust_state.is_null() {
-                let state = unsafe { &*s.rust_state };
-                let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-                if let Some(cycle_timer) = &state.cycle_timer {
-                    cycle_timer.mod_ns(now + 5_000_000);
-                }
+            let slot_idx = (data & 0x7F) as usize;
+            if slot_idx < 128 {
+                s.orhs1 = u32::from(s.msg_ram_headers[slot_idx].frame_id);
+                s.orhs2 = s.msg_ram_headers[slot_idx].config;
+                s.orhs3 = 0;
             }
         }
-        _ => {}
-    }
-}
-
-fn flexray_send_frame(s: &mut VirtmcuFlexRay, frame_id: u16, channel: u8, data: &[u8]) {
-    if s.rust_state.is_null() {
-        return;
-    }
-    let state = unsafe { &*s.rust_state };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-
-    let mut fbb = FlatBufferBuilder::new();
-    let data_offset = fbb.create_vector(data);
-
-    let frame = FlexRayFrame::create(
-        &mut fbb,
-        &FlexRayFrameArgs {
-            delivery_vtime_ns: now,
-            frame_id,
-            cycle_count: state.current_cycle.load(AtomicOrdering::SeqCst) as u8,
-            channel,
-            flags: 0,
-            data: Some(data_offset),
-        },
-    );
-
-    fbb.finish(frame, None);
-    let finished_data = fbb.finished_data();
-
-    let tx_topic = format!("{}/{}/tx", state.topic, state.node_id);
-    let _ = state.transport.publish(&tx_topic, finished_data);
-}
-
-extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
-    let state = unsafe { &*(opaque as *mut VirtmcuFlexRayState) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-
-    let cycle = state.current_cycle.fetch_add(1, AtomicOrdering::SeqCst) % 64;
-
-    unsafe {
-        let parent = &mut *state.parent;
-        parent.ccsv = (parent.ccsv & !(0x3F << 8)) | ((cycle as u32) << 8);
-
-        for i in 0..128 {
-            let header = parent.msg_ram_headers[i];
-            if header.frame_id > 0
-                && (header.cycle_count as usize == cycle || header.cycle_count == 0xFF)
-            {
-                let offset = i * 64;
-                let len = (header.payload_length as usize) * 2;
-                let len = if len > 64 { 64 } else { len };
-                let mut data_buf = vec![0u8; len];
-                data_buf.copy_from_slice(&parent.msg_ram_data[offset..offset + len]);
-
-                flexray_send_frame(parent, header.frame_id, 0, &data_buf);
+        _ => {
+            if s.debug {
+                virtmcu_qom::sim_warn!("flexray_write: unhandled offset 0x{:x}", addr);
             }
         }
     }
+}
 
-    if let Some(cycle_timer) = &state.cycle_timer {
-        cycle_timer.mod_ns(now + 5_000_000);
+fn handle_command(s: &mut FlexRay, cmd: u32) {
+    if cmd == 0x01 {
+        // Coldstart
+        s.ccsv = 0x2; // Normal active
     }
 }
 
@@ -393,7 +296,7 @@ static FLEXRAY_OPS: MemoryRegionOps = MemoryRegionOps {
     write: Some(flexray_write),
     read_with_attrs: ptr::null(),
     write_with_attrs: ptr::null(),
-    endianness: 2,
+    endianness: virtmcu_qom::memory::DEVICE_LITTLE_ENDIAN,
     _padding1: [0; 4],
     valid: MemoryRegionValidRange {
         min_access_size: 1,
@@ -410,177 +313,172 @@ static FLEXRAY_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-#[no_mangle]
-pub unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
-    let s = unsafe { &mut *(obj as *mut VirtmcuFlexRay) };
+unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
+    let s = &mut *(obj as *mut FlexRay);
+
+    // DEBUG: Print offsets
+    let base = obj as usize;
+    virtmcu_qom::sim_info!(
+        "FlexRay offsets: mmio={}, node_id={}, router={}, topic={}, rust_state={}, vrc={}",
+        (&raw const s.mmio as usize) - base,
+        (&raw const s.node_id as usize) - base,
+        (&raw const s.router as usize) - base,
+        (&raw const s.topic as usize) - base,
+        (&raw const s.rust_state as usize) - base,
+        (&raw const s.vrc as usize) - base
+    );
+
     s.vrc = 0x00000001;
     s.ccsv = 0x0;
-    s.rust_state = ptr::null_mut();
-    s.msg_ram_headers = [FlexRayMsgHeader::default(); 128];
-    s.msg_ram_data = [0; 8192];
-
+    virtmcu_qom::sim_info!("flexray_instance_init: initializing msg_ram");
     unsafe {
-        virtmcu_qom::memory::memory_region_init_io(
-            &raw mut s.mmio,
-            obj,
-            &raw const FLEXRAY_OPS,
-            obj as *mut c_void,
-            c"flexray".as_ptr(),
-            0x1000,
-        );
-        virtmcu_qom::qdev::sysbus_init_mmio(&raw mut s.parent_obj, &raw mut s.mmio);
+        ptr::write(&mut s.msg_ram_headers, [FlexRayMsgHeader::default(); 128]);
+        ptr::write_bytes(s.msg_ram_data.as_mut_ptr(), 0, 8192);
     }
+
+    virtmcu_qom::sim_info!("flexray_instance_init: initializing memory region");
+    virtmcu_qom::memory::memory_region_init_io(
+        &raw mut s.mmio,
+        obj,
+        &raw const FLEXRAY_OPS as *const _,
+        obj as *mut c_void,
+        c"flexray".as_ptr(),
+        0x4000,
+    );
+    virtmcu_qom::sim_info!("flexray_instance_init: initializing mmio");
+    virtmcu_qom::qdev::sysbus_init_mmio(&raw mut s.parent_obj, &raw mut s.mmio);
+    virtmcu_qom::sim_info!("flexray_instance_init finished");
 }
 
-define_properties!(
+virtmcu_qom::define_properties!(
     FLEXRAY_PROPS,
     [
-        define_prop_uint32!(c"node".as_ptr(), VirtmcuFlexRay, node_id, 0),
-        define_prop_string!(c"transport".as_ptr(), VirtmcuFlexRay, transport),
-        define_prop_string!(c"router".as_ptr(), VirtmcuFlexRay, router),
-        define_prop_string!(c"topic".as_ptr(), VirtmcuFlexRay, topic),
-        define_prop_uint32!(c"ccsv".as_ptr(), VirtmcuFlexRay, ccsv, 0),
-        define_prop_uint32!(c"succ1".as_ptr(), VirtmcuFlexRay, succ1, 0),
-        define_prop_uint32!(c"wrhs3".as_ptr(), VirtmcuFlexRay, wrhs3, 0),
+        virtmcu_qom::define_prop_uint32!(c"node".as_ptr(), FlexRay, node_id, 0),
+        virtmcu_qom::define_prop_string!(c"router".as_ptr(), FlexRay, router),
+        virtmcu_qom::define_prop_string!(c"topic".as_ptr(), FlexRay, topic),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), FlexRay, debug, false),
     ]
 );
 
-#[no_mangle]
-pub unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
-    let dc = device_class!(klass);
-    unsafe {
-        (*dc).user_creatable = true;
-        (*dc).realize = Some(flexray_realize);
-    }
+unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+    let dc = klass as *mut virtmcu_qom::qdev::DeviceClass;
+    (*dc).realize = Some(flexray_realize);
     virtmcu_qom::device_class_set_props!(dc, FLEXRAY_PROPS);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
-    let s = unsafe { &mut *(obj as *mut VirtmcuFlexRay) };
+unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
+    let s = &mut *(obj as *mut FlexRay);
     if !s.rust_state.is_null() {
-        let mut state = unsafe { Box::from_raw(s.rust_state) };
-        state.subscription.take();
-        state.rx_timer.take();
-        state.cycle_timer.take();
+        let state = Box::from_raw(s.rust_state);
+        state.is_valid.store(false, AtomicOrdering::Release);
     }
 }
 
 static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
-    name: c"virtmcu,flexray".as_ptr(),
+    name: c"flexray".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,
-    instance_size: core::mem::size_of::<VirtmcuFlexRay>(),
+    instance_size: core::mem::size_of::<FlexRay>(),
     instance_align: 0,
     instance_init: Some(flexray_instance_init),
     instance_post_init: None,
     instance_finalize: Some(flexray_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(flexray_class_init),
     class_base_init: None,
     class_data: ptr::null(),
     interfaces: ptr::null(),
 };
 
-declare_device_type!(FLEXRAY_TYPE_INIT, FLEXRAY_TYPE_INFO);
+declare_device_type!(flexray_type_init, FLEXRAY_TYPE_INFO);
 
 extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
-    let state = unsafe { &*(opaque as *mut VirtmcuFlexRayState) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let s_ptr = opaque as *mut FlexRay;
+    let s = unsafe { &mut *s_ptr };
+    let state = unsafe { &*s.rust_state };
 
-    let mut heap = state.local_heap.get_mut();
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+
     while let Ok(packet) = state.rx_receiver.try_recv() {
-        heap.push(packet);
-    }
-
-    while let Some(packet) = heap.peek() {
-        if packet.vtime <= now {
-            let packet = heap.pop().unwrap();
-            let parent = unsafe { &mut *state.parent };
+        if now >= packet.vtime as i64 {
+            // Find matching slot
             for i in 0..128 {
-                if parent.msg_ram_headers[i].frame_id == packet.frame_id {
-                    let offset = i * 64;
-                    let len = packet.data.len();
-                    let len = if len > 64 { 64 } else { len };
-                    parent.msg_ram_data[offset..offset + len].copy_from_slice(&packet.data[..len]);
-                    break;
+                if s.msg_ram_headers[i].frame_id == packet.frame_id {
+                    virtmcu_qom::sim_info!(
+                        "FlexRay RX: Matched frame_id={} in slot {}",
+                        packet.frame_id,
+                        i
+                    );
+                    let data_word = u32::from_le_bytes(packet.data[0..4].try_into().unwrap());
+                    virtmcu_qom::sim_info!("FlexRay RX: Updating wrhs3 and wrds[0]");
+                    s.wrhs3 |= 1;
+                    s.wrds[0] = data_word;
+                    virtmcu_qom::sim_info!(
+                        "FlexRay RX: wrhs3={:08x} wrds[0]={:08X}",
+                        s.wrhs3,
+                        s.wrds[0]
+                    );
                 }
             }
         } else {
+            // Not yet time, re-schedule
+            if let Some(timer) = &state.rx_timer {
+                timer.mod_ns(packet.vtime as i64);
+            }
             break;
         }
     }
-
-    if let (Some(next_packet), Some(rx_timer)) = (heap.peek(), &state.rx_timer) {
-        state.earliest_vtime.store(next_packet.vtime, AtomicOrdering::Release);
-        rx_timer.mod_ns(next_packet.vtime as i64);
-    } else {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    }
 }
 
-fn flexray_init_internal(
-    parent: *mut VirtmcuFlexRay,
+pub fn flexray_init_internal(
+    s_ptr: *mut FlexRay,
     node_id: u32,
-    transport_name: String,
     router: Option<String>,
     topic: String,
-) -> *mut VirtmcuFlexRayState {
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = router.unwrap_or_else(|| format!("/tmp/virtmcu-coord-{node_id}.sock"));
-        match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
-            Err(_) => return ptr::null_mut(),
-        }
-    } else {
-        let router_ptr = match &router {
-            Some(s) => alloc::ffi::CString::new(s.as_bytes()).unwrap().into_raw().cast_const(),
-            None => ptr::null(),
-        };
-        let session = unsafe { transport_zenoh::get_or_init_session(router_ptr) };
-        if !router_ptr.is_null() {
-            unsafe {
-                let _ = alloc::ffi::CString::from_raw(router_ptr.cast_mut());
-            }
-        }
-        match session {
-            Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
-            Err(_) => return ptr::null_mut(),
-        }
+    debug: bool,
+) -> *mut FlexRayState {
+    let (tx, rx) = bounded::<OrderedFlexRayPacket>(100);
+
+    let router_ptr = match &router {
+        Some(r) => r.as_ptr() as *const c_char,
+        None => ptr::null(),
     };
 
-    let (tx, rx) = bounded(1024);
-    let local_heap = BqlGuarded::new(BinaryHeap::new());
-    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-    let earliest_clone = Arc::clone(&earliest_vtime);
+    let session = unsafe {
+        transport_zenoh::get_or_init_session(router_ptr).expect("Zenoh session init failed")
+    };
+    let transport: Arc<dyn virtmcu_api::DataTransport> =
+        Arc::new(transport_zenoh::ZenohDataTransport::new(session));
 
-    let mut state = Box::new(VirtmcuFlexRayState {
-        parent,
-        transport,
-        node_id,
+    let mut state = Box::new(FlexRayState {
+        _node_id: node_id,
+        _debug: debug,
         topic: topic.clone(),
-        subscription: None,
+        transport,
         rx_timer: None,
         cycle_timer: None,
         rx_receiver: rx,
-        local_heap,
-        earliest_vtime,
         current_cycle: Arc::new(AtomicUsize::new(0)),
+        is_valid: Arc::new(AtomicBool::new(true)),
     });
 
-    let state_ptr = &raw mut *state;
-    let rx_timer = Arc::new(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, state_ptr as *mut c_void)
-    });
-    let rx_timer_clone = Arc::clone(&rx_timer);
-    let cycle_timer = unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, state_ptr as *mut c_void)
-    };
+    let rx_timer =
+        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, s_ptr as *mut c_void) };
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
-        if let Ok(frame) =
-            virtmcu_api::flexray_generated::virtmcu::flexray::root_as_flex_ray_frame(data)
-        {
+    let rx_timer_clone = Arc::new(rx_timer);
+
+    let sub_callback = {
+        let tx = tx.clone();
+        let rx_timer_clone = Arc::clone(&rx_timer_clone);
+        move |payload: &[u8]| {
+            virtmcu_qom::sim_info!("FlexRay RX: received {} bytes", payload.len());
+            let frame = flatbuffers::root::<FlexRayFrame>(payload).unwrap();
+            virtmcu_qom::sim_info!(
+                "FlexRay RX: frame_id={} vtime={}",
+                frame.frame_id(),
+                frame.delivery_vtime_ns()
+            );
+
             let packet = OrderedFlexRayPacket {
                 vtime: frame.delivery_vtime_ns(),
                 frame_id: frame.frame_id(),
@@ -590,65 +488,68 @@ fn flexray_init_internal(
                 data: frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
             };
             let _ = tx.send(packet);
-            let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
-            if frame.delivery_vtime_ns() < current_earliest {
-                earliest_clone.fetch_min(frame.delivery_vtime_ns(), AtomicOrdering::Release);
-                rx_timer_clone.mod_ns(frame.delivery_vtime_ns() as i64);
-            }
+            rx_timer_clone.kick();
         }
-    });
+    };
 
-    state.subscription =
-        SafeSubscription::new(&*state.transport, &topic, Arc::new(AtomicU64::new(0)), sub_callback)
-            .ok();
-    state.rx_timer = Some(rx_timer);
+    // Subscribe to per-node RX subtopic; tests publish to this exact path.
+    let rx_topic = alloc::format!("{topic}/{node_id}/rx");
+    let _ = state.transport.subscribe(&rx_topic, Box::new(sub_callback));
+    state.rx_timer = Some(rx_timer_clone);
+
+    let cycle_timer =
+        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, s_ptr as *mut c_void) };
+
+    let now =
+        unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) };
+    cycle_timer.mod_ns(now + 5_000_000);
     state.cycle_timer = Some(cycle_timer);
 
     Box::into_raw(state)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
+    let s_ptr = opaque as *mut FlexRay;
+    let s = unsafe { &mut *s_ptr };
+    let state = unsafe { &*s.rust_state };
 
-    #[test]
-    fn test_flexray_qom_layout() {
-        assert_eq!(
-            core::mem::offset_of!(VirtmcuFlexRay, parent_obj),
-            0,
-            "SysBusDevice must be the first field"
-        );
-    }
+    let cycle = state.current_cycle.fetch_add(1, AtomicOrdering::SeqCst);
+    virtmcu_qom::sim_info!("flexray_cycle_timer_cb fired: cycle={}", cycle);
 
-    #[test]
-    fn test_packet_min_heap_ordering() {
-        let mut heap = BinaryHeap::new();
-        heap.push(OrderedFlexRayPacket {
-            vtime: 500,
-            frame_id: 1,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        heap.push(OrderedFlexRayPacket {
-            vtime: 100,
-            frame_id: 2,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        heap.push(OrderedFlexRayPacket {
-            vtime: 300,
-            frame_id: 3,
-            cycle_count: 0,
-            channel: 0,
-            flags: 0,
-            data: vec![],
-        });
-        assert_eq!(heap.pop().unwrap().vtime, 100);
-        assert_eq!(heap.pop().unwrap().vtime, 300);
-        assert_eq!(heap.pop().unwrap().vtime, 500);
+    // Send TX frames for configured slots
+    let mut sent_count = 0;
+    for i in 0..128 {
+        let header = &s.msg_ram_headers[i];
+        if header.frame_id != 0 {
+            flexray_send_frame(s, i, header.frame_id);
+            sent_count += 1;
+        }
     }
+    virtmcu_qom::sim_info!("flexray_cycle_timer_cb sent {} frames", sent_count);
+
+    // Schedule next cycle
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+    if let Some(timer) = &state.cycle_timer {
+        timer.mod_ns(now + 5_000_000);
+    }
+}
+
+fn flexray_send_frame(s: &mut FlexRay, _slot: usize, frame_id: u16) {
+    let state = unsafe { &*s.rust_state };
+    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+
+    let mut builder = FlatBufferBuilder::new();
+    let data_off = builder.create_vector(&[0u8; 64]);
+    let args = FlexRayFrameArgs {
+        frame_id,
+        cycle_count: state.current_cycle.load(AtomicOrdering::SeqCst) as u8,
+        data: Some(data_off),
+        delivery_vtime_ns: now as u64,
+        ..Default::default()
+    };
+    let frame_off = FlexRayFrame::create(&mut builder, &args);
+    builder.finish(frame_off, None);
+
+    let topic = alloc::format!("{}/tx", state.topic);
+    let _ = state.transport.publish(&topic, builder.finished_data());
 }

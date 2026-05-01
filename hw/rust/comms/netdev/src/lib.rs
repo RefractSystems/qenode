@@ -17,7 +17,7 @@ use virtmcu_qom::net::{
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{Bql, BqlGuarded, SafeSubscription};
+use virtmcu_qom::sync::{Bql, BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
 
 use alloc::collections::{BinaryHeap, VecDeque};
@@ -76,7 +76,7 @@ pub struct TxPacket {
 pub struct VirtmcuNetdevState {
     shared: Arc<SharedState>,
     nc: *mut NetClientState,
-    subscription: Option<SafeSubscription>,
+    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: Safe Zenoh integration
     rx_timer: Option<Arc<QomTimer>>,
     rx_receiver: Receiver<OrderedPacket>,
     // All state accessed exclusively under BQL; see BqlGuarded docs.
@@ -245,7 +245,7 @@ static VIRTMCU_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: None,
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(netdev_class_init),
     class_base_init: None,
     class_data: ptr::null(),
@@ -450,11 +450,10 @@ fn netdev_init_internal(
     });
 
     let generation = Arc::new(AtomicU64::new(0));
-    let subscription =
-        SafeSubscription::new(&*shared.transport, &rx_topic, generation, sub_callback).ok();
+    state.subscription =
+        SafeSubscription::new(&*shared.transport, &rx_topic, generation, sub_callback).ok(); // BQL_EXCEPTION: Safe Zenoh integration
 
     state.rx_timer = Some(rx_timer);
-    state.subscription = subscription;
 
     Box::into_raw(state)
 }

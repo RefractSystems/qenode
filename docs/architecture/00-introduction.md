@@ -14,7 +14,7 @@ VirtMCU is the world's first **deterministic multi-node firmware simulation fram
 The high-level pillars of the architecture and the flow of data between the Control Plane (Time) and the Data Plane (Communication).
 
 ### 2. [The Temporal Core](02-temporal-core.md)
-The most critical chapter. Here we discuss virtual time synchronization, the ARCH-8 barrier, and how we solve the "Causality Problem" in distributed systems.
+The most critical chapter. Here we discuss virtual time synchronization, the synchronization barrier, and how we solve the "Causality Problem" in distributed systems.
 
 ### 3. [Transport Layer](03-transport-layer.md)
 How nodes are physically connected. We explore the use of Zenoh and Unix sockets for low-latency, high-reliability message passing.

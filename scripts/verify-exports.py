@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _get_cmd(cmd: str) -> str:
+    p = shutil.which(cmd)
+    assert p is not None, f"Command {cmd} not found"
+    return p
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +39,18 @@ def check_symbols(so_path: Path, required: list[str], is_executable: bool = Fals
     target_type = "executable" if is_executable else "plugin"
     logger.info(f"Checking {target_type} {so_path.name} for required FFI symbols...")
     try:
+        # Prefer llvm-nm if available to handle LTO/bitcode better, fallback to nm
+        nm_tool = "llvm-nm"
+        if subprocess.run([_get_cmd("which"), nm_tool], capture_output=True).returncode != 0:
+            nm_tool = "nm"
+
         # -D/--dynamic: Look at the dynamic symbol table
-        result = subprocess.run(["nm", "-D", str(so_path)], capture_output=True, text=True, check=True)
+        result = subprocess.run([nm_tool, "-D", str(so_path)], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.info(f"❌ ERROR: nm failed with return code {result.returncode}")
+            logger.info(f"   STDOUT: {result.stdout}")
+            logger.info(f"   STDERR: {result.stderr}")
+            return False
 
         # In executables, some symbols might be B (BSS) rather than T (Text) if they are just pointers.
         exported_symbols = [
@@ -57,7 +75,7 @@ def check_symbols(so_path: Path, required: list[str], is_executable: bool = Fals
         return False
 
 
-def main():
+def main() -> int:
     build_dir = Path("third_party/qemu/build-virtmcu")
     if not build_dir.exists():
         logger.info(f"Build directory {build_dir} not found. Skipping export check.")

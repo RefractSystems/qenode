@@ -8,20 +8,29 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_wireless.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import yaml
 
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import zenoh
+
+
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_wireless_topology(zenoh_router, zenoh_session, tmp_path):
+async def test_wireless_topology(zenoh_router: str, zenoh_session: zenoh.Session, tmp_path: Path) -> None:
     """
     Test Wireless Topology Enforcement.
     The coordinator delivers wireless messages based on distance.
@@ -74,12 +83,12 @@ async def test_wireless_topology(zenoh_router, zenoh_session, tmp_path):
             received_node2 = []
             rx_event = asyncio.Event()
 
-            def on_rx_node1(sample):
-                received_node1.append(sample.payload.to_bytes())
+            def on_rx_node1(sample: object) -> None:
+                received_node1.append(cast(Any, sample).payload.to_bytes())
                 rx_event.set()
 
-            def on_rx_node2(sample):
-                received_node2.append(sample.payload.to_bytes())
+            def on_rx_node2(sample: object) -> None:
+                received_node2.append(cast(Any, sample).payload.to_bytes())
                 rx_event.set()
 
             _sub1 = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/coord/1/rx", on_rx_node1))
@@ -100,7 +109,7 @@ async def test_wireless_topology(zenoh_router, zenoh_session, tmp_path):
                 + msg_payload
             )
 
-            def _send():
+            def _send() -> None:
                 zenoh_session.put("sim/coord/0/tx", msg_broadcast)
                 # Send done signals to advance barrier
                 zenoh_session.put("sim/coord/0/done", (1).to_bytes(8, "little"))

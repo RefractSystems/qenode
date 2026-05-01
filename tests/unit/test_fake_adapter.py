@@ -8,16 +8,20 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_fake_adapter.
 """
 
-import sys
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
+if TYPE_CHECKING:
+    import pytest
+
 from tools.fake_adapter import recvall, start_server
 from tools.vproto import MMIO_REQ_WRITE, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, MmioReq, VirtmcuHandshake
 
 
-def test_recvall():
+def test_recvall() -> None:
     mock_conn = MagicMock()
     # Test successful receive
     mock_conn.recv.side_effect = [b"hello", b" world"]
@@ -29,9 +33,9 @@ def test_recvall():
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_fail(mock_socket_cls, caplog, tmp_path):
+def test_start_server_hs_fail(mock_socket_cls: object, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
     mock_server = MagicMock()
-    mock_socket_cls.return_value = mock_server
+    cast(Any, mock_socket_cls).return_value = mock_server
     mock_conn = MagicMock()
     mock_server.accept.return_value = (mock_conn, None)
 
@@ -47,9 +51,9 @@ def test_start_server_hs_fail(mock_socket_cls, caplog, tmp_path):
 
 
 @patch("tools.fake_adapter.socket.socket")
-def test_start_server_hs_mismatch(mock_socket_cls, caplog, tmp_path):
+def test_start_server_hs_mismatch(mock_socket_cls: object, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
     mock_server = MagicMock()
-    mock_socket_cls.return_value = mock_server
+    cast(Any, mock_socket_cls).return_value = mock_server
     mock_conn = MagicMock()
     mock_server.accept.return_value = (mock_conn, None)
 
@@ -67,11 +71,13 @@ def test_start_server_hs_mismatch(mock_socket_cls, caplog, tmp_path):
 @patch("tools.fake_adapter.socket.socket")
 @patch("pathlib.Path.unlink")
 @patch("pathlib.Path.exists")
-def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, caplog, tmp_path):
-    mock_exists.return_value = True
+def test_start_server_success(
+    mock_exists: object, mock_unlink: object, mock_socket_cls: object, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    cast(Any, mock_exists).return_value = True
 
     mock_server = MagicMock()
-    mock_socket_cls.return_value = mock_server
+    cast(Any, mock_socket_cls).return_value = mock_server
     mock_conn = MagicMock()
     mock_server.accept.return_value = (mock_conn, None)
 
@@ -89,8 +95,8 @@ def test_start_server_success(mock_exists, mock_unlink, mock_socket_cls, caplog,
     sock_path = str(tmp_path / "fake_mmio.sock")
     start_server(sock_path)
 
-    mock_exists.assert_called_with()
-    mock_unlink.assert_called_with()
+    cast(Any, mock_exists).assert_called_with()
+    cast(Any, mock_unlink).assert_called_with()
     mock_server.bind.assert_called_with(sock_path)
     mock_server.listen.assert_called_with(1)
 

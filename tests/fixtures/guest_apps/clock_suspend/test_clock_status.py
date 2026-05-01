@@ -10,25 +10,11 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 
 import logging
 import sys
-from pathlib import Path
+import typing
 
 import zenoh
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+from tools.vproto import ClockAdvanceReq, ClockReadyResp
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +22,17 @@ TOPIC = "sim/clock/advance/0"
 TIMEOUT_S = 5.0
 
 
-def pack_req(delta_ns):
+def pack_req(delta_ns: int) -> bytes:
     req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=0)
     return req.pack()
 
 
-def unpack_rep(data):
+def unpack_rep(data: bytes) -> tuple[int, int]:
     resp = ClockReadyResp.unpack(data)
     return resp.current_vtime_ns, resp.error_code
 
 
-def main():
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -65,7 +51,7 @@ def main():
         logger.error("FAIL: No reply received")
         sys.exit(1)
 
-    payload = replies[0].ok.payload.to_bytes()
+    payload = replies[0].ok.payload.to_bytes()  # type: ignore[union-attr]
     vtime, error_code = unpack_rep(payload)
 
     logger.info(f"Reply: vtime={vtime}, error_code={error_code}")
@@ -76,7 +62,7 @@ def main():
         logger.error(f"FAIL: Unexpected error_code {error_code} (1=STALL, 2=ZENOH_ERROR)")
         sys.exit(1)
 
-    session.close()
+    typing.cast(typing.Any, session).close()
 
 
 if __name__ == "__main__":

@@ -1,8 +1,11 @@
+"""Factory method to create strongly-typed devices based on type_name."""
+
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ class ReplDevice:
     type_name: str
     address_str: str | None = None
     parent: str | None = None
-    properties: dict[str, Any] = field(default_factory=dict)
+    properties: dict[str, object] = field(default_factory=dict)
     interrupts: list[ReplInterrupt] = field(default_factory=list)
 
     @classmethod
@@ -30,37 +33,71 @@ class ReplDevice:
         type_name: str,
         address_str: str | None = None,
         parent: str | None = None,
-        properties: dict[str, Any] | None = None,
+        properties: dict[str, object] | None = None,
         interrupts: list[ReplInterrupt] | None = None,
-    ):
-        """Factory method to create strongly-typed devices based on type_name."""
-        kwargs: dict[str, Any] = {
-            "name": name,
-            "type_name": type_name,
-            "address_str": address_str,
-            "parent": parent,
-        }
-        if properties is not None:
-            kwargs["properties"] = properties
-        if interrupts is not None:
-            kwargs["interrupts"] = interrupts
+    ) -> ReplDevice:
+
+        props = properties if properties is not None else {}
+        irqs = interrupts if interrupts is not None else []
 
         if type_name in ("IRQControllers.GIC", "IRQControllers.ARM_GenericInterruptController"):
-            return GicDevice(**kwargs)
+            return GicDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
 
         if type_name == "IRQControllers.NVIC":
-            return NvicDevice(**kwargs)
+            return NvicDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
 
         if type_name == "Memory.MappedMemory":
-            return MemoryDevice(**kwargs)
+            return MemoryDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
 
         if type_name == "mmio-socket-bridge":
-            return MmioBridgeDevice(**kwargs)
+            return MmioBridgeDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
 
         if type_name in ("ieee802154", "telemetry"):
-            return WirelessDevice(**kwargs)
+            return WirelessDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
 
-        return ReplDevice(**kwargs)
+        return ReplDevice(
+            name=name,
+            type_name=type_name,
+            address_str=address_str,
+            parent=parent,
+            properties=props,
+            interrupts=irqs,
+        )
 
 
 @dataclass

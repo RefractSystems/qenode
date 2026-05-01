@@ -23,7 +23,7 @@ Now, imagine guaranteeing that this entire distributed, multi-language simulatio
 This is not just a user manual for a software tool. This handbook is a masterclass in deep systems engineering. By progressing through this curriculum, you will learn:
 *   **Emulator Internals:** How QEMU's Tiny Code Generator (TCG) translates instructions on the fly, and how to trap memory access at the nanosecond level.
 *   **Safe Systems Programming:** How to safely bridge high-performance C code with memory-safe Rust using Foreign Function Interfaces (FFI) without deadlocking the Big QEMU Lock (BQL).
-*   **Parallel Discrete Event Simulation (PDES):** How to solve the "Causality Problem" in distributed systems using the ARCH-8 synchronization barrier.
+*   **Parallel Discrete Event Simulation (PDES):** How to solve the "Causality Problem" in distributed systems using the synchronization synchronization barrier.
 *   **Cyber-Physical Systems:** How to translate discrete binary firmware registers into continuous physical physics forces using the SAL/AAL abstraction.
 
 If you want to master the future of hardware-in-the-loop simulation and digital twins, you are exactly where you need to be.
@@ -34,7 +34,7 @@ If you want to master the future of hardware-in-the-loop simulation and digital 
 
 ### 🏛️ Part I & II: Foundations & Architecture
 **[Start Here: Foundations](./guide/00-introduction.md)**
-Learn the "Why" and the "How". We begin with the project's history and laboratory setup, followed by a deep dive into the theoretical pillars of the system: the ARCH-8 temporal core, Zenoh transport, and QEMU internals.
+Learn the "Why" and the "How". We begin with the project's history and laboratory setup, followed by a deep dive into the theoretical pillars of the system: the synchronization temporal core, Zenoh transport, and QEMU internals.
 
 ### 🎓 Part III & IV: Practical Mastery
 **[Enter the Lab: Tutorials](./tutorials/README.md)**

@@ -28,6 +28,7 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     echo "ERROR: Could not find scripts/common.sh" >&2
     exit 1
 fi
+export PYTHONPATH="${PYTHONPATH:-}:${WORKSPACE_DIR}/tools"
 
 # Number of independent runs; each must produce identical exit_vtime_ns.
 NUM_RUNS=5
@@ -91,7 +92,7 @@ for run in $(seq 1 $NUM_RUNS); do
 import os, sys, subprocess, threading, time
 import zenoh
 
-sys.path.insert(0, os.path.join("$WORKSPACE_DIR", "tools"))
+from testing.utils import mock_execution_delay  # noqa: E402
 from vproto import ClockAdvanceReq, ClockReadyResp
 
 SCRIPT_DIR  = "$SCRIPT_DIR"
@@ -140,7 +141,7 @@ while time.perf_counter() < deadline:
     if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
         ready = True
         break
-    time.sleep(0.2)
+    mock_execution_delay(0.2)  # SLEEP_EXCEPTION: infrastructure jitter proxy
     q_num += 1
     payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0, quantum_number=q_num).pack()
 

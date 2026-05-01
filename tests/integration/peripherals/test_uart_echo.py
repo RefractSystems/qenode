@@ -8,16 +8,30 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_uart_echo.
 """
 
+from __future__ import annotations
+
 import asyncio
+import hashlib
 import os
-import uuid
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-import vproto
+
+from tools import vproto
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Any, cast
+
+    import zenoh
+
+    from tests.sim_types import SimulationCreator
 
 
 class ZenohUartMonitor:
-    def __init__(self, session, node_id, base_topic, is_rx=False):
+    """Monitors UART traffic over Zenoh."""
+
+    def __init__(self, session: zenoh.Session, node_id: int | str, base_topic: str, is_rx: bool = False) -> None:
         self.node_id = node_id
         self.is_rx = is_rx
         if is_rx:
@@ -27,13 +41,15 @@ class ZenohUartMonitor:
         self.rx_topic = f"{base_topic}/{node_id}/rx"
         self.buffer = ""
         self.session = session
-        self.sub = None
-
-    async def start(self):
-        loop = asyncio.get_running_loop()
+        self.sub: Any | None = None
         self.queue: asyncio.Queue[str] = asyncio.Queue()
 
-        def on_sample(sample):
+    async def start(self) -> None:
+        """Starts the Zenoh subscriber."""
+        loop = asyncio.get_running_loop()
+        self.queue = asyncio.Queue()
+
+        def on_sample(sample: zenoh.Sample) -> None:
             payload = sample.payload.to_bytes()
             if len(payload) > 20:
                 text = payload[vproto.SIZE_ZENOH_FRAME_HEADER :].decode("utf-8", errors="replace")
@@ -41,7 +57,8 @@ class ZenohUartMonitor:
 
         self.sub = await asyncio.to_thread(lambda: self.session.declare_subscriber(self.topic, on_sample))
 
-    async def wait_for(self, pattern, timeout=10.0):
+    async def wait_for(self, pattern: str, timeout: float = 10.0) -> bool:
+        """Waits for a pattern to appear in the monitor buffer."""
         start_time = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_time < timeout:
             try:
@@ -53,13 +70,14 @@ class ZenohUartMonitor:
                 pass
         return False
 
-    async def stop(self):
+    async def stop(self) -> None:
+        """Stops the Zenoh subscriber."""
         if self.sub:
             await asyncio.to_thread(self.sub.undeclare)
 
 
 @pytest.mark.asyncio
-async def test_interactive_echo(simulation, tmp_path):
+async def test_interactive_echo(simulation: SimulationCreator, tmp_path: Path) -> None:
     """
     Interactive UART Echo test (Unix Sockets).
     """
@@ -76,19 +94,22 @@ async def test_interactive_echo(simulation, tmp_path):
     async with await simulation(dtb, kernel, extra_args=extra_args) as sim:
         for _ in range(5):
             await sim.vta.step(20_000_000)
+        assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("Interactive UART Echo Ready.")
         await sim.bridge.write_to_uart("Hello virtmcu\r")
         await sim.vta.step(50_000_000)
+        assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("Hello virtmcu")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 2, "pdes": True}], indirect=True)
-async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, zenoh_session, tmp_path):  # noqa: ARG001
+@pytest.mark.usefixtures("zenoh_coordinator")
+async def test_multi_node_uart(
+    zenoh_router: str, qemu_launcher: object, zenoh_session: zenoh.Session, tmp_path: Path
+) -> None:
     """
     Multi-node UART over Zenoh.
-    Uses slaved-icount for absolute determinism.
-    Uses echo.elf on Node 1 to avoid WFI stall and manual bridging to prevent hub storms.
     """
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -99,8 +120,9 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
 
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
-    topic0 = f"virtmcu/uart/n0_{uuid.uuid4().hex[:8]}"
-    topic1 = f"virtmcu/uart/n1_{uuid.uuid4().hex[:8]}"
+    unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
+    topic0 = f"virtmcu/uart/n0_{unique_id}"
+    topic1 = f"virtmcu/uart/n1_{unique_id}"
 
     extra0 = [
         "-S",
@@ -113,7 +135,7 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
         "-serial",
         "chardev:chr0",
     ]
-    bridge0 = await qemu_launcher(dtb, kernel, extra_args=extra0, ignore_clock_check=True)
+    bridge0 = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra0, ignore_clock_check=True)
 
     extra1 = [
         "-S",
@@ -126,7 +148,7 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
         "-serial",
         "chardev:chr0",
     ]
-    bridge1 = await qemu_launcher(dtb, kernel, extra_args=extra1, ignore_clock_check=True)
+    bridge1 = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra1, ignore_clock_check=True)
 
     monitor0 = ZenohUartMonitor(zenoh_session, 0, topic0)
     monitor1_tx = ZenohUartMonitor(zenoh_session, 1, topic1)
@@ -137,7 +159,7 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
     await monitor1_rx.start()
 
     # Manual bridge: Node 0 TX -> Node 1 RX
-    def bridge_cb(sample):
+    def bridge_cb(sample: zenoh.Sample) -> None:
         payload = sample.payload.to_bytes()
         zenoh_session.put(f"{topic1}/1/rx", payload)
 
@@ -151,7 +173,7 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
 
     async with sim:
         # Helper to pump monitor queues
-        def _pump_monitor(mon):
+        def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():
                 mon.buffer += mon.queue.get_nowait()
 
@@ -161,41 +183,51 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
             await vta.step(10_000_000)
             _pump_monitor(monitor0)
             _pump_monitor(monitor1_tx)
+            _pump_monitor(monitor1_rx)
             if (
                 "Interactive UART Echo Ready." in monitor0.buffer
                 and "Interactive UART Echo Ready." in monitor1_tx.buffer
             ):
                 break
         else:
-            pytest.fail("Nodes boot timeout")
+            pytest.fail(f"Nodes boot timeout | mon0: {monitor0.buffer!r} | mon1_tx: {monitor1_tx.buffer!r}")
+
+        # Clear buffers before starting the actual test phase to avoid false positives from welcome messages
+        monitor0.buffer = ""
+        monitor1_tx.buffer = ""
+        monitor1_rx.buffer = ""
 
         # 2. Inject PING to Node 0 one by one for maximum reliability
         test_data = b"PING"
         for char in test_data:
             msg_byte = bytes([char])
+            char_str = msg_byte.decode()
 
+            # Ensure we are at a clean state
             await vta.step(5_000_000)
             vtime = vta.current_vtimes[0]
             header_bytes = vproto.ZenohFrameHeader(vtime + 1_000_000, 0, len(msg_byte)).pack()
 
-            def _do_put(h=header_bytes, m=msg_byte):
+            def _do_put(h: bytes = header_bytes, m: bytes = msg_byte) -> None:
                 zenoh_session.put(monitor0.rx_topic, h + m)
 
             await asyncio.to_thread(_do_put)
 
-            for _ in range(50):
+            # Wait for echo on both Node 0 (direct) and Node 1 (bridged)
+            for _ in range(100): # Increased retry count
                 await vta.step(5_000_000)
                 _pump_monitor(monitor0)
                 _pump_monitor(monitor1_rx)
-                if msg_byte.decode() in monitor0.buffer and msg_byte.decode() in monitor1_rx.buffer:
+                if char_str in monitor0.buffer and char_str in monitor1_rx.buffer:
                     break
             else:
                 pytest.fail(
-                    f"Echo failed for {msg_byte.decode()} | mon0: {monitor0.buffer!r} | mon1_rx: {monitor1_rx.buffer!r}"
+                    f"Echo failed for {char_str!r} | mon0: {monitor0.buffer!r} | mon1_rx: {monitor1_rx.buffer!r}"
                 )
 
-            monitor0.buffer = monitor0.buffer.replace(msg_byte.decode(), "", 1)
-            monitor1_rx.buffer = monitor1_rx.buffer.replace(msg_byte.decode(), "", 1)
+            # Remove the character from buffers to prepare for next one
+            monitor0.buffer = monitor0.buffer.replace(char_str, "", 1)
+            monitor1_rx.buffer = monitor1_rx.buffer.replace(char_str, "", 1)
 
     await monitor0.stop()
     await monitor1_tx.stop()
@@ -205,10 +237,12 @@ async def test_multi_node_uart(zenoh_router, zenoh_coordinator, qemu_launcher, z
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 1, "pdes": True}], indirect=True)
-async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_session, qemu_launcher, tmp_path):  # noqa: ARG001
+@pytest.mark.usefixtures("zenoh_coordinator")
+async def test_coordinator_topology(
+    zenoh_router: str, zenoh_session: zenoh.Session, qemu_launcher: object, tmp_path: Path
+) -> None:
     """
     Test Zenoh coordinator topology control (Packet Drop).
-    Uses the Marker Packet pattern to empirically prove a drop occurred.
     """
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -219,7 +253,8 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
 
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
-    topic = f"virtmcu/uart/top_{uuid.uuid4().hex[:8]}"
+    unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
+    topic = f"virtmcu/uart/top_{unique_id}"
 
     extra = [
         "-S",
@@ -232,7 +267,7 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
         "-serial",
         "chardev:chr0",
     ]
-    bridge = await qemu_launcher(dtb, kernel, extra_args=extra, ignore_clock_check=True)
+    bridge = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra, ignore_clock_check=True)
 
     monitor = ZenohUartMonitor(zenoh_session, 0, topic)
     await monitor.start()
@@ -240,7 +275,7 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
     # Register dummy node 1
     dummy_topic = f"{topic}/1/tx"
 
-    def _reg():
+    def _reg() -> None:
         zenoh_session.put(dummy_topic, vproto.ZenohFrameHeader(0, 0, 1).pack() + b"H")
 
     await asyncio.to_thread(_reg)
@@ -253,7 +288,7 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
 
     async with sim:
 
-        def _pump_monitor(mon):
+        def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():
                 mon.buffer += mon.queue.get_nowait()
 
@@ -265,7 +300,10 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
             if "Interactive UART Echo Ready." in monitor.buffer:
                 break
         else:
-            pytest.fail("Node 0 boot timeout")
+            pytest.fail(f"Node 0 boot timeout | mon: {monitor.buffer!r}")
+
+        # Clear buffer to ensure subsequent checks are clean
+        monitor.buffer = ""
 
         # 3. Apply topology: Drop all from Node 0 to Node 1
         import json
@@ -277,9 +315,9 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
         await vta.step(1_000_000)
 
         # 4. Monitor Node 1 RX
-        received_msgs = []
+        received_msgs: list[bytes] = []
 
-        def on_node1_rx(sample):
+        def on_node1_rx(sample: zenoh.Sample) -> None:
             payload = sample.payload.to_bytes()
             if len(payload) > 20:
                 received_msgs.append(payload[vproto.SIZE_ZENOH_FRAME_HEADER :])
@@ -327,10 +365,11 @@ async def test_coordinator_topology(zenoh_router, zenoh_coordinator, zenoh_sessi
 
 
 @pytest.mark.asyncio
-async def test_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path):
+async def test_uart_stress(
+    zenoh_router: str, qemu_launcher: object, zenoh_session: zenoh.Session, tmp_path: Path
+) -> None:
     """
     UART Stress test using slaved-icount and large bursts.
-    Verifies that the chardev flow control fix works.
     """
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -341,7 +380,8 @@ async def test_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path)
 
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
-    topic = f"virtmcu/uart/stress_{uuid.uuid4().hex[:8]}"
+    unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
+    topic = f"virtmcu/uart/stress_{unique_id}"
 
     extra = [
         "-S",
@@ -354,7 +394,7 @@ async def test_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path)
         "-serial",
         "chardev:uart0",
     ]
-    bridge = await qemu_launcher(dtb, kernel, extra_args=extra, ignore_clock_check=True)
+    bridge = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra, ignore_clock_check=True)
 
     monitor = ZenohUartMonitor(zenoh_session, 0, topic)
     await monitor.start()
@@ -367,7 +407,7 @@ async def test_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path)
 
     async with sim:
 
-        def _pump_monitor(mon):
+        def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():
                 mon.buffer += mon.queue.get_nowait()
 
@@ -383,11 +423,10 @@ async def test_uart_stress(zenoh_router, qemu_launcher, zenoh_session, tmp_path)
             pytest.fail("Stress test boot timeout")
 
         # Blast a 128-byte burst (Exceeds PL011 32-byte FIFO)
-        # This verifies the flow control and backlog implementation in chardev
         burst_data = b"BURST_TEST_" * 12 + b"END"  # ~135 bytes
         header = vproto.ZenohFrameHeader(vta.current_vtimes[0] + 1_000_000, 0, len(burst_data)).pack()
 
-        def _do_burst():
+        def _do_burst() -> None:
             zenoh_session.put(f"{topic}/0/rx", header + burst_data)
 
         await asyncio.to_thread(_do_burst)

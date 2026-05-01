@@ -81,7 +81,7 @@ all: build
 # Verify that Rust struct layouts match the QEMU binary ground truth.
 check-ffi:
 	@echo "==> Verifying FFI layouts..."
-	@./scripts/check-ffi.py
+	@uv run --active python3 scripts/check-ffi.py
 
 # ------------------------------------------------------------------------------
 # Version Management
@@ -90,13 +90,13 @@ check-ffi:
 # Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
-	@python3 scripts/sync-versions.py
+	@uv run --active python3 scripts/sync-versions.py
 	@echo "✓ Versions synchronized."
 
 # Verify that all versions are in sync across the codebase.
 check-versions:
 	@echo "==> Checking version synchronization..."
-	@python3 scripts/check-versions.py
+	@uv run --active python3 scripts/check-versions.py
 
 # ------------------------------------------------------------------------------
 # Build Targets
@@ -194,6 +194,10 @@ test-miri:
 
 # Parallelism for pytest (default to auto, can be overridden in CI or hooks)
 PYTEST_WORKERS ?= auto
+
+test-plugins-load: build
+	@echo "==> Running plugin smoke test..."
+	@uv run --active python3 scripts/test-plugins-load.py
 
 # Run all Python unit tests (no QEMU required).
 test-unit: venv
@@ -341,10 +345,10 @@ lint-python:
 	@if grep -rE "stall-timeout=[0-9]+" tests/ tools/ ; then \
 		echo "❌ ERROR: Hardcoded stall-timeout detected. Use dynamic scaling via VIRTMCU_STALL_TIMEOUT_MS."; exit 1; \
 	fi
-	@echo "==> Check for banned asyncio.sleep..."
-	@violations=$$(grep -rn "asyncio\.sleep" tests/ tools/ | grep -v "SLEEP_EXCEPTION:" || true); \
+	@echo "==> Check for banned sleep calls (asyncio.sleep / time.sleep)..."
+	@violations=$$(grep -rnE "(asyncio|time)\.sleep\(" tests/ tools/ docs/tutorials/ | grep -v "SLEEP_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
-	        echo "❌ ERROR: Banned asyncio.sleep found in tests/tools (use vta.step or transport signaling instead):"; \
+	        echo "❌ ERROR: Banned sleep call found in tests/tools/tutorials (use vta.step or transport signaling instead):"; \
 	        echo "$$violations"; \
 	        exit 1; \
 	fi
@@ -352,13 +356,41 @@ lint-python:
 	@if grep -rnE '["'\'']/(flexray|spi[0-9]|wifi[0-9]|uart[0-9]|memory)["'\'']' tests/ ; then \
 		echo "❌ ERROR: Hardcoded QOM path without unit address detected. Root FDT devices must use '/device@address' format."; exit 1; \
 	fi
+	@echo "==> Check for non-deterministic uuid.uuid4() in tests..."
+	@# uuid.uuid4() is banned in tests: parallel workers get different IDs each run,
+	@# causing Zenoh key collisions and topology mismatches. Use os.getpid(),
+	@# the pytest worker_id fixture, or tmp_path-derived values for unique IDs.
+	@# Approved exceptions: add # UUID_EXCEPTION: <reason> on the same line.
+	@violations=$$(grep -rnE "uuid\.uuid4\(\)" tests/ --include="*.py" \
+		| grep -v "fixtures/guest_apps" \
+		| grep -v "# UUID_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "❌ ERROR: Non-deterministic uuid.uuid4() found in tests (use os.getpid()/worker_id instead):"; \
+		echo "$$violations"; \
+		exit 1; \
+	fi
+	@echo "✓ No non-deterministic uuid.uuid4() in tests."
+	@echo "==> Check for oversized hardcoded timeouts in tests..."
+	@# Timeouts >= 200 s in test code bypass the CI time-multiplier and mask deadlocks
+	@# on slow/ASan runners. Use vta.step(timeout=T) or bridge.wait_for_line(timeout=T)
+	@# with logical T — the framework scales it via get_time_multiplier() automatically.
+	@# Approved exceptions: add # TIMEOUT_EXCEPTION: <reason> on the same line.
+	@violations=$$(grep -rnE "\btimeout=[2-9][0-9]{2,}|\btimeout=[0-9]{4,}" tests/ --include="*.py" \
+		| grep -v "fixtures/guest_apps" \
+		| grep -v "# TIMEOUT_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "❌ ERROR: Oversized hardcoded timeout (>= 200 s) in tests — use get_time_multiplier() scaling:"; \
+		echo "$$violations"; \
+		exit 1; \
+	fi
+	@echo "✓ No oversized hardcoded timeouts in tests."
 	@echo "==> ruff check..."
 	@uv run --active ruff check .
 	@echo "✓ ruff passed."
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
-	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*" \
+	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*" \
 		--ignore-words-list="virtmcu,zenoh,qemu,qmp,riscv,TE" .
 	@echo "✓ codespell passed."
 
@@ -453,11 +485,13 @@ lint-rust:
 	@# To add an exception: append the comment on the same line as the sleep call.
 	@violations=$$(grep -rn "thread::sleep" hw/rust/ --include="*.rs" | grep -v "SLEEP_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
-		echo "$$violations"; \
-		echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
-		exit 1; \
+	        echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
+	        echo "$$violations"; \
+	        echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
+	        exit 1; \
 	fi
+	@echo "==> Checking for stale QEMU plugins..."
+	@uv run --active python3 scripts/check-stale-so.py
 	@echo "✓ No banned thread::sleep found."
 	@echo "==> Checking for banned Mutex<T> in peripheral state structs..."
 	@# std::sync::Mutex<T> is banned in zenoh-* peripheral state structs because every
@@ -473,6 +507,20 @@ lint-rust:
 		exit 1; \
 	fi
 	@echo "✓ No banned peripheral Mutex<T> found."
+	@echo "==> Checking for banned Bql::lock() and SafeSubscription in hw/rust/comms/..."
+	@# Peripherals in hw/rust/comms/ must be independent of the Big QEMU Lock (BQL)
+	@# because they interact with asynchronous Zenoh callbacks. Using Bql::lock()
+	@# or SafeSubscription (which locks BQL) inside these crates is an anti-pattern
+	@# that leads to deadlocks and non-determinism.
+	@# Approved exceptions must carry an inline // BQL_EXCEPTION: <reason> comment.
+	@violations=$$(grep -rn "Bql::lock()\|SafeSubscription" hw/rust/comms/ | grep -v "BQL_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Banned BQL usage found in hw/rust/comms/:"; \
+		echo "$$violations"; \
+		echo "  Fix: remove Bql::lock()/SafeSubscription, or use lock-free channels to communicate with QEMU threads."; \
+		exit 1; \
+	fi
+	@echo "✓ No banned BQL usage in comms found."
 	@echo "==> Checking for misleading #![no_std] in hw/rust/..."
 	@# #![no_std] is banned in peripheral crates because they implicitly link against std
 	@# via virtmcu-qom or zenoh. It provides a false sense of environment safety.
@@ -512,6 +560,42 @@ lint-rust:
 		exit 1; \
 	fi
 	@echo "✓ No banned rand::thread_rng found."
+	@echo "==> Checking for banned #[allow(] in hw/rust/ production code..."
+	@# #[allow(...)] suppresses clippy/rustc diagnostics and is banned in production code.
+	@# All = "deny" in [workspace.lints.clippy] means every warning is already an error;
+	@# an allow annotation silently creates a hole in that guarantee.
+	@# Fix the underlying issue instead. Test-only exceptions (#[cfg(test)] scope) are
+	@# permitted; document the reason with // ALLOW_EXCEPTION: <reason> on the same line.
+	@violations=$$(grep -rn "#\[allow(" hw/rust/ --include="*.rs" \
+		--exclude-dir=target \
+		--exclude-dir=tests \
+		--exclude="*_generated.rs" \
+		--exclude="build.rs" \
+		| grep -v "// ALLOW_EXCEPTION:" || true); \
+	if [ -n "$$violations" ]; then \
+		echo "ERROR: Banned #[allow(] found in hw/rust/ — fix the underlying lint instead:"; \
+		echo "$$violations"; \
+		exit 1; \
+	fi
+	@echo "✓ No banned #[allow(] in hw/rust/."
+	@echo "==> Checking QOM TypeInfo / DTS / Meson name alignment..."
+	@# A QOM type name in Rust TypeInfo MUST match (a) the meson.build 'obj' field
+	@# for that crate, (b) the DTS 'compatible' string used by integration tests,
+	@# and (c) the -global prefix used in test extra_args. Gemini's flexray crash
+	@# (rc=-11) was a NULL-deref inside QEMU's error_prepend triggered by a
+	@# 4-way mismatch (lib.rs c"virtmcu,flexray", DTS "flexray",
+	@# meson 'obj': 'flexray', test -global flexray.*).
+	@uv run --active python3 scripts/check-qom-alignment.py || exit 1
+	@echo "✓ QOM TypeInfo / DTS / Meson alignment OK."
+	@echo "==> Checking Cargo lib name vs Meson 'lib' field..."
+	@# Each Rust peripheral package's static lib output must match the 'lib' field
+	@# in third_party/qemu/hw/virtmcu/meson.build. A mismatch causes Meson to link
+	@# a stale .a file, producing a working-looking .so that contains old code.
+	@# Detection rule: for each crate under hw/rust/{comms,mcu,observability,backbone},
+	@# the package name's underscore form must equal the meson 'lib' field stripped
+	@# of 'lib' prefix and '.a' suffix.
+	@uv run --active python3 scripts/check-cargo-meson-lib-alignment.py || exit 1
+	@echo "✓ Cargo / Meson library names aligned."
 	@echo "==> Running cargo clippy..."
 	@cargo clippy --workspace -- -D warnings
 

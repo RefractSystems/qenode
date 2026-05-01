@@ -937,7 +937,7 @@ async fn main() {
                                         encode_protocol_msg(&session, &m).await;
                                     }
 
-                                    // ARCH-8: Send start to all nodes for NEXT quantum
+                                    // Send start to all nodes for NEXT quantum
                                     current_quantum += 1;
                                     for i in 0..args.nodes.unwrap_or(0) {
                                         let start_topic = format!("sim/clock/start/{}", i);

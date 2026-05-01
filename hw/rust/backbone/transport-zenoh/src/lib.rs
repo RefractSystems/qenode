@@ -62,11 +62,11 @@ impl DataTransport for ZenohDataTransport {
 
 /// Returns a shared Zenoh session, initializing it if necessary.
 ///
-/// This implements the Shared Zenoh Session Pool (DET-2).
+/// This implements the Shared Zenoh Session Pool.
 ///
 /// **NOTE:** This session is intended for DATA PLANE use only (UART, CAN, SPI, etc.).
 /// The `clock` peripheral MUST use its own dedicated session via `open_session`
-/// to ensure priority isolation and avoid starvation (ARCH-13).
+/// to ensure priority isolation and avoid starvation.
 ///
 /// # Safety
 ///
@@ -90,7 +90,7 @@ pub unsafe fn get_or_init_session(router: *const c_char) -> Result<Arc<Session>,
 /// It ensures that:
 /// 1. The callback always acquires the Big QEMU Lock (BQL).
 /// 2. The callback is only executed if the device state is still valid.
-/// 3. The callback is only executed if the device generation matches (ARCH-11).
+/// 3. The callback is only executed if the device generation matches.
 /// 4. The subscriber is properly undeclared and synchronization occurs during drop,
 ///    preventing Use-After-Free during device finalization.
 pub struct SafeSubscriber {
@@ -106,7 +106,7 @@ impl SafeSubscriber {
     /// Creates a new `SafeSubscriber`.
     ///
     /// This is a legacy wrapper for backward compatibility. Use `new_with_generation`
-    /// to provide a shared generation counter for stale message detection (ARCH-11).
+    /// to provide a shared generation counter for stale message detection.
     ///
     /// # Arguments
     /// * `session` - The Zenoh session.
@@ -166,7 +166,7 @@ impl SafeSubscriber {
 
                     // Re-check validity after acquiring BQL.
                     if valid_clone.load(Ordering::Acquire) {
-                        // [ARCH-11] Check if the message is from a stale device generation.
+                        // Check if the message is from a stale device generation.
                         if generation_clone.load(Ordering::Acquire) == expected_generation {
                             callback(sample);
                         } else {

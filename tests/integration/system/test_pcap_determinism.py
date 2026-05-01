@@ -8,20 +8,30 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_pcap_determinism.
 """
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tests.conftest import wait_for_zenoh_discovery
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import zenoh
+
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_pcap_determinism(zenoh_router, zenoh_session, tmp_path):
+async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session, tmp_path: Path) -> None:
     coordinator_bin = resolve_rust_binary("deterministic_coordinator")
 
     world_yaml = tmp_path / "world.yaml"
@@ -36,7 +46,7 @@ topology:
       nodes: [0, 1]
     """)
 
-    async def run_simulation(pcap_path: Path):
+    async def run_simulation(pcap_path: Path) -> None:
         proc = await asyncio.create_subprocess_exec(
             "stdbuf",
             "-oL",
@@ -93,8 +103,8 @@ topology:
             loop = asyncio.get_running_loop()
             quantum_event = asyncio.Event()
 
-            def on_start(sample):
-                q = int.from_bytes(sample.payload.to_bytes(), "little")
+            def on_start(sample: object) -> None:
+                q = int.from_bytes(cast(Any, sample).payload.to_bytes(), "little")
                 if q == 2:
                     loop.call_soon_threadsafe(quantum_event.set)
 
@@ -102,15 +112,11 @@ topology:
 
             try:
 
-                def _send():
+                def _send() -> None:
                     zenoh_session.put("sim/coord/0/tx", msg_eth)
                     zenoh_session.put("sim/coord/0/tx", msg_uart1)
                     zenoh_session.put("sim/coord/1/tx", msg_uart2)
-                    import time
 
-                    time.sleep(
-                        0.2
-                    )  # SLEEP_EXCEPTION: mock node simulating execution time to avoid Zenoh publisher race condition
                     zenoh_session.put("sim/coord/0/done", (1).to_bytes(8, "little"))
                     zenoh_session.put("sim/coord/1/done", (1).to_bytes(8, "little"))
 
@@ -120,11 +126,9 @@ topology:
                 await asyncio.to_thread(sub.undeclare)
 
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 proc.terminate()
                 await proc.wait()
-            except Exception:
-                pass
 
             assert proc.stderr is not None
             stderr = (await proc.stderr.read()).decode()

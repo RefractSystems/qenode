@@ -61,6 +61,7 @@ pub struct MmioSocketBridgeQEMU {
     pub region_size: u32,
     pub base_addr: u64,
     pub reconnect_ms: u32,
+    pub debug: bool,
 
     pub irqs: [QemuIrq; 32],
 
@@ -188,7 +189,11 @@ pub struct MmioSocketBridgeState {
 }
 
 unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
-    let state = &*(opaque as *mut MmioSocketBridgeState);
+    let qemu = unsafe { &*(opaque as *mut MmioSocketBridgeQEMU) };
+    if qemu.debug {
+        virtmcu_qom::sim_warn!("bridge_read: addr=0x{:x} size={}", addr, size);
+    }
+    let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_READ,
         size as u8,
@@ -210,7 +215,11 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
 }
 
 unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
-    let state = &*(opaque as *mut MmioSocketBridgeState);
+    let qemu = unsafe { &*(opaque as *mut MmioSocketBridgeQEMU) };
+    if qemu.debug {
+        virtmcu_qom::sim_warn!("bridge_write: addr=0x{:x} val=0x{:x} size={}", addr, val, size);
+    }
+    let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_WRITE,
         size as u8,
@@ -288,7 +297,7 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             &raw mut qemu.mmio,
             obj,
             &raw const BRIDGE_MMIO_OPS,
-            qemu.rust_state as *mut c_void,
+            dev,
             c"mmio-socket-bridge".as_ptr(),
             u64::from(qemu.region_size),
         );
@@ -323,12 +332,13 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static BRIDGE_PROPERTIES: [Property; 6] = [
+static BRIDGE_PROPERTIES: [Property; 7] = [
     define_prop_string!(c"id".as_ptr(), MmioSocketBridgeQEMU, id),
     define_prop_string!(c"socket-path".as_ptr(), MmioSocketBridgeQEMU, socket_path),
     define_prop_uint32!(c"region-size".as_ptr(), MmioSocketBridgeQEMU, region_size, 0x1000),
     define_prop_uint64!(c"base-addr".as_ptr(), MmioSocketBridgeQEMU, base_addr, u64::MAX),
     define_prop_uint32!(c"reconnect-ms".as_ptr(), MmioSocketBridgeQEMU, reconnect_ms, 1000),
+    virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), MmioSocketBridgeQEMU, debug, false),
     // SAFETY: QEMU expects a zeroed Property as a sentinel.
     unsafe { core::mem::zeroed() },
 ];
@@ -338,7 +348,7 @@ unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_
     (*dc).realize = Some(bridge_realize);
     (*dc).unrealize = Some(bridge_unrealize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 5);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 6);
 }
 
 static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
@@ -350,7 +360,7 @@ static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(bridge_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(bridge_class_init),
     class_base_init: None,
     class_data: ptr::null(),

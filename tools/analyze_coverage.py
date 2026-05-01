@@ -7,11 +7,14 @@ and correlates the executed basic blocks with symbols in a guest ELF binary.
 It helps identify which functions were covered during a simulation run.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys
 from bisect import bisect_left, bisect_right
 from pathlib import Path
+from typing import Any
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
@@ -19,7 +22,8 @@ from elftools.elf.sections import SymbolTableSection
 logger = logging.getLogger(__name__)
 
 
-def parse_drcov(filename):
+def parse_drcov(filename: str | Path) -> list[tuple[int, int]]:
+    """Parse a .drcov file and return a list of (start, end) intervals."""
     if not Path(filename).exists():
         logger.error(f"Error: Coverage file {filename} not found")
         return []
@@ -39,7 +43,7 @@ def parse_drcov(filename):
     count_str = content[idx + len(marker) : end_idx].decode().strip()
     try:
         count = int(count_str.split()[0])
-    except Exception:
+    except (ValueError, IndexError):
         logger.error(f"Error: Could not parse BB count: {count_str}")
         return []
 
@@ -59,7 +63,8 @@ def parse_drcov(filename):
     return bbs
 
 
-def merge_intervals(intervals):
+def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping intervals."""
     if not intervals:
         return []
     intervals.sort()
@@ -75,7 +80,8 @@ def merge_intervals(intervals):
     return merged
 
 
-def get_elf_symbols(elf_path):
+def get_elf_symbols(elf_path: str | Path) -> list[dict[str, Any]]:
+    """Extract function symbols and their sizes from an ELF file."""
     symbols = []
     if not Path(elf_path).exists():
         logger.error(f"Error: ELF file {elf_path} not found")
@@ -112,7 +118,8 @@ def get_elf_symbols(elf_path):
     return symbols
 
 
-def calculate_coverage(sym_start, sym_end, executed_intervals):
+def calculate_coverage(sym_start: int, sym_end: int, executed_intervals: list[tuple[int, int]]) -> int:
+    """Calculate how many bytes of a symbol's range were executed."""
     # Use binary search to find relevant intervals
     # executed_intervals are sorted and non-overlapping
     # find first interval that ends after sym_start
@@ -134,7 +141,8 @@ def calculate_coverage(sym_start, sym_end, executed_intervals):
     return exec_bytes
 
 
-def main():
+def main() -> None:
+    """Main entry point."""
     parser = argparse.ArgumentParser(description="Analyze Guest Firmware Coverage")
     parser.add_argument("drcov", help="Path to .drcov file")
     parser.add_argument("elf", help="Path to ELF firmware file")

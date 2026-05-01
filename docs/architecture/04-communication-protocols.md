@@ -71,3 +71,10 @@ The industry-standard wire format used by Xilinx QEMU, Renode, and `libsystemctl
 - **Handshake**: Initiates with a `HELLO` packet to negotiate version (4.3).
 - **Symmetry**: `RP_CMD_read` and `RP_CMD_write` are echoed with `RP_PKT_FLAGS_response` to acknowledge receipt.
 - **Remote Port Slave**: The target-side implementation (e.g., `remote-port-tlm-memory-slave` in the SystemC adapter) converts these read/write packets to TLM-2.0 `b_transport` calls, enabling full cycle-accurate co-simulation for external models.
+
+---
+
+## See Also
+*   **[Transport Layer](./03-transport-layer.md)**: The physical movement of bytes defined by these protocols.
+*   **[FlatBuffers and Wire Protocols](../fundamentals/09-flatbuffers-and-wire-protocols.md)**: Deep dive into the `core.fbs` schema and binary layout.
+ calls, enabling full cycle-accurate co-simulation for external models.
