@@ -1,6 +1,46 @@
+"""
+Deterministically wait for a Zenoh router to become available.
+Returns True if successful, False if it timed out.
+"""
+
 import asyncio
+import logging
 import os
+import time
+import typing
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def wait_for_zenoh_router(router_url: str, timeout: float = 15.0) -> bool:
+
+    import zenoh
+
+    config = zenoh.Config()
+    config.insert_json5("connect/endpoints", f'["{router_url}"]')
+    config.insert_json5("scouting/multicast/enabled", "false")
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            temp_session = zenoh.open(config)
+            typing.cast(typing.Any, temp_session).close()
+            return True
+        except zenoh.ZError:
+            time.sleep(0.1)  # SLEEP_EXCEPTION: polling for router startup
+
+    logger.error(f"FAILED: Zenoh router failed to bind at {router_url} within {timeout} seconds")
+    return False
+
+
+def mock_execution_delay(seconds: float) -> None:
+    """
+    Test utility function to simulate execution delay in mock nodes,
+    or to serve as a keepalive pause in standalone scripts.
+    Replaces raw time.sleep() calls.  # SLEEP_EXCEPTION:
+    """
+    time.sleep(seconds)  # SLEEP_EXCEPTION:
 
 
 def get_time_multiplier() -> float:
@@ -17,7 +57,7 @@ def get_time_multiplier() -> float:
     return 1.0  # Local developer machine
 
 
-async def yield_now():
+async def yield_now() -> None:
     """
     SOTA Enterprise Grade yield: explicitly relinquishes control to the asyncio event loop.
 
@@ -29,7 +69,7 @@ async def yield_now():
     await asyncio.sleep(0)  # SLEEP_EXCEPTION: explicit yield to event loop
 
 
-async def wait_for_file_creation(path: str | Path, timeout: float = 10.0):
+async def wait_for_file_creation(path: str | Path, timeout: float = 10.0) -> None:
     """
     Deterministic wait for a file to appear on the filesystem using watchdog (inotify).
     """
@@ -44,7 +84,7 @@ async def wait_for_file_creation(path: str | Path, timeout: float = 10.0):
     event = asyncio.Event()
 
     class Handler(FileSystemEventHandler):
-        def on_created(self, e):
+        def on_created(self, e: object) -> None:
             if isinstance(e, FileCreatedEvent) and Path(os.fsdecode(e.src_path)).resolve() == Path(path).resolve():
                 loop.call_soon_threadsafe(event.set)
 

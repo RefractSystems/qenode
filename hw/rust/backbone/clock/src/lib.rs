@@ -108,7 +108,7 @@ impl ClockSyncResponder for ZenohClockResponder {
             // 2. Wait for 'start' signal from coordinator
             if let Err(e) = self.start_rx.recv() {
                 virtmcu_qom::sim_err!(
-                    "ARCH-8: start_rx channel disconnected before receiving start signal: {}",
+                    "start_rx channel disconnected before receiving start signal: {}",
                     e
                 );
             }
@@ -141,9 +141,10 @@ pub struct VirtmcuClock {
     pub router: *mut c_char,
     /// Timeout in milliseconds before a clock stall is declared.
     pub stall_timeout: u32,
-    /// Whether to synchronize with a Deterministic Coordinator (ARCH-8).
+    /// Whether to synchronize with a Deterministic Coordinator.
     pub coordinated: bool,
     pub session_watchdog_ms: u32,
+    pub debug: bool,
 
     /* Internal State */
     /// Virtual time (ns) of the next quantum boundary.
@@ -719,6 +720,7 @@ define_properties!(
         define_prop_uint32!(c"stall-timeout".as_ptr(), VirtmcuClock, stall_timeout, 0),
         define_prop_bool!(c"coordinated".as_ptr(), VirtmcuClock, coordinated, false),
         define_prop_uint32!(c"session-watchdog-ms".as_ptr(), VirtmcuClock, session_watchdog_ms, 0),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuClock, debug, false),
     ]
 );
 
@@ -740,7 +742,7 @@ static VIRT_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(clock_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(clock_class_init),
     class_base_init: None,
     class_data: ptr::null(),

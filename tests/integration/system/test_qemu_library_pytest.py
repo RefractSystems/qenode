@@ -8,21 +8,23 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_qemu_library_pytest.
 """
 
-import time
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
 
 from tools.testing.QemuLibrary import QemuLibrary
+from tools.testing.utils import mock_execution_delay
 
 
-def test_qemu_library_init():
+def test_qemu_library_init() -> None:
     lib = QemuLibrary()
     assert lib.bridge is not None
     assert lib.loop is not None
 
 
-def test_qemu_library_launch_and_close():
+def test_qemu_library_launch_and_close() -> None:
     lib = QemuLibrary()
     try:
         # Use a minimal DTB for launching
@@ -50,7 +52,7 @@ def test_qemu_library_launch_and_close():
     assert lib.tmpdir is None
 
 
-def test_qemu_library_pc_assertion():
+def test_qemu_library_pc_assertion() -> None:
     lib = QemuLibrary()
     try:
         dtb = "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
@@ -65,19 +67,19 @@ def test_qemu_library_pc_assertion():
         lib.pc_should_be_equal(0x40000000)
 
         lib.start_emulation()
-        # Wait a bit
-        time.sleep(0.5)
+        # Wait a bit for execution to proceed in wall-clock mode
+        mock_execution_delay(0.5)  # SLEEP_EXCEPTION: waiting for wall-clock execution (legacy interface)
         # Should still be in RAM (or at same address if it's a tight loop)
         actual_pc = lib.loop.run_until_complete(lib.bridge.get_pc())
         assert actual_pc >= 0x40000000, f"Expected PC >= 0x40000000, but was {hex(actual_pc)}"
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(AssertionError, match=r".*"):
             lib.pc_should_be_equal(0x0)
     finally:
         lib.close_all_connections()
 
 
-def test_qemu_library_uart_wait_fail():
+def test_qemu_library_uart_wait_fail() -> None:
     lib = QemuLibrary()
     try:
         dtb = "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
@@ -89,7 +91,8 @@ def test_qemu_library_uart_wait_fail():
 
         lib.connect_to_qemu(qmp_sock, uart_sock)
 
-        with pytest.raises(AssertionError):
+        assert lib is not None
+        with pytest.raises(AssertionError, match=r".*"):
             lib.wait_for_line_on_uart("NEVER_GOING_TO_HAPPEN", timeout=0.1)
     finally:
         lib.close_all_connections()

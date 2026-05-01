@@ -1,5 +1,11 @@
 # Chapter 2: The Temporal Core
 
+## Learning Objectives
+After this chapter, you can:
+1. Explain the three clock modes of VirtMCU and their use cases.
+2. Describe the request/reply protocol for clock synchronization.
+3. Understand how the BQL is handled during virtual time pauses.
+
 ## The Philosophy of Time: Physics as the Master
 
 In a standard emulator, time is an afterthought. QEMU typically runs as fast as possible, using the host's wall-clock to drive its internal timers. In the VirtMCU digital twin ecosystem, this is unacceptable. The firmware interacts with a physical world (e.g., a drone in MuJoCo) governed by continuous differential equations. If QEMU runs free, the firmware's control loops will desynchronize from the physics.
@@ -70,3 +76,10 @@ When a peripheral access blocks on an external socket (e.g., SystemC), virtual t
 
 ### Test Automation
 Our Python test harness (`qmp_bridge.py`) tracks virtual time by polling the emulator's `icount`. This allows tests to use **Virtual Time Timeouts**. A test can say "wait for this UART string, but fail if it doesn't appear within 5 *virtual* seconds," ensuring the test is immune to host CPU load or ASan-induced slowdowns.
+
+---
+
+## See Also
+*   **[PDES and Virtual Time](../fundamentals/08-pdes-and-virtual-time.md)**: The theoretical foundation of clock synchronization.
+*   **[BQL and Concurrency](../fundamentals/10-bql-and-concurrency.md)**: Deep dive into the locking mechanisms described in Section 3.
+*   **[Debugging Playbook](../guide/07-debugging-playbook.md)**: Troubleshooting "Stall Detected" errors.

@@ -57,7 +57,17 @@ loop:
 
     /* Write to UART 0x09000000 */
     ldr r2, =0x09000000
-    str r1, [r2]
+    /* Byte 0 */
+    strb r1, [r2]
+    /* Byte 1 */
+    lsr r3, r1, #8
+    strb r3, [r2]
+    /* Byte 2 */
+    lsr r3, r1, #16
+    strb r3, [r2]
+    /* Byte 3 */
+    lsr r3, r1, #24
+    strb r3, [r2]
 
     /* Clear Status */
     ldr r0, =0x09003408

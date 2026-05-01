@@ -14,14 +14,15 @@ import logging
 import socket
 import sys
 import time
+import typing
 
 logger = logging.getLogger(__name__)
 
 
-def qmp_cmd(sock, cmd, args=None):
+def qmp_cmd(sock: socket.socket, cmd: str, args: dict[typing.Any, typing.Any] | None = None) -> typing.Any:  # noqa: ANN401
     req = {"execute": cmd}
     if args:
-        req["arguments"] = args
+        req["arguments"] = args  # type: ignore[assignment]
     sock.sendall((json.dumps(req) + "\n").encode("utf-8"))
     while True:
         resp = json.loads(sock.recv(4096).decode("utf-8").split("\n")[0])
@@ -29,7 +30,7 @@ def qmp_cmd(sock, cmd, args=None):
             return resp
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         logger.info("Usage: qom_stress.py <qmp_socket_path>")
         sys.exit(1)

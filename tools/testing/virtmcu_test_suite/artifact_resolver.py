@@ -1,14 +1,18 @@
+"""
+Finds the expected path for a built Rust binary across standard workspace locations.
+It returns the path even if the file doesn't exist yet, prioritizing locations
+where it actually exists if multiple are possible.
+"""
+
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
+from tools.testing.env import WORKSPACE_DIR
+
 
 def get_rust_binary_path(name: str) -> Path:
-    """
-    Finds the expected path for a built Rust binary across standard workspace locations.
-    It returns the path even if the file doesn't exist yet, prioritizing locations
-    where it actually exists if multiple are possible.
-    """
-    workspace_root = Path(__file__).resolve().parent.parent.parent.parent
 
     if "CARGO_TARGET_DIR" in os.environ:
         p = Path(os.environ["CARGO_TARGET_DIR"]) / f"release/{name}"
@@ -16,12 +20,12 @@ def get_rust_binary_path(name: str) -> Path:
             return p
 
     paths = [
-        workspace_root / "target/release" / name,
-        workspace_root / f"tools/{name}/target/release/{name}",
+        WORKSPACE_DIR / "target/release" / name,
+        WORKSPACE_DIR / f"tools/{name}/target/release/{name}",
         # Some tools belong to specific workspaces like cyber_bridge
-        workspace_root / f"tools/cyber_bridge/target/release/{name}",
-        workspace_root / f"tools/zenoh_coordinator/target/release/{name}",
-        workspace_root / f"tools/deterministic_coordinator/target/release/{name}",
+        WORKSPACE_DIR / f"tools/cyber_bridge/target/release/{name}",
+        WORKSPACE_DIR / f"tools/zenoh_coordinator/target/release/{name}",
+        WORKSPACE_DIR / f"tools/deterministic_coordinator/target/release/{name}",
     ]
 
     for p in paths:
@@ -31,7 +35,7 @@ def get_rust_binary_path(name: str) -> Path:
     # Fallback to standard target dir if it doesn't exist anywhere
     if "CARGO_TARGET_DIR" in os.environ:
         return Path(os.environ["CARGO_TARGET_DIR"]) / f"release/{name}"
-    return workspace_root / "target/release" / name
+    return WORKSPACE_DIR / "target/release" / name
 
 
 def resolve_rust_binary(name: str) -> Path:

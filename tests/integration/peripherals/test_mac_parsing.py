@@ -8,14 +8,24 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_mac_parsing.
 """
 
+from __future__ import annotations
+
+import shutil
 import subprocess
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+if TYPE_CHECKING:
+    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+
 
 @pytest.mark.asyncio
-async def test_macaddr_parsing(qemu_launcher, tmp_path):
+async def test_macaddr_parsing(
+    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]], tmp_path: Path
+) -> None:
     """
     Validate MACAddress property passing from YAML through yaml2qemu to QEMU.
     """
@@ -46,7 +56,9 @@ async def test_macaddr_parsing(qemu_launcher, tmp_path):
     test_dtb = tmp_path / "test_mac.dtb"
 
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root
+        [shutil.which("python3") or "python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb],
+        check=True,
+        cwd=workspace_root,
     )
 
     # Boot QEMU with this DTB

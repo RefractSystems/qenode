@@ -7,9 +7,8 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::Property;
-use virtmcu_qom::qom::LOG_UNIMP;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::{declare_device_type, define_prop_uint64, device_class, qemu_log_mask};
+use virtmcu_qom::{declare_device_type, define_prop_uint64, device_class};
 
 /// RustDummy peripheral structure
 #[repr(C)]
@@ -20,25 +19,30 @@ pub struct RustDummyQEMU {
     pub iomem: MemoryRegion,
     /// Base address property
     pub base_addr: u64,
+    /// Debug flag
+    pub debug: bool,
 }
 
 unsafe extern "C" fn rust_dummy_read(_opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
-    qemu_log_mask!(LOG_UNIMP, "rust_dummy_read called from Rust! addr=0x{:x}", addr);
+    let s = &*(_opaque as *mut RustDummyQEMU);
 
     match addr {
         0 => 0xdead_beef,
         8 => 0xface_babe,
-        _ => 0,
+        _ => {
+            if s.debug {
+                virtmcu_qom::sim_warn!("rust_dummy_read: unhandled offset 0x{:x}", addr);
+            }
+            0
+        }
     }
 }
 
 unsafe extern "C" fn rust_dummy_write(_opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
-    qemu_log_mask!(
-        LOG_UNIMP,
-        "rust_dummy_write called from Rust: addr=0x{:x}, val=0x{:x}",
-        addr,
-        val
-    );
+    let s = &*(_opaque as *mut RustDummyQEMU);
+    if s.debug {
+        virtmcu_qom::sim_warn!("rust_dummy_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
+    }
 }
 
 static RUST_DUMMY_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -77,8 +81,9 @@ unsafe extern "C" fn rust_dummy_realize(dev: *mut c_void, _errp: *mut *mut c_voi
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.iomem);
 }
 
-static RUST_DUMMY_PROPERTIES: [Property; 2] = [
+static RUST_DUMMY_PROPERTIES: [Property; 3] = [
     define_prop_uint64!(c"base-addr".as_ptr(), RustDummyQEMU, base_addr, u64::MAX),
+    virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), RustDummyQEMU, debug, false),
     // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
     unsafe { core::mem::zeroed() },
 ];
@@ -87,7 +92,7 @@ unsafe extern "C" fn rust_dummy_class_init(klass: *mut ObjectClass, _data: *cons
     let dc = device_class!(klass);
     (*dc).realize = Some(rust_dummy_realize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, RUST_DUMMY_PROPERTIES.as_ptr(), 1);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, RUST_DUMMY_PROPERTIES.as_ptr(), 2);
 }
 
 static RUST_DUMMY_TYPE_INFO: TypeInfo = TypeInfo {
@@ -99,7 +104,7 @@ static RUST_DUMMY_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: None,
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(rust_dummy_class_init),
     class_base_init: None,
     class_data: core::ptr::null(),

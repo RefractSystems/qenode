@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 usd_to_virtmcu.py — Generate C++ address maps from OpenUSD-aligned YAML.
 
@@ -14,16 +13,20 @@ Usage:
     python3 usd_to_virtmcu.py <board.yaml> > board_addresses.hpp
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from pathlib import Path
 
 import yaml
 
+#!/usr/bin/env python3
+
 logger = logging.getLogger(__name__)
 
 
-def parse_yaml(filepath):
+def parse_yaml(filepath: str | Path) -> None:
     with Path(filepath).open() as f:
         data = yaml.safe_load(f)
 

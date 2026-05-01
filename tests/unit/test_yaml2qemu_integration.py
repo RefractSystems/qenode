@@ -5,18 +5,20 @@ Tests the full flow from YAML input to generated DTB/DTS, ensuring that
 filtering logic, property injection, and validation all work together.
 """
 
+from __future__ import annotations
+
+import shutil
 import subprocess
 import sys
+import typing
 from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def run_yaml2qemu(yaml_data: dict, tmp_path: Path):
+def run_yaml2qemu(yaml_data: dict[typing.Any, typing.Any], tmp_path: Path) -> tuple[str, str]:
     """
     Runs yaml2qemu.py on the provided data and returns (dts_content, cli_content).
     """
@@ -44,7 +46,9 @@ def run_yaml2qemu(yaml_data: dict, tmp_path: Path):
     )
 
     # Decompile DTB to DTS for inspection
-    dts_content = subprocess.check_output(["dtc", "-I", "dtb", "-O", "dts", str(dtb_file)], text=True)
+    dts_content = subprocess.check_output(
+        [shutil.which("dtc") or "dtc", "-I", "dtb", "-O", "dts", str(dtb_file)], text=True
+    )
     cli_content = cli_file.read_text()
 
     return dts_content, cli_content
@@ -53,7 +57,7 @@ def run_yaml2qemu(yaml_data: dict, tmp_path: Path):
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
-def test_roundtrip_basic_arm(tmp_path):
+def test_roundtrip_basic_arm(tmp_path: Path) -> None:
     """Verify a simple ARM platform with UART and Memory."""
     data = {
         "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
@@ -72,7 +76,7 @@ def test_roundtrip_basic_arm(tmp_path):
     assert "interrupts = <0x21>;" in dts  # 33 = 0x21
 
 
-def test_roundtrip_wireless_devices(tmp_path):
+def test_roundtrip_wireless_devices(tmp_path: Path) -> None:
     """
     Verify that wireless devices (telemetry, ieee802154) are correctly
     included in DTB and have the transport property injected.
@@ -109,7 +113,7 @@ def test_roundtrip_wireless_devices(tmp_path):
     assert 'transport = "zenoh";' in dts
 
 
-def test_roundtrip_chardev_cli_only(tmp_path):
+def test_roundtrip_chardev_cli_only(tmp_path: Path) -> None:
     """Verify that 'chardev' type only goes to CLI and NOT to DTB."""
     data = {
         "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
@@ -128,7 +132,7 @@ def test_roundtrip_chardev_cli_only(tmp_path):
     assert "virtmcu,id=my_serial,node=1,transport=zenoh" in cli
 
 
-def test_roundtrip_riscv_platform(tmp_path):
+def test_roundtrip_riscv_platform(tmp_path: Path) -> None:
     """Verify RISC-V platform generation."""
     data = {
         "machine": {
@@ -152,8 +156,9 @@ def test_roundtrip_riscv_platform(tmp_path):
     assert "memory@80000000" in dts
 
 
-def test_roundtrip_mmio_socket_bridge(tmp_path):
+def test_roundtrip_mmio_socket_bridge(tmp_path: Path) -> None:
     """Verify mmio-socket-bridge appears in DTB with its mandatory container."""
+    socket_path = str(tmp_path / "test.sock")
     data = {
         "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
         "peripherals": [
@@ -162,7 +167,7 @@ def test_roundtrip_mmio_socket_bridge(tmp_path):
                 "type": "mmio-socket-bridge",
                 "address": 0x50000000,
                 "properties": {
-                    "socket-path": "/tmp/test.sock",
+                    "socket-path": socket_path,
                     "region-size": 0x1000,
                 },
             }
@@ -173,5 +178,5 @@ def test_roundtrip_mmio_socket_bridge(tmp_path):
     assert "bridge0@50000000 {" in dts
     assert 'compatible = "mmio-socket-bridge"' in dts
 
-    assert 'socket-path = "/tmp/test.sock";' in dts
+    assert f'socket-path = "{socket_path}";' in dts
     assert "container = <" in dts  # Must have sysmem container for MMIO access

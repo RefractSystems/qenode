@@ -29,6 +29,8 @@ extern "C" {
     pub fn virtmcu_timer_del(timer: *mut QemuTimer);
     /// A function
     pub fn virtmcu_timer_free(timer: *mut QemuTimer);
+    /// A function
+    pub fn virtmcu_timer_kick(timer: *mut QemuTimer);
 
     /// A function
     pub fn qemu_clock_run_all_timers();
@@ -66,6 +68,13 @@ impl QomTimer {
     pub fn del(&self) {
         // SAFETY: self.inner is a valid pointer to a QemuTimer managed by this struct.
         unsafe { virtmcu_timer_del(self.inner) }
+    }
+
+    /// Kicks the timer, waking up the QEMU main loop and forcing it to run.
+    /// This is safe to call from background threads without holding the BQL.
+    pub fn kick(&self) {
+        // SAFETY: self.inner is a valid pointer to a QemuTimer.
+        unsafe { virtmcu_timer_kick(self.inner) }
     }
 }
 

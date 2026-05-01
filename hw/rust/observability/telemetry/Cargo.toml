@@ -6,7 +6,7 @@ edition.workspace = true
 authors.workspace = true
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["cdylib", "staticlib"]
 [lints] 
 workspace = true 
 [dependencies]

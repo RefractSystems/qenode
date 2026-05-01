@@ -12,24 +12,16 @@ import asyncio
 import json
 import logging
 import sys
+import typing
 from pathlib import Path
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent.parent.parent
-
-WORKSPACE_DIR = str(_find_workspace_root(Path(__file__).resolve()))
-if WORKSPACE_DIR not in sys.path:
-    sys.path.append(WORKSPACE_DIR)
+from tools.testing.env import WORKSPACE_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
 
-async def main():
+async def main() -> None:
     logger.info("Connecting to MCP server...")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -41,9 +33,9 @@ async def main():
         cwd=WORKSPACE_DIR,
     )
 
-    async def forward_stderr():
+    async def forward_stderr() -> None:
         while True:
-            line = await proc.stderr.readline()
+            line = await proc.stderr.readline()  # type: ignore[union-attr]
             if not line:
                 break
             sys.stderr.write(f"[server] {line.decode()}")
@@ -51,13 +43,13 @@ async def main():
 
     asyncio.create_task(forward_stderr())  # noqa: RUF006
 
-    async def send_json(obj):
+    async def send_json(obj: dict[typing.Any, typing.Any]) -> None:
         data = json.dumps(obj) + "\n"
-        proc.stdin.write(data.encode())
-        await proc.stdin.drain()
+        proc.stdin.write(data.encode())  # type: ignore[union-attr]
+        await proc.stdin.drain()  # type: ignore[union-attr]
 
-    async def recv_json():
-        line = await proc.stdout.readline()
+    async def recv_json() -> typing.Any:  # noqa: ANN401
+        line = await proc.stdout.readline()  # type: ignore[union-attr]
         if not line:
             return None
         logger.info(f"<- {line.decode().strip()}")
@@ -144,7 +136,7 @@ async def main():
             if re.search(r"(?i)\b(pc|r15|eip|rip)\b\s*(?:=|\s+)\s*[0-9a-f]+", state_text):
                 logger.info("Read CPU State Result: " + json.dumps(res, indent=2))
                 break
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             pass
         await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: RPC polling backoff
     else:

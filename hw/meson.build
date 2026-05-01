@@ -55,7 +55,11 @@ rust_modules = [
         'lib': 'libremote_port.a',
         'obj': 'remote-port-bridge',
     },
-    {'pkg': 'flexray', 'lib': 'libflexray.a', 'obj': 'flexray'},
+    {
+        'pkg': 'flexray',
+        'lib': 'libflexray.a',
+        'obj': 'flexray',
+    },
     {
         'pkg': 's32k144-lpuart',
         'lib': 'libs32k144_lpuart.a',
@@ -135,7 +139,6 @@ foreach m : rust_modules
     i += 1
 
     message('Registering Rust module: ' + m['pkg'])
-    # Generate trigger .c file separately per module
     trigger_c = custom_target(
         m['pkg'] + '_trigger_c',
         output: m['pkg'] + '_trigger.c',

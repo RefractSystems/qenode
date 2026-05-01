@@ -1,30 +1,43 @@
-"""
-Architectural hardening stress tests.
-1. Quantum sync stress: 100 quanta with ZenohClock.
-2. Sequence number tie-breaking: UART bytes at same vtime.
-"""
+"""Run 100 quanta and verify no stalls or state machine failures."""
+
+from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-import vproto
+
+from tools import vproto
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    import zenoh
+
+    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
 
 
-def _ensure_boot_arm_built():
+def _ensure_boot_arm_built() -> tuple[Path, Path]:
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
     dtb = workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
     kernel = workspace_root / "tests/fixtures/guest_apps/boot_arm/hello.elf"
     if not dtb.exists() or not kernel.exists():
-        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/boot_arm"], check=True, cwd=workspace_root)
+        subprocess.run(
+            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm"], check=True, cwd=workspace_root
+        )
     return dtb, kernel
 
 
 @pytest.mark.asyncio
-async def test_quantum_sync_stress(qemu_launcher, zenoh_router, zenoh_session):
-    """Run 100 quanta and verify no stalls or state machine failures."""
+async def test_quantum_sync_stress(
+    qemu_launcher: Callable[..., Awaitable[QmpBridge]], zenoh_router: str, zenoh_session: zenoh.Session
+) -> None:
+
     dtb, kernel = _ensure_boot_arm_built()
     node_id = 42  # Unique ID for this test
     quantum_ns = 1_000_000  # 1ms
@@ -46,7 +59,9 @@ async def test_quantum_sync_stress(qemu_launcher, zenoh_router, zenoh_session):
 
 
 @pytest.mark.asyncio
-async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router, zenoh_session):
+async def test_uart_sequence_tiebreaking(
+    qemu_launcher: Callable[..., Awaitable[QmpBridge]], zenoh_router: str, zenoh_session: zenoh.Session
+) -> None:
     """Verify that multiple UART bytes sent at the same vtime arrive in order."""
     dtb, kernel = _ensure_boot_arm_built()
     node_id = 43
@@ -70,6 +85,9 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router, zenoh_sess
 
     pub = await asyncio.to_thread(lambda: zenoh_session.declare_publisher(f"virtmcu/uart/{node_id}/rx"))
 
+    def put_msg(h: bytes, c: int) -> None:
+        pub.put(h + bytes([c]))
+
     async with sim:
         # 1. Advance past boot
         await vta.step(100_000_000, timeout=10.0)
@@ -79,10 +97,6 @@ async def test_uart_sequence_tiebreaking(qemu_launcher, zenoh_router, zenoh_sess
         test_str = b"HELLO"
         for i, char in enumerate(test_str):
             header = vproto.ZenohFrameHeader(vtime, i, 1).pack()
-
-            def put_msg(h: bytes, c: int) -> None:
-                pub.put(h + bytes([c]))
-
             await asyncio.to_thread(put_msg, header, char)
 
         for _ in range(10):

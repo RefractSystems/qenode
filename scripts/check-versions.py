@@ -7,7 +7,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def get_versions():
+def get_versions() -> dict[str, str]:
     versions = {}
     with Path("BUILD_DEPS").open() as f:
         for line in f:
@@ -17,7 +17,7 @@ def get_versions():
     return versions
 
 
-def check():
+def check() -> None:
     versions = get_versions()
     errors = []
 
@@ -96,18 +96,22 @@ def check():
             elif match.group(1) != fb_ver:
                 errors.append(f"{req_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
-    # 4. Check ci.yml hardcoded PYTHON_VERSION matches BUILD_DEPS
-    ci_path = ".github/workflows/ci.yml"
-    if Path(ci_path).exists():
-        with Path(ci_path).open() as f:
-            content = f.read()
-        py_ver = versions.get("PYTHON_VERSION")
-        if py_ver:
-            match = re.search(r'PYTHON_VERSION:\s*"([^"]+)"', content)
-            if not match:
-                errors.append(f"{ci_path}: Could not find hardcoded PYTHON_VERSION env var")
-            elif match.group(1) != py_ver:
-                errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
+    # 4. Check ci workflows hardcoded PYTHON_VERSION matches BUILD_DEPS
+    py_ver = versions.get("PYTHON_VERSION")
+    if py_ver:
+        for ci_path in [
+            ".github/workflows/ci-main.yml",
+            ".github/workflows/ci-pr.yml",
+            ".github/workflows/ci-asan.yml",
+        ]:
+            if Path(ci_path).exists():
+                with Path(ci_path).open() as f:
+                    content = f.read()
+                match = re.search(r'PYTHON_VERSION:\s*"([^"]+)"', content)
+                if not match:
+                    errors.append(f"{ci_path}: Could not find hardcoded PYTHON_VERSION env var")
+                elif match.group(1) != py_ver:
+                    errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
 
     # 5. Check Cargo.toml (workspace)
     cargo_path = "Cargo.toml"

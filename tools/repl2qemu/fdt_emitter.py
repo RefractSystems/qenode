@@ -1,4 +1,5 @@
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -41,16 +42,16 @@ INT_CONTROLLERS = {
 
 
 class FdtEmitter:
-    def __init__(self, platform: ReplPlatform):
+    def __init__(self, platform: ReplPlatform) -> None:
         self.platform = platform
         self.arch = self._detect_arch()
         self.phandles: dict[str, int] = {}
         self.next_phandle = 1
         self._assign_phandles()
 
-    def validate_platform(self):
+    def validate_platform(self) -> None:
         """
-        ARCH-14: Validate that all devices have mandatory properties.
+        Requirement: Validate that all devices have mandatory properties.
         Throws ValueError if a device is missing required fields.
         """
         for dev in self.platform.devices:
@@ -81,7 +82,7 @@ class FdtEmitter:
                 return "riscv"
         return "arm"
 
-    def _assign_phandles(self):
+    def _assign_phandles(self) -> None:
         # Always have a sysmem phandle
         self.phandles["qemu_sysmem"] = self.next_phandle
         self.next_phandle += 1
@@ -205,7 +206,12 @@ class FdtEmitter:
         if dev.type_name == "Memory.MappedMemory":
             if "size" in dev.properties:
                 size_val = dev.properties["size"]
-                size = int(size_val, 16) if isinstance(size_val, str) else int(size_val)
+                if isinstance(size_val, str):
+                    size = int(size_val, 16)
+                elif isinstance(size_val, int):
+                    size = size_val
+                else:
+                    raise TypeError(f"Invalid size property type: {type(size_val)}")
 
             lines.append(f"{indent}memory@{base:x} {{")
             lines.append(f'{indent}    compatible = "qemu-memory-region";')
@@ -313,13 +319,23 @@ class FdtEmitter:
             if k in ["size", "cpuType", "isa", "mmu-type", "chardev"]:
                 if k == "size" and compat_str == "mmio-socket-bridge" and "region-size" not in dev.properties:
                     # Backward compatibility: map 'size' to 'region-size'
-                    val = v if isinstance(v, int) else int(v, 16)
+                    if isinstance(v, int):
+                        val = v
+                    elif isinstance(v, (str, bytes, bytearray)):
+                        val = int(v, 16)
+                    else:
+                        raise TypeError(f"Invalid type for property {k}: {type(v)}")
                     lines.append(f"{indent}    region-size = <0x{val:x}>;")
                 continue
             if k == "address" and compat_str == "mmio-socket-bridge":
                 # Backward compatibility: map 'address' to 'base-addr'
                 if "base-addr" not in dev.properties:
-                    val = v if isinstance(v, int) else int(v, 16)
+                    if isinstance(v, int):
+                        val = v
+                    elif isinstance(v, (str, bytes, bytearray)):
+                        val = int(v, 16)
+                    else:
+                        raise TypeError(f"Invalid type for property {k}: {type(v)}")
                     v_hi, v_lo = (val >> 32) & 0xFFFFFFFF, val & 0xFFFFFFFF
                     lines.append(f"{indent}    base-addr = <0x{v_hi:x} 0x{v_lo:x}>;")
                 continue
@@ -360,7 +376,7 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
         with Path(dts_path).open("w") as f:
             f.write(dts_content)
         res = subprocess.run(
-            ["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path],
+            [shutil.which("dtc") or "dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path],
             check=True,
             capture_output=True,
             text=True,

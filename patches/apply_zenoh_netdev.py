@@ -6,7 +6,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def patch_file(filepath, marker, insertion, after=False):
+def patch_file(filepath: str | Path, marker: str, insertion: str, after: bool = False) -> bool:
     with Path(filepath).open() as f:
         content = f.read()
     if insertion in content:
@@ -23,7 +23,7 @@ def patch_file(filepath, marker, insertion, after=False):
     return True
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
@@ -50,23 +50,6 @@ def main():
     insertion6 = "\n  'virtmcu.c',"
     if patch_file(meson_build, marker6, insertion6, after=True):
         logger.info(f"  patched {meson_build}")
-
-    # 7. Patch util/module.c to allow re-entrant module loads gracefully
-    module_c = Path(qemu) / "util" / "module.c"
-    marker7 = "    assert(QTAILQ_EMPTY(&dso_init_list));"
-    insertion7 = """    /* assert(QTAILQ_EMPTY(&dso_init_list)); */
-    if (!QTAILQ_EMPTY(&dso_init_list)) {
-        error_setg(errp, "module_load_dso: re-entrant call detected loading %s"
-                   " — skipping to avoid corruption", fname);
-        return false;
-    }"""
-    if Path(module_c).exists():
-        with Path(module_c).open() as f:
-            content = f.read()
-        if marker7.strip() in content:
-            new_content = content.replace(marker7, insertion7)
-            with Path(module_c).open("w") as f:
-                f.write(new_content)
 
     # 6. Generate net/virtmcu.c stub
     virtmcu_c = Path(qemu) / "net" / "virtmcu.c"

@@ -2,7 +2,7 @@
 
 This directory contains the Rust-based QOM (QEMU Object Model) plugins for the virtmcu project.
 
-## Directory Structure (ARCH-19)
+## Directory Structure
 
 The crates are organized into logical subdirectories based on their role in the simulation:
 

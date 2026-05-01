@@ -22,26 +22,15 @@ Usage:
 """
 
 import logging
-import random
+import secrets
 import sys
 import threading
-import time
-from pathlib import Path
+import typing
 
 import zenoh
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: [%(name)s] %(message)s")
 logger = logging.getLogger("jitter_proxy")
@@ -59,11 +48,11 @@ class JitterProxy:
     re-publishes replies with injected jitter on the proxy router.
     """
 
-    def __init__(self, upstream_url: str, proxy_port: int, max_jitter_us: int):
+    def __init__(self, upstream_url: str, proxy_port: int | str, max_jitter_us: int) -> None:
         self.upstream_url = upstream_url
         self.proxy_port = proxy_port
         self.max_jitter_us = max_jitter_us
-        self._rng = random.Random()
+        self._rng = secrets.SystemRandom()
         self._lock = threading.Lock()
         self.injected_delays_us: list[float] = []
         self._stop_event = threading.Event()
@@ -79,10 +68,11 @@ class JitterProxy:
             # Dynamically resolve host IP if only a port is provided
             try:
                 import subprocess
+
                 get_ip_script = WORKSPACE_DIR / "scripts" / "get-free-port.py"
                 host_ip = subprocess.check_output([sys.executable, str(get_ip_script), "--ip"]).decode().strip()
                 proxy_listen = f"tcp/{host_ip}:{self.proxy_port}"
-            except Exception:
+            except (subprocess.CalledProcessError, OSError):
                 proxy_listen = f"tcp/localhost:{self.proxy_port}"
         logger.info(f"upstream={self.upstream_url} listen={proxy_listen} max_jitter={self.max_jitter_us} µs")
 
@@ -98,7 +88,7 @@ class JitterProxy:
         frontend_cfg.insert_json5("scouting/multicast/enabled", "false")
         frontend_session = zenoh.open(frontend_cfg)
 
-        def handle_query(query):
+        def handle_query(query: zenoh.Query) -> None:
             with self._lock:
                 self._in_flight += 1
                 # 50 concurrent queries is far beyond what our benchmarking harness
@@ -119,7 +109,9 @@ class JitterProxy:
                 if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
                     # Inject jitter before replying back to the TimeAuthority.
                     jitter_us = self._rng.uniform(0, self.max_jitter_us)
-                    time.sleep(jitter_us / 1_000_000)
+                    mock_execution_delay(
+                        jitter_us / 1_000_000
+                    )  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
                     with self._lock:
                         self.injected_delays_us.append(jitter_us)
@@ -144,9 +136,9 @@ class JitterProxy:
         except KeyboardInterrupt:
             pass
         finally:
-            queryable.undeclare()
-            frontend_session.close()
-            backend_session.close()
+            typing.cast(typing.Any, queryable).undeclare()
+            typing.cast(typing.Any, frontend_session).close()
+            backend_session.close()  # type: ignore[no-untyped-call]
 
             # Prevent division by zero if no delays were injected
             n_delays = len(self.injected_delays_us)

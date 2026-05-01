@@ -13,21 +13,7 @@ import socket
 import sys
 from pathlib import Path
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-import vproto  # noqa: E402
+from tools import vproto
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +22,7 @@ VIRTMCU_PROTO_MAGIC = 0x564D4355
 VIRTMCU_PROTO_VERSION = 1
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         logger.info("Usage: malicious_adapter.py <socket_path> <mode>")
         logger.info("Modes: hang, crash")
@@ -88,7 +74,7 @@ def main():
                 try:
                     if not conn.recv(1024):
                         break
-                except Exception:
+                except OSError:
                     break
         elif mode == "crash":
             logger.info("Closing connection immediately to simulate crash...")

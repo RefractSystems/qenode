@@ -8,26 +8,38 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_cyber_bridge_stress.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
+import hashlib
 import logging
 import multiprocessing
 import os
 import subprocess
 import time
+import typing
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-import vproto
+import pytest_asyncio
 import zenoh
 
+from tools import vproto
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+from tools.testing.env import WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
 
 # Paths
-WORKSPACE_DIR = Path(Path(Path(__file__).resolve().parent) / "..")
-BUILD_DIR = Path(WORKSPACE_DIR) / "target/release"
+BUILD_DIR = WORKSPACE_DIR / "target/release"
 
 try:
     REPLAY_BIN = resolve_rust_binary("resd_replay")
@@ -37,7 +49,7 @@ except FileNotFoundError:
 logger.info(f"DEBUG: REPLAY_BIN = {REPLAY_BIN}")
 
 
-def create_resd(filename, duration_ms):
+def create_resd(filename: str | Path, duration_ms: int) -> None:
     with Path(filename).open("wb") as f:
         f.write(b"RESD")
         f.write((1).to_bytes(1, "little"))
@@ -61,7 +73,7 @@ def create_resd(filename, duration_ms):
 
 
 @pytest.mark.asyncio
-async def test_multi_node_stress(zenoh_router, tmp_path):
+async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
     ctx = multiprocessing.get_context("spawn")
     manager = ctx.Manager()
 
@@ -76,9 +88,8 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
         resd_files.append(f)
 
     # Use unique topic for parallel isolation
-    import uuid
-
-    unique_prefix = f"sim/clock/{uuid.uuid4().hex[:8]}"
+    unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
+    unique_prefix = f"sim/clock/{unique_id}"
 
     # Start Zenoh session for mock QEMU
     conf = zenoh.Config()
@@ -89,12 +100,12 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
 
     node_vtimes = manager.dict(dict.fromkeys(range(num_nodes), 0))
 
-    def on_query(query):
+    def on_query(query: zenoh.Query) -> None:
         # topic: sim/clock/advance/{id}
         logger.info(f"DEBUG: Received query on {query.key_expr}")
         try:
             node_id = int(str(query.key_expr).split("/")[-1])
-            payload = query.payload.to_bytes()
+            payload = cast(Any, query.payload).to_bytes()
             req = vproto.ClockAdvanceReq.unpack(payload)
             delta_ns, _mujoco_time, qn = req.delta_ns, req.mujoco_time_ns, req.quantum_number
             logger.info(f"DEBUG: Node {node_id} advance: delta={delta_ns}, qn={qn}")
@@ -105,7 +116,8 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
             # Reply with ClockReadyPayload { current_vtime_ns, n_frames, error_code, quantum_number }
             reply_payload = vproto.ClockReadyResp(node_vtimes[node_id], 1, 0, qn).pack()
             query.reply(query.key_expr, reply_payload)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
+            # In a stress test, we log and continue to keep the simulation session alive
             logger.error(f"DEBUG ERROR in on_query: {e}")
 
     # Subscribe to clock advance for all nodes
@@ -155,44 +167,55 @@ async def test_multi_node_stress(zenoh_router, tmp_path):
         assert p.returncode == 0, f"Node {i} failed"
         assert node_vtimes[i] >= (duration_ms - 1) * 1_000_000
 
-    session.close()
+    typing.cast(typing.Any, session).close()
     logger.info("Multi-node stress test PASSED")
 
 
-@pytest.mark.asyncio
-async def test_mujoco_bridge_shm(zenoh_router):  # noqa: ARG001
-    # Test mujoco_bridge shared memory creation and layout
-
-    # Use worker_id logic if needed, but since it's a simple test, a fixed ID like 42 is fine
-    # as long as we clean it up and tests are isolated. Or derive it from the test name/PID.
-    # To be completely safe in parallel without random, we can use the current process PID.
-    import os
-
+@pytest_asyncio.fixture
+async def mujoco_bridge_process() -> AsyncGenerator[tuple[subprocess.Popen[bytes], Path, int, int]]:
+    """Fixture to manage the mujoco_bridge process lifecycle."""
     node_id = 42 + (os.getpid() % 1000)
     nu = 4
     nsensordata = 8
-
     bridge_bin = resolve_rust_binary("mujoco_bridge")
+    shm_path = Path("/") / "dev" / "shm" / f"virtmcu_mujoco_{node_id}"
 
-    # Run bridge briefly
+    # Ensure no stale SHM exists
+    if shm_path.exists():
+        shm_path.unlink()
+
     p = subprocess.Popen(
         [str(bridge_bin), str(node_id), str(nu), str(nsensordata)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
-    time.sleep(1.0)
-    p.kill()
-    _stdout, _stderr = p.communicate()
+    # Deterministically wait for the shared memory file to be created
+    start_time = time.time()
+    while not shm_path.exists() and time.time() - start_time < 5.0:
+        if p.poll() is not None:
+            break
+        await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: polling for shm creation
 
-    # Check if shm segment exists
-    shm_path = f"/dev/shm/virtmcu_mujoco_{node_id}"
-    assert Path(shm_path).exists()
-
-    # Verify size: Header(16) + (4+8)*8 = 16 + 96 = 112
-    # Wait, size is Header + (nsensordata + nu) * 8
-    expected_size = 16 + (nu + nsensordata) * 8
-    assert Path(shm_path).stat().st_size == expected_size
+    yield p, shm_path, nu, nsensordata
 
     # Cleanup
-    if Path(shm_path).exists():
-        Path(shm_path).unlink()
+    p.kill()
+    p.communicate()
+    if shm_path.exists():
+        shm_path.unlink()
+
+
+@pytest.mark.asyncio
+async def test_mujoco_bridge_shm(mujoco_bridge_process: tuple[subprocess.Popen[bytes], Path, int, int]) -> None:
+    """
+    Test the basic SHM lifecycle of the mujoco_bridge.
+    """
+    _p, shm_path, nu, nsensordata = mujoco_bridge_process
+
+    # Check if shm segment exists
+    assert shm_path.exists(), f"Shared memory {shm_path} was not created"
+
+    # Verify size: Header(16) + (nu + nsensordata) * 8
+    expected_size = 16 + (nu + nsensordata) * 8
+    assert shm_path.stat().st_size == expected_size
+
     logger.info("MuJoCo Bridge SHM test PASSED")

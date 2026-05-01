@@ -5,20 +5,24 @@ Subscribes to simulation telemetry topics via Zenoh and prints formatted
 trace events (CPU state changes, IRQs, peripheral events) to the console.
 """
 
+from __future__ import annotations
+
 import logging
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-SCRIPT_DIR = Path(Path(__file__).resolve().parent)
-sys.path.append(str(Path(SCRIPT_DIR) / "telemetry_fbs"))
+import zenoh
 
-import zenoh  # noqa: E402
-from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
+if TYPE_CHECKING:
+    from zenoh import Sample
+
 
 logger = logging.getLogger(__name__)
 
 
-def on_sample(sample):
+def on_sample(sample: Sample) -> None:
+    """Callback for incoming telemetry samples."""
+    from Virtmcu.Telemetry.TraceEvent import TraceEvent
+
     payload = sample.payload.to_bytes()
     try:
         ev = TraceEvent.GetRootAs(payload, 0)
@@ -48,11 +52,12 @@ def on_sample(sample):
             id_str = f"id={ev_id}"
 
         logger.info(f"[{ts:15}] {type_str:10} {id_str} val={val:3}")
-    except Exception as e:
+    except (ValueError, TypeError, IndexError) as e:
         logger.warning(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
 
 
-def main():
+def main() -> None:
+    """Main entry point."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Zenoh Telemetry Listener")
@@ -71,13 +76,14 @@ def main():
     session = zenoh.open(conf)
     _sub = session.declare_subscriber(topic, on_sample)
 
-    try:
-        import time
+    import asyncio
+    import contextlib
 
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
+    async def wait_forever() -> None:
+        await asyncio.Event().wait()
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(wait_forever())
 
 
 if __name__ == "__main__":

@@ -5,20 +5,21 @@ Tests the YAML platform description parser in isolation (no QEMU binary needed).
 Covers CPU mapping, peripheral mapping, interrupt parsing, and edge cases.
 """
 
-import sys
+from __future__ import annotations
+
 import tempfile
+import typing
 from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
 from tools.repl2qemu.parser import ReplPlatform
 from tools.yaml2qemu import parse_yaml_platform
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def write_yaml(data: dict) -> str:
+def write_yaml(data: dict[typing.Any, typing.Any]) -> str:
     """Write a temporary YAML file, return its path. Caller must unlink."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(data, f)
@@ -28,7 +29,7 @@ def write_yaml(data: dict) -> str:
 # ── CPU mapping ───────────────────────────────────────────────────────────────
 
 
-def test_parse_single_cpu():
+def test_parse_single_cpu() -> None:
     path = write_yaml(
         {
             "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
@@ -46,7 +47,7 @@ def test_parse_single_cpu():
         Path(path).unlink()
 
 
-def test_parse_multi_cpu():
+def test_parse_multi_cpu() -> None:
     path = write_yaml(
         {
             "machine": {
@@ -70,7 +71,7 @@ def test_parse_multi_cpu():
 # ── Peripheral mapping ────────────────────────────────────────────────────────
 
 
-def test_parse_uart_peripheral():
+def test_parse_uart_peripheral() -> None:
     path = write_yaml(
         {
             "machine": {"cpus": []},
@@ -93,7 +94,7 @@ def test_parse_uart_peripheral():
         Path(path).unlink()
 
 
-def test_parse_memory_with_properties():
+def test_parse_memory_with_properties() -> None:
     path = write_yaml(
         {
             "machine": {"cpus": []},
@@ -116,7 +117,7 @@ def test_parse_memory_with_properties():
         Path(path).unlink()
 
 
-def test_parse_interrupt():
+def test_parse_interrupt() -> None:
     path = write_yaml(
         {
             "machine": {"cpus": []},
@@ -141,7 +142,7 @@ def test_parse_interrupt():
         Path(path).unlink()
 
 
-def test_renode_type_alias():
+def test_renode_type_alias() -> None:
     """Files migrated from .repl may use 'renode_type' instead of 'type'."""
     path = write_yaml(
         {
@@ -157,7 +158,7 @@ def test_renode_type_alias():
         Path(path).unlink()
 
 
-def test_empty_platform():
+def test_empty_platform() -> None:
     path = write_yaml({"machine": {"cpus": []}, "peripherals": []})
     try:
         platform, _ = parse_yaml_platform(path)
@@ -167,7 +168,7 @@ def test_empty_platform():
         Path(path).unlink()
 
 
-def test_cpu_and_peripherals_combined():
+def test_cpu_and_peripherals_combined() -> None:
     path = write_yaml(
         {
             "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
@@ -190,17 +191,18 @@ def test_cpu_and_peripherals_combined():
 # ── FdtEmitter Integration ───────────────────────────────────────────────────
 
 
-def test_mmio_socket_bridge_property_mapping():
+def test_mmio_socket_bridge_property_mapping(tmp_path: Path) -> None:
     from tools.repl2qemu.fdt_emitter import FdtEmitter
     from tools.repl2qemu.parser import ReplDevice, ReplPlatform
 
+    socket_path = str(tmp_path / "mmio.sock")
     platform = ReplPlatform()
     dev = ReplDevice.create(
         name="bridge0",
         type_name="mmio-socket-bridge",
         address_str="0x10000000",
         properties={
-            "socket-path": "/tmp/mmio.sock",
+            "socket-path": socket_path,
             "size": 0x1000,
             "address": 0x10000000,
         },
@@ -215,15 +217,16 @@ def test_mmio_socket_bridge_property_mapping():
     # Check that 'address' was mapped to 'base-addr' (64-bit split)
     assert "base-addr = <0x0 0x10000000>;" in dts
     # Check that 'socket-path' is still there
-    assert 'socket-path = "/tmp/mmio.sock";' in dts
+    assert f'socket-path = "{socket_path}";' in dts
     # Original 'address' should NOT be there as a raw property
     assert "address = <0x10000000>;" not in dts
 
 
-def test_mmio_socket_bridge_no_double_mapping():
+def test_mmio_socket_bridge_no_double_mapping(tmp_path: Path) -> None:
     from tools.repl2qemu.fdt_emitter import FdtEmitter
     from tools.repl2qemu.parser import ReplDevice, ReplPlatform
 
+    socket_path = str(tmp_path / "test.sock")
     platform = ReplPlatform()
     dev = ReplDevice.create(
         name="bridge0",
@@ -232,7 +235,7 @@ def test_mmio_socket_bridge_no_double_mapping():
         properties={
             "region-size": 0x2000,
             "base-addr": 0x20000000,
-            "socket-path": "/tmp/test.sock",
+            "socket-path": socket_path,
         },
     )
     platform.devices.append(dev)
@@ -243,3 +246,4 @@ def test_mmio_socket_bridge_no_double_mapping():
     # Check that it uses the provided ones
     assert "region-size = <0x2000>;" in dts
     assert "base-addr = <0x0 0x20000000>;" in dts
+    assert f'socket-path = "{socket_path}";' in dts

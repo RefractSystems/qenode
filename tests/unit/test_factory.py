@@ -8,13 +8,15 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_factory.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tools.testing.virtmcu_test_suite.factory import compile_c_snippet, compile_dtb, compile_firmware
 
 
-def test_compile_dtb(tmp_path):
+def test_compile_dtb(tmp_path: Path) -> None:
     base_dts = tmp_path / "base.dts"
     base_dts.write_text('/dts-v1/;\n/ {\n    my_node {\n        prop = "REPLACE_ME";\n    };\n};')
 
@@ -22,8 +24,8 @@ def test_compile_dtb(tmp_path):
 
     # We patch subprocess.run to avoid needing dtc installed in all test environments
     # but we will check that the temporary file was created correctly.
-    def mock_run(args, **_kwargs):
-        assert "dtc" in args
+    def mock_run(args: list[str], **_kwargs: object) -> MagicMock:
+        assert any("dtc" in arg for arg in args)
         assert "-o" in args
         assert str(out_dtb) in args
         # tmp_dts is the last arg
@@ -44,14 +46,14 @@ def test_compile_dtb(tmp_path):
     assert out_dtb.exists()
 
 
-def test_compile_firmware(tmp_path):
+def test_compile_firmware(tmp_path: Path) -> None:
     src = tmp_path / "main.c"
     src.write_text("int main() { return 0; }")
     out_elf = tmp_path / "main.elf"
     linker = tmp_path / "link.ld"
 
-    def mock_run(args, **_kwargs):
-        assert "arm-none-eabi-gcc" in args
+    def mock_run(args: list[str], **_kwargs: object) -> MagicMock:
+        assert any("arm-none-eabi-gcc" in arg for arg in args)
         assert "-mcpu=cortex-a15" in args
         assert "-T" in args
         assert str(linker) in args
@@ -68,8 +70,8 @@ def test_compile_firmware(tmp_path):
     assert out_elf.exists()
 
 
-def test_compile_c_snippet(tmp_path):
-    def mock_run(args, **_kwargs):
+def test_compile_c_snippet(tmp_path: Path) -> None:
+    def mock_run(args: list[str], **_kwargs: object) -> MagicMock:
         out_elf = args[args.index("-o") + 1]
         Path(out_elf).write_bytes(b"dummy elf")
         return MagicMock(returncode=0)

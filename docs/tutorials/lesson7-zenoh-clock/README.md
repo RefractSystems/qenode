@@ -145,7 +145,8 @@ scripts/run.sh \
 python3 - <<'PY'
 import zenoh, vproto, time, sys
 s = zenoh.open(zenoh.Config())
-time.sleep(1)  # wait for QEMU to register queryable
+time.sleep(1)  # SLEEP_EXCEPTION: waiting for infrastructure  # wait for QEMU to register queryable
+
 payload = vproto.ClockAdvanceReq(5_000_000, 0, 0).pack()  # advance 5 ms, q=0
 for reply in s.get("sim/clock/advance/0", payload=payload, timeout=5.0):
     resp = vproto.ClockReadyResp.unpack(reply.ok.payload.to_bytes())

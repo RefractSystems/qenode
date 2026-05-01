@@ -8,19 +8,26 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_coordinator_barrier.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from typing import TYPE_CHECKING, Any
 
 import pytest
+import zenoh
 
-from tools.testing.utils import yield_now
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+
+if TYPE_CHECKING:
+    pass
+
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_coordinator_barrier(zenoh_router, zenoh_session):
+async def test_coordinator_barrier(zenoh_router: str, zenoh_session: zenoh.Session) -> None:
     """
     Test DeterministicCoordinator Quantum Barrier.
     3 nodes send messages to each other. We assert they are delivered in canonical order.
@@ -39,9 +46,9 @@ async def test_coordinator_barrier(zenoh_router, zenoh_session):
         try:
             await proc.wait_for_line("Running Unix coordinator", target="stderr", timeout=10.0)
 
-            received_msgs = []
+            received_msgs: list[tuple[str, int, int, int, int, bytes]] = []
 
-            def on_rx(sample):
+            def on_rx(sample: zenoh.Sample) -> None:
                 topic = str(sample.key_expr)
                 payload = sample.payload.to_bytes()
                 # Decode message: src(u32), dst(u32), vtime(u64), seq(u64), proto(u8), len(u32), data(len)
@@ -57,12 +64,12 @@ async def test_coordinator_barrier(zenoh_router, zenoh_session):
             _subs = []
             for i in range(3):
 
-                def declare_sub(idx: int):
+                def declare_sub(idx: int) -> object:
                     return zenoh_session.declare_subscriber(f"sim/coord/{idx}/rx", on_rx)
 
                 _subs.append(await asyncio.to_thread(declare_sub, i))
 
-            def pack_batch(msgs):
+            def pack_batch(msgs: list[tuple[int, int, int, int, int, bytes]]) -> bytes:
                 # [num_msgs: u32] followed by msgs
                 buf = bytearray(len(msgs).to_bytes(4, "little"))
                 for src, dst, vtime, seq, proto, data in msgs:
@@ -106,7 +113,7 @@ async def test_coordinator_barrier(zenoh_router, zenoh_session):
             for run in range(1, 101):
                 received_msgs.clear()
 
-                def _send_shuffled(q: int):
+                def _send_shuffled(q: int) -> None:
                     # Randomize arrival order
                     import random
 
@@ -114,11 +121,6 @@ async def test_coordinator_barrier(zenoh_router, zenoh_session):
                     random.shuffle(nodes_data)
                     for nid, b in nodes_data:
                         zenoh_session.put(f"sim/coord/{nid}/tx", b)
-
-                        # SLEEP_EXCEPTION: mock node simulating execution time to avoid Zenoh publisher race condition
-                        import time
-
-                        time.sleep(0.1)
 
                     # Send done with quantum number
                     nodes = [0, 1, 2]
@@ -128,12 +130,17 @@ async def test_coordinator_barrier(zenoh_router, zenoh_session):
                         zenoh_session.put(f"sim/coord/{nid}/done", q_payload)
 
                 await asyncio.to_thread(_send_shuffled, run)
-                await yield_now()
 
-                assert len(received_msgs) == 6, f"Run {run}: Expected 6 messages, got {len(received_msgs)}"
+                # Wait for messages to be delivered with timeout
+                import time
+
+                start_wait = time.time()
+                while len(received_msgs) < 6 and time.time() - start_wait < 5.0:
+                    await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: deterministic polling for message delivery
+
+                assert len(received_msgs) == 6, f"Run {run}: Expected 6 messages, got {len(received_msgs)} within 5s"
 
                 # Group received messages by destination topic
-                from typing import Any
 
                 by_topic: dict[str, list[Any]] = {"sim/coord/0/rx": [], "sim/coord/1/rx": [], "sim/coord/2/rx": []}
                 for msg in received_msgs:

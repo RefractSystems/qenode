@@ -1,20 +1,36 @@
+"""
+Context manager for background processes to guarantee strict cleanup.
+Ensures processes are terminated, waited upon, and forcefully killed if necessary.
+Also captures stdout and stderr in the background.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
+from typing import TYPE_CHECKING, Any, cast
 
 from tools.testing.utils import get_time_multiplier
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import TracebackType
+
 
 logger = logging.getLogger(__name__)
 
 
 class AsyncManagedProcess:
-    """
-    Context manager for background processes to guarantee strict cleanup.
-    Ensures processes are terminated, waited upon, and forcefully killed if necessary.
-    Also captures stdout and stderr in the background.
-    """
-
-    def __init__(self, *args, env=None, cwd=None, graceful_timeout: float = 2.0, capture_output: bool = True, **kwargs):
+    def __init__(
+        self,
+        *args: object,
+        env: dict[str, str] | None = None,
+        cwd: str | Path | None = None,
+        graceful_timeout: float = 2.0,
+        capture_output: bool = True,
+        **kwargs: object,
+    ) -> None:
         self.args = [str(a) for a in args]
         self.env = env
         self.cwd = cwd
@@ -24,10 +40,10 @@ class AsyncManagedProcess:
         self.proc: asyncio.subprocess.Process | None = None
         self.stdout_lines: list[str] = []
         self.stderr_lines: list[str] = []
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: list[asyncio.Task[None]] = []
         self.output_event = asyncio.Event()
 
-    async def wait_for_line(self, pattern: str, target: str = "stdout", timeout: float = 10.0) -> bool:
+    async def wait_for_line(self, pattern: str, target: str = "stdout", timeout: float = 10.0) -> bool | None:
         if timeout is not None:
             timeout *= get_time_multiplier()
         import re
@@ -51,19 +67,19 @@ class AsyncManagedProcess:
             except TimeoutError:
                 return False
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> AsyncManagedProcess:
         self.proc = await asyncio.create_subprocess_exec(
             *self.args,
             env=self.env,
             cwd=self.cwd,
             stdout=asyncio.subprocess.PIPE if self.capture_output else None,
             stderr=asyncio.subprocess.PIPE if self.capture_output else None,
-            **self.kwargs,
+            **cast(Any, self.kwargs),
         )
 
         if self.capture_output:
 
-            async def _stream(stream, target_list):
+            async def _stream(stream: asyncio.StreamReader, target_list: list[str]) -> None:
                 while True:
                     line = await stream.readline()
                     if not line:
@@ -79,26 +95,31 @@ class AsyncManagedProcess:
 
         return self
 
-    async def wait(self, timeout=None):
+    async def wait(self, timeout: float | None = None) -> int:
         assert self.proc is not None
         if timeout:
             return await asyncio.wait_for(self.proc.wait(), timeout=timeout)
         return await self.proc.wait()
 
     @property
-    def returncode(self):
+    def returncode(self) -> int | None:
         assert self.proc is not None
         return self.proc.returncode
 
     @property
-    def stdout_text(self):
+    def stdout_text(self) -> str:
         return "".join(self.stdout_lines)
 
     @property
-    def stderr_text(self):
+    def stderr_text(self) -> str:
         return "".join(self.stderr_lines)
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self.proc is None:
             return
 

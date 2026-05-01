@@ -1,37 +1,44 @@
+"""Returns the version of the installed eclipse-zenoh Python package."""
+
+from __future__ import annotations
+
 import logging
 import os
 import re
 import sys
 from pathlib import Path
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
 
-def get_python_zenoh_version():
-    """Returns the version of the installed eclipse-zenoh Python package."""
+def get_python_zenoh_version() -> str:
+
     try:
         # Try modern importlib.metadata first (Python 3.8+)
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
 
         return version("eclipse-zenoh")
-    except ImportError:
+    except (ImportError, PackageNotFoundError):
         try:
             import pkg_resources
 
-            return pkg_resources.get_distribution("eclipse-zenoh").version
-        except Exception:
-            return None
+            return cast(str, pkg_resources.get_distribution("eclipse-zenoh").version)
+        except Exception:  # noqa: BLE001
+            # If all version discovery methods fail, we return empty string
+            return ""
 
 
-def get_libzenohc_version(lib_path):  # noqa: ARG001
+def get_libzenohc_version(lib_path: str) -> str:  # noqa: ARG001
     """
     Extracts the expected zenoh-c version.
     Since the binary no longer reliably embeds its version, we read it
     from the BUILD_DEPS file in the workspace root.
     """
     # Find BUILD_DEPS file relative to this script
-    workspace_dir = Path(Path(Path(__file__).parent.resolve().parent))
-    versions_file = Path(workspace_dir) / "BUILD_DEPS"
+    from tools.testing.env import WORKSPACE_DIR
+
+    versions_file = WORKSPACE_DIR / "BUILD_DEPS"
 
     if Path(versions_file).exists():
         with Path(versions_file).open() as f:
@@ -44,10 +51,10 @@ def get_libzenohc_version(lib_path):  # noqa: ARG001
     if "ZENOH_VERSION" in os.environ:
         return os.environ["ZENOH_VERSION"]
 
-    return None
+    return ""
 
 
-def test_zenoh_version_contract():
+def test_zenoh_version_contract() -> None:
     """
     Contract Test: Verifies that the Zenoh C runtime and Python client
     share the same MAJOR.MINOR version to ensure protocol compatibility.

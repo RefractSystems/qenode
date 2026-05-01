@@ -8,17 +8,30 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_coordinator_sync.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import os
-import subprocess
 import time
+import typing
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import zenoh
 
-from tests.conftest import VirtualTimeAuthority
 from tools.testing.utils import get_time_multiplier
+from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Any, cast
+
+    import zenoh
+
+    from tools.testing.qmp_bridge import QmpBridge
+
 
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
 _STALL_TIMEOUT_MS = int(_base_stall_timeout_ms * get_time_multiplier())
@@ -30,7 +43,12 @@ _COORDINATOR_DELIVERY_DELAY_S: float = 0.1
 
 
 @pytest.mark.asyncio
-async def test_coordinator_sync(zenoh_router, zenoh_session, qemu_launcher, tmp_path):
+async def test_coordinator_sync(
+    zenoh_router: str,
+    zenoh_session: zenoh.Session,
+    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]],
+    tmp_path: Path,
+) -> None:
     """
     TA/Coordinator Synchronization Protocol.
 
@@ -108,19 +126,19 @@ peripherals:
     done_events: dict[int, asyncio.Event] = {1: asyncio.Event(), 2: asyncio.Event()}
     uart_backlog: list[tuple[int, bytes]] = []
 
-    def on_done(sample) -> None:
+    def on_done(sample: zenoh.Sample) -> None:
         nid = int(str(sample.key_expr).split("/")[2])
         loop.call_soon_threadsafe(done_events[nid].set)
 
-    def on_uart_tx(sample) -> None:
+    def on_uart_tx(sample: zenoh.Sample) -> None:
         nid = int(str(sample.key_expr).split("/")[2])
         # Append from Zenoh callback thread; list.append is GIL-atomic in CPython.
         uart_backlog.append((nid, bytes(sample.payload.to_bytes())))
 
-    def declare_done() -> zenoh.Subscriber:
+    def declare_done() -> object:
         return zenoh_session.declare_subscriber("sim/coord/*/done", on_done)
 
-    def declare_uart() -> zenoh.Subscriber:
+    def declare_uart() -> object:
         return zenoh_session.declare_subscriber("sim/uart/*/tx", on_uart_tx)
 
     done_sub = await asyncio.to_thread(declare_done)
@@ -200,27 +218,28 @@ peripherals:
         coord_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await coord_task
-        await asyncio.to_thread(done_sub.undeclare)
-        await asyncio.to_thread(uart_sub.undeclare)
+        await asyncio.to_thread(cast(Any, done_sub).undeclare)
+        await asyncio.to_thread(cast(Any, uart_sub).undeclare)
 
 
 @pytest.mark.asyncio
-async def test_coordinator_fast_node_race(zenoh_router):
+async def test_coordinator_fast_node_race(zenoh_router: str) -> None:
     """
     / Postmortem: Proves that a node can immediately send 'done' the moment it
     receives 'start', without the coordinator dropping it due to a race condition with
     QuantumBarrier.reset().
     """
     from tools.testing.virtmcu_test_suite.artifact_resolver import get_rust_binary_path
+
     cmd = [
-        get_rust_binary_path("zenoh_coordinator"),
+        str(get_rust_binary_path("zenoh_coordinator")),
         "--pdes",
         "--nodes",
         "1",
         "--connect",
         zenoh_router,
     ]
-    coord_task = asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    coord_task = asyncio.create_subprocess_exec(*cmd, stdout=None, stderr=None)
     proc = await coord_task
 
     s = zenoh.open(zenoh.Config())
@@ -238,7 +257,7 @@ async def test_coordinator_fast_node_race(zenoh_router):
     start_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
-    def on_start(sample):
+    def on_start(sample: zenoh.Sample) -> None:
         nonlocal quanta_completed
         # INSTANTLY reply 'done' with the same quantum
         # If the coordinator reset race exists, it drops this because it hasn't reset yet!
@@ -264,5 +283,5 @@ async def test_coordinator_fast_node_race(zenoh_router):
 
     proc.terminate()
     await proc.wait()
-    sub.undeclare()
-    s.close()
+    typing.cast(typing.Any, sub).undeclare()
+    typing.cast(typing.Any, s).close()

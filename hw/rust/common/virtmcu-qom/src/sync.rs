@@ -574,6 +574,16 @@ impl<T> BqlGuarded<T> {
         }
     }
 
+    /// Returns a raw pointer to the inner value.
+    ///
+    /// # Safety
+    /// This is used primarily for QOM property registration which requires a
+    /// stable pointer to a field. QOM property access is assumed to happen
+    /// while holding the BQL.
+    pub fn as_ptr(&self) -> *mut T {
+        self.inner.get()
+    }
+
     /// Returns a shared reference guard.
     ///
     /// Debug-asserts that BQL is held. Panics if already mutably borrowed.

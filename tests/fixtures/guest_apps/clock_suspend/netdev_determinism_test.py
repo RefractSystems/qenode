@@ -25,29 +25,19 @@ import argparse
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import typing
 from pathlib import Path
 
-import vproto
+import zenoh
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(SCRIPT_DIR)
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-import zenoh  # noqa: E402
-from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+from tools import vproto
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
+from tools.vproto import ClockAdvanceReq, ClockReadyResp
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +61,7 @@ def pack_net_frame(vtime_ns: int, data: bytes) -> bytes:
     return vproto.ZenohFrameHeader(vtime_ns, 0, len(data)).pack() + data
 
 
-def build_firmware(tmpdir: str) -> str:
+def build_firmware(tmpdir: str) -> Path:
     """Compile a minimal bare-metal ARM binary (infinite nop loop)."""
     linker = Path(tmpdir) / "linker.ld"
     asm = Path(tmpdir) / "firmware.S"
@@ -83,13 +73,22 @@ def build_firmware(tmpdir: str) -> str:
         f.write(".global _start\n_start:\n" + "  nop\n" * 100 + "  b _start\n")
 
     subprocess.run(
-        ["arm-none-eabi-gcc", "-mcpu=cortex-a15", "-nostdlib", "-T", linker, asm, "-o", elf],
+        [
+            shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc",
+            "-mcpu=cortex-a15",
+            "-nostdlib",
+            "-T",
+            linker,
+            asm,
+            "-o",
+            elf,
+        ],
         check=True,
     )
     return elf
 
 
-def build_dtb(tmpdir: str) -> str:
+def build_dtb(tmpdir: str) -> Path:
     """Generate a minimal DTB (Cortex-A15 + RAM only, no NIC in FDT)."""
     yaml_content = """\
 machine:
@@ -117,25 +116,29 @@ peripherals:
     return dtb_path
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--router")
     args = parser.parse_args()
 
     if not args.router:
         port_script = Path(WORKSPACE_DIR) / "scripts" / "get-free-port.py"
-        args.router = subprocess.check_output([sys.executable, str(port_script), "--endpoint", "--proto", "tcp/"]).decode().strip()
+        args.router = (
+            subprocess.check_output([sys.executable, str(port_script), "--endpoint", "--proto", "tcp/"])
+            .decode()
+            .strip()
+        )
 
     tmpdir = Path(WORKSPACE_DIR) / "test-results" / "netdev_determinism"
     tmpdir.mkdir(parents=True, exist_ok=True)
 
-    dtb_path = build_dtb(tmpdir)
-    elf_path = build_firmware(tmpdir)
+    dtb_path = build_dtb(tmpdir)  # type: ignore[arg-type]
+    elf_path = build_firmware(tmpdir)  # type: ignore[arg-type]
 
     router_proc = subprocess.Popen(
         [sys.executable, str(Path(WORKSPACE_DIR) / "tests" / "zenoh_router_persistent.py"), args.router],
     )
-    time.sleep(1)
+    mock_execution_delay(1)  # SLEEP_EXCEPTION: waiting for process startup
 
     # QEMU stderr is captured so we can parse delivery log lines.
     stderr_path = Path(tmpdir) / "qemu_stderr.log"
@@ -158,8 +161,8 @@ def main():
             "none",
         ]
 
-        logger.info(f"Running: {' '.join(qemu_cmd)}")
-        qemu_proc = subprocess.Popen(qemu_cmd, stderr=subprocess.STDOUT, stdout=stderr_file)
+        logger.info(f"Running: {' '.join(qemu_cmd)}")  # type: ignore[arg-type]
+        qemu_proc = subprocess.Popen(qemu_cmd, stderr=subprocess.STDOUT, stdout=stderr_file)  # type: ignore[arg-type]
 
         try:
             cfg = zenoh.Config()
@@ -186,7 +189,7 @@ def main():
                             break
                     if ready:
                         break
-                time.sleep(0.5)
+                mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
             if not ready:
                 logger.error("FAIL: Could not get valid initial clock state.")
@@ -213,7 +216,7 @@ def main():
             # Deliberately publish A (later vtime) first to test re-ordering.
             session.put(rx_topic, pack_net_frame(VTIME_A_NS, packet_a))
             logger.info(f"  Sent Packet A  vtime={VTIME_A_NS} ns  size={SIZE_A}  (published first)")
-            time.sleep(0.5)
+            mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
             session.put(rx_topic, pack_net_frame(VTIME_B_NS, packet_b))
             logger.info(f"  Sent Packet B  vtime={VTIME_B_NS} ns  size={SIZE_B}  (published second)")
 
@@ -222,8 +225,8 @@ def main():
             list(session.get(clock_topic, payload=pack_clock_req(CLOCK_ADV_NS), timeout=10.0))
 
             # Give rx_timer_cb a moment to flush its log to stderr.
-            time.sleep(0.5)
-            session.close()
+            mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+            typing.cast(typing.Any, session).close()
 
         finally:
             qemu_proc.terminate()

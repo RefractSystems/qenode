@@ -10,25 +10,11 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 
 import logging
 import sys
-from pathlib import Path
+import typing
 
 import zenoh
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(SCRIPT_DIR)
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
+from tools.vproto import ClockAdvanceReq, ClockReadyResp
 
 logger = logging.getLogger(__name__)
 
@@ -41,21 +27,21 @@ TIMEOUT_S = 10.0
 Q_NUM = 0
 
 
-def pack_req(delta_ns):
+def pack_req(delta_ns: int) -> bytes:
     global Q_NUM
     req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=Q_NUM)
     Q_NUM += 1
     return req.pack()
 
 
-def unpack_rep(data):
+def unpack_rep(data: bytes) -> int:
     resp = ClockReadyResp.unpack(data)
     if resp.error_code != 0:
         logger.error(f"WARNING: Reply error_code = {resp.error_code} (1=STALL, 2=ZENOH_ERROR)")
     return resp.current_vtime_ns
 
 
-def send_query(session, delta_ns, label):
+def send_query(session: zenoh.Session, delta_ns: int, label: str) -> int:
     replies = list(session.get(TOPIC, payload=pack_req(delta_ns), timeout=TIMEOUT_S))
     if not replies:
         logger.error(f"{label}: TIMEOUT — no reply received")
@@ -73,7 +59,7 @@ def send_query(session, delta_ns, label):
     return unpack_rep(reply.ok.payload.to_bytes())
 
 
-def main():
+def main() -> None:
     if len(sys.argv) <= 1:
         logger.error(f"Usage: {sys.argv[0]} <router_endpoint>")
         sys.exit(1)
@@ -99,7 +85,7 @@ def main():
         logger.error(f"FAIL: Q3 vtime {vtime3} < Q2 vtime {vtime2} + DELTA2 {DELTA2_NS}")
         sys.exit(1)
 
-    session.close()
+    typing.cast(typing.Any, session).close()
     logger.info("PASS")
 
 

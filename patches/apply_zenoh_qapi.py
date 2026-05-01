@@ -24,7 +24,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def patch_file(path, marker, insertion, guard, after=True):
+def patch_file(path: str | Path, marker: str, insertion: str, guard: str, after: bool = True) -> bool:
     """Insert *insertion* immediately before/after the first occurrence of
     *marker* in *path*.  Returns True if the file was changed.
 
@@ -48,7 +48,7 @@ def patch_file(path, marker, insertion, guard, after=True):
     return True
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)

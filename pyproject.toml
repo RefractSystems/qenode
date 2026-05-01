@@ -5,92 +5,38 @@ description = "Deterministic multi-node firmware simulation framework built on Q
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "qemu.qmp==0.0.3",
-    "robotframework==7.0.0",
+    "qemu.qmp==0.0.5",
     "eclipse-zenoh==1.9.0",
-    "pytest==8.0.0",
-    "pytest-asyncio==0.23.5",
-    "pytest-cov==4.1.0",
-    "pyyaml==6.0.1",
-    "types-PyYAML",
-    "lark==1.1.9",
-"hypothesis==6.152.1",
-    "mcp==1.0.0",
-    "ruff==0.15.11",
-    "flatbuffers==25.12.19",
-    "pyelftools==0.32",
-    "fdt==0.3.0",
+    "pytest==8.3.4",
+    "pytest-asyncio==1.3.0",
     "pytest-xdist==3.5.0",
     "pytest-timeout==2.4.0",
-    "watchdog>=4.0.0",
+    "pytest-cov==4.1.0",
+    "pyelftools==0.30",
+    "flatbuffers==25.12.19",
+    "fdt==0.3.0",
+    "hypothesis==6.152.1",
+    "anyio==4.13.0",
+    "pyyaml==6.0.1",
+    "lark==1.1.9",
+    "robotframework==7.0.0",
+    "mcp==1.0.0",
+    "typing-inspection==0.4.0",
+    "psutil",
+    "watchdog",
+    "mypy",
+    "ruff==0.15.12",
 ]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["tools*"]
 
-[tool.ruff]
-line-length = 120
-exclude = [
-    "third_party/",
-    ".venv/",
-    ".cargo-cache/",
-    "**/__pycache__/",
-    "tools/virtmcu/",
-    "**/*_fbs/",
-    "tests/fixtures/guest_apps/coordinator_stress/virtmcu/rf/",
-]
-
-[tool.ruff.lint]
-select = [
-    "E", "F", "W", "I",
-    "B",      # flake8-bugbear
-    "N",      # pep8-naming
-    "A",      # flake8-builtins
-    "C4",     # flake8-comprehensions
-    "RET",    # flake8-return
-    "SIM",    # flake8-simplify
-    "UP",     # pyupgrade
-    "ARG",    # flake8-unused-arguments
-    "PTH",    # flake8-use-pathlib
-    "RUF",    # ruff-specific rules
-    "T20",    # flake8-print
-    "G",      # flake8-logging-format
-    "PLE",    # pylint-error
-    "S",      # flake8-bandit
-    "ANN",    # flake8-annotations
-]
-ignore = [
-    "E501",   # line-too-long — acceptable in a C/embedded project with long strings
-    "G003",   # logging-string-concat
-    "G004",   # logging-f-string — f-strings are widely used in this project
-    "S101",   # assert — used extensively in tests and tools
-    "S108",   # hardcoded-temp-file — used for orchestration sockets
-    "S110",   # try-except-pass
-    "S306",   # suspicious-mktemp-usage
-    "S311",   # suspicious-non-cryptographic-random-usage
-    "S324",   # hashlib-insecure-hash-function — used for stable patch markers
-    "S603",   # subprocess-without-shell-equals-true
-    "S607",   # start-process-with-partial-path
-]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/fixtures/guest_apps/**/virtmcu/**/*.py" = ["N802", "N803"]
-# Ignore type annotations in tests, auxiliary scripts, and core tools for now to unblock migration
-"tests/**" = ["ANN"]
-"tests/fixtures/guest_apps/**" = ["ANN"]
-"scripts/**" = ["ANN"]
-"docs/tutorials/**" = ["ANN"]
-"tools/**" = ["ANN"]
-"packaging/**" = ["ANN"]
-"patches/**" = ["ANN"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["fixtures", ".*", "build", "dist", "venv", ".venv"]
 pythonpath = [
     ".",
     "tools/lin_fbs",
@@ -99,34 +45,80 @@ pythonpath = [
     "tools",
 ]
 asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "skip_asan: marks tests that are too timing sensitive to run under ASan"
 ]
-# Reduced from 300s to 60s to fail fast during deadlocks while allowing normal tests to pass
-timeout = 60
 
-[dependency-groups]
-dev = [
-    "mypy>=1.20.1",
-    "psutil>=7.2.2",
-    "types-pyyaml>=6.0.12.20260408",
-    "dtschema>=2024.2",
+[tool.ruff]
+exclude = ["tools/virtmcu/core", "tools/lin_fbs", "tools/telemetry_fbs", "tools/flexray_fbs", "tests/fixtures/guest_apps/coordinator_stress/virtmcu"]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+    "N",      # pep8-naming
+    "S",      # flake8-bandit
+    "ANN",    # flake8-annotations
+    "PT",     # flake8-pytest-style
+    "BLE",    # flake8-blind-except
+    "TID",    # flake8-tidy-imports
 ]
+ignore = [
+    "E501",   # line-too-long
+    "S101",   # assert
+    "S603",   # subprocess untrusted input
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.chdir".msg = "Global state mutation is banned. Use pathlib and pass explicit `cwd=` to subprocesses."
+"sys.path.insert".msg = "Path bootstrapping is banned. Rely on pyproject.toml and PYTHONPATH."
+"sys.path.append".msg = "Path bootstrapping is banned. Rely on pyproject.toml and PYTHONPATH."
 
 [tool.mypy]
-explicit_package_bases = true
-strict = false
-check_untyped_defs = true
-disallow_untyped_decorators = true
-warn_unused_ignores = true
-warn_redundant_casts = true
+python_version = "3.13"
+strict = true
+warn_return_any = true
 warn_unused_configs = true
-ignore_missing_imports = true
-exclude = [
-    "^tools/systemc_adapter/build/",
-    "^third_party/",
-    "build/",
-    "^tests/fixtures/guest_apps/",
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_untyped_decorators = false
+check_untyped_defs = true
+show_error_codes = true
+exclude = '(?x)( tools/virtmcu/core/ | tools/lin_fbs/ | tools/telemetry_fbs/ | tools/flexray_fbs/ | tests/fixtures/guest_apps/coordinator_stress/virtmcu/ | build/ | tools/systemc_adapter/build/ | \.venv/ | third_party/ )'
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = [
+    "yaml.*",
+    "lark.*",
+    "fdt.*",
+    "flatbuffers.*",
+    "mcp.*",
+    "psutil.*",
+    "elftools.*",
+    "gdb.*",
+    "Virtmcu.*",
+    "virtmcu.*",
+    "mmio_client.*",
+    "conftest",
+    "zenoh.*",
+    "pytest.*",
+    "pytest_asyncio.*",
+    "robot.*",
+    "pkg_resources.*",
 ]
+ignore_missing_imports = true
 
-
+[[tool.mypy.overrides]]
+module = [
+    "pydantic.*",
+    "httpx.*",
+    "mcp.*",
+]
+follow_imports = "skip"

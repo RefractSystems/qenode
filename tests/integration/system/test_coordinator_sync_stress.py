@@ -8,13 +8,22 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_stress.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
+from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.conftest import VirtualTimeAuthority
 from tools.testing.utils import get_time_multiplier
+from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import zenoh
+
 
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
 _STALL_TIMEOUT_MS = int(_base_stall_timeout_ms * get_time_multiplier())
@@ -23,11 +32,21 @@ _VTA_TIMEOUT_S: float = max(30.0, _STALL_TIMEOUT_MS / 1000.0 + 10.0)
 
 @pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 3, "pdes": True}], indirect=True)
 @pytest.mark.asyncio
-async def test_stress(zenoh_router, zenoh_session, zenoh_coordinator, qemu_launcher, tmp_path):
+async def test_stress(
+    zenoh_router: str,
+    zenoh_session: zenoh.Session,
+    zenoh_coordinator: asyncio.subprocess.Process,
+    qemu_launcher: object,
+    tmp_path: Path,
+) -> None:
     """
     Stress tests the TA/Coordinator Synchronization Protocol using the REAL zenoh_coordinator.
     Runs for 50 quanta to ensure the barrier logic does not deadlock or drop signals under load.
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -66,7 +85,7 @@ peripherals:
             "-serial",
             f"chardev:chr{i}",
         ]
-        n = await qemu_launcher(
+        n = await qemu_launcher(  # type: ignore[operator]
             str(board_yaml),
             firmware_path,
             ignore_clock_check=True,
@@ -76,11 +95,7 @@ peripherals:
 
     vta = VirtualTimeAuthority(zenoh_session, node_ids=[0, 1, 2])
 
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    async def _stream_output(stream, name):
+    async def _stream_output(stream: asyncio.StreamReader, name: str) -> None:
         while True:
             line = await stream.readline()
             if not line:
@@ -88,8 +103,8 @@ peripherals:
             logger.info(f"Coordinator {name}: {line.decode().strip()}")
 
     _output_tasks = [
-        asyncio.create_task(_stream_output(zenoh_coordinator.stdout, "STDOUT")),
-        asyncio.create_task(_stream_output(zenoh_coordinator.stderr, "STDERR")),
+        asyncio.create_task(_stream_output(zenoh_coordinator.stdout, "STDOUT")),  # type: ignore[arg-type]
+        asyncio.create_task(_stream_output(zenoh_coordinator.stderr, "STDERR")),  # type: ignore[arg-type]
     ]
 
     try:
@@ -101,4 +116,8 @@ peripherals:
                 await vta.step(delta_ns=1_000_000, timeout=_VTA_TIMEOUT_S)
 
     finally:
-        pass
+        for task in _output_tasks:
+            task.cancel()
+            import contextlib
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

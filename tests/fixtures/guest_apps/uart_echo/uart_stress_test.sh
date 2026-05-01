@@ -31,10 +31,15 @@ if [ -z "$ROUTER_ENDPOINT" ]; then
 fi
 
 cleanup() {
-    echo "Cleaning up..."
+    EXIT_CODE=$?
+    echo "Cleaning up (exit code: $EXIT_CODE)..."
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
-    rm -rf "$TMPDIR_LOCAL"
+    if [ $EXIT_CODE -eq 0 ]; then
+        rm -rf "$TMPDIR_LOCAL"
+    else
+        echo "TEST FAILED. Logs preserved in $TMPDIR_LOCAL"
+    fi
 }
 trap cleanup EXIT
 
@@ -50,8 +55,8 @@ sleep 2
 "$SCRIPTS_DIR/run.sh" --dtb "$WORKSPACE_DIR/tests/fixtures/guest_apps/boot_arm/minimal.dtb" \
     -kernel "$WORKSPACE_DIR/tests/fixtures/guest_apps/uart_echo/echo.elf" \
     -icount shift=6,align=off,sleep=off \
-    -device virtmcu-clock,node=0,mode=slaved-icount,router=$ROUTER_ENDPOINT, \
-    -chardev zenoh,id=uart0,node=0,router=$ROUTER_ENDPOINT \
+    -device virtmcu-clock,node=0,mode=slaved-icount,router=$ROUTER_ENDPOINT \
+    -chardev virtmcu,id=uart0,node=0,router=$ROUTER_ENDPOINT,max-backlog=1000000 \
     -serial chardev:uart0 \
     -display none -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
@@ -59,6 +64,7 @@ QEMU_PID=$!
 sleep 2
 
 # Run Stress Test
+export PYTHONPATH="$WORKSPACE_DIR:$WORKSPACE_DIR/tools"
 if python3 "$WORKSPACE_DIR/tests/fixtures/guest_apps/uart_echo/uart_stress_test.py" "$ROUTER_ENDPOINT"; then
     echo "=== UART Stress Test PASSED ==="
 else

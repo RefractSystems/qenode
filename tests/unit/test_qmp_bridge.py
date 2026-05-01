@@ -12,20 +12,25 @@ Scenarios covered:
   - wait_for_event: timeout path (no event arrives, vtime static)
 """
 
+from __future__ import annotations
+
 import asyncio
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".."))
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from typing import Any
+
+
 from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import yield_now
 
 
 @pytest.fixture(autouse=True)
-def mock_multiplier():
+def mock_multiplier() -> Generator[None]:
     with patch("tools.testing.qmp_bridge.get_time_multiplier", return_value=1.0):
         yield
 
@@ -42,61 +47,69 @@ def make_bridge() -> QmpBridge:
 
 
 @pytest.mark.asyncio
-async def test_get_virtual_time_ns_returns_icount():
+async def test_get_virtual_time_ns_returns_icount() -> None:
     """query-replay returning icount=42 should give 42."""
     bridge = make_bridge()
-    bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 42})  # type: ignore[method-assign]
-    result = await bridge.get_virtual_time_ns()
-    assert result == 42
-    bridge.execute.assert_awaited_once_with("query-replay")
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none", "icount": 42}
+        result = await bridge.get_virtual_time_ns()
+        assert result == 42
+        mock_execute.assert_awaited_once_with("query-replay")
 
 
 @pytest.mark.asyncio
-async def test_get_virtual_time_ns_returns_zero_on_error():
+async def test_get_virtual_time_ns_returns_zero_on_error() -> None:
     """Any QMP exception must be swallowed and 0 returned."""
     bridge = make_bridge()
-    bridge.execute = AsyncMock(side_effect=RuntimeError("QMP not ready"))  # type: ignore[method-assign]
-    result = await bridge.get_virtual_time_ns()
-    assert result == 0
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.side_effect = RuntimeError("QMP not ready")
+        result = await bridge.get_virtual_time_ns()
+        assert result == 0
 
 
 @pytest.mark.asyncio
-async def test_get_virtual_time_ns_returns_zero_when_icount_missing():
+async def test_get_virtual_time_ns_returns_zero_when_icount_missing() -> None:
     """query-replay response missing 'icount' key should yield 0."""
     bridge = make_bridge()
-    bridge.execute = AsyncMock(return_value={"mode": "none"})  # type: ignore[method-assign]
-    result = await bridge.get_virtual_time_ns()
-    assert result == 0
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none"}
+        result = await bridge.get_virtual_time_ns()
+        assert result == 0
 
 
 # ── wait_for_line_on_uart ─────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_wait_for_line_immediate_match():
+async def test_wait_for_line_immediate_match() -> None:
     """Pattern already in buffer: must return True without sleeping."""
     bridge = make_bridge()
+    assert bridge is not None
     bridge.uart_buffer = "HI from firmware\n"
-    bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
-    result = await bridge.wait_for_line_on_uart("HI", timeout=5.0)
-    assert result is True
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none", "icount": 0}
+        assert bridge is not None
+        result = await bridge.wait_for_line_on_uart("HI", timeout=5.0)
+        assert result is True
 
 
 @pytest.mark.asyncio
-async def test_wait_for_line_wall_clock_timeout():
+async def test_wait_for_line_wall_clock_timeout() -> None:
     """
     When virtual time never advances (standalone mode, icount=0), the wall-clock
     fallback must fire and return False before the test itself times out.
     """
     bridge = make_bridge()
-    bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
-    # Use a very short wall-clock timeout so the test completes quickly.
-    result = await bridge.wait_for_line_on_uart("NEVER", timeout=0.25)
-    assert result is False
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none", "icount": 0}
+        # Use a very short wall-clock timeout so the test completes quickly.
+        assert bridge is not None
+        result = await bridge.wait_for_line_on_uart("NEVER", timeout=0.25)
+        assert result is False
 
 
 @pytest.mark.asyncio
-async def test_wait_for_line_virtual_time_timeout():
+async def test_wait_for_line_virtual_time_timeout() -> None:
     """
     When virtual time IS advancing, the virtual-time branch must trigger the
     timeout (not wall-clock), returning False when icount exceeds the budget.
@@ -107,61 +120,66 @@ async def test_wait_for_line_virtual_time_timeout():
     # on the second and subsequent calls.
     call_count = 0
 
-    async def fake_execute(cmd, args=None):  # noqa: ARG001
+    async def fake_execute(_cmd: str, _args: object = None) -> dict[str, Any]:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return {"mode": "none", "icount": 0}  # start_vtime
         return {"mode": "none", "icount": 2_000_000_000}  # >> timeout
 
-    bridge.execute = fake_execute  # type: ignore[method-assign]
-    # timeout=1.0 s but icount jumps 2 s ahead immediately → virtual timeout
-    result = await bridge.wait_for_line_on_uart("NEVER", timeout=1.0)
-    assert result is False
+    with patch.object(bridge, "execute", side_effect=fake_execute):
+        # timeout=1.0 s but icount jumps 2 s ahead immediately → virtual timeout
+        assert bridge is not None
+        result = await bridge.wait_for_line_on_uart("NEVER", timeout=1.0)
+        assert result is False
 
 
 @pytest.mark.asyncio
-async def test_wait_for_line_match_before_timeout():
+async def test_wait_for_line_match_before_timeout() -> None:
     """Pattern appears in buffer during polling: must return True."""
     bridge = make_bridge()
-    bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
 
-    async def populate_buffer():
+    async def populate_buffer() -> None:
         await yield_now()
+        assert bridge is not None
         bridge.uart_buffer = "boot complete\n"
 
-    asyncio.create_task(populate_buffer())  # noqa: RUF006
-    result = await bridge.wait_for_line_on_uart("boot complete", timeout=5.0)
-    assert result is True
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none", "icount": 0}
+        asyncio.create_task(populate_buffer())  # noqa: RUF006
+        assert bridge is not None
+        result = await bridge.wait_for_line_on_uart("boot complete", timeout=5.0)
+        assert result is True
 
 
 # ── wait_for_event ────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_timeout_wall_clock():
+async def test_wait_for_event_timeout_wall_clock() -> None:
     """
     When no event arrives and vtime stays 0, the wall-clock fallback must raise
     TimeoutError within a short window.
     """
     bridge = make_bridge()
-    bridge.execute = AsyncMock(return_value={"mode": "none", "icount": 0})  # type: ignore[method-assign]
+    with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = {"mode": "none", "icount": 0}
 
-    # Patch qmp.listen() to produce an async generator that never yields.
-    import contextlib
+        import contextlib
+        from collections.abc import Iterator
 
-    @contextlib.contextmanager
-    def fake_listen(*listeners):  # noqa: ARG001
-        yield
+        @contextlib.contextmanager
+        def fake_listen(*_listeners: object) -> Iterator[None]:
+            yield
 
-    bridge.qmp = type("FakeQmp", (), {"listen": fake_listen})()
+        bridge.qmp = type("FakeQmp", (), {"listen": fake_listen})()
 
-    with pytest.raises(TimeoutError, match="Timed out waiting for event"):
-        await bridge.wait_for_event("RESET", timeout=0.25)
+        with pytest.raises(TimeoutError, match="Timed out waiting for event"):
+            await bridge.wait_for_event("RESET", timeout=0.25)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_virtual_time_timeout():
+async def test_wait_for_event_virtual_time_timeout() -> None:
     """
     When virtual time advances past the budget, TimeoutError must be raised
     before the wall-clock timeout would fire.
@@ -170,22 +188,22 @@ async def test_wait_for_event_virtual_time_timeout():
 
     call_count = 0
 
-    async def fake_execute(cmd, args=None):  # noqa: ARG001
+    async def fake_execute(_cmd: str, _args: object = None) -> dict[str, Any]:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return {"mode": "none", "icount": 0}
         return {"mode": "none", "icount": 5_000_000_000}  # 5 s of virtual time
 
-    bridge.execute = fake_execute  # type: ignore[method-assign]
+    with patch.object(bridge, "execute", side_effect=fake_execute):
+        import contextlib
+        from collections.abc import Iterator
 
-    import contextlib
+        @contextlib.contextmanager
+        def fake_listen(*_listeners: object) -> Iterator[None]:
+            yield
 
-    @contextlib.contextmanager
-    def fake_listen(*listeners):  # noqa: ARG001
-        yield
+        bridge.qmp = type("FakeQmp", (), {"listen": fake_listen})()
 
-    bridge.qmp = type("FakeQmp", (), {"listen": fake_listen})()
-
-    with pytest.raises(TimeoutError):
-        await bridge.wait_for_event("RESET", timeout=1.0)
+        with pytest.raises(TimeoutError, match=r".*"):
+            await bridge.wait_for_event("RESET", timeout=1.0)

@@ -1,12 +1,17 @@
+"""
+Reads a base DTS file, performs string replacements, and compiles it into a DTB.
+"""
+
+from __future__ import annotations
+
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 
 def compile_dtb(base_dts: Path | str, replacements: dict[str, str], out_dtb: Path | str) -> Path:
-    """
-    Reads a base DTS file, performs string replacements, and compiles it into a DTB.
-    """
+
     base_dts = Path(base_dts)
     out_dtb = Path(out_dtb)
 
@@ -19,8 +24,9 @@ def compile_dtb(base_dts: Path | str, replacements: dict[str, str], out_dtb: Pat
         tmp_dts = tf.name
 
     try:
+        dtc_cmd = shutil.which("dtc") or "dtc"
         subprocess.run(
-            ["dtc", "-I", "dts", "-O", "dtb", "-o", str(out_dtb), tmp_dts], check=True, capture_output=True, text=True
+            [dtc_cmd, "-I", "dts", "-O", "dtb", "-o", str(out_dtb), tmp_dts], check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"dtc failed: {e.stderr}") from e
@@ -41,7 +47,8 @@ def compile_firmware(
     Compiles a list of source files (C or Assembly) into a bare-metal ELF.
     """
     out_elf = Path(out_elf)
-    cmd = ["arm-none-eabi-gcc", f"-mcpu={cpu}", "-nostdlib"]
+    gcc_cmd = shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc"
+    cmd = [gcc_cmd, f"-mcpu={cpu}", "-nostdlib"]
 
     if linker_script:
         cmd.extend(["-T", str(linker_script)])

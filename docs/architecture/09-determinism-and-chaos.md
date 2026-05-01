@@ -24,9 +24,9 @@ This ensures that even if Node A's messages arrive at the host CPU before Node B
 
 ---
 
-## 2. The ARCH-8 Barrier Protocol
+## 2. The synchronization Barrier Protocol
 
-To maintain causal integrity, VirtMCU uses the **ARCH-8 barrier protocol** (first introduced in Chapter 2) that prevents "clock drift" between the physics engine and the emulated nodes.
+To maintain causal integrity, VirtMCU uses the **synchronization barrier protocol** (first introduced in Chapter 2) that prevents "clock drift" between the physics engine and the emulated nodes.
 
 1.  **TA Advance**: TimeAuthority (TA) requests a clock advance.
 2.  **Execution**: Nodes run their firmware for the requested quantum $Q$.
@@ -41,7 +41,7 @@ This barrier ensures that firmware in quantum $Q+1$ **always** sees all messages
 
 ---
 
-## 3. Chaos Engineering (DET-3)
+## 3. Chaos Engineering
 
 While determinism provides stability, real-world networks are chaotic. VirtMCU supports **Chaos Engineering** through transport-layer jitter profiles.
 

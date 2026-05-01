@@ -1,25 +1,32 @@
+"""
+Wraps an existing SimulationTransport to introduce artificial
+packet loss and latency (Chaos Engineering) for deterministic robustness testing.
+"""
+
+from __future__ import annotations
+
 import abc
 import asyncio
 import logging
-import random
 import shutil
 import socket
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-import vproto
+from tools import vproto
 
 if TYPE_CHECKING:
     import zenoh
+
 
 logger = logging.getLogger(__name__)
 
 
 class SimulationTransport(abc.ABC):
     @abc.abstractmethod
-    def dump_flight_recorder(self) -> list[dict]: ...
+    def dump_flight_recorder(self) -> list[dict[str, Any]]: ...
     @abc.abstractmethod
     def dump_pcap(self, path: Path) -> None: ...
 
@@ -48,11 +55,11 @@ class SimulationTransport(abc.ABC):
     async def step_clock(self, delta_ns: int) -> tuple[int, int]: ...
 
     @abc.abstractmethod
-    def get_vta(self, node_ids: list[int]) -> Any: ...
+    def get_vta(self, node_ids: list[int]) -> object: ...
 
 
 class ZenohTransportImpl(SimulationTransport):
-    def dump_flight_recorder(self) -> list[dict]:
+    def dump_flight_recorder(self) -> list[dict[str, Any]]:
         return getattr(self, "history", [])
 
     def dump_pcap(self, path: Path) -> None:
@@ -60,16 +67,16 @@ class ZenohTransportImpl(SimulationTransport):
 
         write_pcap(path, self.history)
 
-    def __init__(self, router_endpoint: str, session: "zenoh.Session") -> None:
+    def __init__(self, router_endpoint: str, session: zenoh.Session) -> None:
         self.router_endpoint = router_endpoint
         self.session = session
-        self.subs: list[zenoh.Subscriber] = []
+        self.subs: list[Any] = []
         from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
 
         self.vta = VirtualTimeAuthority(session, [0])  # Assumes single node 0 for basic tests
-        self.history: list[dict] = []
+        self.history: list[dict[str, Any]] = []
 
-    def get_vta(self, node_ids: list[int]) -> Any:
+    def get_vta(self, node_ids: list[int]) -> object:
         from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
 
         return VirtualTimeAuthority(self.session, node_ids)
@@ -104,11 +111,11 @@ class ZenohTransportImpl(SimulationTransport):
 
         loop = asyncio.get_running_loop()
 
-        def _cb(sample: "zenoh.Sample") -> None:
+        def _cb(sample: zenoh.Sample) -> None:
             p = sample.payload.to_bytes()
 
             # Offload to loop thread to avoid Zenoh C-thread deadlock
-            def run_in_loop():
+            def run_in_loop() -> None:
                 vtime = self.vta.current_vtimes.get(0, 0) if hasattr(self.vta, "current_vtimes") else 0
                 self.history.append(
                     {"time": time.time(), "vtime_ns": vtime, "topic": topic, "payload": p.hex(), "direction": "rx"}
@@ -121,11 +128,15 @@ class ZenohTransportImpl(SimulationTransport):
         self.subs.append(sub)
 
     async def step_clock(self, delta_ns: int) -> tuple[int, int]:
-        return await self.vta.step(delta_ns)
+        res: dict[int, int] = await self.vta.step(delta_ns)
+        # ZenohTransport uses VirtualTimeAuthority. We return the vtime of node 0 (if present)
+        # or the max vtime, and the current quantum number.
+        vtime = res.get(0, next(iter(res.values())) if res else 0)
+        return vtime, self.vta.quantum_number
 
 
 class UnixTransportImpl(SimulationTransport):
-    def dump_flight_recorder(self) -> list[dict]:
+    def dump_flight_recorder(self) -> list[dict[str, Any]]:
         return getattr(self, "history", [])
 
     def dump_pcap(self, path: Path) -> None:
@@ -145,10 +156,11 @@ class UnixTransportImpl(SimulationTransport):
 
         self.data_subs: list[tuple[str, Callable[[bytes], None]]] = []
         self.data_conns: list[asyncio.StreamWriter] = []
-        self._data_server_task = None
-        self._clock_accept_task: asyncio.Task | None = None
+        self._data_server_task: asyncio.Task[None] | None = None
+        self._clock_accept_task: asyncio.Task[None] | None = None
         self.vtime_ns = 0
-        self.history: list[dict] = []
+        self.history: list[dict[str, Any]] = []
+        self.server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
         self.server = await asyncio.start_unix_server(self._handle_data_conn, self.data_sock)
@@ -168,8 +180,9 @@ class UnixTransportImpl(SimulationTransport):
             self.clock_conn.close()
         self.clock_server.close()
 
-        self.server.close()
-        await self.server.wait_closed()
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     async def _handle_data_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -245,7 +258,7 @@ class UnixTransportImpl(SimulationTransport):
             self._clock_accept_task = None
 
         assert self.clock_conn is not None
-        req = vproto.ClockAdvanceReq(delta_ns, self.vtime_ns + delta_ns, 0).pack()
+        req: bytes = vproto.ClockAdvanceReq(delta_ns, self.vtime_ns + delta_ns, 0).pack()
         loop = asyncio.get_running_loop()
         await loop.sock_sendall(self.clock_conn, req)
 
@@ -262,22 +275,22 @@ class UnixTransportImpl(SimulationTransport):
         self.vtime_ns = resp.current_vtime_ns
         return resp.current_vtime_ns, resp.quantum_number
 
-    def get_vta(self, node_ids: list[int]) -> Any:
+    def get_vta(self, node_ids: list[int]) -> UnixVirtualTimeAuthority:
         return UnixVirtualTimeAuthority(self, node_ids)
 
 
 class UnixVirtualTimeAuthority:
-    def __init__(self, transport: UnixTransportImpl, node_ids: list[int]):
+    def __init__(self, transport: UnixTransportImpl, node_ids: list[int]) -> None:
         self.transport = transport
         self.node_ids = node_ids
         self.current_vtimes = dict.fromkeys(node_ids, 0)
 
-    async def init(self, _timeout: float = 30.0):
+    async def init(self, _timeout: float = 30.0) -> None:
         # QEMU connects to the socket when it's ready.
         # UnixTransportImpl.step_clock will wait for the connection.
         await self.step(0)
 
-    async def step(self, delta_ns: int, _timeout: float | None = None):
+    async def step(self, delta_ns: int, _timeout: float | None = None) -> dict[int, int]:
         # Note: UnixTransportImpl currently only supports a single connection/node.
         vtime, _ = await self.transport.step_clock(delta_ns)
         for nid in self.node_ids:
@@ -286,25 +299,16 @@ class UnixVirtualTimeAuthority:
 
 
 class FaultInjectingTransport(SimulationTransport):
-    """
-    DET-3: Wraps an existing SimulationTransport to introduce artificial
-    packet loss and latency (Chaos Engineering) for deterministic robustness testing.
-    """
-
     def __init__(
-        self,
-        inner: SimulationTransport,
-        drop_prob: float = 0.0,
-        delay_s: float = 0.0,
-        jitter_s: float = 0.0,
+        self, inner: SimulationTransport, drop_prob: float = 0.0, delay_s: float = 0.0, jitter_s: float = 0.0
     ) -> None:
         self.inner = inner
         self.drop_prob = drop_prob
         self.delay_s = delay_s
         self.jitter_s = jitter_s
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
 
-    def get_vta(self, node_ids: list[int]) -> Any:
+    def get_vta(self, node_ids: list[int]) -> object:
         return self.inner.get_vta(node_ids)
 
     async def start(self) -> None:
@@ -323,26 +327,30 @@ class FaultInjectingTransport(SimulationTransport):
         return self.inner.dtb_router_endpoint()
 
     def _should_drop(self, payload: bytes) -> bool:
+        import secrets
+
         if payload in (b"ping", b"sync"):
             return False
-        return self.drop_prob > 0.0 and random.random() < self.drop_prob
+        return self.drop_prob > 0.0 and secrets.SystemRandom().random() < self.drop_prob
 
     def _get_delay(self, payload: bytes) -> float:
+        import secrets
+
         if payload in (b"ping", b"sync"):
             return 0.0
         d = self.delay_s
         if self.jitter_s > 0.0:
-            d += (random.random() * 2 - 1) * self.jitter_s
+            d += (secrets.SystemRandom().random() * 2 - 1) * self.jitter_s
         return max(0.0, d)
 
     def _get_vtime_ns(self) -> int:
         if hasattr(self.inner, "vta") and self.inner.vta:
             if hasattr(self.inner.vta, "current_vtimes"):
-                return self.inner.vta.current_vtimes.get(0, 0)
+                return cast(int, self.inner.vta.current_vtimes.get(0, 0))
             if hasattr(self.inner.vta, "current_vtime_ns"):
-                return self.inner.vta.current_vtime_ns
+                return cast(int, self.inner.vta.current_vtime_ns)
         elif hasattr(self.inner, "vtime_ns"):
-            return self.inner.vtime_ns
+            return cast(int, self.inner.vtime_ns)
         return 0
 
     async def publish(self, topic: str, payload: bytes) -> None:
@@ -408,7 +416,7 @@ class FaultInjectingTransport(SimulationTransport):
     async def step_clock(self, delta_ns: int) -> tuple[int, int]:
         return await self.inner.step_clock(delta_ns)
 
-    def dump_flight_recorder(self) -> list[dict]:
+    def dump_flight_recorder(self) -> list[dict[str, Any]]:
         return getattr(self.inner, "dump_flight_recorder", lambda: [])()
 
     def dump_pcap(self, path: Path) -> None:

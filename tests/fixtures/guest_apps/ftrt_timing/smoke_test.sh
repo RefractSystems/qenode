@@ -60,6 +60,7 @@ sleep 1
 export ZENOH_CONNECT="$ZENOH_ENDPOINT"
 export ZENOH_MULTICAST_SCOUTING="false"
 export WORKSPACE_DIR="$WORKSPACE_DIR"
+export PYTHONPATH="${PYTHONPATH:-}:${WORKSPACE_DIR}/tools"
 
 echo "[ftrt_timing] Building SystemC adapter..."
 make -C "$TOOLS_DIR/systemc_adapter" > /dev/null
@@ -278,8 +279,7 @@ import time
 import os
 import sys
 
-if "WORKSPACE_DIR" in os.environ:
-    sys.path.append(os.path.join(os.environ["WORKSPACE_DIR"], "tools"))
+from testing.utils import mock_execution_delay
 import vproto
 
 config = zenoh.Config()
@@ -293,14 +293,12 @@ pub = session.declare_publisher("sim/systemc/frame/p9-test/rx")
 # Under ASan, QEMU initialization and Zenoh discovery takes unpredictable wall-clock time.
 # Send frames with exponentially/linearly increasing vtime (1s to 50s virtual time)
 # so the adapter receives at least one frame in its "future".
-sys.path.append(os.path.join(os.environ["WORKSPACE_DIR"], "hw/rust/common/virtmcu-api/python"))
-import vproto
 for i in range(1, 50):
     vtime_ns = i * 1000000000 # i seconds
     hdr = vproto.ZenohFrameHeader(vtime_ns, 0, 8).pack()
     payload = hdr + (0x123).to_bytes(4, "little") + (0x456).to_bytes(4, "little")
     pub.put(payload)
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
 session.close()
 PY_EOF

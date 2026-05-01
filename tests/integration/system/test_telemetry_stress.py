@@ -8,13 +8,22 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_telemetry_stress.
 """
 
+from __future__ import annotations
+
+import shutil
 import subprocess
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    pass
+
 
 @pytest.mark.asyncio
-async def test_telemetry_stress_queue(qemu_launcher, zenoh_router: str, tmp_path):
+async def test_telemetry_stress_queue(qemu_launcher: object, zenoh_router: str, tmp_path: Path) -> None:
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -26,12 +35,12 @@ async def test_telemetry_stress_queue(qemu_launcher, zenoh_router: str, tmp_path
     tmp_yaml.write_text(yaml_content)
 
     subprocess.run(
-        ["uv", "run", "python3", "-m", "tools.yaml2qemu", str(tmp_yaml), "--out-dtb", str(dtb)],
+        [shutil.which("uv") or "uv", "run", "python3", "-m", "tools.yaml2qemu", str(tmp_yaml), "--out-dtb", str(dtb)],
         check=True,
         cwd=workspace_root,
     )
 
-    bridge = await qemu_launcher(
+    bridge = await cast(Any, qemu_launcher)(
         dtb,
         extra_args=["-S"],  # Start paused
     )

@@ -19,18 +19,27 @@ pub struct VirtmcuWifiQEMU {
     pub node_id: *mut c_char,
     pub transport: *mut c_char,
     pub router: *mut c_char,
+    pub debug: bool,
 }
 
-unsafe extern "C" fn wifi_read(_opaque: *mut c_void, _addr: u64, _size: core::ffi::c_uint) -> u64 {
+unsafe extern "C" fn wifi_read(_opaque: *mut c_void, addr: u64, _size: core::ffi::c_uint) -> u64 {
+    let s = &*(_opaque as *mut VirtmcuWifiQEMU);
+    if s.debug {
+        virtmcu_qom::sim_warn!("wifi_read: unhandled offset 0x{:x}", addr);
+    }
     0
 }
 
 unsafe extern "C" fn wifi_write(
     _opaque: *mut c_void,
-    _addr: u64,
-    _val: u64,
+    addr: u64,
+    val: u64,
     _size: core::ffi::c_uint,
 ) {
+    let s = &*(_opaque as *mut VirtmcuWifiQEMU);
+    if s.debug {
+        virtmcu_qom::sim_warn!("wifi_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
+    }
 }
 
 static WIFI_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -78,11 +87,12 @@ unsafe extern "C" fn wifi_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
 }
 
-static WIFI_PROPERTIES: [Property; 5] = [
+static WIFI_PROPERTIES: [Property; 6] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
     define_prop_string!(c"node".as_ptr(), VirtmcuWifiQEMU, node_id),
     define_prop_string!(c"transport".as_ptr(), VirtmcuWifiQEMU, transport),
     define_prop_string!(c"router".as_ptr(), VirtmcuWifiQEMU, router),
+    virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuWifiQEMU, debug, false),
     // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
     unsafe { core::mem::zeroed() },
 ];
@@ -91,7 +101,7 @@ unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_vo
     let dc = device_class!(klass);
     (*dc).realize = Some(wifi_realize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, WIFI_PROPERTIES.as_ptr(), 4);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, WIFI_PROPERTIES.as_ptr(), 5);
 }
 
 static WIFI_TYPE_INFO: TypeInfo = TypeInfo {

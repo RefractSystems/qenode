@@ -16,7 +16,7 @@ To maintain "Binary Fidelity" and global determinism, VirtMCU employs a multi-la
 *   Executes a single QEMU node with a minimal guest payload (usually a "smoke app") to verify MMIO routing, clock synchronization, and peripheral registration.
 
 ### Tier 3: Multi-Node Stress Tests
-*   Orchestrates multiple QEMU nodes, Zenoh routers, and a `TimeAuthority`. Verifies causal ordering, ARCH-8 barrier stability, and network throughput under heavy host load.
+*   Orchestrates multiple QEMU nodes, Zenoh routers, and a `TimeAuthority`. Verifies causal ordering, synchronization barrier stability, and network throughput under heavy host load.
 
 ---
 
@@ -58,7 +58,7 @@ await sim_transport.step_clock(10_000_000)
 
 ---
 
-## 4. Timeout Scaling (INFRA-6)
+## 4. Timeout Scaling
 
 VirtMCU tests are "ASan-Aware." When running under AddressSanitizer, the host CPU can be 5–10x slower. The test harness automatically scales logical timeouts via `get_time_multiplier()`. Developers should always write timeouts based on "real-time" expectations; the infrastructure handles the scaling.
 
@@ -115,7 +115,7 @@ By encapsulating discovery and initialization into this declarative context mana
 
 ## 7. Automated Flight Recorder (PCAP)
 
-Debugging complex multi-node failures in CI is challenging. To eliminate the need for parsing thousands of lines of verbose text logs, VirtMCU implements an **Automated Flight Recorder** (INFRA-7).
+Debugging complex multi-node failures in CI is challenging. To eliminate the need for parsing thousands of lines of verbose text logs, VirtMCU implements an **Automated Flight Recorder**.
 
 Whenever a `pytest` execution fails (e.g., due to a timeout or failed assertion), the `conftest_core.py` harness automatically dumps the entire test's network traffic history into two artifact formats:
 1.  **JSON Trace**: A human-readable list of events containing `vtime_ns`, `topic`, and the hex `payload`.
@@ -130,3 +130,19 @@ test-results/flight_recorder/test_name.pcap
 
 ### Wireshark Introspection
 By opening the `.pcap` artifact in Wireshark, you can observe the exact inter-node traffic, perfectly aligned by their **virtual timestamps**, providing a granular view of exactly what caused a multi-node deadlock or failure. The PCAP uses DLT_USER0 (147) and encapsulates Python-side metrics (topics, direction) directly into the Wireshark-readable payloads via Protocol 255 (sim-tracing).
+
+---
+
+## 8. When to write a Lint, a Test, or a Postmortem
+
+The "FlexRay Incident" taught us that high-quality engineering requires choosing the right tool for the right defect.
+
+| Artifact | When to use it | Goal |
+| :--- | :--- | :--- |
+| **Lint** | When a bug is caused by a **static disagreement** between files (e.g., name mismatch, layout drift). | Fail at **compile/lint time**. |
+| **Unit Test** | When a bug is in **internal logic** (e.g., a state machine transition). | Fail during `cargo test`. |
+| **Integration Test** | When a bug is in the **interaction** between components (e.g., QEMU ↔ Zenoh). | Fail during `pytest`. |
+| **Postmortem** | When a bug is **complex, cascading, or structural**. | Documentation for **future engineers**. |
+
+### The "Fail Loudly" Principle
+If a bug can be caught at lint time, **write a linter**. Do not rely on a runtime test to catch a name mismatch that will only surface as a SIGSEGV in a different part of the system.

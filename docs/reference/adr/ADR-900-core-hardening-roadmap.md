@@ -18,7 +18,7 @@ We have successfully mitigated the most immediate "CRITICAL" failure modes:
 *   **Elimination of `libc::abort()`**: The clock device no longer kills the QEMU process on transient stalls. It now propagates a `CLOCK_ERROR_STALL` code, allowing the orchestrator to decide on a retry or a graceful teardown.
 *   **Panic-Safe Mutexes**: Replaced `lock().unwrap()` with poison-recovery patterns across `clock`, `chardev`, and `netdev`. This prevents "silent" FFI-boundary corruption if a background thread panics.
 *   **BQL RAII Transition**: Migrated peripherals to `BqlGuarded<T>` and RAII guards, reducing the risk of manual BQL state-tracking errors.
-*   **Symbol Visibility (ARCH-8)**: Implemented `VirtMCU_export!` and CI linter checks for `#[no_mangle]` to prevent silent `dlopen` failures.
+*   **Symbol Visibility (synchronization)**: Implemented `VirtMCU_export!` and CI linter checks for `#[no_mangle]` to prevent silent `dlopen` failures.
 
 ---
 
@@ -56,7 +56,7 @@ Hardening is enforced through a multi-layered defense:
 
 1.  **Static Analysis**: `make lint` enforces bans on raw `Mutex<T>`, `thread::sleep`, and `asyncio.sleep` (without annotations).
 2.  **Binary Auditing**: `verify-exports.py` ensures FFI symbols are visible.
-3.  **Chaos Integration**: Jitter profiles (DET-3) deliberately stress the coordinator barrier to expose timing races.
+3.  **Chaos Integration**: Jitter profiles deliberately stress the coordinator barrier to expose timing races.
 4.  **Property-Based Testing**: Use `proptest` to fuzz FlatBuffers decoders for malicious or malformed packets.
 
 ## 4. Verification Requirements

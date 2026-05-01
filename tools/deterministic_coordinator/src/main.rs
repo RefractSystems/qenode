@@ -162,7 +162,7 @@ async fn run_zenoh_coordinator(
         .await
         .map_err(|e| format!("Failed to open Zenoh session: {}", e))?;
 
-    // ARCH-8: Declare liveliness so nodes know a coordinator is active
+    // Declare liveliness so nodes know a coordinator is active
     let liveliness_topic = "sim/coord/alive";
     let _liveliness = session
         .liveliness()

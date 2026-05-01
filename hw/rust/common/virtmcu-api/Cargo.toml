@@ -17,3 +17,4 @@ std = []
 
 [dev-dependencies]
 proptest = "1.4.0"
+virtmcu-qom = { path = "../virtmcu-qom" }

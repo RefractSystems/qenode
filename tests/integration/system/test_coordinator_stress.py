@@ -8,18 +8,29 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_coordinator_stress.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import pytest
-import vproto
+import zenoh
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
+
+if TYPE_CHECKING:
+    pass
+
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordinator):  # noqa: ARG001
+@pytest.mark.usefixtures("zenoh_router", "zenoh_coordinator")
+async def test_coordinator_scalability(zenoh_session: zenoh.Session) -> None:
     num_nodes = 50
     msgs_per_node = 50
 
@@ -29,7 +40,7 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordi
     expected = num_nodes * (num_nodes - 1) * msgs_per_node
     done_event = threading.Event()
 
-    def on_sample(_sample):
+    def on_sample(_sample: zenoh.Sample) -> None:
         received_count[0] += 1
         # Accept 50% delivery to account for UDP/queue drops in Python subscriber under heavy CI load
         if received_count[0] >= int(expected * 0.5):
@@ -43,18 +54,18 @@ async def test_coordinator_scalability(zenoh_router, zenoh_session, zenoh_coordi
 
     for i in range(num_nodes):
         pubs[i].put(vproto.ZenohFrameHeader(0, 0, 0).pack())
-    time.sleep(1)
+    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     received_count[0] = 0
     done_event.clear()
     start_time = time.time()
 
-    def node_thread(node_id):
+    def node_thread(node_id: int) -> None:
         pub = pubs[node_id]
         payload = b"X" * 64
         for i in range(msgs_per_node):
             pub.put(vproto.ZenohFrameHeader(i * 1000, 0, len(payload)).pack() + payload)
-            time.sleep(0.001)
+            mock_execution_delay(0.001)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     threads = []
     for i in range(num_nodes):

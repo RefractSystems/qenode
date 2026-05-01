@@ -8,25 +8,20 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_telemetry_fbs.
 """
 
-import sys
-from pathlib import Path
+from __future__ import annotations
 
 import flatbuffers
 
-# Add tools/telemetry_fbs to sys.path so we can import the generated flatbuffers code
-SCRIPT_DIR = Path(Path(__file__).resolve().parent)
-WORKSPACE_DIR = Path(SCRIPT_DIR).parent
-sys.path.append(str(Path(WORKSPACE_DIR) / "tools" / "telemetry_fbs"))
 
-from Virtmcu.Telemetry import TraceEvent as TraceEventBuilder  # noqa: E402
-from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
-
-
-def test_trace_event_serialization():
+def test_trace_event_serialization() -> None:
     """
     Test that the generated FlatBuffers Python code for TraceEvent
     can correctly serialize and deserialize a message.
     """
+
+    from Virtmcu.Telemetry import TraceEvent as TraceEventBuilder
+    from Virtmcu.Telemetry.TraceEvent import TraceEvent
+
     builder = flatbuffers.Builder(1024)
 
     # Test values

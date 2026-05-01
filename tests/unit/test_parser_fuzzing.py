@@ -8,6 +8,8 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_parser_fuzzing.
 """
 
+from __future__ import annotations
+
 import tempfile
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from tools.yaml2qemu import parse_yaml_platform
 
 
 @given(st.text())
-def test_fuzz_yaml_parser(fuzz_data):
+def test_fuzz_yaml_parser(fuzz_data: str) -> None:
     try:
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write(fuzz_data)
@@ -42,7 +44,7 @@ def test_fuzz_yaml_parser(fuzz_data):
 
 
 @given(st.text())
-def test_fuzz_repl_parser(fuzz_data):
+def test_fuzz_repl_parser(fuzz_data: str) -> None:
     try:
         parse_repl(fuzz_data)
     except (lark.exceptions.LarkError, ValueError, TypeError, KeyError, AttributeError):

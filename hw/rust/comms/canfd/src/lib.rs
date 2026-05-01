@@ -20,7 +20,7 @@ use virtmcu_qom::net::{
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription};
+use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
 pub const TYPE_CAN_HOST_VIRTMCU: *const c_char = c"can-host-virtmcu".as_ptr();
@@ -64,7 +64,7 @@ impl Ord for OrderedCanFrame {
 
 pub struct State {
     transport: Arc<dyn virtmcu_api::DataTransport>,
-    subscription: Option<SafeSubscription>,
+    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: Safe Zenoh integration
     tx_sender: Sender<Vec<u8>>,
     rx_sender: Sender<OrderedCanFrame>,
     rx_receiver: Receiver<OrderedCanFrame>,
@@ -335,7 +335,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
 
     let generation = Arc::new(AtomicU64::new(0));
     state.subscription =
-        SafeSubscription::new(&*state.transport, &topic_str, generation, sub_callback).ok();
+        SafeSubscription::new(&*state.transport, &topic_str, generation, sub_callback).ok(); // BQL_EXCEPTION: Safe Zenoh integration
     state.rx_timer = Some(rx_timer);
 
     unsafe {

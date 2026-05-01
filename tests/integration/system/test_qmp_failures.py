@@ -8,7 +8,10 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_qmp_failures.
 """
 
+from __future__ import annotations
+
 import asyncio
+from typing import Any, cast
 
 import pytest
 from qemu.qmp.protocol import ConnectError, StateError
@@ -16,7 +19,7 @@ from qemu.qmp.qmp_client import ExecInterruptedError
 
 
 @pytest.mark.asyncio
-async def test_qemu_crash_handling(qemu_launcher):
+async def test_qemu_crash_handling(qemu_launcher: object) -> None:
     """
     Test how the bridge handles QEMU crashing mid-execution.
     """
@@ -27,7 +30,7 @@ async def test_qemu_crash_handling(qemu_launcher):
     kernel = workspace_root / "tests/fixtures/guest_apps/boot_arm/hello.elf"
 
     # Use qemu_launcher for robust process management
-    bridge = await qemu_launcher(dtb, kernel, ignore_clock_check=True)
+    bridge = await cast(Any, qemu_launcher)(dtb, kernel, ignore_clock_check=True)
 
     # Verify we can connect
     assert bridge.is_connected

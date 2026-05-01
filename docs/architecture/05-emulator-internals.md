@@ -1,5 +1,11 @@
 # Chapter 5: Emulator Internals
 
+## Learning Objectives
+After this chapter, you can:
+1. Understand the TCG translation process.
+2. Identify the role of the BQL in vCPU execution.
+3. Explain how arm-generic-fdt instantiates devices.
+
 ## The Execution Engine
 
 VirtMCU uses QEMU (11.0.0) not as a standalone application, but as a high-speed JIT execution worker. By leveraging QEMU's Tiny Code Generator (TCG), VirtMCU can emulate complex ARM and RISC-V cores at near-native speeds while maintaining the ability to intercept every instruction and memory access.
@@ -64,3 +70,5 @@ In the `arm-generic-fdt` machine, adding a device via `-device` is necessary but
 
 ### Relative Offsets
 The `mmio-socket-bridge` delivers **offsets relative to the region base**, not absolute physical addresses. Adapters must NOT add the base address back, as QEMU performs the subtraction before invoking the callback.
+../fundamentals/10-bql-and-concurrency.md)**: Understanding the locking model for internal plugins.
+*   **[The FlexRay Case Study](../postmortem/2026-05-01-flexray-rc-11-segfault.md)**: An example of why precise emulator intercepts are necessary.

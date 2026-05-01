@@ -37,9 +37,10 @@ QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 # Inherit optional env vars with safe defaults for -u compatibility
 VIRTMCU_SKIP_BUILD_DIR="${VIRTMCU_SKIP_BUILD_DIR:-}"
 
-# Default architecture
+# Default architecture and machine
 ARCH="arm"
 ARCH_EXPLICIT=false
+MACHINE=""
 
 # Pre-scan arguments to find explicit --arch before processing input files
 TEMP_ARGS=("$@")
@@ -137,8 +138,22 @@ elif [[ "$INPUT_FILE" == *.dtb ]]; then
     DTB="$INPUT_FILE"
 fi
 
+# Default machine names
+if [ "$MACHINE_PROVIDED" = false ]; then
+    if [ "$ARCH" = "arm" ]; then
+        MACHINE="arm-generic-fdt"
+    elif [[ "$ARCH" == riscv* ]]; then
+        MACHINE="virt"
+        # Check if -bios is already in EXTRA_ARGS
+        if [[ ! " ${EXTRA_ARGS[*]} " =~ " -bios " ]]; then
+            EXTRA_ARGS+=("-bios" "none")
+        fi
+    fi
+fi
+
 # Determine QEMU binary based on architecture
 QEMU_ARCH_NAME="arm"
+MACHINE_ARGS=""
 if [ "$ARCH" = "riscv" ] || [ "$ARCH" = "riscv64" ]; then
     QEMU_ARCH_NAME="riscv64"
 elif [ "$ARCH" = "riscv32" ]; then
@@ -170,20 +185,6 @@ if [ ! -f "$QEMU_BIN" ]; then
 fi
 
 "$QEMU_BIN" --version | head -n 1
-
-
-# Default machine names
-if [ "$MACHINE_PROVIDED" = false ]; then
-    if [ "$ARCH" = "arm" ]; then
-        MACHINE="arm-generic-fdt"
-    elif [[ "$ARCH" == riscv* ]]; then
-        MACHINE="virt"
-        # Check if -bios is already in EXTRA_ARGS
-        if [[ ! " ${EXTRA_ARGS[*]} " =~ " -bios " ]]; then
-            EXTRA_ARGS+=("-bios" "none")
-        fi
-    fi
-fi
 
 # ── Module Discovery ──────────────────────────────────────────────────────────
 
@@ -316,7 +317,7 @@ if [ -n "$DTB" ]; then
 fi
 
 # Build the command array
-CMD=("$QEMU_BIN" "-M" "$MACHINE")
+CMD=("$QEMU_BIN" "-M" "${MACHINE}${MACHINE_ARGS}")
 
 if [ -n "$KERNEL" ]; then
     CMD+=("-kernel" "$KERNEL")

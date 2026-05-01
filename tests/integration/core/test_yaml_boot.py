@@ -1,12 +1,24 @@
+"""
+YAML platform boot test.
+Verify that a platform defined in YAML can boot and print "HI".
+"""
+
+from __future__ import annotations
+
+import shutil
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from tests.sim_types import SimulationCreator
 
 
 @pytest.mark.asyncio
-async def test_yaml_platform_boot(simulation, tmp_path):
-    """
-    YAML platform boot test.
-    Verify that a platform defined in YAML can boot and print "HI".
-    """
+async def test_yaml_platform_boot(simulation: SimulationCreator, tmp_path: Path) -> None:
+
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -16,13 +28,15 @@ async def test_yaml_platform_boot(simulation, tmp_path):
     if not kernel.exists():
         import subprocess
 
-        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/boot_arm"], check=True, cwd=workspace_root)
+        subprocess.run(
+            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm"], check=True, cwd=workspace_root
+        )
 
     dtb = tmp_path / "test_board.dtb"
     import subprocess
 
     subprocess.run(
-        ["uv", "run", "python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb)],
+        [shutil.which("uv") or "uv", "run", "python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb)],
         check=True,
         cwd=workspace_root,
     )
@@ -30,4 +44,5 @@ async def test_yaml_platform_boot(simulation, tmp_path):
     # Boot and check UART using VirtmcuSimulation
     async with await simulation(dtb, kernel) as sim:
         await sim.vta.step(100_000_000)
+        assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("HI", timeout=5.0)

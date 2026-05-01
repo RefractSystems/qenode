@@ -8,16 +8,20 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of zenoh_router_persistent.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
-import time
+import typing
 
 import zenoh
+
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     if len(sys.argv) <= 1:
         sys.exit(1)
     endpoint = sys.argv[1]
@@ -38,10 +42,10 @@ def main():
 
     try:
         while True:
-            time.sleep(1)
+            mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
     except KeyboardInterrupt:
         pass
-    session.close()
+    typing.cast(typing.Any, session).close()
 
 
 if __name__ == "__main__":

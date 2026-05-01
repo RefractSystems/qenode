@@ -8,17 +8,25 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_clock_unix.
 """
 
+from __future__ import annotations
+
 import asyncio
+import shutil
 import socket
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-import vproto
+
+from tools import vproto
+
+if TYPE_CHECKING:
+    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
 
 
-def build_artifacts():
+def build_artifacts() -> tuple[Path, Path]:
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -26,25 +34,25 @@ def build_artifacts():
     kernel_path = workspace_root / "tests/fixtures/guest_apps/boot_arm/hello.elf"
 
     if not dtb_path.exists() or not kernel_path.exists():
-        subprocess.run(["make", "-C", "tests/fixtures/guest_apps/boot_arm", "all"], check=True)
+        subprocess.run([shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm", "all"], check=True)
 
     return dtb_path, kernel_path
 
 
 class MockUnixTimeAuthority:
-    def __init__(self, socket_path):
+    def __init__(self, socket_path: str) -> None:
         self.socket_path = socket_path
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(self.socket_path)
         self.server.listen(1)
-        self.conn = None
+        self.conn: socket.socket | None = None
 
-    async def accept(self):
+    async def accept(self) -> None:
         self.server.setblocking(False)
         loop = asyncio.get_running_loop()
         self.conn, _ = await loop.sock_accept(self.server)
 
-    async def step(self, delta_ns, mujoco_time_ns):
+    async def step(self, delta_ns: int, mujoco_time_ns: int) -> tuple[int, int, int]:
         # ClockAdvanceReq: delta_ns (u64), mujoco_time_ns (u64), quantum_number (u64)
         req = vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, 0).pack()
         assert self.conn is not None
@@ -62,7 +70,7 @@ class MockUnixTimeAuthority:
         resp = vproto.ClockReadyResp.unpack(resp_data)
         return resp.current_vtime_ns, resp.n_frames, resp.error_code
 
-    def close(self):
+    def close(self) -> None:
         if self.conn:
             self.conn.close()
         self.server.close()
@@ -72,7 +80,7 @@ class MockUnixTimeAuthority:
 
 
 @pytest.mark.asyncio
-async def test_clock_unix_socket(qemu_launcher):
+async def test_clock_unix_socket(qemu_launcher: object) -> None:
     """
     Verify clock with unix socket transport.
     """
@@ -86,8 +94,8 @@ async def test_clock_unix_socket(qemu_launcher):
 
         # 1. Launch QEMU. It will start, realize clock (spawn worker),
         #    and start QMP server.
-        launcher_task = asyncio.create_task(
-            qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)
+        launcher_task: asyncio.Task[QmpBridge] = asyncio.create_task(
+            qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)  # type: ignore[operator]
         )
 
         # 2. Wait for the worker thread to connect to our socket.

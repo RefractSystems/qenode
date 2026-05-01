@@ -21,7 +21,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def write_if_changed(path, content):
+def write_if_changed(path: str | Path, content: str) -> bool:
     """Write content to path only if it differs. Returns True if written."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     if Path(path).exists():
@@ -34,11 +34,11 @@ def write_if_changed(path, content):
     return True
 
 
-def patch_file(path, marker, insertion, after=True):
+def patch_file(path: str | Path, marker: str, insertion: str, after: bool = True) -> bool:
     with Path(path).open() as f:
         content = f.read()
 
-    marker_hash = hashlib.md5(marker.encode()).hexdigest()[:8]
+    marker_hash = hashlib.sha256(marker.encode()).hexdigest()[:8]
     guard = f"/* virtmcu-patch-{marker_hash} */"
 
     if guard in content:
@@ -61,7 +61,7 @@ def patch_file(path, marker, insertion, after=True):
     return True
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         logger.info(f"Usage: {sys.argv[0]} <qemu-source-dir>")
         sys.exit(1)
@@ -113,6 +113,7 @@ VIRTMCU_EXPORT void virtmcu_safe_bql_unlock(void);
 VIRTMCU_EXPORT void virtmcu_safe_bql_lock(void);
 VIRTMCU_EXPORT void virtmcu_safe_bql_force_unlock(void);
 VIRTMCU_EXPORT void virtmcu_safe_bql_force_lock(void);
+VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer);
 
 /* Global function to retrieve current quantum timing for SAL/AAL */
 VIRTMCU_EXPORT extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing);
@@ -150,6 +151,13 @@ void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
 }
 void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level)) {
     virtmcu_irq_hook = cb;
+}
+
+VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer) {
+    if (timer) {
+        timer_mod_ns(timer, 0);
+        qemu_notify_event();
+    }
 }
 """
     patch_file(irq_c, '#include "hw/core/irq.h"', irq_patch, after=True)

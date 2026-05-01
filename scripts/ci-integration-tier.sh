@@ -31,10 +31,16 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
     
     # Ensure Python dependencies are synced in the container
     mkdir -p target
-    if [ ! -f target/.ci_marker_uv_synced ]; then
-        echo "==> Syncing Python dependencies inside container..."
+    PYPROJECT_HASH=$(sha256sum pyproject.toml uv.lock | sha256sum | cut -c1-12)
+    SYNC_MARKER="target/.ci_marker_uv_synced_${PYPROJECT_HASH}"
+
+    if [ ! -f "$SYNC_MARKER" ]; then
+        echo "==> Syncing Python dependencies inside container (hash: ${PYPROJECT_HASH})..."
+        # Clean up old markers
+        rm -f target/.ci_marker_uv_synced_*
         uv pip install --link-mode=copy --system --break-system-packages . >/dev/null
-        touch target/.ci_marker_uv_synced
+        touch "$SYNC_MARKER"
+        echo "✓ Python dependencies synced."
     fi
 
     if [ ! -f target/.ci_marker_artifacts_built ]; then

@@ -37,7 +37,7 @@ INT_CONTROLLERS = {
 
 
 class FdtEmitter:
-    def __init__(self, platform: ReplPlatform):
+    def __init__(self, platform: ReplPlatform) -> None:
         self.platform = platform
         self.arch = self._detect_arch()
         self.phandles: dict[str, int] = {}
@@ -45,12 +45,12 @@ class FdtEmitter:
         self._assign_phandles()
 
     def _detect_arch(self) -> str:
-        for dev in self.platform.devices:
-            if "RISCV" in dev.type_name.upper():
-                return "riscv"
+        for _name, dev in self.platform.devices.items():
+            if dev.type_name.startswith("RISC_V"):
+                return "riscv32"
         return "arm"
 
-    def _assign_phandles(self):
+    def _assign_phandles(self) -> None:
         # Always have a sysmem phandle
         self.phandles["qemu_sysmem"] = self.next_phandle
         self.next_phandle += 1
@@ -246,7 +246,14 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
     try:
         with Path(dts_path).open("w") as f:
             f.write(dts_content)
-        subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True, capture_output=True)
+
+        import shutil
+
+        dtc_path = shutil.which("dtc")
+        if not dtc_path:
+            raise RuntimeError("dtc executable not found in PATH")
+
+        subprocess.run([dtc_path, "-I", "dts", "-O", "dtb", "-o", out_path, dts_path], check=True, capture_output=True)
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Error compiling DTB: {e.stderr.decode()}")

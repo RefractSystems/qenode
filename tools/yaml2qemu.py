@@ -1,22 +1,31 @@
+"""
+Parses our modern YAML schema and returns (ReplPlatform, hints_dict).
+hints_dict is reserved for future metadata (e.g. default clock rates); callers
+that don't need it can unpack with ``platform, _ = parse_yaml_platform(path)``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+
+import fdt
+import yaml
+
+from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
+from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+
 #!/usr/bin/env python3
+
 # ==============================================================================
 # yaml2qemu.py
 #
 # Parses the virtmcu YAML hardware description and translates it into a
 # QEMU Device Tree (.dtb). This drives the FdtEmitter using the modern schema.
 # ==============================================================================
-
-import argparse
-import logging
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-import yaml
-
-from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
-from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +34,15 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
-    """
-    Parses our modern YAML schema and returns (ReplPlatform, hints_dict).
-    hints_dict is reserved for future metadata (e.g. default clock rates); callers
-    that don't need it can unpack with ``platform, _ = parse_yaml_platform(path)``.
-    """
+def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, object]]:
+
     with Path(yaml_path).open() as f:
         data = yaml.safe_load(f)
 
     # Hardening: Check for unknown top-level keys to prevent silent failures
-    KNOWN_KEYS = {"machine", "peripherals", "memory", "include", "nodes", "topology"}  # noqa: N806
+    known_keys = {"machine", "peripherals", "memory", "include", "nodes", "topology"}
     for key in data:
-        if key not in KNOWN_KEYS:
+        if key not in known_keys:
             logger.warning(f"Warning: Unknown top-level key '{key}' in {yaml_path}. It will be ignored.")
 
     # Validate topology if present
@@ -150,72 +155,90 @@ def parse_yaml_platform(yaml_path: str) -> tuple[ReplPlatform, dict]:
     return platform, {}
 
 
-def validate_dtb(dtb_path, devices):
+def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
     """
     Task 2: Validate DTB contains all expected peripherals.
-    Decompiles the DTB back to DTS and ensures each peripheral is present.
+    Uses the fdt library to parse the DTB directly for structured validation.
     """
     try:
-        res = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", dtb_path], capture_output=True, text=True, check=True)
-        dts = res.stdout
+        with Path(dtb_path).open("rb") as f:
+            dtb = fdt.parse_dtb(f.read())
 
         missing = []
+
+        def find_node_recursive(parent: fdt.Node, prefix: str) -> fdt.Node | None:
+            """Recursively finds a node that matches the prefix exactly or matches prefix@address."""
+            for node in parent.nodes:
+                if node.name == prefix or node.name.startswith(prefix + "@"):
+                    return node
+                # Recurse into children
+                found = find_node_recursive(node, prefix)
+                if found:
+                    return found
+            return None
+
         for dev in devices:
             if "CPU" in dev.type_name:
+                # CPUs are typically under /cpus/
+                cpus_node = dtb.root.get_subnode("cpus")
+                if not cpus_node:
+                    logger.error("ERROR: No 'cpus' node found in DTB!")
+                    missing.append("cpus")
+                    continue
+
+                cpu_node = find_node_recursive(cpus_node, dev.name)
+                if cpu_node:
+                    if not cpu_node.get_property("memory"):
+                        logger.error(f"ERROR: CPU node '{dev.name}' is missing 'memory' property!")
+                        missing.append(f"{dev.name} (missing memory binding)")
+                else:
+                    missing.append(dev.name)
                 continue
+
             if dev.type_name == "chardev":
                 continue  # CLI-only, no DTB node
 
-            # Check for name@address (DTS node format), e.g. "uart0@9000000".
-            # Memory nodes are special: FdtEmitter always names them "memory@..."
-            try:
-                addr_int = int(dev.address_str, 0)
-                if dev.type_name == "Memory.MappedMemory":
-                    dts_node = f"memory@{addr_int:x}"
-                else:
-                    dts_node = f"{dev.name}@{addr_int:x}"
-            except (ValueError, TypeError):
-                dts_node = dev.name  # fallback for non-numeric address strings
+            # Check for name or name@address
+            prefix = "memory" if dev.type_name == "Memory.MappedMemory" else dev.name
+            dev_node = find_node_recursive(dtb.root, prefix)
 
-            if dts_node not in dts and dev.name not in dts:
+            if not dev_node:
                 missing.append(dev.name)
-            elif (
-                (dts_node in dts or dev.name in dts)
-                and dev.type_name == "Memory.MappedMemory"
-                and "size" in dev.properties
-            ):
-                # Task: Verify memory size matches
-                try:
-                    target_node = dts_node if dts_node in dts else dev.name
-                    size_val = dev.properties["size"]
-                    expected_size = int(size_val, 0) if isinstance(size_val, str) else int(size_val)
-                    # Simple heuristic: find the node block and check reg property
-                    node_start = dts.find(target_node)
-                    node_end = dts.find("};", node_start)
-                    node_content = dts[node_start:node_end]
+            elif dev.type_name == "Memory.MappedMemory" and "size" in dev.properties:
+                # Verify memory size matches
+                reg_prop = dev_node.get_property("reg")
+                if reg_prop:
+                    try:
+                        # VirtMCU uses #address-cells = 2, #size-cells = 2
+                        # reg = <base_hi base_lo size_hi size_lo>
+                        cells = reg_prop.data
+                        if len(cells) >= 4:
+                            size_hi = cells[2]
+                            size_lo = cells[3]
+                            actual_size = (size_hi << 32) | size_lo
 
-                    import re
+                            size_val = dev.properties["size"]
+                            if isinstance(size_val, str):
+                                expected_size = int(size_val, 0)
+                            elif isinstance(size_val, int):
+                                expected_size = size_val
+                            else:
+                                raise TypeError(f"Invalid size property type: {type(size_val)}")
 
-                    # Robust regex: handle 0x or decimal, and varying whitespace
-                    reg_match = re.search(
-                        r"reg = <((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)\s+((?:0x)?[0-9a-fA-F]+)>",
-                        node_content,
-                    )
-                    if reg_match:
-
-                        def to_int(s):
-                            return int(s, 16) if s.startswith("0x") else int(s)
-
-                        size_hi = to_int(reg_match.group(3))
-                        size_lo = to_int(reg_match.group(4))
-                        actual_size = (size_hi << 32) | size_lo
-                        if actual_size != expected_size:
-                            logger.error(
-                                f"ERROR: Memory node '{dev.name}' size mismatch! Expected {hex(expected_size)}, found {hex(actual_size)}"
+                            if actual_size != expected_size:
+                                logger.error(
+                                    f"ERROR: Memory node '{dev.name}' size mismatch! Expected {hex(expected_size)}, found {hex(actual_size)}"
+                                )
+                                missing.append(f"{dev.name} (size mismatch)")
+                        else:
+                            logger.warning(
+                                f"⚠️ Warning: Memory node '{dev.name}' has unexpected reg property length: {len(cells)}"
                             )
-                            missing.append(f"{dev.name} (size mismatch)")
-                except Exception as e:
-                    logger.warning(f"⚠️ Warning: Could not verify size for {dev.name}: {e}")
+                    except (ValueError, TypeError, IndexError) as e:
+                        logger.warning(f"⚠️ Warning: Could not verify size for {dev.name}: {e}")
+                else:
+                    logger.error(f"ERROR: Memory node '{dev.name}' is missing 'reg' property!")
+                    missing.append(f"{dev.name} (missing reg)")
 
         if missing:
             logger.error(
@@ -225,19 +248,12 @@ def validate_dtb(dtb_path, devices):
             logger.error("FAILED: DTB validation failed.")
             sys.exit(1)
         logger.info("✓ Validation successful.")
-    except subprocess.CalledProcessError as e:
-        logger.warning(f"⚠️ Warning: dtc failed during validation: {e.stderr}")
-    except FileNotFoundError:
-        logger.error(
-            "ERROR: 'dtc' (device-tree-compiler) not found — DTB validation skipped. "
-            "Install dtc to enable post-build validation."
-        )
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"ERROR: Could not validate DTB: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.warning(f"⚠️ Warning: Could not validate DTB: {e}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Convert virtmcu YAML to Device Tree")
     parser.add_argument("input", help="Path to .yaml file")
     parser.add_argument("--out-dtb", help="Path to output .dtb file", required=True)

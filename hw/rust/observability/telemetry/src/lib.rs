@@ -34,6 +34,8 @@ pub struct VirtmcuTelemetryQOM {
     pub transport: *mut c_char,
     /// Optional Zenoh router address.
     pub router: *mut c_char,
+    /// Debug flag
+    pub debug: bool,
 
     /* Rust state */
     /// Opaque pointer to the Rust backend state.
@@ -185,10 +187,11 @@ unsafe extern "C" fn telemetry_instance_finalize(obj: *mut Object) {
 
 /* ── Properties ───────────────────────────────────────────────────────────── */
 
-static VIRTMCU_TELEMETRY_PROPERTIES: [virtmcu_qom::qom::Property; 4] = [
+static VIRTMCU_TELEMETRY_PROPERTIES: [virtmcu_qom::qom::Property; 5] = [
     define_prop_uint32!(c"node".as_ptr(), VirtmcuTelemetryQOM, node_id, 0),
     define_prop_string!(c"transport".as_ptr(), VirtmcuTelemetryQOM, transport),
     define_prop_string!(c"router".as_ptr(), VirtmcuTelemetryQOM, router),
+    virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuTelemetryQOM, debug, false),
     // SAFETY: QEMU expects a zeroed Property as a sentinel.
     unsafe { core::mem::zeroed() },
 ];
@@ -201,7 +204,7 @@ unsafe extern "C" fn telemetry_class_init(klass: *mut ObjectClass, _data: *const
         (*dc).realize = Some(telemetry_realize);
         (*dc).user_creatable = true;
     }
-    virtmcu_qom::qdev::device_class_set_props_n(dc, VIRTMCU_TELEMETRY_PROPERTIES.as_ptr(), 3);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, VIRTMCU_TELEMETRY_PROPERTIES.as_ptr(), 4);
 }
 
 static VIRTMCU_TELEMETRY_TYPE_INFO: TypeInfo = TypeInfo {
@@ -213,7 +216,7 @@ static VIRTMCU_TELEMETRY_TYPE_INFO: TypeInfo = TypeInfo {
     instance_post_init: None,
     instance_finalize: Some(telemetry_instance_finalize),
     abstract_: false,
-    class_size: 0,
+    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(telemetry_class_init),
     class_base_init: None,
     class_data: core::ptr::null(),

@@ -8,20 +8,34 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_chaos.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+import time
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tools.testing.utils import yield_now
+from tools.testing.utils import get_time_multiplier, yield_now
 from tools.testing.virtmcu_test_suite.orchestrator import SimulationOrchestrator
 from tools.testing.virtmcu_test_suite.transport import FaultInjectingTransport
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    import zenoh
+
+    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+    from tools.testing.virtmcu_test_suite.orchestrator import SimNode
+    from tools.testing.virtmcu_test_suite.transport import SimulationTransport
+
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_fault_injection(sim_transport):
+async def test_fault_injection(sim_transport: SimulationTransport) -> None:
     """
     Chaos Engineering validation.
     Verifies that the FaultInjectingTransport correctly drops and delays packets bi-directionally.
@@ -41,8 +55,6 @@ async def test_fault_injection(sim_transport):
     await chaos.subscribe("tests/fixtures/guest_apps/chaos", on_rx)
 
     # Deterministic wait for subscription to propagate
-    import time
-
     start_wait = time.time()
     chaos.drop_prob = 0.0
     while b"ping" not in received:
@@ -95,8 +107,6 @@ async def test_fault_injection(sim_transport):
     start_t = loop.time()
     await chaos.publish("tests/fixtures/guest_apps/chaos", b"delayed_msg")
 
-    from tools.testing.utils import get_time_multiplier
-
     try:
         await asyncio.wait_for(rx_event.wait(), timeout=2.0 * get_time_multiplier())
     except TimeoutError:
@@ -116,8 +126,14 @@ async def test_fault_injection(sim_transport):
     assert delay_measured >= 0.04, f"Message should have been delayed. Measured: {delay_measured}s"
 
 
+def _nodes_alive(node1: SimNode, node2: SimNode) -> bool:
+    return "HI" in cast(Any, cast(Any, node1).uart).buffer and "HI" in cast(Any, cast(Any, node2).uart).buffer
+
+
 @pytest.mark.asyncio
-async def test_multi_node_chaos(zenoh_session, zenoh_router, qemu_launcher):
+async def test_multi_node_chaos(
+    zenoh_session: zenoh.Session, zenoh_router: str, qemu_launcher: Callable[..., Awaitable[QmpBridge]]
+) -> None:
     """
     Proves that the system survives network chaos (drops/latency)
     between two nodes without deadlocking the coordinator or losing determinism.
@@ -143,16 +159,13 @@ async def test_multi_node_chaos(zenoh_session, zenoh_router, qemu_launcher):
     await orchestrator.start()
 
     # Define a simple "progress" condition: both nodes have booted and said something
-    def nodes_alive():
-        return "HI" in node1.uart.buffer and "HI" in node2.uart.buffer
-
     # Run simulation under chaos
     # Even with drops and jitter, the VirtualTimeAuthority should keep them in sync
     # though it might take longer in wall-clock time due to FaultInjectingTransport sleeps.
-    await orchestrator.run_until(nodes_alive, timeout=30.0)
+    await orchestrator.run_until(lambda: _nodes_alive(node1, node2), timeout=30.0)
 
     # If we reached here, the coordinator didn't deadlock and nodes made progress
-    assert nodes_alive()
+    assert _nodes_alive(node1, node2)
 
     # Check flight recorder for drops
     history = chaos.dump_flight_recorder()

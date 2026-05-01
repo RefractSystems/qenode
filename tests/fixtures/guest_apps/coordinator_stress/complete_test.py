@@ -13,20 +13,19 @@ import logging
 import os
 import queue
 import sys
-import time
-from pathlib import Path
+import typing
 
 import flatbuffers
-import vproto
 import zenoh
 from virtmcu.rf import RfHeader
 
-sys.path.append(str(Path(__file__).resolve().parent))
+import tools.vproto as vproto
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def pack_rf_header(vtime, size, rssi, lqi):
+def pack_rf_header(vtime: int, size: int, rssi: int, lqi: int) -> bytes:
     builder = flatbuffers.Builder(64)
     RfHeader.Start(builder)
     RfHeader.AddDeliveryVtimeNs(builder, vtime)
@@ -36,16 +35,16 @@ def pack_rf_header(vtime, size, rssi, lqi):
     RfHeader.AddLqi(builder, lqi)
     hdr = RfHeader.End(builder)
     builder.FinishSizePrefixed(hdr)
-    return builder.Output()
+    return builder.Output()  # type: ignore[no-any-return]
 
 
-def unpack_rf_header(data):
+def unpack_rf_header(data: bytes) -> typing.Any:  # noqa: ANN401
     sz = int.from_bytes(data[:4], "little")
     hdr = RfHeader.RfHeader.GetRootAs(data[4 : 4 + sz], 0)
     return hdr.DeliveryVtimeNs(), hdr.Size(), hdr.Rssi(), hdr.Lqi(), 4 + sz
 
 
-def main():
+def main() -> None:
     conf = zenoh.Config()
 
     router = os.environ.get("ZENOH_ROUTER")
@@ -83,25 +82,25 @@ def main():
     }
 
     # 1. ETH test
-    rx_eth = queue.Queue()
+    rx_eth = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/eth/frame/2/rx", lambda sample: rx_eth.put(sample.payload.to_bytes()))
     pub_eth_tx1 = s.declare_publisher("sim/eth/frame/1/tx")
     pub_eth_tx2 = s.declare_publisher("sim/eth/frame/2/tx")
 
     # 2. UART test
-    rx_uart = queue.Queue()
+    rx_uart = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("virtmcu/uart/2/rx", lambda sample: rx_uart.put(sample.payload.to_bytes()))
     pub_uart_tx1 = s.declare_publisher("virtmcu/uart/1/tx")
     pub_uart_tx2 = s.declare_publisher("virtmcu/uart/2/tx")
 
     # 3. SystemC test
-    rx_sysc = queue.Queue()
+    rx_sysc = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/systemc/frame/2/rx", lambda sample: rx_sysc.put(sample.payload.to_bytes()))
     pub_sysc_tx1 = s.declare_publisher("sim/systemc/frame/1/tx")
     pub_sysc_tx2 = s.declare_publisher("sim/systemc/frame/2/tx")
 
     # 4. RF test (802.15.4)
-    rx_rf = queue.Queue()
+    rx_rf = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/rf/ieee802154/1/rx", lambda sample: rx_rf.put(sample.payload.to_bytes()))
     pub_rf_tx0 = s.declare_publisher("sim/rf/ieee802154/0/tx")
     pub_rf_tx1 = s.declare_publisher("sim/rf/ieee802154/1/tx")
@@ -110,7 +109,7 @@ def main():
     # 5. Topology control
     pub_ctrl = s.declare_publisher("sim/network/control")
 
-    time.sleep(2)
+    mock_execution_delay(2)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     logger.info("Making nodes known...")
     # Nodes must transmit to be known
@@ -120,7 +119,7 @@ def main():
     pub_rf_tx1.put(pack_rf_header(0, 0, 0, 0))  # Node 1 is at (10,0,0), Node 0 is at (0,0,0)
     pub_rf_tx2.put(pack_rf_header(0, 0, 0, 0))  # Node 2 is at (100,0,0)
 
-    time.sleep(1)
+    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     logger.info("Testing ETH...")
     pub_eth_tx1.put(vproto.ZenohFrameHeader(1000, 0, 4).pack() + b"ETH1")
@@ -179,7 +178,7 @@ def main():
     try:
         data = rx_rf.get(timeout=timeout_val)
         data = data
-        vtime, size, rssi, lqi, offset = unpack_rf_header(data)  # noqa: RUF059
+        vtime, size, rssi, lqi, offset = unpack_rf_header(data)  # noqa: RUF059  # type: ignore[misc]
         logger.info(f"  RF received: vtime={vtime}, rssi={rssi}")
         if vtime >= 4000 + 1000000:  # 1ms + speed of light (33ns)
             results["rf"] = True
@@ -209,13 +208,13 @@ def main():
     # Node 0 (0,0,0) to Node 2 (100,0,0). Distance = 100m.
     # fspl = 20*log10(100) + 40.04 = 80.04 dB. RSSI = -80.04 dBm.
     # Default sensitivity is -90.0 dBm, so it should be received!
-    rx_rf2 = queue.Queue()
+    rx_rf2 = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/rf/ieee802154/2/rx", lambda sample: rx_rf2.put(sample.payload.to_bytes()))
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     pub_rf_tx0.put(pack_rf_header(8000, 4, 0, 0) + b"RF02")
     try:
         data = rx_rf2.get(timeout=timeout_val)
-        vtime, size, rssi, _lqi, _offset = unpack_rf_header(data)  # noqa: RUF059
+        vtime, size, rssi, _lqi, _offset = unpack_rf_header(data)  # noqa: RUF059  # type: ignore[misc]
         logger.info(f"  RF Sensitivity PASS: frame received with rssi={rssi}")
         if rssi == -80:
             results["rf_sensitivity"] = True
@@ -223,12 +222,12 @@ def main():
         logger.info("  RF Sensitivity FAIL: frame dropped unexpectedly")
 
     logger.info("Testing RF HCI (no RF header)...")
-    rx_hci = queue.Queue()
+    rx_hci = queue.Queue()  # type: ignore[var-annotated]
     s.declare_subscriber("sim/rf/hci/1/rx", lambda sample: rx_hci.put(sample.payload.to_bytes()))
     pub_hci_tx0 = s.declare_publisher("sim/rf/hci/0/tx")
     pub_hci_tx1 = s.declare_publisher("sim/rf/hci/1/tx")
     pub_hci_tx1.put(vproto.ZenohFrameHeader(0, 0, 0).pack())  # known
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     pub_hci_tx0.put(vproto.ZenohFrameHeader(7000, 0, 4).pack() + b"HCI0")
     try:
         data = rx_hci.get(timeout=timeout_val)
@@ -256,7 +255,7 @@ def main():
         results["malformed"] = True
     update = {"from": "1", "to": "2", "drop_probability": 1.0}
     pub_ctrl.put(json.dumps(update))
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     while not rx_eth.empty():
         rx_eth.get_nowait()
     pub_eth_tx1.put(vproto.ZenohFrameHeader(5000, 0, 4).pack() + b"DROP")
@@ -268,9 +267,9 @@ def main():
         # Now reset
         update = {"from": "1", "to": "2", "drop_probability": 0.0}
         pub_ctrl.put(json.dumps(update))
-        time.sleep(0.5)
+        mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
         pub_eth_tx1.put(vproto.ZenohFrameHeader(6000, 0, 4).pack() + b"KEPT")
-        time.sleep(0.5)
+        mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
         try:
             rx_eth.get(timeout=timeout_val)
             results["topology"] = True
@@ -278,16 +277,16 @@ def main():
         except queue.Empty:
             logger.info("  Topology FAIL: frame still dropped after reset")
 
-    s.close()
+    s.close()  # type: ignore[no-untyped-call]
 
     all_pass = all(results.values())
     if all_pass:
         logger.info("\nALL TESTS PASSED")
-        s.close()
+        s.close()  # type: ignore[no-untyped-call]
         sys.exit(0)
     else:
         logger.info(f"\nSOME TESTS FAILED: {results}")
-        s.close()
+        s.close()  # type: ignore[no-untyped-call]
         sys.exit(1)
 
 

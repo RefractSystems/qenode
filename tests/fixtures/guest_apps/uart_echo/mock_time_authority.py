@@ -10,24 +10,26 @@ Ensure correct functionality, performance, and deterministic execution of mock_t
 
 import logging
 import sys
+import typing
 
-import vproto
 import zenoh
+
+from tools import vproto
 
 logger = logging.getLogger(__name__)
 
 
 # Standard virtmcu ClockAdvanceReq/ClockReadyResp packing
-def pack_clock_advance(delta_ns, mujoco_time_ns=0, quantum_number=0):
+def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
     return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
 
 
-def unpack_clock_ready(data):
+def unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:
     resp = vproto.ClockReadyResp.unpack(data)
     return resp.current_vtime_ns, resp.n_frames, resp.error_code, resp.quantum_number
 
 
-def main():
+def main() -> None:
     if len(sys.argv) <= 1:
         logger.error(f"Usage: {sys.argv[0]} <router_endpoint>")
         sys.exit(1)
@@ -55,7 +57,7 @@ def main():
         # No sleep here, we want to advance as fast as QEMU allows
 
     logger.info("[TimeAuthority] Reached target virtual time.")
-    session.close()
+    typing.cast(typing.Any, session).close()
 
 
 if __name__ == "__main__":

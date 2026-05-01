@@ -8,14 +8,21 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_spi_multibus.
 """
 
+from __future__ import annotations
+
+import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 @pytest.mark.asyncio
-async def test_spi_bus_stress(qemu_launcher, tmp_path):
+async def test_spi_bus_stress(qemu_launcher: object, tmp_path: Path) -> None:
     """
     Stress test: many SPI devices on many buses.
     Verify that hardening handles multiple buses and devices correctly.
@@ -44,16 +51,18 @@ async def test_spi_bus_stress(qemu_launcher, tmp_path):
             if d == 0:
                 yml += f"  - name: {dev_name}\n    type: spi-echo\n    parent: {bus_name}\n    address: {d}\n"
 
-    test_yaml = Path(tmp_path) / "stress_spi.yml"
+    test_yaml = tmp_path / "stress_spi.yml"
     with Path(test_yaml).open("w") as f:
         f.write(yml)
 
-    test_dtb = Path(tmp_path) / "stress_spi.dtb"
+    test_dtb = tmp_path / "stress_spi.dtb"
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root
+        [shutil.which("python3") or "python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb],
+        check=True,
+        cwd=workspace_root,
     )
 
-    bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
 
     # Verify all devices are parented correctly
     for b in range(num_buses):
@@ -66,7 +75,7 @@ async def test_spi_bus_stress(qemu_launcher, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mac_stress(qemu_launcher, tmp_path):
+async def test_mac_stress(qemu_launcher: object, tmp_path: Path) -> None:
     """
     Stress test: multiple devices with different MAC addresses.
     """
@@ -85,16 +94,18 @@ async def test_mac_stress(qemu_launcher, tmp_path):
         addr = 0x50000000 + i * 0x1000
         yml += f'  - name: wifi{i}\n    type: wifi\n    address: 0x{addr:x}\n    properties:\n      MACAddress: "{mac}"\n      node: "{i}"\n'
 
-    test_yaml = Path(tmp_path) / "stress_mac.yml"
+    test_yaml = tmp_path / "stress_mac.yml"
     with Path(test_yaml).open("w") as f:
         f.write(yml)
 
-    test_dtb = Path(tmp_path) / "stress_mac.dtb"
+    test_dtb = tmp_path / "stress_mac.dtb"
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root
+        [shutil.which("python3") or "python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb],
+        check=True,
+        cwd=workspace_root,
     )
 
-    bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
 
     for i in range(num_devs):
         addr = 0x50000000 + i * 0x1000

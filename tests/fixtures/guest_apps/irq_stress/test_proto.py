@@ -14,6 +14,7 @@ Usage:
     python3 tests/fixtures/guest_apps/irq_stress/test_proto.py <adapter_binary>
 """
 
+import contextlib
 import logging
 import signal
 import socket
@@ -23,25 +24,8 @@ import tempfile
 import time
 from pathlib import Path
 
-
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
-
-logger = logging.getLogger(__name__)
-
-import contextlib  # noqa: E402
-
-from vproto import (  # noqa: E402
+from tools.testing.utils import mock_execution_delay
+from tools.vproto import (
     MMIO_REQ_READ,
     MMIO_REQ_WRITE,
     SIZE_SYSC_MSG,
@@ -56,8 +40,10 @@ from vproto import (  # noqa: E402
     VirtmcuHandshake,
 )
 
+logger = logging.getLogger(__name__)
 
-def send_req(sock, req_type, size, addr, data=0):
+
+def send_req(sock: socket.socket, req_type: int, size: int, addr: int, data: int = 0) -> int:
     """Send one mmio_req and return the resp.data field."""
     req = MmioReq(type=req_type, size=size, reserved1=0, reserved2=0, vtime_ns=0, addr=addr, data=data)
     sock.sendall(req.pack())
@@ -76,17 +62,17 @@ def send_req(sock, req_type, size, addr, data=0):
         # Ignore async IRQ messages during sync tests
 
 
-def wait_for_socket(path, timeout=5.0):
+def wait_for_socket(path: str, timeout: float = 5.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if Path(path).exists():
             return True
-        time.sleep(0.05)
+        mock_execution_delay(0.05)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     return False
 
 
-def run_tests(adapter_bin):
-    sock_path = tempfile.mktemp(suffix=".sock", prefix="virtmcu-proto-test-")
+def run_tests(adapter_bin: str) -> bool | None:
+    sock_path = tempfile.mkstemp(suffix=".sock", prefix="virtmcu-proto-test-")[1]
     proc = subprocess.Popen([adapter_bin, sock_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         if not wait_for_socket(sock_path):

@@ -117,6 +117,9 @@ if [ -z "$FILTER" ]; then
 
     # Clean up stale lock files
     rm -f "$TOOLS_DIR/zenoh_coordinator/build.lock" 2>/dev/null || true
+
+    log "Cleaning up stale plugins..."
+    python3 "$WORKSPACE_DIR/scripts/check-stale-so.py" --delete || true
 fi
 
 log "✓ Cleanup complete."

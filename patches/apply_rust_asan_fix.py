@@ -7,7 +7,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         logger.info("Usage: apply_rust_asan_fix.py <qemu_dir>")
         sys.exit(1)

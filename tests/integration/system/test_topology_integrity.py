@@ -8,14 +8,21 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_topology_integrity.
 """
 
+from __future__ import annotations
+
+import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 @pytest.mark.asyncio
-async def test_spi_topology_integrity(qemu_launcher, tmp_path):
+async def test_spi_topology_integrity(qemu_launcher: object, tmp_path: Path) -> None:
     """
     Verify via QMP that child peripherals are correctly linked to their parent buses.
     """
@@ -49,11 +56,13 @@ peripherals:
     test_dtb = tmp_path / "test_spi_topology.dtb"
 
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb], check=True, cwd=workspace_root
+        [shutil.which("python3") or "python3", "-m", "tools.yaml2qemu", test_yaml, "--out-dtb", test_dtb],
+        check=True,
+        cwd=workspace_root,
     )
 
     # Boot QEMU
-    bridge = await qemu_launcher(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
 
     # Find my_spi_echo. In arm-generic-fdt it's likely a child of its parent node.
     # Root nodes are named <name>@<address>.

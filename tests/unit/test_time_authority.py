@@ -8,12 +8,17 @@ Objective:
 Ensure correct functionality, performance, and deterministic execution of test_time_authority_unit.
 """
 
+from __future__ import annotations
+
+import typing
 from collections import namedtuple
 from unittest.mock import AsyncMock
 
 import pytest
-import vproto
-from conftest import VirtualTimeAuthority
+import zenoh
+
+from tests.conftest import VirtualTimeAuthority
+from tools import vproto
 
 
 def pack_clock_ready(vtime_ns: int, n_frames: int = 0, error_code: int = 0, quantum_number: int = 0) -> bytes:
@@ -21,19 +26,21 @@ def pack_clock_ready(vtime_ns: int, n_frames: int = 0, error_code: int = 0, quan
 
 
 @pytest.mark.asyncio
-async def test_no_overshoot_when_exact():
-    vta = VirtualTimeAuthority(session=None, node_ids=[1])
+async def test_no_overshoot_when_exact() -> None:
+    vta = VirtualTimeAuthority(session=typing.cast(zenoh.Session, None), node_ids=[1])
 
     # Mock _get_reply to return a valid Zenoh reply structure
     Reply = namedtuple("Reply", ["ok"])
     Ok = namedtuple("Ok", ["payload"])
     Payload = namedtuple("Payload", ["to_bytes"])
 
-    async def mock_get_reply(_nid, _topic, payload, _timeout):
+    async def mock_get_reply(_nid: int, _topic: str, payload: bytes, _timeout: float) -> Reply:
         req = vproto.ClockAdvanceReq.unpack(payload)
-        return Reply(ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(10_000_000, quantum_number=req.quantum_number))))
+        return Reply(
+            ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(10_000_000, quantum_number=req.quantum_number)))
+        )
 
-    vta._get_reply = AsyncMock(side_effect=mock_get_reply)
+    vta.__dict__["_get_reply"] = AsyncMock(side_effect=mock_get_reply)
 
     await vta.step(10_000_000)
 
@@ -42,22 +49,24 @@ async def test_no_overshoot_when_exact():
 
 
 @pytest.mark.asyncio
-async def test_overshoot_subtracted_next_step():
-    vta = VirtualTimeAuthority(session=None, node_ids=[1])
+async def test_overshoot_subtracted_next_step() -> None:
+    vta = VirtualTimeAuthority(session=typing.cast(zenoh.Session, None), node_ids=[1])
 
     # Mock _get_reply
     Reply = namedtuple("Reply", ["ok"])
     Ok = namedtuple("Ok", ["payload"])
     Payload = namedtuple("Payload", ["to_bytes"])
 
-    async def mock_get_reply(_nid, _topic, payload, _timeout):
+    async def mock_get_reply(_nid: int, _topic: str, payload: bytes, _timeout: float) -> Reply:
         req = vproto.ClockAdvanceReq.unpack(payload)
         # First step: 10ms requested, but we simulate 10.002ms advanced (2000ns overshoot)
         # Second step: will be adjusted.
         vtime = 10_002_000 if req.quantum_number == 1 else 20_000_000
-        return Reply(ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(vtime, quantum_number=req.quantum_number))))
+        return Reply(
+            ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(vtime, quantum_number=req.quantum_number)))
+        )
 
-    vta._get_reply = AsyncMock(side_effect=mock_get_reply)
+    vta.__dict__["_get_reply"] = AsyncMock(side_effect=mock_get_reply)
 
     # First step
     await vta.step(10_000_000)
@@ -74,18 +83,20 @@ async def test_overshoot_subtracted_next_step():
 
 
 @pytest.mark.asyncio
-async def test_overshoot_never_negative():
-    vta = VirtualTimeAuthority(session=None, node_ids=[1])
+async def test_overshoot_never_negative() -> None:
+    vta = VirtualTimeAuthority(session=typing.cast(zenoh.Session, None), node_ids=[1])
 
     Reply = namedtuple("Reply", ["ok"])
     Ok = namedtuple("Ok", ["payload"])
     Payload = namedtuple("Payload", ["to_bytes"])
 
-    async def mock_get_reply(_nid, _topic, payload, _timeout):
+    async def mock_get_reply(_nid: int, _topic: str, payload: bytes, _timeout: float) -> Reply:
         req = vproto.ClockAdvanceReq.unpack(payload)
-        return Reply(ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(9_000_000, quantum_number=req.quantum_number))))
+        return Reply(
+            ok=Ok(payload=Payload(to_bytes=lambda: pack_clock_ready(9_000_000, quantum_number=req.quantum_number)))
+        )
 
-    vta._get_reply = AsyncMock(side_effect=mock_get_reply)
+    vta.__dict__["_get_reply"] = AsyncMock(side_effect=mock_get_reply)
 
     await vta.step(10_000_000)
 
@@ -94,8 +105,8 @@ async def test_overshoot_never_negative():
 
 
 @pytest.mark.asyncio
-async def test_1000_quantum_drift_under_1_quantum():
-    vta = VirtualTimeAuthority(session=None, node_ids=[1])
+async def test_1000_quantum_drift_under_1_quantum() -> None:
+    vta = VirtualTimeAuthority(session=typing.cast(zenoh.Session, None), node_ids=[1])
 
     Reply = namedtuple("Reply", ["ok"])
     Ok = namedtuple("Ok", ["payload"])
@@ -104,7 +115,7 @@ async def test_1000_quantum_drift_under_1_quantum():
     actual_sum_of_adjusted_deltas = 0
     current_mock_vtime = 0
 
-    async def mock_get_reply(_nid, _topic, payload, _timeout):
+    async def mock_get_reply(_nid: int, _topic: str, payload: bytes, _timeout: float) -> Reply:
         nonlocal actual_sum_of_adjusted_deltas, current_mock_vtime
         req = vproto.ClockAdvanceReq.unpack(payload)
         actual_sum_of_adjusted_deltas += req.delta_ns
@@ -120,7 +131,7 @@ async def test_1000_quantum_drift_under_1_quantum():
             )
         )
 
-    vta._get_reply = AsyncMock(side_effect=mock_get_reply)
+    vta.__dict__["_get_reply"] = AsyncMock(side_effect=mock_get_reply)
 
     quantum_ns = 1_000_000  # 1ms
 

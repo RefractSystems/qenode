@@ -57,7 +57,7 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 
 ### Stall-Timeout Contract
 - **Never hardcode `stall-timeout=<ms>` in test `extra_args`** unless validating stall detection explicitly.
-- **INFRA-6 (Timeout Multiplier)**: Timeouts dynamically scale based on the environment (e.g., 5.0x under ASan). The `qemu_launcher` automatically injects the appropriately scaled `stall-timeout` via `conftest_core.py::get_time_multiplier()`.
+- **Timeout Multiplier**: Timeouts dynamically scale based on the environment (e.g., 5.0x under ASan). The `qemu_launcher` automatically injects the appropriately scaled `stall-timeout` via `conftest_core.py::get_time_multiplier()`.
 - **Logical Timeouts**: In test code, pass ideal *logical* timeouts to `vta.step(timeout=10.0)` or `bridge.wait_for_line(timeout=10.0)`. The framework will mathematically stretch these into real-world bounds transparently. Do NOT use massive arbitrary timeouts like `timeout=500` to fix slow CI runners.
 
 ---
@@ -148,7 +148,7 @@ virtmcu/
 | Layer | Language | Framework | Purpose |
 | :--- | :--- | :--- | :--- |
 | **White-Box Internals** | **Rust** | `cargo test` | State machines, layout validation, protocol parsing, FFI boundaries. |
-| **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration, QMP, UART verification, end-to-end regression. Uses `SimulationTransport` (ARCH-19) for transport agnosticism. |
+| **Black-Box Orchestration** | **Python** | `pytest` + `asyncio` | Multi-process orchestration, QMP, UART verification, end-to-end regression. Uses `SimulationTransport` for transport agnosticism. |
 | **Thin CI Wrappers** | **Bash** | `make test` / `.sh` | 2-3 line entry points only — invoke `pytest` or `cargo test`. |
 
 ### Parallel Execution Rules (`pytest -n auto` — all tests MUST comply)
@@ -203,6 +203,7 @@ Every deployment change must be revertable. Add logging on critical paths (not i
 - **DO NOT** edit `.env` or `BUILD_DEPS` automatically — user-only or via `make sync-versions`.
 - All QEMU source modifications → `scripts/apply-qemu-patches.sh`. No ad-hoc `sed`/`git am` elsewhere.
 - **DEBIAN_CODENAME** in `BUILD_DEPS` is the single source of truth for all stages. Never deviate between devcontainer and release — disable incompatible QEMU features at configure time instead.
+- **Python Testing Framework**: `pytest-asyncio` is pinned to **1.3.0** (with `asyncio_default_fixture_loop_scope = "function"` in `pyproject.toml`) to ensure compatibility with Python 3.13 and solve `FixtureDef` attribute errors. Agents MUST NOT change this version.
 
 ### 7. Environment Parity (1:1 Local-to-Remote)
 
@@ -235,12 +236,12 @@ Sharing `target/` between host and container corrupts Cargo fingerprints. See `d
 
 ### 11. No Polling / Sleep Avoidance
 - BANNED: `std::thread::sleep`, `time.sleep()`, or `asyncio.sleep()` in hot paths, MMIO, network callbacks, or tests. All test synchronization MUST be deterministic (e.g., using `vta.step()`, QMP events, or Zenoh `recv_async()`).
-- CI enforcement: `grep -r "thread::sleep" hw/rust/` and `grep -r "asyncio.sleep" tests/` must be zero. Exception: `# SLEEP_EXCEPTION: <reason>`.
-- Use `bridge.wait_for_line(..., timeout=...)` or `bridge.wait_for_event(...)` which leverage `asyncio.Event` signaling rather than busy-wait spinloops (ARCH-20).
+- CI enforcement: `grep -r "thread::sleep" hw/rust/` and `grep -r "(asyncio|time).sleep(" tests/` must be zero. Exception: `# SLEEP_EXCEPTION: <reason>`.
+- Use `bridge.wait_for_line(..., timeout=...)` or `bridge.wait_for_event(...)` which leverage `asyncio.Event` signaling rather than busy-wait spinloops.
 - Rust: use `condvar.wait_timeout()` keyed on `shutdown: Arc<AtomicBool>`.
 - Python tests: use `TimeAuthority` for virtual time; Zenoh Pub/Sub for signaling.
 
-### 10. Safe Big QEMU Lock (BQL) Usage
+### 12. Safe Big QEMU Lock (BQL) Usage
 
 - **Async threads** (Transport subscribers): MUST NOT block waiting for BQL. Push to `crossbeam_channel::unbounded`; a QEMU timer (holding BQL) drains the queue. `SafeSubscription` handles this pattern automatically.
 - **MMIO vCPU threads**: yield BQL via `Bql::temporary_unlock()` when blocking.
@@ -248,11 +249,11 @@ Sharing `target/` between host and container corrupts Cargo fingerprints. See `d
 - BANNED: raw `virtmcu_bql_unlock/lock()` or `virtmcu_mutex_lock/unlock()` outside `virtmcu-qom/src/sync.rs`; `std::mem::forget(Bql::lock())`; mixing `std::sync::Mutex` with `*mut QemuMutex` in one device.
 - **Lock order (canonical)**: BQL → peripheral mutex → condvar wait. Document in module-level comment.
 
-### 11. New Peripherals
+### 13. New Peripherals
 - All new peripherals in Rust using `hw/rust/common/rust-dummy` template.
 - One legacy C model (`hw/misc/educational-dummy.c`, `dummy-device`) kept for compatibility; tested in dynamic_plugin.
 
-### 12. Safe Peripheral Teardown
+### 14. Safe Peripheral Teardown
 
 Mandatory shutdown sequence:
 1. Set `running = false` (holding state lock).
@@ -265,7 +266,7 @@ Mandatory shutdown sequence:
 - **Drain pattern**: `drain_cond: Arc<(Mutex<()>, Condvar)>`; callback calls `notify_all()` after decrement; Drop: `while active_count > 0 { guard = cvar.wait(guard).unwrap(); }`.
 - Every new peripheral needs a shutdown integration test (teardown during blocked MMIO, no sanitizer errors).
 
-### 13. Unsafe Rust — Precise Rules
+### 15. Unsafe Rust — Precise Rules
 - **Packed structs**: use `ptr::read_unaligned` — never direct dereference of `*const T` where `T: repr(packed)`.
 - **Serialization**: use `to_le_bytes()`/`from_le_bytes()` or per-field byte-order ops — not `mem::transmute`.
 - **Wire protocols**: `to_ne_bytes()` / `from_ne_bytes()` BANNED for cross-process/machine values. CI: `grep -rn "to_ne_bytes\|from_ne_bytes" hw/rust/` must be zero. Exception: `// NE_BYTES_EXCEPTION: <reason>`.
@@ -273,14 +274,20 @@ Mandatory shutdown sequence:
 - **`unsafe` scope**: one FFI call per block — no aggregated unsafe ops.
 - **Deserialization**: no `ptr::copy_nonoverlapping` into `&mut T`. Use `from_le/be_bytes()` or `unpack()`.
 
-### 14. Test Quality Mandates
+### 16. Test Quality Mandates
 - **Mock fidelity**: mocks must support configurable return values — "always success" mocks hide error paths.
 - **Concurrency**: `loom`-based test (small state space) or 10 000+ iteration stress test (`cargo test --release`).
 - **Teardown**: every thread-spawning peripheral needs a clean-shutdown test; run under `cargo miri test`.
 
-### 15. Lessons Learned (Anti-Patterns — Do Not Repeat)
+### 17. Python SOTA Mandates (Tooling & Testing)
+- **No Path Bootstrapping**: BANNED: `sys.path.insert()`, `sys.path.append()`. Scripts MUST rely on `uv run` and the `pyproject.toml` package boundary.
+- **No Global Path Mutation**: BANNED: `os.chdir()`. Use absolute `pathlib.Path` objects or pass `cwd=` to `subprocess`.
+- **AST over Regex**: BANNED: using regex or string searches (`.find()`) to parse structured data like `.dtb`, JSON, or YAML. Use native parsers (e.g., the `fdt` library).
+- **First-Class Tooling**: Scripts in `tools/` and `scripts/` are production code. They must pass strict type-checking (`mypy`) and cannot use `# noqa` or `# type: ignore` to bypass architecture rules.
 
-- **SafeSubscription Teardown (DET-1)**: never bound a drain loop. Use `Condvar::notify_all()` in callback + unconditional `Condvar::wait()` in Drop (see §12). `SafeSubscription` encapsulates this logic.
+### 18. Lessons Learned (Anti-Patterns — Do Not Repeat)
+
+- **SafeSubscription Teardown**: never bound a drain loop. Use `Condvar::notify_all()` in callback + unconditional `Condvar::wait()` in Drop (see §12). `SafeSubscription` encapsulates this logic.
 - **PDES Tie-Breaking**: direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator` for canonical ordering.
 - **DSO TLS Trap**: never call QEMU TLS macros (e.g., `bql_locked()`) from a plugin DSO — use `virtmcu_is_bql_locked()` from the main-binary header.
 - **Atomic State Transitions**: use a single `AtomicU8` enum + `compare_exchange`. Multiple boolean flags allow illegal states.

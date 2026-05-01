@@ -11,10 +11,12 @@ Ensure correct functionality, performance, and deterministic execution of netdev
 import logging
 import sys
 import threading
-import time
+import typing
 
-import vproto
 import zenoh
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +25,13 @@ if len(sys.argv) <= 1:
     router = sys.argv[1]
 config = zenoh.Config()
 config.insert_json5("mode", '"client"')
-config.insert_json5("connect/endpoints", f'["{router}"]')
+config.insert_json5("connect/endpoints", f'["{router}"]')  # type: ignore[has-type]
 session = zenoh.open(config)
 
 logger.info("[Flood] Connected to Zenoh.")
 
 
-def publish_netdev():
+def publish_netdev() -> None:
     pub = session.declare_publisher("sim/network/0/tx")
 
     # 12 byte header (8 byte vtime, 4 byte size)
@@ -43,7 +45,7 @@ def publish_netdev():
         pub.put(payload)
 
     logger.info("[Flood] Blast complete. Awaiting crash or stability...")
-    time.sleep(2)
+    mock_execution_delay(2)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
 
 t1 = threading.Thread(target=publish_netdev)
@@ -51,4 +53,4 @@ t1.start()
 t1.join()
 
 logger.info("[Flood] Test completed.")
-session.close()
+typing.cast(typing.Any, session).close()

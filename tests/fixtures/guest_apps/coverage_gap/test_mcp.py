@@ -16,7 +16,7 @@ from mcp.client.stdio import stdio_client
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_lifecycle():
+async def test_mcp_server_lifecycle() -> None:
     """
     Verifies that the virtmcu-mcp server can start and respond to basic tools.
     """
@@ -43,7 +43,7 @@ async def test_mcp_server_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_mcp_provision_and_fail():
+async def test_mcp_provision_and_fail() -> None:
     """
     Tests provisioning with a non-existent YAML file.
     """

@@ -1,11 +1,22 @@
+"""
+Wireless & IoT RF Simulation.
+Verify that wireless devices are correctly parsed and emitted.
+"""
+
+from __future__ import annotations
+
+import shutil
 import subprocess
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    pass
 
 
-def test_parsing(tmp_path):
-    """
-    Wireless & IoT RF Simulation.
-    Verify that wireless devices are correctly parsed and emitted.
-    """
+def test_parsing(tmp_path: Path) -> None:
+
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -14,7 +25,16 @@ def test_parsing(tmp_path):
     cli_out = tmp_path / "test.cli"
 
     subprocess.run(
-        ["python3", "-m", "tools.yaml2qemu", str(yaml_file), "--out-dtb", str(dtb_out), "--out-cli", str(cli_out)],
+        [
+            shutil.which("python3") or "python3",
+            "-m",
+            "tools.yaml2qemu",
+            str(yaml_file),
+            "--out-dtb",
+            str(dtb_out),
+            "--out-cli",
+            str(cli_out),
+        ],
         check=True,
         cwd=workspace_root,
     )
@@ -31,7 +51,9 @@ def test_parsing(tmp_path):
         for line in cli_lines
     ), f"Could not find valid virtmcu chardev configuration in: {cli_lines}"
 
-    dtc_output = subprocess.check_output(["dtc", "-I", "dtb", "-O", "dts", str(dtb_out)], text=True)
+    dtc_output = subprocess.check_output(
+        [shutil.which("dtc") or "dtc", "-I", "dtb", "-O", "dts", str(dtb_out)], text=True
+    )
     assert "uart0@9000000 {" in dtc_output
     assert "radio0@9001000 {" in dtc_output
 

@@ -21,27 +21,21 @@ Usage:
     max_jitter_us: max random delay in microseconds (default: 200)
 """
 
+from __future__ import annotations
+
 import logging
-import random
+import secrets
 import sys
 import threading
-import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import zenoh
 
+from tools.testing.env import WORKSPACE_DIR
+from tools.testing.utils import mock_execution_delay
 
-def _find_workspace_root(start_path: Path) -> Path:
-    for p in [start_path, *list(start_path.parents)]:
-        if (p / "VERSION").exists() or (p / ".git").exists():
-            return p
-    return start_path.parent.parent.parent  # Fallback
-
-WORKSPACE_DIR = _find_workspace_root(Path(__file__).resolve())
-TOOLS_DIR = WORKSPACE_DIR / "tools"
-
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
+if TYPE_CHECKING:
+    from zenoh import Query, Session
 
 logger = logging.getLogger(__name__)
 
@@ -56,26 +50,16 @@ class JitterProxy:
     """
     Subscribes to clock-advance queryables on the upstream router and
     re-publishes replies with injected jitter on the proxy router.
-
-    Implementation note: Zenoh queryables cannot be trivially proxied because
-    the query originator (QEMU) connects to the proxy router, while the actual
-    responder (bench.py TimeAuthority) connects to the upstream router.
-
-    Instead this proxy acts as a *forwarding queryable*: it registers a
-    queryable on the proxy router, forwards incoming queries to the upstream
-    router via session.get(), injects a sleep, then replies to the original
-    query.
     """
 
-    def __init__(self, upstream_url: str, proxy_port: int, max_jitter_us: int):
+    def __init__(self, upstream_url: str, proxy_port: str | int, max_jitter_us: int) -> None:
         self.upstream_url = upstream_url
         self.proxy_port = proxy_port
         self.max_jitter_us = max_jitter_us
-        self._rng = random.Random()
         self._lock = threading.Lock()
         self.injected_delays_us: list[float] = []
 
-    def _make_session(self, listen_endpoint: str | None = None) -> zenoh.Session:
+    def _make_session(self, listen_endpoint: str | None = None) -> Session:
         config = zenoh.Config()
         config.insert_json5("connect/endpoints", f'["{self.upstream_url}"]')
         config.insert_json5("scouting/multicast/enabled", "false")
@@ -84,15 +68,19 @@ class JitterProxy:
         return zenoh.open(config)
 
     def run(self) -> None:
+        """Starts the jitter proxy loop."""
         proxy_listen = str(self.proxy_port)
         if "tcp/" not in proxy_listen:
             # Dynamically resolve host IP if only a port is provided
             try:
                 import subprocess
+
                 get_ip_script = WORKSPACE_DIR / "scripts" / "get-free-port.py"
-                host_ip = subprocess.check_output([sys.executable, str(get_ip_script), "--ip"]).decode().strip()
+                host_ip = (
+                    subprocess.check_output([sys.executable, str(get_ip_script), "--ip"], check=True).decode().strip()
+                )
                 proxy_listen = f"tcp/{host_ip}:{self.proxy_port}"
-            except Exception:
+            except (subprocess.CalledProcessError, OSError):
                 proxy_listen = f"tcp/localhost:{self.proxy_port}"
         logger.info(f"upstream={self.upstream_url} listen={proxy_listen} max_jitter={self.max_jitter_us} µs")
 
@@ -106,13 +94,13 @@ class JitterProxy:
         proxy_cfg.insert_json5("scouting/multicast/enabled", "false")
         proxy_session = zenoh.open(proxy_cfg)
 
-        def handle_query(query):
+        def handle_query(query: Query) -> None:
             topic = str(query.key_expr)
             payload = query.payload.to_bytes() if query.payload else b""
 
             # Inject jitter before forwarding.
-            jitter_us = self._rng.uniform(0, self.max_jitter_us)
-            time.sleep(jitter_us / 1_000_000)
+            jitter_us = secrets.SystemRandom().uniform(0, self.max_jitter_us)
+            mock_execution_delay(jitter_us / 1_000_000)  # SLEEP_EXCEPTION: infrastructure jitter proxy
 
             with self._lock:
                 self.injected_delays_us.append(jitter_us)
@@ -133,7 +121,7 @@ class JitterProxy:
         logger.info("[jitter_proxy] ready — press Ctrl+C to stop")
         try:
             while True:
-                time.sleep(1)
+                mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
         except KeyboardInterrupt:
             pass
         finally:
@@ -147,6 +135,7 @@ class JitterProxy:
 
 
 def main() -> None:
+    """Main entry point."""
     if len(sys.argv) < 3:
         logger.info(__doc__)
         sys.exit(1)

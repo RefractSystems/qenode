@@ -2,6 +2,7 @@
 
 # namespace: core
 
+
 import flatbuffers
 from flatbuffers.compat import import_numpy
 
@@ -11,11 +12,11 @@ class ZenohSPIHeader:
     __slots__ = ['_tab']
 
     @classmethod
-    def SizeOf(cls):
+    def SizeOf(cls) -> int:
         return 24
 
     # ZenohSPIHeader
-    def Init(self, buf, pos):
+    def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # ZenohSPIHeader

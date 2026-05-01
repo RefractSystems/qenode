@@ -10,21 +10,23 @@ Ensure correct functionality, performance, and deterministic execution of test_o
 
 import logging
 import sys
-import time
+import typing
 
-import vproto
 import zenoh
+
+from tools import vproto
+from tools.testing.utils import mock_execution_delay
 
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     conf = zenoh.Config()
     s = zenoh.open(conf)
 
     rx_frames = []
 
-    def on_rx(sample):
+    def on_rx(sample: zenoh.Sample) -> None:
         rx_frames.append(sample.payload.to_bytes())
 
     s.declare_subscriber("sim/eth/frame/2/rx", on_rx)
@@ -32,14 +34,14 @@ def main():
     pub1 = s.declare_publisher("sim/eth/frame/1/tx")
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
 
-    time.sleep(1)
+    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     pub2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
-    time.sleep(0.5)
+    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     orig_vtime = 0xFFFFFFFFFFFFFFFF - 500000
     pub1.put(vproto.ZenohFrameHeader(orig_vtime, 0, 4).pack() + b"DEAD")
 
-    time.sleep(1)
+    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
 
     if len(rx_frames) == 0:
         logger.error("FAIL: No frame received")
@@ -56,7 +58,7 @@ def main():
     else:
         logger.info("PASS: VTime did not wrap around.")
 
-    s.close()
+    typing.cast(typing.Any, s).close()
 
 
 if __name__ == "__main__":
