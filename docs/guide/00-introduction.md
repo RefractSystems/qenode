@@ -1,25 +1,23 @@
-# The Virtmcu Engineer's Manual: Development, Testing, and Infrastructure
+# Part I: Foundations
 
-## Preface
+## Welcome to VirtMCU
 
-Welcome to the **Virtmcu Engineer's Manual**. While the *Architecture Specification* (located in `/docs/architecture/`) explains how the system is designed, this manual explains how to **build, test, and maintain** it.
+Welcome to the **VirtMCU** curriculum. Before we dive into the complex internals of virtual time synchronization and hardware emulation, we must first understand the "Why" and the "How" of the system's development. This section provides the historical context and the practical tools you need to begin your journey.
 
-VirtMCU is a complex, multi-language project that bridges the gap between C (QEMU), Rust (Peripherals), Python (Orchestration), and DevOps (Docker, CI/CD). To maintain the high standards of an enterprise-grade digital twin platform, every engineer must adhere to the workflows, safety guardrails, and testing standards defined in these chapters.
+VirtMCU is a complex, multi-language project that bridges the gap between C (QEMU), Rust (Peripherals), Python (Orchestration), and DevOps (Docker, CI/CD). To master this system, you must first master the environment in which it lives.
 
 ---
 
 ## Table of Contents
 
-### Part I: The Environment
-- **[Chapter 1: The Build System](01-build-system.md)**: Understanding `meson`, `cargo`, and the bifurcated QEMU/Rust build process.
-- **[Chapter 2: Containerized Development](02-containerized-development.md)**: Working within the DevContainer and managing the development lifecycle.
+### 1. [The VirtMCU Story](05-project-history.md)
+A record of the technical evolution of the project, from its inception to its current state as a hardened, deterministic emulator. Understanding the history helps clarify the "why" behind many architectural decisions.
 
-### Part II: Quality Assurance
-- **[Chapter 3: Testing Strategy & Guidelines](03-testing-strategy.md)**: From unit tests to multi-node Robot Framework integration suites.
-- **[Chapter 4: Continuous Integration & Delivery](04-continuous-integration.md)**: Our GitHub Actions pipeline, ASan tiers, and release management.
+### 2. [Laboratory Setup](02-containerized-development.md)
+Setting up your development environment. We leverage containerization to ensure that "it works on my machine" is a guarantee, not a gamble.
 
-### Part III: Evolution
-- **[Chapter 5: Project History & Milestones](05-project-history.md)**: A record of completed phases and the technical evolution of the project.
+### 3. [The Build System](01-build-system.md)
+Understanding `meson`, `cargo`, and the bifurcated QEMU/Rust build process. Here, you will learn how the "Forge" works—how source code is transformed into a high-performance simulation engine.
 
 ---
 
@@ -29,10 +27,7 @@ VirtMCU is a complex, multi-language project that bridges the gap between C (QEM
 If a check can be automated (lint, FFI export verify, address alignment), it must be in the `Makefile` and enforced in CI. We do not rely on developer memory.
 
 ### 2. Hermeticity
-Our build environment is strictly containerized. "It works on my machine" is solved by "It works in the DevContainer." All production artifacts are built in the `builder` image.
+Our build environment is strictly containerized. The DevContainer is your standardized laboratory.
 
 ### 3. Test-First Evolution
-No feature is complete without a corresponding test in the integration suite. For bug fixes, an empirical reproduction script is a prerequisite for a pull request.
-
-### 4. Zero-Warning Policy
-We maintain a zero-warning threshold for `clippy`, `ruff`, `mypy`, and `cppcheck`. Technical debt is a liability that we aggressively manage.
+No feature is complete without a corresponding test. We build with the confidence that every change is verified against a rigorous suite of deterministic tests.

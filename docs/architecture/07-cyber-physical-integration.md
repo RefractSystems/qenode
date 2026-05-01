@@ -18,7 +18,15 @@ Sensor peripherals (ADC, IMU, encoder) receive physical quantities from the phys
 
 ---
 
-## 2. The "Cyber Prim" Vision (OpenUSD)
+## 2. Co-Simulation Hardware Integration
+
+While SAL/AAL connects abstract physics, VirtMCU also integrates with external digital logic simulators (RTL/SystemC) using two distinct paths (detailed in Chapter 4):
+- **Path A (Unix Socket Bridge)**: A lightweight, custom protocol for simple custom logic.
+- **Path B (Remote Port)**: An industry-standard interface targeting Verilator models and existing Xilinx/SystemC ecosystems. It natively transports TLM-2.0 `b_transport` payloads over IPC to a Remote Port Slave implementation.
+
+---
+
+## 3. The "Cyber Prim" Vision (OpenUSD)
 
 In traditional robotics simulation, there is a hard wall between the Physics Engine (geometry, joints) and the Cyber Node (firmware, registers). VirtMCU breaks this wall by treating an emulated microcontroller as a first-class **"Cyber Prim"** within the **OpenUSD (Universal Scene Description)** ecosystem.
 

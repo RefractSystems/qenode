@@ -524,6 +524,12 @@ pub unsafe extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     // Guest is ready for more data. Try to drain immediately.
     let stalled = drain_backlog(state);
 
+    if !state.backlog.get().is_empty() {
+        // Resume pushing bytes into the guest
+        let now = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
+        unsafe { virtmcu_qom::timer::virtmcu_timer_mod(state.rx_baud_timer, now) };
+    }
+
     if !stalled {
         // Successfully pushed data, check if we need to schedule the timer for future packets
         let heap = state.local_heap.get();

@@ -5,7 +5,7 @@
 
 ## Context
 
-The `virtmcu` project utilizes a mix of C, C++, Rust, and Python. As the project matures and integrates more deeply with high-performance simulation requirements (FirmwareStudio), the overhead of inter-process communication and the fragility of FFI bindings have become critical bottlenecks. Specifically, the previous C implementation of Zenoh plugins (`hw/zenoh/`) relied on `zenoh-c` bindings, which complicated the build process and introduced potential safety risks in multi-threaded contexts.
+The `VirtMCU` project utilizes a mix of C, C++, Rust, and Python. As the project matures and integrates more deeply with high-performance simulation requirements (FirmwareStudio), the overhead of inter-process communication and the fragility of FFI bindings have become critical bottlenecks. Specifically, the previous C implementation of Zenoh plugins (`hw/zenoh/`) relied on `zenoh-c` bindings, which complicated the build process and introduced potential safety risks in multi-threaded contexts.
 
 ## Decision
 
@@ -25,7 +25,7 @@ We established a strict **Language Selection Policy** and initiated a **Native R
 *   **NO Python** in the simulation loop (managing MMIO, virtual time, or packet delivery).
 *   **NO heavy FFI** for components that are natively available in another project-supported language (e.g., use Rust for Zenoh).
 
-### 2. Phase 18 & 19: Native Rust Migration (The "Oxidization")
+### 2. Milestones 18 & 19: Native Rust Migration (The "Oxidization")
 
 We migrated the core `hw/` subsystem and infrastructure to native Rust.
 
@@ -45,7 +45,7 @@ We migrated the core `hw/` subsystem and infrastructure to native Rust.
     *   Migrated `telemetry.c` to Rust and integrated directly with the FlatBuffers schema.
 
 ## Status Update (2026-04-24)
-Phase 18 and 19 have been successfully completed. All core plugins are now native Rust QOM modules, leveraging the `virtmcu-qom` abstraction layer.
+These milestones have been successfully completed. All core plugins are now native Rust QOM modules, leveraging the `virtmcu-qom` abstraction layer.
 
 ## Consequences
 

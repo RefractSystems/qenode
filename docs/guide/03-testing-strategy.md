@@ -71,7 +71,62 @@ When developing new features or debugging flaky tests, you must prove stability 
 ./tools/testing/run_stress.sh tests/test_flexray.py::test_flexray_stress
 
 # Run a test suite 50 times
-./tools/testing/run_stress.sh tests/test_phase20_5_stress.py 50
+./tools/testing/run_stress.sh tests/test_spi_stress.py 50
 ```
 
-The script will instantly halt and report the failure if any iteration fails, allowing you to inspect the system state and logs at the exact moment of failure.
+## 6. The Declarative Simulation Environment (`VirtmcuSimulation`)
+
+A critical lesson learned during extreme-load ASan/TSan stress testing was the vulnerability of manual test orchestration. If developers must manually sequence QEMU boot, Zenoh discovery, and clock initialization, simple omissions (like forgetting a `wait_for_discovery()` barrier) inevitably lead to race conditions, dropped packets, and endless polling deadlocks.
+
+To structurally prevent this and provide an "idiot-proof" API, VirtMCU uses the `simulation` fixture to expose a declarative `VirtmcuSimulation` orchestrator.
+
+### The Orchestration Lifecycle
+
+You no longer need to instantiate `QmpBridge` or `VirtualTimeAuthority` manually. Instead, use the declarative context manager:
+
+```python
+@pytest.mark.asyncio
+async def test_my_feature(simulation):
+    dtb, kernel = build_artifacts()
+    extra_args = ["-device", "virtmcu-clock,node=0,mode=slaved-icount"]
+
+    # 1. Bring-Up & Setup
+    async with await simulation(dtb, kernel, extra_args=extra_args) as sim:
+        
+        # 2. Test Logic (System is guaranteed to be perfectly frozen at 0 ns)
+        await sim.vta.step(1_000_000)
+        
+    # 3. Teardown (Automatically handles QEMU termination & Zenoh cleanup)
+```
+
+The `VirtmcuSimulation` orchestrator handles three distinct stages behind the scenes:
+
+1. **Bring-Up (Deterministic Setup):** 
+   - Starts the QEMU instance and ensures the `-S` (freeze at boot) flag is present.
+   - Automatically injects `router={zenoh_router}` into your `-device` and `-chardev` CLI arguments so you don't have to manage network topologies manually.
+   - Waits for the QMP and UART sockets to appear and connects the bridge.
+2. **The Deterministic Initialization Barrier (`sim.vta.init()`):**
+   - Automatically waits for the `sim/clock/liveliness/{nid}` tokens for all managed nodes (Global Liveliness Barrier).
+   - Implicitly executes a `0 ns` clock advance to ensure QEMU is fully booted, connected, and frozen *exactly* at `vtime = 0 ns` before yielding control to your test logic.
+3. **Teardown:**
+   - Safely closes the QMP bridge and guarantees QEMU processes are reaped, even if your test assertions fail.
+
+By encapsulating discovery and initialization into this declarative context manager, tests are significantly shorter, cleaner, and completely immune to race conditions!
+
+## 7. Automated Flight Recorder (PCAP)
+
+Debugging complex multi-node failures in CI is challenging. To eliminate the need for parsing thousands of lines of verbose text logs, VirtMCU implements an **Automated Flight Recorder** (INFRA-7).
+
+Whenever a `pytest` execution fails (e.g., due to a timeout or failed assertion), the `conftest_core.py` harness automatically dumps the entire test's network traffic history into two artifact formats:
+1.  **JSON Trace**: A human-readable list of events containing `vtime_ns`, `topic`, and the hex `payload`.
+2.  **PCAP File**: A binary capture file natively readable by Wireshark.
+
+### Locating Artifacts
+Artifacts are automatically saved to the `test-results/flight_recorder/` directory:
+```
+test-results/flight_recorder/test_name.json
+test-results/flight_recorder/test_name.pcap
+```
+
+### Wireshark Introspection
+By opening the `.pcap` artifact in Wireshark, you can observe the exact inter-node traffic, perfectly aligned by their **virtual timestamps**, providing a granular view of exactly what caused a multi-node deadlock or failure. The PCAP uses DLT_USER0 (147) and encapsulates Python-side metrics (topics, direction) directly into the Wireshark-readable payloads via Protocol 255 (sim-tracing).

@@ -30,11 +30,10 @@ extern "C" {
 
     /// A static
     pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>;
-    /// A static
-    pub static mut virtmcu_cpu_halt_hook: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>;
 
     /// A setter
-    pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
+    #[link_name = "virtmcu_cpu_set_halt_hook"]
+    fn qemu_virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
     /// A setter
     pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(cpu: *mut CPUState)>);
     /// A static
@@ -43,6 +42,30 @@ extern "C" {
 
     /// A function
     pub fn cpu_exit(cpu: *mut CPUState);
+}
+
+use std::sync::Mutex;
+static HALT_HOOKS: Mutex<Vec<extern "C" fn(cpu: *mut CPUState, halted: bool)>> =
+    Mutex::new(Vec::new());
+
+/// Register a new CPU halt hook.
+/// This allows multiple devices to observe halt events.
+pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>) {
+    let Some(cb) = cb else { return };
+    let mut hooks = HALT_HOOKS.lock().unwrap();
+    if hooks.is_empty() {
+        unsafe {
+            qemu_virtmcu_cpu_set_halt_hook(Some(multiplexed_halt_hook));
+        }
+    }
+    hooks.push(cb);
+}
+
+extern "C" fn multiplexed_halt_hook(cpu: *mut CPUState, halted: bool) {
+    let hooks = HALT_HOOKS.lock().unwrap();
+    for hook in hooks.iter() {
+        hook(cpu, halted);
+    }
 }
 
 const _: () = assert!(core::mem::size_of::<CPUState>() == 16624);

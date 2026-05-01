@@ -1,7 +1,7 @@
 # ADR 015: Enterprise Lock-Free Logging Architecture
 
 ## Context
-The VirtMCU project previously relied on a primitive `vlog!` macro that directly wrapped the QEMU C function `virtmcu_log` (which wraps `printf`). This approach violated several core enterprise mandates:
+The VirtMCU project previously relied on a primitive `vlog!` macro that directly wrapped the QEMU C function `VirtMCU_log` (which wraps `printf`). This approach violated several core enterprise mandates:
 1. **Real-Time Safety:** `printf` acquires libc locks and performs blocking I/O on the host. Calling this from a vCPU MMIO handler blocks the Big QEMU Lock (BQL), causing severe virtual time jitter and potentially stalling the simulation.
 2. **Context Blindness:** Developers had to manually prepend module tags (`[actuator]`) and node IDs to log strings.
 3. **Missing Telemetry (VTime):** Logs lacked Virtual Time (VTime) stamps, making deterministic debugging impossible. Wall-clock time is useless in a Parallel Discrete Event Simulation (PDES).

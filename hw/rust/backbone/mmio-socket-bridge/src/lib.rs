@@ -9,20 +9,21 @@
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::sync::Arc;
+
 use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
 use core::time::Duration;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::{Condvar, Mutex};
+use std::sync::Mutex;
 
 use virtmcu_api::{
     FlatBufferStructExt, MmioReq, SyscMsg, VirtmcuHandshake, MMIO_REQ_READ, MMIO_REQ_WRITE,
     SYSC_MSG_IRQ_CLEAR, SYSC_MSG_IRQ_SET, SYSC_MSG_RESP, VIRTMCU_PROTO_MAGIC,
     VIRTMCU_PROTO_VERSION,
 };
+use virtmcu_qom::cosim::{CoSimBridge, CoSimContext, CoSimTransport};
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -30,6 +31,7 @@ use virtmcu_qom::memory::{
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, sysbus_mmio_map};
 use virtmcu_qom::qom::{Object, ObjectClass, Property, TypeInfo};
+use virtmcu_qom::sync::Bql;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_prop_uint64, device_class,
@@ -66,111 +68,45 @@ pub struct MmioSocketBridgeQEMU {
     pub mapped: bool,
 }
 
-use virtmcu_qom::sync::Bql;
-
-pub struct MmioSocketBridgeState {
-    shared: Arc<SharedState>,
-    bg_thread: Option<std::thread::JoinHandle<()>>,
-}
-
-pub struct SharedState {
-    socket_path: String,
-    reconnect_ms: u32,
-    irqs: RawIrqArray, // Points to MmioSocketBridgeQEMU.irqs
-    resp_cond: Condvar,
-    connected_cond: Condvar,
-    drain_cond: Condvar,
-    state: Mutex<ConnectionState>,
-}
-
-// SAFETY: SharedState is only accessed through Arc and its internal synchronisation
-// primitives (Mutex<ConnectionState>, Condvar). Raw pointers inside wrapper
-// structs are documented below.
-// SAFETY: All members are Send.
-unsafe impl Send for SharedState {}
-// SAFETY: All members are Sync (Mutex/Condvar/String).
-unsafe impl Sync for SharedState {}
-
 struct RawIrqArray(*mut QemuIrq);
 // SAFETY: the IRQ array lives in MmioSocketBridgeQEMU which outlives SharedState.
 // qemu_set_irq is only called while holding the BQL.
-// SAFETY: Raw pointer to QemuIrq array managed by QEMU.
 unsafe impl Send for RawIrqArray {}
-// SAFETY: See above.
 unsafe impl Sync for RawIrqArray {}
 
-struct ConnectionState {
-    stream: Option<UnixStream>,
-    has_resp: bool,
-    current_resp: Option<SyscMsg>,
-    running: bool,
-    active_vcpu_count: usize,
+struct MmioTransport {
+    socket_path: String,
+    reconnect_ms: u32,
+    irqs: RawIrqArray,
+    stream: Mutex<Option<UnixStream>>,
 }
 
-const BRIDGE_TIMEOUT_MS: u32 = 5000;
-/// Maximum time to wait for all vCPU threads to exit during teardown.
-/// Unbounded wait risks deadlocking QEMU if active_vcpu_count never reaches
-/// zero due to a panic or logic bug in the vCPU path.
-const DRAIN_TIMEOUT_SECS: u64 = 30;
+impl CoSimTransport for MmioTransport {
+    type Request = MmioReq;
+    type Response = SyscMsg;
 
-impl Drop for SharedState {
-    fn drop(&mut self) {
-        // Rust Mutex and Condvar are automatically freed
-    }
-}
-
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
-        }
-    }
-}
-
-impl SharedState {
-    fn run_background_thread(self: Arc<Self>) {
+    fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
         loop {
-            {
-                let lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if !lock.running {
-                    break;
-                }
+            if !ctx.is_running() {
+                break;
             }
 
             let stream_res = UnixStream::connect(&self.socket_path);
-            let mut stream = if let Ok(s) = stream_res {
-                s
-            } else {
-                virtmcu_qom::sim_err!(
-                    "connect failed to {}: {:?}",
-                    self.socket_path,
-                    stream_res.err()
-                );
-                if self.reconnect_ms == 0 {
-                    break;
+            let mut stream = match stream_res {
+                Ok(s) => s,
+                Err(e) => {
+                    virtmcu_qom::sim_err!("connect failed to {}: {:?}", self.socket_path, e);
+                    if self.reconnect_ms == 0 {
+                        break;
+                    }
+                    std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(u64::from(self.reconnect_ms)));
+                    continue;
                 }
-                let d = Duration::from_millis(u64::from(self.reconnect_ms));
-                let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let start = std::time::Instant::now();
-                while lock.running && start.elapsed() < d {
-                    let remaining =
-                        d.checked_sub(start.elapsed()).unwrap_or(Duration::from_secs(0));
-                    let (new_lock, _) = self
-                        .connected_cond
-                        .wait_timeout(lock, remaining)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    lock = new_lock;
-                }
-                continue;
             };
 
-            // Handshake: announce our magic/version and verify the server echoes it back.
+            // Handshake
             let hs_out = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
-            let hs_bytes = hs_out.pack();
-            if stream.write_all(hs_bytes).is_err() {
+            if stream.write_all(hs_out.pack()).is_err() {
                 continue;
             }
 
@@ -191,32 +127,24 @@ impl SharedState {
             };
 
             {
-                let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.stream = Some(stream);
+                let mut lock = self.stream.lock().unwrap();
+                *lock = Some(stream);
                 virtmcu_qom::sim_info!("connected to {}", self.socket_path);
             }
-            // Notify any vCPU thread blocked in send_req_and_wait_internal waiting for
-            // a stream to become available. Without this, the waiter must spin out the
-            // full BRIDGE_TIMEOUT_MS (5 s) before re-checking lock.stream.
-            self.connected_cond.notify_all();
+            ctx.notify_connected();
 
-            // Blocking read loop (no timeout needed; shutdown() wakes it on teardown).
+            // Blocking read loop
             loop {
-                let mut msg_bytes = [0u8; virtmcu_api::SYSC_MSG_SIZE]; // size of SyscMsg
+                let mut msg_bytes = [0u8; virtmcu_api::SYSC_MSG_SIZE];
                 if let Ok(()) = read_stream.read_exact(&mut msg_bytes) {
                     let msg = SyscMsg::unpack_slice(&msg_bytes).expect("Failed to unpack SyscMsg");
                     if msg.type_() == SYSC_MSG_RESP {
-                        let mut lock =
-                            self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                        lock.current_resp = Some(msg);
-                        lock.has_resp = true;
-                        self.resp_cond.notify_all();
+                        ctx.dispatch_response(msg);
                     } else if (msg.type_() == SYSC_MSG_IRQ_SET || msg.type_() == SYSC_MSG_IRQ_CLEAR)
                         && msg.irq_num() < 32
                     {
                         let bql = Bql::lock();
-                        // SAFETY: irqs pointer is valid (lives in MmioSocketBridgeQEMU).
-                        // qemu_set_irq is a safe QEMU FFI when BQL is held.
+                        // SAFETY: irqs pointer is valid
                         unsafe {
                             qemu_set_irq(
                                 *self.irqs.0.add(msg.irq_num() as usize),
@@ -226,88 +154,37 @@ impl SharedState {
                         drop(bql);
                     }
                 } else {
-                    // EOF or error — signal any waiting vCPU thread to return.
-                    let mut lock =
-                        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    lock.stream = None;
-                    lock.has_resp = true;
-                    lock.current_resp = None;
-                    self.resp_cond.notify_all();
-                    // SAFETY: Safe QEMU FFI to wake up vCPUs.
-                    unsafe { virtmcu_qom::cpu::virtmcu_cpu_exit_all() };
+                    {
+                        let mut lock = self.stream.lock().unwrap();
+                        *lock = None;
+                    }
+                    ctx.notify_disconnected();
                     virtmcu_qom::sim_info!("remote disconnected, closing socket");
                     break;
                 }
             }
         }
-
-        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.running = false;
-        self.connected_cond.notify_all();
-        self.resp_cond.notify_all();
     }
 
-    fn send_req_and_wait(&self, req: MmioReq) -> Option<SyscMsg> {
-        {
-            let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !lock.running {
-                return None;
-            }
-            lock.active_vcpu_count += 1;
+    fn send_request(&self, req: Self::Request) -> bool {
+        let mut lock = self.stream.lock().unwrap();
+        if let Some(s) = lock.as_mut() {
+            s.write_all(req.pack()).is_ok()
+        } else {
+            false
         }
-        let _guard = VcpuCountGuard(self);
-
-        self.send_req_and_wait_internal(req)
     }
 
-    fn send_req_and_wait_internal(&self, req: MmioReq) -> Option<SyscMsg> {
-        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        loop {
-            if !lock.running {
-                return None;
-            }
-            if let Some(mut s) = lock.stream.take() {
-                if s.write_all(req.pack()).is_ok() {
-                    lock.stream = Some(s);
-                    lock.has_resp = false;
-                    break;
-                }
-                // Write failed, stream is None
-            }
-
-            // Wait for connection
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, result) = self
-                .connected_cond
-                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if result.timed_out() {
-                virtmcu_qom::sim_info!("timeout waiting for connection");
-                return None;
-            }
+    fn interrupt_rx(&self) {
+        let mut lock = self.stream.lock().unwrap();
+        if let Some(s) = lock.as_mut() {
+            let _ = s.shutdown(std::net::Shutdown::Both);
         }
-
-        // Wait for response
-        while !lock.has_resp && lock.running {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, result) = self
-                .resp_cond
-                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if result.timed_out() {
-                virtmcu_qom::sim_info!("timeout waiting for response");
-                lock.stream = None;
-                lock.has_resp = true;
-                break;
-            }
-        }
-
-        lock.current_resp.take()
     }
+}
+
+pub struct MmioSocketBridgeState {
+    bridge: CoSimBridge<MmioTransport>,
 }
 
 unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
@@ -321,7 +198,11 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
         addr,
         0,
     );
-    if let Some(resp) = state.shared.send_req_and_wait(req) {
+
+    // We attempt to wait if unconnected to preserve behavior
+    state.bridge.wait_connected(5000);
+
+    if let Some(resp) = state.bridge.send_and_wait(req, 5000) {
         resp.data()
     } else {
         0
@@ -339,7 +220,9 @@ unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size
         addr,
         val,
     );
-    state.shared.send_req_and_wait(req);
+
+    state.bridge.wait_connected(5000);
+    state.bridge.send_and_wait(req, 5000);
 }
 
 static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -381,29 +264,15 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         sysbus_init_irq(dev as *mut SysBusDevice, &raw mut qemu.irqs[i]);
     }
 
-    let shared = Arc::new(SharedState {
+    let transport = MmioTransport {
         socket_path: CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned(),
         reconnect_ms: qemu.reconnect_ms,
         irqs: RawIrqArray(qemu.irqs.as_mut_ptr()),
-        resp_cond: Condvar::new(),
-        connected_cond: Condvar::new(),
-        drain_cond: Condvar::new(),
-        state: Mutex::new(ConnectionState {
-            stream: None,
-            has_resp: false,
-            current_resp: None,
-            running: true,
-            active_vcpu_count: 0,
-        }),
-    });
+        stream: Mutex::new(None),
+    };
 
-    let shared_clone = Arc::clone(&shared);
-    let bg_thread = std::thread::spawn(move || {
-        shared_clone.run_background_thread();
-    });
-
-    let state =
-        Box::new(MmioSocketBridgeState { shared: Arc::clone(&shared), bg_thread: Some(bg_thread) });
+    let bridge = CoSimBridge::new(transport);
+    let state = Box::new(MmioSocketBridgeState { bridge });
     qemu.rust_state = Box::into_raw(state);
 
     let id_str = if qemu.id.is_null() {
@@ -440,46 +309,8 @@ unsafe extern "C" fn bridge_instance_init(_obj: *mut Object) {}
 unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
     let qemu = &mut *(obj as *mut MmioSocketBridgeQEMU);
     if !qemu.rust_state.is_null() {
-        let mut state = Box::from_raw(qemu.rust_state);
-        // Stop background thread
-        {
-            let mut lock =
-                state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock.running = false;
-            if let Some(ref mut s) = lock.stream {
-                let _ = s.shutdown(std::net::Shutdown::Both);
-            }
-        }
-        // Wake it up if it's blocked on connect/wait
-        state.shared.resp_cond.notify_all();
-        state.shared.connected_cond.notify_all();
-
-        // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock
-        // if active_vcpu_count never reaches zero due to a bug or panic).
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        while lock.active_vcpu_count > 0 {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, timed_out) = state
-                .shared
-                .drain_cond
-                .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if timed_out.timed_out() {
-                virtmcu_qom::sim_info!(
-                    "drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
-                    DRAIN_TIMEOUT_SECS, lock.active_vcpu_count
-                );
-                break;
-            }
-        }
-
-        if let Some(handle) = state.bg_thread.take() {
-            let bql_unlock = Bql::temporary_unlock();
-            let _ = handle.join();
-            drop(bql_unlock);
-        }
+        let state = Box::from_raw(qemu.rust_state);
+        drop(state); // CoSimBridge Drop handler cleans up thread and drains vCPUs!
 
         if qemu.mapped && !qemu.id.is_null() {
             let id = CStr::from_ptr(qemu.id).to_string_lossy().into_owned();

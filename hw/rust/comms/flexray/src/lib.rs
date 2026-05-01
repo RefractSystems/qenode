@@ -127,7 +127,12 @@ impl Ord for OrderedFlexRayPacket {
 pub unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     let s = unsafe { &mut *(dev as *mut VirtmcuFlexRay) };
 
-    let router = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
+    let router_str = if s.router.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(s.router).to_string_lossy().into_owned() })
+    };
+
     let transport_name = if s.transport.is_null() {
         "zenoh".to_owned()
     } else {
@@ -140,7 +145,7 @@ pub unsafe extern "C" fn flexray_realize(dev: *mut c_void, _errp: *mut *mut c_vo
         unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() }
     };
 
-    s.rust_state = flexray_init_internal(s, s.node_id, transport_name, router, topic);
+    s.rust_state = flexray_init_internal(s, s.node_id, transport_name, router_str, topic);
 }
 
 /// # Safety
@@ -410,6 +415,7 @@ pub unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
     let s = unsafe { &mut *(obj as *mut VirtmcuFlexRay) };
     s.vrc = 0x00000001;
     s.ccsv = 0x0;
+    s.rust_state = ptr::null_mut();
     s.msg_ram_headers = [FlexRayMsgHeader::default(); 128];
     s.msg_ram_data = [0; 8192];
 
@@ -461,7 +467,7 @@ pub unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
 }
 
 static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
-    name: c"flexray".as_ptr(),
+    name: c"virtmcu,flexray".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,
     instance_size: core::mem::size_of::<VirtmcuFlexRay>(),
     instance_align: 0,
@@ -517,21 +523,27 @@ fn flexray_init_internal(
     parent: *mut VirtmcuFlexRay,
     node_id: u32,
     transport_name: String,
-    router: *const c_char,
+    router: Option<String>,
     topic: String,
 ) -> *mut VirtmcuFlexRayState {
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node_id })
-        } else {
-            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
-        };
+        let path = router.unwrap_or_else(|| format!("/tmp/virtmcu-coord-{node_id}.sock"));
         match transport_unix::UnixDataTransport::new(&path) {
             Ok(t) => Arc::new(t),
             Err(_) => return ptr::null_mut(),
         }
     } else {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
+        let router_ptr = match &router {
+            Some(s) => alloc::ffi::CString::new(s.as_bytes()).unwrap().into_raw().cast_const(),
+            None => ptr::null(),
+        };
+        let session = unsafe { transport_zenoh::get_or_init_session(router_ptr) };
+        if !router_ptr.is_null() {
+            unsafe {
+                let _ = alloc::ffi::CString::from_raw(router_ptr.cast_mut());
+            }
+        }
+        match session {
             Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
             Err(_) => return ptr::null_mut(),
         }

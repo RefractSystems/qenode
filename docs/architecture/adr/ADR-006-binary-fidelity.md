@@ -15,7 +15,7 @@ This concern is concrete, not theoretical. Renode requires a `.repl` that maps d
 at Renode's canonical addresses, which often differ from the physical MCU's datasheet
 addresses. Engineers working with Renode frequently discover that the firmware built for
 the sim crashes on silicon because the peripheral base addresses or interrupt numbers
-differ. virtmcu must not repeat this mistake.
+differ. VirtMCU must not repeat this mistake.
 
 ## Decision
 
@@ -34,7 +34,7 @@ inside VirtMCU without any modifications to the firmware source or build system.
    must not fault unless the real hardware would fault.
 
 3. **Interrupt fidelity**: IRQ numbers in the DTB `interrupts` property must match the
-   NVIC/GIC numbers in the datasheet. virtmcu co-simulation devices (`clock`,
+   NVIC/GIC numbers in the datasheet. VirtMCU co-simulation devices (`clock`,
    `netdev`) must not consume interrupt lines that the target MCU exposes to
    firmware.
 
@@ -44,7 +44,7 @@ inside VirtMCU without any modifications to the firmware source or build system.
    oscilloscope probe — it observes and controls timing without altering the circuit the
    firmware sees.
 
-5. **No firmware API**: virtmcu must not define a guest-visible semihosting extension,
+5. **No firmware API**: VirtMCU must not define a guest-visible semihosting extension,
    mailbox, or special memory region that firmware calls to interact with the simulator.
    Any such interface would break binary fidelity immediately.
 
@@ -97,7 +97,7 @@ Binary fidelity must be verified by a dedicated test suite separate from unit te
    register-map regression in VirtMCU.
 
 3. **No-firmware-change CI gate**: The CI pipeline must include a step that builds the
-   reference firmware with a standard ARM cross-compiler (no virtmcu flags) and runs
+   reference firmware with a standard ARM cross-compiler (no VirtMCU flags) and runs
    the golden binary test. If the test requires a firmware rebuild, the build step is
    considered a fidelity failure.
 

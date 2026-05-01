@@ -46,7 +46,7 @@ the Rust logic in isolation, but the resulting binary is not loaded by QEMU.
 
 ```bash
 # Load from the QEMU command line (run.sh sets QEMU_MODULE_DIR automatically):
-scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
+scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
     -device rust-dummy,base-addr=0x60000000 \
     -nographic
 ```

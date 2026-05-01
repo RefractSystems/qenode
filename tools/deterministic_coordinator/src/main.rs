@@ -132,8 +132,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let barrier = Arc::new(QuantumBarrier::new(args.nodes, max_messages));
 
     if topo.transport == topology::Transport::Unix {
+        barrier.set_quantum(1);
         run_unix_coordinator(args, topo, barrier, pcap_log).await
     } else {
+        barrier.set_quantum(1);
         run_zenoh_coordinator(args, topo, barrier, pcap_log).await
     }
 }
@@ -145,7 +147,12 @@ async fn run_zenoh_coordinator(
     mut pcap_log: Option<MessageLog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = zenoh::Config::default();
+    config
+        .insert_json5("mode", "\"client\"")
+        .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
+
     if let Some(router) = args.connect {
+        tracing::info!("Connecting to Zenoh router at {}", router);
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", router))
             .map_err(|e| format!("Invalid Zenoh endpoint: {}", e))?;

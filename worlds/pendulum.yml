@@ -3,7 +3,7 @@
 # This overrides the cyber-node to run a slaved-clock firmware and adds a physics node.
 services:
   cyber-node:
-    command: ["/app/scripts/run.sh", "--yaml", "/app/tests/fixtures/guest_apps/phase3/test_board.yaml", "-kernel", "/app/tests/fixtures/guest_apps/phase1/hello.elf", "-device", "clock,mode=suspend,node=0"]
+    command: ["/app/scripts/run.sh", "--yaml", "/app/tests/fixtures/guest_apps/yaml_boot/test_board.yaml", "-kernel", "/app/tests/fixtures/guest_apps/boot_arm/hello.elf", "-device", "clock,mode=suspend,node=0"]
 
   physics-node:
     image: python:3.11-slim

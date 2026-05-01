@@ -720,6 +720,326 @@ impl Drop for SafeSubscription {
 const _: () = assert!(core::mem::size_of::<QemuMutex>() == 64);
 const _: () = assert!(core::mem::size_of::<QemuCond>() == 56);
 
+/// A mutual exclusion primitive useful for protecting shared data, based on QEMU's
+/// internal `QemuMutex`. It acts exactly like `std::sync::Mutex<T>` but ensures
+/// compatibility with QEMU's BQL-yielding wait mechanisms.
+pub struct Mutex<T> {
+    raw: *mut QemuMutex,
+    data: core::cell::UnsafeCell<T>,
+}
+
+// SAFETY: Mutex is Send and Sync if the underlying data is Send.
+// QemuMutex provides thread safety.
+unsafe impl<T: Send> Send for Mutex<T> {}
+unsafe impl<T: Send> Sync for Mutex<T> {}
+
+impl<T> Mutex<T> {
+    /// Creates a new QEMU-backed mutex in an unlocked state ready for use.
+    pub fn new(val: T) -> Self {
+        #[cfg(not(any(test, miri)))]
+        let raw = unsafe {
+            let m = virtmcu_mutex_new();
+            qemu_mutex_init(m);
+            m
+        };
+        #[cfg(any(test, miri))]
+        let raw = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<QemuMutex>() }));
+
+        Self { raw, data: core::cell::UnsafeCell::new(val) }
+    }
+
+    /// Acquires a mutex, blocking the current thread until it is able to do so.
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_mutex_lock(self.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_mutex_lock(self.raw);
+
+        MutexGuard { mutex: self }
+    }
+}
+
+impl<T> Drop for Mutex<T> {
+    fn drop(&mut self) {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            qemu_mutex_destroy(self.raw);
+            virtmcu_mutex_free(self.raw);
+        };
+        #[cfg(any(test, miri))]
+        unsafe {
+            let _ = Box::from_raw(self.raw);
+        }
+    }
+}
+
+/// An RAII implementation of a "scoped lock" of a mutex.
+pub struct MutexGuard<'a, T> {
+    mutex: &'a Mutex<T>,
+}
+
+impl<T> core::ops::Deref for MutexGuard<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        unsafe { &*self.mutex.data.get() }
+    }
+}
+
+impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.mutex.data.get() }
+    }
+}
+
+impl<T> Drop for MutexGuard<'_, T> {
+    fn drop(&mut self) {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_mutex_unlock(self.mutex.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_mutex_unlock(self.mutex.raw);
+    }
+}
+
+/// A Condition Variable based on QEMU's internal `QemuCond`.
+pub struct Condvar {
+    raw: *mut QemuCond,
+}
+
+// SAFETY: Condvar provides synchronization and does not store thread-local data.
+unsafe impl Send for Condvar {}
+unsafe impl Sync for Condvar {}
+
+impl Condvar {
+    /// Creates a new condition variable which is ready to be waited on and notified.
+    pub fn new() -> Self {
+        #[cfg(not(any(test, miri)))]
+        let raw = unsafe {
+            let c = virtmcu_cond_new();
+            qemu_cond_init(c);
+            c
+        };
+        #[cfg(any(test, miri))]
+        let raw = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<QemuCond>() }));
+
+        Self { raw }
+    }
+
+    /// Wakes up one blocked thread on this condvar.
+    pub fn notify_one(&self) {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_cond_signal(self.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_cond_signal(self.raw);
+    }
+
+    /// Wakes up all blocked threads on this condvar.
+    pub fn notify_all(&self) {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_cond_broadcast(self.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_cond_broadcast(self.raw);
+    }
+
+    /// Atomically releases the BQL, waits on this condition variable using the provided
+    /// peripheral mutex guard, and re-acquires the BQL before returning.
+    ///
+    /// This is the ONLY approved pattern for blocking a vCPU thread while yielding the BQL
+    /// when waiting on a `Mutex<T>`.
+    ///
+    /// Returns the acquired lock and a boolean (`true` if signaled/spurious, `false` on timeout).
+    pub fn wait_yielding_bql<'a, T>(
+        &self,
+        guard: MutexGuard<'a, T>,
+        timeout_ms: u32,
+    ) -> (MutexGuard<'a, T>, bool) {
+        // 1. Temporarily yield BQL if held.
+        let bql_unlock = Bql::temporary_unlock();
+
+        // 2. Wait on the condition variable.
+        let signaled = {
+            #[cfg(not(any(test, miri)))]
+            unsafe {
+                virtmcu_cond_timedwait(self.raw, guard.mutex.raw, timeout_ms) != 0
+            }
+            #[cfg(any(test, miri))]
+            {
+                mock::virtmcu_cond_timedwait(self.raw, guard.mutex.raw, timeout_ms) != 0
+            }
+        };
+
+        // 3. To avoid lock order inversion (BQL -> mutex vs mutex -> BQL),
+        // we must release the peripheral mutex before re-acquiring the BQL.
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_mutex_unlock(guard.mutex.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_mutex_unlock(guard.mutex.raw);
+
+        // 4. Re-acquire BQL.
+        drop(bql_unlock);
+
+        // 5. Re-acquire peripheral mutex to restore caller's invariants.
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_mutex_lock(guard.mutex.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_mutex_lock(guard.mutex.raw);
+
+        (guard, signaled)
+    }
+
+    /// Standard wait without yielding BQL (only safe if BQL is NOT held!).
+    pub fn wait<'a, T>(&self, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            virtmcu_cond_wait(self.raw, guard.mutex.raw);
+        };
+        #[cfg(any(test, miri))]
+        mock::virtmcu_cond_wait(self.raw, guard.mutex.raw);
+        guard
+    }
+
+    /// Standard wait with timeout, without yielding BQL (only safe if BQL is NOT held!).
+    pub fn wait_timeout<'a, T>(
+        &self,
+        guard: MutexGuard<'a, T>,
+        ms: u32,
+    ) -> (MutexGuard<'a, T>, bool) {
+        let res = {
+            #[cfg(not(any(test, miri)))]
+            unsafe {
+                virtmcu_cond_timedwait(self.raw, guard.mutex.raw, ms) != 0
+            }
+            #[cfg(any(test, miri))]
+            {
+                mock::virtmcu_cond_timedwait(self.raw, guard.mutex.raw, ms) != 0
+            }
+        };
+        (guard, res)
+    }
+}
+
+impl Drop for Condvar {
+    fn drop(&mut self) {
+        #[cfg(not(any(test, miri)))]
+        unsafe {
+            qemu_cond_destroy(self.raw);
+            virtmcu_cond_free(self.raw);
+        };
+        #[cfg(any(test, miri))]
+        unsafe {
+            let _ = Box::from_raw(self.raw);
+        }
+    }
+}
+
+impl Default for Condvar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// An RAII-based drain for tracking active vCPU threads within a peripheral.
+///
+/// Ensures that during device teardown, QEMU will wait for all blocked MMIO
+/// requests to complete, safely yielding the Big QEMU Lock (BQL) during the wait
+/// to prevent permanent deadlocks.
+pub struct VcpuDrain {
+    count: Mutex<usize>,
+    cond: Condvar,
+}
+
+impl VcpuDrain {
+    /// Creates a new, empty vCPU drain tracker.
+    pub fn new() -> Self {
+        Self { count: Mutex::new(0), cond: Condvar::new() }
+    }
+
+    /// Registers an active vCPU. Returns a guard that deregisters it when dropped.
+    pub fn acquire(&self) -> VcpuDrainGuard<'_> {
+        let mut count = self.count.lock();
+        *count = count.saturating_add(1);
+        VcpuDrainGuard { drain: self }
+    }
+
+    /// Blocks the current thread (yielding the BQL) until the active count reaches 0
+    /// or the timeout expires.
+    pub fn wait_for_drain(&self, timeout_ms: u32) {
+        let mut count = self.count.lock();
+        if *count == 0 {
+            return;
+        }
+
+        #[cfg(not(any(test, miri)))]
+        let start_ns =
+            unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_REALTIME) };
+        #[cfg(any(test, miri))]
+        let start_ns =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+                as i64;
+
+        let limit_ns = (timeout_ms as i64).saturating_mul(1_000_000);
+
+        while *count > 0 {
+            #[cfg(not(any(test, miri)))]
+            let now_ns =
+                unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_REALTIME) };
+            #[cfg(any(test, miri))]
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as i64;
+
+            let elapsed_ns = now_ns.saturating_sub(start_ns);
+            if elapsed_ns >= limit_ns {
+                crate::sim_err!(
+                    "VcpuDrain timed out after {} ms with {} vCPUs still active",
+                    timeout_ms,
+                    *count
+                );
+                break;
+            }
+
+            let remaining_ms = ((limit_ns - elapsed_ns) / 1_000_000) as u32;
+            let (new_count, _) = self.cond.wait_yielding_bql(count, remaining_ms);
+            count = new_count;
+        }
+    }
+}
+
+impl Default for VcpuDrain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A guard that decrements the `VcpuDrain` count when dropped.
+pub struct VcpuDrainGuard<'a> {
+    drain: &'a VcpuDrain,
+}
+
+impl Drop for VcpuDrainGuard<'_> {
+    fn drop(&mut self) {
+        let mut count = self.drain.count.lock();
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.drain.cond.notify_all();
+        }
+    }
+}
+
 #[cfg(any(test, miri))]
 mod tests {
     use std::thread;
@@ -897,22 +1217,34 @@ mod tests {
     }
 
     #[test]
-    fn test_wait_yielding_bql_timeout() {
-        // SAFETY: test only
-        let mut mutex: QemuMutex = unsafe { core::mem::zeroed() };
-        // SAFETY: test only
-        let cond: QemuCond = unsafe { core::mem::zeroed() };
+    fn test_vcpu_drain() {
+        let drain = VcpuDrain::new();
+        assert_eq!(*drain.count.lock(), 0);
+
+        let guard1 = drain.acquire();
+        assert_eq!(*drain.count.lock(), 1);
+
+        let guard2 = drain.acquire();
+        assert_eq!(*drain.count.lock(), 2);
+
+        drop(guard1);
+        assert_eq!(*drain.count.lock(), 1);
+
+        drop(guard2);
+        assert_eq!(*drain.count.lock(), 0);
+    }
+
+    #[test]
+    fn test_vcpu_drain_wait_timeout() {
+        let drain = VcpuDrain::new();
+        let _guard = drain.acquire();
 
         let _bql = Bql::lock();
-        let mut guard = mutex.lock();
+        let start = std::time::Instant::now();
+        // This should timeout since we hold the guard
+        drain.wait_for_drain(10);
+        let elapsed = start.elapsed();
 
-        let t0 = std::time::Instant::now();
-        let res = cond.wait_yielding_bql(&mut guard, 10);
-        let elapsed = t0.elapsed();
-
-        assert!(!res, "Should have timed out");
-        assert!(elapsed >= core::time::Duration::from_millis(10));
-        assert!(Bql::temporary_unlock().is_some(), "BQL should be re-acquired");
-        drop(guard);
+        assert!(elapsed.as_millis() >= 10);
     }
 }

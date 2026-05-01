@@ -22,6 +22,21 @@ In standard Rust, shared state is protected by `std::sync::Mutex<T>`. However, b
 
 VirtMCU mandates the use of `BqlGuarded<T>` for state accessed from MMIO handlers, timers, and `SafeSubscriber` callbacks. It uses `UnsafeCell<T>` internally and debug-asserts that the BQL is held at every access point.
 
+### Co-Simulation and BQL Discipline: `CoSimBridge`
+When a peripheral needs to block waiting for an external co-simulation response (like over a Remote Port Unix socket), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
+
+VirtMCU now uses an **Inversion of Control (IoC)** pattern via the `virtmcu_qom::cosim::CoSimBridge` framework primitive.
+
+Developers implement the `CoSimTransport` trait (providing pure socket/I/O logic) and pass it to a `CoSimBridge`. The framework automatically handles:
+1. **Safe BQL Yielding**: Uses `QemuCond::wait_yielding_bql` internally, structurally guaranteeing that the BQL is yielded before blocking and re-acquired safely without Lock-Order Inversion against local mutexes.
+2. **Background I/O Thread**: Spawns and manages the OS-bound socket/receive thread.
+3. **RAII vCPU Teardown (`VcpuDrain`)**: Tracks active vCPUs in the MMIO path. During device teardown (in `Drop`), it automatically waits for all blocked vCPUs to drain (with a bounded timeout) before freeing the device memory, strictly avoiding Use-After-Free regressions.
+
+To execute a blocking co-simulation request, the vCPU simply calls:
+```rust
+let response = self.bridge.send_and_wait(request, TIMEOUT_MS);
+```
+
 ---
 
 ## 2. Peripheral Fidelity & Timing

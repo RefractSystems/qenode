@@ -27,7 +27,7 @@ endif
 # Most developers will only need:
 #   make setup-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
 #   make build   — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
-#   make run     — Launch QEMU using the minimal Phase 1 test DTB.
+#   make run     — Launch QEMU using the minimal boot_arm test DTB.
 #
 # Environment Variables / Flags:
 #   VIRTMCU_SKIP_BUILD_DIR=1  — Forces `scripts/run.sh` to bypass the local build 
@@ -117,8 +117,8 @@ build:
 # Launch the emulator using the test DTB and default arguments.
 run:
 	@bash scripts/run.sh \
-	  $(if $(wildcard tests/fixtures/guest_apps/phase1/minimal.dtb),--dtb tests/fixtures/guest_apps/phase1/minimal.dtb) \
-	  $(if $(wildcard tests/fixtures/guest_apps/phase1/hello.elf),--kernel tests/fixtures/guest_apps/phase1/hello.elf) \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
 	  -nographic \
 	  -m 128M \
 	  $(EXTRA_ARGS)
@@ -127,8 +127,8 @@ run:
 # (ignores local build directory).
 run-installed:
 	@VIRTMCU_SKIP_BUILD_DIR=1 bash scripts/run.sh \
-	  $(if $(wildcard tests/fixtures/guest_apps/phase1/minimal.dtb),--dtb tests/fixtures/guest_apps/phase1/minimal.dtb) \
-	  $(if $(wildcard tests/fixtures/guest_apps/phase1/hello.elf),--kernel tests/fixtures/guest_apps/phase1/hello.elf) \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
 	  -nographic \
 	  -m 128M \
 	  $(EXTRA_ARGS)
@@ -148,22 +148,19 @@ venv:
 	@echo "✓ Virtual environment synchronized with uv."
 	@echo "✓ Activate with: source .venv/bin/activate"
 
-# Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
+# Run integration smoke tests (Bash/QEMU level tests for boot_arm & dynamic_plugin)
 test-integration: venv
 	uv run --active $(MAKE) build-test-artifacts
 	@bash scripts/cleanup-sim.sh --quiet
 	@echo "==> Running Modernized Integration Tests (via pytest)..."
-	uv run --active pytest tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py \
-		tools/testing/test_qmp.py tests/test_qmp_bridge.py tests/test_qemu_library_pytest.py \
-		tests/test_phase6.py tests/test_phase7.py \
-		tests/test_phase8.py tests/test_phase10.py tests/test_phase12.py \
+	uv run --active pytest tests/integration/ \
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
 	@echo "==> Running Legacy Integration Tests (Bash scripts)..."
 
-	@for test_script in tests/fixtures/guest_apps/phase11_3/smoke_test.sh tests/fixtures/guest_apps/phase11/smoke_test.sh \
-		tests/fixtures/guest_apps/phase13/smoke_test.sh tests/fixtures/guest_apps/phase14/smoke_test.sh tests/fixtures/guest_apps/phase15/smoke_test.sh \
-		tests/fixtures/guest_apps/phase16/smoke_test.sh tests/fixtures/guest_apps/phase3.5/smoke_test.sh tests/fixtures/guest_apps/phase5/smoke_test.sh \
-		tests/fixtures/guest_apps/phase9/smoke_test.sh tests/fixtures/guest_apps/actuator/smoke_test.sh; do \
+	@for test_script in tests/fixtures/guest_apps/riscv_interrupts/smoke_test.sh tests/fixtures/guest_apps/riscv_complex/smoke_test.sh \
+		tests/fixtures/guest_apps/priority_routing/smoke_test.sh tests/fixtures/guest_apps/complex_board/smoke_test.sh tests/fixtures/guest_apps/coverage_gap/smoke_test.sh \
+		tests/fixtures/guest_apps/perf_bench/smoke_test.sh tests/fixtures/guest_apps/yaml_boot_advanced/smoke_test.sh tests/fixtures/guest_apps/irq_stress/smoke_test.sh \
+		tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh tests/fixtures/guest_apps/actuator/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
 		uv run --active bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
 		bash scripts/cleanup-sim.sh --quiet; \
@@ -203,10 +200,7 @@ test-unit: venv
 	@echo "==> Running Tier 1 Unit Tests (no QEMU)..."
 	@./scripts/cleanup-sim.sh --quiet
 	PYTHONPATH=$(CURDIR) uv run --active pytest \
-		tests/repl2qemu/ tests/test_yaml2qemu.py tests/test_cli_generator.py \
-		tests/test_fdt_emitter.py tests/test_qmp_bridge.py tests/test_vproto.py \
-		tests/test_telemetry_listener.py tests/test_telemetry_fbs.py tests/test_fake_adapter.py \
-		tests/test_mcp_server/ tests/test_phase14.py \
+		tests/unit/ \
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
 
 # Alias for test-unit
@@ -218,10 +212,9 @@ test-robot: venv
 	uv run --active robot \
 	  --outputdir test-results/robot \
 	  --loglevel INFO \
-	  tests/test_qmp_keywords.robot \
-	  tests/test_interactive_echo.robot
+	  tests/integration/peripherals/test_uart_interactive.robot
 
-# Run guest firmware coverage analysis (Phase 1)
+# Run guest firmware coverage analysis (boot_arm)
 test-coverage-guest:
 	@echo "==> Running guest firmware coverage (drcov) inside builder..."
 	@bash scripts/docker-build.sh builder
@@ -230,13 +223,13 @@ test-coverage-guest:
 		-e PYTHONPATH=/workspace \
 		-e CI=true \
 		$(BUILDER_IMG) \
-		bash -c "make -C tests/fixtures/guest_apps/phase1 && \
+		bash -c "make -C tests/fixtures/guest_apps/boot_arm && \
 			 DRCOV_SO=\$$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
-			 qemu-system-arm -M arm-generic-fdt,hw-dtb=tests/fixtures/guest_apps/phase1/minimal.dtb \
-			   -kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic -m 128M -display none \
+			 qemu-system-arm -M arm-generic-fdt,hw-dtb=tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+			   -kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic -m 128M -display none \
 			   -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin & \
 			 sleep 2 && kill -INT \$$! && wait \$$! || true; \
-			 python3 tools/analyze_coverage.py hello.drcov tests/fixtures/guest_apps/phase1/hello.elf --fail-under 80"
+			 python3 tools/analyze_coverage.py hello.drcov tests/fixtures/guest_apps/boot_arm/hello.elf --fail-under 80"
 	@echo "✓ Guest coverage check passed."
 
 # Generate host-side C/Rust coverage report (requires lcov)
@@ -261,14 +254,14 @@ coverage-report:
 	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
 	@echo "✓ Report generated: test-results/coverage/html/index.html"
 
-# Builds all test artifacts across all phases
+# Builds all test artifacts across all domains
 build-test-artifacts:
-	@$(MAKE) -C tests/fixtures/guest_apps/phase1 -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/phase8 -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/phase12 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/boot_arm -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/uart_echo -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/telemetry_wfi -j$(JOBS)
 	@$(MAKE) -C tests/fixtures/guest_apps/actuator -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/riscv -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/phase27 -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/boot_riscv -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/flexray_bridge -j$(JOBS)
 	@if [ "$$CI" = "true" ] && command -v zenoh_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
@@ -337,7 +330,7 @@ lint-audit:
 # Run Python linting and type checking
 lint-python:
 	@echo "==> Check for banned struct usage..."
-	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ tutorial/ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
+	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
 		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
@@ -415,7 +408,7 @@ lint-python-types:
 lint-c:
 	@echo "==> clang-format (dry-run)..."
 	@clang-format --version >/dev/null 2>&1 || { echo "❌ Error: clang-format is not installed. Install with: sudo apt-get install clang-format"; exit 1; }
-	@find hw tools test -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.cc" -o -name "*.hpp" \) \
+	@find hw tools tests -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.cc" -o -name "*.hpp" \) \
 		-not -path "*/rust/*" \
 		-not -path "*/remote-port/*" \
 		-not -path "*/third_party/*" \
@@ -580,13 +573,13 @@ install-hooks:
 	@echo "✓ hooks installed: pre-commit and pre-push run 'make lint && make test-unit' directly."
 
 # ------------------------------------------------------------------------------
-# Performance Benchmarking & Trend Tracking (Phase 16)
+# Performance Benchmarking & Trend Tracking (boot_arm6)
 # ------------------------------------------------------------------------------
 
-# Run the full performance benchmark and save results to tests/fixtures/guest_apps/phase16/last_results.json.
+# Run the full performance benchmark and save results to tests/fixtures/guest_apps/perf_bench/last_results.json.
 perf-bench: venv
-	@$(MAKE) -C tests/fixtures/guest_apps/phase16 bench.elf
-	PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/phase16/bench.py
+	@$(MAKE) -C tests/fixtures/guest_apps/perf_bench bench.elf
+	PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/perf_bench/bench.py
 
 # Save the current benchmark results as the performance baseline.
 perf-baseline: perf-bench
@@ -595,8 +588,8 @@ perf-baseline: perf-bench
 
 # Check current benchmark results against the saved baseline; exit 1 on regression.
 perf-check: venv
-	@if [ ! -f tests/fixtures/guest_apps/phase16/last_results.json ]; then \
-		$(MAKE) -C tests/fixtures/guest_apps/phase16 bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/phase16/bench.py; \
+	@if [ ! -f tests/fixtures/guest_apps/perf_bench/last_results.json ]; then \
+		$(MAKE) -C tests/fixtures/guest_apps/perf_bench bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/perf_bench/bench.py; \
 	fi
 	uv run --active python3 scripts/perf_trend.py --check
 
@@ -615,11 +608,11 @@ perf-check: venv
 #     flags that .github/workflows/ci-main.yml uses.  No CARGO_HOME override.
 #     Run this before opening a pull request.
 #
-#   make ci-smoke PHASE=N — Run a single CI smoke phase inside the builder Docker image.
+#   make ci-smoke DOMAIN=N — Run a single CI integration domain inside the builder Docker image.
 #     Perfect for testing exactly what GitHub will run for a specific integration test.
 #
 #   make ci-full    — Full pipeline: ci-local + ci-asan + ci-miri + builder image
-#     (full QEMU compile) + all smoke phases run sequentially inside the builder.
+#     (full QEMU compile) + all integration domains run sequentially inside the builder.
 #     This is the authoritative "will GitHub be green?" answer.
 #     Run this before merging to main.
 #
@@ -674,7 +667,7 @@ ci-local:
 		$(DEVENV_BASE_IMG) bash -c "make lint && make build-tools && make test-unit"
 	@echo ""
 	@echo "✓ ci-local passed (1:1 with GitHub CI Tier 1)."
-	@echo "  To run the full pipeline (builder ~40 min + all smoke phases): make ci-full"
+	@echo "  To run the full pipeline (builder ~40 min + all integration domains): make ci-full"
 
 # Run host-side C coverage for peripheral plugins (inside builder)
 test-coverage-peripheral:
@@ -716,7 +709,7 @@ ci-full: ci-local ci-asan ci-miri
 		-e GCOV_PREFIX_STRIP=3 \
 		-e VIRTMCU_SKIP_BUILD_DIR=1 \
 		$(BUILDER_IMG) \
-		bash scripts/ci-phase.sh all
+		bash scripts/ci-integration-tier.sh all
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
@@ -726,15 +719,15 @@ ci-full: ci-local ci-asan ci-miri
 	@echo ""
 	@echo "✓ ci-full passed."
 
-# Run a single CI smoke phase in Docker (e.g., make ci-smoke PHASE=2)
+# Run a single CI integration domain in Docker (e.g., make ci-smoke DOMAIN=2)
 ci-smoke:
-	@if [ -z "$(PHASE)" ]; then \
-		echo "Usage: make ci-smoke PHASE=<phase_number>"; \
-		echo "Example: make ci-smoke PHASE=2"; \
+	@if [ -z "$(DOMAIN)" ]; then \
+		echo "Usage: make ci-smoke DOMAIN=<domain_name>"; \
+		echo "Example: make ci-smoke DOMAIN=2"; \
 		exit 1; \
 	fi
 	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Smoke Phase $(PHASE) — Docker: builder"
+	@echo "  CI Integration Domain $(DOMAIN) — Docker: builder"
 	@echo "════════════════════════════════════════════════════"
 	@bash scripts/docker-build.sh builder
 	@mkdir -p coverage-data
@@ -747,7 +740,7 @@ ci-smoke:
 		-e GCOV_PREFIX_STRIP=3 \
 		-e VIRTMCU_SKIP_BUILD_DIR=1 \
 		$(BUILDER_IMG) \
-		bash scripts/ci-phase.sh $(PHASE)
+		bash scripts/ci-integration-tier.sh $(DOMAIN)
 
 # Run integration tests compiled with ASan/UBSan inside devenv-base
 ci-asan:
@@ -920,3 +913,23 @@ distclean: clean
 	rm -rf third_party
 	rm -rf test-results
 	@echo "✓ Deep clean complete. Run 'make setup-initial' to rebuild the environment."
+# ------------------------------------------------------------------------------
+# Documentation
+# ------------------------------------------------------------------------------
+
+# Build the mdBook documentation
+book:
+	@echo "==> Building mdBook..."
+	@if command -v mdbook >/dev/null 2>&1; then \
+		mdbook build; \
+	else \
+		echo "❌ mdbook not installed. Please restart devcontainer or run: cargo install mdbook"; exit 1; \
+	fi
+	@echo "✓ mdBook built in target/book."
+
+# Serve the mdBook documentation locally (uses Python to avoid WebSocket/DevContainer port forwarding issues)
+book-serve: book
+	@echo "==> Serving mdBook..."
+	@echo "    Click this link to open: http://localhost:8080"
+	@python3 -m http.server -d target/book 8080
+

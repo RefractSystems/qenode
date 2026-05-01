@@ -44,7 +44,9 @@ async def test_emulation_control(qemu_launcher):
     Test pausing, resuming, and resetting emulation.
     """
     # Launch QEMU paused (-S)
-    bridge = await qemu_launcher("tests/fixtures/guest_apps/phase1/minimal.dtb", "tests/fixtures/guest_apps/phase1/hello.elf", extra_args=["-S"])
+    bridge = await qemu_launcher(
+        "tests/fixtures/guest_apps/boot_arm/minimal.dtb", "tests/fixtures/guest_apps/boot_arm/hello.elf", extra_args=["-S"]
+    )
 
     # Check that it's actually paused
     status = await bridge.execute("query-status")

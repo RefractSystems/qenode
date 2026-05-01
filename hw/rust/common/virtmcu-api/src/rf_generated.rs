@@ -12,7 +12,7 @@
 //   }
 //   root_type RfHeader;
 //
-// Using FlatBuffers instead of the legacy 14-byte packed C struct (Phase 14.8)
+// Using FlatBuffers instead of the legacy 14-byte packed C struct
 // enables schema evolution: new optional fields can be added without breaking
 // consumers that read only the fields they know about.
 //

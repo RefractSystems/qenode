@@ -25,6 +25,13 @@ dependencies = [
     "watchdog>=4.0.0",
 ]
 
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tools*"]
+
 [tool.ruff]
 line-length = 120
 exclude = [
@@ -34,7 +41,7 @@ exclude = [
     "**/__pycache__/",
     "tools/virtmcu/",
     "**/*_fbs/",
-    "tests/fixtures/guest_apps/phase6/virtmcu/rf/",
+    "tests/fixtures/guest_apps/coordinator_stress/virtmcu/rf/",
 ]
 
 [tool.ruff.lint]
@@ -71,18 +78,19 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"tests/fixtures/guest_apps/**/virtmcu/**/*.py" = ["N802", "N803"]
 # Ignore type annotations in tests, auxiliary scripts, and core tools for now to unblock migration
 "tests/**" = ["ANN"]
 "tests/fixtures/guest_apps/**" = ["ANN"]
 "scripts/**" = ["ANN"]
-"tutorial/**" = ["ANN"]
+"docs/tutorials/**" = ["ANN"]
 "tools/**" = ["ANN"]
 "packaging/**" = ["ANN"]
 "patches/**" = ["ANN"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["fixtures"]
+norecursedirs = ["fixtures", ".*", "build", "dist", "venv", ".venv"]
 pythonpath = [
     ".",
     "tools/lin_fbs",

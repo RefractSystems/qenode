@@ -20,7 +20,7 @@ Every level of our pipeline is reproducible locally. We do not rely on "magic" G
 
 ### Level 2: `make ci-full`
 *   **Purpose**: Authoritative parity with the cloud.
-*   **Mechanism**: Executes the full suite, including ASan/Miri passes and sequential execution of all 20+ smoke test phases inside the `builder` image.
+*   **Mechanism**: Executes the full suite, including ASan/Miri passes and sequential execution of all 20+ smoke test domains inside the `builder` image.
 
 ---
 
@@ -42,7 +42,7 @@ VirtMCU uses a multi-stage Docker strategy to optimize build times and minimize 
 To avoid the 40-minute QEMU compilation on every run, we use a three-layer cache:
 
 1.  **Registry Cache (Primary)**: PRs and Main write intermediate layers to GHCR.
-2.  **GHA Cache (Fallback)**: Per-stage scopes (e.g., `virtmcu-builder-amd64`) provide a secondary speedup.
+2.  **GHA Cache (Fallback)**: Per-stage scopes (e.g., `VirtMCU-builder-amd64`) provide a secondary speedup.
 3.  **Layer Reuse**: The `qemu-builder` layer is only invalidated if `patches/`, `QEMU_VERSION`, or build flags change. Modifying Rust `hw/` sources only rebuilds the final plugin layer.
 
 ---
@@ -65,4 +65,4 @@ All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a si
 | `CLOCK STALL` | ASan overhead or deadlock | Check QEMU stderr; system scales to 300s timeout under ASan. |
 | `FFI Layout Mismatch` | C/Rust struct drift | Run `scripts/check-ffi.py --fix` and commit the updated offsets. |
 | `can't find crate` | Cargo cache corruption | Run `docker volume rm ci-cargo-registry`. |
-| `SIGSEGV` in plugin | Unmangled symbols | Ensure FFI hooks are wrapped in `virtmcu_export!`. |
+| `SIGSEGV` in plugin | Unmangled symbols | Ensure FFI hooks are wrapped in `VirtMCU_export!`. |

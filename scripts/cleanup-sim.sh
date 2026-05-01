@@ -34,7 +34,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-WORKSPACE_DIR=$(pwd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
 log() {
     if [[ "$QUIET" != "--quiet" ]]; then
@@ -110,13 +111,12 @@ if [ -z "$FILTER" ]; then
     log "Cleaning up temporary files..."
     # We leave /tmp/virtmcu-test-* alone because pytest handles its own tempdir cleanup safely.
     # We only clean up legacy hardcoded /tmp files if they exist.
-    rm -rf /tmp/phase[0-9]* 2>/dev/null || true
     rm -f /tmp/virtmcu-*.dtb 2>/dev/null || true
     rm -f /tmp/virtmcu-*.cli 2>/dev/null || true
     rm -f /tmp/virtmcu-*.arch 2>/dev/null || true
 
     # Clean up stale lock files
-    rm -f "$WORKSPACE_DIR/tools/zenoh_coordinator/build.lock" 2>/dev/null || true
+    rm -f "$TOOLS_DIR/zenoh_coordinator/build.lock" 2>/dev/null || true
 fi
 
 log "✓ Cleanup complete."

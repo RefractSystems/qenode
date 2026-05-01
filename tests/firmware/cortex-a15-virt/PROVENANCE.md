@@ -3,11 +3,11 @@
 | Field        | Value |
 |---|---|
 | Status       | `virtmcu-baseline` — silicon validation pending |
-| ELF source   | `tests/fixtures/guest_apps/phase8/echo.S` |
+| ELF source   | `tests/fixtures/guest_apps/uart_echo/echo.S` |
 | Build command | `arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T echo.ld echo.S -o echo.elf` |
 | Target CPU   | ARM Cortex-A15, soft-float ABI |
 | Entry point  | `0x40000000` |
-| UART         | PL011 at `0x09000000` (matches `tests/fixtures/guest_apps/phase1/minimal.dtb`) |
+| UART         | PL011 at `0x09000000` (matches `tests/fixtures/guest_apps/boot_arm/minimal.dtb`) |
 | SHA256       | `810886b91efbc2c9c6ff71ffe3b500eba261e35e788926488e9cb176a24a18ec` |
 
 ## Golden output provenance

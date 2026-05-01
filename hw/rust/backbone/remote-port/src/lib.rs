@@ -17,6 +17,8 @@ use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, sysbus_mmio_map};
 use virtmcu_qom::qom::{Object, ObjectClass, Property, TypeInfo};
 use virtmcu_qom::sync::Bql;
+
+use virtmcu_qom::cosim::{CoSimBridge, CoSimContext, CoSimTransport};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_prop_uint64, device_class,
     error_setg,
@@ -25,7 +27,7 @@ use virtmcu_qom::{
 use core::time::Duration;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Mutex;
 
 // --- Remote Port Protocol Definitions ---
 
@@ -529,6 +531,7 @@ pub struct RemotePortBridgeQEMU {
     pub parent_obj: SysBusDevice,
     pub mmio: MemoryRegion,
 
+    pub id: *mut c_char,
     pub socket_path: *mut c_char,
     pub region_size: u32,
     pub base_addr: u64,
@@ -537,101 +540,74 @@ pub struct RemotePortBridgeQEMU {
     pub irqs: [QemuIrq; 32],
 
     pub rust_state: *mut RemotePortBridgeState,
+    pub mapped: bool,
 }
 
-pub struct RemotePortBridgeState {
-    shared: Arc<SharedState>,
-    bg_thread: Option<std::thread::JoinHandle<()>>,
+static MAPPED_IDS: std::sync::Mutex<Option<std::collections::HashMap<String, bool>>> =
+    std::sync::Mutex::new(None);
+
+fn is_id_mapped(id: &str) -> bool {
+    let mut lock = MAPPED_IDS.lock().unwrap();
+    *lock.get_or_insert_with(std::collections::HashMap::new).get(id).unwrap_or(&false)
 }
 
-pub struct SharedState {
-    socket_path: String,
-    reconnect_ms: u32,
-    irqs: RawIrqArray,
-    resp_cond: Condvar,
-    connected_cond: Condvar,
-    drain_cond: Condvar,
-    state: Mutex<ConnectionState>,
+fn set_id_mapped(id: &str, mapped: bool) {
+    let mut lock = MAPPED_IDS.lock().unwrap();
+    lock.get_or_insert_with(std::collections::HashMap::new).insert(id.to_owned(), mapped);
 }
-
-// Safe: SharedState is only accessed through Arc and its internal synchronisation
-// primitives (Mutex<ConnectionState>, Condvar). Raw pointer wrappers are documented below.
-unsafe impl Send for SharedState {}
-unsafe impl Sync for SharedState {}
 
 struct RawIrqArray(*mut QemuIrq);
-// Safe: the IRQ array lives in RemotePortBridgeQEMU which outlives SharedState.
+// SAFETY: the IRQ array lives in RemotePortBridgeQEMU which outlives the transport.
 // qemu_set_irq is only called while holding the BQL.
 unsafe impl Send for RawIrqArray {}
 unsafe impl Sync for RawIrqArray {}
 
-struct ConnectionState {
-    stream: Option<UnixStream>,
-    has_resp: bool,
-    current_resp: Option<RpPktBusaccess>,
-    current_data: [u8; 8],
-    next_id: u32,
-    running: bool,
-    active_vcpu_count: usize,
+pub struct RpRequest {
+    pub cmd: RpCmd,
+    pub addr: u64,
+    pub size: u32,
+    pub data: Option<[u8; 8]>,
+    pub data_len: u32,
 }
 
-const BRIDGE_TIMEOUT_MS: u32 = 5000;
-/// Maximum time to wait for all vCPU threads to exit during teardown.
-const DRAIN_TIMEOUT_SECS: u64 = 30;
-
-impl Drop for SharedState {
-    fn drop(&mut self) {
-        // Rust Mutex and Condvar are automatically freed
-    }
+pub struct RpResponse {
+    pub pkt: RpPktBusaccess,
+    pub data: [u8; 8],
 }
 
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
-        }
-    }
+struct RpTransport {
+    socket_path: String,
+    reconnect_ms: u32,
+    irqs: RawIrqArray,
+    stream: Mutex<Option<UnixStream>>,
+    next_id: std::sync::atomic::AtomicU32,
 }
 
-impl SharedState {
-    fn run_background_thread(self: Arc<Self>) {
+impl CoSimTransport for RpTransport {
+    type Request = RpRequest;
+    type Response = RpResponse;
+
+    fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
         let mut rx_buf = Vec::with_capacity(4096);
         loop {
-            {
-                let lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if !lock.running {
-                    break;
-                }
+            if !ctx.is_running() {
+                break;
             }
 
             let stream_res = UnixStream::connect(&self.socket_path);
-            let mut stream = if let Ok(s) = stream_res {
-                s
-            } else {
-                if self.reconnect_ms > 0 {
-                    let d = Duration::from_millis(self.reconnect_ms as u64);
-                    let mut lock =
-                        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let start = std::time::Instant::now();
-                    while lock.running && start.elapsed() < d {
-                        let remaining =
-                            d.checked_sub(start.elapsed()).unwrap_or(Duration::from_secs(0));
-                        let (new_lock, _) = self
-                            .connected_cond
-                            .wait_timeout(lock, remaining)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        lock = new_lock;
+            let mut stream = match stream_res {
+                Ok(s) => s,
+                Err(_e) => {
+                    if self.reconnect_ms > 0 {
+                        std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(self.reconnect_ms as u64));
+                        continue;
+                    } else {
+                        virtmcu_qom::sim_err!(
+                            "failed to connect to {}, exiting thread",
+                            self.socket_path
+                        );
+                        break;
                     }
-                    continue;
-                } else {
-                    virtmcu_qom::sim_err!(
-                        "failed to connect to {}, exiting thread",
-                        self.socket_path
-                    );
-                    break;
                 }
             };
 
@@ -653,9 +629,7 @@ impl SharedState {
                 },
             };
 
-            let hello_bytes = hello.pack_be();
-
-            if stream.write_all(&hello_bytes).is_err() {
+            if stream.write_all(&hello.pack_be()).is_err() {
                 continue;
             }
 
@@ -665,11 +639,11 @@ impl SharedState {
             };
 
             {
-                let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.stream = Some(stream);
+                let mut lock = self.stream.lock().unwrap();
+                *lock = Some(stream);
                 virtmcu_qom::sim_info!("connected to {}", self.socket_path);
             }
-            self.connected_cond.notify_all();
+            ctx.notify_connected();
 
             // Read loop
             let mut temp_buf = [0u8; 1024];
@@ -688,7 +662,7 @@ impl SharedState {
                                 break;
                             }
 
-                            self.handle_packet(&rx_buf[..pkt_len], &hdr);
+                            self.handle_packet(&rx_buf[..pkt_len], &hdr, ctx);
                             rx_buf.drain(..pkt_len);
                         }
                     }
@@ -697,36 +671,67 @@ impl SharedState {
             }
 
             {
-                let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.stream = None;
-                lock.has_resp = true;
+                let mut lock = self.stream.lock().unwrap();
+                *lock = None;
                 virtmcu_qom::sim_info!("remote disconnected");
             }
-            self.resp_cond.notify_all();
+            ctx.notify_disconnected();
 
             if self.reconnect_ms == 0 {
                 break;
             }
-            let d = Duration::from_millis(self.reconnect_ms as u64);
-            let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let start = std::time::Instant::now();
-            while lock.running && start.elapsed() < d {
-                let remaining = d.checked_sub(start.elapsed()).unwrap_or(Duration::from_secs(0));
-                let (new_lock, _) = self
-                    .connected_cond
-                    .wait_timeout(lock, remaining)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock = new_lock;
-            }
+            std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(self.reconnect_ms as u64));
         }
-
-        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.running = false;
-        self.connected_cond.notify_all();
-        self.resp_cond.notify_all();
     }
 
-    fn handle_packet(&self, data: &[u8], hdr: &RpPktHdr) {
+    fn send_request(&self, req: Self::Request) -> bool {
+        let mut lock = self.stream.lock().unwrap();
+        if let Some(s) = lock.as_mut() {
+            let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let bus_hdr_len =
+                (core::mem::size_of::<RpPktBusaccess>() - core::mem::size_of::<RpPktHdr>()) as u32;
+            let pkt = RpPktBusaccess {
+                hdr: RpPktHdr {
+                    cmd: req.cmd as u32,
+                    len: bus_hdr_len + req.data_len,
+                    id,
+                    flags: 0,
+                    dev: 0,
+                },
+                timestamp: 0,
+                attributes: 0,
+                addr: req.addr,
+                len: req.size,
+                width: req.size,
+                stream_width: req.size,
+                master_id: 0,
+            };
+
+            let pkt_bytes = pkt.pack_be();
+            if s.write_all(&pkt_bytes).is_err() {
+                return false;
+            }
+            if let Some(d) = req.data {
+                if s.write_all(&d[..(req.data_len as usize)]).is_err() {
+                    return false;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn interrupt_rx(&self) {
+        let mut lock = self.stream.lock().unwrap();
+        if let Some(s) = lock.as_mut() {
+            let _ = s.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+impl RpTransport {
+    fn handle_packet(&self, data: &[u8], hdr: &RpPktHdr, ctx: &CoSimContext<RpResponse>) {
         if hdr.cmd == RpCmd::Interrupt as u32 {
             if data.len() >= core::mem::size_of::<RpPktInterrupt>() {
                 let pkt_be = unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktInterrupt) };
@@ -742,172 +747,57 @@ impl SharedState {
                     drop(bql);
                 }
             }
-        } else {
-            let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if hdr.cmd == RpCmd::Read as u32 || hdr.cmd == RpCmd::Write as u32 {
-                if data.len() >= core::mem::size_of::<RpPktBusaccess>() {
-                    let pkt_be =
-                        unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktBusaccess) };
-                    lock.current_resp = Some(pkt_be.from_be());
-
-                    let bus_hdr_len =
-                        core::mem::size_of::<RpPktBusaccess>() - core::mem::size_of::<RpPktHdr>();
-                    let payload_len = hdr.len as usize - bus_hdr_len;
-                    if payload_len > 0 && payload_len <= 8 {
-                        lock.current_data[..payload_len].copy_from_slice(
-                            &data[core::mem::size_of::<RpPktBusaccess>()
-                                ..core::mem::size_of::<RpPktBusaccess>() + payload_len],
-                        );
-                    }
-                }
-            } else if hdr.cmd == RpCmd::Hello as u32 {
-                // Handshake response received
-            }
-            lock.has_resp = true;
-            self.resp_cond.notify_all();
-        }
-    }
-
-    fn send_req_and_wait(
-        &self,
-        cmd: RpCmd,
-        addr: u64,
-        size: u32,
-        data_to_write: Option<&[u8]>,
-    ) -> Option<u64> {
+        } else if (hdr.cmd == RpCmd::Read as u32 || hdr.cmd == RpCmd::Write as u32)
+            && data.len() >= core::mem::size_of::<RpPktBusaccess>()
         {
-            let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !lock.running {
-                return None;
+            let pkt_be = unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktBusaccess) };
+            let pkt = pkt_be.from_be();
+
+            let bus_hdr_len =
+                core::mem::size_of::<RpPktBusaccess>() - core::mem::size_of::<RpPktHdr>();
+            let payload_len = hdr.len as usize - bus_hdr_len;
+            let mut resp_data = [0u8; 8];
+            if payload_len > 0 && payload_len <= 8 {
+                resp_data[..payload_len].copy_from_slice(
+                    &data[core::mem::size_of::<RpPktBusaccess>()
+                        ..core::mem::size_of::<RpPktBusaccess>() + payload_len],
+                );
             }
-            lock.active_vcpu_count += 1;
-        }
-        let _guard = VcpuCountGuard(self);
-
-        self.send_req_and_wait_internal(cmd, addr, size, data_to_write)
-    }
-
-    fn send_req_and_wait_internal(
-        &self,
-        cmd: RpCmd,
-        addr: u64,
-        size: u32,
-        data_to_write: Option<&[u8]>,
-    ) -> Option<u64> {
-        let mut id;
-
-        // 1. Wait for connection
-        let mut lock = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        loop {
-            if !lock.running {
-                return None;
-            }
-            if let Some(mut stream) = lock.stream.take() {
-                id = lock.next_id;
-                lock.next_id += 1;
-                lock.has_resp = false;
-                lock.current_resp = None;
-
-                let bus_hdr_len = (core::mem::size_of::<RpPktBusaccess>()
-                    - core::mem::size_of::<RpPktHdr>()) as u32;
-                let payload_len = data_to_write.map(|d| d.len()).unwrap_or(0) as u32;
-
-                let pkt = RpPktBusaccess {
-                    hdr: RpPktHdr {
-                        cmd: cmd as u32,
-                        len: bus_hdr_len + payload_len,
-                        id,
-                        flags: 0,
-                        dev: 0,
-                    },
-                    timestamp: 0,
-                    attributes: 0,
-                    addr,
-                    len: size,
-                    width: size,
-                    stream_width: size,
-                    master_id: 0,
-                };
-
-                let pkt_bytes = pkt.pack_be();
-
-                let mut send_success = false;
-                if stream.write_all(&pkt_bytes).is_ok() {
-                    let mut failed = false;
-                    if let Some(d) = data_to_write {
-                        if stream.write_all(d).is_err() {
-                            failed = true;
-                        }
-                    }
-                    if !failed {
-                        send_success = true;
-                    }
-                }
-
-                if send_success {
-                    lock.stream = Some(stream);
-                    break; // Successfully sent
-                }
-                // Write failed, stream is already dropped/None
-            }
-
-            // Wait for connection with BQL yielding
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, result) = self
-                .connected_cond
-                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock); // Re-acquires BQL
-            if result.timed_out() {
-                virtmcu_qom::sim_info!("timeout waiting for connection");
-                return None;
-            }
-        }
-
-        // 2. Wait for response
-        while !lock.has_resp && lock.running {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, result) = self
-                .resp_cond
-                .wait_timeout(lock, Duration::from_millis(BRIDGE_TIMEOUT_MS as u64))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock); // Re-acquires BQL
-            if result.timed_out() {
-                virtmcu_qom::sim_info!("timeout waiting for response");
-                lock.stream = None;
-                lock.has_resp = true;
-                break;
-            }
-        }
-
-        if cmd == RpCmd::Read {
-            let n = size as usize;
-            if n > 0 && n <= 8 {
-                let mut bytes = [0u8; 8];
-                bytes[..n].copy_from_slice(&lock.current_data[..n]);
-                // Remote peer sends data in ARM (LE) byte order.
-                Some(u64::from_le_bytes(bytes))
-            } else {
-                Some(0)
-            }
-        } else {
-            Some(0)
+            ctx.dispatch_response(RpResponse { pkt, data: resp_data });
         }
     }
+}
+
+pub struct RemotePortBridgeState {
+    bridge: CoSimBridge<RpTransport>,
 }
 
 unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
     let state = &*(opaque as *mut RemotePortBridgeState);
-    state.shared.send_req_and_wait(RpCmd::Read, addr, size, None).unwrap_or(0)
+    let req = RpRequest { cmd: RpCmd::Read, addr, size, data: None, data_len: 0 };
+
+    state.bridge.wait_connected(5000);
+
+    if let Some(resp) = state.bridge.send_and_wait(req, 5000) {
+        if size <= 8 {
+            let mut buf = [0u8; 8];
+            buf[..size as usize].copy_from_slice(&resp.data[..size as usize]);
+            u64::from_le_bytes(buf)
+        } else {
+            0
+        }
+    } else {
+        0
+    }
 }
 
 unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
     let state = &*(opaque as *mut RemotePortBridgeState);
-    // ARM (LE) target — data payload is always little-endian.
-    let data = val.to_le_bytes();
-    state.shared.send_req_and_wait(RpCmd::Write, addr, size, Some(&data[..size as usize]));
+    let val_bytes = val.to_le_bytes();
+    let req = RpRequest { cmd: RpCmd::Write, addr, size, data: Some(val_bytes), data_len: size };
+
+    state.bridge.wait_connected(5000);
+    state.bridge.send_and_wait(req, 5000);
 }
 
 static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -918,8 +808,8 @@ static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
     endianness: DEVICE_NATIVE_ENDIAN,
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 1,
-        max_access_size: 8,
+        min_access_size: 0,
+        max_access_size: 0,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
@@ -934,6 +824,8 @@ static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
 
 unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let qemu = &mut *(dev as *mut RemotePortBridgeQEMU);
+    let obj = dev as *mut Object;
+
     if qemu.socket_path.is_null() {
         error_setg!(errp, "socket-path must be set");
         return;
@@ -943,138 +835,85 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         return;
     }
 
-    let socket_path = CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned();
-
     for i in 0..32 {
         sysbus_init_irq(dev as *mut SysBusDevice, &raw mut qemu.irqs[i]);
     }
 
-    let shared = Arc::new(SharedState {
-        socket_path,
+    let transport = RpTransport {
+        socket_path: CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned(),
         reconnect_ms: qemu.reconnect_ms,
         irqs: RawIrqArray(qemu.irqs.as_mut_ptr()),
-        resp_cond: Condvar::new(),
-        connected_cond: Condvar::new(),
-        drain_cond: Condvar::new(),
-        state: Mutex::new(ConnectionState {
-            stream: None,
-            has_resp: false,
-            current_resp: None,
-            current_data: [0u8; 8],
-            next_id: 0,
-            running: true,
-            active_vcpu_count: 0,
-        }),
-    });
+        stream: Mutex::new(None),
+        next_id: std::sync::atomic::AtomicU32::new(0),
+    };
 
-    let shared_clone = Arc::clone(&shared);
-    let bg_thread = std::thread::spawn(move || {
-        shared_clone.run_background_thread();
-    });
-
-    let state =
-        Box::new(RemotePortBridgeState { shared: Arc::clone(&shared), bg_thread: Some(bg_thread) });
+    let bridge = CoSimBridge::new(transport);
+    let state = Box::new(RemotePortBridgeState { bridge });
     qemu.rust_state = Box::into_raw(state);
 
-    memory_region_init_io(
-        &raw mut qemu.mmio,
-        dev as *mut Object,
-        &raw const BRIDGE_MMIO_OPS,
-        qemu.rust_state as *mut c_void,
-        c"remote-port-bridge".as_ptr(),
-        u64::from(qemu.region_size),
-    );
+    let id_str = if qemu.id.is_null() {
+        None
+    } else {
+        Some(CStr::from_ptr(qemu.id).to_string_lossy().into_owned())
+    };
 
-    sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut qemu.mmio);
+    let already_mapped = if let Some(ref id) = id_str { is_id_mapped(id) } else { false };
 
-    if qemu.base_addr != 0 {
-        sysbus_mmio_map(dev as *mut SysBusDevice, 0, qemu.base_addr);
+    if !already_mapped {
+        memory_region_init_io(
+            &raw mut qemu.mmio,
+            obj,
+            &raw const BRIDGE_MMIO_OPS,
+            qemu.rust_state as *mut c_void,
+            c"remote-port-bridge".as_ptr(),
+            u64::from(qemu.region_size),
+        );
+
+        sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut qemu.mmio);
+
+        if qemu.base_addr != u64::MAX {
+            sysbus_mmio_map(dev as *mut SysBusDevice, 0, qemu.base_addr);
+        }
+        if let Some(ref id) = id_str {
+            set_id_mapped(id, true);
+        }
+        qemu.mapped = true;
     }
 }
 
 unsafe extern "C" fn bridge_instance_init(_obj: *mut Object) {}
-
 unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
     let qemu = &mut *(obj as *mut RemotePortBridgeQEMU);
     if !qemu.rust_state.is_null() {
-        let mut state = Box::from_raw(qemu.rust_state);
-        {
-            let mut lock =
-                state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock.running = false;
-            if let Some(ref mut s) = lock.stream {
-                let _ = s.shutdown(std::net::Shutdown::Both);
-            }
+        let state = Box::from_raw(qemu.rust_state);
+        drop(state); // CoSimBridge handles safe Drop teardown + vCPU drain
+
+        if qemu.mapped && !qemu.id.is_null() {
+            let id = CStr::from_ptr(qemu.id).to_string_lossy().into_owned();
+            set_id_mapped(&id, false);
         }
 
-        // Signal all threads to wake up and check 'running' flag
-        state.shared.resp_cond.notify_all();
-        state.shared.connected_cond.notify_all();
-
-        // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock
-        // if active_vcpu_count never reaches zero due to a bug or panic).
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        while lock.active_vcpu_count > 0 {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, timed_out) = state
-                .shared
-                .drain_cond
-                .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if timed_out.timed_out() {
-                virtmcu_qom::sim_info!(
-                    "drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
-                    DRAIN_TIMEOUT_SECS, lock.active_vcpu_count
-                );
-                break;
-            }
-        }
-
-        if let Some(handle) = state.bg_thread.take() {
-            let bql_unlock = Bql::temporary_unlock();
-            let _ = handle.join();
-            drop(bql_unlock);
-        }
         qemu.rust_state = ptr::null_mut();
     }
 }
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static BRIDGE_PROPERTIES: std::sync::OnceLock<[Property; 5]> = std::sync::OnceLock::new();
-
-fn get_bridge_properties() -> *const Property {
-    BRIDGE_PROPERTIES
-        .get_or_init(|| {
-            [
-                define_prop_string!(c"socket-path".as_ptr(), RemotePortBridgeQEMU, socket_path),
-                define_prop_uint32!(
-                    c"region-size".as_ptr(),
-                    RemotePortBridgeQEMU,
-                    region_size,
-                    0x1000
-                ),
-                define_prop_uint64!(c"base-addr".as_ptr(), RemotePortBridgeQEMU, base_addr, 0),
-                define_prop_uint32!(
-                    c"reconnect-ms".as_ptr(),
-                    RemotePortBridgeQEMU,
-                    reconnect_ms,
-                    1000
-                ),
-                unsafe { std::mem::zeroed() },
-            ]
-        })
-        .as_ptr()
-}
+static BRIDGE_PROPERTIES: [Property; 6] = [
+    define_prop_string!(c"id".as_ptr(), RemotePortBridgeQEMU, id),
+    define_prop_string!(c"socket-path".as_ptr(), RemotePortBridgeQEMU, socket_path),
+    define_prop_uint32!(c"region-size".as_ptr(), RemotePortBridgeQEMU, region_size, 0x1000),
+    define_prop_uint64!(c"base-addr".as_ptr(), RemotePortBridgeQEMU, base_addr, u64::MAX),
+    define_prop_uint32!(c"reconnect-ms".as_ptr(), RemotePortBridgeQEMU, reconnect_ms, 1000),
+    unsafe { core::mem::zeroed() },
+];
 
 unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
     (*dc).realize = Some(bridge_realize);
     (*dc).unrealize = Some(bridge_unrealize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, get_bridge_properties(), 4);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 5);
 }
 
 static BRIDGE_TYPE_INFO: TypeInfo = TypeInfo {

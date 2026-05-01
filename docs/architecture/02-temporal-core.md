@@ -16,7 +16,7 @@ VirtMCU provides three distinct clock modes to balance simulation accuracy with 
 |---|---|---|---|---|
 | **Standalone** | *(omit `-device clock`)* | Wall-clock | 100% | Pure firmware unit testing; no physics engine. |
 | **Slaved-Suspend** | `-device clock` | Quantum-accurate | ~95% | **Default.** Control loops ≥ 1ms. TB-boundary pauses. |
-| **Slaved-Icount** | `-device clock,mode=icount` | Instruction-accurate | ~15–20% | PWM, bit-banging, µs-precision DMA. |
+| **Slaved-Icount** | `-device clock,mode=icount` | Instruction-accurate | ~15–20% | PWM, bit-banging, µs-precision DMA. QEMU uses `-icount shift=0`, guaranteeing an exact 1 instruction = 1 virtual nanosecond relationship. |
 
 ---
 
@@ -51,10 +51,8 @@ We inject a function pointer into `accel/tcg/cpu-exec.c`. At the end of every Tr
 ### The BQL "Unlock-and-Park" Pattern
 QEMU uses the **Big QEMU Lock (BQL)** to protect hardware state. If we block the vCPU thread while holding the BQL, the entire process (including QMP and GDB) deadlocks. VirtMCU uses a safe RAII pattern:
 1.  **Detect** quantum expiry.
-2.  **Signal** the Zenoh background thread that the quantum is done.
-3.  **Unlock** the BQL (`bql_unlock()`).
-4.  **Wait** on a condition variable (`vcpu_cond`).
-5.  **Re-lock** the BQL once the next quantum request arrives.
+2.  **Signal** the background thread that the quantum is done.
+3.  **Wait** on a condition variable using `virtmcu_qom::sync::Condvar::wait_yielding_bql`. This internally uses `Bql::temporary_unlock()` to safely yield the lock and automatically re-acquires it before resuming execution.
 
 This ensures the emulator remains responsive even while "paused" in virtual time.
 

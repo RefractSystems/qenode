@@ -1,3 +1,13 @@
+"""
+SOTA Test Module: verify_control
+
+Context:
+This module implements tests for the verify_control subsystem.
+
+Objective:
+Ensure correct functionality, performance, and deterministic execution of verify_control.
+"""
+
 # tests/fixtures/guest_apps/actuator/verify_control.py
 import logging
 import os
@@ -12,20 +22,27 @@ import zenoh
 logger = logging.getLogger(__name__)
 
 
+def _find_workspace_root(start_path: Path) -> Path:
+    for p in [start_path, *list(start_path.parents)]:
+        if (p / "VERSION").exists() or (p / ".git").exists():
+            return p
+    return start_path.parent.parent.parent.parent
+
+
 def main():
     logger.info("[Test] Starting Zenoh control verification...")
 
-    workspace_dir = Path(__file__).resolve().parent.parent.parent
-    router_script = Path(workspace_dir) / "tests" / "zenoh_router_persistent.py"
+    workspace_dir = _find_workspace_root(Path(__file__).resolve())
+    router_script = workspace_dir / "tests" / "zenoh_router_persistent.py"
 
     # 1. Start Zenoh router
     logger.info("[Test] Starting Zenoh router...")
-    router_proc = subprocess.Popen([sys.executable, router_script, "tcp/127.0.0.1:7450"])
+    router_proc = subprocess.Popen([sys.executable, router_script, "ZENOH_ROUTER_ENDPOINT"])
     time.sleep(2)
 
     # 2. Open Zenoh session
     conf = zenoh.Config()
-    conf.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7450"]')
+    conf.insert_json5("connect/endpoints", '["ZENOH_ROUTER_ENDPOINT"]')
     conf.insert_json5("scouting/multicast/enabled", "false")
     session = zenoh.open(conf)
 
@@ -51,14 +68,14 @@ def main():
 
     # 2. Run QEMU
     script_dir = Path(os.path.realpath(__file__)).parent
-    workspace_dir = Path(Path(script_dir).parent.parent)
-    run_sh = Path(workspace_dir) / "scripts" / "run.sh"
+    workspace_dir = Path(Path(script_dir).parent.parent.parent.parent)
+    run_sh_path = os.environ.get("RUN_SH") or str(workspace_dir / "scripts" / "run.sh")
 
     dtb = Path(script_dir) / "board.dtb"
     kernel = Path(script_dir) / "actuator.elf"
 
     cmd = [
-        run_sh,
+        run_sh_path,
         "--dtb",
         dtb,
         "--kernel",
@@ -121,7 +138,7 @@ def main():
     for msg in received_msgs:
         if msg["topic"] == "firmware/control/0/42" and abs(msg["vals"][0] - 3.14) < 0.001:
             success_1 = True
-        elif msg["topic"] == "firmware/control/0/99" and len(msg["vals"]) == 3 and msg["vals"] == (1.0, 2.0, 3.0):
+        elif msg["topic"] == "firmware/control/0/99" and len(msg["vals"]) == 3 and msg["vals"] == [1.0, 2.0, 3.0]:
             success_2 = True
 
     if success_1 and success_2:

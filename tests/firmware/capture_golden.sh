@@ -17,7 +17,7 @@ FIRMWARE_DIR="$SCRIPT_DIR/$TARGET"
 WORKSPACE="$SCRIPT_DIR/../.."
 
 ELF="$FIRMWARE_DIR/echo.elf"
-DTB="$WORKSPACE/tests/fixtures/guest_apps/phase1/minimal.dtb"
+DTB="$WORKSPACE/tests/fixtures/guest_apps/boot_arm/minimal.dtb"
 GOLDEN="$FIRMWARE_DIR/golden_uart.txt"
 UART_LOG="$(mktemp)"
 

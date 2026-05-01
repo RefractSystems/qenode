@@ -4,7 +4,7 @@
 2026-04-29
 
 ## The Incident
-During the integration of Phase 12-14 (Telemetry, IEEE802.15.4, and the Zenoh Coordinator stress testing), we observed spontaneous failures of the `test_phase12_telemetry` and clock-related tests. The QEMU emulator was failing to load the external QOM plugins (e.g., `hw-virtmcu-telemetry.so` and `hw-virtmcu-clock.so`), terminating with:
+During the integration of Telemetry, IEEE802.15.4, and the Zenoh Coordinator stress testing, we observed spontaneous failures of the `test_telemetry` and clock-related tests. The QEMU emulator was failing to load the external QOM plugins (e.g., `hw-virtmcu-telemetry.so` and `hw-virtmcu-clock.so`), terminating with:
 
 ```text
 QEMU Plugin Load Error: undefined symbol: virtmcu_cpu_set_tcg_hook

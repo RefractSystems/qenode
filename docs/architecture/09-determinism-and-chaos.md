@@ -14,7 +14,7 @@ VirtMCU enforces determinism through three coordinated mechanisms:
 
 ### Stochastic Seeding
 Any simulation logic that requires randomness (e.g., CSMA/CA backoff, radio noise models, or BLE advertising slot selection) MUST NOT use system time or local PIDs for seeding. Instead, they must use:
-`virtmcu_api::seed_for_quantum(global_seed, node_id, quantum_number)`
+`VirtMCU_api::seed_for_quantum(global_seed, node_id, quantum_number)`
 This ensures that the "random" behavior is perfectly reproducible for every node and every quantum across multiple runs.
 
 ### Canonical Message Ordering
@@ -24,9 +24,9 @@ This ensures that even if Node A's messages arrive at the host CPU before Node B
 
 ---
 
-## 2. The 8-Step Barrier Protocol
+## 2. The ARCH-8 Barrier Protocol
 
-To maintain causal integrity, VirtMCU uses an 8-step barrier protocol that prevents "clock drift" between the physics engine and the emulated nodes.
+To maintain causal integrity, VirtMCU uses the **ARCH-8 barrier protocol** (first introduced in Chapter 2) that prevents "clock drift" between the physics engine and the emulated nodes.
 
 1.  **TA Advance**: TimeAuthority (TA) requests a clock advance.
 2.  **Execution**: Nodes run their firmware for the requested quantum $Q$.

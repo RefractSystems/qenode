@@ -1,4 +1,4 @@
-# Rust FFI Safety & Memory Audit (Phase 18.13)
+# Rust FFI Safety & Memory Audit
 
 ## Overview
 This document summarizes the invariants and safety boundaries established during the migration of QEMU plugins to native Rust in `hw/rust/`.
@@ -24,7 +24,7 @@ QEMU is single-threaded for guest MMIO and timer delivery (the BQL). Zenoh, howe
 ### Invariants:
 1. **State Mutation:** Zenoh worker threads MUST NOT mutate QEMU state directly.
 2. **FFI Wrappers:** Calls to `qemu_set_irq`, `virtmcu_timer_mod`, and `qemu_chr_be_write` are wrapped in `virtmcu_bql_lock()` and `virtmcu_bql_unlock()` inside the Zenoh callback closures.
-3. **Priority Queues (Phase 18.14):** To prevent Zenoh worker threads from stalling while waiting for the BQL, `netdev` was refactored to use a lock-free MPSC channel (`crossbeam_channel::unbounded`). The Zenoh thread simply pushes to the channel. The `rx_timer_cb` (which executes on the QEMU main thread) pulls from the channel into a thread-local `BinaryHeap`.
+3. **Priority Queues (Performance Iteration):** To prevent Zenoh worker threads from stalling while waiting for the BQL, `netdev` was refactored to use a lock-free MPSC channel (`crossbeam_channel::unbounded`). The Zenoh thread simply pushes to the channel. The `rx_timer_cb` (which executes on the QEMU main thread) pulls from the channel into a thread-local `BinaryHeap`.
 
 ## 3. Endianness Assumptions
 When memory is accessed via `MemoryRegionOps`, the Rust implementation assumes `DEVICE_LITTLE_ENDIAN`.

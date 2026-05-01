@@ -53,3 +53,21 @@ These topics bridge the cyber world with the physics engine and external observa
 *   **UI LEDs**: `sim/ui/{node_id}/led/{led_id}`
 *   **UI Buttons**: `sim/ui/{node_id}/button/{btn_id}`
 *   **Telemetry**: `sim/telemetry/trace/{node_id}` (High-fidelity CPU and IRQ traces)
+
+---
+
+## 4. Co-Simulation Protocols
+
+While the Data Plane handles intra-simulation routing, Co-Simulation protocols bridge VirtMCU to external hardware models (like SystemC or Verilator).
+
+### Path A: Custom Unix Socket Bridge (`virtmcu_proto.h`)
+A synchronous request/response protocol for simple MMIO forwarding.
+- **Request (`mmio_req`)**: 32 bytes containing access type (read/write), size, virtual time (`vtime_ns`), address, and data.
+- **Response (`sysc_msg`)**: 16 bytes returning read data or forwarding interrupts.
+
+### Path B: AMD/Xilinx Remote Port Protocol
+The industry-standard wire format used by Xilinx QEMU, Renode, and `libsystemctlm-soc`. VirtMCU uses it to integrate with Verilated FPGA fabrics and SystemC TLM-2.0 targets.
+- **Wire Format**: A simple TCP/Unix request/response stream. Every transaction starts with a `rp_pkt_hdr` (command, length, id, device, flags).
+- **Handshake**: Initiates with a `HELLO` packet to negotiate version (4.3).
+- **Symmetry**: `RP_CMD_read` and `RP_CMD_write` are echoed with `RP_PKT_FLAGS_response` to acknowledge receipt.
+- **Remote Port Slave**: The target-side implementation (e.g., `remote-port-tlm-memory-slave` in the SystemC adapter) converts these read/write packets to TLM-2.0 `b_transport` calls, enabling full cycle-accurate co-simulation for external models.

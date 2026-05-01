@@ -13,8 +13,8 @@
 | `b4` | ≥ 0.14 | Fetching QEMU patch series |
 | `pkg-config` | Any | |
 
-**Platform**: macOS and Linux are both supported for development (Phases 1–3).
-For Phase 4+ (TCG plugins), use Docker — macOS has a conflict between
+**Platform**: macOS and Linux are both supported for development (basic tests).
+For advanced tests (TCG plugins), use Docker — macOS has a conflict between
 `--enable-modules` and `--enable-plugins` (QEMU GitLab #516).
 Windows is not supported (QEMU module loading is unavailable on Windows).
 
@@ -113,7 +113,7 @@ the right QEMU binary.
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb \
+   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
                     -device <your-device-name> -nographic
    ```
 6. Verify the type appears in `-device help` output.
@@ -185,7 +185,7 @@ We split testing into two categories:
 
 ### 1. Emulator-Level Smoke Tests
 These are raw `bash` scripts combined with small Python scripts (using QMP) to verify the emulator works at a low level.
-They are located in `tests/fixtures/guest_apps/phaseX/smoke_test.sh`.
+They are located in `tests/fixtures/guest_apps/<domain>/smoke_test.sh`.
 
 **To run all integration smoke tests locally:**
 The Makefile automatically handles building required test artifacts (like ELFs) and setting up the Python environment before running the tests.
@@ -200,25 +200,25 @@ If a test passes locally but fails on CI, you can run the test inside the exact 
 # 1. Build the builder image from scratch
 docker build -t virtmcu-builder -f docker/Dockerfile --target builder .
 
-# 2. Run a specific phase smoke test (e.g., Phase 1)
+# 2. Run a specific domain smoke test (e.g., boot_arm)
 docker run --rm \
   -v "$(pwd):/workspace" \
   -w /workspace \
   -e PYTHONPATH=/workspace \
   virtmcu-builder \
-  bash -c "make -C tests/fixtures/guest_apps/phase1 && bash tests/fixtures/guest_apps/phase1/smoke_test.sh"
+  bash -c "make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/boot_arm/smoke_test.sh"
 ```
 
 ### Debugging Failed Smoke Tests
 *   **Inspect the Logs:** Many tests capture QEMU output to a log file (e.g., `smoke_test_output.log` in the test directory). Always read this file if the test fails.
 *   **Run Interactively:** If a smoke test times out or fails, run the QEMU command interactively without the `-monitor none` or `-serial file:...` flags so you can see what QEMU prints to the terminal.
     ```bash
-    ./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
+    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
     ```
     *(To exit an interactive QEMU session, press `Ctrl+A` followed by `X`)*
 *   **Add Debug Flags:** You can append `-d exec,cpu_reset` or `-trace "zenoh_*"` to the `run.sh` command to trace execution blocks and see exactly where the firmware or QEMU is hanging.
 
-### 2. Python Unit & Automation Tests (Phase 4+)
+### 2. Python Unit & Automation Tests (advanced tests)
 For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge, we use `pytest`.
 
 **To run unit/automation tests:**
@@ -227,7 +227,7 @@ For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge
 make test
 ```
 
-When implementing a feature for a new Phase, you **MUST** provide a corresponding `smoke_test.sh` (or `pytest` suite for later phases) before submitting your PR. This prevents regressions.
+When implementing a feature for a new Domain, you **MUST** provide a corresponding `smoke_test.sh` (or `pytest` suite for later domains) before submitting your PR. This prevents regressions.
 
 ---
 
@@ -268,7 +268,7 @@ If you are using an AI agent (Claude Code, Gemini CLI), you can automate the pro
 
 ## Branching and Commits
 
-- Branch off `main`: `git checkout -b feature/<phase>-<short-desc>`
+- Branch off `main`: `git checkout -b feature/<domain>-<short-desc>`
 - Commit style: `scope: imperative description`
   - `hw/uart: add pl011 mmio read/write stubs`
   - `tools/repl2qemu: handle using keyword in parser`
@@ -303,4 +303,4 @@ ruff check tools/ tests/
 virtmcu is developed alongside **FirmwareStudio** (separate upstream repo),
 a digital twin environment where MuJoCo drives physical simulation and acts as the
 **external time master** for QEMU. See `CLAUDE.md` for the full architectural picture,
-and `PLAN.md` for the phased task checklist.
+and `PLAN.md` for the incremental task checklist.

@@ -55,7 +55,9 @@ def main():
     # 2. Patch UndefinedBehaviorSanitizer (ubsan)
     rust_ubsan = "add_project_arguments('-C', 'link-arg=-fsanitize=undefined', language: 'rust')"
     if "get_option('b_sanitize').contains('undefined')" not in content:
-        pattern_c = r"(\s+)(qemu_cflags\s+\+=\s+\['-fsanitize=undefined'\]\n\s+qemu_ldflags\s+\+=\s+\['-fsanitize=undefined'\])"
+        pattern_c = (
+            r"(\s+)(qemu_cflags\s+\+=\s+\['-fsanitize=undefined'\]\n\s+qemu_ldflags\s+\+=\s+\['-fsanitize=undefined'\])"
+        )
         match_c = re.search(pattern_c, content)
         if match_c:
             indent = match_c.group(1)

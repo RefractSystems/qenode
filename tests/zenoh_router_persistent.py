@@ -1,3 +1,13 @@
+"""
+SOTA Test Module: zenoh_router_persistent
+
+Context:
+This module implements tests for the zenoh_router_persistent subsystem.
+
+Objective:
+Ensure correct functionality, performance, and deterministic execution of zenoh_router_persistent.
+"""
+
 import logging
 import sys
 import time
@@ -6,11 +16,11 @@ import zenoh
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
-
 
 def main():
-    endpoint = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ENDPOINT
+    if len(sys.argv) <= 1:
+        sys.exit(1)
+    endpoint = sys.argv[1]
     config = zenoh.Config()
     config.insert_json5("mode", '"router"')
     config.insert_json5("listen/endpoints", f'["{endpoint}"]')
@@ -22,9 +32,9 @@ def main():
     logger.info(f"Starting persistent Zenoh mock router on {endpoint}...")
     session = zenoh.open(config)
 
-    # Declare a liveliness token so clients can deterministically wait for the router to be ready.
-    # The key sim/router/check is used by wait_for_zenoh_discovery in conftest.py.
+    logger.info("Zenoh router started. Declaring liveliness...")
     _liveliness = session.liveliness().declare_token("sim/router/check")
+    logger.info("Liveliness declared. Ready.")
 
     try:
         while True:

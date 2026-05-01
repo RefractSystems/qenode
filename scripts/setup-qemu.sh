@@ -16,7 +16,7 @@ set -euo pipefail
 
 # Determine absolute paths for the script, workspace, and QEMU directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/common.sh"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
 if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
@@ -105,10 +105,10 @@ if [ "${FORCE_SYMLINKS:-0}" != "1" ] || [ -d "$QEMU_DIR" ]; then
 
     # Apply all virtmcu patches (arm-generic-fdt, SysBus, Zenoh hooks)
     # We use a centralized script to ensure the Dockerfile and local dev stay 1:1 consistent.
-    bash "$WORKSPACE_DIR/scripts/apply-qemu-patches.sh" "$QEMU_DIR"
+    bash "$SCRIPTS_DIR/apply-qemu-patches.sh" "$QEMU_DIR"
 fi
 
-# Phase 7: Fetch Zenoh-C prebuilt library for native QOM plugins
+# Fetch Zenoh-C prebuilt library for native QOM plugins
 ZENOHC_VER="${ZENOH_VERSION:-1.9.0}"
 ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
 
@@ -149,7 +149,7 @@ elif [ ! -d "$ZENOHC_DIR/include" ]; then
     rm /tmp/zenoh-c.zip
 fi
 
-# Phase 12: Fetch and compile flatcc for Telemetry
+# Fetch and compile flatcc for Telemetry
 FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
 # Try to find pre-installed flatcc headers first
 if [ ! -x "$FLATCC_DIR/bin/flatcc" ] && [ -f "/usr/local/bin/flatcc" ] && [ -d "/usr/local/include/flatcc" ]; then
@@ -207,8 +207,8 @@ mkdir -p "$BUILD_DIR_NAME"
 cd "$BUILD_DIR_NAME"
 
 # Configure the build, handling macOS specific plugin bugs (GitLab #516)
-# Phase 18: Enable --enable-rust for native QOM plugins
-# Phase 31: Use LLVM linker (lld) for faster linking
+# Enable --enable-rust for native QOM plugins
+# Use LLVM linker (lld) for faster linking
 CONFIGURE_ARGS=(
     --enable-rust
     --enable-modules

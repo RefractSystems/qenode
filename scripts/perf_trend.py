@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-perf_trend.py — Performance trend tracking for virtmcu (Phase 16.5).
+perf_trend.py — Performance trend tracking for virtmcu .
 
-Reads the benchmark results produced by tests/fixtures/guest_apps/phase16/bench.py
-(tests/fixtures/guest_apps/phase16/last_results.json) and compares them against a saved baseline.
+Reads the benchmark results produced by tests/fixtures/guest_apps/perf_bench/bench.py
+(tests/fixtures/guest_apps/perf_bench/last_results.json) and compares them against a saved baseline.
 
 Usage:
     python3 scripts/perf_trend.py --save-baseline    # persist current results as baseline
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 
-RESULTS_PATH = Path(WORKSPACE) / "test" / "phase16" / "last_results.json"
-BASELINE_PATH = Path(WORKSPACE) / "test" / "phase16" / "baseline.json"
+RESULTS_PATH = Path(WORKSPACE) / "tests" / "fixtures" / "guest_apps" / "perf_bench" / "last_results.json"
+BASELINE_PATH = Path(WORKSPACE) / "tests" / "fixtures" / "guest_apps" / "perf_bench" / "baseline.json"
 
 # Regression thresholds.
 MIPS_REGRESSION_PCT = 5.0  # fail if MIPS drops by more than this percentage

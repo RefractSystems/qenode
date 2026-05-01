@@ -12,7 +12,7 @@ robotframework==7.0.0
 lark==1.1.9
 
 # Zenoh — federation bus used by the FirmwareStudio time authority
-# (required for Phase 7: external time master / MuJoCo integration)
+#
 eclipse-zenoh==1.9.0
 
 # Development / testing
@@ -22,7 +22,7 @@ pyyaml==6.0.1
 hypothesis==6.152.1
 ruff==0.15.11
 
-# MCP SDK - used for the AI Debugging interface (Phase 13)
+# MCP SDK - used for the AI Debugging interface
 mcp==1.0.0
 
 # FlatBuffers - schema-driven zero-copy serialization

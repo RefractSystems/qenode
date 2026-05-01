@@ -138,6 +138,8 @@ unsafe extern "C" fn cache_irq_paths_cb(obj: *mut Object, _opaque: *mut c_void) 
 unsafe extern "C" fn telemetry_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut VirtmcuTelemetryQOM);
 
+    virtmcu_qom::vlog!("Telemetry device realize (node={})", s.node_id);
+
     assert!(virtmcu_qom::sync::Bql::is_held());
 
     let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
@@ -169,11 +171,9 @@ unsafe extern "C" fn telemetry_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut VirtmcuTelemetryQOM);
 
     if core::ptr::eq(s, GLOBAL_TELEMETRY.load(Ordering::Acquire)) {
-        unsafe {
-            virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(None);
-            virtmcu_qom::irq::virtmcu_set_irq_hook(None);
-            GLOBAL_TELEMETRY.store(ptr::null_mut(), Ordering::Release);
-        }
+        virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(None);
+        virtmcu_qom::irq::virtmcu_set_irq_hook(None);
+        GLOBAL_TELEMETRY.store(ptr::null_mut(), Ordering::Release);
     }
 
     if !s.rust_state.is_null() {

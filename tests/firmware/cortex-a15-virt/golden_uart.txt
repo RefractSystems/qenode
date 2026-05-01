@@ -1,5 +1,5 @@
 # Provenance: virtmcu-baseline
-# Source: tests/fixtures/guest_apps/phase8/echo.S — welcome_msg .asciz "Interactive UART Echo Ready.\r\nType something: "
+# Source: tests/fixtures/guest_apps/uart_echo/echo.S — welcome_msg .asciz "Interactive UART Echo Ready.\r\nType something: "
 # The output below is derived from the firmware source and confirmed by test_interactive_echo.robot
 # running against VirtMCU. It has NOT yet been captured from real Cortex-A15 silicon.
 #

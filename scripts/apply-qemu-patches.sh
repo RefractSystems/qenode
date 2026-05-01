@@ -18,7 +18,7 @@ if [ -z "$QEMU_DIR" ] || [ ! -d "$QEMU_DIR" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/common.sh"
 
 if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
     # shellcheck source=../BUILD_DEPS

@@ -4,13 +4,13 @@
 Accepted
 
 ## Context
-In a deterministic multi-node simulation framework (`virtmcu`), multiple independent QEMU instances (cyber nodes) and physics engines (like MuJoCo) must coordinate time, exchange Ethernet frames, and transmit serial/UART bytes. 
+In a deterministic multi-node simulation framework (`VirtMCU`), multiple independent QEMU instances (cyber nodes) and physics engines (like MuJoCo) must coordinate time, exchange Ethernet frames, and transmit serial/UART bytes. 
 
 Traditional emulation frameworks approach this in various ways:
 - **Renode**: Runs everything in a single C# process space, using shared memory and direct function calls for its `WirelessMedium`.
 - **SystemC / TLM-2.0**: Relies on a single C++ kernel thread to schedule and synchronize discrete events across all modules.
 
-Because `virtmcu` relies on unmodified QEMU (which is a heavy, standalone C application with its own TCG execution loop), we cannot simply compile multiple QEMU instances into a single binary. They must run as separate processes (or separate Docker containers in a Kubernetes cluster). We need an Inter-Process Communication (IPC) layer.
+Because `VirtMCU` relies on unmodified QEMU (which is a heavy, standalone C application with its own TCG execution loop), we cannot simply compile multiple QEMU instances into a single binary. They must run as separate processes (or separate Docker containers in a Kubernetes cluster). We need an Inter-Process Communication (IPC) layer.
 
 ## Decision
 We selected **Eclipse Zenoh** (native Rust) as the sole federation message bus for all inter-node communication, time synchronization, and cyber-physical telemetry.
@@ -24,7 +24,7 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 1. **High Performance and Low Overhead**: Zenoh is written in Rust and highly optimized for edge and robotics (ROS2) networks. Native Rust plugins integrate directly into QEMU's event loop.
 2. **Language Agnostic**: The `TimeAuthority` can be written in Python, the `zenoh_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
 3. **Flexible Discovery**: Zenoh supports both decentralized discovery (multicast) and explicit endpoints. VirtMCU strictly mandates explicit TCP/UDP endpoints for deterministic CI execution.
-4. **Flexible Topologies**: Zenoh can route over shared memory (SHM), TCP, UDP, or QUIC. If two QEMU instances are on the same host, Zenoh uses SHM. If they are in different cloud regions, it uses TCP. The `virtmcu` code does not change.
+4. **Flexible Topologies**: Zenoh can route over shared memory (SHM), TCP, UDP, or QUIC. If two QEMU instances are on the same host, Zenoh uses SHM. If they are in different cloud regions, it uses TCP. The `VirtMCU` code does not change.
 5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `clock` requirement where QEMU must block the TCG loop and ask the `TimeAuthority` for the next time quantum.
 
 ### Cons

@@ -1,3 +1,13 @@
+"""
+SOTA Test Module: spi_echo_node
+
+Context:
+This module implements tests for the spi_echo_node subsystem.
+
+Objective:
+Ensure correct functionality, performance, and deterministic execution of spi_echo_node.
+"""
+
 import logging
 import sys
 import time

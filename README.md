@@ -88,7 +88,7 @@ See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-over
     NVIDIA Omniverse (Accellera Federated Simulation Standard / OpenUSD schemas).
 
 - **Co-Simulation Bridge**: Connect Verilated C++ models or FPGAs via SystemC TLM-2.0
-  and Remote Port sockets. Phase 9 extends this to shared physical media (CAN, SPI) with
+  and Remote Port sockets. The architecture extends this to shared physical media (CAN, SPI) with
   asynchronous IRQ support.
 
 - **Platform Description Tools**: `repl2qemu` compiles legacy Renode `.repl` files or
@@ -126,7 +126,7 @@ virtmcu/
 ├── tests/                      # pytest / Robot test suites
 │   ├── conftest.py             # pytest fixtures for Zenoh and QEMU orchestration
 │   ├── test_qmp_keywords.robot # Robot Framework integration
-│   └── ...                     # Extensive coverage tests (phase1, phase2, etc.)
+│   └── ...                     # Extensive coverage tests (boot_arm, spi_bridge, etc.)
 │
 ├── patches/
 │   ├── arm-generic-fdt-v3.mbx  # 33-patch series (applied by setup-qemu.sh)
@@ -162,16 +162,16 @@ covers the timing design and BQL constraints. Section 6 covers prior art (qbox, 
 **Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
-./scripts/run.sh --dtb tests/fixtures/guest_apps/phase1/minimal.dtb -device your-device-name -nographic
+./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
 ```
 
 **Run the repl2qemu tool**:
 ```bash
 source .venv/bin/activate
-./scripts/run.sh --repl tests/fixtures/guest_apps/phase3/test_board.repl --kernel tests/fixtures/guest_apps/phase1/hello.elf -nographic
+./scripts/run.sh --repl tests/fixtures/guest_apps/yaml_boot/test_board.repl --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
-**Run with FirmwareStudio** (external time master, Phase 7+):
+**Run with FirmwareStudio** (external time master):
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
 ./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
@@ -183,7 +183,7 @@ source .venv/bin/activate
     -icount shift=0,align=off,sleep=off
 ```
 
-**Docker** (CI or Phase 4+ with TCG plugins):
+**Docker** (CI or advanced tests with TCG plugins):
 ```bash
 docker compose -f docker/docker-compose.yml up
 ```
@@ -215,7 +215,7 @@ source .venv/bin/activate
 make run           # smoke-test
 ```
 
-> **macOS note**: Native builds work for Phases 1–3. Phase 4+ requires Docker — a
+> **macOS note**: Native builds work for basic tests. Advanced tests require Docker — a
 > GLib conflict (`--enable-modules` + `--enable-plugins`, GitLab #516) breaks module
 > loading on macOS. See `docs/architecture/01-system-overview.md §6`.
 
@@ -256,7 +256,7 @@ The core framework development is complete. All architectural pillars and capabi
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<phase>-<short-desc>`.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Branch: `feature/<domain>-<short-desc>`.
 Commit style: `scope: imperative description` (e.g., `hw/rust/chardev: add buffering`).
 
 ---

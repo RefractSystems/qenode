@@ -7,7 +7,7 @@ import socket
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import vproto
 
@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 class SimulationTransport(abc.ABC):
     @abc.abstractmethod
     def dump_flight_recorder(self) -> list[dict]: ...
+    @abc.abstractmethod
+    def dump_pcap(self, path: Path) -> None: ...
+
     @abc.abstractmethod
     async def start(self) -> None: ...
 
@@ -44,10 +47,18 @@ class SimulationTransport(abc.ABC):
     @abc.abstractmethod
     async def step_clock(self, delta_ns: int) -> tuple[int, int]: ...
 
+    @abc.abstractmethod
+    def get_vta(self, node_ids: list[int]) -> Any: ...
+
 
 class ZenohTransportImpl(SimulationTransport):
     def dump_flight_recorder(self) -> list[dict]:
         return getattr(self, "history", [])
+
+    def dump_pcap(self, path: Path) -> None:
+        from tools.testing.virtmcu_test_suite.pcap_writer import write_pcap
+
+        write_pcap(path, self.history)
 
     def __init__(self, router_endpoint: str, session: "zenoh.Session") -> None:
         self.router_endpoint = router_endpoint
@@ -57,6 +68,11 @@ class ZenohTransportImpl(SimulationTransport):
 
         self.vta = VirtualTimeAuthority(session, [0])  # Assumes single node 0 for basic tests
         self.history: list[dict] = []
+
+    def get_vta(self, node_ids: list[int]) -> Any:
+        from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+
+        return VirtualTimeAuthority(self.session, node_ids)
 
     async def start(self) -> None:
         pass
@@ -77,7 +93,10 @@ class ZenohTransportImpl(SimulationTransport):
     async def publish(self, topic: str, payload: bytes) -> None:
         import time
 
-        self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "tx"})
+        vtime = self.vta.current_vtimes.get(0, 0) if hasattr(self.vta, "current_vtimes") else 0
+        self.history.append(
+            {"time": time.time(), "vtime_ns": vtime, "topic": topic, "payload": payload.hex(), "direction": "tx"}
+        )
         await asyncio.to_thread(lambda: self.session.put(topic, payload))
 
     async def subscribe(self, topic: str, callback: Callable[[bytes], None]) -> None:
@@ -90,7 +109,10 @@ class ZenohTransportImpl(SimulationTransport):
 
             # Offload to loop thread to avoid Zenoh C-thread deadlock
             def run_in_loop():
-                self.history.append({"time": time.time(), "topic": topic, "payload": p.hex(), "direction": "rx"})
+                vtime = self.vta.current_vtimes.get(0, 0) if hasattr(self.vta, "current_vtimes") else 0
+                self.history.append(
+                    {"time": time.time(), "vtime_ns": vtime, "topic": topic, "payload": p.hex(), "direction": "rx"}
+                )
                 callback(p)
 
             loop.call_soon_threadsafe(run_in_loop)
@@ -105,6 +127,11 @@ class ZenohTransportImpl(SimulationTransport):
 class UnixTransportImpl(SimulationTransport):
     def dump_flight_recorder(self) -> list[dict]:
         return getattr(self, "history", [])
+
+    def dump_pcap(self, path: Path) -> None:
+        from tools.testing.virtmcu_test_suite.pcap_writer import write_pcap
+
+        write_pcap(path, self.history)
 
     def __init__(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="virtmcu-unix-transport-")
@@ -160,7 +187,15 @@ class UnixTransportImpl(SimulationTransport):
 
                 import time
 
-                self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "rx"})
+                self.history.append(
+                    {
+                        "time": time.time(),
+                        "vtime_ns": self.vtime_ns,
+                        "topic": topic,
+                        "payload": payload.hex(),
+                        "direction": "rx",
+                    }
+                )
                 for sub_topic, cb in self.data_subs:
                     if topic == sub_topic or topic.startswith(sub_topic):
                         cb(payload)
@@ -182,7 +217,15 @@ class UnixTransportImpl(SimulationTransport):
         msg = len(topic).to_bytes(4, "little") + topic.encode() + len(payload).to_bytes(4, "little") + payload
         import time
 
-        self.history.append({"time": time.time(), "topic": topic, "payload": payload.hex(), "direction": "tx"})
+        self.history.append(
+            {
+                "time": time.time(),
+                "vtime_ns": self.vtime_ns,
+                "topic": topic,
+                "payload": payload.hex(),
+                "direction": "tx",
+            }
+        )
         for w in self.data_conns:
             w.write(msg)
             await w.drain()
@@ -219,6 +262,28 @@ class UnixTransportImpl(SimulationTransport):
         self.vtime_ns = resp.current_vtime_ns
         return resp.current_vtime_ns, resp.quantum_number
 
+    def get_vta(self, node_ids: list[int]) -> Any:
+        return UnixVirtualTimeAuthority(self, node_ids)
+
+
+class UnixVirtualTimeAuthority:
+    def __init__(self, transport: UnixTransportImpl, node_ids: list[int]):
+        self.transport = transport
+        self.node_ids = node_ids
+        self.current_vtimes = dict.fromkeys(node_ids, 0)
+
+    async def init(self, _timeout: float = 30.0):
+        # QEMU connects to the socket when it's ready.
+        # UnixTransportImpl.step_clock will wait for the connection.
+        await self.step(0)
+
+    async def step(self, delta_ns: int, _timeout: float | None = None):
+        # Note: UnixTransportImpl currently only supports a single connection/node.
+        vtime, _ = await self.transport.step_clock(delta_ns)
+        for nid in self.node_ids:
+            self.current_vtimes[nid] = vtime
+        return self.current_vtimes
+
 
 class FaultInjectingTransport(SimulationTransport):
     """
@@ -238,6 +303,9 @@ class FaultInjectingTransport(SimulationTransport):
         self.delay_s = delay_s
         self.jitter_s = jitter_s
         self._tasks: set[asyncio.Task] = set()
+
+    def get_vta(self, node_ids: list[int]) -> Any:
+        return self.inner.get_vta(node_ids)
 
     async def start(self) -> None:
         await self.inner.start()
@@ -267,6 +335,16 @@ class FaultInjectingTransport(SimulationTransport):
             d += (random.random() * 2 - 1) * self.jitter_s
         return max(0.0, d)
 
+    def _get_vtime_ns(self) -> int:
+        if hasattr(self.inner, "vta") and self.inner.vta:
+            if hasattr(self.inner.vta, "current_vtimes"):
+                return self.inner.vta.current_vtimes.get(0, 0)
+            if hasattr(self.inner.vta, "current_vtime_ns"):
+                return self.inner.vta.current_vtime_ns
+        elif hasattr(self.inner, "vtime_ns"):
+            return self.inner.vtime_ns
+        return 0
+
     async def publish(self, topic: str, payload: bytes) -> None:
         if self._should_drop(payload):
             # Deliberately drop packet
@@ -274,6 +352,7 @@ class FaultInjectingTransport(SimulationTransport):
                 self.inner.history.append(
                     {
                         "time": __import__("time").time(),
+                        "vtime_ns": self._get_vtime_ns(),
                         "topic": topic,
                         "payload": payload.hex(),
                         "direction": "tx_dropped",
@@ -294,6 +373,7 @@ class FaultInjectingTransport(SimulationTransport):
                     self.inner.history.append(
                         {
                             "time": __import__("time").time(),
+                            "vtime_ns": self._get_vtime_ns(),
                             "topic": topic,
                             "payload": payload.hex(),
                             "direction": "rx_dropped",
@@ -330,3 +410,7 @@ class FaultInjectingTransport(SimulationTransport):
 
     def dump_flight_recorder(self) -> list[dict]:
         return getattr(self.inner, "dump_flight_recorder", lambda: [])()
+
+    def dump_pcap(self, path: Path) -> None:
+        if hasattr(self.inner, "dump_pcap"):
+            self.inner.dump_pcap(path)

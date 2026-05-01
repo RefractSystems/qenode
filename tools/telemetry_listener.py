@@ -4,6 +4,7 @@ telemetry_listener.py - Zenoh-based telemetry trace viewer.
 Subscribes to simulation telemetry topics via Zenoh and prints formatted
 trace events (CPU state changes, IRQs, peripheral events) to the console.
 """
+
 import logging
 import sys
 from pathlib import Path

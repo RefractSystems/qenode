@@ -51,7 +51,7 @@ VirtMCU peripherals are compiled as proper QEMU modules (`--enable-modules`). Th
 
 To achieve determinism, we apply a minimal set of strategic patches to QEMU:
 
-1.  **TCG Quantum Hook**: AST-injects `virtmcu_tcg_quantum_hook` into `accel/tcg/cpu-exec.c`. This allows the `clock` device to pause the vCPU at exact virtual time boundaries.
+1.  **TCG Quantum Hook**: AST-injects `VirtMCU_tcg_quantum_hook` into `accel/tcg/cpu-exec.c`. This allows the `clock` device to pause the vCPU at exact virtual time boundaries.
 2.  **Zenoh Backends**: Registers native `netdev` and `chardev` backends to route traffic onto the simulation bus.
 3.  **BQL Helpers**: Injects thread-safe wrappers for Big QEMU Lock management, allowing plugins to yield the lock during blocking I/O safely.
 

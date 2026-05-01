@@ -51,7 +51,7 @@ services:
     # has no meaningful firmware; the clock hook fires at the first TB
     # boundary and blocks the vCPU waiting for a clock advance. Overlays (like
     # pendulum.yml) should override this command to supply a -kernel.
-    command: ["/app/scripts/run.sh", "--dtb", "/app/tests/fixtures/guest_apps/phase1/minimal.dtb", "-device", "clock,mode=suspend,node=0"]
+    command: ["/app/scripts/run.sh", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "clock,mode=suspend,node=0"]
     tty: true
 
 networks:

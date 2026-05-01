@@ -100,8 +100,13 @@ class SimulationOrchestrator:
         bridges = await asyncio.gather(*tasks)
         for config, bridge in zip(self._nodes_config, bridges, strict=True):
             self._nodes[config["id"]].bridge = bridge
+            await bridge.start_emulation()
 
-        self.vta = VirtualTimeAuthority(self.session, node_ids)
+        if self.transport:
+            self.vta = self.transport.get_vta(node_ids)
+        else:
+            self.vta = VirtualTimeAuthority(self.session, node_ids)
+        await self.vta.init()
 
     async def run_until(self, condition: Callable[[], bool], timeout: float = 5.0, step_ns: int = 1_000_000) -> None:
         """

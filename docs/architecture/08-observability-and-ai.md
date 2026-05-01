@@ -39,3 +39,12 @@ Because VirtMCU is deterministic, we can perform **Record & Replay** debugging.
 3.  **Replay**: Re-run the simulation with the same seed and a GDB debugger attached. The bug will manifest at the exact same point, every time.
 
 This removes the "Heisenbug" problem from embedded software development, making even the most complex multi-node races reliably reproducible.
+
+### PCAP Link-Layer Schema
+VirtMCU exports binary network and telemetry traces using the **DLT_USER0 (147)** link layer. We multiplex the different node protocols via a 2-byte protocol identifier immediately following the standard 8-byte src/dst routing header:
+*   Protocol `1`: Ethernet
+*   Protocol `2`: UART
+*   Protocol `3`: IEEE 802.15.4
+*   Protocol `4`: CAN-FD
+*   Protocol `5`: FlexRay
+*   Protocol `255`: VirtMCU Test Infrastructure (Python topics, direction markers).

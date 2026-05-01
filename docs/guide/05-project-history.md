@@ -1,6 +1,6 @@
-# virtmcu Completed Phases
+# VirtMCU Completed Milestones
 
-This file serves as a historical record of completed phases and tasks in the virtmcu project.
+This file serves as a historical record of completed milestones and tasks in the VirtMCU project.
 
 ---
 
@@ -14,7 +14,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 - [x] **Lookahead Buffer**: Implemented 1-quantum lookahead in the barrier to safely buffer fast-arriving messages without manual resets.
 - [x] **Stress Testing**: Added `barrier_race_stress.rs` integration test, verified with 100x local loop stability.
 - [x] **DTC Hardening**: Updated FDT emitter to treat DTC warnings as non-fatal to ensure CI stability.
-- [x] **Phase 14 Fix**: Updated wireless tests for modern `name@address` node naming convention.
+- [x] **Wireless Fix**: Updated wireless tests for modern `name@address` node naming convention.
 
 ---
 
@@ -29,7 +29,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 0 — Repository Setup ✅
+## Milestone 0 — Repository Setup ✅
 
 **Status**: Done
 
@@ -38,18 +38,18 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 1 — QEMU Build with arm-generic-fdt ✅
+## Milestone 1 — QEMU Build with arm-generic-fdt ✅
 
 ### Tasks
 - [x] **1.1** `scripts/setup-qemu.sh`.
-- [x] **1.2** Minimal `tests/fixtures/guest_apps/phase1/minimal.dts`.
+- [x] **1.2** Minimal `tests/fixtures/guest_apps/boot_arm/minimal.dts`.
 - [x] **1.3** `scripts/run.sh` skeleton.
 - [x] **1.4** Smoke-test: boot minimal DTB.
 - [x] **1.5** Tutorial lesson 1.
 
 ---
 
-## Phase 2 — Dynamic QOM Plugin Infrastructure ✅
+## Milestone 2 — Dynamic QOM Plugin Infrastructure ✅
 
 ### Tasks
 - [x] **2.1** `hw/rust/common/rust-dummy`.
@@ -60,7 +60,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 3 — repl2qemu Parser ✅
+## Milestone 3 — repl2qemu Parser ✅
 
 ### Tasks
 - [x] **3.1** Obtain reference `.repl` files.
@@ -70,11 +70,11 @@ This file serves as a historical record of completed phases and tasks in the vir
 - [x] **3.5** `tools/repl2qemu/__main__.py`.
 - [x] **3.6** Unit tests.
 - [x] **3.7** Tutorial lesson 3.
-- [x] **3.8** Integration test `tests/fixtures/guest_apps/phase3/smoke_test.sh`.
+- [x] **3.8** Integration test `tests/fixtures/guest_apps/yaml_boot/smoke_test.sh`.
 
 ---
 
-## Phase 5 — Co-Simulation Bridge ✅
+## Milestone 5 — Co-Simulation Bridge ✅
 
 ### Tasks
 - [x] **5.1** `hw/rust/mmio-socket-bridge` and `tools/systemc_adapter/`.
@@ -86,7 +86,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 8 — Interactive and Multi-Node Serial (UART) ✅
+## Milestone 8 — Interactive and Multi-Node Serial (UART) ✅
 
 ### Tasks
 - [x] **8.1** Echo Firmware.
@@ -98,7 +98,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 9 — Advanced Co-Simulation: Shared Media (SystemC) ✅
+## Milestone 9 — Advanced Co-Simulation: Shared Media (SystemC) ✅
 
 ### Tasks
 - [x] **9.1** Asynchronous IRQ Protocol.
@@ -108,7 +108,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 10 — Telemetry Injection & Physics Alignment (SAL/AAL) ✅
+## Milestone 10 — Telemetry Injection & Physics Alignment (SAL/AAL) ✅
 
 ### Tasks
 - [x] **10.1** SAL/AAL Interfaces.
@@ -120,7 +120,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 11 — RISC-V Expansion & Framework Maturation ✅
+## Milestone 11 — RISC-V Expansion & Framework Maturation ✅
 
 ### Tasks
 - [x] **11.1** RISC-V Machine Generation.
@@ -130,7 +130,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 12 — Advanced Observability & Interactive APIs ✅
+## Milestone 12 — Advanced Observability & Interactive APIs ✅
 
 ### Tasks
 - [x] **12.1** Telemetry Tracing.
@@ -144,7 +144,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 13 — AI Debugging & MCP Interface ✅
+## Milestone 13 — AI Debugging & MCP Interface ✅
 
 ### Tasks
 - [x] **13.1** MCP Tools.
@@ -154,7 +154,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 14 — Wireless & IoT RF Simulation (BLE, Thread, WiFi) ✅
+## Milestone 14 — Wireless & IoT RF Simulation (BLE, Thread, WiFi) ✅
 
 ### Tasks
 - [x] **14.1** HCI over Zenoh.
@@ -169,7 +169,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 15 — Distribution & Packaging ✅
+## Milestone 15 — Distribution & Packaging ✅
 
 ### Tasks
 - [x] **15.1** PyPI Package.
@@ -178,7 +178,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 16 — Performance & Determinism CI ✅
+## Milestone 16 — Performance & Determinism CI ✅
 
 ### Tasks
 - [x] **16.1** IPS Benchmarking.
@@ -189,7 +189,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 17 — Security & Hardening (Fuzzing) ✅
+## Milestone 17 — Security & Hardening (Fuzzing) ✅
 
 ### Tasks
 - [x] **17.1** Network Boundary Fuzzing.
@@ -198,7 +198,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 18 — Native Rust Zenoh Migration (Oxidization) ✅
+## Milestone 18 — Native Rust Zenoh Migration (Oxidization) ✅
 
 ### Tasks
 - [x] **18.1** Enable QEMU Rust.
@@ -218,7 +218,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 19 — Native Rust QOM API Migration ✅
+## Milestone 19 — Native Rust QOM API Migration ✅
 
 ### Tasks
 - [x] **19.1** QOM type registration.
@@ -227,12 +227,12 @@ This file serves as a historical record of completed phases and tasks in the vir
 - [x] **19.4** Delete FFI shim.
 - [x] **19.5** Memory Layout Verification.
 - [x] **19.6** Refactor lint suppression.
-- [x] **19.7** Phase 19 Stabilization.
-- [x] **19.8** Phase 19 Jitter Fix.
+- [x] **19.7** Rust QOM Stabilization.
+- [x] **19.8** Rust QOM Jitter Fix.
 
 ---
 
-## Phase 20 — Shared Rust API Crate (`virtmcu-api`) ✅
+## Milestone 20 — Shared Rust API Crate (`virtmcu-api`) ✅
 
 ### Tasks
 - [x] **20.1** Create `virtmcu-api`.
@@ -240,7 +240,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 25 — Local Interconnect Network (LIN) ✅
+## Milestone 25 — Local Interconnect Network (LIN) ✅
 
 ### Tasks
 - [x] **25.1** LIN Controller.
@@ -250,7 +250,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 31 — Advanced CI & Build Pipeline Optimization ✅
+## Milestone 31 — Advanced CI & Build Pipeline Optimization ✅
 
 ### Tasks
 - [x] **31.1** Ninja Lock Contention fix.
@@ -270,7 +270,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 |---|---|
 | P01 | BOOT_QUANTUM_TIMEOUT grace window (5 min). |
 | P02 | ptr::read_unaligned for packed structs. |
-| P04 | BqlGuarded<T> migration. |
+| P04 | `BqlGuarded<T>` migration. |
 | P05 | Pure Rust Mutex/Condvar conversion. |
 | P06 | VcpuCountGuard RAII. |
 | P07 | Zero untagged sleeps in hw/rust/. |
@@ -283,12 +283,12 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ## 2026 Multi-Node Determinism & Migration (DET Series) ✅
 
-**Status**: Done (Phases 1-4, 7)
+**Status**: Done (Milestones 1-4, 7-8)
 
 ### Tasks
 - [x] **DET-1**: Safe Teardown.
 - [x] **DET-2**: Session Pool.
-- [x] **DET-3**: Sync Trait.
+- [x] **DET-3**: Hardware Jitter Profile Injection (Chaos Engineering).
 - [x] **DET-4**: Unix Sockets.
 - [x] **DET-5**: Coordinator Barrier.
 - [x] **DET-6**: Wireless Topology.
@@ -297,7 +297,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Architectural Hardening — Quantum 2026 Phase ✅
+## Architectural Hardening — Quantum 2026 ✅
 
 ### Tasks
 - [x] **ARCH-1**: GLOBAL_CLOCK TOCTOU.
@@ -309,7 +309,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 20.5 — SPI Bus & Peripherals ✅
+## Milestone 20.5 — SPI Bus & Peripherals ✅
 
 ### Tasks
 - [x] **20.5.1**: SSI/SPI bindings.
@@ -319,7 +319,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 
 ---
 
-## Phase 29 — Peripheral Time Fidelity & Backpressure ✅
+## Milestone 29 — Peripheral Time Fidelity & Backpressure ✅
 
 ### Tasks
 - [x] **29.1**: QEMUTimer modeling.
@@ -333,6 +333,7 @@ This file serves as a historical record of completed phases and tasks in the vir
 ## Miscellaneous Hardening & Infrastructure ✅
 
 ### Tasks
+- [x] **INFRA-7**: Automated Flight Recorder (Record & Replay).
 - [x] **INFRA-8**: Watchdog.
 - [x] **INFRA-6**: Multiplier.
 - [x] **P10-Part 2.1**: Zenoh Liveliness.

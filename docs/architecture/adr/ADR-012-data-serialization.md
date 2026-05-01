@@ -5,7 +5,7 @@
 
 ## Context
 
-The `virtmcu` simulation framework communicates with external tools (like SystemC adapters, `clock` masters, and Firmware Studio telemetry dashboards) heavily. Originally, we used raw C `struct` types mapped directly over sockets and parsed manually in Python using `struct.unpack("<QQII", data)`. 
+The `VirtMCU` simulation framework communicates with external tools (like SystemC adapters, `clock` masters, and Firmware Studio telemetry dashboards) heavily. Originally, we used raw C `struct` types mapped directly over sockets and parsed manually in Python using `struct.unpack("<QQII", data)`. 
 
 As the structs evolved (e.g., adding `vtime_ns` to MMIO requests), this resulted in "silent failures" where mismatched sizes or misaligned padding caused Python parsers and SystemC adapters to hang or interpret garbage data. We needed a robust, cross-language serialization format. However, the QEMU main loop (TCG thread) is hyper-sensitive to latency, meaning heavy serialization overhead (like JSON or even FlatBuffers builders) directly inside the MMIO or Clock hooks would drastically lower simulation Instructions-Per-Second (IPS).
 
@@ -17,7 +17,7 @@ We chose a **Hybrid Serialization Strategy** tailored to the synchronous vs. asy
 For blocking, high-frequency bridges where every nanosecond counts, we use **FlatBuffers Structs** (Strictly defined, fixed-size binary layouts).
 *   **Format**: FlatBuffers `struct` types within `core.fbs`.
 *   **Single Source of Truth**: `hw/rust/common/virtmcu-api/src/core.fbs` defines all payloads (`MmioReq`, `ClockAdvanceReq`, etc.).
-*   **Handshake Safety**: Every connection must immediately send and verify a `VirtmcuHandshake` struct containing a `MAGIC` (0x564D4355) and an incrementing `VERSION`.
+*   **Handshake Safety**: Every connection must immediately send and verify a `VirtMCUHandshake` struct containing a `MAGIC` (0x564D4355) and an incrementing `VERSION`.
 *   **Downstream (Python)**: We use **FlatBuffers** Python bindings with a manual `@dataclass` wrapper (`tools/vproto.py`).
 *   **Downstream (C/C++)**: Legacy components use `hw/misc/virtmcu_proto.h` which is manually aligned with the FlatBuffers layout.
 
@@ -36,5 +36,5 @@ For high-volume, fire-and-forget telemetry events, we use **FlatBuffers**.
 
 ## Note for Downstream Consumers (e.g., Firmware Studio)
 
-*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `virtmcu_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, add the `virtmcu-api` crate as a dependency and use the exported packed structs.
+*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `VirtMCU_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, add the `virtmcu-api` crate as a dependency and use the exported packed structs.
 *   **For Telemetry Consumption:** Subscribe to `sim/telemetry/trace/<node_id>`. If using Rust, consume the `virtmcu-api` crate to access the pre-generated FlatBuffers bindings rather than compiling `telemetry.fbs` manually.

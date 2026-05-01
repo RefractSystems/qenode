@@ -31,7 +31,7 @@ trap 'echo "ERROR: ${BASH_SOURCE[0]} failed at line $LINENO" >&2' ERR
 
 # Resolve paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/common.sh"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
 # Inherit optional env vars with safe defaults for -u compatibility
@@ -168,6 +168,9 @@ if [ ! -f "$QEMU_BIN" ]; then
     echo "QEMU binary for $ARCH not found at $QEMU_BIN. Please run setup-qemu.sh first."
     exit 1
 fi
+
+"$QEMU_BIN" --version | head -n 1
+
 
 # Default machine names
 if [ "$MACHINE_PROVIDED" = false ]; then

@@ -156,6 +156,7 @@ pub struct VirtmcuClock {
     /* Rust state */
     /// Opaque pointer to the Rust backend state.
     pub rust_state: *mut VirtmcuClockBackend,
+    pub is_yielding: bool,
 }
 
 /// State of the quantum synchronization state machine.
@@ -294,19 +295,26 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     virtmcu_qom::telemetry::update_global_vtime(now as u64);
 
-    // In slaved mode, we ONLY block when we reach the virtual time boundary.
-    let should_block = now >= s.next_quantum_ns;
-
-    if should_block {
-        // SAFETY: s.rust_state is checked for null before calling this function.
+    if now >= s.next_quantum_ns {
+        if s.rust_state.is_null() {
+            return;
+        }
         let backend = unsafe { &*s.rust_state };
 
         // Release BQL before blocking using RAII guard
         let bql_unlock = virtmcu_qom::sync::Bql::temporary_unlock();
 
-        let raw_delta = clock_quantum_wait_internal(backend, now as u64);
+        let raw_delta = clock_quantum_wait_internal(backend, now as u64, s.is_yielding);
+        s.is_yielding = false;
         // On stall the sentinel is returned; treat as zero advance (hold position).
-        let delta = if raw_delta == QUANTUM_WAIT_STALL_SENTINEL { 0 } else { raw_delta };
+        let delta = if raw_delta == QUANTUM_WAIT_STALL_SENTINEL {
+            0
+        } else if raw_delta == QUANTUM_WAIT_YIELD_SENTINEL {
+            s.is_yielding = true;
+            0
+        } else {
+            raw_delta
+        };
 
         if bql_unlock.is_some() {
             let bql_start = Instant::now();
@@ -352,8 +360,13 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
 /// Return value of `clock_quantum_wait_internal`: delta_ns on success,
 /// or `u64::MAX` as a sentinel indicating a stall timeout.
 const QUANTUM_WAIT_STALL_SENTINEL: u64 = u64::MAX;
+const QUANTUM_WAIT_YIELD_SENTINEL: u64 = u64::MAX - 1;
 
-fn clock_quantum_wait_internal(backend: &VirtmcuClockBackend, _vtime_ns: u64) -> u64 {
+fn clock_quantum_wait_internal(
+    backend: &VirtmcuClockBackend,
+    _vtime_ns: u64,
+    is_yielding: bool,
+) -> u64 {
     // Runtime assertion (not just debug_assert): BQL must NOT be held here.
     if virtmcu_qom::sync::Bql::is_held() {
         if virtmcu_qom::sysemu::runstate_is_running() {
@@ -366,21 +379,23 @@ fn clock_quantum_wait_internal(backend: &VirtmcuClockBackend, _vtime_ns: u64) ->
 
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
 
-    // Transition: Initial -> Waiting
-    let current_state = QuantumState::from(backend.state.load(Ordering::Acquire));
-    if current_state != QuantumState::Waiting {
-        let _ = backend.state.compare_exchange(
-            current_state as u8,
-            QuantumState::Waiting as u8,
-            Ordering::SeqCst,
-            Ordering::Relaxed,
-        );
-    }
+    if !is_yielding {
+        // Transition: Initial -> Waiting
+        let current_state = QuantumState::from(backend.state.load(Ordering::Acquire));
+        if current_state != QuantumState::Waiting {
+            let _ = backend.state.compare_exchange(
+                current_state as u8,
+                QuantumState::Waiting as u8,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            );
+        }
 
-    // Notify TA that we finished previous quantum
-    {
-        let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        backend.cond.notify_all();
+        // Notify TA that we finished previous quantum
+        {
+            let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            backend.cond.notify_all();
+        }
     }
 
     let start = Instant::now();
@@ -393,8 +408,11 @@ fn clock_quantum_wait_internal(backend: &VirtmcuClockBackend, _vtime_ns: u64) ->
 
     // Spin briefly to avoid context switch latency
     while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
-        if backend.shutdown.load(Ordering::Acquire) || unsafe { virtmcu_vcpu_should_yield() } {
+        if backend.shutdown.load(Ordering::Acquire) {
             return 0;
+        }
+        if unsafe { virtmcu_vcpu_should_yield() } {
+            return QUANTUM_WAIT_YIELD_SENTINEL;
         }
         if start.elapsed() > Duration::from_millis(1) {
             break;
@@ -405,14 +423,20 @@ fn clock_quantum_wait_internal(backend: &VirtmcuClockBackend, _vtime_ns: u64) ->
     if backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
         let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
-            if backend.shutdown.load(Ordering::Acquire) || unsafe { virtmcu_vcpu_should_yield() } {
+            if backend.shutdown.load(Ordering::Acquire) {
                 return 0;
             }
+            if unsafe { virtmcu_vcpu_should_yield() } {
+                return QUANTUM_WAIT_YIELD_SENTINEL;
+            }
+
+            // Wait for Executing
             let (new_guard, result) = backend
                 .cond
                 .wait_timeout(guard, Duration::from_millis(100))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard = new_guard;
+
             if result.timed_out() && start.elapsed() > timeout {
                 backend.stall_count.fetch_add(1, Ordering::Relaxed);
                 backend.pending_stall.store(true, Ordering::SeqCst);

@@ -125,7 +125,7 @@ fn init_logger_thread() -> Sender<LogEntry> {
 }
 
 #[doc(hidden)]
-pub fn _sim_log(level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
+pub fn sim_log(level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
     #[cfg(miri)]
     {
         let node_id = GLOBAL_NODE_ID.load(Ordering::Relaxed);
@@ -160,7 +160,7 @@ pub fn _sim_log(level: LogLevel, module: &'static str, args: core::fmt::Argument
 #[macro_export]
 macro_rules! sim_err {
     ($($arg:tt)*) => {{
-        $crate::telemetry::_sim_log($crate::telemetry::LogLevel::Error, module_path!(), format_args!($($arg)*));
+        $crate::telemetry::sim_log($crate::telemetry::LogLevel::Error, module_path!(), format_args!($($arg)*));
     }};
 }
 
@@ -168,7 +168,7 @@ macro_rules! sim_err {
 #[macro_export]
 macro_rules! sim_warn {
     ($($arg:tt)*) => {{
-        $crate::telemetry::_sim_log($crate::telemetry::LogLevel::Warn, module_path!(), format_args!($($arg)*));
+        $crate::telemetry::sim_log($crate::telemetry::LogLevel::Warn, module_path!(), format_args!($($arg)*));
     }};
 }
 
@@ -176,7 +176,7 @@ macro_rules! sim_warn {
 #[macro_export]
 macro_rules! sim_info {
     ($($arg:tt)*) => {{
-        $crate::telemetry::_sim_log($crate::telemetry::LogLevel::Info, module_path!(), format_args!($($arg)*));
+        $crate::telemetry::sim_log($crate::telemetry::LogLevel::Info, module_path!(), format_args!($($arg)*));
     }};
 }
 
@@ -184,7 +184,7 @@ macro_rules! sim_info {
 #[macro_export]
 macro_rules! sim_debug {
     ($($arg:tt)*) => {{
-        $crate::telemetry::_sim_log($crate::telemetry::LogLevel::Debug, module_path!(), format_args!($($arg)*));
+        $crate::telemetry::sim_log($crate::telemetry::LogLevel::Debug, module_path!(), format_args!($($arg)*));
     }};
 }
 
@@ -192,6 +192,6 @@ macro_rules! sim_debug {
 #[macro_export]
 macro_rules! sim_trace {
     ($($arg:tt)*) => {{
-        $crate::telemetry::_sim_log($crate::telemetry::LogLevel::Trace, module_path!(), format_args!($($arg)*));
+        $crate::telemetry::sim_log($crate::telemetry::LogLevel::Trace, module_path!(), format_args!($($arg)*));
     }};
 }

@@ -149,7 +149,7 @@ static UART_ECHO_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(UART_ECHO_TYPE_INIT, UART_ECHO_TYPE_INFO);
 
-/* ── Test Rust Device (Phase 19) ────────────────────────────────────────── */
+/* ── Test Rust Device ────────────────────────────────────────── */
 
 #[repr(C)]
 pub struct TestRustDevice {

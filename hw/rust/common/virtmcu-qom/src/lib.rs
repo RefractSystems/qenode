@@ -8,6 +8,8 @@ extern crate std;
 
 /// Character device (Chardev) bindings.
 pub mod chardev;
+/// Co-simulation bridging abstractions.
+pub mod cosim;
 /// CPU-related bindings and hooks.
 pub mod cpu;
 /// Error handling for QOM operations.

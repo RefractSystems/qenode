@@ -2,7 +2,7 @@
 """
 usd_to_virtmcu.py — Generate C++ address maps from OpenUSD-aligned YAML.
 
-In the cyber-physical bridge (Phase 10), external simulation tools (like the
+In the cyber-physical bridge (Cyber-Physical Bridge), external simulation tools (like the
 MuJoCo bridge or RESD replay) need to know the exact MMIO base addresses of
 the virtual peripherals they are communicating with (e.g., the mmio-socket-bridge).
 

@@ -23,7 +23,7 @@ members = [
     "hw/rust/comms/spi",
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
-    "tools/deterministic_coordinator",
+    "tools/deterministic_coordinator", "tools/stress_adapter",
 ]
 resolver = "2"
 

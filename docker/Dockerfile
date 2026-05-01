@@ -225,7 +225,8 @@ WORKDIR /build
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
 COPY patches/ /build/patches/
-COPY scripts/apply-qemu-patches.sh /build/scripts/apply-qemu-patches.sh
+COPY scripts/ /build/scripts/
+COPY BUILD_DEPS VERSION /build/
 
 # Apply all patches using the centralized script
 RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu

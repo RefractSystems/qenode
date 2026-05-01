@@ -154,10 +154,10 @@ virtmcu/
 ### Parallel Execution Rules (`pytest -n auto` — all tests MUST comply)
 
 1. **NO Hardcoded Ports**: BANNED: fixed ports (`7447`, `7450`) anywhere. REQUIRED: `zenoh_router` fixture or `scripts/get-free-port.py`.
-2. **NO Hardcoded Paths**: BANNED: shared temp paths (e.g., `/tmp/phase3/out.dtb`). REQUIRED: `pytest` `tmp_path` fixture or `mktemp -d`.
+2. **NO Hardcoded Paths**: BANNED: shared temp paths (e.g., `/tmp/yaml_boot/out.dtb`). REQUIRED: `pytest` `tmp_path` fixture or `mktemp -d`.
 3. **NO Random Collisions**: BANNED: `random.randint()` / generic UUIDs for node IDs. REQUIRED: deterministic uniqueness via `os.getpid()`, `worker_id`, or `tmp_path`.
 4. **NO Manual Process Management**: BANNED: spawning daemons (e.g., `zenoh_coordinator`) in test bodies. REQUIRED: centralized `pytest` fixtures with automated teardown.
-5. **Test Scope**: `pytest` scoped to `tests/` via `pyproject.toml`. Do NOT place test files in `tests/fixtures/guest_apps/phase*/`.
+5. **Test Scope**: `pytest` scoped to `tests/` via `pyproject.toml`. Do NOT place test files in `tests/fixtures/guest_apps/<domain>/`.
 6. **Binary Resolution**: check both `target/release/` and `tools/<tool_name>/target/release/` for Rust tool binaries.
 
 **Mandates**: complex orchestration (QEMU + background process) → Python `pytest` fixture only. Internal logic → `#[test]` in Rust, no QEMU boot.
@@ -210,7 +210,7 @@ Every deployment change must be revertable. Add logging on critical paths (not i
 |---|---|---|
 | **Hooks** (`make lint && make test-unit`) | Every commit (auto) | Direct in devcontainer — fast (~3-5 min). |
 | **`make ci-local`** | Before PR | Three `docker run` steps matching `.github/workflows/ci-main.yml`. |
-| **`make ci-full`** | Before merge | `ci-local` + ASan + Miri + all smoke phases. |
+| **`make ci-full`** | Before merge | `ci-local` + ASan + Miri + all integration domains. |
 
 **CARGO_HOME isolation** — every `docker run devenv-base` MUST use:
 ```
@@ -250,7 +250,7 @@ Sharing `target/` between host and container corrupts Cargo fingerprints. See `d
 
 ### 11. New Peripherals
 - All new peripherals in Rust using `hw/rust/common/rust-dummy` template.
-- One legacy C model (`hw/misc/educational-dummy.c`, `dummy-device`) kept for compatibility; tested in Phase 2.
+- One legacy C model (`hw/misc/educational-dummy.c`, `dummy-device`) kept for compatibility; tested in dynamic_plugin.
 
 ### 12. Safe Peripheral Teardown
 
@@ -322,7 +322,7 @@ make lint     # ruff, version checks, cargo clippy -D warnings, sleep-ban grep, 
 
 ### "Fix CI" / "Make CI Green" (Enterprise CI Fixer Loop)
 1. Diagnose: `gh run list` / `gh run view --log`.
-2. Reproduce locally: `make ci-full` or `docker run --rm -v $(pwd):/workspace -w /workspace -e USER=vscode $(BUILDER_IMG) bash scripts/ci-phase.sh <PHASE>`. If local passes but CI fails — **STOP** and align environments first.
+2. Reproduce locally: `make ci-full` or `docker run --rm -v $(pwd):/workspace -w /workspace -e USER=vscode $(BUILDER_IMG) bash scripts/ci-integration-tier.sh <DOMAIN>`. If local passes but CI fails — **STOP** and align environments first.
 3. Stress-test the bug: 100+ runs, quantify failure rate.
 4. Implement fix.
 5. Stress-test again: must reach 100% success rate.
