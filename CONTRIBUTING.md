@@ -147,7 +147,7 @@ To ensure a completely clean environment:
 make clean-sim
 ```
 
-This command runs `scripts/cleanup-sim.sh`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `zenoh_coordinator`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
+This command runs `scripts/cleanup-sim.sh`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `deterministic_coordinator`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
 
 *Note: The `make test-integration` target automatically runs this cleanup script before and after every test.*
 
@@ -178,8 +178,10 @@ virtmcu relies on automated testing to ensure new features (like parsing or new 
 **Parallel Execution Strict Rules:** Our test suites run in parallel by default (`-n auto`). When writing new tests, they **MUST** be designed "out of the box" for parallel execution isolation. Do not rely on fixed resources:
 1. **NO Hardcoded Ports:** Never use fixed ports like `tcp/127.0.0.1:7447`. Inject dynamic ports using the `zenoh_router` fixture (in Python) or `scripts/get-free-port.py` (in Bash).
 2. **NO Hardcoded Temporal Paths:** Never generate output files (`.dtb`, `.yaml`, `.cli`) directly in `workspace_root` or shared test directories. Always use `pytest`'s `tmp_path` fixture or `mktemp -d` in Bash.
-3. **NO Random Value Collisions:** Do not use `random.randint()` for IDs or paths. Use deterministic uniqueness tied to the execution context (e.g., `os.getpid()` or `tmp_path`).
-4. **NO Manual Process Management:** Do not spawn background daemons (like `cargo run ... zenoh_coordinator`) manually inside tests. Use the provided reusable `pytest` fixtures for clean, isolated orchestration.
+3. **NO Zenoh Cross-Talk:** BANNED: Raw `zenoh.open()` in tests. REQUIRED: Use `make_client_config()` or the `zenoh_session` fixture to ensure client-mode isolation with scouting disabled.
+4. **Deterministic Synchronization:** The framework handles routing synchronization (`ensure_session_routing`) automatically via the `simulation` fixture or `coordinator_subprocess` context manager. Manual calls in tests are banned.
+5. **NO Random Value Collisions:** Do not use `random.randint()` for IDs or paths. Use deterministic uniqueness tied to the execution context (e.g., `os.getpid()` or `tmp_path`).
+6. **NO Manual Process Management:** Do not spawn background daemons (like `cargo run ... deterministic_coordinator`) manually inside tests. Use the provided reusable `pytest` fixtures for clean, isolated orchestration.
 
 We split testing into two categories:
 

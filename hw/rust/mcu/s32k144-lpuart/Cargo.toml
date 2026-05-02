@@ -10,6 +10,7 @@ crate-type = ["cdylib", "staticlib"]
 [lints] 
 workspace = true 
 [dependencies]
+zenoh.workspace = true
 virtmcu-qom.workspace = true
 transport-zenoh.workspace = true
 transport-unix.workspace = true

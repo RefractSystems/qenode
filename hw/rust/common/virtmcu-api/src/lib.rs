@@ -48,6 +48,7 @@ pub mod flexray_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod lin_generated;
+pub use rf_generated::rf_header;
 #[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     clippy::all,
     missing_docs,
@@ -397,6 +398,31 @@ pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]
     let mut out = Vec::with_capacity(ZENOH_FRAME_HEADER_SIZE + payload.len());
     let header = ZenohFrameHeader::new(delivery_vtime_ns, sequence_number, payload.len() as u32);
     out.extend_from_slice(&header.0);
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Encode an `RfHeader` + payload into a byte vector (little-endian, size-prefixed).
+pub fn encode_rf_frame(
+    delivery_vtime_ns: u64,
+    sequence_number: u64,
+    payload: &[u8],
+    rssi: i8,
+    lqi: u8,
+) -> Vec<u8> {
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64);
+    let mut args = rf_header::RfHeaderBuilder::new(&mut builder);
+    args.add_delivery_vtime_ns(delivery_vtime_ns);
+    args.add_sequence_number(sequence_number);
+    args.add_size(payload.len() as u32);
+    args.add_rssi(rssi);
+    args.add_lqi(lqi);
+    let hdr = args.finish();
+    builder.finish_size_prefixed(hdr, None);
+    let hdr_data = builder.finished_data();
+
+    let mut out = Vec::with_capacity(hdr_data.len() + payload.len());
+    out.extend_from_slice(hdr_data);
     out.extend_from_slice(payload);
     out
 }

@@ -65,159 +65,171 @@ def send_req(sock: socket.socket, req_type: int, size: int, addr: int, data: int
 def wait_for_socket(path: str, timeout: float = 5.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if Path(path).exists():
+        if Path(path).is_socket():
             return True
         mock_execution_delay(0.05)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     return False
 
 
 def run_tests(adapter_bin: str) -> bool | None:
-    sock_path = tempfile.mkstemp(suffix=".sock", prefix="virtmcu-proto-test-")[1]
-    proc = subprocess.Popen([adapter_bin, sock_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        if not wait_for_socket(sock_path):
-            proc.terminate()
-            out, err = proc.communicate(timeout=2)
-            raise RuntimeError(
-                f"adapter socket {sock_path} never appeared.\nstdout: {out.decode()}\nstderr: {err.decode()}"
-            )
-
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(sock_path)
-            s.settimeout(5.0)
-
-            # Handshake
-            hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
-            s.sendall(hs_out.pack())
-            hs_in_data = s.recv(SIZE_VIRTMCU_HANDSHAKE)
-            if len(hs_in_data) != SIZE_VIRTMCU_HANDSHAKE:
-                logger.info(f"Handshake failed, got {len(hs_in_data)} bytes")
-                return False
-
-            failures = []
-
-            # ── T1: write a value, read it back ──────────────────────────────
-            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0xDEADBEEF)
-            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
-            if got != 0xDEADBEEF:
-                failures.append(f"T1 FAIL: wrote 0xdeadbeef, read back 0x{got:08x}")
-            else:
-                logger.info("T1 PASS: write/read round-trip")
-
-            # ── T2: write to a different register, verify independence ────────
-            send_req(s, MMIO_REQ_WRITE, 4, addr=4, data=0x12345678)
-            got0 = send_req(s, MMIO_REQ_READ, 4, addr=0)
-            got1 = send_req(s, MMIO_REQ_READ, 4, addr=4)
-            if got0 != 0xDEADBEEF:
-                failures.append(f"T2 FAIL: reg0 changed after reg1 write: 0x{got0:08x}")
-            elif got1 != 0x12345678:
-                failures.append(f"T2 FAIL: reg1 readback wrong: 0x{got1:08x}")
-            else:
-                logger.info("T2 PASS: register independence")
-
-            # ── T3: overwrite and verify new value ────────────────────────────
-            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x00000001)
-            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
-            if got != 0x00000001:
-                failures.append(f"T3 FAIL: expected 0x1, got 0x{got:08x}")
-            else:
-                logger.info("T3 PASS: overwrite")
-
-            # ── T4: zero write ────────────────────────────────────────────────
-            send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x0)
-            got = send_req(s, MMIO_REQ_READ, 4, addr=0)
-            if got != 0:
-                failures.append(f"T4 FAIL: expected 0, got 0x{got:08x}")
-            else:
-                logger.info("T4 PASS: zero write")
-
-            # ── T5: last valid register (index 255) ───────────────────────────
-            send_req(s, MMIO_REQ_WRITE, 4, addr=255 * 4, data=0xFEEDFACE)
-            got = send_req(s, MMIO_REQ_READ, 4, addr=255 * 4)
-            if got != 0xFEEDFACE:
-                failures.append(f"T5 FAIL: last reg readback wrong: 0x{got:08x}")
-            else:
-                logger.info("T5 PASS: last register")
-
-            # ── T7: Asynchronous IRQ test ─────────────────────────────────────
-            logger.info("T7: Testing asynchronous IRQ...")
-            # Writing non-zero to reg 255 should trigger IRQ SET
-            # We use sock.sendall directly because send_req expects a RESP
-            req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=1)
-            s.sendall(req.pack())
-
-            irq_set_received = False
-            resp_received = False
-            deadline = time.time() + 2.0
-            while time.time() < deadline and (not irq_set_received or not resp_received):
-                chunk = s.recv(SIZE_SYSC_MSG)
-                if not chunk:
-                    break
-                msg = SyscMsg.unpack(chunk)
-
-                if msg.type == SYSC_MSG_IRQ_SET and msg.irq_num == 0:
-                    irq_set_received = True
-                    logger.info("T7: Received IRQ_SET(0)")
-                elif msg.type == SYSC_MSG_RESP:
-                    resp_received = True
-
-            if not irq_set_received:
-                failures.append("T7 FAIL: did not receive IRQ_SET(0) after writing to reg 255")
-            elif not resp_received:
-                failures.append("T7 FAIL: did not receive RESP after IRQ write")
-            else:
-                logger.info("T7 PASS: Asynchronous IRQ SET")
-
-            # Writing zero to reg 255 should trigger IRQ CLEAR
-            req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=0)
-            s.sendall(req.pack())
-            irq_clear_received = False
-            resp_received = False
-            while time.time() < deadline and (not irq_clear_received or not resp_received):
-                chunk = s.recv(SIZE_SYSC_MSG)
-                if not chunk:
-                    break
-                msg = SyscMsg.unpack(chunk)
-
-                if msg.type == SYSC_MSG_IRQ_CLEAR and msg.irq_num == 0:
-                    irq_clear_received = True
-                    logger.info("T7: Received IRQ_CLEAR(0)")
-                elif msg.type == SYSC_MSG_RESP:
-                    resp_received = True
-
-            if not irq_clear_received:
-                failures.append("T7 FAIL: did not receive IRQ_CLEAR(0)")
-            else:
-                logger.info("T7 PASS: Asynchronous IRQ CLEAR")
-
-            # ── T6: throughput / latency benchmark ────────────────────────────
-            N = 1000  # noqa: N806
-            t0 = time.monotonic()
-            for i in range(N):
-                send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=i)
-            t1 = time.monotonic()
-            elapsed = t1 - t0
-            us_per_op = (elapsed / N) * 1e6
-            logger.info(f"T6 BENCH: {N} writes in {elapsed * 1000:.1f} ms ({us_per_op:.1f} µs/op)")
-            if us_per_op > 5000:
-                failures.append(f"T6 WARN: {us_per_op:.0f} µs/op exceeds 5 ms threshold — socket latency regression?")
-
-        if failures:
-            logger.info("\nFAILURES:")
-            for f in failures:
-                logger.info(f"  {f}")
-            return False
-        logger.info("\nAll protocol tests PASSED")
-        return True
-
-    finally:
-        proc.send_signal(signal.SIGTERM)
+    # Use a temporary directory to avoid collisions and ensure clean start
+    with tempfile.TemporaryDirectory(prefix="virtmcu-proto-test-") as tmpdir:
+        sock_path = str(Path(tmpdir) / "test.sock")
+        proc = subprocess.Popen([adapter_bin, sock_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        with contextlib.suppress(FileNotFoundError):
-            Path(sock_path).unlink()
+            if not wait_for_socket(sock_path):
+                proc.terminate()
+                # Try to get some output if it failed
+                try:
+                    out, err = proc.communicate(timeout=2)
+                    stdout_str = out.decode() if out else ""
+                    stderr_str = err.decode() if err else ""
+                except Exception:  # noqa: BLE001
+                    stdout_str = "failed to capture"
+                    stderr_str = "failed to capture"
+
+                raise RuntimeError(
+                    f"adapter socket {sock_path} never appeared.\nstdout: {stdout_str}\nstderr: {stderr_str}"
+                )
+
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.connect(sock_path)
+                s.settimeout(5.0)
+
+                # Handshake
+                hs_out = VirtmcuHandshake(magic=VIRTMCU_PROTO_MAGIC, version=VIRTMCU_PROTO_VERSION)
+                s.sendall(hs_out.pack())
+                hs_in_data = s.recv(SIZE_VIRTMCU_HANDSHAKE)
+                if len(hs_in_data) != SIZE_VIRTMCU_HANDSHAKE:
+                    logger.info(f"Handshake failed, got {len(hs_in_data)} bytes")
+                    return False
+
+                failures = []
+
+                # ── T1: write a value, read it back ──────────────────────────────
+                send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0xDEADBEEF)
+                got = send_req(s, MMIO_REQ_READ, 4, addr=0)
+                if got != 0xDEADBEEF:
+                    failures.append(f"T1 FAIL: wrote 0xdeadbeef, read back 0x{got:08x}")
+                else:
+                    logger.info("T1 PASS: write/read round-trip")
+
+                # ── T2: write to a different register, verify independence ────────
+                send_req(s, MMIO_REQ_WRITE, 4, addr=4, data=0x12345678)
+                got0 = send_req(s, MMIO_REQ_READ, 4, addr=0)
+                got1 = send_req(s, MMIO_REQ_READ, 4, addr=4)
+                if got0 != 0xDEADBEEF:
+                    failures.append(f"T2 FAIL: reg0 changed after reg1 write: 0x{got0:08x}")
+                elif got1 != 0x12345678:
+                    failures.append(f"T2 FAIL: reg1 readback wrong: 0x{got1:08x}")
+                else:
+                    logger.info("T2 PASS: register independence")
+
+                # ── T3: overwrite and verify new value ────────────────────────────
+                send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x00000001)
+                got = send_req(s, MMIO_REQ_READ, 4, addr=0)
+                if got != 0x00000001:
+                    failures.append(f"T3 FAIL: expected 0x1, got 0x{got:08x}")
+                else:
+                    logger.info("T3 PASS: overwrite")
+
+                # ── T4: zero write ────────────────────────────────────────────────
+                send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=0x0)
+                got = send_req(s, MMIO_REQ_READ, 4, addr=0)
+                if got != 0:
+                    failures.append(f"T4 FAIL: expected 0, got 0x{got:08x}")
+                else:
+                    logger.info("T4 PASS: zero write")
+
+                # ── T5: last valid register (index 255) ───────────────────────────
+                send_req(s, MMIO_REQ_WRITE, 4, addr=255 * 4, data=0xFEEDFACE)
+                got = send_req(s, MMIO_REQ_READ, 4, addr=255 * 4)
+                if got != 0xFEEDFACE:
+                    failures.append(f"T5 FAIL: last reg readback wrong: 0x{got:08x}")
+                else:
+                    logger.info("T5 PASS: last register")
+
+                # ── T7: Asynchronous IRQ test ─────────────────────────────────────
+                logger.info("T7: Testing asynchronous IRQ...")
+                # Writing non-zero to reg 255 should trigger IRQ SET
+                # We use sock.sendall directly because send_req expects a RESP
+                req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=1)
+                s.sendall(req.pack())
+
+                irq_set_received = False
+                resp_received = False
+                deadline = time.time() + 2.0
+                while time.time() < deadline and (not irq_set_received or not resp_received):
+                    chunk = s.recv(SIZE_SYSC_MSG)
+                    if not chunk:
+                        break
+                    msg = SyscMsg.unpack(chunk)
+
+                    if msg.type == SYSC_MSG_IRQ_SET and msg.irq_num == 0:
+                        irq_set_received = True
+                        logger.info("T7: Received IRQ_SET(0)")
+                    elif msg.type == SYSC_MSG_RESP:
+                        resp_received = True
+
+                if not irq_set_received:
+                    failures.append("T7 FAIL: did not receive IRQ_SET(0) after writing to reg 255")
+                elif not resp_received:
+                    failures.append("T7 FAIL: did not receive RESP after IRQ write")
+                else:
+                    logger.info("T7 PASS: Asynchronous IRQ SET")
+
+                # Writing zero to reg 255 should trigger IRQ CLEAR
+                req = MmioReq(type=MMIO_REQ_WRITE, size=4, reserved1=0, reserved2=0, vtime_ns=0, addr=255 * 4, data=0)
+                s.sendall(req.pack())
+                irq_clear_received = False
+                resp_received = False
+                while time.time() < deadline and (not irq_clear_received or not resp_received):
+                    chunk = s.recv(SIZE_SYSC_MSG)
+                    if not chunk:
+                        break
+                    msg = SyscMsg.unpack(chunk)
+
+                    if msg.type == SYSC_MSG_IRQ_CLEAR and msg.irq_num == 0:
+                        irq_clear_received = True
+                        logger.info("T7: Received IRQ_CLEAR(0)")
+                    elif msg.type == SYSC_MSG_RESP:
+                        resp_received = True
+
+                if not irq_clear_received:
+                    failures.append("T7 FAIL: did not receive IRQ_CLEAR(0)")
+                else:
+                    logger.info("T7 PASS: Asynchronous IRQ CLEAR")
+
+                # ── T6: throughput / latency benchmark ────────────────────────────
+                N = 1000  # noqa: N806
+                t0 = time.monotonic()
+                for i in range(N):
+                    send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=i)
+                t1 = time.monotonic()
+                elapsed = t1 - t0
+                us_per_op = (elapsed / N) * 1e6
+                logger.info(f"T6 BENCH: {N} writes in {elapsed * 1000:.1f} ms ({us_per_op:.1f} µs/op)")
+                if us_per_op > 5000:
+                    failures.append(
+                        f"T6 WARN: {us_per_op:.0f} µs/op exceeds 5 ms threshold — socket latency regression?"
+                    )
+
+            if failures:
+                logger.info("\nFAILURES:")
+                for f in failures:
+                    logger.info(f"  {f}")
+                return False
+            logger.info("\nAll protocol tests PASSED")
+            return True
+
+        finally:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            with contextlib.suppress(FileNotFoundError):
+                Path(sock_path).unlink()
 
 
 if __name__ == "__main__":

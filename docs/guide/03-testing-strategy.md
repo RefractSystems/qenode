@@ -46,8 +46,14 @@ To ensure tests are 100% reproducible and immune to CI load (e.g., under ASan), 
 ### 🚫 Banned: `asyncio.sleep` and `time.sleep`
 Using `sleep` to wait for I/O or process initialization is non-deterministic. It will eventually flake.
 
-### ✅ Mandated: Event Signaling & Virtual Time
-Use the event-driven helpers provided by the `QmpBridge` and `SimulationTransport`:
+### 🚫 Banned: Raw `zenoh.open()` in Parallel Tests
+By default, Zenoh opens in peer mode with multicast scouting enabled. In parallel `pytest` runs, workers will silently discover each other across the network namespace and cross-talk on shared topics. This is the #1 cause of "passes locally, fails in CI" races.
+
+### ✅ Mandated: Client-Mode Isolation & Synchronization
+All Zenoh sessions MUST be opened in client mode with scouting disabled.
+1. **Isolation**: Use `make_client_config(connect=router_url)` to build a safe config.
+2. **Automated Synchronization (SOTA)**: The framework owns the entire freeze/cont lifecycle. It implicitly injects the `-S` flag to launch QEMU in a frozen state, synchronizes Zenoh routing (`ensure_session_routing`), and issues the final `cont` command. Tests MUST NOT pass `-S` manually, call `ensure_session_routing` directly, or manually instantiate core orchestration components like `QmpBridge` or `VirtualTimeAuthority`.
+
 ```python
 # ✅ CORRECT: Wakes instantly via signal, respects virtual time limits
 await bridge.wait_for_line_on_uart("INIT_DONE", timeout=10.0)
@@ -74,44 +80,56 @@ When developing new features or debugging flaky tests, you must prove stability 
 ./tools/testing/run_stress.sh tests/test_spi_stress.py 50
 ```
 
-## 6. The Declarative Simulation Environment (`VirtmcuSimulation`)
+## 6. The Single Simulation Entry Point (`Simulation`)
 
-A critical lesson learned during extreme-load ASan/TSan stress testing was the vulnerability of manual test orchestration. If developers must manually sequence QEMU boot, Zenoh discovery, and clock initialization, simple omissions (like forgetting a `wait_for_discovery()` barrier) inevitably lead to race conditions, dropped packets, and endless polling deadlocks.
+Historically, the project maintained overlapping entry points (`qemu_launcher`, etc.). These have been consolidated into a single SOTA `Simulation` class, exposed via the `simulation` pytest fixture. This consolidation ensures a single, robust lifecycle that is immune to ordering bugs (such as starting emulation before the clock is initialized).
 
-To structurally prevent this and provide an "idiot-proof" API, VirtMCU uses the `simulation` fixture to expose a declarative `VirtmcuSimulation` orchestrator.
+### The Canonical Lifecycle
+The framework strictly enforces the following sequence:
+1. **Spawn**: All QEMU nodes are launched frozen (`-S` is injected by the framework).
+2. **Barrier**: Wait for plugin liveliness barriers across all nodes.
+3. **Route**: `ensure_session_routing(session)` is called (framework owned).
+4. **Init**: `vta.init()` executes a 0-ns sync while nodes are still frozen.
+5. **Start**: QMP `cont` (start_emulation) is issued to all nodes simultaneously.
+6. **Teardown**: Strict reverse-order teardown on exit.
 
-### The Orchestration Lifecycle
+### Usage Patterns
 
-You no longer need to instantiate `QmpBridge` or `VirtualTimeAuthority` manually. Instead, use the declarative context manager:
-
+#### Single-Node Simulation
 ```python
-@pytest.mark.asyncio
-async def test_my_feature(simulation):
-    dtb, kernel = build_artifacts()
-    extra_args = ["-device", "virtmcu-clock,node=0,mode=slaved-icount"]
-
-    # 1. Bring-Up & Setup
-    async with await simulation(dtb, kernel, extra_args=extra_args) as sim:
-        
-        # 2. Test Logic (System is guaranteed to be perfectly frozen at 0 ns)
+async def test_peripheral(simulation):
+    # Simple single-node boot
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel)
+    async with simulation as sim:
         await sim.vta.step(1_000_000)
-        
-    # 3. Teardown (Automatically handles QEMU termination & Zenoh cleanup)
 ```
 
-The `VirtmcuSimulation` orchestrator handles three distinct stages behind the scenes:
+#### Multi-Node Simulation
+The `Simulation` object supports dynamic node addition before the lifecycle begins. Node IDs are integers (matching the existing `virtmcu-clock,node=N` convention).
+```python
+async def test_network(simulation):
+    simulation.add_node(node_id=0, dtb=dtb0, kernel=k0)
+    simulation.add_node(node_id=1, dtb=dtb1, kernel=k1)
+    async with simulation as sim:
+        # All nodes spawn frozen, complete the barrier sequence,
+        # then `cont` is issued simultaneously to all of them.
+        await sim.vta.step(1_000_000)
+```
 
-1. **Bring-Up (Deterministic Setup):** 
-   - Starts the QEMU instance and ensures the `-S` (freeze at boot) flag is present.
-   - Automatically injects `router={zenoh_router}` into your `-device` and `-chardev` CLI arguments so you don't have to manage network topologies manually.
-   - Waits for the QMP and UART sockets to appear and connects the bridge.
-2. **The Deterministic Initialization Barrier (`sim.vta.init()`):**
-   - Automatically waits for the `sim/clock/liveliness/{nid}` tokens for all managed nodes (Global Liveliness Barrier).
-   - Implicitly executes a `0 ns` clock advance to ensure QEMU is fully booted, connected, and frozen *exactly* at `vtime = 0 ns` before yielding control to your test logic.
-3. **Teardown:**
-   - Safely closes the QMP bridge and guarantees QEMU processes are reaped, even if your test assertions fail.
+### The `inspection_bridge` Escape Hatch
+For tests that only require QOM introspection (e.g., verifying register reset values or object properties) without firmware execution or Zenoh traffic, use the `inspection_bridge` fixture.
+- **Rule**: Allowed ONLY if no firmware is executed and no Zenoh traffic is generated.
+- Nodes remain frozen for the duration of the test; `cont` is never issued.
 
-By encapsulating discovery and initialization into this declarative context manager, tests are significantly shorter, cleaner, and completely immune to race conditions!
+### Banned Patterns in Tests
+To maintain simulation integrity and prevent flaky CI runs, the following patterns are strictly banned and will be enforced by CI lints:
+- **Manual `ensure_session_routing(...)`**: The framework handles routing barriers internally.
+- **Manual `-S` in `extra_args`**: Framework-injected; manual override breaks synchronization logic.
+- **Direct `qemu_launcher` for Firmware**: Use `simulation` for any test that executes guest code.
+- **Manual `bridge.start_emulation()`**: Emulation start must be coordinated by the `Simulation` lifecycle.
+- **Manual Orchestrator Instantiation**: Do not instantiate orchestrator classes directly in new tests.
+
+---
 
 ## 7. Automated Flight Recorder (PCAP)
 

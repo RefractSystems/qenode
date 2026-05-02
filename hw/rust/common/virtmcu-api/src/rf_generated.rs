@@ -53,6 +53,16 @@ pub mod rf_header {
 
     impl<'a> RfHeader<'a> {
         #[inline]
+        pub fn unpack_slice(buf: &'a [u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+            flatbuffers::root::<RfHeader>(buf)
+        }
+
+        #[inline]
+        pub unsafe fn unpack_slice_unchecked(buf: &'a [u8]) -> Self {
+            flatbuffers::root_unchecked::<RfHeader>(buf)
+        }
+
+        #[inline]
         pub unsafe fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
             RfHeader { _tab: table }
         }

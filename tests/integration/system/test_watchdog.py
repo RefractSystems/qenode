@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 if TYPE_CHECKING:
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 def build_boot_arm_artifacts() -> tuple[Path, Path]:
@@ -36,13 +36,14 @@ def build_boot_arm_artifacts() -> tuple[Path, Path]:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_fires_on_vtime_stall(simulation: SimulationCreator, zenoh_router: str) -> None:
+async def test_watchdog_fires_on_vtime_stall(simulation: Simulation, zenoh_router: str) -> None:
     dtb_path, kernel_path = build_boot_arm_artifacts()
     extra_args = [
         "-device",
         f"virtmcu-clock,node=0,mode=slaved-suspend,router={zenoh_router}",
     ]
-    async with await simulation(dtb_path, kernel_path, extra_args=extra_args) as sim:
+    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=extra_args)
+    async with simulation as sim:
         # Mock the get_virtual_time_ns so it appears to be stalled at 1_000_000
         with patch.object(sim.bridge, "get_virtual_time_ns", new_callable=AsyncMock, return_value=1_000_000):
             with pytest.raises(asyncio.CancelledError, match="Guest OS deadlocked"):

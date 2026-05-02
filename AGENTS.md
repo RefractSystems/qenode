@@ -24,8 +24,10 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 **Same topology YAML + same firmware ELFs + same `global_seed` → bit-identical output on every run.**
 
 - **Topology declared, not discovered**: full network graph in world YAML, loaded by `DeterministicCoordinator` at startup. Runtime Zenoh peer-mode scouting is BANNED.
+- **Zenoh Session Isolation**: All Zenoh sessions in Python tests MUST use `make_client_config()` or the `zenoh_session` fixture. Raw `zenoh.open()` is BANNED to prevent parallel test cross-talk (scouting=false, mode=client).
 - **Canonical tie-breaking**: same-vtime messages delivered in order `(delivery_vtime_ns, source_node_id, sequence_number)` by the coordinator — never by OS scheduling.
 - **Per-quantum barrier**: coordinator withholds quantum-Q messages until ALL nodes signal "quantum Q complete" (PDES barrier pattern).
+- **Automated Synchronization (SOTA)**: The framework implicitly injects the `-S` flag to launch QEMU frozen, handles routing synchronization internally (`ensure_session_routing`), and issues `cont` via QMP. Do not manually call `ensure_session_routing` in tests.
 - **Stochastic seeding**: derive per-node PRNG as `seed_for_quantum(global_seed, node_id, quantum_number)`. `rand::thread_rng()` and wall-clock seeding are BANNED.
 - **Mobile nodes**: topology changes pushed by physics engine before each quantum step, never discovered at runtime.
 - Any feature producing different output across identical runs is a VirtMCU bug. See [ADR-014](docs/architecture/09-determinism-and-chaos.md).
@@ -156,7 +158,7 @@ virtmcu/
 1. **NO Hardcoded Ports**: BANNED: fixed ports (`7447`, `7450`) anywhere. REQUIRED: `zenoh_router` fixture or `scripts/get-free-port.py`.
 2. **NO Hardcoded Paths**: BANNED: shared temp paths (e.g., `/tmp/yaml_boot/out.dtb`). REQUIRED: `pytest` `tmp_path` fixture or `mktemp -d`.
 3. **NO Random Collisions**: BANNED: `random.randint()` / generic UUIDs for node IDs. REQUIRED: deterministic uniqueness via `os.getpid()`, `worker_id`, or `tmp_path`.
-4. **NO Manual Process Management**: BANNED: spawning daemons (e.g., `zenoh_coordinator`) in test bodies. REQUIRED: centralized `pytest` fixtures with automated teardown.
+4. **NO Manual Process Management**: BANNED: spawning daemons (e.g., `deterministic_coordinator`) in test bodies. REQUIRED: centralized `pytest` fixtures with automated teardown.
 5. **Test Scope**: `pytest` scoped to `tests/` via `pyproject.toml`. Do NOT place test files in `tests/fixtures/guest_apps/<domain>/`.
 6. **Binary Resolution**: check both `target/release/` and `tools/<tool_name>/target/release/` for Rust tool binaries.
 
@@ -284,6 +286,8 @@ Mandatory shutdown sequence:
 - **No Global Path Mutation**: BANNED: `os.chdir()`. Use absolute `pathlib.Path` objects or pass `cwd=` to `subprocess`.
 - **AST over Regex**: BANNED: using regex or string searches (`.find()`) to parse structured data like `.dtb`, JSON, or YAML. Use native parsers (e.g., the `fdt` library).
 - **First-Class Tooling**: Scripts in `tools/` and `scripts/` are production code. They must pass strict type-checking (`mypy`) and cannot use `# noqa` or `# type: ignore` to bypass architecture rules.
+- **No Hardcoded Binary Names**: BANNED: using literal strings like `"deterministic_coordinator"` in `get_rust_binary_path` or `resolve_rust_binary`. REQUIRED: Use `VirtmcuBinary.DETERMINISTIC_COORDINATOR` from `tools.testing.virtmcu_test_suite.constants`. CI enforces this via AST lints.
+
 
 ### 18. Lessons Learned (Anti-Patterns — Do Not Repeat)
 

@@ -12,6 +12,7 @@ pub struct CoordMessage {
     pub sequence_number: u64,
     pub protocol: Protocol,
     pub payload: Vec<u8>,
+    pub base_topic: Option<String>,
 }
 
 impl PartialOrd for CoordMessage {
@@ -28,6 +29,7 @@ impl Ord for CoordMessage {
             .then_with(|| self.dst_node_id.cmp(&other.dst_node_id))
             .then_with(|| self.sequence_number.cmp(&other.sequence_number))
             .then_with(|| self.protocol.cmp(&other.protocol))
+            .then_with(|| self.base_topic.cmp(&other.base_topic))
             .then_with(|| self.payload.cmp(&other.payload))
     }
 }
@@ -223,6 +225,7 @@ mod tests {
             sequence_number: seq,
             protocol: Protocol::Uart,
             payload: vec![],
+            base_topic: None,
         }
     }
 

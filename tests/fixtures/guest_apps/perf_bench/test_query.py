@@ -30,6 +30,7 @@ def main() -> None:
     config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     from typing import Any
+
     session: Any = zenoh.open(config)
 
     topic = "sim/clock/advance/0"

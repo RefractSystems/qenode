@@ -4,7 +4,7 @@
     compatible = "arm,generic-fdt";
     #address-cells = <2>;
     #size-cells = <2>;
-    qemu_sysmem {
+    qemu_sysmem: qemu_sysmem {
         compatible = "qemu:system-memory";
         phandle = <0x01>;
     };
@@ -12,7 +12,7 @@
         compatible = "qemu-memory-region";
         qemu,ram = <1>;
         container = <1>;
-        reg = <0x0 0x40000000 0x0 0x10000000>;
+        reg = <0x0 0x40000000 0x0 0x08000000>;
     };
     cpus {
         #address-cells = <1>;
@@ -24,12 +24,15 @@
             memory = <0x01>;
         };
     };
-    flexray@09003000 {
+    flexray@9003000 {
         compatible = "flexray";
         reg = <0x0 0x09003000 0x0 0x4000>;
+        container = <1>;
     };
-    uart@09000000 {
+    pl011@9000000 {
         compatible = "pl011";
         reg = <0x0 0x09000000 0x0 0x1000>;
+        chardev = <0x00>;
+        container = <1>;
     };
 };

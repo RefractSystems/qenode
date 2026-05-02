@@ -45,9 +45,9 @@ class FdtEmitter:
         self._assign_phandles()
 
     def _detect_arch(self) -> str:
-        for _name, dev in self.platform.devices.items():
-            if dev.type_name.startswith("RISC_V"):
-                return "riscv32"
+        for dev in self.platform.devices:
+            if "RISCV" in dev.type_name.upper():
+                return "riscv"
         return "arm"
 
     def _assign_phandles(self) -> None:

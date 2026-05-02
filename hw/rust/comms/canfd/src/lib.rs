@@ -1,4 +1,5 @@
 //! Virtmcu virtual CAN FD device with pluggable transport.
+use zenoh::Wait;
 
 extern crate alloc;
 
@@ -75,6 +76,7 @@ pub struct State {
     client_ptr: *mut CanBusClientState,
     tx_sequence: AtomicU64,
     _topic: String,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 unsafe extern "C" fn virtmcu_can_receive(client: *mut CanBusClientState) -> bool {
@@ -274,7 +276,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
 
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
         let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node })
+            format!("/tmp/virtmcu-coord-{node}.sock")
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };
@@ -308,7 +310,19 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
         (*zch).parent_obj.bus_client.peer = zch as *mut core::ffi::c_void;
     }
 
+    let liveliness = if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/canfd/liveliness/{node}");
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     let mut state = Box::new(State {
+        _liveliness: liveliness,
         transport,
         subscription: None,
         tx_sender: tx_rx,
@@ -527,6 +541,7 @@ unsafe extern "C" fn virtmcu_can_host_instance_finalize(obj: *mut Object) {
     }
 }
 
+#[used]
 static VIRTMCU_CAN_HOST_TYPE_INFO: TypeInfo = TypeInfo {
     name: TYPE_CAN_HOST_VIRTMCU,
     parent: c"can-host".as_ptr(),

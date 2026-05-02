@@ -13,16 +13,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 @pytest.mark.asyncio
-async def test_spi_bus_stress(qemu_launcher: object, tmp_path: Path) -> None:
+async def test_spi_bus_stress(inspection_bridge: object, tmp_path: Path) -> None:
     """
     Stress test: many SPI devices on many buses.
     Verify that hardening handles multiple buses and devices correctly.
@@ -62,7 +59,7 @@ async def test_spi_bus_stress(qemu_launcher: object, tmp_path: Path) -> None:
         cwd=workspace_root,
     )
 
-    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, inspection_bridge)(test_dtb)
 
     # Verify all devices are parented correctly
     for b in range(num_buses):
@@ -75,7 +72,7 @@ async def test_spi_bus_stress(qemu_launcher: object, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mac_stress(qemu_launcher: object, tmp_path: Path) -> None:
+async def test_mac_stress(inspection_bridge: object, tmp_path: Path) -> None:
     """
     Stress test: multiple devices with different MAC addresses.
     """
@@ -105,7 +102,7 @@ async def test_mac_stress(qemu_launcher: object, tmp_path: Path) -> None:
         cwd=workspace_root,
     )
 
-    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, inspection_bridge)(test_dtb)
 
     for i in range(num_devs):
         addr = 0x50000000 + i * 0x1000

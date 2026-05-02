@@ -154,10 +154,10 @@ fn init_logger_thread() -> Sender<LogEntry> {
 }
 
 #[cfg(miri)]
+#[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri requires direct printing as FFI is unavailable
 fn miri_output(node_id: u32, level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
     // In Miri, we use eprintln! directly as FFI is unavailable.
     // But to satisfy the lint, we add the exception comment.
-    #[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri requires direct printing as FFI is unavailable
     eprintln!("[Node: {}] [{}] [{}] {}", node_id, level.as_str(), module, args);
 }
 

@@ -39,6 +39,12 @@ To maintain causal integrity, VirtMCU uses the **synchronization barrier protoco
 
 This barrier ensures that firmware in quantum $Q+1$ **always** sees all messages sent by its peers in quantum $Q$.
 
+### Lookahead and Future Quanta
+The `DeterministicCoordinator` supports arbitrary lookahead by buffering `done` signals and messages for future quanta. This allows high-performance nodes to pre-calculate and submit their traffic ahead of the barrier, significantly reducing synchronization overhead in multi-core simulations.
+
+### Topology-Enforced Links
+For critical industrial buses like **FlexRay**, the coordinator enforces a strict `topology` graph defined in the world YAML. Messages are only routed between nodes that have an explicit physical link in the model. Any attempt to send traffic on an undeclared link is logged as a **Topology Violation**, ensuring the simulation remains faithful to the physical wiring.
+
 ---
 
 ## 3. Chaos Engineering

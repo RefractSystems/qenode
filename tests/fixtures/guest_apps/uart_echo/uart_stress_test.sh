@@ -32,9 +32,19 @@ fi
 
 cleanup() {
     EXIT_CODE=$?
+    # Disable job control messages to avoid "Killed" noise in logs
+    set +m
     echo "Cleaning up (exit code: $EXIT_CODE)..."
-    [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
-    [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
+    if [[ -n "${QEMU_PID:-}" ]]; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        (sleep 1 && kill -9 "$QEMU_PID" 2>/dev/null) &
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${ROUTER_PID:-}" ]]; then
+        kill "$ROUTER_PID" 2>/dev/null || true
+        (sleep 1 && kill -9 "$ROUTER_PID" 2>/dev/null) &
+        wait "$ROUTER_PID" 2>/dev/null || true
+    fi
     if [ $EXIT_CODE -eq 0 ]; then
         rm -rf "$TMPDIR_LOCAL"
     else

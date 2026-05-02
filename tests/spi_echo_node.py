@@ -18,6 +18,7 @@ import typing
 import zenoh
 
 from tools import vproto
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,9 @@ def main() -> None:
     config.insert_json5("scouting/multicast/enabled", "false")
 
     logger.info(f"Connecting to Zenoh on {router}...")
-    session = zenoh.open(config)
+    session = zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: standalone script executed by test
 
-    topic = "sim/spi/spi0/0"
+    topic = SimTopic.spi_base("spi0", 0)
 
     def on_query(query: zenoh.Query) -> None:
         if query.payload is None:

@@ -52,29 +52,33 @@ ASM_PATH="/tmp/virtmcu-rp-$$.S"
 LD_PATH="/tmp/virtmcu-rp-$$.ld"
 
 cleanup() {
-    echo "[riscv_interrupts] Cleaning up..."
+    echo "[remote_port_arm] Cleaning up..."
     kill "${QEMU_PID:-}" 2>/dev/null || true
     kill "${ADAPTER_PID:-}" 2>/dev/null || true
     rm -f "$SOCK_PATH" "$ASM_PATH" "$LD_PATH" "$ELF_PATH" "$DTB_PATH" "$DTS_PATH" "$ADAPTER_LOG" "$QEMU_LOG"
 }
 trap cleanup EXIT
 
-echo "[riscv_interrupts] Building SystemC Remote Port adapter..."
+echo "[remote_port_arm] Building SystemC Remote Port adapter..."
 ADAPTER_BUILD_DIR="$TOOLS_DIR/systemc_adapter/build"
 if [ ! -f "$ADAPTER_BUILD_DIR/CMakeCache.txt" ]; then
-    echo "[riscv_interrupts] CMake not yet configured — running cmake..."
+    echo "[remote_port_arm] CMake not yet configured — running cmake..."
     cmake -S "$TOOLS_DIR/systemc_adapter" -B "$ADAPTER_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DGIT_EXECUTABLE="$(which git)" > /dev/null 2>&1
 fi
 make -C "$ADAPTER_BUILD_DIR" rp_adapter > /dev/null 2>&1
 
-echo "[riscv_interrupts] Starting SystemC adapter on $SOCK_PATH..."
+echo "[remote_port_arm] Starting SystemC adapter on $SOCK_PATH..."
 "$TOOLS_DIR/systemc_adapter/build/rp_adapter" "unix:$SOCK_PATH" > "$ADAPTER_LOG" 2>&1 &
 ADAPTER_PID=$!
 
 # Wait for adapter to create the socket
-sleep 1
+timeout=50
+while [ ! -S "$SOCK_PATH" ] && [ $timeout -gt 0 ]; do
+    sleep 0.1
+    timeout=$((timeout - 1))
+done
 
-echo "[riscv_interrupts] Compiling ARM firmware..."
+echo "[remote_port_arm] Compiling ARM firmware..."
 cat << 'ASM_EOF' > "$ASM_PATH"
 .section .text
 .global _start
@@ -107,7 +111,7 @@ LD_EOF
 arm-none-eabi-gcc -mcpu=cortex-a15 -mthumb -nostdlib -nostartfiles \
     -T "$LD_PATH" "$ASM_PATH" -o "$ELF_PATH"
 
-echo "[riscv_interrupts] Compiling device tree..."
+echo "[remote_port_arm] Compiling device tree..."
 cat << DTS_EOF > "$DTS_PATH"
 /dts-v1/;
 / {
@@ -150,7 +154,7 @@ DTS_EOF
 
 dtc -I dts -O dtb -o "$DTB_PATH" "$DTS_PATH" 2>/dev/null
 
-echo "[riscv_interrupts] Starting QEMU..."
+echo "[remote_port_arm] Starting QEMU..."
 "$RUN_SH" \
     --dtb "$DTB_PATH" \
     -kernel "$ELF_PATH" \
@@ -158,7 +162,7 @@ echo "[riscv_interrupts] Starting QEMU..."
     -monitor none > "$QEMU_LOG" 2>&1 &
 QEMU_PID=$!
 
-echo "[riscv_interrupts] Waiting for Remote Port transactions..."
+echo "[remote_port_arm] Waiting for Remote Port transactions..."
 timeout=10
 while [ $timeout -gt 0 ]; do
     if grep -q "WRITE" "$ADAPTER_LOG" && grep -q "READ" "$ADAPTER_LOG"; then

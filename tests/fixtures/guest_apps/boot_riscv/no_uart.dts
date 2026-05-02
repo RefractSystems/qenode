@@ -1,0 +1,40 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <0x02>;
+    #size-cells = <0x02>;
+    model = "riscv-virt-virtmcu";
+    compatible = "riscv-virtio";
+
+    chosen {
+        stdout-path = "/soc/uart@10000000";
+    };
+
+    cpus {
+        #address-cells = <0x01>;
+        #size-cells = <0x00>;
+        timebase-frequency = <0x989680>;
+
+        cpu@0 {
+            device_type = "cpu";
+            reg = <0x00>;
+            status = "okay";
+            compatible = "riscv,rv64";
+            riscv,isa = "rv64imafdc";
+            mmu-type = "riscv,sv48";
+
+            cpu0_intc: interrupt-controller {
+                #interrupt-cells = <0x01>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+    };
+
+    soc {
+        #address-cells = <0x02>;
+        #size-cells = <0x02>;
+        compatible = "simple-bus";
+        ranges;
+    };
+};

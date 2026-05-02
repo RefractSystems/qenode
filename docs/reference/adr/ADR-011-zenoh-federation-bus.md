@@ -22,7 +22,7 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 
 ### Pros
 1. **High Performance and Low Overhead**: Zenoh is written in Rust and highly optimized for edge and robotics (ROS2) networks. Native Rust plugins integrate directly into QEMU's event loop.
-2. **Language Agnostic**: The `TimeAuthority` can be written in Python, the `zenoh_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
+2. **Language Agnostic**: The `TimeAuthority` can be written in Python, the `deterministic_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
 3. **Flexible Discovery**: Zenoh supports both decentralized discovery (multicast) and explicit endpoints. VirtMCU strictly mandates explicit TCP/UDP endpoints for deterministic CI execution.
 4. **Flexible Topologies**: Zenoh can route over shared memory (SHM), TCP, UDP, or QUIC. If two QEMU instances are on the same host, Zenoh uses SHM. If they are in different cloud regions, it uses TCP. The `VirtMCU` code does not change.
 5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `clock` requirement where QEMU must block the TCG loop and ask the `TimeAuthority` for the next time quantum.

@@ -65,12 +65,12 @@ class NodeManager:
         node = self.get_node(node_id)
 
         # Save to temporary file for validation
-        fd, path = tempfile.mkstemp(suffix=f".{config_type}", prefix=f"virtmcu-{node_id}-")
+        fd, path = tempfile.mkstemp(suffix=f".{config_type}", prefix=f"virtmcu-{node_id}-", dir=self.base_tmpdir)
         os.write(fd, board_config.encode("utf-8"))
         os.close(fd)
 
         # Validate by trying to generate DTB
-        dtb_fd, dtb_path = tempfile.mkstemp(suffix=".dtb")
+        dtb_fd, dtb_path = tempfile.mkstemp(suffix=".dtb", dir=self.base_tmpdir)
         os.close(dtb_fd)
 
         f_out = io.StringIO()
@@ -241,7 +241,7 @@ class NodeManager:
 
         await node.qmp_bridge.close()
 
-        for path in [node.qmp_socket_path, node.uart_socket_path, node.yaml_path]:
+        for path in [node.qmp_socket_path, node.uart_socket_path]:
             if path and Path(path).exists():
                 with suppress(OSError):
                     Path(path).unlink()

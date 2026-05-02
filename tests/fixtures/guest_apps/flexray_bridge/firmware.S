@@ -1,6 +1,18 @@
 
 .global _start
 _start:
+    /* Print BOOT to UART */
+    ldr r2, =0x09000000
+    mov r3, #66  /* 'B' */
+    str r3, [r2]
+    mov r3, #79  /* 'O' */
+    str r3, [r2]
+    str r3, [r2]
+    mov r3, #84  /* 'T' */
+    str r3, [r2]
+    mov r3, #10 /* '\n' */
+    str r3, [r2]
+
     /* 1. Configure Message RAM via Interface */
 
     /* Slot 0: Frame ID = 10, for TX test */
@@ -55,7 +67,7 @@ loop:
     ldr r0, =0x09003410
     ldr r1, [r0]
 
-    /* Write to UART 0x09000000 */
+    /* Write to UART 0x09000000 - 4 bytes individually */
     ldr r2, =0x09000000
     /* Byte 0 */
     strb r1, [r2]

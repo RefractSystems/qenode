@@ -260,9 +260,7 @@ class NodeManager:
 
         await node.qmp_bridge.close()
 
-        if node.yaml_path and Path(node.yaml_path).exists():
-            with suppress(OSError):
-                Path(node.yaml_path).unlink()
-
-        node.cleanup()
-        del self.nodes[node_id]
+        for path in [node.qmp_socket_path, node.uart_socket_path]:
+            if path and Path(path).exists():
+                with suppress(OSError):
+                    Path(path).unlink()

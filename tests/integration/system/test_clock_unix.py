@@ -10,20 +10,15 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 
 from __future__ import annotations
 
-import asyncio
 import shutil
-import socket
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tools import vproto
-
 if TYPE_CHECKING:
-    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 def build_artifacts() -> tuple[Path, Path]:
@@ -39,83 +34,35 @@ def build_artifacts() -> tuple[Path, Path]:
     return dtb_path, kernel_path
 
 
-class MockUnixTimeAuthority:
-    def __init__(self, socket_path: str) -> None:
-        self.socket_path = socket_path
-        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.server.bind(self.socket_path)
-        self.server.listen(1)
-        self.conn: socket.socket | None = None
-
-    async def accept(self) -> None:
-        self.server.setblocking(False)
-        loop = asyncio.get_running_loop()
-        self.conn, _ = await loop.sock_accept(self.server)
-
-    async def step(self, delta_ns: int, mujoco_time_ns: int) -> tuple[int, int, int]:
-        # ClockAdvanceReq: delta_ns (u64), mujoco_time_ns (u64), quantum_number (u64)
-        req = vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, 0).pack()
-        assert self.conn is not None
-        await asyncio.get_running_loop().sock_sendall(self.conn, req)
-
-        # ClockReadyResp: current_vtime_ns (u64), n_frames (u32), error_code (u32), quantum_number (u64)
-        resp_data = b""
-        while len(resp_data) < vproto.SIZE_CLOCK_READY_RESP:
-            assert self.conn is not None
-            chunk = await asyncio.get_running_loop().sock_recv(self.conn, vproto.SIZE_CLOCK_READY_RESP - len(resp_data))
-            if not chunk:
-                raise RuntimeError("Connection closed")
-            resp_data += chunk
-
-        resp = vproto.ClockReadyResp.unpack(resp_data)
-        return resp.current_vtime_ns, resp.n_frames, resp.error_code
-
-    def close(self) -> None:
-        if self.conn:
-            self.conn.close()
-        self.server.close()
-        p = Path(self.socket_path)
-        if p.exists():
-            p.unlink()
-
-
 @pytest.mark.asyncio
-async def test_clock_unix_socket(qemu_launcher: object) -> None:
+async def test_clock_unix_socket(simulation: Simulation) -> None:
     """
     Verify clock with unix socket transport.
     """
     dtb_path, kernel_path = build_artifacts()
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        socket_path = str(Path(tmpdir) / "clock.sock")
-        vta = MockUnixTimeAuthority(socket_path)
+    from tools.testing.virtmcu_test_suite.transport import UnixTransportImpl
 
-        extra_args = ["-S", "-device", f"virtmcu-clock,node=1,mode=slaved-unix,router={socket_path}"]
+    transport = UnixTransportImpl()
+    await transport.start()
+    simulation.transport = transport
 
-        # 1. Launch QEMU. It will start, realize clock (spawn worker),
-        #    and start QMP server.
-        launcher_task: asyncio.Task[QmpBridge] = asyncio.create_task(
-            qemu_launcher(dtb_path, kernel_path, extra_args=extra_args, ignore_clock_check=True)  # type: ignore[operator]
-        )
+    extra_args = ["-device", f"virtmcu-clock,node=0,mode=slaved-unix,router={transport.clock_sock}"]
+    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=extra_args)
 
-        # 2. Wait for the worker thread to connect to our socket.
-        await vta.accept()
+    try:
+        async with simulation as sim:
+            vta = sim.vta
+            assert vta is not None
+            # Initial sync (vtime should be 0 or close to it) is handled by sim.__aenter__
 
-        # 3. Now await the bridge
-        bridge = await launcher_task
-
-        await bridge.start_emulation()
-
-        try:
             # 2. Advance 1ms
-            vtime, _, err = await vta.step(1_000_000, 1_000_000)
-            assert err == 0
-            assert vtime >= 1_000_000
+            vtimes = await vta.step(1_000_000)
+            assert vtimes[0] >= 1_000_000
 
             # 3. Advance 10ms
-            vtime, _, err = await vta.step(10_000_000, 11_000_000)
-            assert err == 0
-            assert vtime >= 11_000_000
+            vtimes = await vta.step(10_000_000)
+            assert vtimes[0] >= 11_000_000
 
-        finally:
-            vta.close()
+    finally:
+        await transport.stop()

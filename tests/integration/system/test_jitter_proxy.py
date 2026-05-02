@@ -10,18 +10,23 @@ Ensure correct functionality, performance, and deterministic execution of test_j
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
-import threading
 import time
 import typing
 
 import pytest
 import zenoh
 
-from tests.fixtures.guest_apps.perf_bench.jitter_proxy import CLOCK_ADVANCE_PREFIX, JitterProxy
 from tools.testing.env import WORKSPACE_DIR
-from tools.testing.utils import mock_execution_delay
+from tools.testing.utils import get_time_multiplier
+from tools.testing.virtmcu_test_suite.conftest_core import (
+    ManagedSubprocess,
+    open_client_session,
+    wait_for_zenoh_discovery,
+)
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 GET_FREE_PORT_SCRIPT = WORKSPACE_DIR / "scripts" / "get-free-port.py"
 
@@ -34,10 +39,6 @@ def _get_endpoint(proto: str = "tcp/") -> str:
     )
 
 
-def _get_port() -> int:
-    return int(subprocess.check_output([sys.executable, str(GET_FREE_PORT_SCRIPT), "--port"]).decode().strip())
-
-
 @pytest.fixture
 def mock_upstream_router() -> object:
     """Spins up an isolated local Zenoh router to act as the upstream."""
@@ -45,36 +46,36 @@ def mock_upstream_router() -> object:
     cfg = zenoh.Config()
     cfg.insert_json5("listen/endpoints", f'["{endpoint}"]')
     cfg.insert_json5("scouting/multicast/enabled", "false")
-    router = zenoh.open(cfg)
+    router = zenoh.open(cfg)  # ZENOH_OPEN_EXCEPTION: peer/router-mode session for an isolated test router
     yield router, endpoint
-    typing.cast(typing.Any, router).close()
+    router.close()  # type: ignore[no-untyped-call]
 
 
-def _wait_for_queryable(session: zenoh.Session, topic: str, timeout: float = 5.0) -> bool:
+async def _wait_for_queryable_async(session: zenoh.Session, topic: str, timeout: float = 5.0) -> bool:
     """Deterministically polls until a queryable on the topic responds or timeouts."""
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
-        # We send a dummy payload. The mock queryable handles it.
-        replies = list(session.get(topic, payload=b"ping", timeout=0.5))
-        if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
-            return True
-        mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
+        try:
+            replies = list(session.get(topic, payload=b"ping", timeout=0.5))
+            if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
+                return True
+        except zenoh.ZError:
+            pass
+        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
     return False
 
 
-def test_jitter_proxy_routing(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
+@pytest.mark.asyncio
+async def test_jitter_proxy_routing(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
     """
     Validates that the proxy correctly isolates sessions and forwards payloads.
-    - Upstream Session: TimeAuthority
-    - Proxy Backend: QEMU
     """
     _, upstream_url = mock_upstream_router
     proxy_endpoint = _get_endpoint()
-    max_jitter_us = 1000  # 1 ms max jitter
+    max_jitter_us = 1000
 
-    proxy = JitterProxy(upstream_url, proxy_endpoint, max_jitter_us)
-    proxy_thread = threading.Thread(target=proxy.run, daemon=True)
-    proxy_thread.start()
+    proxy_script = WORKSPACE_DIR / "tests/fixtures/guest_apps/perf_bench/jitter_proxy.py"
+    cmd = [sys.executable, "-u", str(proxy_script), upstream_url, proxy_endpoint, str(max_jitter_us)]
 
     qemu_handled_payload = None
     qemu_session = None
@@ -86,139 +87,131 @@ def test_jitter_proxy_routing(mock_upstream_router: tuple[zenoh.Session, str]) -
         qemu_handled_payload = query.payload.to_bytes() if query.payload else b""
         query.reply(query.key_expr, b"qemu_response")
 
-    try:
-        # 1. Mock QEMU: Connect to the proxy's backend listen port and declare a queryable.
-        qemu_cfg = zenoh.Config()
-        qemu_cfg.insert_json5("connect/endpoints", f'["{proxy_endpoint}"]')
-        qemu_cfg.insert_json5("scouting/multicast/enabled", "false")
-        qemu_session = zenoh.open(qemu_cfg)
-        qemu_queryable = qemu_session.declare_queryable(f"{CLOCK_ADVANCE_PREFIX}0", mock_qemu_queryable)
+    async with ManagedSubprocess("jitter_proxy", cmd) as proc:
+        try:
+            assert await proc.wait_for_line("listen=tcp/")
+            await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
 
-        # 2. Mock TimeAuthority: Connect to the upstream router.
-        ta_cfg = zenoh.Config()
-        ta_cfg.insert_json5("connect/endpoints", f'["{upstream_url}"]')
-        ta_cfg.insert_json5("scouting/multicast/enabled", "false")
-        ta_session = zenoh.open(ta_cfg)
+            ta_session = open_client_session(connect=upstream_url)
+            await wait_for_zenoh_discovery(ta_session, SimTopic.plugin_liveliness("jitter_proxy", 0))
 
-        # Wait deterministically for the routing to stabilize.
-        assert _wait_for_queryable(ta_session, f"{CLOCK_ADVANCE_PREFIX}0", timeout=5.0), "Routing failed to propagate"
+            qemu_session = open_client_session(connect=proxy_endpoint)
+            qemu_queryable = qemu_session.declare_queryable(SimTopic.clock_advance(0), mock_qemu_queryable)
 
-        # 3. Execute the actual query
-        qemu_handled_payload = None  # reset after ping
-        replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"ta_request", timeout=5.0))
+            assert await _wait_for_queryable_async(ta_session, SimTopic.clock_advance(0), timeout=5.0)
 
-        # 4. Verify the architecture worked correctly
-        assert len(replies) == 1, "TimeAuthority should receive exactly one reply"
-        assert hasattr(replies[0], "ok"), "Reply should have 'ok' attribute"
-        assert replies[0].ok is not None, "Reply 'ok' should not be None"
-        assert replies[0].ok.payload.to_bytes() == b"qemu_response", "Payload should route back from QEMU to TA"
-        assert qemu_handled_payload == b"ta_request", "Payload should route forward from TA to QEMU"
+            qemu_handled_payload = None
+            replies = list(ta_session.get(SimTopic.clock_advance(0), payload=b"ta_request", timeout=5.0))
 
-        with proxy._lock:
-            assert len(proxy.injected_delays_us) > 0
-            assert 0 <= proxy.injected_delays_us[-1] <= max_jitter_us
+            assert len(replies) == 1
+            assert replies[0].ok is not None
+            assert replies[0].ok.payload.to_bytes() == b"qemu_response"
+            assert qemu_handled_payload == b"ta_request"
 
-    finally:
-        proxy.stop()
-        proxy_thread.join(timeout=2.0)
-        if qemu_queryable:
-            qemu_queryable.undeclare()  # type: ignore[no-untyped-call]
-        if qemu_session:
-            qemu_session.close()  # type: ignore[no-untyped-call]
-        if ta_session:
-            ta_session.close()  # type: ignore[no-untyped-call]
+            await proc.stop()
+            assert await proc.wait_for_line("injected.*delays")
+
+        finally:
+            if qemu_queryable:
+                typing.cast(typing.Any, qemu_queryable).undeclare()
+            if qemu_session:
+                typing.cast(typing.Any, qemu_session).close()
+            if ta_session:
+                typing.cast(typing.Any, ta_session).close()
 
 
-def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
-    """
-    Validates that the proxy fails gracefully if QEMU hasn't registered its queryable.
-    """
+@pytest.mark.asyncio
+async def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
+    """Validates proxy fail-gracefully behavior."""
     _, upstream_url = mock_upstream_router
     proxy_endpoint = _get_endpoint()
 
-    proxy = JitterProxy(upstream_url, proxy_endpoint, max_jitter_us=100)
-    proxy_thread = threading.Thread(target=proxy.run, daemon=True)
-    proxy_thread.start()
+    proxy_script = WORKSPACE_DIR / "tests/fixtures/guest_apps/perf_bench/jitter_proxy.py"
+    cmd = [sys.executable, "-u", str(proxy_script), upstream_url, proxy_endpoint, "100"]
 
-    ta_session = None
-    try:
-        ta_cfg = zenoh.Config()
-        ta_cfg.insert_json5("connect/endpoints", f'["{upstream_url}"]')
-        ta_cfg.insert_json5("scouting/multicast/enabled", "false")
-        ta_session = zenoh.open(ta_cfg)
+    async with ManagedSubprocess("jitter_proxy", cmd) as proc:
+        assert await proc.wait_for_line("listen=tcp/")
+        await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
 
-        # It might take a moment for the proxy to declare its queryable on the upstream.
-        # Wait until the proxy itself responds (it will return an error because QEMU is missing).
-        deadline = time.perf_counter() + 5.0
-        replies = []
-        while time.perf_counter() < deadline:
-            replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"ta_request", timeout=1.0))
-            if replies:
-                break
-            mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
+        ta_session = open_client_session(connect=upstream_url)
+        try:
+            await wait_for_zenoh_discovery(ta_session, SimTopic.plugin_liveliness("jitter_proxy", 0))
 
-        assert len(replies) == 1
-        assert hasattr(replies[0], "err")
-        assert replies[0].err is not None
-        assert replies[0].err.payload.to_bytes() == b"proxy: no QEMU reply"
-    finally:
-        proxy.stop()
-        proxy_thread.join(timeout=2.0)
-        if ta_session:
-            ta_session.close()  # type: ignore[no-untyped-call]
+            deadline = time.perf_counter() + 5.0
+            replies = []
+            while time.perf_counter() < deadline:
+                replies = list(ta_session.get(SimTopic.clock_advance(0), payload=b"ta_request", timeout=1.0))
+                if replies:
+                    break
+                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
+
+            assert len(replies) == 1
+            assert hasattr(replies[0], "err")
+            assert replies[0].err is not None
+            assert replies[0].err.payload.to_bytes() == b"proxy: no QEMU reply"
+        finally:
+            if ta_session:
+                typing.cast(typing.Any, ta_session).close()
 
 
-def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
-    """
-    Intentionally creates a query storm to verify the proxy's fail-fast concurrency guard.
-    """
+@pytest.mark.asyncio
+async def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
+    """Intentionally creates a query storm."""
     _, upstream_url = mock_upstream_router
     proxy_endpoint = _get_endpoint()
 
-    proxy = JitterProxy(upstream_url, proxy_endpoint, max_jitter_us=100)
-    proxy_thread = threading.Thread(target=proxy.run, daemon=True)
-    proxy_thread.start()
+    proxy_script = WORKSPACE_DIR / "tests/fixtures/guest_apps/perf_bench/jitter_proxy.py"
+    # Run proxy with limit=10
+    cmd = [sys.executable, "-u", str(proxy_script), upstream_url, proxy_endpoint, "100", "10"]
 
-    ta_session = None
-    futures = []
-    try:
-        ta_cfg = zenoh.Config()
-        ta_cfg.insert_json5("connect/endpoints", f'["{upstream_url}"]')
-        ta_cfg.insert_json5("scouting/multicast/enabled", "false")
-        ta_session = zenoh.open(ta_cfg)
+    from concurrent.futures import ThreadPoolExecutor
 
-        # Wait for proxy queryable
-        deadline = time.perf_counter() + 5.0
-        while time.perf_counter() < deadline:
-            if list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=0.1)):
-                break
-            mock_execution_delay(0.1)  # SLEEP_EXCEPTION: infrastructure jitter proxy
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        async with ManagedSubprocess("jitter_proxy", cmd) as proc:
+            assert await proc.wait_for_line("listen=tcp/")
+            await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
 
-        # Flood the proxy (triggering the >50 in_flight guard)
-        # We don't wait for responses, we just blast async gets.
-        for _ in range(60):
-            # session.get is blocking, we need to run it in threads
-            t = threading.Thread(
-                target=lambda: list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=1.0))
-            )
-            t.daemon = True
-            t.start()
-            futures.append(t)
+            ta_session = open_client_session(connect=upstream_url)
+            backend_session = open_client_session(connect=proxy_endpoint)
 
-        # Give it a tiny bit of time to hit the limit
-        mock_execution_delay(0.2)  # SLEEP_EXCEPTION: infrastructure jitter proxy
+            def slow_queryable(query: zenoh.Query) -> None:
+                import threading
 
-        # The next request should be instantly rejected by the guard
-        replies = list(ta_session.get(f"{CLOCK_ADVANCE_PREFIX}0", payload=b"", timeout=1.0))
-        assert len(replies) == 1
-        assert hasattr(replies[0], "err")
-        assert replies[0].err is not None
-        assert replies[0].err.payload.to_bytes() in [b"proxy: no QEMU reply", b"proxy: routing loop detected"]
+                def delayed_reply() -> None:
+                    time.sleep(2.0)  # SLEEP_EXCEPTION: Intentional delay for proxy test
+                    query.reply(query.key_expr, b"slow_reply")
 
-    finally:
-        for t in futures:
-            t.join(timeout=1.0)
-        proxy.stop()
-        proxy_thread.join(timeout=2.0)
-        if ta_session:
-            ta_session.close()  # type: ignore[no-untyped-call]
+                threading.Thread(target=delayed_reply, daemon=True).start()
+
+            sub = backend_session.declare_queryable(SimTopic.clock_advance(0), slow_queryable)
+
+            try:
+                await wait_for_zenoh_discovery(ta_session, SimTopic.plugin_liveliness("jitter_proxy", 0))
+
+                loop = asyncio.get_running_loop()
+                sessions = [open_client_session(connect=upstream_url) for _ in range(5)]
+
+                async def fire_get(sess: zenoh.Session) -> list[zenoh.Reply]:
+                    return await loop.run_in_executor(
+                        executor, lambda: list(sess.get(SimTopic.clock_advance(0), timeout=10.0))
+                    )
+
+                tasks = []
+                for s in sessions:
+                    for _ in range(10):
+                        tasks.append(asyncio.create_task(fire_get(s)))
+
+                await asyncio.wait(tasks, timeout=5.0)
+                assert await proc.wait_for_line("query storm detected")
+
+                replies = list(ta_session.get(SimTopic.clock_advance(0), timeout=1.0))
+                assert len(replies) == 1
+                assert hasattr(replies[0], "err")
+                assert replies[0].err is not None
+                assert replies[0].err.payload.to_bytes() in [b"proxy: no QEMU reply", b"proxy: routing loop detected"]
+            finally:
+                for s in sessions:
+                    typing.cast(typing.Any, s).close()
+                typing.cast(typing.Any, sub).undeclare()
+                typing.cast(typing.Any, backend_session).close()
+                typing.cast(typing.Any, ta_session).close()

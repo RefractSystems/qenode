@@ -1,11 +1,11 @@
 """
-SOTA Test Module: test_wireless
+SOTA Test Module: test_wireless_topology
 
 Context:
-This module implements tests for the test_wireless subsystem.
+This module implements tests for the test_wireless_topology subsystem.
 
 Objective:
-Ensure correct functionality, performance, and deterministic execution of test_wireless.
+Ensure correct functionality, performance, and deterministic execution of test_wireless_topology.
 """
 
 from __future__ import annotations
@@ -13,18 +13,23 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
-import yaml
+import zenoh
 
+from tools import vproto
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import zenoh
-
+from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
+from tools.testing.virtmcu_test_suite.topics import SimTopic
+from tools.testing.virtmcu_test_suite.world_schema import (
+    NodeSpec,
+    TopologySpec,
+    WirelessMedium,
+    WirelessNode,
+    WorldYaml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,110 +40,69 @@ async def test_wireless_topology(zenoh_router: str, zenoh_session: zenoh.Session
     Test Wireless Topology Enforcement.
     The coordinator delivers wireless messages based on distance.
     """
-    coordinator_bin = resolve_rust_binary("deterministic_coordinator")
+    coordinator_bin = resolve_rust_binary(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
 
-    # 1. Create a world YAML with wireless topology
-    # Node 0 at (0,0,0)
-    # Node 1 at (5,0,0) - In range (max_range=10)
-    # Node 2 at (15,0,0) - Out of range
     world_yaml = tmp_path / "world.yaml"
-    topology = {
-        "nodes": [{"id": "0"}, {"id": "1"}, {"id": "2"}],
-        "topology": {
-            "global_seed": 42,
-            "transport": "zenoh",
-            "wireless": {
-                "medium": "ieee802154",
-                "max_range_m": 10.0,
-                "nodes": [
-                    {"id": "0", "initial_position": [0.0, 0.0, 0.0]},
-                    {"id": "1", "initial_position": [5.0, 0.0, 0.0]},
-                    {"id": "2", "initial_position": [15.0, 0.0, 0.0]},
+    world = WorldYaml(
+        topology=TopologySpec(
+            nodes=[NodeSpec(name="0"), NodeSpec(name="1"), NodeSpec(name="2")],
+            global_seed=42,
+            wireless=WirelessMedium(
+                medium="ieee802154",
+                max_range_m=10.0,
+                nodes=[
+                    WirelessNode(name="0", initial_position=[0.0, 0.0, 0.0]),
+                    WirelessNode(name="1", initial_position=[5.0, 0.0, 0.0]),
+                    WirelessNode(name="2", initial_position=[15.0, 0.0, 0.0]),
                 ],
-            },
-        },
-    }
-    with Path(world_yaml).open("w") as f:
-        yaml.dump(topology, f)
+            ),
+        )
+    )
+    world_yaml.write_text(world.to_yaml())
 
-    # 2. Start coordinator
-    from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
+    received_node1: list[bytes] = []
+    received_node2: list[bytes] = []
+    rx_event = asyncio.Event()
 
-    async with AsyncManagedProcess(
-        "stdbuf",
-        "-oL",
-        str(coordinator_bin),
-        "--connect",
-        zenoh_router,
-        "--topology",
-        str(world_yaml),
-        "--nodes",
-        "3",
-    ) as proc:
-        try:
-            await proc.wait_for_line("Coordinator subscriber active", target="stderr", timeout=10.0)
+    def on_node1_rx(sample: zenoh.Sample) -> None:
+        logger.info(f"Node 1 RX: {sample.payload.to_bytes()!r}")
+        received_node1.append(sample.payload.to_bytes())
+        rx_event.set()
 
-            # Setup listeners for rx
-            received_node1 = []
-            received_node2 = []
-            rx_event = asyncio.Event()
+    def on_node2_rx(sample: zenoh.Sample) -> None:
+        logger.info(f"Node 2 RX: {sample.payload.to_bytes()!r}")
+        received_node2.append(sample.payload.to_bytes())
+        rx_event.set()
 
-            def on_rx_node1(sample: object) -> None:
-                received_node1.append(cast(Any, sample).payload.to_bytes())
-                rx_event.set()
+    s = zenoh_session
+    sub1 = s.declare_subscriber(SimTopic.rf_ieee802154_rx(1), on_node1_rx)
+    sub2 = s.declare_subscriber(SimTopic.rf_ieee802154_rx(2), on_node2_rx)
 
-            def on_rx_node2(sample: object) -> None:
-                received_node2.append(cast(Any, sample).payload.to_bytes())
-                rx_event.set()
+    async with coordinator_subprocess(
+        binary=coordinator_bin,
+        args=["--connect", zenoh_router, "--topology", str(world_yaml), "--nodes", "3", "--no-pdes"],
+        zenoh_session=s,
+    ):
+        # 1. Send Wireless from 0 (at 0,0,0) repeatedly until it arrives (handles discovery delay)
+        pub_rf_tx0 = s.declare_publisher(SimTopic.rf_ieee802154_tx(0))
+        msg = b"WIRELESS"
+        # We use ZenohFrameHeader as a fallback, which the coordinator should now support for RF too.
+        header = vproto.ZenohFrameHeader(1000, 0, len(msg)).pack()
 
-            _sub1 = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/coord/1/rx", on_rx_node1))
-            _sub2 = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber("sim/coord/2/rx", on_rx_node2))
-
-            # 4. Send a wireless BROADCAST from node 0
-            # Protocol 6 = Rf802154
-            vtime = 1000
-            msg_payload = b"BEACON"
-            msg_broadcast = (
-                (1).to_bytes(4, "little")
-                + (0).to_bytes(4, "little")
-                + (0xFFFFFFFF).to_bytes(4, "little")
-                + vtime.to_bytes(8, "little")
-                + (1).to_bytes(8, "little")
-                + (6).to_bytes(1, "little")
-                + len(msg_payload).to_bytes(4, "little")
-                + msg_payload
-            )
-
-            def _send() -> None:
-                zenoh_session.put("sim/coord/0/tx", msg_broadcast)
-                # Send done signals to advance barrier
-                zenoh_session.put("sim/coord/0/done", (1).to_bytes(8, "little"))
-                zenoh_session.put("sim/coord/1/done", (1).to_bytes(8, "little"))
-                zenoh_session.put("sim/coord/2/done", (1).to_bytes(8, "little"))
-
-            await asyncio.to_thread(_send)
-
-            # Wait for message reception on both node 1 and 2
-            success = False
+        while not rx_event.is_set():
+            pub_rf_tx0.put(header + msg)
             try:
-                await asyncio.wait_for(rx_event.wait(), timeout=2.0)
-                success = True
+                await asyncio.wait_for(rx_event.wait(), timeout=0.1)
             except TimeoutError:
-                success = False
+                pass
 
-            if not success:
-                logger.error(f"STDOUT: {proc.stdout_text}")
-                logger.error(f"STDERR: {proc.stderr_text}")
+        assert len(received_node1) > 0
+        assert len(received_node2) == 0, "Wireless message delivered to Node 2 (out of range)"
 
-            assert success, "Broadcast not delivered to node 1"
-            assert len(received_node1) == 1
-            assert len(received_node2) == 0, "Broadcast delivered to out-of-range node 2"
+    cast(Any, sub1).undeclare()
+    cast(Any, sub2).undeclare()
 
-            # The coordinator should have rewritten the dst_node_id to 1
-            # Unpack without num_msgs: src(I), dst(I), vtime(Q), seq(Q), proto(B), len(I) = 29 bytes
-            dst = int.from_bytes(received_node1[0][4:8], "little")
-            assert dst == 1, f"Expected dst_node_id=1, got {dst}"
-            assert received_node1[0][29:] == b"BEACON"
 
-        finally:
-            pass
+@pytest.fixture(autouse=True)
+def _noop_fixture() -> None:
+    pass

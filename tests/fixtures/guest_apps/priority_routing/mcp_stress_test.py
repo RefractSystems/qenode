@@ -114,7 +114,7 @@ async def main() -> None:
         res = await recv_json()
         if "error" in res:
             logger.error(f"Start error: {res['error']}")
-            break
+            sys.exit(1)
         logger.info(f"Iteration {i + 1}: Waiting deterministically for CPU state...")
         for _ in range(50):
             await send_json(
