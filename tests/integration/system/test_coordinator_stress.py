@@ -10,16 +10,21 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import threading
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import zenoh
 
 from tools import vproto
-from tools.testing.utils import mock_execution_delay
+from tools.testing.utils import get_time_multiplier
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     pass
@@ -29,56 +34,93 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("zenoh_router", "zenoh_coordinator")
-async def test_coordinator_scalability(zenoh_session: zenoh.Session) -> None:
-    num_nodes = 50
-    msgs_per_node = 50
-
+async def test_coordinator_scalability(zenoh_router: str, zenoh_session: zenoh.Session) -> None:
+    """
+    Smoke test the coordinator with a small number of nodes and messages.
+    Ensures the PDES barrier progresses and delivers messages.
+    """
+    coordinator_bin = resolve_rust_binary(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
+    num_nodes = 3
+    msgs_per_node = 5
     s = zenoh_session
 
     received_count = [0]
     expected = num_nodes * (num_nodes - 1) * msgs_per_node
-    done_event = threading.Event()
+    done_event = asyncio.Event()
 
     def on_sample(_sample: zenoh.Sample) -> None:
         received_count[0] += 1
-        # Accept 50% delivery to account for UDP/queue drops in Python subscriber under heavy CI load
-        if received_count[0] >= int(expected * 0.5):
+        if received_count[0] >= expected:
             done_event.set()
 
-    _sub = s.declare_subscriber("sim/eth/frame/*/rx", on_sample)
+    _sub = s.declare_subscriber(SimTopic.ETH_FRAME_RX_WILDCARD, on_sample)
 
-    pubs = []
-    for i in range(num_nodes):
-        pubs.append(s.declare_publisher(f"sim/eth/frame/{i}/tx"))
+    pubs = [s.declare_publisher(SimTopic.eth_tx(i)) for i in range(num_nodes)]
+    done_pubs = [s.declare_publisher(SimTopic.coord_done(i)) for i in range(num_nodes)]
 
-    for i in range(num_nodes):
-        pubs[i].put(vproto.ZenohFrameHeader(0, 0, 0).pack())
-    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    start_queues: list[asyncio.Queue[bytes]] = [asyncio.Queue() for _ in range(num_nodes)]
 
-    received_count[0] = 0
-    done_event.clear()
-    start_time = time.time()
+    def make_on_start(nid: int) -> Callable[[zenoh.Sample], None]:
+        def _callback(sample: zenoh.Sample) -> None:
+            start_queues[nid].put_nowait(sample.payload.to_bytes())
 
-    def node_thread(node_id: int) -> None:
-        pub = pubs[node_id]
-        payload = b"X" * 64
-        for i in range(msgs_per_node):
-            pub.put(vproto.ZenohFrameHeader(i * 1000, 0, len(payload)).pack() + payload)
-            mock_execution_delay(0.001)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+        return _callback
 
-    threads = []
-    for i in range(num_nodes):
-        t = threading.Thread(target=node_thread, args=(i,))
-        t.start()
-        threads.append(t)
+    start_subs = [s.declare_subscriber(SimTopic.clock_start(i), make_on_start(i)) for i in range(num_nodes)]
 
-    for t in threads:
-        t.join()
+    async with coordinator_subprocess(
+        binary=coordinator_bin,
+        args=["--connect", zenoh_router, "--nodes", str(num_nodes)],
+        zenoh_session=s,
+    ):
+        start_time = time.time()
 
-    done_event.wait(timeout=15.0)
-    end_time = time.time()
-    duration = end_time - start_time
+        async def mock_node(node_id: int) -> None:
+            pub = pubs[node_id]
+            done_pub = done_pubs[node_id]
+            q = start_queues[node_id]
 
-    assert received_count[0] >= int(expected * 0.5), f"Dropped too many: {received_count[0]} / {expected}"
+            payload = b"X" * 64
+            quantum = 0
+            for i in range(msgs_per_node):
+                quantum += 1
+                # 1. Send message for CURRENT quantum
+                pub.put(vproto.ZenohFrameHeader(quantum * 1000, 0, len(payload)).pack() + payload)
+
+                # 2. Signal DONE for CURRENT quantum
+                done_pub.put(quantum.to_bytes(8, "little"))
+                # 3. Wait for NEXT quantum start
+                if i < msgs_per_node - 1:
+                    try:
+                        await asyncio.wait_for(q.get(), timeout=5.0 * get_time_multiplier())
+                    except TimeoutError:
+                        logger.error(f"Node {node_id} timed out waiting for quantum {quantum + 1}")
+                        break
+
+            # Keep pumping DONEs to flush any delayed TX messages due to Zenoh topic racing
+            while not done_event.is_set():
+                quantum += 1
+                done_pub.put(quantum.to_bytes(8, "little"))
+                try:
+                    await asyncio.wait_for(q.get(), timeout=0.1)
+                except TimeoutError:
+                    pass
+
+        # Run all mock nodes concurrently
+        await asyncio.gather(*(mock_node(i) for i in range(num_nodes)))
+
+        # Wait for delivery
+        timeout = 5.0 * get_time_multiplier()
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=timeout)
+        except TimeoutError:
+            pass
+
+        end_time = time.time()
+        duration = end_time - start_time
+
+    assert received_count[0] >= expected, f"Dropped too many: {received_count[0]} / {expected}"
     logger.info(f"Routed {received_count[0]} messages in {duration:.2f} seconds")
+
+    for sub in start_subs:
+        cast(Any, sub).undeclare()

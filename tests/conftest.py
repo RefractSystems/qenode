@@ -10,13 +10,14 @@ import pytest_asyncio
 
 from tools.testing.virtmcu_test_suite.conftest_core import (
     VirtualTimeAuthority,
+    deterministic_coordinator,
+    inspection_bridge,
     pytest_collection_modifyitems,
     pytest_runtest_makereport,
     qemu_launcher,
     qmp_bridge,
     simulation,
     time_authority,
-    zenoh_coordinator,
     zenoh_router,
     zenoh_session,
 )
@@ -34,9 +35,10 @@ __all__ = [
     "pytest_runtest_makereport",
     "qemu_launcher",
     "qmp_bridge",
+    "inspection_bridge",
     "simulation",
     "time_authority",
-    "zenoh_coordinator",
+    "deterministic_coordinator",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -82,7 +84,14 @@ _BANNED_SPAWN_NAMES = frozenset({"Popen", "create_subprocess_exec", "create_subp
 def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
     violations: list[str] = []
     for path in sorted(root.rglob("test_*.py")):
-        if "fixtures" in path.parts:
+        # Skip hidden directories, virtual environments, fixtures, third_party, and build artifacts
+        if (
+            any(part.startswith(".") for part in path.parts)
+            or "fixtures" in path.parts
+            or "venv" in path.parts
+            or "third_party" in path.parts
+            or "target" in path.parts
+        ):
             continue
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -106,5 +115,14 @@ def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Session start hook."""
-    # Temporarily disabled to allow FlexRay test fixing
-    pass
+    violations = _scan_subprocess_in_test_bodies(session.config.rootpath)
+    if violations:
+        print("\n" + "=" * 80)
+        print("ERROR: Manual subprocess spawning detected in test bodies.")
+        print("Standard VirtMCU tests MUST NOT spawn processes manually.")
+        print("Use standard fixtures (qemu_launcher, deterministic_coordinator, etc.) instead.")
+        print("-" * 80)
+        for v in violations:
+            print(f"  * {v}")
+        print("=" * 80 + "\n")
+        pytest.exit("Aborting due to simulation hygiene violations", returncode=1)

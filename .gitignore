@@ -70,7 +70,7 @@ third_party/
 
 target/
 .cargo-cache/
-tools/zenoh_coordinator/target/
+tools/deterministic_coordinator/target/
 hw/rust-dummy/target/
 hw/rust-dummy/Cargo.lock
 test-results/

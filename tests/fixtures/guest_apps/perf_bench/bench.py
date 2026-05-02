@@ -105,7 +105,7 @@ class BenchmarkRunner:
             return
         for line in proc.stdout:
             line_str = line.strip()
-            logger.info(f"  [QEMU/{self.mode}/stdout] {line_str.decode()}")  # type: ignore[attr-defined]
+            logger.info(f"  [QEMU/{self.mode}/stdout] {line_str}")
 
             if not self.cntfrq:
                 match = CNTFRQ_RE.search(line_str)

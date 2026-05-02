@@ -7,7 +7,7 @@ third_party
 test-results
 tools/cyber_bridge/build
 tools/systemc_adapter/build
-tools/zenoh_coordinator/target
+tools/deterministic_coordinator/target
 target/
 **/target/
 *.pyc

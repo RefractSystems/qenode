@@ -184,6 +184,17 @@ if [ ! -f "$QEMU_BIN" ]; then
     exit 1
 fi
 
+# Isolate GCOV output to avoid libgcov merge mismatches when running multiple
+# QEMU configurations (e.g., ASan vs non-ASan) in parallel.
+# If GCOV_PREFIX is already set (e.g., by ci-full), we respect it but append
+# a unique identifier to avoid concurrent write collisions.
+if [ -z "${GCOV_PREFIX:-}" ]; then
+    export GCOV_PREFIX="${WORKSPACE_DIR:-/tmp}/target/coverage/${QEMU_ARCH_NAME}_${BUILD_DIR_NAME}_$$"
+else
+    # Append PID to the existing prefix to ensure process-level isolation
+    export GCOV_PREFIX="${GCOV_PREFIX}/$$"
+fi
+
 "$QEMU_BIN" --version | head -n 1
 
 # ── Module Discovery ──────────────────────────────────────────────────────────

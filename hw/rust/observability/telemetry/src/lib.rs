@@ -207,6 +207,7 @@ unsafe extern "C" fn telemetry_class_init(klass: *mut ObjectClass, _data: *const
     virtmcu_qom::qdev::device_class_set_props_n(dc, VIRTMCU_TELEMETRY_PROPERTIES.as_ptr(), 4);
 }
 
+#[used]
 static VIRTMCU_TELEMETRY_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"telemetry".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),

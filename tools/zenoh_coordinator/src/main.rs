@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 use virtmcu_api::rf_generated::rf_header;
 use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 use zenoh::config::Config;
+use zenoh::Wait;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -204,20 +205,6 @@ fn parse_protocol(p: u8) -> Protocol {
         _ => Protocol::Ethernet,
     }
 }
-#[allow(dead_code)]
-fn serialize_protocol(p: &Protocol) -> u8 {
-    match p {
-        Protocol::Ethernet => 0,
-        Protocol::Uart => 1,
-        Protocol::Spi => 2,
-        Protocol::CanFd => 3,
-        Protocol::FlexRay => 4,
-        Protocol::Lin => 5,
-        Protocol::Rf802154 => 6,
-        Protocol::RfHci => 7,
-    }
-}
-
 fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
     let mut msgs = Vec::new();
     let mut cur = Cursor::new(payload);
@@ -247,21 +234,6 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
         }
     }
     msgs
-}
-
-#[allow(dead_code)]
-fn encode_message(msg: &CoordMessage) -> Vec<u8> {
-    let mut b = Vec::new();
-    let src = msg.src_node_id.parse::<u32>().unwrap_or(0);
-    let dst = msg.dst_node_id.parse::<u32>().unwrap_or(0);
-    let _ = b.write_u32::<LittleEndian>(src);
-    let _ = b.write_u32::<LittleEndian>(dst);
-    let _ = b.write_u64::<LittleEndian>(msg.delivery_vtime_ns);
-    let _ = b.write_u64::<LittleEndian>(msg.sequence_number);
-    let _ = b.write_u8(serialize_protocol(&msg.protocol));
-    let _ = b.write_u32::<LittleEndian>(msg.payload.len() as u32);
-    b.extend_from_slice(&msg.payload);
-    b
 }
 
 async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
@@ -323,46 +295,52 @@ async fn handle_eth_msg(
         return out;
     }
     let data = p[20..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
-    if let Some(nodes) = known.get(&base) {
+
+    let mut dest_nodes = HashSet::new();
+    if tg.is_explicit {
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::Ethernet);
+    } else if let Some(nodes) = known.get(&base) {
         for dst in nodes {
-            if dst == &src {
-                continue;
+            if dst != &src {
+                dest_nodes.insert(dst.clone());
             }
-            if !tg.is_link_allowed(&src, dst, &Protocol::Ethernet) {
-                eprintln!(
-                    "[Topology Violation] Dropping ETH msg from {} to {}",
-                    src, dst
-                );
-                continue;
-            }
-            let (d, prob, jit, _) =
-                if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
-                    (
-                        s.delay_ns,
-                        s.drop_probability,
-                        s.jitter_ns,
-                        s.enable_collisions,
-                    )
-                } else {
-                    (delay, 0.0, 0, false)
-                };
-            if prob > 0.0 && rng.gen::<f64>() < prob {
-                continue;
-            }
-            let mut act = d;
-            if jit > 0 {
-                act = act.saturating_add(rng.gen_range(0..=jit));
-            }
-            out.push(CoordMessage {
-                src_node_id: src.clone(),
-                dst_node_id: dst.clone(),
-                base_topic: base.clone(),
-                delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
-                sequence_number: h.sequence_number(),
-                protocol: Protocol::Ethernet,
-                payload: data.clone(),
-            });
         }
+    }
+
+    for dst in dest_nodes {
+        if !tg.is_link_allowed(&src, &dst, &Protocol::Ethernet) {
+            eprintln!(
+                "[Topology Violation] Dropping ETH msg from {} to {}",
+                src, dst
+            );
+            continue;
+        }
+        let (d, prob, jit, _) = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
+            (
+                s.delay_ns,
+                s.drop_probability,
+                s.jitter_ns,
+                s.enable_collisions,
+            )
+        } else {
+            (delay, 0.0, 0, false)
+        };
+        if prob > 0.0 && rng.gen::<f64>() < prob {
+            continue;
+        }
+        let mut act = d;
+        if jit > 0 {
+            act = act.saturating_add(rng.gen_range(0..=jit));
+        }
+        out.push(CoordMessage {
+            src_node_id: src.clone(),
+            dst_node_id: dst.clone(),
+            base_topic: base.clone(),
+            delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
+            sequence_number: h.sequence_number(),
+            protocol: Protocol::Ethernet,
+            payload: data.clone(),
+        });
     }
     out
 }
@@ -390,46 +368,52 @@ async fn handle_uart_msg(
         return out;
     }
     let data = p[20..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
-    if let Some(nodes) = known.get(&base) {
+
+    let mut dest_nodes = HashSet::new();
+    if tg.is_explicit {
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::Uart);
+    } else if let Some(nodes) = known.get(&base) {
         for dst in nodes {
-            if dst == &src {
-                continue;
+            if dst != &src {
+                dest_nodes.insert(dst.clone());
             }
-            if !tg.is_link_allowed(&src, dst, &Protocol::Uart) {
-                eprintln!(
-                    "[Topology Violation] Dropping UART msg from {} to {}",
-                    src, dst
-                );
-                continue;
-            }
-            let (d, prob, jit, _) =
-                if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
-                    (
-                        s.delay_ns,
-                        s.drop_probability,
-                        s.jitter_ns,
-                        s.enable_collisions,
-                    )
-                } else {
-                    (delay, 0.0, 0, false)
-                };
-            if prob > 0.0 && rng.gen::<f64>() < prob {
-                continue;
-            }
-            let mut act = d;
-            if jit > 0 {
-                act = act.saturating_add(rng.gen_range(0..=jit));
-            }
-            out.push(CoordMessage {
-                src_node_id: src.clone(),
-                dst_node_id: dst.clone(),
-                base_topic: base.clone(),
-                delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
-                sequence_number: h.sequence_number(),
-                protocol: Protocol::Uart,
-                payload: data.clone(),
-            });
         }
+    }
+
+    for dst in dest_nodes {
+        if !tg.is_link_allowed(&src, &dst, &Protocol::Uart) {
+            eprintln!(
+                "[Topology Violation] Dropping UART msg from {} to {}",
+                src, dst
+            );
+            continue;
+        }
+        let (d, prob, jit, _) = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
+            (
+                s.delay_ns,
+                s.drop_probability,
+                s.jitter_ns,
+                s.enable_collisions,
+            )
+        } else {
+            (delay, 0.0, 0, false)
+        };
+        if prob > 0.0 && rng.gen::<f64>() < prob {
+            continue;
+        }
+        let mut act = d;
+        if jit > 0 {
+            act = act.saturating_add(rng.gen_range(0..=jit));
+        }
+        out.push(CoordMessage {
+            src_node_id: src.clone(),
+            dst_node_id: dst.clone(),
+            base_topic: base.clone(),
+            delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
+            sequence_number: h.sequence_number(),
+            protocol: Protocol::Uart,
+            payload: data.clone(),
+        });
     }
     out
 }
@@ -452,39 +436,46 @@ async fn handle_lin_msg(
         Ok(f) => f,
         Err(_) => return out,
     };
-    if let Some(nodes) = known.get(&base) {
+
+    let mut dest_nodes = HashSet::new();
+    if tg.is_explicit {
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::Lin);
+    } else if let Some(nodes) = known.get(&base) {
         for dst in nodes {
-            if dst == &src {
-                continue;
+            if dst != &src {
+                dest_nodes.insert(dst.clone());
             }
-            if !tg.is_link_allowed(&src, dst, &Protocol::Lin) {
-                eprintln!("Topology Violation: LIN {}->{}", src, dst);
-                continue;
-            }
-            let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
-                s.delay_ns
-            } else {
-                delay
-            };
-            let mut fbb = flatbuffers::FlatBufferBuilder::new();
-            let data = frame.data().map(|d| fbb.create_vector(d.bytes()));
-            let args = virtmcu_api::lin_generated::virtmcu::lin::LinFrameArgs {
-                delivery_vtime_ns: frame.delivery_vtime_ns().saturating_add(d),
-                type_: frame.type_(),
-                data,
-            };
-            let f = virtmcu_api::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
-            fbb.finish(f, None);
-            out.push(CoordMessage {
-                src_node_id: src.clone(),
-                dst_node_id: dst.clone(),
-                base_topic: base.clone(),
-                delivery_vtime_ns: args.delivery_vtime_ns,
-                sequence_number: 0,
-                protocol: Protocol::Lin,
-                payload: fbb.finished_data().to_vec(),
-            });
         }
+    }
+
+    for dst in dest_nodes {
+        if !tg.is_link_allowed(&src, &dst, &Protocol::Lin) {
+            eprintln!("Topology Violation: LIN {}->{}", src, dst);
+            continue;
+        }
+        let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
+            s.delay_ns
+        } else {
+            delay
+        };
+        let mut fbb = flatbuffers::FlatBufferBuilder::new();
+        let data = frame.data().map(|d| fbb.create_vector(d.bytes()));
+        let args = virtmcu_api::lin_generated::virtmcu::lin::LinFrameArgs {
+            delivery_vtime_ns: frame.delivery_vtime_ns().saturating_add(d),
+            type_: frame.type_(),
+            data,
+        };
+        let f = virtmcu_api::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
+        fbb.finish(f, None);
+        out.push(CoordMessage {
+            src_node_id: src.clone(),
+            dst_node_id: dst.clone(),
+            base_topic: base.clone(),
+            delivery_vtime_ns: args.delivery_vtime_ns,
+            sequence_number: 0,
+            protocol: Protocol::Lin,
+            payload: fbb.finished_data().to_vec(),
+        });
     }
     out
 }
@@ -494,7 +485,7 @@ async fn handle_sysc_msg(
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
-    _tg: &topology::TopologyGraph,
+    tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
     let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
@@ -516,27 +507,34 @@ async fn handle_sysc_msg(
     let data = p[virtmcu_api::ZENOH_FRAME_HEADER_SIZE
         ..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
         .to_vec();
-    if let Some(nodes) = known.get(&base) {
+
+    let mut dest_nodes = HashSet::new();
+    if tg.is_explicit {
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::Spi);
+    } else if let Some(nodes) = known.get(&base) {
         for dst in nodes {
-            if dst == &src {
-                continue;
+            if dst != &src {
+                dest_nodes.insert(dst.clone());
             }
-            // For SystemC CAN, any allowed link is fine, we just reuse the Ethernet protocol mapping internally
-            let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
-                s.delay_ns
-            } else {
-                delay
-            };
-            out.push(CoordMessage {
-                src_node_id: src.clone(),
-                dst_node_id: dst.clone(),
-                base_topic: base.clone(),
-                delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(d),
-                sequence_number: h.sequence_number(),
-                protocol: Protocol::Ethernet, // Map to standard ZenohFrameHeader wrapper
-                payload: data.clone(),
-            });
         }
+    }
+
+    for dst in dest_nodes {
+        // For SystemC CAN, any allowed link is fine, we just reuse the Ethernet protocol mapping internally
+        let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
+            s.delay_ns
+        } else {
+            delay
+        };
+        out.push(CoordMessage {
+            src_node_id: src.clone(),
+            dst_node_id: dst.clone(),
+            base_topic: base.clone(),
+            delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(d),
+            sequence_number: h.sequence_number(),
+            protocol: Protocol::Ethernet, // Map to standard ZenohFrameHeader wrapper
+            payload: data.clone(),
+        });
     }
     out
 }
@@ -684,18 +682,22 @@ async fn main() {
     } else {
         Vec::new()
     };
+    // Force client mode + disabled multicast scouting (CLAUDE.md Second Priority,
+    // ADR-014). `Config::default()` is peer mode with multicast scouting ON, which
+    // causes parallel pytest workers' coordinators to silently discover each
+    // other across the container's network namespace and cross-talk on shared
+    // topics like `sim/coord/*/done`.
     let mut config = Config::default();
     if let Some(ref c) = args.connect {
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", c))
             .unwrap();
     }
-    let session = zenoh::open(config).await.unwrap();
-    let _liveliness = session
-        .liveliness()
-        .declare_token("sim/coordinator/liveliness")
-        .await
+    config.insert_json5("mode", "\"client\"").unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
         .unwrap();
+    let session = zenoh::open(config).await.unwrap();
 
     let eth_sub = session
         .declare_subscriber("**/sim/eth/frame/**/tx")
@@ -735,6 +737,20 @@ async fn main() {
         .unwrap();
     let done_sub = session
         .declare_subscriber("**/sim/coord/**/done")
+        .await
+        .unwrap();
+
+    let _ready_q = session
+        .declare_queryable("sim/coordinator/ready_probe")
+        .callback(|query| {
+            let _ = query.reply(query.key_expr(), b"ok").wait();
+        })
+        .await
+        .unwrap();
+
+    let _liveliness = session
+        .liveliness()
+        .declare_token("sim/coordinator/liveliness")
         .await
         .unwrap();
 
@@ -930,15 +946,19 @@ async fn main() {
                                     tracing::error!("Quantum mismatch for node {}: expected {}, got {}", nid, current_quantum, quantum);
                                 }
                             }
+                            tracing::debug!("Received DONE for node {} quantum {}", nid, quantum);
                             let msgs = batches.remove(&nid).unwrap_or_default();
                             match b.submit_done(nid.clone(), quantum, current_quantum, msgs) {
                                 Ok(Some(sorted)) => {
+                                    let q = b.current_quantum() - 1;
+                                    tracing::info!("Quantum {} complete. Delivering {} messages.", q, sorted.len());
                                     for m in sorted {
                                         encode_protocol_msg(&session, &m).await;
                                     }
 
                                     // Send start to all nodes for NEXT quantum
-                                    current_quantum += 1;
+                                    current_quantum = b.current_quantum();
+                                    tracing::debug!("Advancing to quantum {}. Sending START to all nodes.", current_quantum);
                                     for i in 0..args.nodes.unwrap_or(0) {
                                         let start_topic = format!("sim/clock/start/{}", i);
                                         let mut start_payload = Vec::new();

@@ -300,9 +300,10 @@ peripherals: []
 def test_yaml2qemu_validate_dtb_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
     dtb_file = tmp_path / "empty.dtb"
-    
+
     # Create a valid but empty DTB
     import fdt
+
     dt = fdt.FDT()
     dtb_file.write_bytes(dt.to_dtb(version=17))
 
@@ -316,7 +317,7 @@ def test_yaml2qemu_validate_dtb_failure(tmp_path: Path, caplog: pytest.LogCaptur
 def test_yaml2qemu_validate_dtb_dtc_missing(caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
 
-    # In the library-based version, we don't use dtc. 
+    # In the library-based version, we don't use dtc.
     # Instead, we test that it fails if the file is missing.
     with pytest.raises(SystemExit) as e:
         validate_dtb("non_existent.dtb", devices)

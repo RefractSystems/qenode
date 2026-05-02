@@ -252,7 +252,15 @@ run_test_case() {
     QEMU_PID=$!
 
     # Wait for QEMU to start and encounter the MMIO operation
-    sleep 5
+    echo "[irq_stress]   Waiting for expected error in QEMU log..."
+    found_error=false
+    for _ in $(seq 1 $((POLL_ITERS * 3))); do
+        if grep -q "$expected_msg" "$QEMU_LOG" 2>/dev/null; then
+            found_error=true
+            break
+        fi
+        sleep 0.1
+    done
 
     # ── Check QMP responsiveness ──
     echo "[irq_stress]   Checking QMP responsiveness..."
@@ -297,7 +305,7 @@ sys.exit(0)
     fi
     
     echo "[irq_stress]   Checking for expected error in log..."
-    if grep -q "$expected_msg" "$QEMU_LOG"; then
+    if [ "$found_error" = true ]; then
         echo "[irq_stress]   SUCCESS: Expected error detected"
     else
         echo "[irq_stress]   FAILED: Expected error not found in log"

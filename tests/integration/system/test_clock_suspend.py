@@ -14,7 +14,6 @@ import asyncio
 import logging
 import shutil
 import subprocess
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +23,7 @@ from tools.testing.env import WORKSPACE_ROOT
 from tools.testing.utils import get_time_multiplier
 
 if TYPE_CHECKING:
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 logger = logging.getLogger(__name__)
@@ -46,14 +45,15 @@ def build_clock_suspend_artifacts() -> tuple[Path, Path]:
 
 
 @pytest.mark.asyncio
-async def test_clock_slaved_suspend_smoke(simulation: Callable[..., Awaitable[VirtmcuSimulation]]) -> None:
+async def test_clock_slaved_suspend_smoke(simulation: Simulation) -> None:
     """
     Verify basic clock advancement in slaved-suspend mode.
     """
     dtb, kernel = build_clock_suspend_artifacts()
     extra_args = ["-device", "virtmcu-clock,node=0,mode=slaved-suspend"]
 
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         # 1. Initial vtime should be small (we allow some slack for boot if not using icount)
         vtime = (await sim.vta.step(0))[0]
         # In slaved-suspend without icount, vtime is real-time. simulation fixture has some sleep(0.5) calls.
@@ -69,7 +69,7 @@ async def test_clock_slaved_suspend_smoke(simulation: Callable[..., Awaitable[Vi
 
 
 @pytest.mark.asyncio
-async def test_clock_stall_detection(simulation: Callable[..., Awaitable[VirtmcuSimulation]]) -> None:
+async def test_clock_stall_detection(simulation: Simulation) -> None:
     """
     Verify that slaved-suspend mode correctly triggers and reports
     clock stall detection.
@@ -84,7 +84,8 @@ async def test_clock_stall_detection(simulation: Callable[..., Awaitable[Virtmcu
         f"virtmcu-clock,node=0,mode=slaved-suspend,stall-timeout={stall_timeout}",
     ]
 
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         assert sim.bridge is not None
         # Trigger stall by pausing emulation
         await sim.bridge.pause_emulation()
@@ -110,7 +111,7 @@ async def test_clock_stall_detection(simulation: Callable[..., Awaitable[Virtmcu
 
 
 @pytest.mark.asyncio
-async def test_slow_boot_fast_execute(simulation: Callable[..., Awaitable[VirtmcuSimulation]]) -> None:
+async def test_slow_boot_fast_execute(simulation: Simulation) -> None:
     """
     Verify "slow boot / fast execute" invariant.
     The first quantum (initial sync) should survive a delay longer than the standard stall-timeout.
@@ -127,7 +128,9 @@ async def test_slow_boot_fast_execute(simulation: Callable[..., Awaitable[Virtmc
     ]
 
     # Use init_barrier=False so we can manually wait BEFORE the first sync.
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True, init_barrier=False) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    simulation._init_barrier = False
+    async with simulation as sim:
         # 2. Wait longer than stall_timeout BEFORE the first sync.
         #    The initial handshake/sync should NOT stall.
         await asyncio.sleep(1.0 * get_time_multiplier())  # SLEEP_EXCEPTION: deliberate delay to test boot grace period
@@ -145,7 +148,7 @@ async def test_slow_boot_fast_execute(simulation: Callable[..., Awaitable[Virtmc
 
 
 @pytest.mark.asyncio
-async def test_clock_suspend_wfi(simulation: Callable[..., Awaitable[VirtmcuSimulation]]) -> None:
+async def test_clock_suspend_wfi(simulation: Simulation) -> None:
     """
     Verify that clock continues to advance during WFI in slaved-suspend mode.
     The test kernel performs a 10ms WFI.
@@ -163,7 +166,8 @@ async def test_clock_suspend_wfi(simulation: Callable[..., Awaitable[VirtmcuSimu
 
     extra_args = ["-device", "virtmcu-clock,node=0,mode=slaved-suspend"]
 
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         # Initial sync
         await sim.vta.step(0)
 
@@ -177,7 +181,7 @@ async def test_clock_suspend_wfi(simulation: Callable[..., Awaitable[VirtmcuSimu
 
 
 @pytest.mark.asyncio
-async def test_clock_suspend_vtime_alignment(simulation: Callable[..., Awaitable[VirtmcuSimulation]]) -> None:
+async def test_clock_suspend_vtime_alignment(simulation: Simulation) -> None:
     """
     Verify that vtime reported by QMP matches the VTA expected time.
     """
@@ -185,7 +189,8 @@ async def test_clock_suspend_vtime_alignment(simulation: Callable[..., Awaitable
     # Use slaved-icount to ensure QMP 'query-replay' returns meaningful icount/vtime
     extra_args = ["-device", "virtmcu-clock,node=0,mode=slaved-icount"]
 
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         for _ in range(5):
             await sim.vta.step(1_000_000)
             expected_ns = sim.vta.current_vtimes[0]

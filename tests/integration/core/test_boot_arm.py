@@ -18,19 +18,20 @@ import pytest
 from tools.testing.env import build_guest_app
 
 if TYPE_CHECKING:
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
-async def test_boot_arm(simulation: SimulationCreator) -> None:
+async def test_boot_arm(simulation: Simulation) -> None:
 
     # 1. Autonomously resolve paths and build the guest firmware
     app_dir = build_guest_app("boot_arm")
     dtb = app_dir / "minimal.dtb"
     kernel = app_dir / "hello.elf"
 
-    # 2. Boot and check UART using VirtmcuSimulation
-    async with await simulation(dtb, kernel) as sim:
+    # 2. Boot and check UART using Simulation
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel)
+    async with simulation as sim:
         # Advance clock to allow boot (up to 1s in virtual time)
         success = False
         for _ in range(100):  # 100 * 10ms = 1s
@@ -41,5 +42,5 @@ async def test_boot_arm(simulation: SimulationCreator) -> None:
                 break
 
         if not success:
-            await sim.bridge.get_virtual_time_ns()  # type: ignore[union-attr]
+            await sim.bridge.get_virtual_time_ns()
         assert success

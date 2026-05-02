@@ -14,23 +14,18 @@ import shutil
 import subprocess
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
-if TYPE_CHECKING:
-    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+from tools.testing.env import WORKSPACE_ROOT
 
 
 @pytest.mark.asyncio
-async def test_macaddr_parsing(
-    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]], tmp_path: Path
-) -> None:
+async def test_macaddr_parsing(inspection_bridge: Callable[..., Coroutine[Any, Any, Any]], tmp_path: Path) -> None:
     """
     Validate MACAddress property passing from YAML through yaml2qemu to QEMU.
     """
-    from tools.testing.env import WORKSPACE_ROOT
-
     workspace_root = WORKSPACE_ROOT
 
     # We will temporarily inject a zenoh-wifi node to test macaddr parsing
@@ -62,7 +57,7 @@ async def test_macaddr_parsing(
     )
 
     # Boot QEMU with this DTB
-    await qemu_launcher(test_dtb, extra_args=["-display", "none", "-nographic", "-serial", "null", "-monitor", "null"])
+    await inspection_bridge(test_dtb)
 
     # Query QOM for the mac property
     # In QEMU, the macaddr property is accessed as 'macaddr' usually.

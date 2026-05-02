@@ -76,7 +76,7 @@ Now that the basic UART is complete, you can map the emulated UART directly to t
 1. **Start the Zenoh Coordinator:**
    ```bash
    export PATH="$HOME/.cargo/bin:$PATH"
-   cd tools/zenoh_coordinator
+   cd tools/deterministic_coordinator
    cargo run -- --delay-ns 500000
    ```
 

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zenoh_session")
-async def test_coordinator(zenoh_router: str, zenoh_coordinator: asyncio.subprocess.Process) -> None:
+async def test_coordinator(zenoh_router: str, deterministic_coordinator: asyncio.subprocess.Process) -> None:
     """
     smoke test: Zenoh Multi-Node Coordinator.
     Migrated from tests/fixtures/guest_apps/coordinator_stress/smoke_test.sh
@@ -88,4 +88,4 @@ async def test_coordinator(zenoh_router: str, zenoh_coordinator: asyncio.subproc
     assert ret.returncode == 0, "stress_test.py failed"
 
     # Check if coordinator is still alive
-    assert zenoh_coordinator.returncode is None
+    assert deterministic_coordinator.returncode is None

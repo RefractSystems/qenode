@@ -298,8 +298,8 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
     && make install \
-    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p zenoh_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target \
-    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/zenoh_coordinator /opt/virtmcu/bin/ \
+    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/deterministic_coordinator /opt/virtmcu/bin/ \
     && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/mujoco_bridge /opt/virtmcu/bin/ \
     && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/resd_replay /opt/virtmcu/bin/
 

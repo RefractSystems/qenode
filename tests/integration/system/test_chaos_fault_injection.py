@@ -13,21 +13,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
 from tools.testing.utils import get_time_multiplier, yield_now
-from tools.testing.virtmcu_test_suite.orchestrator import SimulationOrchestrator
 from tools.testing.virtmcu_test_suite.transport import FaultInjectingTransport
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     import zenoh
 
-    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
-    from tools.testing.virtmcu_test_suite.orchestrator import SimNode
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
     from tools.testing.virtmcu_test_suite.transport import SimulationTransport
 
 
@@ -126,14 +122,8 @@ async def test_fault_injection(sim_transport: SimulationTransport) -> None:
     assert delay_measured >= 0.04, f"Message should have been delayed. Measured: {delay_measured}s"
 
 
-def _nodes_alive(node1: SimNode, node2: SimNode) -> bool:
-    return "HI" in cast(Any, cast(Any, node1).uart).buffer and "HI" in cast(Any, cast(Any, node2).uart).buffer
-
-
 @pytest.mark.asyncio
-async def test_multi_node_chaos(
-    zenoh_session: zenoh.Session, zenoh_router: str, qemu_launcher: Callable[..., Awaitable[QmpBridge]]
-) -> None:
+async def test_multi_node_chaos(simulation: Simulation, zenoh_session: zenoh.Session, zenoh_router: str) -> None:
     """
     Proves that the system survives network chaos (drops/latency)
     between two nodes without deadlocking the coordinator or losing determinism.
@@ -144,34 +134,29 @@ async def test_multi_node_chaos(
     # 5% drop, 10ms delay, 5ms jitter
     chaos = FaultInjectingTransport(inner, drop_prob=0.05, delay_s=0.01, jitter_s=0.005)
 
-    orchestrator = SimulationOrchestrator(zenoh_session, zenoh_router, qemu_launcher)
-    # Override transport to use chaos
-    orchestrator.transport = chaos
+    simulation.transport = chaos
 
     dtb = "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
     kernel = "tests/fixtures/guest_apps/boot_arm/hello.elf"
 
-    # Node 1
-    node1 = orchestrator.add_node(1, dtb, kernel)
-    # Node 2
-    node2 = orchestrator.add_node(2, dtb, kernel)
+    simulation.add_node(node_id=1, dtb=dtb, kernel=kernel)
+    simulation.add_node(node_id=2, dtb=dtb, kernel=kernel)
 
-    await orchestrator.start()
+    def _nodes_alive(s: Simulation) -> bool:
+        return "HI" in s.uart_buffer(1) and "HI" in s.uart_buffer(2)
 
-    # Define a simple "progress" condition: both nodes have booted and said something
-    # Run simulation under chaos
-    # Even with drops and jitter, the VirtualTimeAuthority should keep them in sync
-    # though it might take longer in wall-clock time due to FaultInjectingTransport sleeps.
-    await orchestrator.run_until(lambda: _nodes_alive(node1, node2), timeout=30.0)
+    async with simulation as sim:
+        # Even with drops and jitter, the VirtualTimeAuthority should keep nodes
+        # in sync — wall-clock may stretch under FaultInjectingTransport.
+        await sim.run_until(lambda: _nodes_alive(sim), timeout=30.0)
 
-    # If we reached here, the coordinator didn't deadlock and nodes made progress
-    assert _nodes_alive(node1, node2)
+        assert _nodes_alive(sim)
 
-    # Check flight recorder for drops
-    history = chaos.dump_flight_recorder()
-    tx_drops = [h for h in history if h["direction"] == "tx_dropped"]
-    rx_drops = [h for h in history if h["direction"] == "rx_dropped"]
+        # Check flight recorder for drops
+        history = chaos.dump_flight_recorder()
+        tx_drops = [h for h in history if h["direction"] == "tx_dropped"]
+        rx_drops = [h for h in history if h["direction"] == "rx_dropped"]
 
-    logger.info(f"Chaos stats: {len(tx_drops)} TX drops, {len(rx_drops)} RX drops")
-    # Statistically we should have some drops if we sent enough packets (booting + clock steps)
-    # but we don't strictly assert count to avoid flake in tiny simulations.
+        logger.info(f"Chaos stats: {len(tx_drops)} TX drops, {len(rx_drops)} RX drops")
+        # Statistically we should have some drops if we sent enough packets
+        # (booting + clock steps) but don't strictly assert count to avoid flake.

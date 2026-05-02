@@ -1,4 +1,5 @@
 //! VirtMCU virtual network device with pluggable transport.
+use zenoh::Wait;
 
 extern crate alloc;
 
@@ -88,6 +89,7 @@ pub struct VirtmcuNetdevState {
     _max_backlog: u64,
     backlog_count: Arc<AtomicU64>,
     _dropped_frames: Arc<AtomicU64>,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 struct InnerState {
@@ -236,6 +238,7 @@ unsafe extern "C" fn netdev_class_init(klass: *mut ObjectClass, _data: *const c_
     }
 }
 
+#[used]
 static VIRTMCU_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"netdev".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
@@ -344,6 +347,45 @@ fn start_tx_thread(
     })
 }
 
+fn get_transport(
+    transport_name: &str,
+    router: *const c_char,
+    node_id: u32,
+) -> Option<Arc<dyn virtmcu_api::DataTransport>> {
+    if transport_name == "unix" {
+        let path = if router.is_null() {
+            format!("/tmp/virtmcu-coord-{node_id}.sock")
+        } else {
+            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
+        };
+        transport_unix::UnixDataTransport::new(&path).ok().map(|t| Arc::new(t) as _)
+    } else {
+        unsafe {
+            transport_zenoh::get_or_init_session(router)
+                .ok()
+                .map(|s| Arc::new(transport_zenoh::ZenohDataTransport::new(s)) as _)
+        }
+    }
+}
+
+fn get_liveliness(
+    transport_name: &str,
+    router: *const c_char,
+    node_id: u32,
+) -> Option<zenoh::liveliness::LivelinessToken> {
+    if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/netdev/liveliness/{node_id}");
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    }
+}
+
 fn netdev_init_internal(
     nc: *mut NetClientState,
     node_id: u32,
@@ -352,50 +394,35 @@ fn netdev_init_internal(
     topic: String,
     max_backlog: u64,
 ) -> *mut VirtmcuNetdevState {
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node_id })
-        } else {
-            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
-        };
-        match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
-            Err(_) => return ptr::null_mut(),
-        }
-    } else {
-        let session = unsafe {
-            match transport_zenoh::get_or_init_session(router) {
-                Ok(s) => s,
-                Err(_) => return ptr::null_mut(),
-            }
-        };
-        Arc::new(transport_zenoh::ZenohDataTransport::new(session))
+    let transport = match get_transport(&transport_name, router, node_id) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
     };
 
     let (tx, rx) = bounded(65536);
     let (tx_out, rx_out) = bounded(65536);
     let local_heap = BqlGuarded::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-    let earliest_clone = Arc::clone(&earliest_vtime);
 
     let backlog_count = Arc::new(AtomicU64::new(0));
     let dropped_frames = Arc::new(AtomicU64::new(0));
     let backlog_count_sub = Arc::clone(&backlog_count);
     let dropped_frames_sub = Arc::clone(&dropped_frames);
 
-    let tx_topic = format!("{topic}/{node_id}/tx");
     let shared = Arc::new(SharedState {
         transport,
         _node_id: node_id,
-        _topic: tx_topic,
+        _topic: format!("{topic}/{node_id}/tx"),
         tx_sender: tx_out,
         drain_cond: Condvar::new(),
         state: Mutex::new(InnerState { running: true, active_vcpu_count: 0 }),
     });
 
     let tx_thread = start_tx_thread(Arc::clone(&shared), rx_out);
+    let liveliness = get_liveliness(&transport_name, router, node_id);
 
     let mut state = Box::new(VirtmcuNetdevState {
+        _liveliness: liveliness,
         shared: Arc::clone(&shared),
         nc,
         subscription: None,
@@ -416,6 +443,7 @@ fn netdev_init_internal(
         QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void)
     });
     let rx_timer_clone = Arc::clone(&rx_timer);
+    let earliest_clone = Arc::clone(&state.earliest_vtime);
 
     let rx_topic = format!("{topic}/rx");
     let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {

@@ -13,19 +13,19 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from tools import vproto
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from typing import Any, cast
 
     import zenoh
 
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 class ZenohUartMonitor:
@@ -77,7 +77,7 @@ class ZenohUartMonitor:
 
 
 @pytest.mark.asyncio
-async def test_interactive_echo(simulation: SimulationCreator, tmp_path: Path) -> None:
+async def test_interactive_echo(simulation: Simulation, tmp_path: Path) -> None:
     """
     Interactive UART Echo test (Unix Sockets).
     """
@@ -91,7 +91,8 @@ async def test_interactive_echo(simulation: SimulationCreator, tmp_path: Path) -
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
     extra_args = ["-icount", "shift=4,align=off,sleep=off"]
-    async with await simulation(dtb, kernel, extra_args=extra_args) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         for _ in range(5):
             await sim.vta.step(20_000_000)
         assert sim.bridge is not None
@@ -103,11 +104,9 @@ async def test_interactive_echo(simulation: SimulationCreator, tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 2, "pdes": True}], indirect=True)
-@pytest.mark.usefixtures("zenoh_coordinator")
-async def test_multi_node_uart(
-    zenoh_router: str, qemu_launcher: object, zenoh_session: zenoh.Session, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize("deterministic_coordinator", [{"nodes": 2, "pdes": True}], indirect=True)
+@pytest.mark.usefixtures("deterministic_coordinator")
+async def test_multi_node_uart(simulation: Simulation, tmp_path: Path) -> None:
     """
     Multi-node UART over Zenoh.
     """
@@ -121,35 +120,34 @@ async def test_multi_node_uart(
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
-    topic0 = f"virtmcu/uart/n0_{unique_id}"
-    topic1 = f"virtmcu/uart/n1_{unique_id}"
+    topic0 = SimTopic.uart_unique_prefix(f"n0_{unique_id}")
+    topic1 = SimTopic.uart_unique_prefix(f"n1_{unique_id}")
 
     extra0 = [
-        "-S",
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=true",
+        "virtmcu-clock,coordinated=true",
         "-chardev",
-        f"virtmcu,id=chr0,node=0,router={zenoh_router},topic={topic0}",
+        f"virtmcu,id=chr0,topic={topic0}",
         "-serial",
         "chardev:chr0",
     ]
-    bridge0 = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra0, ignore_clock_check=True)
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra0)
 
     extra1 = [
-        "-S",
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"virtmcu-clock,node=1,mode=slaved-icount,router={zenoh_router},coordinated=true",
+        "virtmcu-clock,coordinated=true",
         "-chardev",
-        f"virtmcu,id=chr0,node=1,router={zenoh_router},topic={topic1}",
+        f"virtmcu,id=chr0,topic={topic1}",
         "-serial",
         "chardev:chr0",
     ]
-    bridge1 = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra1, ignore_clock_check=True)
+    simulation.add_node(node_id=1, dtb=dtb, kernel=kernel, extra_args=extra1)
 
+    zenoh_session = simulation._session
     monitor0 = ZenohUartMonitor(zenoh_session, 0, topic0)
     monitor1_tx = ZenohUartMonitor(zenoh_session, 1, topic1)
     monitor1_rx = ZenohUartMonitor(zenoh_session, 1, topic1, is_rx=True)
@@ -165,13 +163,10 @@ async def test_multi_node_uart(
 
     sub_bridge = await asyncio.to_thread(lambda: zenoh_session.declare_subscriber(f"{topic0}/0/tx", bridge_cb))
 
-    from tests.conftest import VirtualTimeAuthority
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
+    async with simulation as sim:
+        vta = sim.vta
+        assert vta is not None
 
-    vta = VirtualTimeAuthority(zenoh_session, [0, 1])
-    sim = VirtmcuSimulation([bridge0, bridge1], vta)
-
-    async with sim:
         # Helper to pump monitor queues
         def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():
@@ -214,7 +209,7 @@ async def test_multi_node_uart(
             await asyncio.to_thread(_do_put)
 
             # Wait for echo on both Node 0 (direct) and Node 1 (bridged)
-            for _ in range(100): # Increased retry count
+            for _ in range(100):  # Increased retry count
                 await vta.step(5_000_000)
                 _pump_monitor(monitor0)
                 _pump_monitor(monitor1_rx)
@@ -236,11 +231,9 @@ async def test_multi_node_uart(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("zenoh_coordinator", [{"nodes": 1, "pdes": True}], indirect=True)
-@pytest.mark.usefixtures("zenoh_coordinator")
-async def test_coordinator_topology(
-    zenoh_router: str, zenoh_session: zenoh.Session, qemu_launcher: object, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize("deterministic_coordinator", [{"nodes": 1, "pdes": True}], indirect=True)
+@pytest.mark.usefixtures("deterministic_coordinator")
+async def test_coordinator_topology(simulation: Simulation, tmp_path: Path) -> None:
     """
     Test Zenoh coordinator topology control (Packet Drop).
     """
@@ -254,21 +247,21 @@ async def test_coordinator_topology(
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
-    topic = f"virtmcu/uart/top_{unique_id}"
+    topic = SimTopic.uart_unique_prefix(f"top_{unique_id}")
 
     extra = [
-        "-S",
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=true",
+        "virtmcu-clock,coordinated=true",
         "-chardev",
-        f"virtmcu,id=chr0,node=0,router={zenoh_router},topic={topic}",
+        f"virtmcu,id=chr0,topic={topic}",
         "-serial",
         "chardev:chr0",
     ]
-    bridge = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra, ignore_clock_check=True)
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra)
 
+    zenoh_session = simulation._session
     monitor = ZenohUartMonitor(zenoh_session, 0, topic)
     await monitor.start()
 
@@ -280,13 +273,9 @@ async def test_coordinator_topology(
 
     await asyncio.to_thread(_reg)
 
-    from tests.conftest import VirtualTimeAuthority
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
-
-    vta = VirtualTimeAuthority(zenoh_session, [0])
-    sim = VirtmcuSimulation(bridge, vta)
-
-    async with sim:
+    async with simulation as sim:
+        vta = sim.vta
+        assert vta is not None
 
         def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():
@@ -308,7 +297,7 @@ async def test_coordinator_topology(
         # 3. Apply topology: Drop all from Node 0 to Node 1
         import json
 
-        ctrl_topic = "sim/network/control"
+        ctrl_topic = SimTopic.NETWORK_CONTROL
         update = {"from": "0", "to": "1", "drop_probability": 1.0}
         await asyncio.to_thread(lambda: zenoh_session.put(ctrl_topic, json.dumps(update)))
         # We step the clock slightly to ensure the coordinator process receives the update
@@ -365,9 +354,7 @@ async def test_coordinator_topology(
 
 
 @pytest.mark.asyncio
-async def test_uart_stress(
-    zenoh_router: str, qemu_launcher: object, zenoh_session: zenoh.Session, tmp_path: Path
-) -> None:
+async def test_uart_stress(simulation: Simulation, tmp_path: Path) -> None:
     """
     UART Stress test using slaved-icount and large bursts.
     """
@@ -381,31 +368,27 @@ async def test_uart_stress(
     shutil.copy(workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb", dtb)
 
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
-    topic = f"virtmcu/uart/stress_{unique_id}"
+    topic = SimTopic.uart_unique_prefix(f"stress_{unique_id}")
 
     extra = [
-        "-S",
         "-icount",
         "shift=4,align=off,sleep=off",
         "-device",
-        f"virtmcu-clock,node=0,mode=slaved-icount,router={zenoh_router},coordinated=false",
+        "virtmcu-clock,coordinated=false",
         "-chardev",
-        f"virtmcu,id=uart0,node=0,router={zenoh_router},topic={topic}",
+        f"virtmcu,id=uart0,topic={topic}",
         "-serial",
         "chardev:uart0",
     ]
-    bridge = await cast(Any, qemu_launcher)(dtb, kernel, extra_args=extra, ignore_clock_check=True)
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra)
 
+    zenoh_session = simulation._session
     monitor = ZenohUartMonitor(zenoh_session, 0, topic)
     await monitor.start()
 
-    from tests.conftest import VirtualTimeAuthority
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
-
-    vta = VirtualTimeAuthority(zenoh_session, [0])
-    sim = VirtmcuSimulation(bridge, vta)
-
-    async with sim:
+    async with simulation as sim:
+        vta = sim.vta
+        assert vta is not None
 
         def _pump_monitor(mon: ZenohUartMonitor) -> None:
             while not mon.queue.empty():

@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from tests.sim_types import SimulationCreator
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 logger = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ def build_bql_deadlock_artifacts() -> tuple[Path, Path]:
     return dtb_path, kernel_path
 
 
-async def _qmp_worker(sim: VirtmcuSimulation) -> None:
+async def _qmp_worker(sim: Simulation) -> None:
     assert sim.bridge is not None
     for _ in range(10):
         await sim.bridge.execute("query-status")
@@ -48,13 +47,14 @@ async def _qmp_worker(sim: VirtmcuSimulation) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bql_qmp_deadlock(simulation: SimulationCreator) -> None:
+async def test_bql_qmp_deadlock(simulation: Simulation) -> None:
 
     dtb, kernel = build_bql_deadlock_artifacts()
     # Use slaved-icount for deterministic boundary blocking
     extra_args = ["-icount", "shift=0,align=off,sleep=off", "-device", "virtmcu-clock,node=0,mode=slaved-icount"]
 
-    async with await simulation(dtb, kernel, nodes=[0], extra_args=extra_args, ignore_clock_check=True) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
+    async with simulation as sim:
         # 1. Advance to first boundary (0 ns sync)
         await sim.vta.step(0)
 

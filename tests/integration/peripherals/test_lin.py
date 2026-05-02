@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,11 +19,12 @@ import flatbuffers
 import pytest
 
 from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     import zenoh
 
-    from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
     from tools.testing.virtmcu_test_suite.transport import SimulationTransport
 
 
@@ -52,7 +52,7 @@ def create_lin_frame(vtime_ns: int, msg_type: int, data: bytes | None) -> bytear
 
 @pytest.mark.asyncio
 async def test_lin_lpuart(
-    qemu_launcher: Callable[..., AsyncManagedProcess],
+    simulation: Simulation,
     sim_transport: SimulationTransport,
     zenoh_session: zenoh.Session,
     zenoh_router: str,
@@ -71,7 +71,7 @@ async def test_lin_lpuart(
 
     # Use unique topic to avoid interference
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
-    lin_topic = f"sim/lin/{unique_id}"
+    lin_topic = SimTopic.lin_unique_prefix(unique_id)
 
     # Generate DTB
     dtb = Path(tmpdir) / "lin_test.dtb"
@@ -116,48 +116,42 @@ async def test_lin_lpuart(
 
     await sim_transport.subscribe(tx_topic, on_msg)
 
-    logger.info(f"Starting QEMU with topic {lin_topic} via Orchestrator...")
-    from tools.testing.virtmcu_test_suite.orchestrator import SimulationOrchestrator
+    simulation.transport = sim_transport
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
 
-    orchestrator = SimulationOrchestrator(zenoh_session, zenoh_router, qemu_launcher)
-    orchestrator.transport = sim_transport
+    async with simulation as sim:
+        assert sim.vta is not None
+        logger.info(f"QEMU started with topic {lin_topic}; sending 'X' to RX...")
 
-    orchestrator.add_node(node_id=0, dtb_path=str(dtb), kernel_path=str(kernel), extra_args=extra_args)
-    await orchestrator.start()
+        frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
+        await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
 
-    logger.info("Sending 'X' to QEMU RX...")
-    frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
-    await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
+        # Advance clock to process 'X'
+        await sim.vta.step(5_000_000)
 
-    # Advance clock to process 'X'
-    assert orchestrator.vta is not None
-    await orchestrator.vta.step(5_000_000)
+        logger.info("Sending Break to QEMU RX...")
+        frame = create_lin_frame(6_000_000, LinMessageType.LinMessageType.Break, None)
+        await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
 
-    logger.info("Sending Break to QEMU RX...")
-    frame = create_lin_frame(6_000_000, LinMessageType.LinMessageType.Break, None)
-    await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
+        # Advance clock to process Break
+        await sim.vta.step(5_000_000)
 
-    # Advance clock to process Break
-    assert orchestrator.vta is not None
-    await orchestrator.vta.step(5_000_000)
+        # Deterministic check for responses
+        logger.info("Checking responses...")
+        found_x = False
+        found_b = False
+        for _ in range(10):
+            for msg_type, data in received:
+                if msg_type == LinMessageType.LinMessageType.Data:
+                    if data == b"X":
+                        found_x = True
+                    if data == b"B":
+                        found_b = True
+            if found_x and found_b:
+                break
+            await sim.vta.step(5_000_000)
 
-    # Deterministic check for responses
-    logger.info("Checking responses...")
-    found_x = False
-    found_b = False
-    for _ in range(10):
-        for msg_type, data in received:
-            if msg_type == LinMessageType.LinMessageType.Data:
-                if data == b"X":
-                    found_x = True
-                if data == b"B":
-                    found_b = True
-        if found_x and found_b:
-            break
-        assert orchestrator.vta is not None
-        await orchestrator.vta.step(5_000_000)
+        assert found_x, f"Failed to receive Echo for 'X', received: {received}"
+        assert found_b, f"Failed to receive Echo for Break, received: {received}"
 
-    assert found_x, f"Failed to receive Echo for 'X', received: {received}"
-    assert found_b, f"Failed to receive Echo for Break, received: {received}"
-
-    logger.info("SUCCESS: LIN UART verified.")
+        logger.info("SUCCESS: LIN UART verified.")

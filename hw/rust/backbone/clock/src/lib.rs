@@ -100,9 +100,10 @@ pub struct ZenohClockResponder {
 impl ClockSyncResponder for ZenohClockResponder {
     fn send_ready(&self, resp: ClockReadyResp) -> Result<(), String> {
         if self.is_coordinated {
-            // 1. Send 'done' signal to coordinator
-            let mut payload = alloc::vec::Vec::new();
+            // 1. Send 'done' signal to coordinator: [quantum (8), current_vtime_ns (8)]
+            let mut payload = alloc::vec::Vec::with_capacity(16);
             payload.extend_from_slice(&self.quantum.to_le_bytes());
+            payload.extend_from_slice(&resp.current_vtime_ns().to_le_bytes());
             self.done_pub.send(payload);
 
             // 2. Wait for 'start' signal from coordinator
@@ -733,6 +734,7 @@ unsafe extern "C" fn clock_class_init(klass: *mut ObjectClass, _data: *const c_v
     virtmcu_qom::device_class_set_props!(dc, VIRT_CLOCK_PROPERTIES);
 }
 
+#[used]
 static VIRT_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"virtmcu-clock".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),

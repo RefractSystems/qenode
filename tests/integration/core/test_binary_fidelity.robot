@@ -19,11 +19,14 @@ Documentation
 ...    3. Write tests/firmware/<target>/PROVENANCE.md and golden_uart.txt.
 ...    4. Add a test case below following the pattern of the existing ones.
 
-Resource         ${CURDIR}/../tools/testing/qemu_keywords.robot
+Library          Process
+Library          OperatingSystem
+Library          String
+Resource         ${CURDIR}/../../../tools/testing/qemu_keywords.robot
 Test Teardown    Terminate Emulation
 
 *** Variables ***
-${FIRMWARE_DIR}     ${CURDIR}/firmware
+${FIRMWARE_DIR}     ${CURDIR}/../../firmware
 
 *** Keywords ***
 Verify Binary Fidelity
@@ -41,7 +44,7 @@ Verify Binary Fidelity
     Should Be Equal As Integers    ${result.rc}    0
     ...    msg=SHA256 mismatch — ELF was replaced without re-validation. See ADR-006.
     # Boot the firmware
-    ${qmp}    ${uart}=    Launch Qemu    ${dtb}    ${elf}
+    ${qmp}    ${uart}=    Launch Qemu    ${dtb}    ${elf}    extra_args=-S
     Connect To Emulation    ${qmp}    ${uart}
     Start Emulation
     # Assert each non-comment line of the golden file appears on UART in order
@@ -49,7 +52,7 @@ Verify Binary Fidelity
     FOR    ${line}    IN    @{content.splitlines()}
         ${stripped}=    Strip String    ${line}
         Continue For Loop If    not $stripped or $stripped.startswith('#')
-        Wait For Line On UART    ${stripped}    timeout=10s
+        Wait For Line On UART    ${stripped}    timeout=10.0
     END
 
 *** Test Cases ***
@@ -66,6 +69,6 @@ Cortex-A15 Echo Firmware Runs Unmodified
     ...    for silicon validation status and instructions.
     [Tags]    binary-fidelity    cortex-a15    virtmcu-baseline
     Verify Binary Fidelity
-    ...    dtb=${CURDIR}/../tests/fixtures/guest_apps/boot_arm/minimal.dtb
+    ...    dtb=${CURDIR}/../../fixtures/guest_apps/boot_arm/minimal.dtb
     ...    elf=${FIRMWARE_DIR}/cortex-a15-virt/echo.elf
     ...    golden=${FIRMWARE_DIR}/cortex-a15-virt/golden_uart.txt

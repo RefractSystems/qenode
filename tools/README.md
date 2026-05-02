@@ -19,7 +19,7 @@ This directory contains a suite of utilities for hardware description, protocol 
 ## Simulation & Co-simulation
 
 ### Bridging & Coordination
-*   **`zenoh_coordinator/`**: A Rust-based multi-node coordinator that uses Zenoh as the transport layer for virtual wires.
+*   **`deterministic_coordinator/`**: A Rust-based multi-node coordinator that uses Zenoh as the transport layer for virtual wires.
 *   **`deterministic_coordinator/`**: A specialized coordinator designed for fully deterministic multi-node simulations.
 *   **`cyber_bridge/`**: The core bridge implementation for connecting virtual peripherals to physical or external simulators.
 *   **`systemc_adapter/`**: A C++ adapter allowing SystemC modules to participate in VirtMCU simulations via the `mmio-socket-bridge`.

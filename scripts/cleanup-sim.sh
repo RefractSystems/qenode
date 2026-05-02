@@ -54,7 +54,7 @@ PROCESSES=(
     "zenohd"
     "zenoh_router"
     "zenoh_router_persistent.py"
-    "zenoh_coordinator"
+    "deterministic_coordinator"
     "mmio-socket-bridge"
 )
 
@@ -116,7 +116,7 @@ if [ -z "$FILTER" ]; then
     rm -f /tmp/virtmcu-*.arch 2>/dev/null || true
 
     # Clean up stale lock files
-    rm -f "$TOOLS_DIR/zenoh_coordinator/build.lock" 2>/dev/null || true
+    rm -f "$TOOLS_DIR/deterministic_coordinator/build.lock" 2>/dev/null || true
 
     log "Cleaning up stale plugins..."
     python3 "$WORKSPACE_DIR/scripts/check-stale-so.py" --delete || true

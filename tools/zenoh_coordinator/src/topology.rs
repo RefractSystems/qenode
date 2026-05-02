@@ -161,6 +161,25 @@ impl TopologyGraph {
         false
     }
 
+    pub fn get_wire_peers(&self, node_id: &str, protocol: &Protocol) -> HashSet<String> {
+        let mut peers = HashSet::new();
+        if !self.is_explicit {
+            return peers;
+        }
+
+        for link in &self.wire_links {
+            if &link.protocol == protocol && link.nodes.iter().any(|n| n == node_id) {
+                for node in &link.nodes {
+                    if node != node_id {
+                        peers.insert(node.clone());
+                    }
+                }
+            }
+        }
+
+        peers
+    }
+
     pub fn update_positions(&mut self, updates: Vec<(String, [f64; 3])>) {
         for (id, pos) in updates {
             self.node_positions.insert(id, pos);

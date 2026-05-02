@@ -1,13 +1,8 @@
 """
 SOTA Test Module: uart_stress_test
-
-Context:
-This module implements tests for the uart_stress_test subsystem.
-
-Objective:
-Ensure correct functionality, performance, and deterministic execution of uart_stress_test.
 """
 
+import asyncio
 import logging
 import sys
 import threading
@@ -17,32 +12,23 @@ import zenoh
 
 from tools import vproto
 from tools.testing.utils import mock_execution_delay
+from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
 
 logger = logging.getLogger(__name__)
 
-# 1 Mbps = 100,000 bytes per second (approx)
-# Interval between bytes = 1 / 100,000 = 10,000 ns
 BAUD_1MBPS_INTERVAL_NS = 10000
 TOTAL_BYTES = 50000
 NODE_ID = "0"
 TOPIC_BASE = "virtmcu/uart"
 
-# Test byte: 0x58 ('X') does not appear in the firmware welcome message
-# ("Interactive UART Echo Ready.\r\nType something: "), so we can safely
-# count only 'X' bytes to separate echo bytes from startup noise.
 TEST_BYTE = b"X"
 TEST_BYTE_VAL = ord("X")
-
-# Start at 10 ms virtual time
 START_VTIME_NS = 10_000_000
-
-CHUNK_SIZE = 1000  # bytes per Zenoh publication burst
-CHUNK_SLEEP_S = 0.01  # throttle between bursts (avoids overwhelming router)
-QUANTUM_NS = 10_000_000  # 10 ms per clock-advance quantum
-
-# Virtual time ceiling: 100 seconds (plenty of room)
+CHUNK_SIZE = 1000
+CHUNK_SLEEP_S = 0.01
+QUANTUM_NS = 10_000_000
 CLOCK_TOTAL_NS = 100_000_000_000
-RX_TIMEOUT_S = 300  # wall-clock timeout waiting for all echoes
+RX_TIMEOUT_S = 300
 
 
 def _pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
@@ -67,12 +53,11 @@ router = sys.argv[1]
 session = _open_session(router)
 logger.info(f"[UART Stress] Connected to Zenoh router at {router}")
 
-# Thread-safe echo counter.  We only count TEST_BYTE_VAL ('X') to isolate echo
-# bytes from firmware startup noise (welcome message).
 _lock = threading.Lock()
 _x_count = 0
 _first_logged = False
 received_all_event = threading.Event()
+_welcome_received = threading.Event()
 
 
 def on_tx_sample(sample: zenoh.Sample) -> None:
@@ -80,10 +65,13 @@ def on_tx_sample(sample: zenoh.Sample) -> None:
     raw = sample.payload.to_bytes()
     if len(raw) < vproto.SIZE_ZENOH_FRAME_HEADER:
         return
-    # Skip ZenohFrameHeader
     payload = raw[vproto.SIZE_ZENOH_FRAME_HEADER :]
     if not payload:
         return
+
+    if b"Interactive UART Echo Ready" in payload:
+        logger.info("[UART Stress] Firmware welcome message detected.")
+        _welcome_received.set()
 
     new_x = sum(1 for b in payload if b == TEST_BYTE_VAL)
     if new_x == 0:
@@ -101,8 +89,11 @@ def on_tx_sample(sample: zenoh.Sample) -> None:
 _sub = session.declare_subscriber(f"{TOPIC_BASE}/{NODE_ID}/tx", on_tx_sample)
 _pub = session.declare_publisher(f"{TOPIC_BASE}/{NODE_ID}/rx")
 
-logger.info("[UART Stress] Waiting 5 s for QEMU and Zenoh discovery...")
-mock_execution_delay(5)  # SLEEP_EXCEPTION: ensure QEMU is fully up and firmware welcome message is sent
+logger.info("[UART Stress] Waiting for QEMU and Zenoh discovery...")
+asyncio.run(wait_for_zenoh_discovery(session, "sim/clock/advance/0"))
+
+if not _welcome_received.wait(timeout=10.0):
+    logger.warning("[UART Stress] Timeout waiting for welcome message, proceeding anyway...")
 
 logger.info(f"[UART Stress] Pre-publishing {TOTAL_BYTES} bytes at 1 Mbps equivalent...")
 
@@ -110,8 +101,6 @@ for i in range(0, TOTAL_BYTES, CHUNK_SIZE):
     chunk_end = min(i + CHUNK_SIZE, TOTAL_BYTES)
     for j in range(i, chunk_end):
         vtime = START_VTIME_NS + (j * BAUD_1MBPS_INTERVAL_NS)
-        # ZenohFrameHeader: delivery_vtime_ns, sequence_number, size
-        # Using sequence number 0 for pre-published bytes as they have distinct vtimes.
         header = vproto.ZenohFrameHeader(vtime, 0, 1).pack()
         _pub.put(header + TEST_BYTE)
     mock_execution_delay(CHUNK_SLEEP_S)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
@@ -143,20 +132,19 @@ _ta_thread.start()
 if received_all_event.wait(timeout=RX_TIMEOUT_S):
     with _lock:
         final_count = _x_count
-
     logger.info(f"[UART Stress] Received {final_count} echo bytes (expected {TOTAL_BYTES})")
-
     if final_count != TOTAL_BYTES:
         logger.info(f"[UART Stress] FAIL: byte count mismatch ({final_count} != {TOTAL_BYTES})")
         typing.cast(typing.Any, session).close()
         sys.exit(1)
-
     logger.info("[UART Stress] Data integrity verified.")
-    session.close()  # type: ignore[no-untyped-call]
+    typing.cast(typing.Any, session).close()
+
     sys.exit(0)
 else:
     with _lock:
         final_count = _x_count
     logger.info(f"[UART Stress] FAIL: timeout after {RX_TIMEOUT_S} s — received {final_count}/{TOTAL_BYTES} echo bytes")
-    session.close()  # type: ignore[no-untyped-call]
+    typing.cast(typing.Any, session).close()
+
     sys.exit(1)

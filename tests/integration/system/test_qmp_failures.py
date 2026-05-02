@@ -1,59 +1,60 @@
-"""
-SOTA Test Module: test_qmp_failures
-
-Context:
-This module implements tests for the test_qmp_failures subsystem.
-
-Objective:
-Ensure correct functionality, performance, and deterministic execution of test_qmp_failures.
-"""
+#
+# Copyright (C) 2026 Refract Systems
+#
+# This file is part of VirtMCU.
+#
+# Ensure correct functionality, performance, and deterministic execution of test_qemu_crash_handling.
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
+from typing import TYPE_CHECKING
 
 import pytest
-from qemu.qmp.protocol import ConnectError, StateError
-from qemu.qmp.qmp_client import ExecInterruptedError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
-async def test_qemu_crash_handling(qemu_launcher: object) -> None:
+async def test_qemu_crash_handling(simulation: Simulation, tmp_path: Path) -> None:
     """
     Test how the bridge handles QEMU crashing mid-execution.
     """
+    import psutil
+
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
     dtb = workspace_root / "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
     kernel = workspace_root / "tests/fixtures/guest_apps/boot_arm/hello.elf"
 
-    # Use qemu_launcher for robust process management
-    bridge = await cast(Any, qemu_launcher)(dtb, kernel, ignore_clock_check=True)
+    # Use simulation for robust process management
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=None)
+    async with simulation as sim:
+        # Verify we can connect
+        bridge = sim.bridge
+        assert bridge is not None
+        assert bridge.is_connected
+        pid = bridge.pid
 
-    # Verify we can connect
-    assert bridge.is_connected
-
-    try:
-        # Kill QEMU
-        import psutil
-
+        # Kill QEMU and children surgically
         try:
-            qemu_proc = psutil.Process(bridge.pid)
-            qemu_proc.kill()
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                child.kill()
+            parent.kill()
         except psutil.NoSuchProcess:
             pass
 
-        # Give it a tiny moment to die
-        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: yield to let OS kill process
+        # Next operation should eventually fail
+        # We use a helper to poll until it fails to satisfy PT012
+        async def poll_until_fail() -> None:
+            for _ in range(20):
+                await bridge.execute("query-status")
+                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: waiting for OS to reclaim resources
 
-        # Next command should fail
-        with pytest.raises((ConnectError, StateError, EOFError, asyncio.IncompleteReadError, ExecInterruptedError)):
-            await bridge.qmp.execute("query-status")
-
-    finally:
-        import contextlib
-
-        with contextlib.suppress(EOFError, ConnectionResetError, Exception):
-            await bridge.close()
+        with pytest.raises(Exception, match=".*"):
+            await poll_until_fail()

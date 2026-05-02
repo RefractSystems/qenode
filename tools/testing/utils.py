@@ -17,14 +17,16 @@ def wait_for_zenoh_router(router_url: str, timeout: float = 15.0) -> bool:
 
     import zenoh
 
-    config = zenoh.Config()
-    config.insert_json5("connect/endpoints", f'["{router_url}"]')
-    config.insert_json5("scouting/multicast/enabled", "false")
+    from tools.testing.virtmcu_test_suite.conftest_core import make_client_config
+
+    config = make_client_config(connect=router_url)
 
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            temp_session = zenoh.open(config)
+            temp_session = zenoh.open(  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+                config
+            )
             typing.cast(typing.Any, temp_session).close()
             return True
         except zenoh.ZError:
