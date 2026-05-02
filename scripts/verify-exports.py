@@ -5,11 +5,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Try to import WORKSPACE_DIR from our internal environment helper
+try:
+    from tools.testing.env import WORKSPACE_DIR
+except ImportError:
+    WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
-def _get_cmd(cmd: str) -> str:
-    p = shutil.which(cmd)
-    assert p is not None, f"Command {cmd} not found"
-    return p
+
+def _get_nm_tool() -> str:
+    # Prefer llvm-nm if available to handle LTO/bitcode better, fallback to nm
+    for tool in ["llvm-nm", "nm"]:
+        if shutil.which(tool):
+            return tool
+    raise RuntimeError("Neither 'llvm-nm' nor 'nm' found in PATH")
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +25,6 @@ logger = logging.getLogger(__name__)
 # Mandatory symbols that every VirtMCU plugin must export
 REQUIRED_SYMBOLS = {
     "hw-virtmcu-clock.so": ["clock_cpu_halt_cb"],
-    # Add other plugins and their required symbols here
 }
 
 # Mandatory symbols that the main QEMU executable MUST export dynamically to plugins
@@ -37,17 +44,18 @@ QEMU_REQUIRED_EXPORTS = [
 
 def check_symbols(so_path: Path, required: list[str], is_executable: bool = False) -> bool:
     target_type = "executable" if is_executable else "plugin"
-    logger.info(f"Checking {target_type} {so_path.name} for required FFI symbols...")
-    try:
-        # Prefer llvm-nm if available to handle LTO/bitcode better, fallback to nm
-        nm_tool = "llvm-nm"
-        if subprocess.run([_get_cmd("which"), nm_tool], capture_output=True).returncode != 0:
-            nm_tool = "nm"
+    logger.info(f"Checking {target_type} {so_path} for required FFI symbols...")
 
+    if not so_path.exists():
+        logger.info(f"⚠️  {target_type.capitalize()} {so_path} not found. Skipping.")
+        return True
+
+    try:
+        nm_tool = _get_nm_tool()
         # -D/--dynamic: Look at the dynamic symbol table
         result = subprocess.run([nm_tool, "-D", str(so_path)], capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            logger.info(f"❌ ERROR: nm failed with return code {result.returncode}")
+            logger.info(f"❌ ERROR: {nm_tool} -D failed with return code {result.returncode} for {so_path}")
             logger.info(f"   STDOUT: {result.stdout}")
             logger.info(f"   STDERR: {result.stderr}")
             return False
@@ -70,34 +78,40 @@ def check_symbols(so_path: Path, required: list[str], is_executable: bool = Fals
 
         logger.info(f"✅ {so_path.name}: All symbols found.")
         return True
-    except subprocess.CalledProcessError as e:
-        logger.info(f"❌ ERROR: Failed to run 'nm' on {so_path}: {e}")
+    except (OSError, RuntimeError) as e:
+        logger.info(f"❌ ERROR: Unexpected error while checking {so_path}: {e}")
         return False
 
 
 def main() -> int:
-    build_dir = Path("third_party/qemu/build-virtmcu")
-    if not build_dir.exists():
-        logger.info(f"Build directory {build_dir} not found. Skipping export check.")
-        return 0
+    # Check multiple possible build locations
+    build_dirs = [
+        WORKSPACE_DIR / "third_party/qemu/build-virtmcu",
+        WORKSPACE_DIR / "third_party/qemu/build-virtmcu-asan",
+    ]
 
     success = True
+    found_any = False
 
-    # Check main executable
-    qemu_bin = build_dir / "qemu-system-arm"
-    if qemu_bin.exists() and not check_symbols(qemu_bin, QEMU_REQUIRED_EXPORTS, is_executable=True):
-        success = False
+    for build_dir in build_dirs:
+        if not build_dir.exists():
+            continue
 
-    # Check plugins
-    for so_name, symbols in REQUIRED_SYMBOLS.items():
-        so_path = build_dir / so_name
-        if so_path.exists():
+        found_any = True
+        # Check main executable
+        qemu_bin = build_dir / "qemu-system-arm"
+        if not check_symbols(qemu_bin, QEMU_REQUIRED_EXPORTS, is_executable=True):
+            success = False
+
+        # Check plugins
+        for so_name, symbols in REQUIRED_SYMBOLS.items():
+            so_path = build_dir / so_name
             if not check_symbols(so_path, symbols):
                 success = False
 
-        else:
-            # Not all plugins might be built, that's fine
-            continue
+    if not found_any:
+        logger.info("Build directory not found. Skipping export check.")
+        return 0
 
     return 0 if success else 1
 

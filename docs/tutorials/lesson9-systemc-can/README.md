@@ -20,7 +20,7 @@ Our example consists of three major components:
 
 ## The Zenoh Coordinator
 
-The `zenoh_coordinator` (developed for coordinator stress and upgraded for FTRT timing) subscribes to `sim/systemc/frame/*/tx`.
+The `deterministic_coordinator` (developed for coordinator stress and upgraded for FTRT timing) subscribes to `sim/systemc/frame/*/tx`.
 
 When it receives a frame from Node 1:
 1. It inspects the `delivery_vtime_ns` timestamp.
@@ -223,12 +223,12 @@ str r1, [r0, #0x08]
 ```
 
 The `SharedMedium` publishes the frame to `sim/systemc/frame/node1/tx`.
-The `zenoh_coordinator` (started separately) routes it to `sim/systemc/frame/node2/rx`
+The `deterministic_coordinator` (started separately) routes it to `sim/systemc/frame/node2/rx`
 with a 1 ms propagation delay added to `delivery_vtime_ns`.
 
 **Starting the coordinator:**
 ```bash
-# From tools/zenoh_coordinator/
+# From tools/deterministic_coordinator/
 cargo run --release
 ```
 
@@ -264,4 +264,4 @@ s.close()
 - Check that `delivery_vtime_ns` is non-zero in the published frame.
 - The `process_rx` SC_THREAD only delivers after `sc_time_stamp()` reaches the delivery
   time. If the adapter's SystemC clock is behind, the frame queues silently.
-- Inspect with: `zenoh_coordinator` logs show routed frames with their vtime stamps.
+- Inspect with: `deterministic_coordinator` logs show routed frames with their vtime stamps.

@@ -16,8 +16,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from qemu.qmp import QMPClient
+from qemu.qmp.protocol import StateError
 
 from tools.testing.utils import get_time_multiplier
+from tools.testing.virtmcu_test_suite.topics import SimTopic
+
+# Suppress expected EOFError noise from qemu.qmp.protocol when QEMU stops
+logging.getLogger("qemu.qmp.protocol").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     import zenoh
@@ -110,7 +115,7 @@ class QmpBridge:
             self._read_task = asyncio.create_task(self._read_uart())
 
         if zenoh_session and node_id is not None:
-            topic = f"sim/clock/vtime/{node_id}"
+            topic = SimTopic.clock_vtime(node_id)
             loop = asyncio.get_running_loop()
 
             def on_vtime(sample: zenoh.Sample) -> None:
@@ -378,5 +383,5 @@ class QmpBridge:
             self._watchdog_task = None
 
         if self.is_connected:
-            with contextlib.suppress(EOFError):
+            with contextlib.suppress(EOFError, ConnectionResetError, StateError, BrokenPipeError, OSError):
                 await self.qmp.disconnect()

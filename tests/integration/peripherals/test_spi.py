@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tools.testing.utils import yield_now
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     import zenoh
 
-    from tests.sim_types import SimulationCreator
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_spi_echo_baremetal(
-    simulation: SimulationCreator, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path
+    simulation: Simulation, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path
 ) -> None:
     """
     SPI Loopback/Echo Firmware.
@@ -89,7 +89,7 @@ async def test_spi_echo_baremetal(
 
     # 3. Setup Zenoh Echo
     # Topic: sim/spi/{id}/{cs} -> default id is 'spi0', cs is 0
-    topic = "sim/spi/spi0/0"
+    topic = SimTopic.spi_base("spi0", 0)
 
     def on_query(query: zenoh.Query) -> None:
         payload = query.payload
@@ -104,9 +104,9 @@ async def test_spi_echo_baremetal(
 
     _ = await asyncio.to_thread(lambda: zenoh_session.declare_queryable(topic, on_query))
 
-    # 4. Launch QEMU using VirtmcuSimulation
-    sim: VirtmcuSimulation
-    async with await simulation(dtb_path, kernel_path) as sim:
+    # 4. Launch QEMU using Simulation
+    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=None)
+    async with simulation as sim:
         # 4. Wait for firmware to complete.
         # spi_echo.S writes 'P' (success) or 'F' (failure) to UART0.
         success = False

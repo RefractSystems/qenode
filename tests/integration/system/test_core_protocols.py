@@ -43,11 +43,6 @@ MMIO_REQ_SIZE: int = vproto.SIZE_MMIO_REQ
 SYSC_MSG_SIZE: int = vproto.SIZE_SYSC_MSG
 VIRTMCU_HANDSHAKE_SIZE: int = vproto.SIZE_VIRTMCU_HANDSHAKE
 
-# Topic naming (must match chardev, netdev, clock)
-CHARDEV_TOPIC_BASE: str = "sim/chardev"
-CLOCK_TOPIC_BASE: str = "sim/clock"
-
-
 # ---------------------------------------------------------------------------
 # Wire-format helpers
 # ---------------------------------------------------------------------------
@@ -412,52 +407,7 @@ class TestVirtmcuHandshake:
             decode_handshake(b"\x00" * 7)
 
 
-# ---------------------------------------------------------------------------
-# Zenoh topic naming conventions
-# ---------------------------------------------------------------------------
-
-
-class TestTopicNaming:
-    def test_chardev_rx_topic_node0(self) -> None:
-        assert f"{CHARDEV_TOPIC_BASE}/0/rx" == "sim/chardev/0/rx"
-
-    def test_chardev_tx_topic_node0(self) -> None:
-        assert f"{CHARDEV_TOPIC_BASE}/0/tx" == "sim/chardev/0/tx"
-
-    def test_chardev_rx_tx_distinct(self) -> None:
-        rx = f"{CHARDEV_TOPIC_BASE}/0/rx"
-        tx = f"{CHARDEV_TOPIC_BASE}/0/tx"
-        assert rx != tx
-
-    def test_chardev_multi_node_isolation(self) -> None:
-        rx0 = f"{CHARDEV_TOPIC_BASE}/0/rx"
-        rx1 = f"{CHARDEV_TOPIC_BASE}/1/rx"
-        assert rx0 != rx1
-
-    def test_clock_advance_topic(self) -> None:
-        assert f"{CLOCK_TOPIC_BASE}/advance/0" == "sim/clock/advance/0"
-        assert f"{CLOCK_TOPIC_BASE}/advance/3" == "sim/clock/advance/3"
-
-    def test_clock_heartbeat_topic(self) -> None:
-        assert f"{CLOCK_TOPIC_BASE}/heartbeat/0" == "sim/clock/heartbeat/0"
-
-    def test_netdev_rx_topic(self) -> None:
-        base = "sim/netdev"
-        assert f"{base}/0/rx" == "sim/netdev/0/rx"
-
-    def test_topic_no_trailing_slash(self) -> None:
-        for topic in [
-            f"{CHARDEV_TOPIC_BASE}/0/rx",
-            f"{CHARDEV_TOPIC_BASE}/0/tx",
-            f"{CLOCK_TOPIC_BASE}/advance/0",
-        ]:
-            assert not topic.endswith("/"), f"topic has trailing slash: {topic}"
-
-    def test_node_id_string_vs_int(self) -> None:
-        # Node IDs are u32 properties; topic uses str(node_id)
-        for node in [0, 1, 15, 255]:
-            topic = f"{CHARDEV_TOPIC_BASE}/{node}/rx"
-            assert f"/{node}/" in topic
+# Topic-naming contract tests live in tests/unit/test_topic_registry.py.
 
 
 # ---------------------------------------------------------------------------

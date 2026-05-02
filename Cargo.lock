@@ -11,6 +11,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -287,6 +288,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -335,6 +337,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -821,6 +824,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -1280,6 +1284,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -2519,6 +2524,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -2854,6 +2860,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]

@@ -55,11 +55,7 @@ rust_modules = [
         'lib': 'libremote_port.a',
         'obj': 'remote-port-bridge',
     },
-    {
-        'pkg': 'flexray',
-        'lib': 'libflexray.a',
-        'obj': 'flexray',
-    },
+    {'pkg': 'flexray', 'lib': 'libflexray.a', 'obj': 'flexray'},
     {
         'pkg': 's32k144-lpuart',
         'lib': 'libs32k144_lpuart.a',

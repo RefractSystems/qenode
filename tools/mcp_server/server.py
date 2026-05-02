@@ -20,9 +20,9 @@ from tools.mcp_server.node_manager import NodeManager
 logger = logging.getLogger(__name__)
 
 
-
 class VirtmcuServer(Server):  # type: ignore[misc]
     node_manager: NodeManager
+
 
 def create_mcp_server() -> VirtmcuServer:
     server = VirtmcuServer("virtmcu-mcp")
@@ -178,7 +178,7 @@ def create_mcp_server() -> VirtmcuServer:
             ),
             Tool(
                 name="set_network_latency",
-                description="Communicates with the zenoh_coordinator to manipulate the simulated RF environment.",
+                description="Communicates with the deterministic_coordinator to manipulate the simulated RF environment.",
                 inputSchema={
                     "type": "object",
                     "properties": {

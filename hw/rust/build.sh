@@ -28,6 +28,23 @@ elif [ "${VIRTMCU_USE_TSAN:-}" = "1" ]; then
 fi
 
 echo "Building Rust workspace in $RUST_DIR with target-dir $TARGET_DIR"
+
+# Detect if TARGET_DIR is on a suspect mount (virtiofs, fakeowner) common in Docker on macOS/Windows
+# These filesystems have known issues with mmap and file locking that can cause
+# "Bus error" (SIG7) and Cargo fingerprint corruption.
+FS_TYPE="$(df -T "$TARGET_DIR" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+if [ -z "$FS_TYPE" ]; then
+    FS_TYPE="$(df -T "$(dirname "$TARGET_DIR")" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+fi
+
+if [ "$FS_TYPE" = "virtiofs" ] || [ "$FS_TYPE" = "fakeowner" ] || [ "$FS_TYPE" = "9p" ]; then
+    SAFE_TARGET_DIR="/tmp/virtmcu-rust-target-$(id -u)"
+    echo "WARNING: $TARGET_DIR is on a $FS_TYPE mount. Redirecting Cargo target-dir to $SAFE_TARGET_DIR to avoid Bus errors."
+    TARGET_DIR="$SAFE_TARGET_DIR"
+fi
+
+mkdir -p "$TARGET_DIR"
+
 # Disconnect from Ninja's jobserver to prevent E0463 race conditions during
 # parallel builds. Only MAKEFLAGS carries the jobserver token; unsetting it is
 # sufficient. Cargo then manages its own thread pool independently.

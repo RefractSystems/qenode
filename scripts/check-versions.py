@@ -136,7 +136,7 @@ def check() -> None:
                 errors.append(f"{cargo_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
     # 6. Check tools/*/Cargo.toml
-    for child_cargo in ["tools/zenoh_coordinator/Cargo.toml"]:
+    for child_cargo in ["tools/deterministic_coordinator/Cargo.toml"]:
         if Path(child_cargo).exists():
             with Path(child_cargo).open() as f:
                 content = f.read()

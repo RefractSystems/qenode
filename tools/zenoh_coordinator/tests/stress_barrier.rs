@@ -12,7 +12,10 @@ fn stress_barrier() {
 
     let barrier = Arc::new(QuantumBarrier::new(n_nodes, max_msgs));
 
-    for round in 0..rounds {
+    // QuantumBarrier::new() initializes current_quantum to 1, so quantum 0 is
+    // treated as stale. Iterate 1..=rounds to match the barrier's quantum
+    // numbering convention (also used by all unit tests in barrier.rs).
+    for round in 1..=rounds {
         let mut handles = vec![];
 
         for node_id in 0..n_nodes {

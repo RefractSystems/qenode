@@ -37,5 +37,6 @@
         node = <0>;
         topic = "sim/lin";
         router = "ZENOH_ROUTER_ENDPOINT";
+        container = <0x01>;
     };
 };
