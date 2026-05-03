@@ -42,7 +42,7 @@ async def test_stress(
     """
     import logging
 
-    logger = logging.getLogger(__name__)
+    logging.getLogger(__name__)
 
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -84,29 +84,8 @@ peripherals:
             kernel=firmware_path,
             extra_args=args,
         )
-
-    async def _stream_output(stream: asyncio.StreamReader, name: str) -> None:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            logger.info(f"Coordinator {name}: {line.decode().strip()}")
-
-    _output_tasks = [
-        asyncio.create_task(_stream_output(deterministic_coordinator.stdout, "STDOUT")),  # type: ignore[arg-type]
-        asyncio.create_task(_stream_output(deterministic_coordinator.stderr, "STDERR")),  # type: ignore[arg-type]
-    ]
-
-    try:
         async with simulation as sim:
             # Run 50 quanta
             for _i in range(50):
                 await sim.vta.step(delta_ns=1_000_000, timeout=_VTA_TIMEOUT_S)
 
-    finally:
-        for task in _output_tasks:
-            task.cancel()
-            import contextlib
-
-            with contextlib.suppress(asyncio.CancelledError):
-                await task

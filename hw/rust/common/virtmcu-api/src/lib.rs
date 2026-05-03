@@ -2,6 +2,8 @@
 #![deny(missing_docs)]
 #![doc = "The crate"]
 
+/// Topics module for standard Zenoh routing
+pub mod topics;
 extern crate alloc;
 
 #[cfg(feature = "std")]
@@ -950,5 +952,40 @@ mod tests {
             .map(super::core_generated::virtmcu::core::ZenohFrameHeader::sequence_number)
             .collect();
         assert_eq!(seqs, alloc::vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_virtmcu_handshake_unpack_error() {
+        assert!(VirtmcuHandshake::unpack_slice(b"1234").is_none());
+    }
+
+    #[test]
+    fn test_mmio_req_unpack_error() {
+        assert!(MmioReq::unpack_slice(b"1234567890").is_none());
+    }
+
+    #[test]
+    fn test_sysc_msg_unpack_error() {
+        assert!(SyscMsg::unpack_slice(b"short").is_none());
+    }
+
+    #[test]
+    fn test_clock_advance_req_unpack_error() {
+        assert!(ClockAdvanceReq::unpack_slice(b"toolittle").is_none());
+    }
+
+    #[test]
+    fn test_clock_ready_resp_unpack_error() {
+        assert!(ClockReadyResp::unpack_slice(b"wrongsize").is_none());
+    }
+
+    #[test]
+    fn test_zenoh_frame_header_unpack_error() {
+        assert!(ZenohFrameHeader::unpack_slice(b"short").is_none());
+    }
+
+    #[test]
+    fn test_zenoh_spi_header_unpack_error() {
+        assert!(ZenohSPIHeader::unpack_slice(b"short").is_none());
     }
 }

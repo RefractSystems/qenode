@@ -48,3 +48,30 @@ struct ZenohSPIHeader {
     cs_index: uint8;
     padding: uint16;
 }
+
+enum Protocol : uint8 {
+    Ethernet = 0,
+    Uart = 1,
+    Spi = 2,
+    CanFd = 3,
+    FlexRay = 4,
+    Lin = 5,
+    Rf802154 = 6,
+    RfHci = 7,
+    Control = 8
+}
+
+table CoordMessage {
+    src_node_id: uint32;
+    dst_node_id: uint32;
+    delivery_vtime_ns: uint64;
+    sequence_number: uint64;
+    protocol: Protocol;
+    payload: [uint8];
+}
+
+table CoordDoneReq {
+    quantum: uint64;
+    vtime_limit: uint64;
+    messages: [CoordMessage];
+}
