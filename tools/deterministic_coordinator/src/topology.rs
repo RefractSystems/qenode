@@ -142,6 +142,7 @@ pub enum TopologyError {
     IoError(std::io::Error),
     YamlError(serde_yaml::Error),
     UnknownNode(u32),
+    SplitBrainError(String),
 }
 
 impl core::fmt::Display for TopologyError {
@@ -150,6 +151,7 @@ impl core::fmt::Display for TopologyError {
             TopologyError::IoError(e) => write!(f, "IO Error: {e}"),
             TopologyError::YamlError(e) => write!(f, "YAML Error: {e}"),
             TopologyError::UnknownNode(n) => write!(f, "Unknown node in topology: {n}"),
+            TopologyError::SplitBrainError(s) => write!(f, "Split-brain Error: {s}"),
         }
     }
 }
@@ -185,6 +187,32 @@ impl TopologyGraph {
     pub fn from_yaml(path: &Path) -> Result<Self, TopologyError> {
         let content = fs::read_to_string(path)?;
         let world: YamlWorld = serde_yaml::from_str(&content)?;
+
+        // Task 2.2: Split-Brain Schema Rejection
+        let has_topology_nodes = world
+            .topology
+            .as_ref()
+            .and_then(|t| t.nodes.as_ref())
+            .is_some_and(|n| !n.is_empty());
+
+        let mut has_numeric_periphs = false;
+        if let Some(nodes_list) = world.legacy_peripherals.as_sequence() {
+            has_numeric_periphs = nodes_list.iter().any(|item| {
+                item.get("name")
+                    .and_then(|n| match n {
+                        serde_yaml::Value::String(s) => Some(s.clone()),
+                        serde_yaml::Value::Number(num) => Some(num.to_string()),
+                        _ => None,
+                    })
+                    .is_some_and(|s| s.parse::<u32>().is_ok())
+            });
+        }
+
+        if has_topology_nodes && has_numeric_periphs {
+            return Err(TopologyError::SplitBrainError(
+                "Split-brain YAML detected: both 'topology.nodes' and numeric 'peripherals' are present.".to_owned(),
+            ));
+        }
 
         let mut valid_nodes = HashSet::new();
 
@@ -432,5 +460,34 @@ topology:
         let graph = TopologyGraph::from_yaml(file.path()).unwrap();
         // Should not fail parsing 'uart0' because it's not falling back
         assert!(graph.is_explicit);
+    }
+
+    #[test]
+    fn test_schema_split_brain_rejection() {
+        let content = r#"
+peripherals:
+  - name: "1"
+topology:
+  nodes:
+    - name: "2"
+  links: []
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let res = TopologyGraph::from_yaml(file.path());
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("Split-brain"));
+    }
+
+    #[test]
+    fn test_schema_legacy_fallback_with_warning() {
+        let content = r#"
+peripherals:
+  - name: "1"
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        assert!(!graph.is_explicit);
     }
 }

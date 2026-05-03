@@ -1,7 +1,6 @@
 """
 AUTO-GENERATED from topics.toml. DO NOT EDIT MANUALLY.
 """
-
 from __future__ import annotations
 
 from typing import Final
@@ -25,6 +24,7 @@ class SimTopic:
     SIM_UART_RX_WILDCARD: Final[str] = "sim/uart/*/rx"
     CAN_TX_WILDCARD: Final[str] = "sim/can/*/tx"
     LIN_TX_WILDCARD: Final[str] = "sim/lin/*/tx"
+    SIM_SYSTEMC_TX_WILDCARD: Final[str] = "sim/systemc/frame/*/tx"
     SPI_TX_WILDCARD: Final[str] = "sim/spi/*/*/tx"
     RF_IEEE802154_TX_WILDCARD: Final[str] = "sim/rf/ieee802154/*/tx"
     RF_HCI_TX_WILDCARD: Final[str] = "sim/rf/hci/*/tx"

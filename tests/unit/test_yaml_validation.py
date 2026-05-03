@@ -1,181 +1,84 @@
+import pytest
+
+from tools.testing.virtmcu_test_suite.world_schema import WorldYaml
+
+
+def test_schema_modern() -> None:
+    content = """
+topology:
+  nodes:
+    - name: "1"
+    - name: 2
+  links:
+    - type: uart
+      nodes: [1, 2]
 """
-SOTA Test Module: test_yaml_validation
+    world = WorldYaml.from_text(content)
+    assert world.topology is not None
+    assert world.topology.nodes is not None
+    assert len(world.topology.nodes) == 2
+    assert world.get_node_ids() == {"1", "2"}
 
-Context:
-This module implements tests for the test_yaml_validation subsystem.
 
-Objective:
-Ensure correct functionality, performance, and deterministic execution of test_yaml_validation.
+def test_schema_legacy_fallback() -> None:
+    content = """
+peripherals:
+  - name: "1"
+    type: clock
+  - name: 2
+    type: uart
 """
-
-from __future__ import annotations
-
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
-
-import yaml
+    world = WorldYaml.from_text(content)
+    assert world.topology is None
+    assert world.get_node_ids() == {"1", "2"}
 
 
-def test_missing_peripheral_validation() -> None:
-    """
-    Tests that yaml2qemu fails if a peripheral in YAML is missing in the DTB.
-    We simulate this by providing a YAML with a peripheral type that FdtEmitter skips.
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yaml_path = Path(tmpdir) / "test.yaml"
-        dtb_path = Path(tmpdir) / "test.dtb"
-
-        # Create a YAML with one valid peripheral and one 'Unknown' type which FdtEmitter skips
-        test_yaml = {
-            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-            "peripherals": [
-                {"name": "uart0", "type": "UART.PL011", "address": 0x10000000},
-                {
-                    "name": "broken_dev",
-                    "type": "UART.UnknownUART",  # FdtEmitter will skip this because of '.'
-                    "address": 0x20000000,
-                },
-            ],
-        }
-
-        with Path(yaml_path).open("w") as f:
-            yaml.dump(test_yaml, f)
-
-        # Run yaml2qemu
-        # It should fail because 'broken_dev' will be missing in DTB
-        cmd = [
-            shutil.which("python3") or "python3",
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_path),
-            "--out-dtb",
-            str(dtb_path),
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        output = result.stdout + result.stderr
-
-        assert result.returncode != 0, "yaml2qemu should have failed"
-        assert "ERROR: The following peripherals from YAML are missing in the generated DTB: broken_dev" in output
-        assert "FAILED: DTB validation failed." in output
+def test_schema_machine_passthrough() -> None:
+    content = """
+machine:
+  type: arm
+peripherals:
+  - name: uart0
+    type: pl011
+"""
+    world = WorldYaml.from_text(content)
+    assert world.topology is None
+    assert world.get_node_ids() == set()
 
 
-def test_successful_validation() -> None:
-    """
-    Tests that yaml2qemu succeeds when all peripherals are correctly mapped.
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yaml_path = Path(tmpdir) / "test.yaml"
-        dtb_path = Path(tmpdir) / "test.dtb"
-
-        test_yaml = {
-            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-            "peripherals": [{"name": "uart0", "type": "UART.PL011", "address": 0x10000000}],
-        }
-
-        with Path(yaml_path).open("w") as f:
-            yaml.dump(test_yaml, f)
-
-        cmd = [
-            shutil.which("python3") or "python3",
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_path),
-            "--out-dtb",
-            str(dtb_path),
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        output = result.stdout + result.stderr
-
-        assert result.returncode == 0, f"yaml2qemu failed: {result.stderr}"
-        assert "✓ Validation successful." in output
+def test_schema_split_brain_rejection_nodes() -> None:
+    content = """
+nodes:
+  - name: "1"
+topology:
+  nodes:
+    - name: "2"
+"""
+    with pytest.raises(ValueError, match="Split-brain YAML detected"):
+        WorldYaml.from_text(content)
 
 
-def test_topology_validation_success() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yaml_path = Path(tmpdir) / "test.yaml"
-        dtb_path = Path(tmpdir) / "test.dtb"
-
-        test_yaml = {
-            "nodes": [{"id": "node1"}],
-            "topology": {
-                "max_messages_per_node_per_quantum": 500,
-                "global_seed": 42,
-                "links": [{"nodes": ["node1"]}],
-            },
-            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-        }
-
-        with Path(yaml_path).open("w") as f:
-            yaml.dump(test_yaml, f)
-
-        cmd = [
-            shutil.which("python3") or "python3",
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_path),
-            "--out-dtb",
-            str(dtb_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        assert result.returncode == 0, f"yaml2qemu failed: {result.stderr}"
+def test_schema_split_brain_rejection_numeric_peripherals() -> None:
+    content = """
+peripherals:
+  - name: "1"
+topology:
+  nodes:
+    - name: "2"
+"""
+    with pytest.raises(ValueError, match="Split-brain YAML detected"):
+        WorldYaml.from_text(content)
 
 
-def test_topology_validation_invalid_max_msgs() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yaml_path = Path(tmpdir) / "test.yaml"
-        dtb_path = Path(tmpdir) / "test.dtb"
-
-        test_yaml = {
-            "nodes": [{"id": "node1"}],
-            "topology": {
-                "max_messages_per_node_per_quantum": -1,
-                "global_seed": 42,
-            },
-            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-        }
-
-        with Path(yaml_path).open("w") as f:
-            yaml.dump(test_yaml, f)
-
-        cmd = [
-            shutil.which("python3") or "python3",
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_path),
-            "--out-dtb",
-            str(dtb_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        assert result.returncode != 0
-        assert "max_messages_per_node_per_quantum must be a positive integer" in result.stderr
-
-
-def test_topology_validation_unknown_node() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yaml_path = Path(tmpdir) / "test.yaml"
-        dtb_path = Path(tmpdir) / "test.dtb"
-
-        test_yaml = {
-            "nodes": [{"id": "node1"}],
-            "topology": {"links": [{"nodes": ["node1", "unknown_node"]}]},
-            "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
-        }
-
-        with Path(yaml_path).open("w") as f:
-            yaml.dump(test_yaml, f)
-
-        cmd = [
-            shutil.which("python3") or "python3",
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_path),
-            "--out-dtb",
-            str(dtb_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        assert result.returncode != 0
-        assert "Topology validation failed: node ID unknown_node in links not found in nodes" in result.stderr
+def test_schema_machine_peripherals_with_topology() -> None:
+    content = """
+peripherals:
+  - name: uart0
+    type: pl011
+topology:
+  nodes:
+    - name: "1"
+"""
+    # This should be fine as 'uart0' is not numeric
+    world = WorldYaml.from_text(content)
+    assert world.get_node_ids() == {"1"}

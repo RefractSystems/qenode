@@ -17,6 +17,7 @@ pub mod wildcard {
     pub const SIM_UART_RX_WILDCARD: &str = "sim/uart/*/rx";
     pub const CAN_TX_WILDCARD: &str = "sim/can/*/tx";
     pub const LIN_TX_WILDCARD: &str = "sim/lin/*/tx";
+    pub const SIM_SYSTEMC_TX_WILDCARD: &str = "sim/systemc/frame/*/tx";
     pub const SPI_TX_WILDCARD: &str = "sim/spi/*/*/tx";
     pub const RF_IEEE802154_TX_WILDCARD: &str = "sim/rf/ieee802154/*/tx";
     pub const RF_HCI_TX_WILDCARD: &str = "sim/rf/hci/*/tx";
@@ -25,6 +26,21 @@ pub mod wildcard {
     pub const VIRTM_UART_TX_WILDCARD: &str = "virtmcu/uart/*/tx";
     pub const VIRTM_UART_PORT_TX_WILDCARD: &str = "virtmcu/uart/**/tx";
 }
+
+pub const ALL_LEGACY_TX_WILDCARDS: &[&str] = &[
+    wildcard::ETH_FRAME_TX_WILDCARD,
+    wildcard::SIM_UART_TX_WILDCARD,
+    wildcard::CAN_TX_WILDCARD,
+    wildcard::LIN_TX_WILDCARD,
+    wildcard::SIM_SYSTEMC_TX_WILDCARD,
+    wildcard::SPI_TX_WILDCARD,
+    wildcard::RF_IEEE802154_TX_WILDCARD,
+    wildcard::RF_HCI_TX_WILDCARD,
+    wildcard::CHARDEV_TX_WILDCARD,
+    wildcard::NETDEV_TX_WILDCARD,
+    wildcard::VIRTM_UART_TX_WILDCARD,
+    wildcard::VIRTM_UART_PORT_TX_WILDCARD,
+];
 
 pub mod templates {
     pub fn clock_advance(node_id: &str) -> String {
