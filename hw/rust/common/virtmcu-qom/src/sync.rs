@@ -1050,7 +1050,7 @@ impl Drop for VcpuDrainGuard<'_> {
     }
 }
 
-#[cfg(any(test, miri))]
+#[cfg(test)]
 mod tests {
     use std::thread;
 

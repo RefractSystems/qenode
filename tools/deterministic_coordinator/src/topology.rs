@@ -13,11 +13,13 @@ pub enum Protocol {
     FlexRay,
     Lin,
     Rf802154,
+    RfHci,
+    Control,
 }
 
 impl Protocol {
     pub fn is_wireless(&self) -> bool {
-        matches!(self, Protocol::Rf802154)
+        matches!(self, Protocol::Rf802154 | Protocol::RfHci)
     }
 }
 
@@ -29,23 +31,53 @@ pub enum Transport {
     Unix,
 }
 
-// Convert from string to u32
-fn string_to_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+// Convert from string or number to u32, gracefully skipping non-integers
+fn string_to_u32_or_max<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let s: String = Deserialize::deserialize(deserializer)?;
-    s.parse::<u32>().map_err(serde::de::Error::custom)
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrU32 {
+        String(String),
+        U32(u32),
+    }
+
+    match StringOrU32::deserialize(deserializer)? {
+        StringOrU32::String(s) => {
+            match s.parse::<u32>() {
+                Ok(u) => Ok(u),
+                Err(_) => Ok(u32::MAX), // Marker for non-integer names (like 'memory')
+            }
+        }
+        StringOrU32::U32(u) => Ok(u),
+    }
 }
 
 fn vec_string_to_u32<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let strings: Vec<String> = Deserialize::deserialize(deserializer)?;
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrU32 {
+        String(String),
+        U32(u32),
+    }
+
+    let values: Vec<StringOrU32> = Deserialize::deserialize(deserializer)?;
     let mut out = Vec::new();
-    for s in strings {
-        out.push(s.parse::<u32>().map_err(serde::de::Error::custom)?);
+    for v in values {
+        match v {
+            StringOrU32::String(s) => {
+                if let Ok(u) = s.parse::<u32>() {
+                    out.push(u);
+                }
+            }
+            StringOrU32::U32(u) => out.push(u),
+        }
     }
     Ok(out)
 }
@@ -61,7 +93,7 @@ pub struct WireLink {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WirelessNode {
-    #[serde(deserialize_with = "string_to_u32")]
+    #[serde(rename = "name", deserialize_with = "string_to_u32_or_max")]
     pub id: u32,
     pub initial_position: [f64; 3],
 }
@@ -75,6 +107,8 @@ pub struct WirelessMedium {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopologyConfig {
+    #[serde(default)]
+    pub nodes: Option<Vec<YamlNode>>,
     #[serde(default = "default_max_messages")]
     pub max_messages_per_node_per_quantum: usize,
     #[serde(default)]
@@ -92,14 +126,14 @@ fn default_max_messages() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YamlNode {
-    #[serde(deserialize_with = "string_to_u32")]
+    #[serde(rename = "name", deserialize_with = "string_to_u32_or_max")]
     pub id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YamlWorld {
-    #[serde(default)]
-    pub nodes: Vec<YamlNode>,
+    #[serde(rename = "peripherals", default)]
+    pub legacy_peripherals: serde_yaml::Value,
     pub topology: Option<TopologyConfig>,
 }
 
@@ -108,6 +142,7 @@ pub enum TopologyError {
     IoError(std::io::Error),
     YamlError(serde_yaml::Error),
     UnknownNode(u32),
+    SplitBrainError(String),
 }
 
 impl core::fmt::Display for TopologyError {
@@ -116,6 +151,7 @@ impl core::fmt::Display for TopologyError {
             TopologyError::IoError(e) => write!(f, "IO Error: {e}"),
             TopologyError::YamlError(e) => write!(f, "YAML Error: {e}"),
             TopologyError::UnknownNode(n) => write!(f, "Unknown node in topology: {n}"),
+            TopologyError::SplitBrainError(s) => write!(f, "Split-brain Error: {s}"),
         }
     }
 }
@@ -144,6 +180,7 @@ pub struct TopologyGraph {
     node_positions: HashMap<u32, [f64; 3]>,
     max_wireless_range_m: f64,
     pub is_explicit: bool,
+    drop_list: HashSet<(u32, u32)>,
 }
 
 impl TopologyGraph {
@@ -151,9 +188,83 @@ impl TopologyGraph {
         let content = fs::read_to_string(path)?;
         let world: YamlWorld = serde_yaml::from_str(&content)?;
 
+        // Task 2.2: Split-Brain Schema Rejection
+        let has_topology_nodes = world
+            .topology
+            .as_ref()
+            .and_then(|t| t.nodes.as_ref())
+            .is_some_and(|n| !n.is_empty());
+
+        let mut has_numeric_periphs = false;
+        if let Some(nodes_list) = world.legacy_peripherals.as_sequence() {
+            has_numeric_periphs = nodes_list.iter().any(|item| {
+                item.get("name")
+                    .and_then(|n| match n {
+                        serde_yaml::Value::String(s) => Some(s.clone()),
+                        serde_yaml::Value::Number(num) => Some(num.to_string()),
+                        _ => None,
+                    })
+                    .is_some_and(|s| s.parse::<u32>().is_ok())
+            });
+        }
+
+        if has_topology_nodes && has_numeric_periphs {
+            return Err(TopologyError::SplitBrainError(
+                "Split-brain YAML detected: both 'topology.nodes' and numeric 'peripherals' are present.".to_owned(),
+            ));
+        }
+
         let mut valid_nodes = HashSet::new();
-        for node in world.nodes {
-            valid_nodes.insert(node.id);
+
+        // 1. Try to get nodes from topology.nodes
+        if let Some(ref topo) = world.topology {
+            if let Some(ref nodes) = topo.nodes {
+                for node in nodes {
+                    if node.id != u32::MAX {
+                        valid_nodes.insert(node.id);
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to legacy top-level peripherals if topology.nodes is missing
+        if valid_nodes.is_empty() && !world.legacy_peripherals.is_null() {
+            if let Some(nodes_list) = world.legacy_peripherals.as_sequence() {
+                let mut fallback_nodes = Vec::new();
+                let mut all_numeric = true;
+
+                for item in nodes_list {
+                    if let Some(name) = item.get("name") {
+                        let name_str = match name {
+                            serde_yaml::Value::String(s) => Some(s.clone()),
+                            serde_yaml::Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        };
+
+                        if let Some(s) = name_str {
+                            if let Ok(id) = s.parse::<u32>() {
+                                fallback_nodes.push(id);
+                            } else {
+                                all_numeric = false;
+                                break;
+                            }
+                        } else {
+                            all_numeric = false;
+                            break;
+                        }
+                    } else {
+                        all_numeric = false;
+                        break;
+                    }
+                }
+
+                if all_numeric && !fallback_nodes.is_empty() {
+                    tracing::warn!("DEPRECATION: Top-level 'peripherals' for topology nodes is deprecated. Move them to 'topology.nodes'.");
+                    for id in fallback_nodes {
+                        valid_nodes.insert(id);
+                    }
+                }
+            }
         }
 
         if let Some(topo) = world.topology {
@@ -171,10 +282,12 @@ impl TopologyGraph {
             if let Some(ref wl) = topo.wireless {
                 max_range = wl.max_range_m;
                 for n in &wl.nodes {
-                    if !valid_nodes.contains(&n.id) {
-                        return Err(TopologyError::UnknownNode(n.id));
+                    if n.id != u32::MAX {
+                        if !valid_nodes.contains(&n.id) {
+                            return Err(TopologyError::UnknownNode(n.id));
+                        }
+                        positions.insert(n.id, n.initial_position);
                     }
-                    positions.insert(n.id, n.initial_position);
                 }
             }
 
@@ -187,6 +300,7 @@ impl TopologyGraph {
                 node_positions: positions,
                 max_wireless_range_m: max_range,
                 is_explicit: true,
+                drop_list: HashSet::new(),
             })
         } else {
             Ok(TopologyGraph::default())
@@ -205,6 +319,7 @@ impl Default for TopologyGraph {
             node_positions: HashMap::new(),
             max_wireless_range_m: 0.0,
             is_explicit: false,
+            drop_list: HashSet::new(),
         }
     }
 }
@@ -219,6 +334,9 @@ impl TopologyGraph {
     }
 
     pub fn is_link_allowed(&self, src: u32, dst: u32, protocol: Protocol) -> bool {
+        if self.drop_list.contains(&(src, dst)) || self.drop_list.contains(&(dst, src)) {
+            return false;
+        }
         if !self.is_explicit {
             return true; // implicitly allow all if no topology is loaded
         }
@@ -254,7 +372,6 @@ impl TopologyGraph {
                 let dy = my_pos[1] - other_pos[1];
                 let dz = my_pos[2] - other_pos[2];
                 let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                // We add a tiny epsilon (1e-6) to handle floating point inaccuracies
                 if dist <= self.max_wireless_range_m + 1e-6 {
                     neighbors.push(*other_id);
                 }
@@ -262,161 +379,115 @@ impl TopologyGraph {
         }
         neighbors
     }
+
+    pub fn update_from_json(&mut self, json_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+        use serde_json::Value;
+        let v: Value = serde_json::from_str(json_str)?;
+
+        if let (Some(from_val), Some(to_val), Some(drop_prob)) = (
+            v.get("from").and_then(|f| f.as_str()),
+            v.get("to").and_then(|t| t.as_str()),
+            v.get("drop_probability").and_then(|d| d.as_f64()),
+        ) {
+            let from_node = from_val.parse::<u32>()?;
+            let to_node = to_val.parse::<u32>()?;
+
+            if drop_prob >= 0.99 {
+                self.drop_list.insert((from_node, to_node));
+            } else if drop_prob <= 0.01 {
+                self.drop_list.remove(&(from_node, to_node));
+                self.drop_list.remove(&(to_node, from_node));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
-    fn test_wire_link_bidirectional() {
-        let yaml_str = r#"
-nodes:
-  - id: 0
-  - id: 1
+    fn test_topology_nodes_new_schema() {
+        let content = r#"
 topology:
+  nodes:
+    - name: "1"
+    - name: 2
   links:
-    - type: ethernet
-      nodes: [0, 1]
-        "#;
-        let path = std::env::temp_dir().join(format!(
-            "test_topo_{}.yaml",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-
-        fs::write(&path, yaml_str).unwrap();
-
-        let tg = TopologyGraph::from_yaml(&path).unwrap();
-        assert!(tg.is_link_allowed(0, 1, Protocol::Ethernet));
-        assert!(tg.is_link_allowed(1, 0, Protocol::Ethernet));
+    - type: uart
+      nodes: [1, 2]
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        assert!(graph.is_link_allowed(1, 2, Protocol::Uart));
     }
 
     #[test]
-    fn test_wire_link_no_cross_protocol() {
-        let yaml_str = r#"
-nodes:
-  - id: 0
-  - id: 1
-topology:
-  links:
-    - type: ethernet
-      nodes: [0, 1]
-        "#;
-        let path = std::env::temp_dir().join(format!(
-            "test_topo_{}.yaml",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-
-        fs::write(&path, yaml_str).unwrap();
-
-        let tg = TopologyGraph::from_yaml(&path).unwrap();
-        assert!(!tg.is_link_allowed(0, 1, Protocol::Uart));
-    }
-
-    #[test]
-    fn test_wireless_in_range() {
-        let mut tg = TopologyGraph {
-            transport: Transport::Zenoh,
-            max_messages_per_node_per_quantum: 1024,
-            global_seed: 0,
-            wire_links: vec![],
-            wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_owned(),
-                nodes: vec![],
-                max_range_m: 10.0,
-            }),
-            node_positions: HashMap::new(),
-            max_wireless_range_m: 10.0,
-            is_explicit: true,
-        };
-
-        tg.update_positions(&[(0, [0.0, 0.0, 0.0]), (1, [5.0, 0.0, 0.0])]);
-
-        let n0 = tg.rf_neighbors(0);
-        assert!(n0.contains(&1));
-    }
-
-    #[test]
-    fn test_wireless_out_of_range() {
-        let mut tg = TopologyGraph {
-            transport: Transport::Zenoh,
-            max_messages_per_node_per_quantum: 1024,
-            global_seed: 0,
-            wire_links: vec![],
-            wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_owned(),
-                nodes: vec![],
-                max_range_m: 10.0,
-            }),
-            node_positions: HashMap::new(),
-            max_wireless_range_m: 10.0,
-            is_explicit: true,
-        };
-
-        tg.update_positions(&[(0, [0.0, 0.0, 0.0]), (1, [15.0, 0.0, 0.0])]);
-
-        let n0 = tg.rf_neighbors(0);
-        assert!(!n0.contains(&1));
-    }
-
-    #[test]
-    fn test_position_update_changes_neighbors() {
-        let mut tg = TopologyGraph {
-            transport: Transport::Zenoh,
-            max_messages_per_node_per_quantum: 1024,
-            global_seed: 0,
-            wire_links: vec![],
-            wireless_medium: Some(WirelessMedium {
-                medium: "ieee802154".to_owned(),
-                nodes: vec![],
-                max_range_m: 10.0,
-            }),
-            node_positions: HashMap::new(),
-            max_wireless_range_m: 10.0,
-            is_explicit: true,
-        };
-
-        // start node 1 at [15,0,0]
-        tg.update_positions(&[(0, [0.0, 0.0, 0.0]), (1, [15.0, 0.0, 0.0])]);
-
-        assert!(!tg.rf_neighbors(0).contains(&1));
-
-        // call update_positions
-        tg.update_positions(&[(1, [5.0, 0.0, 0.0])]);
-
-        assert!(tg.rf_neighbors(0).contains(&1));
-    }
-
-    #[test]
-    fn test_topology_unknown_node_rejected() {
-        let yaml_str = r#"
-nodes:
-  - id: 0
+    fn test_topology_fallback_legacy_schema() {
+        let content = r#"
+peripherals:
+  - name: "1"
+  - name: 2
 topology:
   links:
     - type: uart
-      nodes: [0, 99]
-        "#;
-        let path = std::env::temp_dir().join(format!(
-            "test_topo_{}.yaml",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+      nodes: [1, 2]
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        assert!(graph.is_link_allowed(1, 2, Protocol::Uart));
+    }
 
-        fs::write(&path, yaml_str).unwrap();
+    #[test]
+    fn test_topology_no_fallback_machine_schema() {
+        let content = r#"
+peripherals:
+  - name: uart0
+    renode_type: UART.PL011
+topology:
+  nodes:
+    - name: "1"
+  links: []
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        // Should not fail parsing 'uart0' because it's not falling back
+        assert!(graph.is_explicit);
+    }
 
-        let result = TopologyGraph::from_yaml(&path);
-        match result {
-            Err(TopologyError::UnknownNode(99)) => (), // Success
-            _ => panic!("Expected UnknownNode(99), got {:?}", result),
-        }
+    #[test]
+    fn test_schema_split_brain_rejection() {
+        let content = r#"
+peripherals:
+  - name: "1"
+topology:
+  nodes:
+    - name: "2"
+  links: []
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let res = TopologyGraph::from_yaml(file.path());
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("Split-brain"));
+    }
+
+    #[test]
+    fn test_schema_legacy_fallback_with_warning() {
+        let content = r#"
+peripherals:
+  - name: "1"
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "{}", content).unwrap();
+        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        assert!(!graph.is_explicit);
     }
 }

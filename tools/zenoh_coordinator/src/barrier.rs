@@ -2,7 +2,7 @@ use crate::topology::Protocol;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use core::time::Duration;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Condvar, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +42,12 @@ pub enum BarrierError {
     QuantumMismatch { expected: u64, got: u64 },
 }
 
+#[derive(Default)]
+struct QuantumData {
+    done_nodes: HashSet<String>,
+    messages: Vec<CoordMessage>,
+}
+
 pub struct QuantumBarrier {
     n_nodes: usize,
     max_messages_per_node: usize,
@@ -51,11 +57,7 @@ pub struct QuantumBarrier {
 }
 
 struct BarrierState {
-    done_count: usize,
-    message_buffer: Vec<CoordMessage>,
-    done_nodes: HashSet<String>,
-    next_quantum_buffer: Vec<CoordMessage>,
-    next_quantum_done_nodes: HashSet<String>,
+    quanta: HashMap<u64, QuantumData>,
 }
 
 impl QuantumBarrier {
@@ -65,11 +67,7 @@ impl QuantumBarrier {
             max_messages_per_node,
             current_quantum: AtomicU64::new(1),
             state: Mutex::new(BarrierState {
-                done_count: 0,
-                message_buffer: Vec::new(),
-                done_nodes: HashSet::new(),
-                next_quantum_buffer: Vec::new(),
-                next_quantum_done_nodes: HashSet::new(),
+                quanta: HashMap::new(),
             }),
             all_done_cond: Condvar::new(),
         }
@@ -81,11 +79,7 @@ impl QuantumBarrier {
 
     pub fn reset(&self) {
         let mut state = self.state.lock().unwrap();
-        state.done_count = 0;
-        state.message_buffer.clear();
-        state.done_nodes.clear();
-        state.next_quantum_buffer.clear();
-        state.next_quantum_done_nodes.clear();
+        state.quanta.clear();
     }
 
     pub fn submit_done(
@@ -103,55 +97,49 @@ impl QuantumBarrier {
             return Ok(None);
         }
 
-        if quantum > current + 1 {
-            return Err(BarrierError::QuantumMismatch {
-                expected: current,
-                got: quantum,
-            });
-        }
+        // We allow arbitrarily large future quanta now
 
-        // Handle NEXT quantum (Lookahead)
-        if quantum == current + 1 {
-            if state.next_quantum_done_nodes.contains(&node_id) {
-                return Err(BarrierError::DuplicateDone);
-            }
-            state.next_quantum_done_nodes.insert(node_id.clone());
-            messages.sort();
-            if messages.len() > self.max_messages_per_node {
-                messages.truncate(self.max_messages_per_node);
-            }
-            state.next_quantum_buffer.extend(messages);
-            return Ok(None);
-        }
-
-        // Handle CURRENT quantum
-        if state.done_nodes.contains(&node_id) {
+        let q_data = state.quanta.entry(quantum).or_default();
+        if q_data.done_nodes.contains(&node_id) {
             return Err(BarrierError::DuplicateDone);
         }
-        state.done_nodes.insert(node_id.clone());
+        q_data.done_nodes.insert(node_id.clone());
 
         messages.sort();
         if messages.len() > self.max_messages_per_node {
             messages.truncate(self.max_messages_per_node);
         }
-        state.message_buffer.extend(messages);
-        state.done_count += 1;
+        q_data.messages.extend(messages);
 
-        if state.done_count == self.n_nodes {
-            let mut all_msgs = state.message_buffer.clone();
-            all_msgs.sort();
+        let mut current_q = self.current_quantum.load(AtomicOrdering::SeqCst);
+        let mut all_sorted_msgs = Vec::new();
+        let mut advanced = false;
 
-            // Promotion Logic:
-            // 1. Increment quantum
-            self.current_quantum.fetch_add(1, AtomicOrdering::SeqCst);
+        while let Some(current_q_data) = state.quanta.get(&current_q) {
+            if current_q_data.done_nodes.len() == self.n_nodes {
+                // We have a complete quantum!
+                let mut data = state.quanta.remove(&current_q).unwrap();
+                data.messages.sort();
+                all_sorted_msgs.extend(data.messages);
 
-            // 2. Move lookahead to current
-            state.message_buffer = std::mem::take(&mut state.next_quantum_buffer);
-            state.done_nodes = std::mem::take(&mut state.next_quantum_done_nodes);
-            state.done_count = state.done_nodes.len();
+                // Advance to next quantum
+                current_q += 1;
+                self.current_quantum
+                    .store(current_q, AtomicOrdering::SeqCst);
+                self.all_done_cond.notify_all();
+                advanced = true;
+            } else {
+                // Current quantum is not complete
+                break;
+            }
+        }
 
-            self.all_done_cond.notify_all();
-            Ok(Some(all_msgs))
+        // `Some(_)` signals barrier-satisfied (caller must publish the next START
+        // and deliver any messages). The empty-vec case is meaningful: a quantum
+        // can complete with zero in-flight messages (e.g. the kickstart DONE), and
+        // collapsing it to `None` would silently swallow the advancement.
+        if advanced {
+            Ok(Some(all_sorted_msgs))
         } else {
             Ok(None)
         }
@@ -159,14 +147,12 @@ impl QuantumBarrier {
 
     pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
         let state = self.state.lock().unwrap();
-        let (state, wait_result) = self.all_done_cond.wait_timeout(state, timeout).unwrap();
+        let (_state, wait_result) = self.all_done_cond.wait_timeout(state, timeout).unwrap();
 
         if wait_result.timed_out() {
             Err(BarrierError::Timeout)
         } else {
-            let mut msgs = state.message_buffer.clone();
-            msgs.sort();
-            Ok(msgs)
+            Ok(Vec::new())
         }
     }
 }

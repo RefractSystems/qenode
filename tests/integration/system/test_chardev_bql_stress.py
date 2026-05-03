@@ -7,7 +7,6 @@ and the guest doesn't stall, even with fragmented writes.
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,9 +18,7 @@ from tools.testing.env import WORKSPACE_ROOT
 from tools.testing.utils import get_time_multiplier
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from tools.testing.virtmcu_test_suite.conftest_core import QmpBridge
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 def encode_frame(delivery_vtime_ns: int, payload: bytes, sequence: int = 0) -> bytes:
@@ -46,11 +43,8 @@ def _on_tx(
 
 
 @pytest.mark.asyncio
-async def test_chardev_flow_control_stress(
-    qemu_launcher: Callable[..., Awaitable[QmpBridge]], zenoh_router: str
-) -> None:
+async def test_chardev_flow_control_stress(simulation: Simulation, zenoh_session: zenoh.Session) -> None:
 
-    router_endpoint = zenoh_router
     loop = asyncio.get_running_loop()
 
     # Use the echo firmware from uart_echo
@@ -67,51 +61,36 @@ async def test_chardev_flow_control_stress(
     rx_topic = f"{topic_base}/{node_id}/rx"
     tx_topic = f"{topic_base}/{node_id}/tx"
 
-    base_stall_timeout = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "30000"))
-    stall_timeout = int(base_stall_timeout * get_time_multiplier())
-
     # Start QEMU with zenoh chardev and clock in slaved-suspend mode
+    # simulation handles router, node, mode=slaved-suspend, stall-timeout
     extra_args = [
-        "-S",
-        "-icount",
-        "shift=0,align=off,sleep=off",
-        "-device",
-        f"virtmcu-clock,node={node_id},mode=slaved-suspend,router={router_endpoint},stall-timeout={stall_timeout}",
         "-chardev",
-        f"virtmcu,id=char0,node={node_id},router={router_endpoint},topic={topic_base},max-backlog=1024,baud-rate-ns=0",
+        f"virtmcu,id=char0,topic={topic_base},max-backlog=1024,baud-rate-ns=0",
         "-serial",
         "chardev:char0",
     ]
 
-    bridge = await qemu_launcher(dtb, kernel, extra_args, ignore_clock_check=True)
+    simulation.add_node(node_id=node_id, dtb=dtb, kernel=kernel, extra_args=extra_args)
 
-    # Connect Zenoh to send/receive data
-    z_config = zenoh.Config()
-    z_config.insert_json5("connect/endpoints", f'["{router_endpoint}"]')
-    session = zenoh.open(z_config)
-
+    # Declare Zenoh subscribers BEFORE entering the simulation context
+    # so the framework's routing barrier covers them.
+    session = zenoh_session
     received_data = bytearray()
     received_event = asyncio.Event()
     expected_count = 50
 
     _sub = session.declare_subscriber(
-        tx_topic, lambda sample: _on_tx(sample, received_data, received_event, expected_count, loop)
+        tx_topic,
+        lambda sample: _on_tx(sample, received_data, received_event, expected_count, loop),
     )
     pub = session.declare_publisher(rx_topic)
 
-    # Time authority to drive the clock
-    from tests.conftest import VirtualTimeAuthority
-    from tools.testing.virtmcu_test_suite.conftest_core import VirtmcuSimulation
-
-    vta = VirtualTimeAuthority(session, [node_id])
-    sim = VirtmcuSimulation(bridge, vta)
-
-    async with sim:
+    async with simulation as sim:
         # Wait for firmware boot by stepping simulation
         booted = False
 
         for _ in range(50):  # 50 steps of 10ms
-            await vta.step(10_000_000, timeout=120.0)
+            await sim.vta.step(10_000_000, timeout=120.0)
             if b"Interactive UART Echo Ready." in received_data:
                 booted = True
                 break
@@ -122,7 +101,7 @@ async def test_chardev_flow_control_stress(
         received_data.clear()
 
         # Flood with data. Send in one large packet to avoid overwhelming the Zenoh thread in QEMU.
-        start_vtime = vta.current_vtimes[node_id] + 1_000_000  # +1ms
+        start_vtime = sim.vta.current_vtimes[node_id] + 1_000_000  # +1ms
 
         payload_data = bytes([(i % 26) + 65 for i in range(expected_count)])
         packet = encode_frame(start_vtime, payload_data)
@@ -132,7 +111,7 @@ async def test_chardev_flow_control_stress(
         timeout = 60 * get_time_multiplier()
         start_time = asyncio.get_running_loop().time()
         while len(received_data) < expected_count:
-            await vta.step(10_000_000, timeout=30.0)  # 10ms steps
+            await sim.vta.step(10_000_000, timeout=30.0)  # 10ms steps
 
             if asyncio.get_running_loop().time() - start_time > timeout:
                 break

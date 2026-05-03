@@ -6,18 +6,18 @@ Verify that rust-dummy and educational-dummy are correctly registered in QOM.
 from __future__ import annotations
 
 import shutil
+import subprocess
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
+from tools.testing.env import WORKSPACE_ROOT
+
 
 @pytest.mark.asyncio
-async def test_dynamic_plugin(qemu_launcher: object) -> None:
-
-    import subprocess
-
-    from tools.testing.env import WORKSPACE_ROOT
+async def test_dynamic_plugin(inspection_bridge: Callable[..., Coroutine[Any, Any, Any]]) -> None:
 
     workspace_root = WORKSPACE_ROOT
     dtb = Path(workspace_root) / "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
@@ -26,10 +26,12 @@ async def test_dynamic_plugin(qemu_launcher: object) -> None:
     # 1. Build if missing (crucial for CI robustness)
     if not Path(dtb).exists() or not Path(kernel).exists():
         subprocess.run(
-            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm"], check=True, cwd=workspace_root
+            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm"],
+            check=True,
+            cwd=workspace_root,
         )
 
-    bridge = await cast(Any, qemu_launcher)(dtb, extra_args=["-device", "rust-dummy", "-device", "dummy-device"])
+    bridge = await inspection_bridge(dtb, extra_args=["-device", "rust-dummy", "-device", "dummy-device"])
 
     # Check QOM tree for the devices
     res = await bridge.qmp.execute("qom-list", {"path": "/machine/peripheral-anon"})

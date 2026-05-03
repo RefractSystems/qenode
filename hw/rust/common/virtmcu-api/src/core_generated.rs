@@ -8,6 +8,128 @@ pub mod virtmcu {
     #[allow(unused_imports, dead_code)]
     pub mod core {
 
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        pub const ENUM_MIN_PROTOCOL: u8 = 0;
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        pub const ENUM_MAX_PROTOCOL: u8 = 8;
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        #[allow(non_camel_case_types)]
+        pub const ENUM_VALUES_PROTOCOL: [Protocol; 9] = [
+            Protocol::Ethernet,
+            Protocol::Uart,
+            Protocol::Spi,
+            Protocol::CanFd,
+            Protocol::FlexRay,
+            Protocol::Lin,
+            Protocol::Rf802154,
+            Protocol::RfHci,
+            Protocol::Control,
+        ];
+
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+        #[repr(transparent)]
+        pub struct Protocol(pub u8);
+        #[allow(non_upper_case_globals)]
+        impl Protocol {
+            pub const Ethernet: Self = Self(0);
+            pub const Uart: Self = Self(1);
+            pub const Spi: Self = Self(2);
+            pub const CanFd: Self = Self(3);
+            pub const FlexRay: Self = Self(4);
+            pub const Lin: Self = Self(5);
+            pub const Rf802154: Self = Self(6);
+            pub const RfHci: Self = Self(7);
+            pub const Control: Self = Self(8);
+
+            pub const ENUM_MIN: u8 = 0;
+            pub const ENUM_MAX: u8 = 8;
+            pub const ENUM_VALUES: &'static [Self] = &[
+                Self::Ethernet,
+                Self::Uart,
+                Self::Spi,
+                Self::CanFd,
+                Self::FlexRay,
+                Self::Lin,
+                Self::Rf802154,
+                Self::RfHci,
+                Self::Control,
+            ];
+            /// Returns the variant's name or "" if unknown.
+            pub fn variant_name(self) -> Option<&'static str> {
+                match self {
+                    Self::Ethernet => Some("Ethernet"),
+                    Self::Uart => Some("Uart"),
+                    Self::Spi => Some("Spi"),
+                    Self::CanFd => Some("CanFd"),
+                    Self::FlexRay => Some("FlexRay"),
+                    Self::Lin => Some("Lin"),
+                    Self::Rf802154 => Some("Rf802154"),
+                    Self::RfHci => Some("RfHci"),
+                    Self::Control => Some("Control"),
+                    _ => None,
+                }
+            }
+        }
+        impl ::core::fmt::Debug for Protocol {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                if let Some(name) = self.variant_name() {
+                    f.write_str(name)
+                } else {
+                    f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+                }
+            }
+        }
+        impl<'a> ::flatbuffers::Follow<'a> for Protocol {
+            type Inner = Self;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+                Self(b)
+            }
+        }
+
+        impl ::flatbuffers::Push for Protocol {
+            type Output = Protocol;
+            #[inline]
+            unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+                unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+            }
+        }
+
+        impl ::flatbuffers::EndianScalar for Protocol {
+            type Scalar = u8;
+            #[inline]
+            fn to_little_endian(self) -> u8 {
+                self.0.to_le()
+            }
+            #[inline]
+            #[allow(clippy::wrong_self_convention)]
+            fn from_little_endian(v: u8) -> Self {
+                let b = u8::from_le(v);
+                Self(b)
+            }
+        }
+
+        impl<'a> ::flatbuffers::Verifiable for Protocol {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                u8::run_verifier(v, pos)
+            }
+        }
+
+        impl ::flatbuffers::SimpleToVerifyInSlice for Protocol {}
         // struct VirtmcuHandshake, aligned to 4
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq)]
@@ -47,7 +169,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<VirtmcuHandshake>(self) as *const u8,
+                        self as *const VirtmcuHandshake as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -102,7 +224,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -133,7 +255,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[4..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -185,7 +307,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<MmioReq>(self) as *const u8,
+                        self as *const MmioReq as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -253,7 +375,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u8 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -284,7 +406,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[1..].as_mut_ptr(),
                         ::core::mem::size_of::<<u8 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -315,7 +437,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[2..].as_mut_ptr(),
                         ::core::mem::size_of::<<u16 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -346,7 +468,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[4..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -377,7 +499,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -408,7 +530,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[16..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -439,7 +561,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[24..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -487,7 +609,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<SyscMsg>(self) as *const u8,
+                        self as *const SyscMsg as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -543,7 +665,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -574,7 +696,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[4..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -605,7 +727,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -653,7 +775,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<ClockAdvanceReq>(self) as *const u8,
+                        self as *const ClockAdvanceReq as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -709,7 +831,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -740,7 +862,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -771,7 +893,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[16..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -820,7 +942,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<ClockReadyResp>(self) as *const u8,
+                        self as *const ClockReadyResp as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -882,7 +1004,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -913,7 +1035,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -944,7 +1066,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[12..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -975,7 +1097,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[16..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1023,7 +1145,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<ZenohFrameHeader>(self) as *const u8,
+                        self as *const ZenohFrameHeader as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -1079,7 +1201,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1110,7 +1232,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1141,7 +1263,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[16..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1192,7 +1314,7 @@ pub mod virtmcu {
             unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
                 let src = unsafe {
                     ::core::slice::from_raw_parts(
-                        core::ptr::from_ref::<ZenohSPIHeader>(self) as *const u8,
+                        self as *const ZenohSPIHeader as *const u8,
                         <Self as ::flatbuffers::Push>::size(),
                     )
                 };
@@ -1258,7 +1380,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[0..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1289,7 +1411,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[8..].as_mut_ptr(),
                         ::core::mem::size_of::<<u64 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1320,7 +1442,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[16..].as_mut_ptr(),
                         ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1351,7 +1473,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[20..].as_mut_ptr(),
                         ::core::mem::size_of::<<bool as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1382,7 +1504,7 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[21..].as_mut_ptr(),
                         ::core::mem::size_of::<<u8 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
@@ -1413,11 +1535,381 @@ pub mod virtmcu {
                 // Which contains a valid value in this slot
                 unsafe {
                     ::core::ptr::copy_nonoverlapping(
-                        core::ptr::from_ref(&x_le) as *const u8,
+                        &x_le as *const _ as *const u8,
                         self.0[22..].as_mut_ptr(),
                         ::core::mem::size_of::<<u16 as ::flatbuffers::EndianScalar>::Scalar>(),
                     );
                 }
+            }
+        }
+
+        pub enum CoordMessageOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        pub struct CoordMessage<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for CoordMessage<'a> {
+            type Inner = CoordMessage<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> CoordMessage<'a> {
+            pub const VT_SRC_NODE_ID: ::flatbuffers::VOffsetT = 4;
+            pub const VT_DST_NODE_ID: ::flatbuffers::VOffsetT = 6;
+            pub const VT_DELIVERY_VTIME_NS: ::flatbuffers::VOffsetT = 8;
+            pub const VT_SEQUENCE_NUMBER: ::flatbuffers::VOffsetT = 10;
+            pub const VT_PROTOCOL: ::flatbuffers::VOffsetT = 12;
+            pub const VT_PAYLOAD: ::flatbuffers::VOffsetT = 14;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                CoordMessage { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args CoordMessageArgs<'args>,
+            ) -> ::flatbuffers::WIPOffset<CoordMessage<'bldr>> {
+                let mut builder = CoordMessageBuilder::new(_fbb);
+                builder.add_sequence_number(args.sequence_number);
+                builder.add_delivery_vtime_ns(args.delivery_vtime_ns);
+                if let Some(x) = args.payload {
+                    builder.add_payload(x);
+                }
+                builder.add_dst_node_id(args.dst_node_id);
+                builder.add_src_node_id(args.src_node_id);
+                builder.add_protocol(args.protocol);
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn src_node_id(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(CoordMessage::VT_SRC_NODE_ID, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn dst_node_id(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(CoordMessage::VT_DST_NODE_ID, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn delivery_vtime_ns(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<u64>(CoordMessage::VT_DELIVERY_VTIME_NS, Some(0)).unwrap()
+                }
+            }
+            #[inline]
+            pub fn sequence_number(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u64>(CoordMessage::VT_SEQUENCE_NUMBER, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn protocol(&self) -> Protocol {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<Protocol>(CoordMessage::VT_PROTOCOL, Some(Protocol::Ethernet))
+                        .unwrap()
+                }
+            }
+            #[inline]
+            pub fn payload(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(
+                        CoordMessage::VT_PAYLOAD,
+                        None,
+                    )
+                }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for CoordMessage<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u32>("src_node_id", Self::VT_SRC_NODE_ID, false)?
+                    .visit_field::<u32>("dst_node_id", Self::VT_DST_NODE_ID, false)?
+                    .visit_field::<u64>("delivery_vtime_ns", Self::VT_DELIVERY_VTIME_NS, false)?
+                    .visit_field::<u64>("sequence_number", Self::VT_SEQUENCE_NUMBER, false)?
+                    .visit_field::<Protocol>("protocol", Self::VT_PROTOCOL, false)?
+                    .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>(
+                        "payload",
+                        Self::VT_PAYLOAD,
+                        false,
+                    )?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct CoordMessageArgs<'a> {
+            pub src_node_id: u32,
+            pub dst_node_id: u32,
+            pub delivery_vtime_ns: u64,
+            pub sequence_number: u64,
+            pub protocol: Protocol,
+            pub payload: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+        }
+        impl<'a> Default for CoordMessageArgs<'a> {
+            #[inline]
+            fn default() -> Self {
+                CoordMessageArgs {
+                    src_node_id: 0,
+                    dst_node_id: 0,
+                    delivery_vtime_ns: 0,
+                    sequence_number: 0,
+                    protocol: Protocol::Ethernet,
+                    payload: None,
+                }
+            }
+        }
+
+        pub struct CoordMessageBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CoordMessageBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_src_node_id(&mut self, src_node_id: u32) {
+                self.fbb_.push_slot::<u32>(CoordMessage::VT_SRC_NODE_ID, src_node_id, 0);
+            }
+            #[inline]
+            pub fn add_dst_node_id(&mut self, dst_node_id: u32) {
+                self.fbb_.push_slot::<u32>(CoordMessage::VT_DST_NODE_ID, dst_node_id, 0);
+            }
+            #[inline]
+            pub fn add_delivery_vtime_ns(&mut self, delivery_vtime_ns: u64) {
+                self.fbb_.push_slot::<u64>(
+                    CoordMessage::VT_DELIVERY_VTIME_NS,
+                    delivery_vtime_ns,
+                    0,
+                );
+            }
+            #[inline]
+            pub fn add_sequence_number(&mut self, sequence_number: u64) {
+                self.fbb_.push_slot::<u64>(CoordMessage::VT_SEQUENCE_NUMBER, sequence_number, 0);
+            }
+            #[inline]
+            pub fn add_protocol(&mut self, protocol: Protocol) {
+                self.fbb_.push_slot::<Protocol>(
+                    CoordMessage::VT_PROTOCOL,
+                    protocol,
+                    Protocol::Ethernet,
+                );
+            }
+            #[inline]
+            pub fn add_payload(
+                &mut self,
+                payload: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b, u8>>,
+            ) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    CoordMessage::VT_PAYLOAD,
+                    payload,
+                );
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> CoordMessageBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                CoordMessageBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<CoordMessage<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for CoordMessage<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("CoordMessage");
+                ds.field("src_node_id", &self.src_node_id());
+                ds.field("dst_node_id", &self.dst_node_id());
+                ds.field("delivery_vtime_ns", &self.delivery_vtime_ns());
+                ds.field("sequence_number", &self.sequence_number());
+                ds.field("protocol", &self.protocol());
+                ds.field("payload", &self.payload());
+                ds.finish()
+            }
+        }
+        pub enum CoordDoneReqOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        pub struct CoordDoneReq<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for CoordDoneReq<'a> {
+            type Inner = CoordDoneReq<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> CoordDoneReq<'a> {
+            pub const VT_QUANTUM: ::flatbuffers::VOffsetT = 4;
+            pub const VT_VTIME_LIMIT: ::flatbuffers::VOffsetT = 6;
+            pub const VT_MESSAGES: ::flatbuffers::VOffsetT = 8;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                CoordDoneReq { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args CoordDoneReqArgs<'args>,
+            ) -> ::flatbuffers::WIPOffset<CoordDoneReq<'bldr>> {
+                let mut builder = CoordDoneReqBuilder::new(_fbb);
+                builder.add_vtime_limit(args.vtime_limit);
+                builder.add_quantum(args.quantum);
+                if let Some(x) = args.messages {
+                    builder.add_messages(x);
+                }
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn quantum(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u64>(CoordDoneReq::VT_QUANTUM, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn vtime_limit(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u64>(CoordDoneReq::VT_VTIME_LIMIT, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn messages(
+                &self,
+            ) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CoordMessage<'a>>>>
+            {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<
+                        ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CoordMessage>>,
+                    >>(CoordDoneReq::VT_MESSAGES, None)
+                }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for CoordDoneReq<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u64>("quantum", Self::VT_QUANTUM, false)?
+                    .visit_field::<u64>("vtime_limit", Self::VT_VTIME_LIMIT, false)?
+                    .visit_field::<::flatbuffers::ForwardsUOffset<
+                        ::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CoordMessage>>,
+                    >>("messages", Self::VT_MESSAGES, false)?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct CoordDoneReqArgs<'a> {
+            pub quantum: u64,
+            pub vtime_limit: u64,
+            pub messages: Option<
+                ::flatbuffers::WIPOffset<
+                    ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CoordMessage<'a>>>,
+                >,
+            >,
+        }
+        impl<'a> Default for CoordDoneReqArgs<'a> {
+            #[inline]
+            fn default() -> Self {
+                CoordDoneReqArgs { quantum: 0, vtime_limit: 0, messages: None }
+            }
+        }
+
+        pub struct CoordDoneReqBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CoordDoneReqBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_quantum(&mut self, quantum: u64) {
+                self.fbb_.push_slot::<u64>(CoordDoneReq::VT_QUANTUM, quantum, 0);
+            }
+            #[inline]
+            pub fn add_vtime_limit(&mut self, vtime_limit: u64) {
+                self.fbb_.push_slot::<u64>(CoordDoneReq::VT_VTIME_LIMIT, vtime_limit, 0);
+            }
+            #[inline]
+            pub fn add_messages(
+                &mut self,
+                messages: ::flatbuffers::WIPOffset<
+                    ::flatbuffers::Vector<'b, ::flatbuffers::ForwardsUOffset<CoordMessage<'b>>>,
+                >,
+            ) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    CoordDoneReq::VT_MESSAGES,
+                    messages,
+                );
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> CoordDoneReqBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                CoordDoneReqBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<CoordDoneReq<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for CoordDoneReq<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("CoordDoneReq");
+                ds.field("quantum", &self.quantum());
+                ds.field("vtime_limit", &self.vtime_limit());
+                ds.field("messages", &self.messages());
+                ds.finish()
             }
         }
     } // pub mod core

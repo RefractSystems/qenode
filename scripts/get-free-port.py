@@ -10,10 +10,46 @@ import argparse
 import os
 import socket
 import sys
+import time
+
+RESERVATION_DIR = os.environ.get(
+    "VIRTMCU_PORT_RESERVATION_DIR",
+    f"/tmp/virtmcu_port_reservations_{os.getuid()}",  # noqa: S108
+)
 
 
 def get_free_port() -> int:
-    """Finds a free port available on all interfaces."""
+    """
+    Finds a free port available on all interfaces and reserves it.
+    Uses a file-based registry in /tmp to avoid collisions in parallel tests.
+    """
+    os.makedirs(RESERVATION_DIR, exist_ok=True)
+
+    # Try to find and reserve a port
+    for _ in range(100):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+
+        res_path = os.path.join(RESERVATION_DIR, str(port))
+        try:
+            # Atomic creation of a reservation file
+            fd = os.open(res_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return port
+        except FileExistsError:
+            # Port was recently reserved. Check if it's stale (older than 60s)
+            try:
+                if time.time() - os.path.getmtime(res_path) > 60:
+                    try:
+                        os.remove(res_path)
+                    except OSError:
+                        pass  # Someone else cleaned it up
+            except OSError:
+                pass
+            continue
+
+    # Fallback if we can't reserve after many attempts
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]

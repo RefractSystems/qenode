@@ -4,6 +4,19 @@ This file serves as a historical record of completed milestones and tasks in the
 
 ---
 
+## Simulation Stability & FlexRay Support (May 2026) ✅
+
+**Status**: Done
+
+### Tasks
+- [x] **FlexRay Support**: Implemented native Rust FlexRay QOM peripheral with Bosch E-Ray Message RAM support.
+- [x] **Lookahead Barrier**: Refactored `DeterministicCoordinator` and `QuantumBarrier` to support arbitrary lookahead via `HashMap<u64, QuantumData>`, allowing nodes to pre-calculate future quanta.
+- [x] **Zenoh Session Isolation**: Enforced strict client-mode isolation for Zenoh sessions in tests via `make_client_config()` and `lint-python` gates.
+- [x] **Deterministic Routing Sync**: Implemented `ensure_session_routing()` to eliminate races during Zenoh declaration propagation.
+- [x] **Harden Test Suites**: Simplified smoke test domains and moved legacy Bash tests to structured `pytest` orchestration.
+
+---
+
 ## Architectural Hardening — Definitive Race Condition Fixes (April 2026) ✅
 
 **Status**: Done

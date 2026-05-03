@@ -110,6 +110,7 @@ fn main() {
         .allowlist_type("qemu_can_frame")
         .allowlist_type("CanHostState")
         .layout_tests(true)
+        .use_core()
         .generate()
         .unwrap_or_else(|_| std::process::abort()); // "Unable to generate bindings");
 

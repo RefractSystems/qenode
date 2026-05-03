@@ -13,11 +13,11 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
-async def test_yaml_platform_boot(simulation: SimulationCreator, tmp_path: Path) -> None:
+async def test_yaml_platform_boot(simulation: Simulation, tmp_path: Path) -> None:
 
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -41,8 +41,9 @@ async def test_yaml_platform_boot(simulation: SimulationCreator, tmp_path: Path)
         cwd=workspace_root,
     )
 
-    # Boot and check UART using VirtmcuSimulation
-    async with await simulation(dtb, kernel) as sim:
+    # Boot and check UART using Simulation
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel)
+    async with simulation as sim:
         await sim.vta.step(100_000_000)
         assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("HI", timeout=5.0)

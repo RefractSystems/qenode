@@ -20,6 +20,7 @@ import pytest
 from mcp.server import Server
 
 from tools.mcp_server.server import create_mcp_server
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -92,7 +93,7 @@ async def test_call_tool_set_network_latency(mock_zenoh_open: object, server: Se
     await handler(req)
     mock_session.put.assert_called_once()
     topic, payload = mock_session.put.call_args[0]
-    assert topic == "sim/network/control"
+    assert topic == SimTopic.NETWORK_CONTROL
     assert b"1000" in payload
 
 
@@ -126,7 +127,7 @@ async def test_read_resource_status(server: Server) -> None:
     res = await handler(req)
     status = json.loads(res.root.contents[0].text)
     assert status["status"] == "running"
-    assert any(n["id"] == node_id and n["status"] == "running" for n in status["nodes"])
+    assert any(n["id"] == node_id and n["status"] == "running" for n in status["nodes"])  # LINT_EXCEPTION: MCP protocol status
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,11 @@
+topology:
+  links:
+  - type: lin
+    nodes:
+    - '0'
+    - '1'
+  nodes:
+  - name: '0'
+    type: LIN
+  - name: '1'
+    type: LIN

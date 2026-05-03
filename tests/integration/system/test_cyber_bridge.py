@@ -16,6 +16,7 @@ import pytest
 
 from tools.testing.utils import wait_for_file_creation
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
 
 
@@ -44,7 +45,7 @@ async def test_resd_replay_startup() -> None:
     """
     TEST 3: resd_replay startup + empty-file rejection
     """
-    replay_bin = resolve_rust_binary("resd_replay")
+    replay_bin = resolve_rust_binary(VirtmcuBinary.RESD_REPLAY)
 
     # Missing file should fail
     async with AsyncManagedProcess(str(replay_bin), "/nonexistent.resd", "0") as proc:
@@ -58,7 +59,7 @@ async def test_mujoco_bridge_shm() -> None:
     """
     TEST 4: mujoco_bridge shared memory creation
     """
-    bridge_bin = resolve_rust_binary("mujoco_bridge")
+    bridge_bin = resolve_rust_binary(VirtmcuBinary.MUJOCO_BRIDGE)
 
     import os
 

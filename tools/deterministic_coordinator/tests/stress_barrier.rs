@@ -27,6 +27,7 @@ fn stress_barrier() {
                         sequence_number: m as u64,
                         protocol: Protocol::Uart,
                         payload: vec![m as u8],
+                        base_topic: None,
                     });
                 }
                 barrier_clone

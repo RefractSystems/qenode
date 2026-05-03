@@ -1,12 +1,12 @@
 *** Settings ***
 Documentation    Integration test for Interactive UART Echo Firmware.
-Resource         ${CURDIR}/../tools/testing/qemu_keywords.robot
+Resource         ${CURDIR}/../../../tools/testing/qemu_keywords.robot
 Test Setup       Launch And Connect
 Test Teardown    Terminate Emulation
 
 *** Variables ***
-${DTB_PATH}      ${CURDIR}/../tests/fixtures/guest_apps/boot_arm/minimal.dtb
-${FIRMWARE}      ${CURDIR}/../tests/fixtures/guest_apps/uart_echo/echo.elf
+${DTB_PATH}      ${CURDIR}/../../fixtures/guest_apps/boot_arm/minimal.dtb
+${FIRMWARE}      ${CURDIR}/../../fixtures/guest_apps/uart_echo/echo.elf
 
 *** Keywords ***
 Launch And Connect

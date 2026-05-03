@@ -37,15 +37,38 @@ For every completed milestone, an automated integration test MUST be added to `t
 
 
 **Determinism migration (new — highest correctness priority):**
-1. **DET-9** — Wireshark extcap plugin (Low priority / Redundant with INFRA-7).
+1. **Phase X: Active Codebase Migration to TypeSpec Schema** (See details below)
+2. **DET-9** — Wireshark extcap plugin (Low priority / Redundant with INFRA-7).
 
 **Hardware / infrastructure (existing, continue in parallel with DET work):**
-2. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
-3. **Milestones 21 / 22** — WiFi / Thread Protocol expansion.
-4. **Milestone 30.9 + 30.9.1** — Rust systemc-adapter + stress-adapter.
-5. **Milestone 30.8 + 30.10** — Firmware coverage (drcov) + unified reporting.
-6. **P12** — Deterministic Deadlock Detection (virtual-time budgets).
-7. **Milestone 32** — Vendor Firmware Validation (Ethernet & CAN-FD Binary Fidelity).
+3. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
+4. **Milestones 21 / 22** — WiFi / Thread Protocol expansion.
+5. **Milestone 30.9 + 30.9.1** — Rust systemc-adapter + stress-adapter.
+6. **Milestone 30.8 + 30.10** — Firmware coverage (drcov) + unified reporting.
+7. **P12** — Deterministic Deadlock Detection (virtual-time budgets).
+8. **Milestone 32** — Vendor Firmware Validation (Ethernet & CAN-FD Binary Fidelity).
+
+---
+
+### Phase X: Active Codebase Migration to TypeSpec Schema 🚧
+**Status**: 🟡 Open. *Depends on the successfully implemented and tested TypeSpec generation pipeline (Completed).*
+
+**Goal**: Now that the TypeSpec SSoT (Single Source of Truth) is generating 100% tested Pydantic and Serde models, the active codebase must be migrated to actually *use* these generated files, replacing all manually maintained schema definitions.
+
+**Tasks**:
+- [ ] **X.1** Migrate Python Tooling: Replace all manual Pydantic definitions in `tools/testing/virtmcu_test_suite/world_schema.py` with imports from the newly generated `tools/testing/virtmcu_test_suite/generated.py`. Update downstream consumers like `yaml2qemu.py` and `runner.py` to match the exact attribute shapes (e.g. unwrapping `.root` values on generated alias types like `Address` and `NodeID`).
+- [ ] **X.2** Migrate Rust Coordinator: Replace the manual `serde` definitions inside `tools/deterministic_coordinator/src/topology.rs` with the generated `deterministic_coordinator::generated::topology::WorldSchema`. Update the `TopologyGraph` construction logic to unwrap the generated `Result<Option<T>>` Typify types safely.
+- [ ] **X.3** Clean Up: Delete the obsolete, manually maintained `world_schema.py` file.
+
+**Testing Requirements**:
+- [ ] Ensure all existing Python unit and integration tests (especially `tests/unit/test_yaml2qemu.py` and `tests/integration/system/`) pass without modification using the new generated models.
+- [ ] Ensure `cargo test` passes cleanly inside the coordinator.
+- [ ] Run the full `make ci-local` pipeline to ensure no hidden dependencies or test fixtures relied on legacy schema quirks.
+
+**Exit Criteria**:
+- `tools/testing/virtmcu_test_suite/world_schema.py` is completely removed.
+- `tools/deterministic_coordinator/src/topology.rs` contains zero manual data structures, relying entirely on the `generated::topology` module.
+- `make ci-local` completes 100% successfully.
 
 ---
 

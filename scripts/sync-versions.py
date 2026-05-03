@@ -23,8 +23,8 @@ def sync() -> None:
         logger.error("Error: ZENOH_VERSION not found in BUILD_DEPS")
         return
 
-    # 1. Update tools/zenoh_coordinator/Cargo.toml
-    for cargo_path in ["tools/zenoh_coordinator/Cargo.toml"]:
+    # 1. Update tools/deterministic_coordinator/Cargo.toml
+    for cargo_path in ["tools/deterministic_coordinator/Cargo.toml"]:
         if Path(cargo_path).exists():
             with Path(cargo_path).open() as f:
                 content = f.read()
@@ -216,13 +216,9 @@ def sync() -> None:
             with Path(pyproject_path).open() as f:
                 content = f.read()
             new_content = re.sub(r'"pytest==[^"]+"', f'"pytest=={pytest_ver}"', content)
-            new_content = re.sub(
-                r'"pytest-asyncio[>=]=?[^"]+"', f'"pytest-asyncio=={pytest_asyncio_ver}"', new_content
-            )
+            new_content = re.sub(r'"pytest-asyncio[>=]=?[^"]+"', f'"pytest-asyncio=={pytest_asyncio_ver}"', new_content)
             if content != new_content:
-                logger.info(
-                    f"Updating {pyproject_path} to pytest {pytest_ver} and pytest-asyncio {pytest_asyncio_ver}"
-                )
+                logger.info(f"Updating {pyproject_path} to pytest {pytest_ver} and pytest-asyncio {pytest_asyncio_ver}")
                 with Path(pyproject_path).open("w") as f:
                     f.write(new_content)
 

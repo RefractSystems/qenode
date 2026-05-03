@@ -14,11 +14,11 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
-async def test_repl2qemu(simulation: SimulationCreator, tmp_path: Path) -> None:
+async def test_repl2qemu(simulation: Simulation, tmp_path: Path) -> None:
 
     from tools.testing.env import WORKSPACE_ROOT
 
@@ -42,8 +42,9 @@ async def test_repl2qemu(simulation: SimulationCreator, tmp_path: Path) -> None:
 
     assert out_dtb.exists()
 
-    # 2. Boot and check UART using VirtmcuSimulation
-    async with await simulation(out_dtb, kernel) as sim:
+    # 2. Boot and check UART using Simulation
+    simulation.add_node(node_id=0, dtb=out_dtb, kernel=kernel)
+    async with simulation as sim:
         await sim.vta.step(100_000_000)
         assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("HI")

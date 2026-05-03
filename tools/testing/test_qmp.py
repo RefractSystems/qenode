@@ -50,15 +50,14 @@ async def test_pc_retrieval(qmp_bridge: QmpBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_emulation_control(qemu_launcher: object) -> None:
+async def test_emulation_control(inspection_bridge: object) -> None:
     """
     Test pausing, resuming, and resetting emulation.
     """
-    # Launch QEMU paused (-S)
-    bridge = await cast(Any, qemu_launcher)(
+    # inspection_bridge spawns frozen (-S)
+    bridge = await cast(Any, inspection_bridge)(
         "tests/fixtures/guest_apps/boot_arm/minimal.dtb",
         "tests/fixtures/guest_apps/boot_arm/hello.elf",
-        extra_args=["-S"],
     )
 
     # Check that it's actually paused

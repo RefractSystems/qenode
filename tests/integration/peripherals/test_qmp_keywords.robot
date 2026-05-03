@@ -1,11 +1,11 @@
 *** Settings ***
 Documentation    Integration test for virtmcu QMP keywords.
-Resource        ../tools/testing/qemu_keywords.robot
+Resource        ../../../tools/testing/qemu_keywords.robot
 Test Teardown   Terminate Emulation
 
 *** Variables ***
-${DTB}          ${CURDIR}/../tests/fixtures/guest_apps/boot_arm/minimal.dtb
-${KERNEL}       ${CURDIR}/../tests/fixtures/guest_apps/boot_arm/hello.elf
+${DTB}          ${CURDIR}/../../fixtures/guest_apps/boot_arm/minimal.dtb
+${KERNEL}       ${CURDIR}/../../fixtures/guest_apps/boot_arm/hello.elf
 
 *** Test Cases ***
 Should Boot And Print HI

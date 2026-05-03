@@ -19,18 +19,19 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tools.testing.utils import yield_now
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import zenoh
 
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
 async def test_spi_stress_baremetal(
-    simulation: SimulationCreator, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path
+    simulation: Simulation, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path
 ) -> None:
     """
     Stress test for Perform 10,000 rapid SPI transactions
@@ -75,7 +76,7 @@ async def test_spi_stress_baremetal(
         cwd=workspace_root,
     )
 
-    topic = "sim/spi/spi0/0"
+    topic = SimTopic.spi_base("spi0", 0)
 
     received_queries = 0
 
@@ -95,7 +96,8 @@ async def test_spi_stress_baremetal(
 
     _ = await asyncio.to_thread(lambda: zenoh_session.declare_queryable(topic, on_query))
 
-    async with await simulation(dtb_path, kernel_path) as sim:
+    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=None)
+    async with simulation as sim:
         # Task 20.3: In slaved-icount mode, the clock only advances when we call vta.step().
         # We need a background task to drive the simulation while we wait for UART results.
         async def drive_clock() -> None:

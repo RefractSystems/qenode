@@ -1,3 +1,4 @@
+use zenoh::Wait;
 extern crate alloc;
 
 use alloc::sync::Arc;
@@ -41,6 +42,7 @@ pub struct ZenohUiState {
     publisher: transport_zenoh::SafeSessionPublisher,
     node_id: u32,
     buttons: BqlGuarded<HashMap<u32, ButtonState>>,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 struct ButtonState {
@@ -200,6 +202,7 @@ pub unsafe extern "C" fn ui_class_init(klass: *mut ObjectClass, _data: *const c_
     virtmcu_qom::qdev::device_class_set_props_n(dc, ZENOH_UI_PROPERTIES.as_ptr(), 3);
 }
 
+#[used]
 static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"ui".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
@@ -230,7 +233,10 @@ fn ui_init_internal(node_id: u32, router: *const c_char) -> *mut ZenohUiState {
         }
     };
 
+    let liveliness =
+        session.liveliness().declare_token(format!("sim/ui/liveliness/{node_id}")).wait().ok();
     Box::into_raw(Box::new(ZenohUiState {
+        _liveliness: liveliness,
         publisher: transport_zenoh::SafeSessionPublisher::new(Arc::clone(&session)),
         _session: session,
         node_id,

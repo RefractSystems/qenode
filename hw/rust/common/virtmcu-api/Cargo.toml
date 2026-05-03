@@ -5,8 +5,9 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
-[lints] 
-workspace = true 
+[lints.clippy]
+ref_as_ptr = "allow"
+elidable_lifetime_names = "allow"
 
 [dependencies]
 flatbuffers.workspace = true

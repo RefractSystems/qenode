@@ -50,26 +50,26 @@ echo "✓ DTB contains radio0 node with correct properties."
 # 4. Check coordinator build
 echo "Verifying coordinator..."
 COORDINATOR_BIN=""
-if command -v zenoh_coordinator >/dev/null 2>&1; then
-    COORDINATOR_BIN=$(command -v zenoh_coordinator)
+if command -v deterministic_coordinator >/dev/null 2>&1; then
+    COORDINATOR_BIN=$(command -v deterministic_coordinator)
     echo "Using pre-built coordinator from PATH."
-elif [ -f "target/release/zenoh_coordinator" ]; then
-    COORDINATOR_BIN="target/release/zenoh_coordinator"
+elif [ -f "target/release/deterministic_coordinator" ]; then
+    COORDINATOR_BIN="target/release/deterministic_coordinator"
     echo "Using workspace release coordinator."
-elif [ -f "target/debug/zenoh_coordinator" ]; then
-    COORDINATOR_BIN="target/debug/zenoh_coordinator"
+elif [ -f "target/debug/deterministic_coordinator" ]; then
+    COORDINATOR_BIN="target/debug/deterministic_coordinator"
     echo "Using workspace debug coordinator."
-elif [ -f "tools/zenoh_coordinator/target/release/zenoh_coordinator" ]; then
-    COORDINATOR_BIN="tools/zenoh_coordinator/target/release/zenoh_coordinator"
+elif [ -f "tools/deterministic_coordinator/target/release/deterministic_coordinator" ]; then
+    COORDINATOR_BIN="tools/deterministic_coordinator/target/release/deterministic_coordinator"
     echo "Using tool-specific release coordinator."
 else
     # Subshell to avoid changing the CWD of this script.
-    ( cd tools/zenoh_coordinator && cargo build -q --release )
-    COORDINATOR_BIN="tools/zenoh_coordinator/target/release/zenoh_coordinator"
+    ( cd tools/deterministic_coordinator && cargo build -q --release )
+    COORDINATOR_BIN="tools/deterministic_coordinator/target/release/deterministic_coordinator"
 fi
 # Verify the binary is executable and responds to --help.
 "$COORDINATOR_BIN" --help >/dev/null 2>&1 || "$COORDINATOR_BIN" --version >/dev/null 2>&1 || {
-    echo "ERROR: zenoh_coordinator at $COORDINATOR_BIN failed to execute." >&2
+    echo "ERROR: deterministic_coordinator at $COORDINATOR_BIN failed to execute." >&2
     exit 1
 }
 echo "✓ Coordinator is present and executable."

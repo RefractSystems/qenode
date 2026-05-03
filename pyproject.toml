@@ -106,19 +106,33 @@ module = [
     "Virtmcu.*",
     "virtmcu.*",
     "mmio_client.*",
-    "conftest",
     "zenoh.*",
     "pytest.*",
     "pytest_asyncio.*",
-    "robot.*",
     "pkg_resources.*",
 ]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "pydantic.*",
-    "httpx.*",
+    
     "mcp.*",
 ]
 follow_imports = "skip"
+[[tool.mypy.overrides]]
+module = ["tools.virtmcu.core.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ['tools.virtmcu.core.*']
+ignore_errors = true
+
+
+[tool.ruff.lint.per-file-ignores]
+"tools/testing/virtmcu_test_suite/generated.py" = ["N999", "E501", "UP007", "UP035"]
+
+
+[[tool.mypy.overrides]]
+module = ['tools.testing.virtmcu_test_suite.generated']
+ignore_errors = true
+

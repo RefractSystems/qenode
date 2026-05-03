@@ -19,6 +19,9 @@ We have successfully mitigated the most immediate "CRITICAL" failure modes:
 *   **Panic-Safe Mutexes**: Replaced `lock().unwrap()` with poison-recovery patterns across `clock`, `chardev`, and `netdev`. This prevents "silent" FFI-boundary corruption if a background thread panics.
 *   **BQL RAII Transition**: Migrated peripherals to `BqlGuarded<T>` and RAII guards, reducing the risk of manual BQL state-tracking errors.
 *   **Symbol Visibility (synchronization)**: Implemented `VirtMCU_export!` and CI linter checks for `#[no_mangle]` to prevent silent `dlopen` failures.
+*   **Zenoh Session Isolation**: Enforced client-mode isolation for Zenoh sessions in parallel tests, eliminating cross-talk races between pytest workers.
+*   **Deterministic Routing Sync**: Implemented `ensure_session_routing` to guarantee router-side propagation of declarations before emulation start, preventing "passes locally, fails in CI" races.
+*   **Coordinator Lookahead**: Enhanced the `DeterministicCoordinator` with arbitrary lookahead, allowing high-performance nodes to pre-calculate future quanta.
 
 ---
 

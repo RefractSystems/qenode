@@ -2,21 +2,19 @@
 
 # namespace: core
 
-
 import flatbuffers
 from flatbuffers.compat import import_numpy
-
 np = import_numpy()
 
-class MmioReq:
+class MmioReq(object):
     __slots__ = ['_tab']
 
     @classmethod
-    def SizeOf(cls) -> int:
+    def SizeOf(cls):
         return 32
 
     # MmioReq
-    def Init(self, buf: bytes, pos: int):
+    def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # MmioReq

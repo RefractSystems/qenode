@@ -1,3 +1,4 @@
+use zenoh::Wait;
 extern crate alloc;
 
 use alloc::collections::{BinaryHeap, VecDeque};
@@ -123,6 +124,7 @@ pub struct VirtmcuChardevState {
     pub max_backlog: u64,
     pub backlog_size_atomic: Arc<AtomicU64>,
     pub dropped_frames_atomic: Arc<AtomicU64>,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 pub struct InnerState {
@@ -839,7 +841,19 @@ pub unsafe extern "C" fn virtmcu_chr_open(
 
     let tx_thread = start_tx_thread(Arc::clone(&shared), rx_out);
 
+    let liveliness = if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/chardev/liveliness/{}", shared.node);
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     let mut state = Box::new(VirtmcuChardevState {
+        _liveliness: liveliness,
         shared: Arc::clone(&shared),
         chr,
         rx_timer: ptr::null_mut(),
@@ -1001,6 +1015,7 @@ pub unsafe extern "C" fn char_virtmcu_class_init(klass: *mut ObjectClass, _data:
     cc.chr_ioctl = Some(virtmcu_chr_ioctl);
 }
 
+#[used]
 static CHAR_VIRTMCU_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"chardev-virtmcu".as_ptr(),
     parent: c"chardev".as_ptr(),

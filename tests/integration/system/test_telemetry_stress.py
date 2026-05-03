@@ -12,18 +12,17 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    pass
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 @pytest.mark.asyncio
-async def test_telemetry_stress_queue(qemu_launcher: object, zenoh_router: str, tmp_path: Path) -> None:
+async def test_telemetry_stress_queue(simulation: Simulation, zenoh_router: str, tmp_path: Path) -> None:
     from tools.testing.env import WORKSPACE_ROOT
 
     workspace_root = WORKSPACE_ROOT
@@ -40,12 +39,9 @@ async def test_telemetry_stress_queue(qemu_launcher: object, zenoh_router: str, 
         cwd=workspace_root,
     )
 
-    bridge = await cast(Any, qemu_launcher)(
-        dtb,
-        extra_args=["-S"],  # Start paused
-    )
+    simulation.add_node(node_id=0, dtb=dtb)
 
-    await bridge.start_emulation()
-
-    status = await bridge.qmp.execute("query-status")
-    assert status["running"] is True
+    async with simulation as sim:
+        status = await sim.bridge.qmp.execute("query-status")
+        assert isinstance(status, dict)
+        assert status["running"] is True

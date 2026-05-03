@@ -1,0 +1,13 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <0x02>;
+    #size-cells = <0x02>;
+    compatible = "riscv-virtio";
+    cpus {
+        cpu@0 {
+            device_type = "cpu";
+            reg = <0x00>;
+        };
+    };
+};

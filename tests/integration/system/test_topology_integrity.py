@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_spi_topology_integrity(qemu_launcher: object, tmp_path: Path) -> None:
+async def test_spi_topology_integrity(inspection_bridge: object, tmp_path: Path) -> None:
     """
     Verify via QMP that child peripherals are correctly linked to their parent buses.
     """
@@ -30,29 +30,38 @@ async def test_spi_topology_integrity(qemu_launcher: object, tmp_path: Path) -> 
 
     workspace_root = WORKSPACE_ROOT
 
+    from tools.testing.virtmcu_test_suite.world_schema import (
+        MachineSpec,
+        WorldYaml,
+    )
+
     test_yaml = tmp_path / "test_spi_topology.yml"
-    with Path(test_yaml).open("w") as f:
-        f.write("""
-machine:
-  cpus:
-    - name: cpu0
-      type: cortex-a15
-peripherals:
-  - name: memory
-    type: Memory.MappedMemory
-    address: 0x40000000
-    properties:
-      size: 0x01000000
-  - name: spi0
-    type: SPI.PL022
-    address: 0x10000000
-    properties:
-      size: 0x1000
-  - name: my_spi_echo
-    type: spi-echo
-    parent: spi0
-    address: 0
-""")
+    world = WorldYaml(
+        machine=MachineSpec(
+            cpus=[{"name": "cpu0", "type": "cortex-a15"}],
+        ),
+        peripherals=[
+            {
+                "name": "memory",
+                "type": "Memory.MappedMemory",
+                "address": "0x40000000",
+                "properties": {"size": "0x01000000"},
+            },
+            {
+                "name": "spi0",
+                "type": "SPI.PL022",
+                "address": "0x10000000",
+                "properties": {"size": "0x1000"},
+            },
+            {
+                "name": "my_spi_echo",
+                "type": "spi-echo",
+                "parent": "spi0",
+                "address": 0,
+            },
+        ],
+    )
+    test_yaml.write_text(world.to_yaml())
     test_dtb = tmp_path / "test_spi_topology.dtb"
 
     subprocess.run(
@@ -62,7 +71,7 @@ peripherals:
     )
 
     # Boot QEMU
-    bridge = await cast(Any, qemu_launcher)(test_dtb, extra_args=["-S"])
+    bridge = await cast(Any, inspection_bridge)(test_dtb)
 
     # Find my_spi_echo. In arm-generic-fdt it's likely a child of its parent node.
     # Root nodes are named <name>@<address>.

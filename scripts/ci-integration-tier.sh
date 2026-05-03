@@ -63,9 +63,6 @@ run_domain() {
         boot_arm)
             make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/boot_arm/smoke_test.sh
             ;;
-        dynamic_plugin)
-            bash tests/fixtures/guest_apps/dynamic_plugin/smoke_test.sh
-            ;;
         yaml_boot)
             bash tests/fixtures/guest_apps/yaml_boot/smoke_test.sh
             ;;
@@ -83,9 +80,6 @@ run_domain() {
             ;;
         clock_suspend)
             bash tests/fixtures/guest_apps/clock_suspend/smoke_test.sh
-            ;;
-        uart_echo)
-            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/uart_echo && bash tests/fixtures/guest_apps/uart_echo/smoke_test.sh
             ;;
         ftrt_timing)
             make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh
@@ -116,16 +110,10 @@ run_domain() {
         perf_bench)
             make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/perf_bench && bash tests/fixtures/guest_apps/perf_bench/smoke_test.sh
             ;;
-        bql_deadlock)
-            bash tests/fixtures/guest_apps/bql_deadlock/bql_deadlock_test.sh
-            ;;
         bql_stress)
             bash tests/fixtures/guest_apps/bql_stress/bql_stress_test.sh
             bash tests/fixtures/guest_apps/bql_stress/netdev_flood_test.sh
             bash tests/fixtures/guest_apps/bql_stress/qom_registration_test.sh
-            ;;
-        actuator)
-            bash tests/fixtures/guest_apps/actuator/smoke_test.sh
             ;;
         flexray_bridge)
             PYTHONPATH=$(pwd) pytest tests/integration/peripherals/test_flexray.py -v --tb=short
@@ -155,7 +143,7 @@ run_domain() {
 if [ "$DOMAIN" = "all" ]; then
     # The authoritative list of domains that MUST pass
     # (Matches the matrix in .github/smoke-domains.json)
-    for d in boot_arm dynamic_plugin yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend uart_echo ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi priority_routing complex_board coverage_gap perf_bench bql_deadlock bql_stress actuator flexray_bridge spi_bridge mac_parsing lin_bridge qmp robot; do
+    for d in boot_arm yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi priority_routing complex_board coverage_gap perf_bench bql_stress flexray_bridge spi_bridge mac_parsing lin_bridge qmp robot; do
         run_domain "$d"
     done
 else

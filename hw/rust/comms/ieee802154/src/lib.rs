@@ -1,5 +1,6 @@
 // std is required: zenoh/tokio bring std
 //! Virtmcu 802.15.4 radio with pluggable transport.
+use zenoh::Wait;
 
 extern crate alloc;
 
@@ -74,6 +75,7 @@ pub struct Virtmcu802154State {
 
     // All state accessed exclusively under BQL; see BqlGuarded docs.
     inner: BqlGuarded<Virtmcu802154Inner>,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 struct Virtmcu802154Inner {
@@ -254,6 +256,7 @@ extern "C" fn ieee802154_class_init(klass: *mut ObjectClass, _data: *const c_voi
     virtmcu_qom::device_class_set_props!(dc, VIRTM_802154_PROPERTIES);
 }
 
+#[used]
 static VIRTM_802154_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"ieee802154".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
@@ -363,7 +366,19 @@ fn ieee802154_init_internal(
         tx_sequence: 0,
     };
 
+    let liveliness = if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/ieee802154/liveliness/{node_id}");
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     let state = Virtmcu802154State {
+        _liveliness: liveliness,
         parent_ptr: parent,
         irq,
         transport,

@@ -10,6 +10,7 @@ crate-type = ["staticlib"]
 [lints] 
 workspace = true 
 [dependencies]
+zenoh.workspace = true
 virtmcu-api.workspace = true
 transport-zenoh.workspace = true
 virtmcu-qom.workspace = true
