@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from tools import vproto
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
 from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
@@ -54,41 +55,30 @@ async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session,
     world_yaml.write_text(world.to_yaml())
 
     async def run_simulation(pcap_path: Path) -> None:
-        msg_payload_eth = b"ETH"
-        # Coordinator expects: num_msgs(4) + [src(4), dst(4), vtime(8), seq(8), proto(1), len(4), payload]
-        msg_eth = (
-            (1).to_bytes(4, "little")
-            + (0).to_bytes(4, "little")
-            + (1).to_bytes(4, "little")
-            + (1000).to_bytes(8, "little")
-            + (1).to_bytes(8, "little")
-            + (0).to_bytes(1, "little")
-            + len(msg_payload_eth).to_bytes(4, "little")
-            + msg_payload_eth
+        msg_eth = vproto.CoordMessage(
+            src_node_id=0,
+            dst_node_id=1,
+            delivery_vtime_ns=1000,
+            sequence_number=1,
+            protocol=0,  # Ethernet
+            payload=b"ETH",
         )
-        msg_payload_uart1 = b"UART1"
-        msg_uart1 = (
-            (1).to_bytes(4, "little")
-            + (0).to_bytes(4, "little")
-            + (1).to_bytes(4, "little")
-            + (2000).to_bytes(8, "little")
-            + (2).to_bytes(8, "little")
-            + (1).to_bytes(1, "little")
-            + len(msg_payload_uart1).to_bytes(4, "little")
-            + msg_payload_uart1
+        msg_uart1 = vproto.CoordMessage(
+            src_node_id=0,
+            dst_node_id=1,
+            delivery_vtime_ns=2000,
+            sequence_number=2,
+            protocol=1,  # Uart
+            payload=b"UART1",
         )
-        msg_payload_uart2 = b"UART2"
-        msg_uart2 = (
-            (1).to_bytes(4, "little")
-            + (1).to_bytes(4, "little")
-            + (0).to_bytes(4, "little")
-            + (3000).to_bytes(8, "little")
-            + (3).to_bytes(8, "little")
-            + (1).to_bytes(1, "little")
-            + len(msg_payload_uart2).to_bytes(4, "little")
-            + msg_payload_uart2
+        msg_uart2 = vproto.CoordMessage(
+            src_node_id=1,
+            dst_node_id=0,
+            delivery_vtime_ns=3000,
+            sequence_number=3,
+            protocol=1,  # Uart
+            payload=b"UART2",
         )
-
         loop = asyncio.get_running_loop()
         quantum_event = asyncio.Event()
 
@@ -138,19 +128,20 @@ async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session,
                 ],
                 zenoh_session=zenoh_session,
                 liveliness_topic=SimTopic.COORD_ALIVE,
+                env={"RUST_LOG": "debug"},
             ):
                 q = 1
+                u64_max = 0xFFFFFFFFFFFFFFFF
                 while len(rx_received) < 3 and q < 10:
-                    # Pack TX for node 0 and node 1 into quantum 1 DONE
-                    payload0 = q.to_bytes(8, "little")
-                    payload1 = q.to_bytes(8, "little")
                     if q == 1:
-                        # Combine msg_eth and msg_uart1 into a single batch of 2 messages
-                        payload0 += (2).to_bytes(4, "little") + msg_eth[4:] + msg_uart1[4:]
-                        payload1 += msg_uart2
+                        done0 = vproto.CoordDoneReq(quantum=q, vtime_limit=u64_max, messages=[msg_eth, msg_uart1])
+                        done1 = vproto.CoordDoneReq(quantum=q, vtime_limit=u64_max, messages=[msg_uart2])
+                    else:
+                        done0 = vproto.CoordDoneReq(quantum=q, vtime_limit=u64_max, messages=[])
+                        done1 = vproto.CoordDoneReq(quantum=q, vtime_limit=u64_max, messages=[])
 
-                    await asyncio.to_thread(pub0.put, payload0)
-                    await asyncio.to_thread(pub1.put, payload1)
+                    await asyncio.to_thread(pub0.put, done0.pack())
+                    await asyncio.to_thread(pub1.put, done1.pack())
 
                     try:
                         await asyncio.wait_for(rx_event.wait(), timeout=0.2)

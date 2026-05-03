@@ -92,7 +92,7 @@ In `slaved-suspend`, virtual time advances during WFI. Quantum boundaries still 
 - **MMIO Delivery**: `mmio-socket-bridge` delivers **relative offsets**. Do NOT add the base address.
 - **DTB Validation**: `yaml2qemu` validates all YAML peripherals are in the DTB — missing entries fail the build.
 - **SysBus Mapping**: `-device`-only devices are NOT mapped into guest memory → Data Abort. Declare in YAML.
-- **Topology-First**: full graph in `topology:` YAML before start. Coordinator rejects unlisted connections (logged as violations). Topology changes pushed by physics engine, not discovered.
+- **Topology-First**: full graph in `topology:` YAML before start. Coordinator rejects unlisted connections (logged as violations). Topology changes pushed by physics engine, not discovered. See [Chapter 10: World Specification](docs/architecture/10-world-specification.md).
 - **Clock/Comms Separation**: clock sync (`ClockSyncTransport`) and emulated network (`DeterministicCoordinator`) use separate transports. Never mix.
 
 ---

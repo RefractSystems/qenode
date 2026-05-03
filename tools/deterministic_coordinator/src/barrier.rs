@@ -451,3 +451,50 @@ mod tests {
         assert_eq!(result[1023].delivery_vtime_ns, 1023);
     }
 }
+#[cfg(test)]
+pub mod extra_tests {
+    use super::*;
+    use crate::topology::Protocol;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn test_concurrent_submit_done() {
+        let n_nodes = 3;
+        let barrier = Arc::new(QuantumBarrier::new(n_nodes, 10));
+
+        let mut handles = vec![];
+        for node_id in 0..n_nodes {
+            let barrier_clone = barrier.clone();
+            handles.push(thread::spawn(move || {
+                let msg = CoordMessage {
+                    src_node_id: node_id as u32,
+                    dst_node_id: 0,
+                    delivery_vtime_ns: 10,
+                    sequence_number: 1,
+                    protocol: Protocol::Uart,
+                    payload: vec![1, 2, 3],
+                    base_topic: None,
+                };
+                barrier_clone
+                    .submit_done(node_id as u32, 0, 0, vec![msg])
+                    .unwrap()
+            }));
+        }
+
+        let mut all_msgs = None;
+        let mut none_count = 0;
+        for handle in handles {
+            let res = handle.join().unwrap();
+            if let Some(msgs) = res {
+                all_msgs = Some(msgs);
+            } else {
+                none_count += 1;
+            }
+        }
+
+        assert_eq!(none_count, n_nodes - 1);
+        let msgs = all_msgs.unwrap();
+        assert_eq!(msgs.len(), n_nodes);
+    }
+}

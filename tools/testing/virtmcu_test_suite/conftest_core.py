@@ -181,6 +181,12 @@ class ManagedSubprocess:
         self._stdout_task = asyncio.create_task(self._stream_output(self.proc.stdout, "stdout"))
         self._stderr_task = asyncio.create_task(self._stream_output(self.proc.stderr, "stderr"))
 
+    @property
+    def returncode(self) -> int | None:
+        if self.proc:
+            return self.proc.returncode
+        return None
+
     async def _stream_output(self, reader: asyncio.StreamReader | None, label: str) -> None:
         if not reader:
             return
@@ -611,13 +617,14 @@ async def coordinator_subprocess(
     args: list[str],
     zenoh_session: zenoh.Session,
     liveliness_topic: str = SimTopic.COORD_ALIVE,
+    env: dict[str, str] | None = None,
 ) -> AsyncGenerator[ManagedSubprocess]:
     """
     SOTA spawn-and-barrier helper for tests that drive a Rust coordinator
     subprocess directly (no QEMU, no Simulation framework).
     """
     cmd = [str(binary), *args]
-    async with ManagedSubprocess("coordinator", cmd) as proc:
+    async with ManagedSubprocess("coordinator", cmd, env=env) as proc:
         await wait_for_zenoh_discovery(zenoh_session, liveliness_topic)
         await ensure_session_routing(zenoh_session)
         yield proc
@@ -631,7 +638,7 @@ async def deterministic_coordinator(
     Fixture that starts the deterministic_coordinator.
     """
     params = getattr(request, "param", {})
-    n_nodes = params.get("nodes", 3)
+    n_nodes = params.get("nodes", 3)  # LINT_EXCEPTION: fixture_param
 
     workspace_root = WORKSPACE_DIR
 
@@ -661,7 +668,7 @@ async def deterministic_coordinator(
         # Refresh location after build
         coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
 
-    topology = params.get("topology", None)
+    topology = params.get("topology", None)  # LINT_EXCEPTION: fixture_param
     pdes = params.get("pdes", False)
 
     logger.info(

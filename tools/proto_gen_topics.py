@@ -59,6 +59,13 @@ def generate_rust(config: dict[str, Any]) -> str:
     lines.append("}")
     lines.append("")
 
+    lines.append("pub const ALL_LEGACY_TX_WILDCARDS: &[&str] = &[")
+    for name in config["wildcard"]:
+        if name.endswith("_TX_WILDCARD") and name != "COORD_TX_WILDCARD":
+            lines.append(f"    wildcard::{name},")
+    lines.append("];")
+    lines.append("")
+
     lines.append("pub mod templates {")
     for name, value in config["templates"].items():
         val = (

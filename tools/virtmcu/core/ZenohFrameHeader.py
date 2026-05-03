@@ -2,21 +2,19 @@
 
 # namespace: core
 
-
 import flatbuffers
 from flatbuffers.compat import import_numpy
-
 np = import_numpy()
 
-class ZenohFrameHeader:
+class ZenohFrameHeader(object):
     __slots__ = ['_tab']
 
     @classmethod
-    def SizeOf(cls) -> int:
+    def SizeOf(cls):
         return 24
 
     # ZenohFrameHeader
-    def Init(self, buf: bytes, pos: int):
+    def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # ZenohFrameHeader

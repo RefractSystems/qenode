@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,12 +92,17 @@ uart0: UART.PL011 @ sysbus 0x09000000
 
     migrate(str(repl_file), str(yaml_file))
 
+    from tools.testing.virtmcu_test_suite.world_schema import WorldYaml
+
     assert Path(yaml_file).exists()
     with Path(yaml_file).open() as f:
-        data = yaml.safe_load(f)
-        assert data["machine"]["cpus"][0]["name"] == "cpu"
-        assert data["peripherals"][0]["name"] == "uart0"
-        assert data["peripherals"][0]["address"] == "0x09000000"
+        world = WorldYaml.from_text(f.read())
+        assert world.machine is not None
+        assert world.machine.cpus is not None
+        assert world.machine.cpus[0]["name"] == "cpu"
+        assert world.peripherals is not None
+        assert world.peripherals[0]["name"] == "uart0"
+        assert world.peripherals[0]["address"] == "0x09000000"
 
 
 def test_repl2yaml_main(tmp_path: Path) -> None:
