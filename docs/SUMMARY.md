@@ -43,12 +43,11 @@
   - [19: Cyber-Physical Integration: Bridging the Gap](architecture/07-cyber-physical-integration.md)
   - [20: Co-simulation Strategies: SAL and AAL](tutorials/lesson10-sal-aal/README.md)
   - [21: Observability & AI-Augmented Debugging](architecture/08-observability-and-ai.md)
-  - [Advanced Lab Series]
-    - [Multi-Node Networking](tutorials/lesson6-multi-node/README.md)
-    - [Zenoh Clock Synchronization](tutorials/lesson7-zenoh-clock/README.md)
-    - [Interactive UART Communication](tutorials/lesson8-interactive-uart/README.md)
-    - [SystemC & CAN Bus Integration](tutorials/lesson9-systemc-can/README.md)
-    - [Remote Port Extensions](tutorials/lesson11.3-remote-port/README.md)
+  - [Multi-Node Networking](tutorials/lesson6-multi-node/README.md)
+  - [Zenoh Clock Synchronization](tutorials/lesson7-zenoh-clock/README.md)
+  - [Interactive UART Communication](tutorials/lesson8-interactive-uart/README.md)
+  - [SystemC & CAN Bus Integration](tutorials/lesson9-systemc-can/README.md)
+  - [Remote Port Extensions](tutorials/lesson11.3-remote-port/README.md)
 
 - [Part VI: Production Readiness & Postmortems](guide/volume-vi-intro.md)
   - [The Testing Strategy: From Unit to Integration](guide/03-testing-strategy.md)
