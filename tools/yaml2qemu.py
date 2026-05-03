@@ -13,10 +13,10 @@ import sys
 from pathlib import Path
 
 import fdt
-import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
+from .testing.virtmcu_test_suite.world_schema import WorldYaml
 
 #!/usr/bin/env python3
 
@@ -37,122 +37,101 @@ if __name__ == "__main__":
 def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, object]]:
 
     with Path(yaml_path).open() as f:
-        data = yaml.safe_load(f)
+        content = f.read()
+    
+    try:
+        world = WorldYaml.from_text(content)
+    except Exception as e:
+        raise ValueError(f"Topology validation failed: {e}") from e
 
-    # Hardening: Check for unknown top-level keys to prevent silent failures
-    known_keys = {"machine", "peripherals", "memory", "include", "nodes", "topology"}
-    for key in data:
-        if key not in known_keys:
-            logger.warning(f"Warning: Unknown top-level key '{key}' in {yaml_path}. It will be ignored.")
+    valid_node_ids = world.get_node_ids()
 
     # Validate topology if present
-    topology = data.get("topology")
-    if topology:
-        nodes = data.get("nodes", [])
-        valid_node_ids = set()
-
-        # If nodes is a list of dicts, extract 'id' or 'name'. If it's a list of ints/strings, use them.
-        for node in nodes:
-            if isinstance(node, dict) and "id" in node:
-                valid_node_ids.add(str(node["id"]))
-            elif isinstance(node, (int, str)):
-                valid_node_ids.add(str(node))
-
-        # Validate global_seed
-        seed = topology.get("global_seed", 0)
-        if not isinstance(seed, int) or seed < 0:
-            raise ValueError(f"Topology validation failed: global_seed must be a non-negative integer, got {seed}")
-
-        # Validate max_messages_per_node_per_quantum
-        max_msgs = topology.get("max_messages_per_node_per_quantum", 1024)
-        if not isinstance(max_msgs, int) or max_msgs < 1:
-            raise ValueError(
-                f"Topology validation failed: max_messages_per_node_per_quantum must be a positive integer, got {max_msgs}"
-            )
-
+    if world.topology:
         # Validate links
-        for link in topology.get("links", []):
-            for node_id in link.get("nodes", []):
+        for link in world.topology.links:
+            for node_id in link.nodes:
                 if str(node_id) not in valid_node_ids:
-                    raise ValueError(f"Topology validation failed: node ID {node_id} in links not found in nodes:")
+                    raise ValueError(f"Topology validation failed: node ID {node_id} in links not found in nodes")
 
         # Validate wireless
-        wireless = topology.get("wireless", {})
-        for w_node in wireless.get("nodes", []):
-            node_id = w_node.get("id")
-            if str(node_id) not in valid_node_ids:
-                raise ValueError(f"Topology validation failed: node ID {node_id} in wireless nodes not found in nodes:")
+        if world.topology.wireless:
+            for w_node in world.topology.wireless.nodes:
+                if str(w_node.name) not in valid_node_ids:
+                    raise ValueError(f"Topology validation failed: node ID {w_node.name} in wireless nodes not found in nodes")
 
     platform = ReplPlatform()
 
     # 1. Map CPUs
-    for cpu in data.get("machine", {}).get("cpus", []):
-        cpu_type = cpu["type"]
-        internal_type = "CPU.ARMv7A"
-        if "riscv" in cpu_type.lower():
-            internal_type = "CPU.RISCV64"
+    if world.machine and world.machine.cpus:
+        for cpu in world.machine.cpus:
+            cpu_type = cpu["type"]
+            internal_type = "CPU.ARMv7A"
+            if "riscv" in cpu_type.lower():
+                internal_type = "CPU.RISCV64"
 
-        dev = ReplDevice.create(
-            name=cpu["name"],
-            type_name=internal_type,
-            address_str="sysbus",
-        )
-        dev.properties["cpuType"] = cpu_type
-        if internal_type == "CPU.RISCV64":
-            if "isa" in cpu:
-                dev.properties["isa"] = cpu["isa"]
-            if "mmu-type" in cpu:
-                dev.properties["mmu-type"] = cpu["mmu-type"]
+            dev = ReplDevice.create(
+                name=cpu["name"],
+                type_name=internal_type,
+                address_str="sysbus",
+            )
+            dev.properties["cpuType"] = cpu_type
+            if internal_type == "CPU.RISCV64":
+                if "isa" in cpu:
+                    dev.properties["isa"] = cpu["isa"]
+                if "mmu-type" in cpu:
+                    dev.properties["mmu-type"] = cpu["mmu-type"]
 
-        platform.devices.append(dev)
+            platform.devices.append(dev)
 
     # 2. Map Memory
-    # Support a dedicated 'memory' section to avoid requiring 'Memory.MappedMemory' type in peripherals.
-    for m in data.get("memory", []):
-        addr_val = m.get("address", 0)
-        address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
+    if world.memory:
+        for m in world.memory:
+            addr_val = m.get("address", 0)
+            address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
-        # properties must be dict[str, str] for ReplDevice, but we support ints in YAML
-        size = m.get("size", 0)
-        size_str = hex(size) if isinstance(size, int) else str(size)
+            size = m.get("size", 0)
+            size_str = hex(size) if isinstance(size, int) else str(size)
 
-        dev = ReplDevice.create(
-            name=m["name"],
-            type_name="Memory.MappedMemory",
-            address_str=address_str,
-        )
-        dev.properties["size"] = size_str
-        platform.devices.append(dev)
+            dev = ReplDevice.create(
+                name=m["name"],
+                type_name="Memory.MappedMemory",
+                address_str=address_str,
+            )
+            dev.properties["size"] = size_str
+            platform.devices.append(dev)
 
     # 3. Map Peripherals
-    for p in data.get("peripherals", []):
-        # Support both 'renode_type' (for migrated files) or 'type' (for native ones)
-        type_name = p.get("type") or p.get("renode_type", "Unknown")
+    if world.peripherals:
+        for p in world.peripherals:
+            # Support both 'renode_type' (for migrated files) or 'type' (for native ones)
+            type_name = p.get("type") or p.get("renode_type", "Unknown")
 
-        addr_val = p.get("address", "none")
-        address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
+            addr_val = p.get("address", "none")
+            address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
-        dev = ReplDevice.create(
-            name=p["name"],
-            type_name=type_name,
-            address_str=address_str,
-            parent=p.get("parent"),
-        )
-        dev.properties = p.get("properties", {})
+            dev = ReplDevice.create(
+                name=p["name"],
+                type_name=type_name,
+                address_str=address_str,
+                parent=p.get("parent"),
+            )
+            dev.properties = p.get("properties", {})
 
-        # Parse interrupts if they exist
-        for irq_entry in p.get("interrupts", []):
-            if isinstance(irq_entry, int):
-                # Native YAML format: just the IRQ number
-                dev.interrupts.append(ReplInterrupt("0", "none", str(irq_entry)))
-            elif isinstance(irq_entry, str) and "@" in irq_entry:
-                # Legacy repl2yaml format: target@line
-                target, line = irq_entry.split("@")
-                dev.interrupts.append(ReplInterrupt("0", target, line))
+            # Parse interrupts if they exist
+            for irq_entry in p.get("interrupts", []):
+                if isinstance(irq_entry, int):
+                    # Native YAML format: just the IRQ number
+                    dev.interrupts.append(ReplInterrupt("0", "none", str(irq_entry)))
+                elif isinstance(irq_entry, str) and "@" in irq_entry:
+                    # Legacy repl2yaml format: target@line
+                    target, line = irq_entry.split("@")
+                    dev.interrupts.append(ReplInterrupt("0", target, line))
 
-        platform.devices.append(dev)
+            platform.devices.append(dev)
 
     return platform, {}
+
 
 
 def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:

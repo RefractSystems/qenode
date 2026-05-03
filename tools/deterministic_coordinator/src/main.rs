@@ -240,23 +240,11 @@ async fn run_deterministic_coordinator(
         .await
         .map_err(|e| format!("Failed to open Zenoh session: {}", e))?;
 
-    let legacy_tx_topics = vec![
-        deterministic_coordinator::topics::wildcard::ETH_FRAME_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::SIM_UART_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::VIRTM_UART_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::VIRTM_UART_PORT_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::CAN_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::LIN_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::SPI_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::RF_IEEE802154_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::RF_HCI_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::CHARDEV_TX_WILDCARD,
-        deterministic_coordinator::topics::wildcard::NETDEV_TX_WILDCARD,
-    ];
+    let legacy_tx_topics = deterministic_coordinator::topics::ALL_LEGACY_TX_WILDCARDS;
 
     let (tx_chan, mut rx_chan) = tokio::sync::mpsc::unbounded_channel();
     let mut _subs = Vec::new();
-    for topic in &legacy_tx_topics {
+    for topic in legacy_tx_topics {
         let tx = tx_chan.clone();
         let sub = session
             .declare_subscriber(*topic)
@@ -421,26 +409,46 @@ async fn run_deterministic_coordinator(
                     if let Ok(node_id) = parts[2].parse::<u32>() {
                         seen_nodes.insert(node_id);
                         let payload = sample.payload().to_bytes();
-                        let mut quantum = u64::MAX;
-                        let mut vtime_limit = u64::MAX;
-                        let mut batched_msgs = Vec::new();
-                        if payload.len() >= 8 {
-                            let mut cursor = Cursor::new(&payload);
-                            quantum = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                        tracing::debug!("DONE payload (len {}): {:02x?}", payload.len(), &payload[..std::cmp::min(16, payload.len())]);
 
-                            // Check for vtime_limit in the 16-byte DONE format
-                            if payload.len() >= 16 {
-                                vtime_limit = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                        let (quantum, vtime_limit, mut batched_msgs) = if let Ok(req) = flatbuffers::root::<virtmcu_api::CoordDoneReq>(&payload) {
+                            let mut msgs = Vec::new();
+                            if let Some(fb_msgs) = req.messages() {
+                                for i in 0..fb_msgs.len() {
+                                    let m = fb_msgs.get(i);
+                                    msgs.push(CoordMessage {
+                                        src_node_id: m.src_node_id(),
+                                        dst_node_id: m.dst_node_id(),
+                                        delivery_vtime_ns: m.delivery_vtime_ns(),
+                                        sequence_number: m.sequence_number(),
+                                        protocol: parse_protocol(m.protocol().0),
+                                        payload: m.payload().map(|p| p.bytes().to_vec()).unwrap_or_default(),
+                                        base_topic: None,
+                                    });
+                                }
                             }
+                            (req.quantum(), req.vtime_limit(), msgs)
+                        } else {
+                            // Legacy fallback (8-byte or 16-byte raw)
+                            let mut q = u64::MAX;
+                            let mut vtl = u64::MAX;
+                            let mut msgs = Vec::new();
+                            if payload.len() >= 8 {
+                                let mut cursor = Cursor::new(&payload);
+                                q = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                if payload.len() >= 16 {
+                                    vtl = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                    if payload.len() > 16 {
+                                        msgs = decode_batch(&payload[16..]);
+                                    }
+                                } else if payload.len() > 8 {
+                                    msgs = decode_batch(&payload[8..]);
+                                }
+                            }
+                            (q, vtl, msgs)
+                        };
 
-                            tracing::info!("Received DONE from node {} for quantum {} (vtime_limit: {})", node_id, quantum, vtime_limit);
-                            if payload.len() > 16 {
-                                batched_msgs = decode_batch(&payload[16..]);
-                            } else if payload.len() > 8 && payload.len() < 16 {
-                                // Legacy path for messages batched after 8-byte quantum
-                                batched_msgs = decode_batch(&payload[8..]);
-                            }
-                        }
+                        tracing::info!("Received DONE from node {} for quantum {} (vtime_limit: {}, {} batched msgs)", node_id, quantum, vtime_limit, batched_msgs.len());
 
                         let msgs = node_batches.remove(&node_id).unwrap_or_default();
                         let (mut current_msgs, future_msgs): (Vec<CoordMessage>, Vec<CoordMessage>) = msgs.into_iter().partition(|m| m.delivery_vtime_ns <= vtime_limit);

@@ -219,7 +219,9 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
     receives 'start', without the coordinator dropping it due to a race condition with
     QuantumBarrier.reset().
     """
+    from tools import vproto
     from tools.testing.virtmcu_test_suite.topics import SimTopic
+
 
     s = zenoh_session
     done_topic = SimTopic.coord_done(0)
@@ -235,10 +237,10 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
         nonlocal quanta_completed
         # INSTANTLY reply 'done' with the same quantum
         # If the coordinator reset race exists, it drops this because it hasn't reset yet!
-        s.put(done_topic, sample.payload.to_bytes())
+        q = int.from_bytes(sample.payload.to_bytes(), "little")
+        s.put(done_topic, vproto.CoordDoneReq(quantum=q, vtime_limit=0xFFFFFFFFFFFFFFFF, messages=[]).pack())
         quanta_completed += 1
         loop.call_soon_threadsafe(start_event.set)
-
     # Declare subscriber BEFORE entering the coordinator context — the framework's
     # routing barrier inside coordinator_subprocess covers it.
     sub = s.declare_subscriber(start_topic, on_start)
@@ -250,8 +252,7 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
             zenoh_session=s,
         ):
             # Kickstart the coordinator
-            s.put(SimTopic.coord_done(0), (1).to_bytes(8, "little"))
-
+            s.put(SimTopic.coord_done(0), vproto.CoordDoneReq(quantum=1, vtime_limit=0xFFFFFFFFFFFFFFFF, messages=[]).pack())
             # Wait for 100 quanta to fly by. If a race exists, this hangs.
             async with asyncio.timeout(5.0):
                 while quanta_completed < max_quanta:

@@ -9,6 +9,7 @@ from __future__ import annotations
 #
 # Prefer using this module over manual struct packing and unpacking.
 # =============================================================================
+import logging
 from dataclasses import dataclass
 
 import flatbuffers
@@ -17,6 +18,26 @@ from tools.virtmcu.core.ClockAdvanceReq import ClockAdvanceReq as FBClockAdvance
 from tools.virtmcu.core.ClockAdvanceReq import CreateClockAdvanceReq
 from tools.virtmcu.core.ClockReadyResp import ClockReadyResp as FBClockReadyResp
 from tools.virtmcu.core.ClockReadyResp import CreateClockReadyResp
+from tools.virtmcu.core.CoordDoneReq import CoordDoneReq as FBCoordDoneReq
+from tools.virtmcu.core.CoordDoneReq import (
+    CoordDoneReqAddMessages,
+    CoordDoneReqAddQuantum,
+    CoordDoneReqAddVtimeLimit,
+    CoordDoneReqEnd,
+    CoordDoneReqStart,
+    CoordDoneReqStartMessagesVector,
+)
+from tools.virtmcu.core.CoordMessage import CoordMessage as FBCoordMessage
+from tools.virtmcu.core.CoordMessage import (
+    CoordMessageAddDeliveryVtimeNs,
+    CoordMessageAddDstNodeId,
+    CoordMessageAddPayload,
+    CoordMessageAddProtocol,
+    CoordMessageAddSequenceNumber,
+    CoordMessageAddSrcNodeId,
+    CoordMessageEnd,
+    CoordMessageStart,
+)
 from tools.virtmcu.core.MmioReq import CreateMmioReq
 from tools.virtmcu.core.MmioReq import MmioReq as FBMmioReq
 from tools.virtmcu.core.SyscMsg import CreateSyscMsg
@@ -27,6 +48,8 @@ from tools.virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
 from tools.virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
 from tools.virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
 from tools.virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
+
+logger = logging.getLogger(__name__)
 
 VIRTMCU_PROTO_MAGIC = 1447904085
 VIRTMCU_PROTO_VERSION = 1
@@ -189,3 +212,82 @@ class ZenohSPIHeader:
         b = flatbuffers.Builder(32)
         CreateZenohSpiheader(b, self.delivery_vtime_ns, self.sequence_number, self.size, self.cs, self.cs_index, 0)
         return bytes(b.Bytes[b.Head() :])
+
+
+@dataclass
+class CoordMessage:
+    src_node_id: int
+    dst_node_id: int
+    delivery_vtime_ns: int
+    sequence_number: int
+    protocol: int
+    payload: bytes
+
+    @classmethod
+    def unpack(cls, data: bytes) -> CoordMessage:
+        fb = FBCoordMessage.GetRootAs(data, 0)  # type: ignore[no-untyped-call]
+        payload = bytes(fb.Payload(i) for i in range(fb.PayloadLength()))
+        return cls(
+            fb.SrcNodeId(),
+            fb.DstNodeId(),
+            fb.DeliveryVtimeNs(),
+            fb.SequenceNumber(),
+            fb.Protocol(),
+            payload,
+        )
+
+    def _pack_to_builder(self, b: flatbuffers.Builder) -> int:
+        payload_offset = b.CreateByteVector(self.payload)
+        CoordMessageStart(b)  # type: ignore[no-untyped-call]
+        CoordMessageAddSrcNodeId(b, self.src_node_id)  # type: ignore[no-untyped-call]
+        CoordMessageAddDstNodeId(b, self.dst_node_id)  # type: ignore[no-untyped-call]
+        CoordMessageAddDeliveryVtimeNs(b, self.delivery_vtime_ns)  # type: ignore[no-untyped-call]
+        CoordMessageAddSequenceNumber(b, self.sequence_number)  # type: ignore[no-untyped-call]
+        CoordMessageAddProtocol(b, self.protocol)  # type: ignore[no-untyped-call]
+        CoordMessageAddPayload(b, payload_offset)  # type: ignore[no-untyped-call]
+        return CoordMessageEnd(b)  # type: ignore[no-untyped-call, no-any-return]
+
+
+@dataclass
+class CoordDoneReq:
+    quantum: int
+    vtime_limit: int
+    messages: list[CoordMessage]
+
+    @classmethod
+    def unpack(cls, data: bytes) -> CoordDoneReq:
+        fb = FBCoordDoneReq.GetRootAs(data, 0)  # type: ignore[no-untyped-call]
+        msgs = []
+        for i in range(fb.MessagesLength()):
+            m_fb = fb.Messages(i)
+            payload = bytes(m_fb.Payload(j) for j in range(m_fb.PayloadLength()))
+            msgs.append(
+                CoordMessage(
+                    m_fb.SrcNodeId(),
+                    m_fb.DstNodeId(),
+                    m_fb.DeliveryVtimeNs(),
+                    m_fb.SequenceNumber(),
+                    m_fb.Protocol(),
+                    payload,
+                )
+            )
+        return cls(fb.Quantum(), fb.VtimeLimit(), msgs)
+
+    def pack(self) -> bytes:
+        b = flatbuffers.Builder(1024)
+        msg_offsets: list[int] = []
+        for m in reversed(self.messages):
+            msg_offsets.insert(0, m._pack_to_builder(b))
+
+        CoordDoneReqStartMessagesVector(b, len(msg_offsets))  # type: ignore[no-untyped-call]
+        for offset in reversed(msg_offsets):
+            b.PrependUOffsetTRelative(offset)
+        messages_vector = b.EndVector()
+
+        CoordDoneReqStart(b)  # type: ignore[no-untyped-call]
+        CoordDoneReqAddQuantum(b, self.quantum)  # type: ignore[no-untyped-call]
+        CoordDoneReqAddVtimeLimit(b, self.vtime_limit)  # type: ignore[no-untyped-call]
+        CoordDoneReqAddMessages(b, messages_vector)  # type: ignore[no-untyped-call]
+        res = CoordDoneReqEnd(b)  # type: ignore[no-untyped-call]
+        b.Finish(res)
+        return b.Output()  # type: ignore[no-any-return]

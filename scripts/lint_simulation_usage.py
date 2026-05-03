@@ -157,6 +157,35 @@ def lint_file(path: Path) -> list[str]:
                                 "The framework (Simulation or inspection_bridge) handles this."
                             )
 
+        # Rule 5: Ban raw string lookups for YAML keys (peripherals, topology, etc.)
+        # This enforces usage of the Pydantic WorldYaml model.
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                val = node.slice.value
+                if val in ("peripherals", "topology", "machine", "memory", "nodes"):
+                    if path.name not in ("world_schema.py", "yaml2qemu.py"):
+                        with path.open("r") as f:
+                            lines = f.readlines()
+                        if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
+                            violations.append(
+                                f"{path}:{node.lineno}: Banned raw string lookup for YAML key '{val}'. "
+                                "Use the `WorldYaml` Pydantic model from "
+                                "`tools.testing.virtmcu_test_suite.world_schema` instead."
+                            )
+
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                val = node.args[0].value
+                if val in ("peripherals", "topology", "machine", "memory", "nodes"):
+                    if path.name not in ("world_schema.py", "yaml2qemu.py"):
+                        with path.open("r") as f:
+                            lines = f.readlines()
+                        if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
+                            violations.append(
+                                f"{path}:{node.lineno}: Banned .get('{val}') for YAML key. "
+                                "Use the `WorldYaml` Pydantic model instead."
+                            )
+
     return violations
 
 

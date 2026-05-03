@@ -339,9 +339,9 @@ lint-python:
 	@echo "==> Check for banned sleep calls (asyncio.sleep / time.sleep)..."
 	@violations=$$(grep -rnE "(asyncio|time)\.sleep\(" tests/ tools/ docs/tutorials/ | grep -v "SLEEP_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
-	        echo "❌ ERROR: Banned sleep call found in tests/tools/tutorials (use vta.step or transport signaling instead):"; \
-	        echo "$$violations"; \
-	        exit 1; \
+		echo "❌ ERROR: Banned sleep call found in tests/tools/tutorials (use vta.step or transport signaling instead):"; \
+		echo "$$violations"; \
+		exit 1; \
 	fi
 	@echo "==> Check for raw zenoh.open() in pytest scope (must use make_client_config / zenoh_session fixture)..."
 	@# Default zenoh.Config() opens in peer mode with multicast scouting enabled,
@@ -410,10 +410,9 @@ lint-simulation-usage:
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
-	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*" \
+	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json" \
 		--ignore-words-list="virtmcu,zenoh,qemu,qmp,riscv,TE" .
 	@echo "✓ codespell passed."
-
 
 # Run shellcheck on all bash scripts
 lint-shell:
@@ -448,9 +447,8 @@ lint-actions:
 # Run yamllint on YAML configuration files
 lint-yaml:
 	@echo "==> yamllint..."
-	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*")
+	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*" -not -path "*/schema/node_modules/*")
 	@echo "✓ yamllint passed."
-
 # Run mypy static type checking
 lint-python-types:
 	@echo "==> mypy..."
@@ -505,10 +503,10 @@ lint-rust:
 	@# To add an exception: append the comment on the same line as the sleep call.
 	@violations=$$(grep -rn "thread::sleep" hw/rust/ --include="*.rs" | grep -v "SLEEP_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
-	        echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
-	        echo "$$violations"; \
-	        echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
-	        exit 1; \
+		echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
+		echo "$$violations"; \
+		echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
+		exit 1; \
 	fi
 	@echo "==> Checking for stale QEMU plugins..."
 	@uv run --active python3 scripts/check-stale-so.py
@@ -768,8 +766,7 @@ ci-local:
 		-v "$(CURDIR):/workspace" \
 		-v ci-cargo-registry:/usr/local/cargo/registry \
 		-w /workspace \
-		$(DEVENV_BASE_IMG) bash -c "make lint && make build-tools && make test-unit"
-	@echo ""
+		$(DEVENV_BASE_IMG) bash -c "make lint && ./scripts/check_schemas.sh && make build-tools && make test-unit"	@echo ""
 	@echo "✓ ci-local passed (1:1 with GitHub CI Tier 1)."
 	@echo "  To run the full pipeline (builder ~40 min + all integration domains): make ci-full"
 

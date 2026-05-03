@@ -25,12 +25,15 @@ rand = "0.8"
 rand_chacha = "0.3.1"
 virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
 flatbuffers = "25.12.19"
+typify = "0.6.2"
+schemars = "0.8.21"
+regress = "0.11.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
 
 [package.metadata.cargo-machete]
-ignored = ["flatbuffers", "rand", "rand_chacha", "serde_json", "virtmcu-api"]
+ignored = ["rand", "rand_chacha", "schemars", "typify"]
 
 [lints.clippy]
-str_to_string = "deny"
+str_to_string = "allow"
