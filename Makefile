@@ -305,6 +305,10 @@ lint-docs:
 	@echo "==> Checking Rust documentation..."
 	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 	@echo "✓ Rust documentation check passed."
+	@echo "==> Checking mdbook documentation..."
+	@mdbook build
+	@rm -rf target/book
+	@echo "✓ mdbook documentation check passed."
 
 # Run Rust security audit and supply chain checks
 lint-audit:
