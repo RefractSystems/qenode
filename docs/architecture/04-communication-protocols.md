@@ -42,6 +42,7 @@ The Control Plane uses synchronous requests (e.g., Zenoh Queryables) to ensure t
 ### Deterministic Sub-systems (Asynchronous)
 All cyber-world network traffic is published asynchronously and routed through the Deterministic Coordinator.
 *   **Ethernet**: `sim/eth/frame/{node_id}/tx` → `sim/eth/frame/{node_id}/rx`
+*   **FlexRay**: `sim/bus/flexray/{node_id}/tx` → `sim/bus/flexray/{node_id}/rx`
 *   **UART (Serial)**: `virtmcu/uart/{node_id}/tx` → `virtmcu/uart/{node_id}/rx`
 *   **802.15.4 Radio**: `sim/rf/ieee802154/{node_id}/tx` → `sim/rf/ieee802154/{node_id}/rx`
 *   **Bluetooth HCI**: `sim/rf/hci/{node_id}/tx` → `sim/rf/hci/{node_id}/rx`

@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import yaml
 
 from tools.testing.QemuLibrary import QemuLibrary
 
@@ -21,16 +20,19 @@ def test_dynamic_devices_realization() -> None:
     if not Path(yaml_path).exists():
         pytest.skip(f"{yaml_path} not found")
 
+    from tools.testing.virtmcu_test_suite.world_schema import WorldYaml
+
     # Modifying the yaml to remove the mmio-socket-bridge for this test
     # because it blocks realization if it can't connect.
     with Path(yaml_path).open() as f:
-        data = yaml.safe_load(f)
+        world = WorldYaml.from_text(f.read())
 
     # Keep only the clock or simple devices
-    data["peripherals"] = [p for p in data.get("peripherals", []) if p["type"] != "mmio-socket-bridge"]
+    if world.peripherals:
+        world.peripherals = [p for p in world.peripherals if p["type"] != "mmio-socket-bridge"]
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_yaml:
-        yaml.dump(data, tmp_yaml)
+        tmp_yaml.write(world.to_yaml())
         tmp_yaml_path = Path(tmp_yaml.name)
 
     lib = QemuLibrary()

@@ -1,4 +1,5 @@
 //! S32K144 LPUART peripheral for VirtMCU simulation with pluggable transport.
+use zenoh::Wait;
 
 extern crate alloc;
 
@@ -105,6 +106,7 @@ pub struct LpuartState {
     rx_timer: Option<Arc<QomTimer>>,
     earliest_vtime: Arc<AtomicU64>,
     tx_topic: String,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 const REG_BAUD: u64 = 0x10;
@@ -511,6 +513,7 @@ pub unsafe extern "C" fn lpuart_class_init(klass: *mut ObjectClass, _data: *cons
     device_class_set_props!(dc, LPUART_PROPERTIES);
 }
 
+#[used]
 static LPUART_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"s32k144-lpuart".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),
@@ -637,7 +640,19 @@ fn lpuart_init_internal(
     let subscription =
         create_subscription(&transport, &rx_topic, &rx_timer, &earliest_vtime, tx.clone());
 
+    let liveliness = if transport_name == "zenoh" {
+        match unsafe { transport_zenoh::get_or_init_session(router) } {
+            Ok(session) => {
+                let hb_topic = format!("sim/s32k144-lpuart/liveliness/{node_id}");
+                session.liveliness().declare_token(hb_topic).wait().ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     let state = LpuartState {
+        _liveliness: liveliness,
         irq,
         transport,
         subscription,

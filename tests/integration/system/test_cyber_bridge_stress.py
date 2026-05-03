@@ -11,15 +11,14 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import logging
 import multiprocessing
 import os
-import subprocess
 import time
 import typing
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,6 +28,9 @@ import zenoh
 
 from tools import vproto
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
+from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 BUILD_DIR = WORKSPACE_DIR / "target/release"
 
 try:
-    REPLAY_BIN = resolve_rust_binary("resd_replay")
+    REPLAY_BIN = resolve_rust_binary(VirtmcuBinary.RESD_REPLAY)
 except FileNotFoundError:
     # Allow test collection to proceed if binary is missing, test will fail later
     REPLAY_BIN = Path(WORKSPACE_DIR) / "target/release/resd_replay"
@@ -89,14 +91,13 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
 
     # Use unique topic for parallel isolation
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
-    unique_prefix = f"sim/clock/{unique_id}"
+    unique_prefix = SimTopic.clock_unique_prefix(unique_id)
 
     # Start Zenoh session for mock QEMU
-    conf = zenoh.Config()
-    # Force a local locator to ensure connectivity
+    from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
+
     locator = zenoh_router
-    conf.insert_json5("connect/endpoints", f'["{locator}"]')
-    session = zenoh.open(conf)
+    session = open_client_session(connect=locator)
 
     node_vtimes = manager.dict(dict.fromkeys(range(num_nodes), 0))
 
@@ -133,79 +134,71 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
     env["ZENOH_CONNECT"] = f'["{locator}"]'
     env["ZENOH_TOPIC_PREFIX"] = unique_prefix
 
-    for i in range(num_nodes):
-        p = await asyncio.create_subprocess_exec(
-            REPLAY_BIN,
-            resd_files[i],
-            str(i),
-            "1000000",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        procs.append(p)
+    async with AsyncExitStack() as stack:
+        for i in range(num_nodes):
+            p = await stack.enter_async_context(
+                AsyncManagedProcess(
+                    REPLAY_BIN,
+                    resd_files[i],
+                    str(i),
+                    "1000000",
+                    env=env,
+                )
+            )
+            procs.append(p)
 
-    # Wait for completion or timeout
-    try:
-        from tools.testing.utils import get_time_multiplier
+        # Wait for completion or timeout
+        try:
+            from tools.testing.utils import get_time_multiplier
 
-        await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs)), timeout=30.0 * get_time_multiplier())
-    except TimeoutError:
-        logger.error("DEBUG: Stress test timed out!")
-        for p in procs:
-            with contextlib.suppress(Exception):
-                p.kill()
-        pytest.fail("Timeout in multi-node stress test")
+            await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs)), timeout=30.0 * get_time_multiplier())
+        except TimeoutError:
+            logger.error("DEBUG: Stress test timed out!")
+            pytest.fail("Timeout in multi-node stress test")
 
-    # Verify exit codes and print logs
-    for i, p in enumerate(procs):
-        stdout, stderr = await p.communicate()
-        logger.info(f"DEBUG: Node {i} STDOUT: {stdout.decode()}")
-        logger.info(f"DEBUG: Node {i} STDERR: {stderr.decode()}")
-        if p.returncode != 0:
-            logger.error(f"Node {i} failed with code {p.returncode}")
-        assert p.returncode == 0, f"Node {i} failed"
-        assert node_vtimes[i] >= (duration_ms - 1) * 1_000_000
+        # Verify exit codes and print logs
+        for i, p in enumerate(procs):
+            logger.info(f"DEBUG: Node {i} STDOUT: {p.stdout_text}")
+            logger.info(f"DEBUG: Node {i} STDERR: {p.stderr_text}")
+            if p.returncode != 0:
+                logger.error(f"Node {i} failed with code {p.returncode}")
+            assert p.returncode == 0, f"Node {i} failed"
+            assert node_vtimes[i] >= (duration_ms - 1) * 1_000_000
 
     typing.cast(typing.Any, session).close()
     logger.info("Multi-node stress test PASSED")
 
 
 @pytest_asyncio.fixture
-async def mujoco_bridge_process() -> AsyncGenerator[tuple[subprocess.Popen[bytes], Path, int, int]]:
+async def mujoco_bridge_process() -> AsyncGenerator[tuple[AsyncManagedProcess, Path, int, int]]:
     """Fixture to manage the mujoco_bridge process lifecycle."""
     node_id = 42 + (os.getpid() % 1000)
     nu = 4
     nsensordata = 8
-    bridge_bin = resolve_rust_binary("mujoco_bridge")
+    bridge_bin = resolve_rust_binary(VirtmcuBinary.MUJOCO_BRIDGE)
     shm_path = Path("/") / "dev" / "shm" / f"virtmcu_mujoco_{node_id}"
 
     # Ensure no stale SHM exists
     if shm_path.exists():
         shm_path.unlink()
 
-    p = subprocess.Popen(
-        [str(bridge_bin), str(node_id), str(nu), str(nsensordata)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    async with AsyncManagedProcess(str(bridge_bin), str(node_id), str(nu), str(nsensordata)) as p:
+        # Deterministically wait for the shared memory file to be created
+        start_time = time.time()
+        while not shm_path.exists() and time.time() - start_time < 5.0:
+            if p.returncode is not None:
+                break
+            await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: polling for shm creation
 
-    # Deterministically wait for the shared memory file to be created
-    start_time = time.time()
-    while not shm_path.exists() and time.time() - start_time < 5.0:
-        if p.poll() is not None:
-            break
-        await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: polling for shm creation
-
-    yield p, shm_path, nu, nsensordata
+        yield p, shm_path, nu, nsensordata
 
     # Cleanup
-    p.kill()
-    p.communicate()
     if shm_path.exists():
         shm_path.unlink()
 
 
 @pytest.mark.asyncio
-async def test_mujoco_bridge_shm(mujoco_bridge_process: tuple[subprocess.Popen[bytes], Path, int, int]) -> None:
+async def test_mujoco_bridge_shm(mujoco_bridge_process: tuple[asyncio.subprocess.Process, Path, int, int]) -> None:
     """
     Test the basic SHM lifecycle of the mujoco_bridge.
     """

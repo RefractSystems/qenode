@@ -63,6 +63,7 @@ unsafe extern "C" fn spi_echo_class_init(klass: *mut ObjectClass, _data: *const 
     (*ssc).transfer = Some(spi_echo_transfer);
 }
 
+#[used]
 static SPI_ECHO_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"spi-echo".as_ptr(),
     parent: TYPE_SSI_PERIPHERAL,
@@ -131,6 +132,7 @@ unsafe extern "C" fn uart_echo_class_init(klass: *mut ObjectClass, _data: *const
     virtmcu_qom::device_class_set_props!(dc, UART_ECHO_PROPS);
 }
 
+#[used]
 static UART_ECHO_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"uart-echo".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,
@@ -216,6 +218,7 @@ unsafe extern "C" fn test_class_init(klass: *mut ObjectClass, _data: *const c_vo
     virtmcu_qom::qdev::device_class_set_props_n(dc, TEST_PROPERTIES.as_ptr(), 1);
 }
 
+#[used]
 static TEST_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"test-rust-device".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,

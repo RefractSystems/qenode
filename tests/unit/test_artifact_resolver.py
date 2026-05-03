@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tools.testing.virtmcu_test_suite.artifact_resolver import get_rust_binary_path, resolve_rust_binary
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,7 +34,7 @@ def test_get_rust_binary_path_cargo_target_dir(monkeypatch: pytest.MonkeyPatch, 
     dummy_bin.parent.mkdir(parents=True, exist_ok=True)
     dummy_bin.touch()
 
-    resolved = get_rust_binary_path("dummy_bin")
+    resolved = get_rust_binary_path("dummy_bin")  # LINT_EXCEPTION: hardcoded_binary
     assert resolved == dummy_bin
 
 
@@ -47,10 +48,17 @@ def test_get_rust_binary_path_workspace_fallback(mock_exists: MagicMock, monkeyp
 
     # Just check that if nothing exists it returns the default workspace path
     mock_exists.return_value = False
-    resolved = get_rust_binary_path("dummy_bin")
+    resolved = get_rust_binary_path("dummy_bin")  # LINT_EXCEPTION: hardcoded_binary
     assert resolved.parts[-3:] == ("target", "release", "dummy_bin")
 
 
 def test_resolve_rust_binary_missing() -> None:
     with pytest.raises(FileNotFoundError, match=r"Did you run 'cargo build'\?"):
-        resolve_rust_binary("some_nonexistent_binary_12345")
+        resolve_rust_binary("some_nonexistent_binary_12345")  # LINT_EXCEPTION: hardcoded_binary
+
+
+def test_get_rust_binary_path_enum() -> None:
+    # Testing with a known binary from the Enum
+    resolved = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
+    assert resolved.name == "deterministic_coordinator"
+    assert "deterministic_coordinator" in str(resolved)

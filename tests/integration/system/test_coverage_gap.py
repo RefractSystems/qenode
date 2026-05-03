@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,12 +92,17 @@ uart0: UART.PL011 @ sysbus 0x09000000
 
     migrate(str(repl_file), str(yaml_file))
 
+    from tools.testing.virtmcu_test_suite.world_schema import WorldYaml
+
     assert Path(yaml_file).exists()
     with Path(yaml_file).open() as f:
-        data = yaml.safe_load(f)
-        assert data["machine"]["cpus"][0]["name"] == "cpu"
-        assert data["peripherals"][0]["name"] == "uart0"
-        assert data["peripherals"][0]["address"] == "0x09000000"
+        world = WorldYaml.from_text(f.read())
+        assert world.machine is not None
+        assert world.machine.cpus is not None
+        assert world.machine.cpus[0]["name"] == "cpu"
+        assert world.peripherals is not None
+        assert world.peripherals[0]["name"] == "uart0"
+        assert world.peripherals[0]["address"] == "0x09000000"
 
 
 def test_repl2yaml_main(tmp_path: Path) -> None:
@@ -300,9 +304,10 @@ peripherals: []
 def test_yaml2qemu_validate_dtb_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
     dtb_file = tmp_path / "empty.dtb"
-    
+
     # Create a valid but empty DTB
     import fdt
+
     dt = fdt.FDT()
     dtb_file.write_bytes(dt.to_dtb(version=17))
 
@@ -316,7 +321,7 @@ def test_yaml2qemu_validate_dtb_failure(tmp_path: Path, caplog: pytest.LogCaptur
 def test_yaml2qemu_validate_dtb_dtc_missing(caplog: pytest.LogCaptureFixture) -> None:
     devices = [ReplDevice(name="uart0", type_name="UART.PL011", address_str="0x9000000", properties={})]
 
-    # In the library-based version, we don't use dtc. 
+    # In the library-based version, we don't use dtc.
     # Instead, we test that it fails if the file is missing.
     with pytest.raises(SystemExit) as e:
         validate_dtb("non_existent.dtb", devices)

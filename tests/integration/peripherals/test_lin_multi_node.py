@@ -13,8 +13,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import shutil
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,20 +21,28 @@ import pytest
 if TYPE_CHECKING:
     import zenoh
 
-    from tools.testing.virtmcu_test_suite.process import AsyncManagedProcess
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 from virtmcu.lin import LinFrame, LinMessageType
 
 from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
-from tools.testing.virtmcu_test_suite.orchestrator import SimulationOrchestrator
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "deterministic_coordinator",
+    [{"nodes": 2, "pdes": True, "topology": "tests/fixtures/topologies/lin_2node.yml"}],
+    indirect=True,
+)
+@pytest.mark.usefixtures("deterministic_coordinator")
 async def test_multi_node_lin(
-    zenoh_router: str, qemu_launcher: Callable[..., AsyncManagedProcess], zenoh_session: zenoh.Session, tmp_path: Path
+    zenoh_router: str,
+    zenoh_session: zenoh.Session,
+    simulation: Simulation,
+    tmp_path: Path,
 ) -> None:
     tmpdir = tmp_path
 
@@ -60,22 +66,8 @@ async def test_multi_node_lin(
     unique_id = hashlib.sha256(tmp_path.name.encode()).hexdigest()[:8]
     lin_topic = f"{unique_id}/sim/lin"
 
-    # Generate world YAML for coordinator
-    world_yaml = tmp_path / "world.yml"
-    world_yaml.write_text("""
-peripherals:
-  - name: "0"
-    type: LIN
-  - name: "1"
-    type: LIN
-
-topology:
-  links:
-    - { type: "lin", nodes: ["0", "1"] }
-""")
-
     # Generate Master DTB in tmpdir
-    master_dtb = Path(tmpdir) / "lin_master.dtb"  # Replace router and compile
+    master_dtb = Path(tmpdir) / "lin_master.dtb"
     compile_dtb(
         Path("tests/fixtures/guest_apps/lin_bridge/lin_test.dts"),
         {"ZENOH_ROUTER_ENDPOINT": router_endpoint, '"sim/lin"': f'"{lin_topic}"'},
@@ -84,7 +76,7 @@ topology:
 
     from tools.testing.utils import get_time_multiplier
 
-    stall_timeout = int(1000 * get_time_multiplier())
+    stall_timeout = int(5000 * get_time_multiplier())
 
     # Master node (Node 0)
     master_args = [
@@ -96,6 +88,8 @@ topology:
         "chardev:n0",
         "-net",
         "none",
+        "-icount",
+        "shift=0,align=off,sleep=off",
         "-device",
         f"virtmcu-clock,mode=slaved-icount,node=0,router={router_endpoint},stall-timeout={stall_timeout},coordinated=true",
     ]
@@ -122,6 +116,8 @@ topology:
         "chardev:n1",
         "-net",
         "none",
+        "-icount",
+        "shift=0,align=off,sleep=off",
         "-device",
         f"virtmcu-clock,mode=slaved-icount,node=1,router={router_endpoint},stall-timeout={stall_timeout},coordinated=true",
     ]
@@ -142,60 +138,18 @@ topology:
             logger.info(f"Bus: {topic} type={msg_type} data={data!r}")
             bus_messages.append((topic, msg_type, data))
         except Exception as e:  # noqa: BLE001
-            # Subscription callbacks should not crash the transport thread on malformed payloads
             logger.error(f"Error decoding message: {e}")
 
     # Listen to both nodes' TX
     sub0 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/0/tx", on_bus_msg))
     sub1 = await asyncio.to_thread(lambda: session.declare_subscriber(f"{lin_topic}/1/tx", on_bus_msg))
 
-    import subprocess
-
-    from tools.testing.virtmcu_test_suite.conftest_core import wait_for_zenoh_discovery
-
-    # Start coordinator manually
-    coord_cmd = [
-        str(Path.cwd() / "target/release/zenoh_coordinator"),
-        "--topology",
-        str(world_yaml),
-        "--connect",
-        router_endpoint,
-        "--pdes",
-        "--nodes",
-        "2",
-    ]
-
-    # Ensure it's built
-    if not (Path.cwd() / "target/release/zenoh_coordinator").exists():
-        subprocess.run([shutil.which("cargo") or "cargo", "build", "--release", "-p", "zenoh_coordinator"], check=True)
-
-    coord_proc = await asyncio.create_subprocess_exec(
-        *coord_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    async def _stream_coord_output(stream: asyncio.StreamReader, name: str) -> None:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            logger.info(f"Coordinator {name}: {line.decode().strip()}")
-
-    [
-        asyncio.create_task(_stream_coord_output(coord_proc.stdout, "STDOUT")),  # type: ignore[arg-type]
-        asyncio.create_task(_stream_coord_output(coord_proc.stderr, "STDERR")),  # type: ignore[arg-type]
-    ]
+    simulation.add_node(node_id=0, dtb=master_dtb, kernel=master_kernel, extra_args=master_args)
+    simulation.add_node(node_id=1, dtb=slave_dtb, kernel=slave_kernel, extra_args=slave_args)
 
     try:
-        await wait_for_zenoh_discovery(session, "sim/coordinator/liveliness")
-
-        async with SimulationOrchestrator(session, router_endpoint, qemu_launcher) as sim:
-            logger.info("Launching Master and Slave via Orchestrator...")
-            sim.add_node(node_id=0, dtb_path=str(master_dtb), kernel_path=str(master_kernel), extra_args=master_args)
-            sim.add_node(node_id=1, dtb_path=str(slave_dtb), kernel_path=str(slave_kernel), extra_args=slave_args)
-
-            await sim.start()
+        async with simulation as sim:
+            logger.info("Launching Master and Slave via Simulation...")
 
             def condition_met() -> bool:
                 found_master_header = False
@@ -207,13 +161,9 @@ topology:
                         found_slave_response = True
                 return found_master_header and found_slave_response
 
-            await sim.run_until(condition_met, timeout=120.0, step_ns=10_000_000)
+            await sim.run_until(condition_met, timeout=120.0, step_ns=1_000_000)
 
-            logger.info(f"SUCCESS: Multi-node LIN communication verified at vtime={sim._vtime_ns}!")
+            logger.info("SUCCESS: Multi-node LIN communication verified")
     finally:
-        if coord_proc.returncode is None:
-            coord_proc.terminate()
-            await coord_proc.wait()
-
-    await asyncio.to_thread(sub0.undeclare)
-    await asyncio.to_thread(sub1.undeclare)
+        await asyncio.to_thread(sub0.undeclare)
+        await asyncio.to_thread(sub1.undeclare)

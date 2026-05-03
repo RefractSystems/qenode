@@ -1,0 +1,76 @@
+# =============================================================================
+# topics.toml - Single source of truth for VirtMCU Zenoh topics.
+#
+# Generated files:
+#   - tools/testing/virtmcu_test_suite/topics.py
+#   - tools/deterministic_coordinator/src/topics.rs
+# =============================================================================
+
+[singleton]
+COORD_ALIVE = "sim/coord/alive"
+ROUTER_CHECK = "sim/router/check"
+NETWORK_CONTROL = "sim/network/control"
+
+[wildcard]
+COORD_DONE_WILDCARD = "sim/coord/*/done"
+COORD_RX_WILDCARD = "sim/coord/*/rx"
+COORD_TX_WILDCARD = "sim/coord/*/tx"
+ETH_FRAME_RX_WILDCARD = "sim/eth/frame/*/rx"
+ETH_FRAME_TX_WILDCARD = "sim/eth/frame/*/tx"
+SIM_UART_TX_WILDCARD = "sim/uart/*/tx"
+SIM_UART_RX_WILDCARD = "sim/uart/*/rx"
+CAN_TX_WILDCARD = "sim/can/*/tx"
+LIN_TX_WILDCARD = "sim/lin/*/tx"
+SIM_SYSTEMC_TX_WILDCARD = "sim/systemc/frame/*/tx"
+SPI_TX_WILDCARD = "sim/spi/*/*/tx"
+RF_IEEE802154_TX_WILDCARD = "sim/rf/ieee802154/*/tx"
+RF_HCI_TX_WILDCARD = "sim/rf/hci/*/tx"
+CHARDEV_TX_WILDCARD = "sim/chardev/*/tx"
+NETDEV_TX_WILDCARD = "sim/netdev/*/tx"
+VIRTM_UART_TX_WILDCARD = "virtmcu/uart/*/tx"
+VIRTM_UART_PORT_TX_WILDCARD = "virtmcu/uart/**/tx"
+
+[templates]
+clock_advance = "sim/clock/advance/{node_id}"
+clock_start = "sim/clock/start/{node_id}"
+clock_vtime = "sim/clock/vtime/{node_id}"
+clock_liveliness = "sim/clock/liveliness/{node_id}"
+clock_heartbeat = "sim/clock/heartbeat/{node_id}"
+clock_unique_prefix = "sim/clock/{unique_id}"
+
+coord_done = "sim/coord/{node_id}/done"
+coord_rx = "sim/coord/{node_id}/rx"
+coord_tx = "sim/coord/{node_id}/tx"
+
+plugin_liveliness = "sim/{plugin}/liveliness/{node_id}"
+test_probe = "sim/test/probe/{suffix}"
+
+eth_tx = "sim/eth/frame/{node_id}/tx"
+eth_rx = "sim/eth/frame/{node_id}/rx"
+
+uart_tx = "virtmcu/uart/{node_id}/tx"
+uart_rx = "virtmcu/uart/{node_id}/rx"
+uart_unique_prefix = "virtmcu/uart/{unique_id}"
+sim_uart_tx = "sim/uart/{node_id}/tx"
+sim_uart_rx = "sim/uart/{node_id}/rx"
+uart_port_tx = "virtmcu/uart/{node_id}/{port_id}/tx"
+uart_port_rx = "virtmcu/uart/{node_id}/{port_id}/rx"
+
+can_tx = "sim/can/{node_id}/tx"
+can_rx = "sim/can/{node_id}/rx"
+lin_tx = "sim/lin/{node_id}/tx"
+lin_rx = "sim/lin/{node_id}/rx"
+lin_unique_prefix = "sim/lin/{unique_id}"
+flexray_unique_prefix = "sim/flexray/{unique_id}"
+spi_base = "sim/spi/{bus}/{node_id}"
+
+rf_ieee802154_tx = "sim/rf/ieee802154/{node_id}/tx"
+rf_ieee802154_rx = "sim/rf/ieee802154/{node_id}/rx"
+rf_hci_tx = "sim/rf/hci/{node_id}/tx"
+rf_hci_rx = "sim/rf/hci/{node_id}/rx"
+
+telemetry_trace = "sim/telemetry/trace/{node_id}"
+chardev_rx = "sim/chardev/{node_id}/rx"
+chardev_tx = "sim/chardev/{node_id}/tx"
+netdev_rx = "sim/netdev/{node_id}/rx"
+netdev_tx = "sim/netdev/{node_id}/tx"

@@ -93,6 +93,7 @@ import os, sys, subprocess, threading, time
 import zenoh
 
 from vproto import ClockAdvanceReq, ClockReadyResp
+from tools.testing.utils import mock_execution_delay
 
 SCRIPT_DIR  = "$SCRIPT_DIR"
 WORKSPACE   = "$WORKSPACE_DIR"

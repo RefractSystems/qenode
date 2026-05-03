@@ -1,24 +1,6 @@
 #!/usr/bin/env python3
 """
 jitter_proxy.py — Zenoh clock-advance jitter injection proxy for .
-
-This proxy sits between the benchmark harness (TimeAuthority) and QEMU's
-clock device.  It forwards every clock-advance queryable reply with a
-random additional delay in [0, MAX_JITTER_US) microseconds, injected via a
-simple sleep.
-
-The purpose is to prove that virtmcu's virtual-time gating correctly absorbs
-host-side Zenoh jitter: despite the extra wall-clock delay, all firmware runs
-must produce byte-perfect identical exit_vtime_ns values.
-
-Usage:
-    python3 jitter_proxy.py <upstream_router> <proxy_listen_port> [max_jitter_us]
-
-    upstream_router: URL of the actual Zenoh router used by QEMU
-                     e.g. tcp/localhost:7448
-    proxy_listen_port: TCP port this proxy listens on (used by bench harness)
-                     e.g. 7449
-    max_jitter_us: max random delay in microseconds (default: 200)
 """
 
 import logging
@@ -37,6 +19,7 @@ logger = logging.getLogger("jitter_proxy")
 
 # Maximum random jitter added per forwarded reply (microseconds).
 DEFAULT_MAX_JITTER_US = 200
+DEFAULT_CONCURRENCY_LIMIT = 50
 
 # Topic pattern for clock-advance queries.
 CLOCK_ADVANCE_PREFIX = "sim/clock/advance/"
@@ -48,10 +31,17 @@ class JitterProxy:
     re-publishes replies with injected jitter on the proxy router.
     """
 
-    def __init__(self, upstream_url: str, proxy_port: int | str, max_jitter_us: int) -> None:
+    def __init__(
+        self,
+        upstream_url: str,
+        proxy_port: int | str,
+        max_jitter_us: int,
+        concurrency_limit: int = DEFAULT_CONCURRENCY_LIMIT,
+    ) -> None:
         self.upstream_url = upstream_url
         self.proxy_port = proxy_port
         self.max_jitter_us = max_jitter_us
+        self.concurrency_limit = concurrency_limit
         self._rng = secrets.SystemRandom()
         self._lock = threading.Lock()
         self.injected_delays_us: list[float] = []
@@ -65,7 +55,6 @@ class JitterProxy:
     def run(self) -> None:
         proxy_listen = str(self.proxy_port)
         if "tcp/" not in proxy_listen:
-            # Dynamically resolve host IP if only a port is provided
             try:
                 import subprocess
 
@@ -76,46 +65,52 @@ class JitterProxy:
                 proxy_listen = f"tcp/localhost:{self.proxy_port}"
         logger.info(f"upstream={self.upstream_url} listen={proxy_listen} max_jitter={self.max_jitter_us} µs")
 
-        # Back-end session: acts as the router for QEMU.
         backend_cfg = zenoh.Config()
         backend_cfg.insert_json5("listen/endpoints", f'["{proxy_listen}"]')
         backend_cfg.insert_json5("scouting/multicast/enabled", "false")
         backend_session = zenoh.open(backend_cfg)
 
-        # Front-end session: connects to upstream router.
         frontend_cfg = zenoh.Config()
         frontend_cfg.insert_json5("connect/endpoints", f'["{self.upstream_url}"]')
         frontend_cfg.insert_json5("scouting/multicast/enabled", "false")
         frontend_session = zenoh.open(frontend_cfg)
 
+        from tools.testing.virtmcu_test_suite.topics import SimTopic
+
+        _liveliness = frontend_session.liveliness().declare_token(SimTopic.plugin_liveliness("jitter_proxy", 0))
+
+        import signal
+
+        def handle_sigterm(_sig: int, _frame: object) -> None:
+            logger.info("SIGTERM received, stopping...")
+            self.stop()
+
+        signal.signal(signal.SIGTERM, handle_sigterm)
+
         def handle_query(query: zenoh.Query) -> None:
             with self._lock:
                 self._in_flight += 1
-                # 50 concurrent queries is far beyond what our benchmarking harness
-                # produces (1 per node). Exceeding this indicates a routing storm.
-                if self._in_flight > 50:
+                if self._in_flight % 5 == 0:
+                    logger.info(f"Concurrency check: in_flight={self._in_flight}")
+
+                if self._in_flight > self.concurrency_limit:
                     self._in_flight -= 1
-                    logger.error("Infinite recursion or query storm detected! Failing fast.")
+                    logger.error(
+                        f"Infinite recursion or query storm detected (limit={self.concurrency_limit})! Failing fast."
+                    )
                     query.reply_err(b"proxy: routing loop detected")
                     return
 
             try:
                 topic = str(query.key_expr)
                 payload = query.payload.to_bytes() if query.payload else b""
-
-                # Forward to QEMU via the backend session.
                 replies = list(backend_session.get(topic, payload=payload, timeout=5.0))
 
                 if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
-                    # Inject jitter before replying back to the TimeAuthority.
                     jitter_us = self._rng.uniform(0, self.max_jitter_us)
-                    mock_execution_delay(
-                        jitter_us / 1_000_000
-                    )  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+                    mock_execution_delay(jitter_us / 1_000_000)
                     with self._lock:
                         self.injected_delays_us.append(jitter_us)
-
                     query.reply(topic, replies[0].ok.payload.to_bytes())
                 else:
                     query.reply_err(b"proxy: no QEMU reply")
@@ -123,12 +118,7 @@ class JitterProxy:
                 with self._lock:
                     self._in_flight -= 1
 
-        # Declare a queryable on the frontend (upstream) session.
-        queryable = frontend_session.declare_queryable(
-            f"{CLOCK_ADVANCE_PREFIX}*",
-            handle_query,
-        )
-
+        queryable = frontend_session.declare_queryable(f"{CLOCK_ADVANCE_PREFIX}*", handle_query)
         logger.info("ready — waiting for queries")
         try:
             while not self._stop_event.is_set():
@@ -138,9 +128,7 @@ class JitterProxy:
         finally:
             typing.cast(typing.Any, queryable).undeclare()
             typing.cast(typing.Any, frontend_session).close()
-            backend_session.close()  # type: ignore[no-untyped-call]
-
-            # Prevent division by zero if no delays were injected
+            typing.cast(typing.Any, backend_session).close()
             n_delays = len(self.injected_delays_us)
             mean_delay = sum(self.injected_delays_us) / max(1, n_delays)
             logger.info(f"shutdown complete. injected {n_delays} delays, mean={mean_delay:.1f} µs")
@@ -148,14 +136,14 @@ class JitterProxy:
 
 def main() -> None:
     if len(sys.argv) < 3:
-        logger.info(__doc__)
         sys.exit(1)
 
     upstream_url = sys.argv[1]
     proxy_port = sys.argv[2]
     max_jitter_us = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_MAX_JITTER_US
+    concurrency_limit = int(sys.argv[4]) if len(sys.argv) > 4 else DEFAULT_CONCURRENCY_LIMIT
 
-    proxy = JitterProxy(upstream_url, proxy_port, max_jitter_us)
+    proxy = JitterProxy(upstream_url, proxy_port, max_jitter_us, concurrency_limit)
     try:
         proxy.run()
     except KeyboardInterrupt:
@@ -163,5 +151,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

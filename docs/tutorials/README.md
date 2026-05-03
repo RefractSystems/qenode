@@ -1,40 +1,48 @@
-# Part III: Practical Mastery
+# The VirtMCU Laboratory: A Practical Curriculum
 
-Welcome to the **VirtMCU** educational series. This curriculum is designed to take you from a basic understanding of machine emulation to mastering complex, multi-node deterministic simulations.
+**Welcome to the VirtMCU Laboratory.**
 
-## Curriculum Overview
+This curriculum is designed to translate the theoretical foundations of Volumes I, II, and III into tangible engineering mastery. As a student in this laboratory, you will progress from single-node logic to the orchestration of complex, multi-node deterministic universes.
 
-### Core: The Basics (The Single Node)
-In this section, we learn how to run a single machine and understand the internals of how firmware interacts with virtual hardware.
+---
 
-*   **[Lesson 1: Dynamic Machines](./lesson1-dynamic-machines/README.md)**: Construct a virtual ARM machine from a text file and use GDB to inspect it.
-*   **[Lesson 18: The MMIO Lifecycle](./lesson18-mmio-lifecycle/README.md)**: Follow the "story of a byte" from firmware instruction to QEMU trap.
-*   **[Lesson 19: Native Rust Migration & Safety](./lesson19-native-rust-migration/README.md)**: Learn how we cross the FFI boundary and manage the BQL.
-*   **[Lesson 2: Dynamic QOM Plugins](./lesson2-dynamic-plugins/README.md)**: Build your first peripheral in Rust without touching QEMU source.
-*   **[Lesson 3: Parsing Platform Descriptions (.repl)](./lesson3-repl2qemu/README.md)**: Translate Renode `.repl` files into QEMU Device Trees.
-*   **[Lesson 4: Emulation Test Automation](./lesson4-emulation-automation/README.md)**: Automate your verification with QMP and Pytest.
+## Laboratory Series I: Foundational Execution (Volume IV)
 
-### System: Distributed Systems (The Multi-Node World)
-We expand beyond a single CPU to a synchronized network of nodes.
+In this series, we focus on the **Atomic Node**. You will learn how to construct, execute, and verify a single machine instance and its peripheral models.
 
-*   **[Lesson 6: Multi-Node Networking](./lesson6-multi-node/README.md)**: The foundations of deterministic communication between nodes.
-*   **[Lesson 7: Zenoh Clock](./lesson7-zenoh-clock/README.md)**: Slaving QEMU to an external master clock for perfect synchronization.
-*   **[Lesson 8: Interactive UART](./lesson8-interactive-uart/README.md)**: Deterministic serial communication and human-in-the-loop debugging.
-*   **[Lesson 5: Co-simulation](./lesson5-cosimulation/README.md)**: Connecting QEMU to external hardware models over Unix sockets.
-*   **[Lesson 9: SystemC CAN](./lesson9-systemc-can/README.md)**: Building complex SystemC adapters for shared-media protocols.
-*   **[Lesson 11.3: Remote Port Co-Simulation](./lesson11.3-remote-port/README.md)**: Using industry-standard protocols for Verilator and FPGA fabrics.
+*   **[Lesson 1: Dynamic Machines](./lesson1-dynamic-machines/README.md)**: Construct a virtual ARM machine from a text-based blueprint and use GDB for deep-state inspection.
+*   **[Lesson 18: The MMIO Lifecycle](./lesson18-mmio-lifecycle/README.md)**: Forensic analysis of the "story of a byte"—following an instruction from the CPU into a custom register.
+*   **[Lesson 19: Native Rust Migration & Safety](./lesson19-native-rust-migration/README.md)**: The SOTA standard for memory-safe peripheral modeling and BQL management.
+*   **[Lesson 2: Dynamic QOM Plugins](./lesson2-dynamic-plugins/README.md)**: Master the creation of Dynamic Shared Objects (DSOs) for modular emulator extension.
+*   **[Lesson 3: Parsing Platform Descriptions (.repl)](./lesson3-repl2qemu/README.md)**: Bridging ecosystem formats by translating Renode descriptions into VirtMCU Device Trees.
+*   **[Lesson 4: Emulation Test Automation](./lesson4-emulation-automation/README.md)**: Implementing rigorous verification using QMP and the `pytest` framework.
 
-### Advanced: Cyber-Physical Systems
-Integrating the cyber world of firmware with the physical world of sensors and actuators.
+---
 
-*   **[Lesson 10: The Cyber-Physical Bridge (SAL/AAL)](./lesson10-sal-aal/README.md)**: Translating between binary registers and continuous physics.
-*   **[Lesson 13: AI-Augmented Debugging](./lesson13-ai-debugging/README.md)**: Using AI agents to analyze traces and generate tests.
-*   **[Lesson 11: RISC-V Expansion](./lesson11-riscv-expansion/README.md)**: Heterogeneous simulation across different CPU architectures.
-*   **[Lesson 11.2: Virtual-Time Timeouts](./lesson11.2-virtual-time-timeouts/README.md)**: Advanced synchronization techniques for high-load environments.
+## Laboratory Series II: Distributed Systems & Co-Simulation (Volume V)
 
-### Validation: Production Readiness
-Packaging, performance, and security for enterprise-grade digital twins.
+In this series, we expand our horizon to the **Distributed Universe**. You will learn to interconnect nodes and bridge the digital world with physical reality.
 
-*   **[Lesson 15: Distribution & Packaging](./lesson15-distribution/README.md)**: Creating portable Docker images and binary releases.
-*   **[Lesson 16: Performance & Benchmarking](./lesson16-performance/README.md)**: Measuring IPS and ensuring timing determinism.
-*   **[Lesson 17: Security Boundaries](./lesson17-security-boundary/README.md)**: Fuzzing the network and protecting the simulation fabric.
+*   **[Lesson 6: Multi-Node Networking](./lesson6-multi-node/README.md)**: The foundations of deterministic, lockstep communication between heterogeneous nodes.
+*   **[Lesson 7: Zenoh Clock](./lesson7-zenoh-clock/README.md)**: Slaving the emulator to a high-speed master clock for perfect synchronization across distributed clusters.
+*   **[Lesson 8: Interactive UART](./lesson8-interactive-uart/README.md)**: Maintaining temporal determinism during interactive human-in-the-loop debugging.
+*   **[Lesson 5: Co-simulation](./lesson5-cosimulation/README.md)**: Connecting the emulator to external hardware models via low-latency Unix sockets.
+*   **[Lesson 9: SystemC CAN](./lesson9-systemc-can/README.md)**: Synthesizing complex SystemC adapters for shared-media protocol simulation.
+*   **[Lesson 11.3: Remote Port Co-Simulation](./lesson11.3-remote-port/README.md)**: Utilizing industry-standard protocols for Verilator and FPGA fabric integration.
+
+---
+
+## Laboratory Series III: Cyber-Physical Synthesis & Advanced Architecture
+
+*   **[Lesson 10: The Cyber-Physical Bridge (SAL/AAL)](./lesson10-sal-aal/README.md)**: The SOTA pattern for translating between binary registers and continuous physics.
+*   **[Lesson 13: AI-Augmented Debugging](./lesson13-ai-debugging/README.md)**: Utilizing AI agents for forensic trace analysis and automated test generation.
+*   **[Lesson 11: RISC-V Expansion](./lesson11-riscv-expansion/README.md)**: Heterogeneous orchestration across disparate CPU architectures.
+*   **[Lesson 11.2: Virtual-Time Timeouts](./lesson11.2-virtual-time-timeouts/README.md)**: Advanced synchronization techniques for high-load, high-fidelity environments.
+
+---
+
+## Laboratory Series IV: Production Engineering & Validation (Volume VI)
+
+*   **[Lesson 15: Distribution & Packaging](./lesson15-distribution/README.md)**: Architecting portable, containerized releases for enterprise-grade digital twins.
+*   **[Lesson 16: Performance & Benchmarking](./lesson16-performance/README.md)**: Quantifying Instructions-Per-Second (IPS) and ensuring timing integrity under load.
+*   **[Lesson 17: Security Boundaries](./lesson17-security-boundary/README.md)**: Fuzzing the simulation fabric and protecting the integrity of the "Matrix."

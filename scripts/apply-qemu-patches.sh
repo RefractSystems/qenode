@@ -77,15 +77,20 @@ if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" hw
     sed 's/mc->minimum_page_bits = 12;/mc->minimum_page_bits = 12;\n\n    \/* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/arm/arm_generic_fdt.c > hw/arm/arm_generic_fdt.c.tmp && mv hw/arm/arm_generic_fdt.c.tmp hw/arm/arm_generic_fdt.c
 fi
 
-if [ -f hw/riscv/virt.c ] && ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" hw/riscv/virt.c; then
+if [ -f hw/riscv/virt.c ]; then
     echo "  -> Enabling dynamic sysbus devices (RISC-V)..."
-    # Inject after TYPE_TPM_TIS_SYSBUS if it exists, otherwise just append to the end of the init function
-    if grep -q "machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);" hw/riscv/virt.c; then
-        sed 's/machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);/machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);\n    \/* virtmcu: allow all SysBus devices via -device *\/\n    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");/' hw/riscv/virt.c > hw/riscv/virt.c.tmp && mv hw/riscv/virt.c.tmp hw/riscv/virt.c
-    else
-        # Fallback: find virt_machine_class_init and inject before it ends
-        sed '/static void virt_machine_class_init(ObjectClass *oc, void *data)/,/}/{ /}/i\    machine_class_allow_dynamic_sysbus_dev(mc, "sys-bus-device");\n }' hw/riscv/virt.c > hw/riscv/virt.c.tmp && mv hw/riscv/virt.c.tmp hw/riscv/virt.c
+    sed -i 's/MACHINE_CLASS(mc)->has_dynamic_sysbus = false;/MACHINE_CLASS(mc)->has_dynamic_sysbus = true;/' hw/riscv/virt.c
+    # virtmcu: allow specific virtmcu devices
+    if ! grep -q "virtmcu-clock" hw/riscv/virt.c; then
+        sed -i '/machine_class_allow_dynamic_sysbus_dev(mc, TYPE_UEFI_VARS_SYSBUS);/a \    machine_class_allow_dynamic_sysbus_dev(mc, "virtmcu-clock");\n    machine_class_allow_dynamic_sysbus_dev(mc, "mmio-socket-bridge");' hw/riscv/virt.c
     fi
+    # virtmcu: add devices to sysbus-fdt bindings so they bypass the FDT generation check
+    if ! grep -q "virtmcu-clock" hw/core/sysbus-fdt.c; then
+        sed -i '/TYPE_BINDING(TYPE_UEFI_VARS_SYSBUS, add_uefi_vars_node),/a \    TYPE_BINDING("virtmcu-clock", no_fdt_node),\n    TYPE_BINDING("mmio-socket-bridge", no_fdt_node),' hw/core/sysbus-fdt.c
+    fi
+    # virtmcu: NOTE: We do NOT allow "sys-bus-device" globally on RISC-V because it causes
+    # double-mapping of board-default devices (like UART) to the platform bus,
+    # leading to Assertion `!subregion->container` failed.
 fi
 
 # 3. Update Meson version to support objects in Rust targets

@@ -104,6 +104,7 @@ unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_vo
     virtmcu_qom::qdev::device_class_set_props_n(dc, WIFI_PROPERTIES.as_ptr(), 5);
 }
 
+#[used]
 static WIFI_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"wifi".as_ptr(),
     parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,

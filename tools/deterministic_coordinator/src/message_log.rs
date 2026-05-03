@@ -169,6 +169,7 @@ mod tests {
             sequence_number: 0,
             protocol: Protocol::Uart,
             payload: vec![],
+            base_topic: None,
         };
         log.write_message(&msg).unwrap();
         log.flush().unwrap();
@@ -196,6 +197,7 @@ mod tests {
             sequence_number: 0,
             protocol: Protocol::Uart,
             payload: vec![0x11, 0x22],
+            base_topic: None,
         };
         log.write_message(&msg).unwrap();
         log.flush().unwrap();
@@ -249,6 +251,7 @@ mod tests {
             sequence_number: 0,
             protocol: Protocol::Uart,
             payload: vec![],
+            base_topic: None,
         };
         let msg2 = CoordMessage {
             src_node_id: 1,
@@ -257,6 +260,7 @@ mod tests {
             sequence_number: 1,
             protocol: Protocol::Uart,
             payload: vec![],
+            base_topic: None,
         };
         let msg3 = CoordMessage {
             src_node_id: 1,
@@ -265,6 +269,7 @@ mod tests {
             sequence_number: 2,
             protocol: Protocol::Uart,
             payload: vec![],
+            base_topic: None,
         };
 
         log.write_message(&msg1).unwrap();

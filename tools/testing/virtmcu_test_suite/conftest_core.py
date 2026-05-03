@@ -20,15 +20,25 @@ from tools import vproto
 from tools.testing.env import WORKSPACE_DIR
 from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import get_time_multiplier, wait_for_file_creation, yield_now
+from tools.testing.virtmcu_test_suite.artifact_resolver import (
+    get_rust_binary_path,
+)
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
+from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
     pass
 
 __all__ = [
+    "CoordinatorHandle",
     "QmpBridge",
-    "VirtmcuSimulation",
     "VirtualTimeAuthority",
+    "coordinator_subprocess",
+    "ensure_session_routing",
     "get_time_multiplier",
+    "inspection_bridge",
+    "make_client_config",
+    "open_client_session",
     "pytest_collection_modifyitems",
     "pytest_runtest_makereport",
     "qemu_launcher",
@@ -36,7 +46,7 @@ __all__ = [
     "simulation",
     "time_authority",
     "wait_for_zenoh_discovery",
-    "zenoh_coordinator",
+    "deterministic_coordinator",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -44,6 +54,63 @@ __all__ = [
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def make_client_config(
+    *,
+    connect: str | list[str],
+    listen: str | list[str] | None = None,
+    multicast: bool = False,
+) -> zenoh.Config:
+    """
+    Canonical builder for safe, deterministic Zenoh sessions.
+
+    Enforces the two non-negotiable invariants from CLAUDE.md (Second Priority,
+    ADR-014): client mode (no peer-mode scouting) and multicast scouting
+    disabled. Without these, Zenoh sessions in parallel pytest workers
+    silently discover each other across the container's network namespace and
+    cross-talk on shared topics — manifesting as "passes locally, fails on
+    gw3 at 78%" race conditions.
+
+    All Zenoh sessions in tests/ and tools/testing/ MUST be opened from a
+    config built by this helper (or via the `zenoh_session` fixture, which
+    wraps it). The lint gate `make lint-python` enforces this.
+    """
+    cfg = zenoh.Config()
+    endpoints = [connect] if isinstance(connect, str) else list(connect)
+    cfg.insert_json5("connect/endpoints", _json5_str_array(endpoints))
+    if listen is not None:
+        listen_eps = [listen] if isinstance(listen, str) else list(listen)
+        cfg.insert_json5("listen/endpoints", _json5_str_array(listen_eps))
+    cfg.insert_json5("scouting/multicast/enabled", "true" if multicast else "false")
+    cfg.insert_json5("mode", '"client"')
+    # Task 27.3: prevent deadlocks when blocking in query handlers.
+    with contextlib.suppress(Exception):
+        cfg.insert_json5("transport/shared/task_workers", "16")
+    return cfg
+
+
+def open_client_session(
+    *,
+    connect: str | list[str],
+    listen: str | list[str] | None = None,
+    multicast: bool = False,
+) -> zenoh.Session:
+    """
+    Synchronous convenience wrapper that opens a Zenoh session from the
+    canonical client config produced by `make_client_config(...)`.
+    Use this from non-async code paths and from tests that need a session
+    distinct from the `zenoh_session` fixture (e.g. multi-router topologies).
+    """
+    return zenoh.open(  # ZENOH_OPEN_EXCEPTION: canonical wrapper enforcing client mode + scouting=false
+        make_client_config(connect=connect, listen=listen, multicast=multicast)
+    )
+
+
+def _json5_str_array(values: list[str]) -> str:
+    """Render a Python list[str] as a JSON5 string array literal."""
+    escaped = [v.replace("\\", "\\\\").replace('"', '\\"') for v in values]
+    return "[" + ",".join(f'"{v}"' for v in escaped) + "]"
 
 
 def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
@@ -87,6 +154,133 @@ def get_zenoh_router_endpoint(session: zenoh.Session) -> str:
     )
 
 
+class ManagedSubprocess:
+    """
+    SOTA wrapper for asyncio subprocesses with unified logging and cleanup.
+    Prevents "readuntil() already waiting" errors by centralizing stream consumption.
+    """
+
+    def __init__(self, name: str, cmd: list[str], env: dict[str, str] | None = None) -> None:
+        self.name = name
+        self.cmd = cmd
+        self.env = env or os.environ.copy()
+        self.proc: asyncio.subprocess.Process | None = None
+        self._stdout_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._output_event = asyncio.Event()
+        self._output_history: list[str] = []
+
+    async def start(self) -> None:
+        logger.debug("[%s] starting: %s", self.name, " ".join(self.cmd))
+        self.proc = await asyncio.create_subprocess_exec(
+            *self.cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=self.env,
+        )
+        self._stdout_task = asyncio.create_task(self._stream_output(self.proc.stdout, "stdout"))
+        self._stderr_task = asyncio.create_task(self._stream_output(self.proc.stderr, "stderr"))
+
+    @property
+    def returncode(self) -> int | None:
+        if self.proc:
+            return self.proc.returncode
+        return None
+
+    async def _stream_output(self, reader: asyncio.StreamReader | None, label: str) -> None:
+        if not reader:
+            return
+        try:
+            while True:
+                line_b = await reader.readline()
+                if not line_b:
+                    break
+                line = line_b.decode(errors="replace").strip()
+                logger.info("[%s] %s: %s", self.name, label, line)
+                self._output_history.append(line)
+                self._output_event.set()
+                self._output_event.clear()
+        except asyncio.CancelledError:
+            pass
+
+    async def wait_for_line(self, pattern: str, timeout: float = 10.0) -> bool:
+        """Wait until a line matching the pattern appears in the output."""
+        import re
+
+        real_timeout = timeout * get_time_multiplier()
+        deadline = asyncio.get_running_loop().time() + real_timeout
+
+        while True:
+            for line in self._output_history:
+                if re.search(pattern, line):
+                    return True
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+
+            try:
+                await asyncio.wait_for(self._output_event.wait(), timeout=remaining)
+            except TimeoutError:
+                return False
+
+    async def stop(self) -> None:
+        if self.proc:
+            if self.proc.returncode is None:
+                self.proc.terminate()
+                try:
+                    await asyncio.wait_for(self.proc.wait(), timeout=2.0)
+                except TimeoutError:
+                    self.proc.kill()
+                    await self.proc.wait()
+
+            # Wait for stream tasks to finish consuming the pipes
+            if self._stdout_task:
+                try:
+                    await asyncio.wait_for(self._stdout_task, timeout=1.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    self._stdout_task.cancel()
+            if self._stderr_task:
+                try:
+                    await asyncio.wait_for(self._stderr_task, timeout=1.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    self._stderr_task.cancel()
+
+    async def __aenter__(self) -> ManagedSubprocess:
+        await self.start()
+        return self
+
+    async def __aexit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
+        await self.stop()
+
+
+async def ensure_session_routing(session: zenoh.Session, timeout: float = 5.0) -> None:
+    """
+    Block until the router has propagated this session's declarations.
+
+    `session.declare_subscriber(...)` returns when the local subscriber object
+    is created and the declaration message has been sent — but the router-side
+    propagation is asynchronous. Sending traffic before the router has
+    processed the declaration causes silently-dropped messages and "passes
+    locally, fails on gw3 at 78%" parallel-test races.
+
+    This helper performs a self-roundtrip via the Zenoh Liveliness API:
+    declare a unique liveliness token on this session, wait until the same
+    session can observe its own token via `liveliness().get()`, then
+    undeclare. The roundtrip proves the router has fully ingested the
+    session's declaration backlog. Subsequent puts/queries on subscribers
+    declared *before* this call are guaranteed to be routed.
+    """
+    real_timeout = timeout * get_time_multiplier()
+    probe_topic = SimTopic.test_probe(f"{os.getpid()}/{id(session):x}")
+
+    token = await asyncio.to_thread(lambda: session.liveliness().declare_token(probe_topic))
+    try:
+        await wait_for_zenoh_discovery(session, probe_topic, timeout=real_timeout)
+    finally:
+        await asyncio.to_thread(cast(Any, token).undeclare)
+
+
 async def wait_for_zenoh_discovery(
     session: zenoh.Session, topic: str, expected_count: int = 1, timeout: float | None = 15.0
 ) -> None:
@@ -128,7 +322,7 @@ async def wait_for_zenoh_discovery(
                 # to the corresponding advance topic if applicable.
                 if "/liveliness/" in topic:
                     nid = topic.split("/")[-1]
-                    advance_topic = f"sim/clock/advance/{nid}"
+                    advance_topic = SimTopic.clock_advance(nid)
 
                     # Try a very short-timeout GET with dummy payload
                     def probe_get(t: str = advance_topic) -> bool | None:
@@ -190,16 +384,18 @@ class VirtualTimeAuthority:
         """
         Deterministic Initialization Barrier.
         """
+        if not self.node_ids:
+            return
+
         if not self._liveliness_checked:
             liveliness_tasks = []
             for nid in self.node_ids:
-                hb_topic = f"sim/clock/liveliness/{nid}"
+                hb_topic = SimTopic.clock_liveliness(nid)
                 liveliness_tasks.append(wait_for_zenoh_discovery(self.session, hb_topic, timeout=timeout))
             await asyncio.gather(*liveliness_tasks)
             self._liveliness_checked = True
 
         # SAFETY: Give QEMU a tiny bit of slack to finish its internal transition to the first barrier
-        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: initialization slack
 
         # Perform the 0-ns sync to ensure QEMU is perfectly frozen and ready
         # We use the returned vtimes to align our expectations, as some modes (like slaved-suspend)
@@ -220,7 +416,7 @@ class VirtualTimeAuthority:
         tasks = []
         self.quantum_number += 1
         for nid in self.node_ids:
-            topic = f"sim/clock/advance/{nid}"
+            topic = SimTopic.clock_advance(nid)
 
             # Compensate for accumulated overshoot from previous quantum.
             adjusted_delta = max(0, delta_ns - self._overshoot_ns[nid])
@@ -304,236 +500,74 @@ async def zenoh_router() -> AsyncGenerator[str]:
 
     logger.info(f"Starting Zenoh Router on {endpoint}...")
 
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-u",
-        str(router_script),
-        endpoint,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    cmd = [sys.executable, "-u", str(router_script), endpoint]
 
-    async def _stream_router_output(stream: asyncio.StreamReader, name: str) -> None:
-        while True:
-            line = await stream.readline()
-            if not line:
+    async with ManagedSubprocess("router", cmd) as _proc:
+        # Wait for router to be ready internally
+        config = make_client_config(connect=endpoint)
+
+        check_session: zenoh.Session | None = None
+        for _ in range(int(100 * get_time_multiplier())):
+            try:
+                check_session = await asyncio.to_thread(
+                    lambda: zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+                )
                 break
-            logger.info(f"Zenoh Router {name}: {line.decode().strip()}")
+            except zenoh.ZError:
+                await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for Zenoh router TCP port
+        else:
+            raise RuntimeError(f"Zenoh Router failed to listen on {endpoint}")
 
-    _router_tasks = [
-        asyncio.create_task(_stream_router_output(proc.stdout, "STDOUT")),  # type: ignore
-        asyncio.create_task(_stream_router_output(proc.stderr, "STDERR")),  # type: ignore
-    ]
-
-    # Wait for router to be ready internally
-    config = zenoh.Config()
-    config.insert_json5("connect/endpoints", f'["{endpoint}"]')
-    config.insert_json5("mode", '"client"')
-
-    check_session: zenoh.Session | None = None
-    for _ in range(int(100 * get_time_multiplier())):
         try:
-            check_session = await asyncio.to_thread(lambda: zenoh.open(config))
-            break
-        except zenoh.ZError:
-            await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for Zenoh router TCP port
-    else:
-        raise RuntimeError(f"Zenoh Router failed to listen on {endpoint}")
+            await wait_for_zenoh_discovery(check_session, SimTopic.ROUTER_CHECK)
+        finally:
+            await asyncio.to_thread(check_session.close)
 
-    try:
-        await wait_for_zenoh_discovery(check_session, "sim/router/check")
-    finally:
-        await asyncio.to_thread(check_session.close)
-
-    yield endpoint
-
-    # Cancel the background stream readers so they don't deadlock
-    for task in _router_tasks:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-    if proc.returncode is None:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=0.5)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
+        yield endpoint
 
 
 @pytest_asyncio.fixture
 async def zenoh_session(zenoh_router: str) -> AsyncGenerator[zenoh.Session]:
     """Fixture that provides a Zenoh session connected to the router."""
-    config = zenoh.Config()
-    config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
-    config.insert_json5("scouting/multicast/enabled", "false")
-    config.insert_json5("mode", '"client"')
-    # Task 27.3: Increase task workers to prevent deadlocks when blocking in query handlers.
-    with contextlib.suppress(Exception):
-        config.insert_json5("transport/shared/task_workers", "16")
-    session = await asyncio.to_thread(lambda: zenoh.open(config))
+    config = make_client_config(connect=zenoh_router)
+    session = await asyncio.to_thread(
+        lambda: zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+    )
 
     # Wait for session to connect to the router by waiting for the router's liveliness token
     try:
-        await wait_for_zenoh_discovery(session, "sim/router/check")
-    except TimeoutError:
+        await wait_for_zenoh_discovery(session, SimTopic.ROUTER_CHECK)
+    except TimeoutError as e:
         await asyncio.to_thread(session.close)
-        raise RuntimeError(f"Failed to connect Zenoh session to {zenoh_router}") from None
+        raise RuntimeError(f"Failed to connect Zenoh session to {zenoh_router}") from e
 
     yield session
     await asyncio.to_thread(session.close)
 
 
-class VirtmcuSimulation:
-    """
-    Enterprise-grade simulation orchestrator.
-    Handles the entire lifecycle: Bring-Up, Synchronization, and Teardown.
-    """
-
-    def __init__(
-        self, bridges: list[QmpBridge] | QmpBridge, vta: VirtualTimeAuthority, init_barrier: bool = True
-    ) -> None:
-        if isinstance(bridges, list):
-            self.bridges = bridges
-            self.bridge = bridges[0] if bridges else None
-        else:
-            self.bridges = [bridges]
-            self.bridge = bridges
-        self.vta = vta
-        self.init_barrier = init_barrier
-
-    async def __aenter__(self) -> VirtmcuSimulation:
-        # 1. Setup: Deterministic Initialization Barrier
-        # We perform the initial clock sync (vta.init -> step(0)) WHILE QEMU is
-        # still frozen (-S). This ensures that wall-clock drift during 
-        # orchestration doesn't advance QEMU_CLOCK_VIRTUAL before the test starts.
-        if self.init_barrier:
-            await self.vta.init()
-
-        # 2. Bring-Up: Start the guest emulation
-        for b in self.bridges:
-            if b:
-                await b.start_emulation()
-
-        # SAFETY: Give QEMU/Plugins a tiny bit of slack to start and register Zenoh handlers
-        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: bring-up slack
-
-        return self
-
-    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
-        # 3. Teardown: Deterministic Cleanup
-        for b in self.bridges:
-            if b:
-                await b.close()
-
-
 @pytest_asyncio.fixture
 async def simulation(
-    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]], zenoh_session: zenoh.Session, zenoh_router: str
-) -> AsyncGenerator[Callable[..., Coroutine[Any, Any, VirtmcuSimulation]]]:
+    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]],
+    zenoh_session: zenoh.Session,
+    zenoh_router: str,
+) -> AsyncGenerator[Any]:
     """
-    Fixture that provides a declarative simulation environment.
+    SOTA single-entry-point simulation harness.
+
+    Returns a `Simulation` instance. Tests register nodes via `add_node(...)`
+    and enter the async context to run the canonical lifecycle:
+    spawn-frozen → liveliness barrier → router barrier → vta.init → cont.
+
+    See /workspace/docs/guide/03-testing-strategy.md §6 for usage.
     """
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
-    async def _create_sim(
-        dtb_path: str | Path,
-        kernel_path: str | Path | None = None,
-        nodes: list[int] | None = None,
-        extra_args: list[str] | None = None,
-        **kwargs: object,
-    ) -> VirtmcuSimulation:
-        router_endpoint = zenoh_router
-        nodes_list = [0] if nodes is None else list(nodes)
-        extra_args_list = [] if extra_args is None else list(extra_args)
-
-        # Robustly inject router and standard properties into virtmcu devices
-        processed_args = []
-        has_clock = False
-
-        i = 0
-        while i < len(extra_args_list):
-            arg = str(extra_args_list[i])
-            if arg in ["-device", "-chardev", "-netdev"] and i + 1 < len(extra_args_list):
-                val = str(extra_args_list[i + 1])
-                if "virtmcu-clock" in val:
-                    has_clock = True
-                    if "router=" not in val:
-                        val = f"{val},router={router_endpoint}"
-                    if "node=" not in val:
-                        val = f"{val},node={nodes_list[0]}"
-                    if "mode=" not in val:
-                        val = f"{val},mode=slaved-icount"
-
-                    if "stall-timeout=" not in val:
-                        base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
-                        scaled_stall = int(base_stall * get_time_multiplier())
-                        val = f"{val},stall-timeout={scaled_stall}"
-
-                elif "virtmcu" in val:
-                    if "router=" not in val:
-                        val = f"{val},router={router_endpoint}"
-                processed_args.extend([arg, val])
-                i += 2
-            else:
-                if "virtmcu-clock" in arg:
-                    has_clock = True
-                    # If passed without -device, we assume caller wants it added correctly
-                    if "router=" not in arg:
-                        arg = f"{arg},router={router_endpoint}"
-                    if "node=" not in arg:
-                        arg = f"{arg},node={nodes_list[0]}"
-                    if "mode=" not in arg:
-                        arg = f"{arg},mode=slaved-icount"
-
-                    if "stall-timeout=" not in arg:
-                        base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
-                        scaled_stall = int(base_stall * get_time_multiplier())
-                        arg = f"{arg},stall-timeout={scaled_stall}"
-                    processed_args.extend(["-device", arg])
-
-                elif "virtmcu" in arg and arg not in ["-device", "-chardev", "-global"]:
-                    # Don't add prefix if the PREVIOUS argument was -global
-                    if i > 0 and extra_args_list[i - 1] == "-global":
-                        processed_args.append(arg)
-                    else:
-                        if "router=" not in arg:
-                            arg = f"{arg},router={router_endpoint}"
-                        # Decide if it's a device or chardev based on name
-                        prefix = "-chardev" if "virtmcu" in arg and "id=" in arg else "-device"
-                        processed_args.extend([prefix, arg])
-                else:
-                    processed_args.append(arg)
-                i += 1
-
-        # If no clock was provided, add a default one for orchestration
-        if not has_clock and nodes_list:
-            base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
-            scaled_stall = int(base_stall * get_time_multiplier())
-            processed_args.extend(
-                [
-                    "-device",
-                    f"virtmcu-clock,node={nodes_list[0]},router={router_endpoint},stall-timeout={scaled_stall},mode=slaved-icount",
-                ]
-            )
-        # Add standard icount configuration if slaved-icount is requested
-        if any("slaved-icount" in arg for arg in processed_args) and "-icount" not in processed_args:
-            processed_args.extend(["-icount", "shift=0,align=off,sleep=off"])
-
-        # Force -S (frozen) for deterministic boot synchronization
-        if "-S" not in processed_args:
-            processed_args.append("-S")
-
-        # Orchestrated simulations always use a clock, so we must bypass the Isolated isolation check
-        kwargs.setdefault("ignore_clock_check", True)
-
-        init_barrier = cast(bool, kwargs.pop("init_barrier", True))
-
-        bridge = await qemu_launcher(dtb_path, kernel_path, extra_args=processed_args, **kwargs)
-        vta = VirtualTimeAuthority(zenoh_session, nodes_list)
-        return VirtmcuSimulation(bridge, vta, init_barrier=init_barrier)
-
-    yield _create_sim
+    sim = Simulation(
+        zenoh_session=zenoh_session,
+        zenoh_router=zenoh_router,
+        qemu_launcher=qemu_launcher,
+    )
+    yield sim
 
 
 @pytest_asyncio.fixture
@@ -542,25 +576,78 @@ async def time_authority(zenoh_session: zenoh.Session) -> VirtualTimeAuthority:
     return VirtualTimeAuthority(zenoh_session, [0])
 
 
-@pytest_asyncio.fixture
-async def zenoh_coordinator(
-    zenoh_router: str, request: pytest.FixtureRequest
-) -> AsyncGenerator[asyncio.subprocess.Process]:
+class CoordinatorHandle:
     """
-    Fixture that starts the zenoh_coordinator.
+    Async-context-managed handle to a Rust coordinator subprocess
+    (`deterministic_coordinator`, `deterministic_coordinator`, etc.).
+
+    Owns the full lifecycle:
+      1. Spawn the subprocess.
+      2. Liveliness barrier — wait for the coordinator's liveliness token
+         on `liveliness_topic` before yielding.
+      3. Router barrier — `ensure_session_routing(zenoh_session)` so any
+         subscribers the test declared BEFORE entering this context are
+         propagated to the router before the coordinator delivers traffic.
+      4. On exit: terminate, drain stderr/stdout, log.
+
+    The contract mirrors the `simulation` fixture: declare subscribers on
+    `zenoh_session` BEFORE `async with coordinator_subprocess(...) as coord:`,
+    and the framework guarantees they are routed by the time the context
+    yields. Tests therefore never need to call `ensure_session_routing`
+    or `wait_for_zenoh_discovery` themselves.
+    """
+
+    def __init__(
+        self,
+        proc: asyncio.subprocess.Process,
+        zenoh_session: zenoh.Session,
+    ) -> None:
+        self.proc = proc
+        self._session = zenoh_session
+
+    @property
+    def returncode(self) -> int | None:
+        return self.proc.returncode
+
+
+@contextlib.asynccontextmanager
+async def coordinator_subprocess(
+    *,
+    binary: str | Path,
+    args: list[str],
+    zenoh_session: zenoh.Session,
+    liveliness_topic: str = SimTopic.COORD_ALIVE,
+    env: dict[str, str] | None = None,
+) -> AsyncGenerator[ManagedSubprocess]:
+    """
+    SOTA spawn-and-barrier helper for tests that drive a Rust coordinator
+    subprocess directly (no QEMU, no Simulation framework).
+    """
+    cmd = [str(binary), *args]
+    async with ManagedSubprocess("coordinator", cmd, env=env) as proc:
+        await wait_for_zenoh_discovery(zenoh_session, liveliness_topic)
+        await ensure_session_routing(zenoh_session)
+        yield proc
+
+
+@pytest_asyncio.fixture
+async def deterministic_coordinator(
+    zenoh_router: str, request: pytest.FixtureRequest
+) -> AsyncGenerator[ManagedSubprocess]:
+    """
+    Fixture that starts the deterministic_coordinator.
     """
     params = getattr(request, "param", {})
-    n_nodes = params.get("nodes", 3)
+    n_nodes = params.get("nodes", 3)  # LINT_EXCEPTION: fixture_param
 
     workspace_root = WORKSPACE_DIR
 
-    from tools.testing.virtmcu_test_suite.artifact_resolver import get_rust_binary_path
-
-    coord_bin = get_rust_binary_path("zenoh_coordinator")
+    coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
 
     # Use a lock to build once in parallel runs
     if not coord_bin.exists():
-        lock_file = workspace_root / "tools/zenoh_coordinator/build.lock"
+        coord_source = VirtmcuBinary.DETERMINISTIC_COORDINATOR.source_path(workspace_root)
+        lock_file = coord_source / "build.lock"
         import fcntl
 
         def _blocking_build() -> None:
@@ -568,52 +655,44 @@ async def zenoh_coordinator(
                 # This blocks until the lock is acquired
                 fcntl.flock(f, fcntl.LOCK_EX)
                 if not coord_bin.exists():
-                    logger.info("Building zenoh_coordinator...")
+                    logger.info("Building deterministic_coordinator...")
                     cargo_cmd = shutil.which("cargo") or "cargo"
                     subprocess.run(
                         [cargo_cmd, "build", "--release"],
-                        cwd=(workspace_root / "tools/zenoh_coordinator"),
+                        cwd=coord_source,
                         check=True,
                     )
 
         await asyncio.to_thread(_blocking_build)
 
         # Refresh location after build
-        coord_bin = get_rust_binary_path("zenoh_coordinator")
+        coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
 
-    pdes = getattr(request, "param", {}).get("pdes", False)
-    logger.info(f"Starting Zenoh Coordinator (nodes={n_nodes}, pdes={pdes}) connecting to {zenoh_router}...")
+    topology = params.get("topology", None)  # LINT_EXCEPTION: fixture_param
+    pdes = params.get("pdes", False)
 
-    cmd = [str(coord_bin), "--connect", zenoh_router, "--nodes", str(n_nodes)]
-    if pdes:
-        cmd.append("--pdes")
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=os.environ.copy(),
+    logger.info(
+        f"Starting Zenoh Coordinator (nodes={n_nodes}, topology={topology}, pdes={pdes}) connecting to {zenoh_router}..."
     )
 
-    # Wait for session to connect to the router
-    check_config = zenoh.Config()
-    check_config.insert_json5("connect/endpoints", f'["{zenoh_router}"]')
-    check_config.insert_json5("mode", '"client"')
-    check_session = await asyncio.to_thread(lambda: zenoh.open(check_config))
-    try:
-        await wait_for_zenoh_discovery(check_session, "sim/coordinator/liveliness")
-    finally:
-        await asyncio.to_thread(check_session.close)
+    cmd = [str(coord_bin), "--connect", zenoh_router, "--nodes", str(n_nodes)]
+    if topology:
+        cmd.extend(["--topology", str(topology)])
+    if not pdes:
+        cmd.append("--no-pdes")
 
-    yield proc
-
-    if proc.returncode is None:
-        proc.terminate()
+    async with ManagedSubprocess("coordinator", cmd) as proc:
+        # Wait for session to connect to the router
+        check_config = make_client_config(connect=zenoh_router)
+        check_session = await asyncio.to_thread(
+            lambda: zenoh.open(check_config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+        )
         try:
-            await asyncio.wait_for(proc.wait(), timeout=0.5)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
+            await wait_for_zenoh_discovery(check_session, SimTopic.COORD_ALIVE)
+        finally:
+            await asyncio.to_thread(check_session.close)
+
+        yield proc
 
 
 @pytest_asyncio.fixture
@@ -848,7 +927,7 @@ async def qemu_launcher(
                     if asan_match:
                         raise RuntimeError(
                             f"QEMU ASan Crash Detected (rc={proc.returncode}):\n{asan_match.group(1)}"
-                        ) from None
+                        ) from e
 
                 if (
                     "failed to open module" in stderr_text
@@ -914,6 +993,38 @@ async def qmp_bridge(qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]
     return bridge
 
 
+@pytest_asyncio.fixture
+async def inspection_bridge(
+    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]],
+) -> AsyncGenerator[Callable[..., Coroutine[Any, Any, QmpBridge]]]:
+    """
+    Fixture that provides a callable to spawn a frozen QEMU node for introspection.
+
+    Never calls start_emulation(). Returns a frozen bridge — do not resume.
+    Signature: inspection_bridge(dtb_path, *, extra_args=None) -> QmpBridge
+    """
+
+    async def _inspect(
+        dtb_path: str | Path,
+        kernel_path: str | Path | None = None,
+        *,
+        extra_args: list[str] | None = None,
+    ) -> QmpBridge:
+        # We pass -S explicitly to ensure it's frozen.
+        args = list(extra_args or [])
+        if "-S" not in args:
+            args.append("-S")
+
+        return await qemu_launcher(
+            dtb_path=dtb_path,
+            kernel_path=kernel_path,
+            extra_args=args,
+            ignore_clock_check=True,
+        )
+
+    yield _inspect
+
+
 class TimeAuthority(VirtualTimeAuthority):
     """
     Legacy wrapper for VirtualTimeAuthority that drives a single node.
@@ -931,16 +1042,18 @@ class TimeAuthority(VirtualTimeAuthority):
         """
         Deterministic Initialization Barrier.
         """
+        if not self.node_ids:
+            return
+
         if not self._liveliness_checked:
             liveliness_tasks = []
             for nid in self.node_ids:
-                hb_topic = f"sim/clock/liveliness/{nid}"
+                hb_topic = SimTopic.clock_liveliness(nid)
                 liveliness_tasks.append(wait_for_zenoh_discovery(self.session, hb_topic, timeout=timeout))
             await asyncio.gather(*liveliness_tasks)
             self._liveliness_checked = True
 
         # SAFETY: Give QEMU a tiny bit of slack to finish its internal transition to the first barrier
-        await asyncio.sleep(0.5)  # SLEEP_EXCEPTION: initialization slack
 
         # Perform the 0-ns sync to ensure QEMU is perfectly frozen and ready
         # We use the returned vtimes to align our expectations, as some modes (like slaved-suspend)

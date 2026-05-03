@@ -11,6 +11,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -287,6 +288,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -335,6 +337,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -667,6 +670,8 @@ dependencies = [
  "flatbuffers",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
+ "regress",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -674,6 +679,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "typify",
  "virtmcu-api",
  "zenoh",
 ]
@@ -821,6 +827,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -1280,6 +1287,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -2293,6 +2301,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "regress"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a"
+dependencies = [
+ "hashbrown 0.16.1",
+ "memchr",
+]
+
+[[package]]
 name = "remote-port"
 version = "0.1.0"
 dependencies = [
@@ -2519,6 +2537,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -2537,6 +2556,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "dyn-clone",
+ "schemars_derive 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2560,9 +2591,21 @@ dependencies = [
  "dyn-clone",
  "either",
  "ref-cast",
- "schemars_derive",
+ "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2621,6 +2664,10 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "serde"
@@ -2674,6 +2721,18 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_tokenstream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c49585c52c01f13c5c2ebb333f14f6885d76daa768d8a037d28017ec538c69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2854,6 +2913,7 @@ dependencies = [
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
+ "zenoh",
 ]
 
 [[package]]
@@ -3377,6 +3437,53 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
+name = "typify"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc0b89f47309feaeb23c4509c15c9a04234f7deccef6f96c3bfe95319819a304"
+dependencies = [
+ "typify-impl",
+ "typify-macro",
+]
+
+[[package]]
+name = "typify-impl"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa7b026f540b148b81043c720889dbb942b08659aa8a43f624ac4f04dbfc1861"
+dependencies = [
+ "heck 0.5.0",
+ "log",
+ "proc-macro2",
+ "quote",
+ "regress",
+ "schemars 0.8.22",
+ "semver",
+ "serde",
+ "serde_json",
+ "syn 2.0.117",
+ "thiserror 2.0.18",
+ "unicode-ident",
+]
+
+[[package]]
+name = "typify-macro"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39ed96c57f06ae0839416b986921a98f18b220da63bbb243a8570a00c8492183"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "schemars 0.8.22",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_tokenstream",
+ "syn 2.0.117",
+ "typify-impl",
+]
+
+[[package]]
 name = "ucd-trie"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3545,6 +3652,7 @@ dependencies = [
  "bindgen",
  "cc",
  "crossbeam-channel",
+ "static_assertions",
  "virtmcu-api",
 ]
 

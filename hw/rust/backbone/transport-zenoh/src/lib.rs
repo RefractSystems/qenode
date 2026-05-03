@@ -257,6 +257,21 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     let _ = config.insert_json5("task_planning/concurrency", "8");
 
     if !router.is_null() {
+        // SAFETY: The caller must ensure router is valid. We perform a best-effort
+        // check for null-termination to avoid runaway reads.
+        let mut len = 0;
+        while len < 1024 {
+            if unsafe { *router.add(len) } == 0 {
+                break;
+            }
+            len += 1;
+        }
+        if len == 1024 {
+            return Err(zenoh::Error::from(
+                "router endpoint too long or not null-terminated (max 1024)",
+            ));
+        }
+
         // SAFETY: The caller guarantees that router is a valid null-terminated C string.
         let r_str = unsafe { CStr::from_ptr(router) }
             .to_str()
@@ -300,7 +315,7 @@ mod tests {
 
     #[no_mangle]
     extern "C" fn virtmcu_is_bql_locked() -> bool {
-        BQL_HELD_BY_ME.with(std::cell::Cell::get)
+        BQL_HELD_BY_ME.with(core::cell::Cell::get)
     }
     #[no_mangle]
     extern "C" fn virtmcu_safe_bql_lock() {
@@ -500,6 +515,14 @@ mod tests {
 
         assert!(Arc::ptr_eq(&s1, &s2));
         Ok(())
+    }
+
+    #[test]
+    fn test_open_session_rejects_non_nul() {
+        let buffer = [b'a' as c_char; 1024];
+        let res = unsafe { open_session(buffer.as_ptr()) };
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("not null-terminated"));
     }
 
     #[test]

@@ -1,11 +1,11 @@
 *** Settings ***
 Documentation    Integration test for Multi-Node UART over Zenoh.
-Resource         ${CURDIR}/../tools/testing/qemu_keywords.robot
+Resource         ${CURDIR}/../../../tools/testing/qemu_keywords.robot
 Test Teardown    Terminate All
 
 *** Variables ***
-${DTB_PATH}      ${CURDIR}/../tests/fixtures/guest_apps/boot_arm/minimal.dtb
-${FIRMWARE}      ${CURDIR}/../tests/fixtures/guest_apps/uart_echo/echo.elf
+${DTB_PATH}      ${CURDIR}/../../fixtures/guest_apps/boot_arm/minimal.dtb
+${FIRMWARE}      ${CURDIR}/../../fixtures/guest_apps/uart_echo/echo.elf
 
 *** Keywords ***
 Terminate All

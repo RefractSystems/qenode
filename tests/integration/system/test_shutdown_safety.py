@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from tests.sim_types import SimulationCreator
+    from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_shutdown_while_blocked(simulation: SimulationCreator) -> None:
+async def test_shutdown_while_blocked(simulation: Simulation) -> None:
     """
     Spawns a simulation, starts it, then immediately stops it to catch teardown races.
     """
@@ -39,9 +39,8 @@ async def test_shutdown_while_blocked(simulation: SimulationCreator) -> None:
     if not dtb.exists():
         subprocess.run([shutil.which("make") or "make", "-C", str(dtb.parent), "all"], check=True)
 
-    async with await simulation(dtb, kernel) as sim:
-        # Cast to VirtmcuSimulation to help IDE/mypy
-        sim = sim
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=None)
+    async with simulation:
         # Give it a few ms to boot
         await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: booting
 
@@ -50,7 +49,7 @@ async def test_shutdown_while_blocked(simulation: SimulationCreator) -> None:
 
 
 @pytest.mark.asyncio
-async def test_shutdown_during_vta_step(simulation: SimulationCreator) -> None:
+async def test_shutdown_during_vta_step(simulation: Simulation) -> None:
     """
     Stress the teardown by closing the transport while a VTA step is in flight.
     """
@@ -64,7 +63,8 @@ async def test_shutdown_during_vta_step(simulation: SimulationCreator) -> None:
     if not dtb.exists():
         subprocess.run([shutil.which("make") or "make", "-C", str(dtb.parent), "all"], check=True)
 
-    async with await simulation(dtb, kernel) as sim:
+    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=None)
+    async with simulation as sim:
         # Start a long step in background
         step_task = asyncio.create_task(sim.vta.step(100_000_000))
 

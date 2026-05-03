@@ -197,4 +197,4 @@ class QemuLibrary:
         if self.loop.is_running():
             # Should not be running if _run finished
             pass
-        self.loop.close()
+        self.bridge = QmpBridge()

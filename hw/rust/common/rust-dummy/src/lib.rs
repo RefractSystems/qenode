@@ -95,6 +95,7 @@ unsafe extern "C" fn rust_dummy_class_init(klass: *mut ObjectClass, _data: *cons
     virtmcu_qom::qdev::device_class_set_props_n(dc, RUST_DUMMY_PROPERTIES.as_ptr(), 2);
 }
 
+#[used]
 static RUST_DUMMY_TYPE_INFO: TypeInfo = TypeInfo {
     name: c"rust-dummy".as_ptr(),
     parent: c"sys-bus-device".as_ptr(),

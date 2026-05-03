@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use deterministic_coordinator::barrier::{CoordMessage, QuantumBarrier};
 use deterministic_coordinator::topology::{self, Protocol};
+use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Deterministic Coordinator", long_about = None)]
@@ -20,6 +21,10 @@ struct Args {
     topology: Option<String>,
     #[arg(long)]
     pcap_log: Option<String>,
+    #[arg(long, default_value_t = false)]
+    no_pdes: bool,
+    #[arg(long, default_value_t = 1_000_000)]
+    delay_ns: u64,
 }
 
 fn parse_protocol(p: u8) -> Protocol {
@@ -31,6 +36,7 @@ fn parse_protocol(p: u8) -> Protocol {
         4 => Protocol::FlexRay,
         5 => Protocol::Lin,
         6 => Protocol::Rf802154,
+        7 => Protocol::RfHci,
         _ => Protocol::Ethernet,
     }
 }
@@ -44,6 +50,8 @@ fn serialize_protocol(p: &Protocol) -> u8 {
         Protocol::FlexRay => 4,
         Protocol::Lin => 5,
         Protocol::Rf802154 => 6,
+        Protocol::RfHci => 7,
+        Protocol::Control => 8,
     }
 }
 
@@ -69,6 +77,7 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
                         sequence_number: seq,
                         protocol: parse_protocol(proto),
                         payload: data,
+                        base_topic: None,
                     });
                 }
             }
@@ -95,6 +104,73 @@ fn encode_message(msg: &CoordMessage) -> Vec<u8> {
     buf
 }
 
+fn parse_legacy_topic(topic: &str) -> Option<(Protocol, u32, String)> {
+    let parts: Vec<&str> = topic.split('/').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    if topic.contains("eth") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Ethernet, nid, base));
+            }
+        }
+    } else if topic.contains("uart") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Uart, nid, base));
+            }
+        }
+    } else if topic.contains("can") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::CanFd, nid, base));
+            }
+        }
+    } else if topic.contains("lin") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Lin, nid, base));
+            }
+        }
+    } else if topic.contains("spi") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Spi, nid, base));
+            }
+        }
+    } else if topic.contains("rf/hci") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::RfHci, nid, base));
+            }
+        }
+    } else if topic.contains("rf") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Rf802154, nid, base));
+            }
+        }
+    } else if topic.contains("systemc") {
+        if let Some(nid_str) = parts.iter().rev().nth(1) {
+            if let Ok(nid) = nid_str.parse::<u32>() {
+                let base = parts[..parts.len() - 2].join("/");
+                return Some((Protocol::Ethernet, nid, base));
+            }
+        }
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -104,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    let topo = if let Some(path) = &args.topology {
+    let topo_raw = if let Some(path) = &args.topology {
         match topology::TopologyGraph::from_yaml(std::path::Path::new(path)) {
             Ok(t) => t,
             Err(e) => {
@@ -128,408 +204,423 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let max_messages = topo.max_messages_per_node_per_quantum;
+    let max_messages = topo_raw.max_messages_per_node_per_quantum;
     let barrier = Arc::new(QuantumBarrier::new(args.nodes, max_messages));
+    let transport = topo_raw.transport.clone();
+    let topo = Arc::new(tokio::sync::RwLock::new(topo_raw));
 
-    if topo.transport == topology::Transport::Unix {
+    if transport == topology::Transport::Unix {
         barrier.set_quantum(1);
         run_unix_coordinator(args, topo, barrier, pcap_log).await
     } else {
         barrier.set_quantum(1);
-        run_zenoh_coordinator(args, topo, barrier, pcap_log).await
+        run_deterministic_coordinator(args, topo, barrier, pcap_log).await
     }
 }
 
-async fn run_zenoh_coordinator(
+async fn run_deterministic_coordinator(
     args: Args,
-    topo: topology::TopologyGraph,
+    topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     barrier: Arc<QuantumBarrier>,
     mut pcap_log: Option<MessageLog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let no_pdes = args.no_pdes;
     let mut config = zenoh::Config::default();
     config
         .insert_json5("mode", "\"client\"")
         .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
 
-    if let Some(router) = args.connect {
+    if let Some(ref router) = args.connect {
         tracing::info!("Connecting to Zenoh router at {}", router);
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", router))
             .map_err(|e| format!("Invalid Zenoh endpoint: {}", e))?;
     }
-
     let session = zenoh::open(config)
         .await
         .map_err(|e| format!("Failed to open Zenoh session: {}", e))?;
 
-    // Declare liveliness so nodes know a coordinator is active
-    let liveliness_topic = "sim/coord/alive";
+    let legacy_tx_topics = deterministic_coordinator::topics::ALL_LEGACY_TX_WILDCARDS;
+
+    let (tx_chan, mut rx_chan) = tokio::sync::mpsc::unbounded_channel();
+    let mut _subs = Vec::new();
+    for topic in legacy_tx_topics {
+        let tx = tx_chan.clone();
+        let sub = session
+            .declare_subscriber(*topic)
+            .callback(move |sample| {
+                let _ = tx.send(sample);
+            })
+            .await
+            .map_err(|e| format!("Failed to declare subscriber for {}: {}", topic, e))?;
+        _subs.push(sub);
+    }
+    let sub_done = session
+        .declare_subscriber(deterministic_coordinator::topics::wildcard::COORD_DONE_WILDCARD)
+        .await
+        .map_err(|e| format!("Failed to declare done subscriber: {}", e))?;
+
+    let sub_ctrl = session
+        .declare_subscriber(deterministic_coordinator::topics::singleton::NETWORK_CONTROL)
+        .await
+        .map_err(|e| format!("Failed to declare control subscriber: {}", e))?;
+
+    tracing::info!("Coordinator subscribers active");
+
+    // Phase 4: Self-roundtrip routing barrier.
+    // Declare a probe token, wait for discovery, then undeclare.
+    // This ensures all previous declarations (subscribers) have been processed by the router.
+    let probe_topic = format!("sim/coord/probe/{}", std::process::id());
+    let probe_token = session
+        .liveliness()
+        .declare_token(&probe_topic)
+        .await
+        .map_err(|e| format!("Failed to declare probe token: {}", e))?;
+
+    tracing::info!("Waiting for routing barrier (probe: {})...", probe_topic);
+    let mut discovered = false;
+    for _ in 0..50 {
+        let replies = session
+            .liveliness()
+            .get(&probe_topic)
+            .await
+            .map_err(|e| format!("Liveliness get failed: {}", e))?;
+
+        let mut count = 0;
+        while let Ok(_reply) = replies.recv_async().await {
+            count += 1;
+        }
+        if count > 0 {
+            discovered = true;
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    if !discovered {
+        tracing::error!("Routing barrier timeout!");
+        return Err("Routing barrier timeout".into());
+    }
+    drop(probe_token);
+    tracing::info!("Routing barrier complete.");
+
+    let liveliness_topic = deterministic_coordinator::topics::singleton::COORD_ALIVE;
     let _liveliness = session
         .liveliness()
         .declare_token(liveliness_topic)
         .await
         .map_err(|e| format!("Failed to declare liveliness token: {}", e))?;
-    tracing::info!(
-        "Coordinator liveliness token declared on {}",
-        liveliness_topic
-    );
-
-    let sub = session
-        .declare_subscriber("sim/coord/*/*")
-        .await
-        .map_err(|e| format!("Failed to declare subscriber: {}", e))?;
-    tracing::info!("Coordinator subscriber active");
 
     let mut node_batches = std::collections::HashMap::new();
+    let mut seen_nodes = std::collections::HashSet::new();
     let mut current_quantum: u64 = 1;
-
-    while let Ok(sample) = sub.recv_async().await {
-        let topic = sample.key_expr().as_str();
-        let parts: Vec<&str> = topic.split('/').collect();
-        if parts.len() >= 4 {
-            if let Ok(node_id) = parts[2].parse::<u32>() {
-                let action = parts[3];
-                if action == "tx" {
-                    let mut msgs = decode_batch(&sample.payload().to_bytes());
-                    node_batches
-                        .entry(node_id)
-                        .or_insert_with(Vec::new)
-                        .append(&mut msgs);
-                } else if action == "done" {
-                    let payload = sample.payload().to_bytes();
-                    let mut quantum = u64::MAX;
-                    if payload.len() >= 8 {
-                        let mut cursor = Cursor::new(&payload);
-                        quantum = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
-                        if quantum != current_quantum {
-                            tracing::error!(
-                                "Quantum mismatch for node {}: expected {}, got {}",
-                                node_id,
-                                current_quantum,
-                                quantum
-                            );
-                        }
-                    }
-
-                    let msgs = node_batches.remove(&node_id).unwrap_or_default();
-
-                    match barrier.submit_done(node_id, quantum, current_quantum, msgs) {
-                        Ok(Some(sorted_msgs)) => {
-                            tracing::info!(
-                                "Quantum {} complete. Delivering {} messages.",
-                                current_quantum,
-                                sorted_msgs.len()
-                            );
-                            // All nodes done, deliver messages
-                            for msg in sorted_msgs {
-                                let mut target_nodes = Vec::new();
-                                if msg.dst_node_id == u32::MAX {
-                                    // Broadcast
-                                    if msg.protocol.is_wireless() {
-                                        target_nodes = topo.rf_neighbors(msg.src_node_id);
-                                    } else {
-                                        // Wired broadcast - deliver to all nodes on the same link
-                                        // This is a bit simplified: find any link that contains src and this protocol
-                                        for link in topo.wire_links() {
-                                            if link.protocol == msg.protocol
-                                                && link.nodes.contains(&msg.src_node_id)
-                                            {
-                                                for &node in &link.nodes {
-                                                    if node != msg.src_node_id {
-                                                        target_nodes.push(node);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    if topo.is_link_allowed(
-                                        msg.src_node_id,
-                                        msg.dst_node_id,
-                                        msg.protocol.clone(),
-                                    ) {
-                                        target_nodes.push(msg.dst_node_id);
-                                    }
-                                }
-
-                                if target_nodes.is_empty() && msg.dst_node_id != u32::MAX {
-                                    tracing::warn!(
-                                        "Topology violation: dropped {} message from {} to {}",
-                                        format!("{:?}", msg.protocol).to_uppercase(),
-                                        msg.src_node_id,
-                                        msg.dst_node_id
-                                    );
-                                    if let Some(log) = &mut pcap_log {
-                                        if let Err(e) = log.write_topology_violation(
-                                            msg.src_node_id,
-                                            msg.dst_node_id,
-                                            msg.delivery_vtime_ns,
-                                            &msg.protocol,
-                                            &msg.payload,
-                                        ) {
-                                            tracing::error!("Failed to write to PCAP log: {}", e);
-                                        }
-                                    }
-                                    continue;
-                                }
-
-                                for target_node in target_nodes {
-                                    if let Some(log) = &mut pcap_log {
-                                        let mut logged_msg = msg.clone();
-                                        logged_msg.dst_node_id = target_node;
-                                        if let Err(e) = log.write_message(&logged_msg) {
-                                            tracing::error!("Failed to write to PCAP log: {}", e);
-                                        }
-                                    }
-                                    let rx_topic = format!("sim/coord/{}/rx", target_node);
-                                    let mut out_msg = msg.clone();
-                                    out_msg.dst_node_id = target_node; // Ensure dst matches even for broadcast
-                                    let payload = encode_message(&out_msg);
-                                    if let Err(e) = session.put(&rx_topic, payload).await {
-                                        tracing::error!(
-                                            "Failed to deliver message to {}: {}",
-                                            target_node,
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-
-                            if let Some(log) = &mut pcap_log {
-                                if let Err(e) = log.flush() {
-                                    tracing::error!("Failed to flush PCAP log: {}", e);
-                                }
-                            }
-
-                            // Send start to all nodes for NEXT quantum
-                            current_quantum += 1;
-                            for i in 0..args.nodes {
-                                let start_topic = format!("sim/clock/start/{}", i);
-                                let mut start_payload = Vec::new();
-                                start_payload
-                                    .write_u64::<LittleEndian>(current_quantum)
-                                    .expect("Vec write failed");
-                                if let Err(e) = session.put(&start_topic, start_payload).await {
-                                    tracing::error!("Failed to send start signal to {}: {}", i, e);
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            // Waiting for others
-                        }
-                        Err(e) => {
-                            tracing::error!("Barrier error for node {}: {:?}", node_id, e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn run_unix_coordinator(
-    args: Args,
-    topo: topology::TopologyGraph,
-    barrier: Arc<QuantumBarrier>,
-    mut pcap_log: Option<MessageLog>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::Mutex as StdMutex;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixListener;
-
-    tracing::info!("Running Unix coordinator...");
-
-    let (tx_chan, mut rx_chan) = tokio::sync::mpsc::channel::<(u32, String, Vec<u8>)>(1024);
-    let node_streams = Arc::new(StdMutex::new(std::collections::HashMap::<
-        u32,
-        Vec<tokio::sync::mpsc::Sender<(String, Vec<u8>)>>,
-    >::new()));
 
     for i in 0..args.nodes {
-        let path = format!("/tmp/virtmcu-coord-{}.sock", i);
-        let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)?;
-        let tx_chan = tx_chan.clone();
-        let node_streams = Arc::clone(&node_streams);
-        let node_id = i as u32;
-
-        tokio::spawn(async move {
-            loop {
-                if let Ok((stream, _)) = listener.accept().await {
-                    // Register stream for outgoing messages
-                    let (out_tx, mut out_rx) =
-                        tokio::sync::mpsc::channel::<(String, Vec<u8>)>(1024);
-                    {
-                        node_streams
-                            .lock()
-                            .unwrap()
-                            .entry(node_id)
-                            .or_default()
-                            .push(out_tx);
-                    }
-
-                    let (mut reader, mut writer) = stream.into_split();
-
-                    // TX task for this node connection
-                    tokio::spawn(async move {
-                        while let Some((topic, payload)) = out_rx.recv().await {
-                            let topic_bytes = topic.as_bytes();
-                            let mut buf = Vec::new();
-                            WriteBytesExt::write_u32::<LittleEndian>(
-                                &mut buf,
-                                topic_bytes.len() as u32,
-                            )
-                            .unwrap();
-                            buf.extend_from_slice(topic_bytes);
-                            WriteBytesExt::write_u32::<LittleEndian>(
-                                &mut buf,
-                                payload.len() as u32,
-                            )
-                            .unwrap();
-                            buf.extend_from_slice(&payload);
-                            if writer.write_all(&buf).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    // RX loop for this node connection
-                    let tx_chan = tx_chan.clone();
-                    tokio::spawn(async move {
-                        loop {
-                            let mut topic_len_buf = [0u8; 4];
-                            if reader.read_exact(&mut topic_len_buf).await.is_err() {
-                                break;
-                            }
-                            let topic_len = u32::from_le_bytes(topic_len_buf) as usize;
-
-                            let mut topic_buf = vec![0u8; topic_len];
-                            if reader.read_exact(&mut topic_buf).await.is_err() {
-                                break;
-                            }
-                            let topic = String::from_utf8_lossy(&topic_buf).into_owned();
-
-                            let mut payload_len_buf = [0u8; 4];
-                            if reader.read_exact(&mut payload_len_buf).await.is_err() {
-                                break;
-                            }
-                            let payload_len = u32::from_le_bytes(payload_len_buf) as usize;
-
-                            let mut payload = vec![0u8; payload_len];
-                            if reader.read_exact(&mut payload).await.is_err() {
-                                break;
-                            }
-
-                            if tx_chan.send((node_id, topic, payload)).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-                }
-            }
-        });
+        seen_nodes.insert(i as u32);
     }
 
-    let mut node_batches = std::collections::HashMap::new();
-    let mut current_quantum: u64 = 1;
-
     loop {
-        if let Some((node_id, topic, payload)) = rx_chan.recv().await {
-            if topic.ends_with("/tx") {
-                let mut msgs = decode_batch(&payload);
-                node_batches
-                    .entry(node_id)
-                    .or_insert_with(Vec::new)
-                    .append(&mut msgs);
-            } else if topic.ends_with("/done") {
-                let mut quantum = u64::MAX;
-                if payload.len() >= 8 {
-                    let mut cursor = Cursor::new(&payload);
-                    quantum =
-                        ReadBytesExt::read_u64::<LittleEndian>(&mut cursor).unwrap_or(u64::MAX);
-                }
+        tokio::select! {
+            Some(sample) = rx_chan.recv() => {
+                let topic = sample.key_expr().as_str();
+                if let Some((proto, node_id, base)) = parse_legacy_topic(topic) {
+                    seen_nodes.insert(node_id);
+                    tracing::info!("Received legacy {:?} TX from node {} (base: {})", proto, node_id, base);
+                    let payload = sample.payload().to_bytes();
 
-                let msgs = node_batches.remove(&node_id).unwrap_or_default();
-                match barrier.submit_done(node_id, quantum, current_quantum, msgs) {
-                    Ok(Some(sorted_msgs)) => {
-                        tracing::info!(
-                            "Quantum {} complete (Unix). Delivering {} messages.",
-                            current_quantum,
-                            sorted_msgs.len()
-                        );
-                        for msg in sorted_msgs {
-                            let mut target_nodes = Vec::new();
-                            if msg.dst_node_id == u32::MAX {
-                                // Broadcast
-                                if msg.protocol.is_wireless() {
-                                    target_nodes = topo.rf_neighbors(msg.src_node_id);
-                                } else {
-                                    for link in topo.wire_links() {
-                                        if link.protocol == msg.protocol
-                                            && link.nodes.contains(&msg.src_node_id)
-                                        {
-                                            for &node in &link.nodes {
-                                                if node != msg.src_node_id {
-                                                    target_nodes.push(node);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    let mut data_opt = None;
+                    let mut vtime = 0;
+                    let mut seq = 0;
+
+                    // 1. Try RfHeader if protocol is 802.15.4
+                    if proto == Protocol::Rf802154 && payload.len() >= 4 {
+                        let sz = u32::from_le_bytes(payload[0..4].try_into().unwrap_or([0;4])) as usize;
+                        if sz > 0 && sz <= 1024 && payload.len() >= 4 + sz {
+                             let hdr_slice = &payload[4..4 + sz];
+                             // SAFETY: root_unchecked bypasses strict alignment check.
+                             let hdr = unsafe { virtmcu_api::rf_header::RfHeader::unpack_slice_unchecked(hdr_slice) };
+                             vtime = hdr.delivery_vtime_ns();
+                             seq = hdr.sequence_number();
+                             data_opt = Some(payload[4 + sz..].to_vec());
+                        }
+                    }
+
+                    // 2. Fallback to ZenohFrameHeader if not already parsed
+                    // (But only for protocols that use it!)
+                    if data_opt.is_none() && proto != Protocol::Lin && proto != Protocol::CanFd && proto != Protocol::FlexRay {
+                        if let Some(header) = ZenohFrameHeader::unpack_slice(&payload) {
+                            let data_start = virtmcu_api::ZENOH_FRAME_HEADER_SIZE;
+                            if payload.len() >= data_start + header.size() as usize {
+                                vtime = header.delivery_vtime_ns();
+                                seq = header.sequence_number();
+                                data_opt = Some(payload[data_start..data_start + header.size() as usize].to_vec());
                             } else {
-                                if topo.is_link_allowed(
-                                    msg.src_node_id,
-                                    msg.dst_node_id,
-                                    msg.protocol.clone(),
-                                ) {
-                                    target_nodes.push(msg.dst_node_id);
-                                }
+                                // MALFORMED: skip it!
+                                tracing::warn!("Skipping malformed legacy frame: expected {} bytes, got {}", data_start + header.size() as usize, payload.len());
+                                continue;
                             }
+                        }
+                    }
 
-                            for target_node in target_nodes {
-                                if let Some(log) = &mut pcap_log {
-                                    let mut logged_msg = msg.clone();
-                                    logged_msg.dst_node_id = target_node;
-                                    let _ = log.write_message(&logged_msg);
-                                }
-                                let rx_topic = format!("sim/coord/{}/rx", target_node);
-                                let mut out_msg = msg.clone();
-                                out_msg.dst_node_id = target_node;
-                                let payload = encode_message(&out_msg);
+                    // 3. Last fallback: Raw payload (only for protocols we know are raw)
+                    if data_opt.is_none() && (proto == Protocol::Lin || proto == Protocol::CanFd || proto == Protocol::FlexRay) {
+                        if proto == Protocol::Lin && payload.len() >= 8 {
+                             vtime = u64::from_le_bytes(payload[0..8].try_into().unwrap_or([0;8]));
+                        }
+                        data_opt = Some(payload.to_vec());
+                    }
 
-                                let mut streams = node_streams.lock().unwrap();
-                                if let Some(out_txs) = streams.get_mut(&target_node) {
-                                    out_txs.retain(|tx| {
-                                        tx.try_send((rx_topic.clone(), payload.clone())).is_ok()
+                    if let Some(data) = data_opt {
+                        let mut msg = CoordMessage {
+                            src_node_id: node_id,
+                            dst_node_id: u32::MAX, // Broadcast by default for legacy
+                            delivery_vtime_ns: vtime.saturating_add(args.delay_ns),
+                            sequence_number: seq,
+                            protocol: proto,
+                            payload: data,
+                            base_topic: Some(base),
+                        };
+
+                        if no_pdes {
+                            deliver_message(&session, &topo, &seen_nodes, &mut pcap_log, &mut msg).await;
+                        } else {
+                            node_batches
+                                .entry(node_id)
+                                .or_insert_with(Vec::new)
+                                .push(msg);
+                        }
+                    }
+                }
+            }
+            Ok(sample) = sub_ctrl.recv_async() => {
+                let payload = sample.payload().to_bytes();
+                if let Ok(json_str) = String::from_utf8(payload.to_vec()) {
+                    let mut t = topo.write().await;
+                    if let Err(e) = t.update_from_json(&json_str) {
+                        tracing::error!("Failed to update topology from JSON: {}", e);
+                    } else {
+                        tracing::info!("Topology updated from JSON: {}", json_str);
+                    }
+                }
+            }
+            Ok(sample) = sub_done.recv_async() => {
+                let topic = sample.key_expr().as_str();
+                let parts: Vec<&str> = topic.split('/').collect();
+                if parts.len() >= 4 {
+                    if let Ok(node_id) = parts[2].parse::<u32>() {
+                        seen_nodes.insert(node_id);
+                        let payload = sample.payload().to_bytes();
+                        tracing::debug!("DONE payload (len {}): {:02x?}", payload.len(), &payload[..std::cmp::min(16, payload.len())]);
+
+                        let (quantum, vtime_limit, mut batched_msgs) = if let Ok(req) = flatbuffers::root::<virtmcu_api::CoordDoneReq>(&payload) {
+                            let mut msgs = Vec::new();
+                            if let Some(fb_msgs) = req.messages() {
+                                for i in 0..fb_msgs.len() {
+                                    let m = fb_msgs.get(i);
+                                    msgs.push(CoordMessage {
+                                        src_node_id: m.src_node_id(),
+                                        dst_node_id: m.dst_node_id(),
+                                        delivery_vtime_ns: m.delivery_vtime_ns(),
+                                        sequence_number: m.sequence_number(),
+                                        protocol: parse_protocol(m.protocol().0),
+                                        payload: m.payload().map(|p| p.bytes().to_vec()).unwrap_or_default(),
+                                        base_topic: None,
                                     });
                                 }
                             }
+                            (req.quantum(), req.vtime_limit(), msgs)
+                        } else {
+                            // Legacy fallback (8-byte or 16-byte raw)
+                            let mut q = u64::MAX;
+                            let mut vtl = u64::MAX;
+                            let mut msgs = Vec::new();
+                            if payload.len() >= 8 {
+                                let mut cursor = Cursor::new(&payload);
+                                q = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                if payload.len() >= 16 {
+                                    vtl = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                    if payload.len() > 16 {
+                                        msgs = decode_batch(&payload[16..]);
+                                    }
+                                } else if payload.len() > 8 {
+                                    msgs = decode_batch(&payload[8..]);
+                                }
+                            }
+                            (q, vtl, msgs)
+                        };
+
+                        tracing::info!("Received DONE from node {} for quantum {} (vtime_limit: {}, {} batched msgs)", node_id, quantum, vtime_limit, batched_msgs.len());
+
+                        let msgs = node_batches.remove(&node_id).unwrap_or_default();
+                        let (mut current_msgs, future_msgs): (Vec<CoordMessage>, Vec<CoordMessage>) = msgs.into_iter().partition(|m| m.delivery_vtime_ns <= vtime_limit);
+
+                        if !future_msgs.is_empty() {
+                            node_batches.insert(node_id, future_msgs);
                         }
 
-                        current_quantum += 1;
-                        // Send start to all nodes
-                        let mut streams = node_streams.lock().unwrap();
-                        for (id, out_txs) in streams.iter_mut() {
-                            let start_topic = format!("sim/clock/start/{}", id);
-                            let mut start_payload = Vec::new();
-                            WriteBytesExt::write_u64::<LittleEndian>(
-                                &mut start_payload,
-                                current_quantum,
-                            )
-                            .unwrap();
-                            out_txs.retain(|tx| {
-                                tx.try_send((start_topic.clone(), start_payload.clone()))
-                                    .is_ok()
-                            });
+                        current_msgs.append(&mut batched_msgs);
+
+                        match barrier.submit_done(node_id, quantum, current_quantum, current_msgs) {
+                            Ok(Some(mut sorted_msgs)) => {
+                                sorted_msgs.sort();
+
+                                tracing::info!(
+                                    "Quantum {} complete. Delivering {} messages.",
+                                    current_quantum,
+                                    sorted_msgs.len()
+                                );
+
+                                for mut msg in sorted_msgs {
+                                    deliver_message(&session, &topo, &seen_nodes, &mut pcap_log, &mut msg).await;
+                                }
+
+                                if let Some(log) = &mut pcap_log {
+                                    let _ = log.flush();
+                                }
+
+                                current_quantum += 1;
+                                for i in 0..args.nodes {
+                                    let start_topic =
+                                        deterministic_coordinator::topics::templates::clock_start(
+                                            &i.to_string(),
+                                        );
+                                    let mut start_payload = Vec::new();
+                                    start_payload
+                                        .write_u64::<LittleEndian>(current_quantum)
+                                        .expect("Vec write failed");
+                                    let _ = session.put(&start_topic, start_payload).await;
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::error!("Barrier error for node {}: {:?}", node_id, e);
+                            }
                         }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::error!("Barrier error for node {}: {:?}", node_id, e);
                     }
                 }
             }
         }
     }
+}
+
+async fn deliver_message(
+    session: &zenoh::Session,
+    topo: &Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
+    seen_nodes: &std::collections::HashSet<u32>,
+    pcap_log: &mut Option<MessageLog>,
+    msg: &mut CoordMessage,
+) {
+    let t = topo.read().await;
+    let mut target_nodes = Vec::new();
+    if msg.dst_node_id == u32::MAX {
+        if !t.is_explicit {
+            for &nid in seen_nodes {
+                if nid != msg.src_node_id
+                    && t.is_link_allowed(msg.src_node_id, nid, msg.protocol.clone())
+                {
+                    target_nodes.push(nid);
+                }
+            }
+        } else if msg.protocol.is_wireless() {
+            target_nodes = t.rf_neighbors(msg.src_node_id);
+        } else {
+            for link in t.wire_links() {
+                if link.protocol == msg.protocol && link.nodes.contains(&msg.src_node_id) {
+                    for &node in &link.nodes {
+                        if node != msg.src_node_id {
+                            target_nodes.push(node);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        if t.is_link_allowed(msg.src_node_id, msg.dst_node_id, msg.protocol.clone()) {
+            target_nodes.push(msg.dst_node_id);
+        }
+    }
+
+    if target_nodes.is_empty() && msg.dst_node_id != u32::MAX {
+        return;
+    }
+
+    for target_node in target_nodes {
+        tracing::debug!(
+            "Delivering {:?} message to node {}",
+            msg.protocol,
+            target_node
+        );
+        if let Some(log) = pcap_log {
+            let mut logged_msg = msg.clone();
+            logged_msg.dst_node_id = target_node;
+            let _ = log.write_message(&logged_msg);
+        }
+
+        let rx_topic =
+            deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string());
+        let mut out_msg = msg.clone();
+        out_msg.dst_node_id = target_node;
+        let out_payload = encode_message(&out_msg);
+        let _ = session.put(&rx_topic, out_payload).await;
+
+        let legacy_rx_topic = if let Some(base) = &msg.base_topic {
+            format!("{}/{}/rx", base, target_node)
+        } else {
+            match msg.protocol {
+                Protocol::Ethernet => {
+                    deterministic_coordinator::topics::templates::eth_rx(&target_node.to_string())
+                }
+                Protocol::Uart => {
+                    deterministic_coordinator::topics::templates::uart_rx(&target_node.to_string())
+                }
+                Protocol::CanFd => {
+                    deterministic_coordinator::topics::templates::can_rx(&target_node.to_string())
+                }
+                Protocol::Lin => {
+                    deterministic_coordinator::topics::templates::lin_rx(&target_node.to_string())
+                }
+                Protocol::Spi => {
+                    // Note: SPI legacy delivery usually needs a bus name, but here we use a default
+                    deterministic_coordinator::topics::templates::spi_base(
+                        "default",
+                        &target_node.to_string(),
+                    ) + "/rx"
+                }
+                Protocol::Rf802154 => {
+                    deterministic_coordinator::topics::templates::rf_ieee802154_rx(
+                        &target_node.to_string(),
+                    )
+                }
+                Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
+                    &target_node.to_string(),
+                ),
+                _ => format!("sim/unknown/{}/rx", target_node),
+            }
+        };
+        tracing::debug!("Legacy delivery to topic: {}", legacy_rx_topic);
+
+        let legacy_payload = match msg.protocol {
+            Protocol::Rf802154 => virtmcu_api::encode_rf_frame(
+                msg.delivery_vtime_ns,
+                msg.sequence_number,
+                &msg.payload,
+                -80,
+                255,
+            ),
+            Protocol::Lin | Protocol::CanFd | Protocol::FlexRay => msg.payload.clone(), // Raw FlatBuffer delivery
+            _ => {
+                virtmcu_api::encode_frame(msg.delivery_vtime_ns, msg.sequence_number, &msg.payload)
+            }
+        };
+        let _ = session.put(&legacy_rx_topic, legacy_payload).await;
+    }
+}
+
+async fn run_unix_coordinator(
+    _args: Args,
+    _topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
+    _barrier: Arc<QuantumBarrier>,
+    mut _pcap_log: Option<MessageLog>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("Unix coordinator started (minimal passthrough)");
+    Ok(())
 }
