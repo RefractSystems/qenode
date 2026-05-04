@@ -38,7 +38,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 
 **Determinism migration (new — highest correctness priority):**
 1. **Phase X: Active Codebase Migration to TypeSpec Schema** (See details below)
-2. **DET-9** — Wireshark extcap plugin (Low priority / Redundant with INFRA-7).
+2. [x] **DET-9** — Wireshark extcap plugin (Completed).
 
 **Hardware / infrastructure (existing, continue in parallel with DET work):**
 3. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
@@ -47,6 +47,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 6. **Milestone 30.8 + 30.10** — Firmware coverage (drcov) + unified reporting.
 7. **P12** — Deterministic Deadlock Detection (virtual-time budgets).
 8. **Milestone 32** — Vendor Firmware Validation (Ethernet & CAN-FD Binary Fidelity).
+9. **Milestone 33** — Deprecation of `repl2qemu` and `.repl` format (Migration to YAML+SVD SSOT).
 
 ---
 
@@ -143,6 +144,17 @@ For every completed milestone, an automated integration test MUST be added to `t
   - *Action*: Download the official vendor SDK lwIP/ping example. Compile unmodified and test against `virtmcu-netdev` to verify bidirectional packet flow.
 - [ ] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
 
+### [Infrastructure] Milestone 33 — Deprecation of `repl2qemu` and `.repl` format 🚧
+**Status**: 🟡 Open.
+
+**Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). This eliminates the structural drift inherent in "all-in-one" `.repl` definitions.
+
+**Tasks**:
+- [ ] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format using the `repl2yaml.py` utility.
+- [ ] **33.2**: Refactor `yaml2qemu.py` to remove its dependency on `repl2qemu/fdt_emitter.py`. Integrate the required FDT emission logic directly into `yaml2qemu` or a new modern library.
+- [ ] **33.3**: Completely remove the `tools/repl2qemu` package and its associated CLI commands.
+- [ ] **33.4**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow as defined in Architecture Chapter 11.
+
 
 ### [Infrastructure] INFRA-9 — Execution Pacing & Faster-Than-Real-Time (FTRT) Support
 **Status**: 🟡 Open.
@@ -170,7 +182,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 - [ ] **Milestone 23**: Bluetooth (nRF52840 RADIO emulation).
 - [ ] **Milestone 26**: Automotive Ethernet (100BASE-T1).
 - [ ] **Milestone 28**: Full Digital Twin (Multi-Medium Coordination).
-- [ ] **DET-9**: Wireshark extcap plugin (Reads the coordinator PCAP log and displays each inter-node message).
+- [x] **DET-9**: Wireshark extcap plugin (Completed).
 
 ## 3. Architectural Hardening — Concurrency, Correctness & Scale
 

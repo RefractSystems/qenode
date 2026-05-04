@@ -81,11 +81,9 @@ unsafe extern "C" fn rust_dummy_realize(dev: *mut c_void, _errp: *mut *mut c_voi
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.iomem);
 }
 
-static RUST_DUMMY_PROPERTIES: [Property; 3] = [
+static RUST_DUMMY_PROPERTIES: [Property; 2] = [
     define_prop_uint64!(c"base-addr".as_ptr(), RustDummyQEMU, base_addr, u64::MAX),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), RustDummyQEMU, debug, false),
-    // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
-    unsafe { core::mem::zeroed() },
 ];
 
 unsafe extern "C" fn rust_dummy_class_init(klass: *mut ObjectClass, _data: *const c_void) {

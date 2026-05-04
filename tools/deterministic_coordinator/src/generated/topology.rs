@@ -44,7 +44,7 @@ pub mod error {
 ///    },
 ///    {
 ///      "type": "string",
-///      "pattern": "^0x[0-9a-fA-F]+$"
+///      "pattern": "^(0x[0-9a-fA-F]+|none|sysbus)$"
 ///    }
 ///  ],
 ///  "$schema": "https://json-schema.org/draft/2020-12/schema"
@@ -116,7 +116,7 @@ impl ::std::convert::From<AddressString> for Address {
 /// ```json
 ///{
 ///  "type": "string",
-///  "pattern": "^0x[0-9a-fA-F]+$"
+///  "pattern": "^(0x[0-9a-fA-F]+|none|sysbus)$"
 ///}
 /// ```
 /// </details>
@@ -138,9 +138,11 @@ impl ::std::str::FromStr for AddressString {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
-            ::std::sync::LazyLock::new(|| ::regress::Regex::new("^0x[0-9a-fA-F]+$").unwrap());
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^(0x[0-9a-fA-F]+|none|sysbus)$").unwrap()
+            });
         if PATTERN.find(value).is_none() {
-            return Err("doesn't match pattern \"^0x[0-9a-fA-F]+$\"".into());
+            return Err("doesn't match pattern \"^(0x[0-9a-fA-F]+|none|sysbus)$\"".into());
         }
         Ok(Self(value.to_string()))
     }
@@ -488,7 +490,7 @@ impl ::std::convert::TryFrom<::std::string::String> for NodeRole {
 ///  "$id": "Protocol.json",
 ///  "description": "Supported inter-node communication protocols.",
 ///  "type": "string",
-///  "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$",
+///  "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$",
 ///  "$schema": "https://json-schema.org/draft/2020-12/schema"
 ///}
 /// ```
@@ -513,14 +515,14 @@ impl ::std::str::FromStr for Protocol {
         static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(
             || {
                 ::regress::Regex::new(
-                    "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$",
+                    "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$",
                 )
                 .unwrap()
             },
         );
         if PATTERN.find(value).is_none() {
             return Err(
-                "doesn't match pattern \"^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$\""
+                "doesn't match pattern \"^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$\""
                     .into(),
             );
         }
@@ -629,7 +631,7 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///      }
 ///    },
 ///    "name": {
-///      "type": "string"
+///      "$ref": "#/$defs/NodeID"
 ///    },
 ///    "parent": {
 ///      "type": "string"
@@ -659,7 +661,7 @@ pub struct Resource {
     pub container: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub interrupts: ::std::vec::Vec<ResourceInterruptsItem>,
-    pub name: ::std::string::String,
+    pub name: NodeId,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub parent: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1439,7 +1441,7 @@ pub mod builder {
             ::std::vec::Vec<super::ResourceInterruptsItem>,
             ::std::string::String,
         >,
-        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        name: ::std::result::Result<super::NodeId, ::std::string::String>,
         parent: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -1506,7 +1508,7 @@ pub mod builder {
         }
         pub fn name<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<::std::string::String>,
+            T: ::std::convert::TryInto<super::NodeId>,
             T::Error: ::std::fmt::Display,
         {
             self.name = value

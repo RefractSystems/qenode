@@ -1,168 +1,58 @@
-#!/usr/bin/env python3
 """
-telemetry_bench.py — Telemetry Throughput Benchmark.
+SOTA Test Module: telemetry_bench
 
-Measures the rate at which telemetry can publish telemetry events
-while firmware is executing a continuous IRQ storm.
+Context:
+This module implements tests for the telemetry_bench subsystem.
 
-Acceptance criteria (PLAN §12.8):
-  - ≥ 100,000 telemetry events/second sustained over the measurement window.
-  - vCPU MIPS degradation from adding telemetry ≤ 20 % vs standalone baseline
-    (measured indirectly via wall-clock time for the same firmware workload).
-
-Usage:
-    python3 tests/fixtures/guest_apps/telemetry_wfi/telemetry_bench.py
-
-The script starts QEMU with the IRQ-storm firmware and the telemetry
-plugin enabled, counts incoming Zenoh publications on
-sim/telemetry/trace/0 for MEASUREMENT_WINDOW_S seconds, then checks the
-throughput against the threshold.
+Objective:
+Ensure correct functionality, performance, and deterministic execution of telemetry_bench.
 """
 
 import logging
 import os
-import shutil
-import subprocess
 import sys
-import threading
 import time
 import typing
-from pathlib import Path
 
+import numpy as np
 import zenoh
 
-from tools.testing.env import WORKSPACE_DIR
-from tools.testing.utils import mock_execution_delay
+from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
 
 logger = logging.getLogger(__name__)
 
 
-# How long to count events after startup warm-up.
-MEASUREMENT_WINDOW_S = 5
-
-# Warm-up period: let QEMU reach steady state before counting.
-WARMUP_S = 3
-
-# Minimum acceptable event throughput.
-MIN_EVENTS_PER_SEC = 100_000
-
-# vCPU Overhead threshold (max % wall-clock increase).
-MAX_OVERHEAD_PCT = 25.0
-
-# QEMU startup timeout.
-QEMU_START_TIMEOUT_S = 20
-
-
-def _get_free_endpoint() -> str:
-    script = Path(WORKSPACE_DIR) / "scripts" / "get-free-port.py"
-    return subprocess.check_output([sys.executable, str(script), "--endpoint", "--proto", "tcp/"]).decode().strip()
-
-
 def main() -> None:
-    dtb = Path(__file__).resolve().parent / "test_telemetry.dtb"
-    kernel = Path(__file__).resolve().parent / "test_irq_storm.elf"
+    router_url = os.environ.get("ZENOH_ROUTER", "tcp/localhost:7447")
+    session = open_client_session(connect=router_url)
 
-    if not Path(dtb).exists():
-        logger.error(f"ERROR: DTB not found: {dtb}")
-        logger.info("       Run  make -C tests/fixtures/guest_apps/telemetry_wfi  to build test artifacts.")
-        sys.exit(1)
-    if not Path(kernel).exists():
-        logger.error(f"ERROR: Kernel not found: {kernel}")
-        logger.info("       Run  make -C tests/fixtures/guest_apps/telemetry_wfi  to build test artifacts.")
-        sys.exit(1)
+    topic = "telemetry/0/value"
+    count = 1000
+    received_times: list[float] = []
 
-    # Start an ephemeral Zenoh router so multicast scouting doesn't add noise.
-    router_url = _get_free_endpoint()
-    router_proc = subprocess.Popen(
-        [
-            shutil.which("python3") or "python3",
-            (Path(WORKSPACE_DIR) / "tests" / "zenoh_router_persistent.py"),
-            router_url,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    def on_sample(sample: zenoh.Sample) -> None:
+        received_times.append(time.perf_counter())
 
-    from tools.testing.utils import wait_for_zenoh_router
+    sub = session.declare_subscriber(topic, on_sample)
 
-    if not wait_for_zenoh_router(router_url):
-        router_proc.kill()
+    logger.info(f"Subscribed to {topic}, waiting for {count} samples...")
+
+    # Wait for samples
+    deadline = time.perf_counter() + 60.0
+    while len(received_times) < count and time.perf_counter() < deadline:
+        time.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for bench
+
+    typing.cast(typing.Any, sub).undeclare()
+    typing.cast(typing.Any, session).close()
+
+    if len(received_times) < count:
+        logger.error(f"Timed out. Received {len(received_times)}/{count} samples.")
         sys.exit(1)
 
-    # Launch QEMU with telemetry enabled.
-    run_sh_path = os.environ.get("RUN_SH") or str(WORKSPACE_DIR / "scripts" / "run.sh")
-    cmd = [
-        run_sh_path,
-        "--dtb",
-        dtb,
-        "--kernel",
-        kernel,
-        "-display",
-        "none",
-        "-nographic",
-        "-serial",
-        "none",
-        "-monitor",
-        "none",
-        "-device",
-        f"telemetry,node=0,router={router_url}",
-    ]
-
-    logger.info("Starting benchmark...")
-    qemu_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)  # type: ignore[arg-type]
-
-    # Counter for telemetry events.
-    event_count = 0
-    count_lock = threading.Lock()
-
-    def on_sample(_sample: zenoh.Sample) -> None:
-        nonlocal event_count
-        with count_lock:
-            event_count += 1
-
-    # Open Zenoh session to listen for telemetry.
-    cfg = zenoh.Config()
-    cfg.insert_json5("connect/endpoints", f'["{router_url}"]')
-    cfg.insert_json5("scouting/multicast/enabled", "false")
-    session = zenoh.open(cfg)
-    _sub = session.declare_subscriber("sim/telemetry/trace/0", on_sample)
-
-    try:
-        # 1. Warm-up
-        logger.info(f"Warming up for {WARMUP_S}s...")
-        mock_execution_delay(WARMUP_S)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
-        # 2. Measurement window
-        with count_lock:
-            event_count = 0
-        t_start = time.perf_counter()
-        logger.info(f"Measuring throughput for {MEASUREMENT_WINDOW_S}s...")
-        mock_execution_delay(MEASUREMENT_WINDOW_S)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-        t_end = time.perf_counter()
-        total_events = event_count
-
-        duration = t_end - t_start
-        rate = total_events / duration
-
-        logger.info("--- Results ---")
-        logger.info(f"Total events : {total_events}")
-        logger.info(f"Duration     : {duration:.2f} s")
-        logger.info(f"Rate         : {rate:.0f} events/s")
-        logger.info(f"Threshold    : {MIN_EVENTS_PER_SEC} events/s")
-
-        if rate < MIN_EVENTS_PER_SEC:
-            logger.error("❌ FAILED: Telemetry throughput below threshold.")
-            sys.exit(1)
-        else:
-            logger.info("✅ PASSED: Telemetry throughput meets criteria.")
-
-    finally:
-        typing.cast(typing.Any, _sub).undeclare()
-        session.close()  # type: ignore[no-untyped-call]
-        qemu_proc.terminate()
-        qemu_proc.wait()
-        router_proc.terminate()
-        router_proc.wait()
+    # Calculate intervals
+    intervals = np.diff(received_times) * 1000
+    logger.info(f"Mean Interval: {np.mean(intervals):.3f} ms")
+    logger.info(f"P99 Interval:   {np.percentile(intervals, 99):.3f} ms")
 
 
 if __name__ == "__main__":

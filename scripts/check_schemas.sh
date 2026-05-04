@@ -14,10 +14,13 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 cp -r schema "$TEMP_DIR/"
 cp -r scripts "$TEMP_DIR/"
 cp -r tools "$TEMP_DIR/"
+cp pyproject.toml "$TEMP_DIR/"
+cp Cargo.toml "$TEMP_DIR/"
+cp -r hw/rust/rustfmt.toml "$TEMP_DIR/hw/rust/" 2>/dev/null || true
 
 # Run generation in temp
 pushd "$TEMP_DIR" > /dev/null
-./scripts/generate_schemas.sh > /dev/null 2>&1
+./scripts/generate_schemas.sh
 popd > /dev/null
 
 # Compare generated files
@@ -28,6 +31,7 @@ fi
 
 if ! cmp -s tools/testing/virtmcu_test_suite/generated.py "$TEMP_DIR/tools/testing/virtmcu_test_suite/generated.py"; then
     echo "❌ Error: generated.py is out of date. Please run ./scripts/generate_schemas.sh"
+    diff tools/testing/virtmcu_test_suite/generated.py "$TEMP_DIR/tools/testing/virtmcu_test_suite/generated.py" | head -n 20
     exit 1
 fi
 

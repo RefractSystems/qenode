@@ -13,39 +13,33 @@ import sys
 import threading
 import typing
 
-import zenoh
-
-from tools import vproto
-from tools.testing.utils import mock_execution_delay
+from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
 
 logger = logging.getLogger(__name__)
 
 if len(sys.argv) <= 1:
     sys.exit(1)
-    router = sys.argv[1]
-config = zenoh.Config()
-config.insert_json5("mode", '"client"')
-config.insert_json5("connect/endpoints", f'["{router}"]')  # type: ignore[has-type]
-session = zenoh.open(config)
+router = sys.argv[1]
+session = open_client_session(connect=router)
 logger.info("[Stress] Connected to Zenoh.")
 
 
 def publish_chardev() -> None:
-    pub = session.declare_publisher("virtmcu/uart/0/rx")
-    for _i in range(1000):
-        # 12 byte header (8 byte vtime, 4 byte size) + payload
-
-        header = vproto.ZenohFrameHeader(0, 0, 5).pack()
-        payload = header + b"Hello"
+    pub = session.declare_publisher("virtmcu/chardev/0")
+    for i in range(1000):
+        # Header (24 bytes) + data
+        payload = b"\x00" * 24 + f"CHR {i}\n".encode()
         pub.put(payload)
-        mock_execution_delay(0.001)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    logger.info("[Stress] CHR thread done.")
 
 
 def publish_ui() -> None:
-    pub = session.declare_publisher("sim/ui/0/button/1")
+    pub = session.declare_publisher("virtmcu/ui/0")
     for i in range(1000):
-        pub.put(b"\x01" if i % 2 == 0 else b"\x00")
-        mock_execution_delay(0.001)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+        # Header (24 bytes) + data
+        payload = b"\x00" * 24 + f"UI {i}\n".encode()
+        pub.put(payload)
+    logger.info("[Stress] UI thread done.")
 
 
 t1 = threading.Thread(target=publish_chardev)

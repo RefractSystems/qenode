@@ -124,7 +124,7 @@ The smoke test compiles a minimal ARM firmware, starts the SystemC adapter, boot
 and asserts that the adapter received the expected MMIO writes:
 
 ```bash
-bash tests/fixtures/guest_apps/riscv_interrupts/smoke_test.sh
+pytest tests/integration/simulation/core/test_boot_riscv.py -v
 ```
 
 Expected output (abbreviated):

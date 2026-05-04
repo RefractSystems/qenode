@@ -91,7 +91,7 @@ def main() -> None:
 typedef struct {
     int64_t quantum_start_vtime_ns;
     int64_t quantum_delta_ns;
-    int64_t mujoco_time_ns;
+    int64_t absolute_vtime_ns;
 } VirtmcuQuantumTiming;
 
 /* Global function pointers used for guest synchronization */

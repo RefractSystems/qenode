@@ -38,7 +38,7 @@ So if `timeout = 10.0` seconds, the test should fire when:
 
 ## How `QmpBridge` Implements This
 
-`tools/testing/qmp_bridge.py` provides `get_virtual_time_ns()`:
+`tools/testing/virtmcu_test_suite/qmp_bridge.py` provides `get_virtual_time_ns()`:
 
 ```python
 async def get_virtual_time_ns(self) -> int:

@@ -23,14 +23,18 @@ struct SyscMsg {
 
 struct ClockAdvanceReq {
     delta_ns: uint64;
-    mujoco_time_ns: uint64;
+    absolute_vtime_ns: uint64;
     quantum_number: uint64;
 }
 
 struct ClockReadyResp {
+    /// Current virtual time in nanoseconds.
     current_vtime_ns: uint64;
+    /// Number of outbound frames bundled in this response.
     n_frames: uint32;
+    /// Error code (0 = OK, 1 = STALL).
     error_code: uint32;
+    /// Global quantum sequence number.
     quantum_number: uint64;
 }
 

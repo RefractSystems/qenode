@@ -131,7 +131,7 @@ session = zenoh.open(cfg)
 
 topic = "sim/clock/advance/0"
 q_num = 0
-payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0, quantum_number=q_num).pack()
+payload0 = ClockAdvanceReq(delta_ns=0, absolute_vtime_ns=0, quantum_number=q_num).pack()
 
 # Wait for QEMU to reach first quantum boundary.
 ready = False
@@ -143,7 +143,7 @@ while time.perf_counter() < deadline:
         break
     mock_execution_delay(0.2)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
     q_num += 1
-    payload0 = ClockAdvanceReq(delta_ns=0, mujoco_time_ns=0, quantum_number=q_num).pack()
+    payload0 = ClockAdvanceReq(delta_ns=0, absolute_vtime_ns=0, quantum_number=q_num).pack()
 
 if not ready:
     proc.terminate(); proc.wait()
@@ -156,7 +156,7 @@ current_q = q_num
 for _ in range(MAX_QUANTA):
     if proc.poll() is not None:
         break
-    payload_adv = ClockAdvanceReq(delta_ns=QUANTUM_NS, mujoco_time_ns=0, quantum_number=current_q).pack()
+    payload_adv = ClockAdvanceReq(delta_ns=QUANTUM_NS, absolute_vtime_ns=0, quantum_number=current_q).pack()
     replies = list(session.get(topic, payload=payload_adv, timeout=30.0))
     current_q += 1
     if not replies or not hasattr(replies[0], "ok") or replies[0].ok is None:

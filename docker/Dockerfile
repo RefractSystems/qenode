@@ -19,6 +19,7 @@ ARG FLATBUFFERS_VERSION=25.12.19
 ARG FLATCC_VERSION=0.6.1
 ARG HADOLINT_VERSION=2.14.0
 ARG ACTIONLINT_VERSION=1.7.12
+ARG MDBOOK_VERSION=0.4.40
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
@@ -28,6 +29,8 @@ ARG TARGETARCH
 # ── Stage 0: rust-builder ─────────────────────────────────────────────────────
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-slim AS rust-builder
 ARG BINDGEN_VERSION
+ARG MDBOOK_VERSION
+ARG RUST_VERSION
 ENV CARGO_HOME=/usr/local/cargo
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
@@ -35,12 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
     && rustup toolchain install nightly --profile minimal --component miri \
     && rustup component add rustfmt clippy rust-analyzer \
-    && cargo binstall -y bindgen-cli@${BINDGEN_VERSION} \
+    && cargo binstall -y bindgen-cli@"${BINDGEN_VERSION}" \
     && cargo binstall -y cargo-audit \
     && cargo binstall -y cargo-deny \
     && cargo binstall -y cargo-machete \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /usr/local/rustup/toolchains/*1.93.0*
+    && cargo binstall -y mdbook@"${MDBOOK_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 1: base ─────────────────────────────────────────────────────────────
 ARG DEBIAN_CODENAME
@@ -192,6 +195,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
 RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
@@ -355,6 +359,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
 
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo

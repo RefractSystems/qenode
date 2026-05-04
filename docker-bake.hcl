@@ -15,6 +15,7 @@ variable "IMAGE_TAG" {
 # Versions from VERSIONS file (passed via environment)
 variable "HADOLINT_VERSION" {}
 variable "ACTIONLINT_VERSION" {}
+variable "MDBOOK_VERSION" {}
 variable "DEBIAN_CODENAME" {}
 variable "NODE_VERSION" {}
 variable "PYTHON_VERSION" {}
@@ -71,6 +72,7 @@ target "_common" {
   args = {
     HADOLINT_VERSION      = HADOLINT_VERSION
     ACTIONLINT_VERSION    = ACTIONLINT_VERSION
+    MDBOOK_VERSION        = MDBOOK_VERSION
     DEBIAN_CODENAME       = DEBIAN_CODENAME
     NODE_VERSION          = NODE_VERSION
     PYTHON_VERSION        = PYTHON_VERSION

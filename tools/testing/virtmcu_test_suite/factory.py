@@ -6,8 +6,69 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+
+def inspect_dtb(dtb_path: Path | str) -> str:
+    """
+    Invokes dtc to decompile a DTB into a DTS string for introspection.
+    """
+    dtb_path = Path(dtb_path)
+    dtc_cmd = shutil.which("dtc") or "dtc"
+    try:
+        res = subprocess.run(
+            [dtc_cmd, "-I", "dtb", "-O", "dts", str(dtb_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return res.stdout
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"dtc failed: {e.stderr}") from e
+
+
+def compile_repl(repl_path: Path | str, out_dtb: Path | str) -> Path:
+    """
+    Invokes repl2qemu to compile a .repl file into a DTB.
+    """
+    repl_path = Path(repl_path)
+    out_dtb = Path(out_dtb)
+    python_cmd = sys.executable
+    try:
+        subprocess.run(
+            [python_cmd, "-m", "tools.repl2qemu", str(repl_path), "--out-dtb", str(out_dtb)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"repl2qemu failed: {e.stderr}") from e
+    return out_dtb
+
+
+def compile_yaml(yaml_path: Path | str, out_dtb: Path | str, out_cli: Path | str | None = None) -> Path:
+    """
+    Invokes yaml2qemu to compile a World Topology YAML into a DTB.
+    """
+    yaml_path = Path(yaml_path)
+    out_dtb = Path(out_dtb)
+    python_cmd = sys.executable
+    cmd = [python_cmd, "-m", "tools.yaml2qemu", str(yaml_path), "--out-dtb", str(out_dtb)]
+    if out_cli:
+        cmd.extend(["--out-cli", str(out_cli)])
+
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"yaml2qemu failed: {e.stderr}") from e
+    return out_dtb
 
 
 def compile_dtb(base_dts: Path | str, replacements: dict[str, str], out_dtb: Path | str) -> Path:
@@ -64,6 +125,23 @@ def compile_firmware(
         raise RuntimeError(f"arm-none-eabi-gcc failed: {e.stderr}") from e
 
     return out_elf
+
+
+def validate_dtb(dtb_path: Path | str) -> bool:
+    """
+    Invokes dt-validate to check a DTB against schemas.
+    Returns True if valid, False if dt-validate is missing.
+    Raises RuntimeError if validation fails.
+    """
+    dtb_path = Path(dtb_path)
+    dt_validate = shutil.which("dt-validate")
+    if not dt_validate:
+        return False
+    try:
+        subprocess.run([dt_validate, str(dtb_path)], check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"dt-validate failed: {e.stderr}") from e
 
 
 def compile_c_snippet(

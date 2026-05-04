@@ -83,11 +83,8 @@ unsafe extern "C" fn uart_echo_realize(dev: *mut c_void, _errp: *mut *mut c_void
     );
 }
 
-static UART_ECHO_PROPERTIES: [virtmcu_qom::qom::Property; 2] = [
-    define_prop_chr!(c"chardev".as_ptr(), UARTEcho, chr),
-    // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
-    unsafe { core::mem::zeroed() },
-];
+static UART_ECHO_PROPERTIES: [virtmcu_qom::qom::Property; 1] =
+    [define_prop_chr!(c"chardev".as_ptr(), UARTEcho, chr)];
 
 unsafe extern "C" fn uart_echo_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);

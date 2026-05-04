@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 # Standard virtmcu ClockAdvanceReq/ClockReadyResp packing
-def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
-    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
+def pack_clock_advance(delta_ns: int, absolute_vtime_ns: int = 0, quantum_number: int = 0) -> bytes:
+    return vproto.ClockAdvanceReq(delta_ns, absolute_vtime_ns, quantum_number).pack()
 
 
 def unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:

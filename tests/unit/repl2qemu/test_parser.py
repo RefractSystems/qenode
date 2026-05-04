@@ -11,7 +11,7 @@ Ensure correct functionality, performance, and deterministic execution of test_p
 from __future__ import annotations
 
 import logging
-import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -154,22 +154,14 @@ def test_stress_test_parser() -> None:
     assert platform.devices[999].name == "dev999"
 
 
-def test_parser_main(tmp_path: Path) -> None:
-    import subprocess
-
+def test_parser_main(tmp_path: Path, script_runner: Callable[..., str]) -> None:
     from tools.testing.env import WORKSPACE_DIR
 
     repl_file = tmp_path / "test.repl"
     repl_file.write_text("sram: Memory.MappedMemory @ sysbus 0x20000000\n")
 
-    result = subprocess.run(
-        [sys.executable, "-m", "tools.repl2qemu.parser", str(repl_file)],
-        capture_output=True,
-        text=True,
-        cwd=WORKSPACE_DIR,
-    )
-    assert result.returncode == 0
-    assert "sram" in result.stdout
+    output = script_runner(WORKSPACE_DIR / "tools/repl2qemu/parser.py", str(repl_file))
+    assert "sram" in output
 
 
 def test_parse_complex_attributes() -> None:

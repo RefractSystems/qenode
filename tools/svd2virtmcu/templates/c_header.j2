@@ -1,0 +1,30 @@
+/* AUTO-GENERATED FROM SVD. DO NOT EDIT. */
+#ifndef {{ device_name | upper }}_IO_H
+#define {{ device_name | upper }}_IO_H
+
+#include <stdint.h>
+
+/* Enterprise SOTA Assertions */
+_Static_assert(sizeof(float) == 4, "Enterprise Mandate: float must be exactly 32 bits (4 bytes)");
+_Static_assert(sizeof(uint32_t) == 4, "Enterprise Mandate: uint32_t must be exactly 32 bits (4 bytes)");
+/* Assume Little Endian for this binary control plane */
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
+_Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "Enterprise Mandate: Binary control plane requires Little Endian");
+#endif
+
+{% for periph in peripherals %}
+/* {{ periph.name }}: {{ periph.description }} */
+#define {{ periph.name }}_BASE 0x{{ "%08X" | format(periph.base_address) }}
+#define {{ periph.name }}_SIZE 0x{{ "%04X" | format(periph.size) }}
+
+{% for reg in periph.registers %}
+/* {{ reg.name }}: {{ reg.description }} */
+#define REG_{{ reg.name }}_OFFSET 0x{{ "%04X" | format(reg.offset) }}
+_Static_assert((REG_{{ reg.name }}_OFFSET % 4) == 0, "Enterprise Mandate: Register {{ reg.name }} offset must be 32-bit aligned");
+#define REG_{{ reg.name }} (*(volatile {{ reg.c_type }}*)({{ periph.name }}_BASE + REG_{{ reg.name }}_OFFSET))
+#define REG_{{ reg.name }}_PTR ((volatile {{ reg.c_type }}*)({{ periph.name }}_BASE + REG_{{ reg.name }}_OFFSET))
+
+{% endfor %}
+{% endfor %}
+
+#endif /* {{ device_name | upper }}_IO_H */

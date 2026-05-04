@@ -14,8 +14,8 @@ import zenoh
 if TYPE_CHECKING:
     import zenoh
 
-from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import wait_for_file_creation, yield_now
+from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 
 logger = logging.getLogger(__name__)
 

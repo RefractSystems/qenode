@@ -17,12 +17,16 @@ class ClockReadyResp(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # Current virtual time in nanoseconds.
     # ClockReadyResp
     def CurrentVtimeNs(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(0))
+    # Number of outbound frames bundled in this response.
     # ClockReadyResp
     def NFrames(self): return self._tab.Get(flatbuffers.number_types.Uint32Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(8))
+    # Error code (0 = OK, 1 = STALL).
     # ClockReadyResp
     def ErrorCode(self): return self._tab.Get(flatbuffers.number_types.Uint32Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(12))
+    # Global quantum sequence number.
     # ClockReadyResp
     def QuantumNumber(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(16))
 
@@ -33,3 +37,49 @@ def CreateClockReadyResp(builder, currentVtimeNs, nFrames, errorCode, quantumNum
     builder.PrependUint32(nFrames)
     builder.PrependUint64(currentVtimeNs)
     return builder.Offset()
+
+
+class ClockReadyRespT(object):
+
+    # ClockReadyRespT
+    def __init__(
+        self,
+        currentVtimeNs = 0,
+        nFrames = 0,
+        errorCode = 0,
+        quantumNumber = 0,
+    ):
+        self.currentVtimeNs = currentVtimeNs  # type: int
+        self.nFrames = nFrames  # type: int
+        self.errorCode = errorCode  # type: int
+        self.quantumNumber = quantumNumber  # type: int
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        clockReadyResp = ClockReadyResp()
+        clockReadyResp.Init(buf, pos)
+        return cls.InitFromObj(clockReadyResp)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, clockReadyResp):
+        x = ClockReadyRespT()
+        x._UnPack(clockReadyResp)
+        return x
+
+    # ClockReadyRespT
+    def _UnPack(self, clockReadyResp):
+        if clockReadyResp is None:
+            return
+        self.currentVtimeNs = clockReadyResp.CurrentVtimeNs()
+        self.nFrames = clockReadyResp.NFrames()
+        self.errorCode = clockReadyResp.ErrorCode()
+        self.quantumNumber = clockReadyResp.QuantumNumber()
+
+    # ClockReadyRespT
+    def Pack(self, builder):
+        return CreateClockReadyResp(builder, self.currentVtimeNs, self.nFrames, self.errorCode, self.quantumNumber)

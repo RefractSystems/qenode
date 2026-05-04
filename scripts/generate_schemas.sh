@@ -19,11 +19,19 @@ uv run --with datamodel-code-generator datamodel-codegen \
     --output tools/testing/virtmcu_test_suite/generated.py \
     --input-file-type jsonschema \
     --output-model-type pydantic_v2.BaseModel \
-    --disable-timestamp
+    --disable-timestamp \
+    --allow-extra-fields
+
+echo "🖌️  3.5. Formatting Python Models..."
+uv run --active ruff format tools/testing/virtmcu_test_suite/generated.py
 
 echo "🦀 4. Generating Rust Models (Serde)..."
 cd schema/rust_gen
 cargo run
 cd ../..
+rustfmt tools/deterministic_coordinator/src/generated/topology.rs || true
+
+echo "🖌️  4.5. Formatting Rust Models..."
+rustfmt --edition 2021 tools/deterministic_coordinator/src/generated/topology.rs
 
 echo "✅ Code generation pipeline completed successfully!"

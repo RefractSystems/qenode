@@ -229,6 +229,9 @@ async fn run_deterministic_coordinator(
     config
         .insert_json5("mode", "\"client\"")
         .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .map_err(|e| format!("Invalid Zenoh scouting config: {}", e))?;
 
     if let Some(ref router) = args.connect {
         tracing::info!("Connecting to Zenoh router at {}", router);
@@ -363,8 +366,10 @@ async fn run_deterministic_coordinator(
 
                     // 3. Last fallback: Raw payload (only for protocols we know are raw)
                     if data_opt.is_none() && (proto == Protocol::Lin || proto == Protocol::CanFd || proto == Protocol::FlexRay) {
-                        if proto == Protocol::Lin && payload.len() >= 8 {
-                             vtime = u64::from_le_bytes(payload[0..8].try_into().unwrap_or([0;8]));
+                        if proto == Protocol::Lin {
+                             if let Ok(frame) = virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&payload) {
+                                 vtime = frame.delivery_vtime_ns();
+                             }
                         }
                         data_opt = Some(payload.to_vec());
                     }
@@ -411,7 +416,9 @@ async fn run_deterministic_coordinator(
                         let payload = sample.payload().to_bytes();
                         tracing::debug!("DONE payload (len {}): {:02x?}", payload.len(), &payload[..std::cmp::min(16, payload.len())]);
 
-                        let (quantum, vtime_limit, mut batched_msgs) = if let Ok(req) = flatbuffers::root::<virtmcu_api::CoordDoneReq>(&payload) {
+                        let is_legacy = payload.len() == 8 || payload.len() == 16;
+                        let (quantum, vtime_limit, mut batched_msgs) = if !is_legacy && flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).is_ok() {
+                            let req = flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).unwrap();
                             let mut msgs = Vec::new();
                             if let Some(fb_msgs) = req.messages() {
                                 for i in 0..fb_msgs.len() {

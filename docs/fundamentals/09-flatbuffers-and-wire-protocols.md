@@ -16,7 +16,7 @@ This is achieved through a schema-first approach. The interface is mathematicall
 // Example: The VirtMCU Clock Sync Request Schema
 table ClockAdvanceReq {
     delta_ns: uint64;
-    mujoco_time_ns: uint64;
+    absolute_vtime_ns: uint64;
     quantum_id: uint32;
 }
 root_type ClockAdvanceReq;

@@ -60,25 +60,12 @@ def get_test_ip() -> str:
     Returns a suitable IP for testing.
     Prioritizes:
     1. TEST_IP environment variable.
-    2. Primary interface IP (to avoid hardcoding 127.0.0.1).
-    3. Loopback 127.0.0.1 as fallback.
+    2. Loopback 127.0.0.1 as default (most robust for inter-process in container).
     """
     if "TEST_IP" in os.environ:
         return os.environ["TEST_IP"]
 
-    # Try to get the primary interface IP that has external connectivity
-    try:
-        # We don't need a real connection, just to see what IP would be used
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # 8.8.8.8 is just a placeholder, no traffic is sent
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except OSError:
-        # Fallback to a simple hostname lookup
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except OSError:
-            return "127.0.0.1"
+    return "127.0.0.1"
 
 
 if __name__ == "__main__":
