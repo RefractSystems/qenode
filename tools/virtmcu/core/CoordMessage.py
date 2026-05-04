@@ -139,3 +139,82 @@ def CoordMessageEnd(builder):
 
 def End(builder):
     return CoordMessageEnd(builder)
+
+try:
+    from typing import List
+except:
+    pass
+
+class CoordMessageT(object):
+
+    # CoordMessageT
+    def __init__(
+        self,
+        srcNodeId = 0,
+        dstNodeId = 0,
+        deliveryVtimeNs = 0,
+        sequenceNumber = 0,
+        protocol = 0,
+        payload = None,
+    ):
+        self.srcNodeId = srcNodeId  # type: int
+        self.dstNodeId = dstNodeId  # type: int
+        self.deliveryVtimeNs = deliveryVtimeNs  # type: int
+        self.sequenceNumber = sequenceNumber  # type: int
+        self.protocol = protocol  # type: int
+        self.payload = payload  # type: Optional[List[int]]
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        coordMessage = CoordMessage()
+        coordMessage.Init(buf, pos)
+        return cls.InitFromObj(coordMessage)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, coordMessage):
+        x = CoordMessageT()
+        x._UnPack(coordMessage)
+        return x
+
+    # CoordMessageT
+    def _UnPack(self, coordMessage):
+        if coordMessage is None:
+            return
+        self.srcNodeId = coordMessage.SrcNodeId()
+        self.dstNodeId = coordMessage.DstNodeId()
+        self.deliveryVtimeNs = coordMessage.DeliveryVtimeNs()
+        self.sequenceNumber = coordMessage.SequenceNumber()
+        self.protocol = coordMessage.Protocol()
+        if not coordMessage.PayloadIsNone():
+            if np is None:
+                self.payload = []
+                for i in range(coordMessage.PayloadLength()):
+                    self.payload.append(coordMessage.Payload(i))
+            else:
+                self.payload = coordMessage.PayloadAsNumpy()
+
+    # CoordMessageT
+    def Pack(self, builder):
+        if self.payload is not None:
+            if np is not None and type(self.payload) is np.ndarray:
+                payload = builder.CreateNumpyVector(self.payload)
+            else:
+                CoordMessageStartPayloadVector(builder, len(self.payload))
+                for i in reversed(range(len(self.payload))):
+                    builder.PrependUint8(self.payload[i])
+                payload = builder.EndVector()
+        CoordMessageStart(builder)
+        CoordMessageAddSrcNodeId(builder, self.srcNodeId)
+        CoordMessageAddDstNodeId(builder, self.dstNodeId)
+        CoordMessageAddDeliveryVtimeNs(builder, self.deliveryVtimeNs)
+        CoordMessageAddSequenceNumber(builder, self.sequenceNumber)
+        CoordMessageAddProtocol(builder, self.protocol)
+        if self.payload is not None:
+            CoordMessageAddPayload(builder, payload)
+        coordMessage = CoordMessageEnd(builder)
+        return coordMessage

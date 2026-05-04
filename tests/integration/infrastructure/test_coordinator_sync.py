@@ -246,7 +246,6 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
     from tools import vproto
     from tools.testing.virtmcu_test_suite.topics import SimTopic
 
-
     s = zenoh_session
     done_topic = SimTopic.coord_done(0)
     start_topic = SimTopic.clock_start(0)
@@ -265,6 +264,7 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
         s.put(done_topic, vproto.CoordDoneReq(quantum=q, vtime_limit=0xFFFFFFFFFFFFFFFF, messages=[]).pack())
         quanta_completed += 1
         loop.call_soon_threadsafe(start_event.set)
+
     # Declare subscriber BEFORE entering the coordinator context — the framework's
     # routing barrier inside coordinator_subprocess covers it.
     sub = s.declare_subscriber(start_topic, on_start)

@@ -1,13 +1,16 @@
 import json
+import sys
 from typing import Any
 
-schema_path = "schema/world_schema.json"
+schema_path = sys.argv[1] if len(sys.argv) > 1 else "schema/world_schema.json"
+
 with open(schema_path) as f:
     schema = json.load(f)
 
+
 def fix_refs(obj: Any) -> None:  # noqa: ANN401
     if isinstance(obj, dict):
-        if "$ref" in obj and not obj["$ref"].startswith("#"):
+        if "$ref" in obj and isinstance(obj["$ref"], str) and not obj["$ref"].startswith("#"):
             # Machine.json -> #/$defs/Machine
             ref = obj["$ref"].replace(".yaml", "").replace(".json", "")
             obj["$ref"] = f"#/$defs/{ref}"
@@ -16,6 +19,7 @@ def fix_refs(obj: Any) -> None:  # noqa: ANN401
     elif isinstance(obj, list):
         for item in obj:
             fix_refs(item)
+
 
 fix_refs(schema)
 

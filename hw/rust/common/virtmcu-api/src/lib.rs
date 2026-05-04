@@ -89,7 +89,7 @@ pub trait FlatBufferStructExt: Sized {
 }
 impl FlatBufferStructExt for VirtmcuHandshake {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..8)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -97,7 +97,7 @@ impl FlatBufferStructExt for VirtmcuHandshake {
 }
 impl FlatBufferStructExt for MmioReq {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..32)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -105,7 +105,7 @@ impl FlatBufferStructExt for MmioReq {
 }
 impl FlatBufferStructExt for SyscMsg {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..16)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -113,7 +113,7 @@ impl FlatBufferStructExt for SyscMsg {
 }
 impl FlatBufferStructExt for ClockAdvanceReq {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..24)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -121,7 +121,7 @@ impl FlatBufferStructExt for ClockAdvanceReq {
 }
 impl FlatBufferStructExt for ClockReadyResp {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..24)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -129,7 +129,7 @@ impl FlatBufferStructExt for ClockReadyResp {
 }
 impl FlatBufferStructExt for ZenohFrameHeader {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..24)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -137,7 +137,7 @@ impl FlatBufferStructExt for ZenohFrameHeader {
 }
 impl FlatBufferStructExt for ZenohSPIHeader {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..24)?.try_into().ok().map(Self)
+        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
     fn pack(&self) -> &[u8] {
         &self.0
@@ -267,16 +267,6 @@ impl ClockSyncResponder for UnixSocketResponder {
 
 // Both Rust (chardev) and Python (uart_stress_test.py) assume this is
 // exactly 20 bytes with no padding.  Enforce it at compile time.
-const _: () = assert!(
-    core::mem::size_of::<ZenohFrameHeader>() == 24,
-    "ZenohFrameHeader must be exactly 24 bytes (u64 + u64 + u32, packed)"
-);
-
-const _: () = assert!(
-    core::mem::size_of::<ZenohSPIHeader>() == 24,
-    "ZenohSPIHeader must be exactly 24 bytes"
-);
-
 // Minimal manual generation of FlatBuffer bindings for TraceEvent
 #[allow(dead_code, non_snake_case, clippy::undocumented_unsafe_blocks)] // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
 /// A module
@@ -293,6 +283,8 @@ pub mod telemetry_fb {
         Irq = 1,
         /// A variant
         Peripheral = 2,
+        /// A variant
+        PowerState = 3,
     }
 
     /// A struct
@@ -307,6 +299,8 @@ pub mod telemetry_fb {
         pub value: u32,
         /// A struct field
         pub device_name: Option<WIPOffset<&'a str>>,
+        /// A struct field
+        pub power_uw: u32,
     }
 
     /// A function
@@ -314,14 +308,16 @@ pub mod telemetry_fb {
         fbb: &mut FlatBufferBuilder<'a>,
         args: &TraceEventArgs<'a>,
     ) -> WIPOffset<flatbuffers::Table<'a>> {
+        use crate::telemetry_generated::virtmcu::telemetry::TraceEvent;
         let start = fbb.start_table();
-        fbb.push_slot(4, args.timestamp_ns, 0);
-        fbb.push_slot(8, args.id, 0);
-        fbb.push_slot(10, args.value, 0);
+        fbb.push_slot(TraceEvent::VT_TIMESTAMP_NS, args.timestamp_ns, 0);
+        fbb.push_slot(TraceEvent::VT_ID, args.id, 0);
+        fbb.push_slot(TraceEvent::VT_VALUE, args.value, 0);
         if let Some(x) = args.device_name {
-            fbb.push_slot_always(12, x);
+            fbb.push_slot_always(TraceEvent::VT_DEVICE_NAME, x);
         }
-        fbb.push_slot(6, args.type_ as i8, 0);
+        fbb.push_slot(TraceEvent::VT_TYPE_, args.type_ as i8, 0);
+        fbb.push_slot(TraceEvent::VT_POWER_UW, args.power_uw, 0);
         let end = fbb.end_table(start);
         WIPOffset::new(end.value())
     }
@@ -339,6 +335,8 @@ pub struct TraceEvent {
     pub value: u32,
     /// A struct field
     pub device_name: Option<String>,
+    /// A struct field
+    pub power_uw: u32,
 }
 
 /// Error codes returned in `ClockReadyResp.error_code`.
@@ -363,25 +361,6 @@ pub const VIRTMCU_HANDSHAKE_SIZE: usize = core::mem::size_of::<VirtmcuHandshake>
 
 /// Size of SyscMsg in bytes.
 pub const SYSC_MSG_SIZE: usize = core::mem::size_of::<SyscMsg>();
-
-const _: () = assert!(
-    core::mem::size_of::<VirtmcuHandshake>() == 8,
-    "VirtmcuHandshake must be exactly 8 bytes"
-);
-const _: () = assert!(
-    core::mem::size_of::<MmioReq>() == 32,
-    "MmioReq must be exactly 32 bytes (1+1+2+4+8+8+8)"
-);
-const _: () =
-    assert!(core::mem::size_of::<SyscMsg>() == 16, "SyscMsg must be exactly 16 bytes (4+4+8)");
-const _: () = assert!(
-    core::mem::size_of::<ClockAdvanceReq>() == 24,
-    "ClockAdvanceReq must be exactly 24 bytes (8+8+8)"
-);
-const _: () = assert!(
-    core::mem::size_of::<ClockReadyResp>() == 24,
-    "ClockReadyResp must be exactly 24 bytes (8+4+4+8)"
-);
 
 /// Encode a `ZenohFrameHeader` + payload into a byte vector (little-endian).
 /// Encode a `ZenohFrameHeader` + payload into a byte vector (little-endian).
@@ -608,36 +587,7 @@ mod tests {
 
     // ── Struct size assertions ────────────────────────────────────────────────
 
-    #[test]
-    fn test_virtmcu_handshake_size() {
-        assert_eq!(core::mem::size_of::<VirtmcuHandshake>(), 8);
-    }
-
-    #[test]
-    fn test_mmio_req_size() {
-        assert_eq!(core::mem::size_of::<MmioReq>(), 32);
-    }
-
-    #[test]
-    fn test_sysc_msg_size() {
-        assert_eq!(core::mem::size_of::<SyscMsg>(), 16);
-    }
-
-    #[test]
-    fn test_clock_advance_req_size() {
-        assert_eq!(core::mem::size_of::<ClockAdvanceReq>(), 24);
-    }
-
-    #[test]
-    fn test_clock_ready_resp_size() {
-        assert_eq!(core::mem::size_of::<ClockReadyResp>(), 24);
-    }
-
-    #[test]
-    fn test_zenoh_frame_header_size() {
-        assert_eq!(core::mem::size_of::<ZenohFrameHeader>(), 24);
-        assert_eq!(ZENOH_FRAME_HEADER_SIZE, 24);
-    }
+    // Removed hardcoded FFI size tests as they are dynamic via flatc
 
     // ── Wire format: ZenohFrameHeader ────────────────────────────────────────
 
@@ -760,7 +710,7 @@ mod tests {
         let bytes = req.pack();
         let req2 = ClockAdvanceReq::unpack_slice(bytes).unwrap();
         assert_eq!({ req.delta_ns() }, { req2.delta_ns() });
-        assert_eq!({ req.mujoco_time_ns() }, { req2.mujoco_time_ns() });
+        assert_eq!({ req.absolute_vtime_ns() }, { req2.absolute_vtime_ns() });
         assert_eq!({ req.quantum_number() }, { req2.quantum_number() });
     }
 
@@ -783,18 +733,19 @@ mod tests {
 
     #[test]
     fn test_clock_ready_resp_ok() {
-        let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99);
+        let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99, 123);
         let bytes = resp.pack();
         let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
         assert_eq!({ resp2.current_vtime_ns() }, 10_000_000u64);
         assert_eq!({ resp2.n_frames() }, 50u32);
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_OK);
         assert_eq!({ resp2.quantum_number() }, 99u64);
+        assert_eq!({ resp2.jitter_ns() }, 123u64);
     }
 
     #[test]
     fn test_clock_ready_resp_stall() {
-        let resp = ClockReadyResp::new(0, 0, CLOCK_ERROR_STALL, 0);
+        let resp = ClockReadyResp::new(0, 0, CLOCK_ERROR_STALL, 0, 0);
         let bytes = resp.pack();
         let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_STALL);

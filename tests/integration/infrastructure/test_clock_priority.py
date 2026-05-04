@@ -40,7 +40,9 @@ async def _flood(noise_count: int, transport: SimulationTransport, topic: str, n
 
 @pytest.mark.asyncio
 async def test_clock_priority_isolation(
-    simulation: Simulation, tmp_path: Path, guest_app_factory: Any  # noqa: ANN401
+    simulation: Simulation,
+    tmp_path: Path,
+    guest_app_factory: Any,  # noqa: ANN401
 ) -> None:
     """
     STRESS TEST for Clock Session Priority Isolation.
@@ -129,6 +131,7 @@ async def test_clock_priority_isolation(
         pass
         if simulation.transport is None:
             from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
             simulation.transport = ZenohTransportImpl(simulation._router, simulation._session)
 
         # Launch QEMU with clock (private session) and chardev (shared session)

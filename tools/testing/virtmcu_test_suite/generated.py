@@ -15,7 +15,7 @@ class Model(RootModel[Any]):
 
 class Cpu(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     name: str
     type: str
@@ -28,31 +28,29 @@ class NodeID(RootModel[conint(ge=0) | str]):
     root: conint(ge=0) | str
 
 
-class Address(
-    RootModel[conint(ge=0) | constr(pattern=r'^(0x[0-9a-fA-F]+|none|sysbus)$')]
-):
-    root: conint(ge=0) | constr(pattern=r'^(0x[0-9a-fA-F]+|none|sysbus)$')
+class Address(RootModel[conint(ge=0) | constr(pattern=r"^(0x[0-9a-fA-F]+|none|sysbus)$")]):
+    root: conint(ge=0) | constr(pattern=r"^(0x[0-9a-fA-F]+|none|sysbus)$")
 
 
 class RecordUnknown(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
 
 
 class Transport(Enum):
-    zenoh = 'zenoh'
-    unix = 'unix'
+    zenoh = "zenoh"
+    unix = "unix"
 
 
 class Role(Enum):
-    Cyber = 'Cyber'
-    Physics = 'Physics'
+    Cyber = "Cyber"
+    Physics = "Physics"
 
 
 class Node(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     name: NodeID
     role: Role | None = None
@@ -61,18 +59,18 @@ class Node(BaseModel):
 class Protocol(
     RootModel[
         constr(
-            pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$'
+            pattern=r"^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$"
         )
     ]
 ):
     root: constr(
-        pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$'
-    ) = Field(..., description='Supported inter-node communication protocols.')
+        pattern=r"^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$"
+    ) = Field(..., description="Supported inter-node communication protocols.")
 
 
 class Coordinate(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     x: float
     y: float
@@ -81,7 +79,7 @@ class Coordinate(BaseModel):
 
 class Machine(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     name: str | None = None
     type: str | None = None
@@ -90,7 +88,7 @@ class Machine(BaseModel):
 
 class Resource(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     name: NodeID
     type: str | None = None
@@ -105,7 +103,7 @@ class Resource(BaseModel):
 
 class WireLink(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     type: Protocol
     nodes: list[NodeID]
@@ -114,7 +112,7 @@ class WireLink(BaseModel):
 
 class WirelessNode(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     name: NodeID
     initial_position: Coordinate
@@ -122,7 +120,7 @@ class WirelessNode(BaseModel):
 
 class WirelessMedium(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     medium: str
     max_range_m: float
@@ -131,7 +129,7 @@ class WirelessMedium(BaseModel):
 
 class Topology(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     nodes: list[Node] | None = None
     links: list[WireLink] | None = None
@@ -143,7 +141,7 @@ class Topology(BaseModel):
 
 class WorldSchema(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     machine: Machine | None = None
     peripherals: list[Resource] | None = None
@@ -154,7 +152,7 @@ class WorldSchema(BaseModel):
 
 class World(BaseModel):
     model_config = ConfigDict(
-        extra='allow',
+        extra="allow",
     )
     machine: Machine | None = None
     peripherals: list[Resource] | None = None

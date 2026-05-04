@@ -25,7 +25,7 @@ async def test_yaml_platform_boot(
 
     workspace_root = WORKSPACE_ROOT
     yaml_file = workspace_root / "tests/fixtures/guest_apps/yaml_boot/test_board.yaml"
-    
+
     app_dir = guest_app_factory("boot_arm")
     kernel = app_dir / "hello.elf"
 

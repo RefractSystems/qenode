@@ -84,6 +84,7 @@ async def test_lin_lpuart(
     kernel = lin_echo_elf
 
     from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
     sim_transport = ZenohTransportImpl(simulation._router, simulation._session)
 
     # Framework auto-injects clock, router, node_id, and icount.
@@ -102,7 +103,6 @@ async def test_lin_lpuart(
     ]
 
     received: list[tuple[int, bytes]] = []
-
 
     def on_msg(payload: bytes) -> None:
         try:
@@ -129,6 +129,7 @@ async def test_lin_lpuart(
         logger.info(f"QEMU started with topic {lin_topic}; sending 'X' to RX...")
 
         from tools.testing.utils import yield_now
+
         await yield_now()
 
         frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
@@ -145,6 +146,7 @@ async def test_lin_lpuart(
 
         # Deterministic check for responses
         logger.info("Checking responses...")
+
         def responses_received() -> bool:
             found_x = False
             found_b = False

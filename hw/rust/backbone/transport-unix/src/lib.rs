@@ -1,3 +1,5 @@
+pub mod router;
+
 use crossbeam_channel::{unbounded, Sender};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;

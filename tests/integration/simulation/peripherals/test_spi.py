@@ -33,7 +33,11 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_spi_echo_baremetal(
-    simulation: Simulation, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path, guest_app_factory: Callable[[str], Path]
+    simulation: Simulation,
+    zenoh_session: zenoh.Session,
+    zenoh_router: str,
+    tmp_path: Path,
+    guest_app_factory: Callable[[str], Path],
 ) -> None:
     """
     SPI Loopback/Echo Firmware.

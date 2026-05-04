@@ -1,0 +1,36 @@
+use flatbuffers::FlatBufferBuilder;
+use virtmcu_api::telemetry_fb;
+
+#[test]
+fn test_trace_event_power_uw_serialization() {
+    let mut builder = FlatBufferBuilder::with_capacity(128);
+
+    // Create device name
+    let device_name = builder.create_string("test_motor");
+
+    // Use manual telemetry_fb module (SSOT for FirmwareStudio)
+    let args = telemetry_fb::TraceEventArgs {
+        timestamp_ns: 1000,
+        type_: telemetry_fb::TraceEventType::PowerState,
+        id: 42,
+        value: 1,
+        device_name: Some(device_name),
+        power_uw: 500000, // 0.5W
+    };
+
+    let offset = telemetry_fb::create_trace_event(&mut builder, &args);
+    builder.finish(offset, None);
+
+    let buf = builder.finished_data();
+
+    // Verify using the generated root type
+    let event =
+        flatbuffers::root::<virtmcu_api::telemetry_generated::virtmcu::telemetry::TraceEvent>(buf)
+            .unwrap();
+
+    assert_eq!(event.timestamp_ns(), 1000);
+    assert_eq!(event.type_().0, 3); // POWER_STATE
+    assert_eq!(event.id(), 42);
+    assert_eq!(event.power_uw(), 500000);
+    assert_eq!(event.device_name(), Some("test_motor"));
+}

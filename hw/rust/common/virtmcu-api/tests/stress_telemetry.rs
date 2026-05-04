@@ -23,6 +23,7 @@ fn test_stress_telemetry_serialization() {
             id: i as u32,
             value: (i % 2) as u32,
             device_name,
+            power_uw: 0,
         };
 
         let root = telemetry_fb::create_trace_event(&mut builder, &args);

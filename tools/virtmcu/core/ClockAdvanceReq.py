@@ -20,13 +20,56 @@ class ClockAdvanceReq(object):
     # ClockAdvanceReq
     def DeltaNs(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(0))
     # ClockAdvanceReq
-    def MujocoTimeNs(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(8))
+    def AbsoluteVtimeNs(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(8))
     # ClockAdvanceReq
     def QuantumNumber(self): return self._tab.Get(flatbuffers.number_types.Uint64Flags, self._tab.Pos + flatbuffers.number_types.UOffsetTFlags.py_type(16))
 
-def CreateClockAdvanceReq(builder, deltaNs, mujocoTimeNs, quantumNumber):
+def CreateClockAdvanceReq(builder, deltaNs, absoluteVtimeNs, quantumNumber):
     builder.Prep(8, 24)
     builder.PrependUint64(quantumNumber)
-    builder.PrependUint64(mujocoTimeNs)
+    builder.PrependUint64(absoluteVtimeNs)
     builder.PrependUint64(deltaNs)
     return builder.Offset()
+
+
+class ClockAdvanceReqT(object):
+
+    # ClockAdvanceReqT
+    def __init__(
+        self,
+        deltaNs = 0,
+        absoluteVtimeNs = 0,
+        quantumNumber = 0,
+    ):
+        self.deltaNs = deltaNs  # type: int
+        self.absoluteVtimeNs = absoluteVtimeNs  # type: int
+        self.quantumNumber = quantumNumber  # type: int
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        clockAdvanceReq = ClockAdvanceReq()
+        clockAdvanceReq.Init(buf, pos)
+        return cls.InitFromObj(clockAdvanceReq)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, clockAdvanceReq):
+        x = ClockAdvanceReqT()
+        x._UnPack(clockAdvanceReq)
+        return x
+
+    # ClockAdvanceReqT
+    def _UnPack(self, clockAdvanceReq):
+        if clockAdvanceReq is None:
+            return
+        self.deltaNs = clockAdvanceReq.DeltaNs()
+        self.absoluteVtimeNs = clockAdvanceReq.AbsoluteVtimeNs()
+        self.quantumNumber = clockAdvanceReq.QuantumNumber()
+
+    # ClockAdvanceReqT
+    def Pack(self, builder):
+        return CreateClockAdvanceReq(builder, self.deltaNs, self.absoluteVtimeNs, self.quantumNumber)

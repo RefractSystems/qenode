@@ -3,15 +3,23 @@ namespace Virtmcu.Telemetry;
 enum TraceEventType : byte {
     CPU_STATE = 0,
     IRQ = 1,
-    PERIPHERAL = 2
+    PERIPHERAL = 2,
+    POWER_STATE = 3
 }
 
 table TraceEvent {
+    /// Virtual timestamp in nanoseconds since simulation start.
     timestamp_ns: uint64;
+    /// Type of trace event (CPU, IRQ, Peripheral, Power).
     type: TraceEventType;
+    /// Optional ID (e.g. IRQ number or peripheral address).
     id: uint32;
+    /// Value associated with the event.
     value: uint32;
+    /// Human-readable device name.
     device_name: string;
+    /// Simulated power consumption in microwatts (uW).
+    power_uw: uint32;
 }
 
 root_type TraceEvent;

@@ -14,7 +14,7 @@ fn test_firmware_studio_struct_sizes() {
     assert_eq!(size_of::<MmioReq>(), 32);
     assert_eq!(size_of::<SyscMsg>(), 16);
     assert_eq!(size_of::<ClockAdvanceReq>(), 24);
-    assert_eq!(size_of::<ClockReadyResp>(), 24);
+    assert_eq!(size_of::<ClockReadyResp>(), 32);
     assert_eq!(size_of::<ZenohFrameHeader>(), 24);
 }
 
@@ -49,6 +49,7 @@ fn test_firmware_studio_telemetry_consumption() {
         id: 42,
         value: 1,
         device_name: Some(name_offset),
+        power_uw: 0,
     };
 
     let root = telemetry_fb::create_trace_event(&mut builder, &args);
@@ -78,6 +79,7 @@ fn test_telemetry_consumption_no_device_name() {
         id: 10,
         value: 20,
         device_name: None,
+        power_uw: 0,
     };
 
     let root = telemetry_fb::create_trace_event(&mut builder, &args);
