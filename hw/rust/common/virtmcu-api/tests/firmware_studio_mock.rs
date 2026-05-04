@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use flatbuffers::FlatBufferBuilder;
 use virtmcu_api::{
-    telemetry_fb, telemetry_generated::virtmcu::telemetry::TraceEvent as GenTraceEvent,
+    telemetry_generated::virtmcu::telemetry::{TraceEvent, TraceEventArgs, TraceEventType},
     ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, MmioReq, SyscMsg, VirtmcuHandshake,
     ZenohFrameHeader, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
 };
@@ -43,22 +43,23 @@ fn test_firmware_studio_telemetry_consumption() {
     let mut builder = FlatBufferBuilder::new();
     let name_offset = builder.create_string("timer0");
 
-    let args = telemetry_fb::TraceEventArgs {
+    let args = TraceEventArgs {
         timestamp_ns: 1_234_567_890,
-        type_: telemetry_fb::TraceEventType::Peripheral,
+        type_: TraceEventType::PERIPHERAL,
         id: 42,
         value: 1,
         device_name: Some(name_offset),
+        power_uw: 0,
     };
 
-    let root = telemetry_fb::create_trace_event(&mut builder, &args);
+    let root = TraceEvent::create(&mut builder, &args);
     builder.finish(root, None);
     let payload = builder.finished_data();
 
     // THIS IS WHAT FIRMWARE STUDIO WILL DO:
     // They will receive `payload` from Zenoh and parse it using the generated FlatBuffer code.
     let parsed_event =
-        flatbuffers::root::<GenTraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse flatbuffer");
+        flatbuffers::root::<TraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse flatbuffer");
 
     assert_eq!(parsed_event.timestamp_ns(), 1_234_567_890);
     assert_eq!(parsed_event.id(), 42);
@@ -72,20 +73,21 @@ fn test_firmware_studio_telemetry_consumption() {
 fn test_telemetry_consumption_no_device_name() {
     let mut builder = FlatBufferBuilder::new();
 
-    let args = telemetry_fb::TraceEventArgs {
+    let args = TraceEventArgs {
         timestamp_ns: 987_654_321,
-        type_: telemetry_fb::TraceEventType::CpuState,
+        type_: TraceEventType::CPU_STATE,
         id: 10,
         value: 20,
         device_name: None,
+        power_uw: 0,
     };
 
-    let root = telemetry_fb::create_trace_event(&mut builder, &args);
+    let root = TraceEvent::create(&mut builder, &args);
     builder.finish(root, None);
     let payload = builder.finished_data();
 
     let parsed_event =
-        flatbuffers::root::<GenTraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse flatbuffer");
+        flatbuffers::root::<TraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse flatbuffer");
 
     assert_eq!(parsed_event.timestamp_ns(), 987_654_321);
     assert_eq!(parsed_event.id(), 10);

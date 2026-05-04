@@ -53,6 +53,7 @@
   - [The Testing Strategy: From Unit to Integration](guide/03-testing-strategy.md)
   - [Continuous Integration: The Quality Gate](guide/04-continuous-integration.md)
   - [The Debugging Playbook](guide/07-debugging-playbook.md)
+  - [Docker Compose & Transport Architecture](guide/08-docker-compose-architecture.md)
   - [Case Studies (Postmortems)](postmortem/README.md)
     - [The FlexRay SIGSEGV](postmortem/2026-05-01-flexray-rc-11-segfault.md)
     - [QEMU Plugin Visibility](postmortem/2026-04-29-qemu-plugin-visibility.md)

@@ -37,8 +37,11 @@ async fn main() {
 
     // Zenoh session
     let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"client\"").unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
     if let Ok(connect) = env::var("ZENOH_CONNECT") {
-        config.insert_json5("mode", "\"client\"").unwrap();
         config.insert_json5("connect/endpoints", &connect).unwrap();
     }
     let session = zenoh::open(config).await.unwrap();
@@ -66,17 +69,18 @@ async fn main() {
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {
                 let payload = sample.payload().to_bytes();
-                if payload.len() == 24 {
-                    let mut arr = [0u8; 24];
+                if payload.len() == virtmcu_api::CLOCK_READY_RESP_SIZE {
+                    let mut arr = [0u8; virtmcu_api::CLOCK_READY_RESP_SIZE];
                     arr.copy_from_slice(&payload);
                     let resp = ClockReadyResp::unpack_slice(&arr).unwrap();
                     current_vtime_ns = resp.current_vtime_ns();
                     got_reply = true;
                 } else {
                     eprintln!(
-                        "[RESD Replay] Node {}: Received invalid payload size: {} (expected 24)",
+                        "[RESD Replay] Node {}: Received invalid payload size: {} (expected {})",
                         node_id,
-                        payload.len()
+                        payload.len(),
+                        virtmcu_api::CLOCK_READY_RESP_SIZE
                     );
                 }
             }

@@ -35,33 +35,36 @@ Any keys you press will be echoed back immediately by the emulated Cortex-A15 pr
 
 ## 2. Automated Testing of Interactive Firmware
 
-To prevent regressions, interactive firmware must be tested using an automated harness. The virtmcu project provides a Python QMP (QEMU Machine Protocol) Bridge and Robot Framework keywords to achieve this.
+To prevent regressions, interactive firmware must be tested using an automated harness. The virtmcu project provides a Python `Simulation` fixture in `pytest` to achieve this.
 
-### The `Write To UART` Keyword
+### The `simulation` fixture and `sim.transport`
 
-In the UART echo tests, we extended the test harness with a `Write To UART` keyword. This allows the test script to simulate a user typing into the console.
+In the UART echo tests, we utilize the `simulation` fixture. This allows the test script to simulate a user typing into the console and reading the output deterministically.
 
-Here is an example test from `tests/test_interactive_echo.robot`:
+Here is an example test concept from `tests/integration/simulation/peripherals/test_uart_echo.py`:
 
-```robotframework
-*** Test Cases ***
-Interactive Echo Should Work
-    # 1. Wait for welcome message
-    Wait For Line On UART    Interactive UART Echo Ready.
-    Wait For Line On UART    Type something:
+```python
+@pytest.mark.asyncio
+async def test_interactive_echo(simulation):
+    # Setup node with the echo firmware
+    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=[
+        "-chardev", "virtmcu,id=char0,topic=virtmcu/uart", "-serial", "chardev:char0"
+    ])
     
-    # 2. Simulate user typing
-    Write To UART    Hello virtmcu\r
-    
-    # 3. Verify the firmware echoed it back
-    Wait For Line On UART    Hello virtmcu
+    async with simulation as sim:
+        # 1. Wait for welcome message
+        assert await sim.bridge.wait_for_line_on_uart("Interactive UART Echo Ready.", timeout=5.0)
+        
+        # 2. Simulate user typing
+        header = vproto.ZenohFrameHeader(vtime_ns, sequence, length).pack()
+        await sim.transport.publish("virtmcu/uart/0/rx", header + b"Hello virtmcu\r")
+        
+        # 3. Verify the firmware echoed it back
+        assert await sim.bridge.wait_for_line_on_uart("Hello virtmcu", timeout=5.0)
 ```
 
-Notice how we boot QEMU with the `-S` (suspend) flag in the test setup:
-```robotframework
-Launch Qemu    ${DTB_PATH}    ${FIRMWARE}    extra_args=-S
-```
-This is critical. If we do not suspend the CPU on boot, the firmware will execute instantly, printing the welcome message to the socket *before* our test harness has connected to read it. By pausing QEMU, connecting our listeners, and *then* issuing `Start Emulation` (via QMP `cont`), we guarantee no data is lost.
+Notice how we boot QEMU using the `Simulation` context manager (`async with simulation as sim:`).
+This is critical. The framework automatically injects the `-S` (suspend) flag during boot, preventing the firmware from executing instantly and printing the welcome message to the socket *before* our test harness has connected to read it. By pausing QEMU, connecting our listeners, and *then* issuing the start command via QMP `cont`, we guarantee no data is lost.
 
 ## 3. Multi-Node Deterministic UART (Upcoming)
 

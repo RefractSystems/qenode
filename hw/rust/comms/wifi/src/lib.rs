@@ -87,14 +87,12 @@ unsafe extern "C" fn wifi_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
 }
 
-static WIFI_PROPERTIES: [Property; 6] = [
+static WIFI_PROPERTIES: [Property; 5] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
     define_prop_string!(c"node".as_ptr(), VirtmcuWifiQEMU, node_id),
     define_prop_string!(c"transport".as_ptr(), VirtmcuWifiQEMU, transport),
     define_prop_string!(c"router".as_ptr(), VirtmcuWifiQEMU, router),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuWifiQEMU, debug, false),
-    // SAFETY: QEMU expects a zeroed Property as a sentinel at the end of the array.
-    unsafe { core::mem::zeroed() },
 ];
 
 unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_void) {

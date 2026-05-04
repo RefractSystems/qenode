@@ -132,7 +132,7 @@ bridge: bridge@50000000 {
 };
 ```
 
-See `tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh` for the full DTS that also adds a CPU, RAM, GIC, and
+See `tests/integration/infrastructure/test_ftrt_timing.py` for the test that orchestrates this, which also adds a CPU, RAM, GIC, and
 UART — or run the smoke test directly (Step 5 below).
 
 ### Step 4 — Run the single-node scenario manually
@@ -169,7 +169,7 @@ REG-OK
 The FTRT timing smoke test exercises both scenarios (RegisterFile IRQ and CAN Zenoh RX):
 
 ```bash
-bash tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh
+pytest tests/integration/infrastructure/test_ftrt_timing.py -v
 ```
 
 Expected output:

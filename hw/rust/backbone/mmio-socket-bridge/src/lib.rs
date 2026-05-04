@@ -332,15 +332,13 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static BRIDGE_PROPERTIES: [Property; 7] = [
+static BRIDGE_PROPERTIES: [Property; 6] = [
     define_prop_string!(c"id".as_ptr(), MmioSocketBridgeQEMU, id),
     define_prop_string!(c"socket-path".as_ptr(), MmioSocketBridgeQEMU, socket_path),
     define_prop_uint32!(c"region-size".as_ptr(), MmioSocketBridgeQEMU, region_size, 0x1000),
     define_prop_uint64!(c"base-addr".as_ptr(), MmioSocketBridgeQEMU, base_addr, u64::MAX),
     define_prop_uint32!(c"reconnect-ms".as_ptr(), MmioSocketBridgeQEMU, reconnect_ms, 1000),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), MmioSocketBridgeQEMU, debug, false),
-    // SAFETY: QEMU expects a zeroed Property as a sentinel.
-    unsafe { core::mem::zeroed() },
 ];
 
 unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_void) {

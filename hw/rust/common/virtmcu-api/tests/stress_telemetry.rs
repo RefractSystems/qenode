@@ -1,8 +1,8 @@
 #![allow(clippy::print_stdout)]
 use flatbuffers::FlatBufferBuilder;
 use std::time::Instant;
-use virtmcu_api::{
-    telemetry_fb, telemetry_generated::virtmcu::telemetry::TraceEvent as GenTraceEvent,
+use virtmcu_api::telemetry_generated::virtmcu::telemetry::{
+    TraceEvent, TraceEventArgs, TraceEventType,
 };
 
 #[test]
@@ -17,24 +17,25 @@ fn test_stress_telemetry_serialization() {
         let device_name =
             if i % 2 == 0 { Some(builder.create_string(&format!("device_{i}"))) } else { None };
 
-        let args = telemetry_fb::TraceEventArgs {
+        let args = TraceEventArgs {
             timestamp_ns: i as u64 * 1000,
-            type_: telemetry_fb::TraceEventType::Irq,
+            type_: TraceEventType::IRQ,
             id: i as u32,
             value: (i % 2) as u32,
             device_name,
+            power_uw: 0,
         };
 
-        let root = telemetry_fb::create_trace_event(&mut builder, &args);
+        let root = TraceEvent::create(&mut builder, &args);
         builder.finish(root, None);
 
         let payload = builder.finished_data();
         let parsed_event =
-            flatbuffers::root::<GenTraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse");
+            flatbuffers::root::<TraceEvent>(payload).unwrap_or_else(|_| std::process::abort()); // "Failed to parse");
 
         assert_eq!(parsed_event.timestamp_ns(), i as u64 * 1000);
         assert_eq!(parsed_event.id(), i as u32);
     }
     let duration = start.elapsed();
-    virtmcu_qom::sim_info!("Serialized and deserialized {num_events} events in {duration:?}");
+    println!("Serialized and deserialized {num_events} events in {duration:?}");
 }

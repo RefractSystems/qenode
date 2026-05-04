@@ -206,6 +206,14 @@ extern "C" {
     pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::QemuIrq);
     /// A function
     pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::QemuIrq;
+    /// A function
+    pub fn qdev_get_gpio_out_connector(dev: *mut DeviceState, n: c_int) -> crate::irq::QemuIrq;
+    /// A function
+    pub fn qemu_irq_intercept_in(
+        irq: crate::irq::QemuIrq,
+        handler: Option<unsafe extern "C" fn(opaque: *mut c_void, n: c_int, level: c_int)>,
+        opaque: *mut c_void,
+    );
 }
 
 #[cfg(miri)]
@@ -237,6 +245,9 @@ mod miri_statics {
     /// A static
     #[no_mangle]
     pub static qdev_prop_macaddr: PropertyInfo = DUMMY_PROP;
+    /// A static
+    #[no_mangle]
+    pub static qdev_prop_link: PropertyInfo = DUMMY_PROP;
 
     extern "C" {
         /// A function
@@ -404,6 +415,29 @@ macro_rules! define_prop_chr {
                 unsafe { &$crate::chardev::qdev_prop_chr as *const _ as *const _ },
             offset: core::mem::offset_of!($state, $field) as isize,
             link_type: core::ptr::null(),
+            bitmask: 0,
+            defval: 0,
+            set_default: false,
+            arrayinfo: core::ptr::null(),
+            arrayoffset: 0,
+            arrayfieldsize: 0,
+            bitnr: 0,
+            _padding: [0; 6],
+        }
+    };
+}
+
+#[macro_export]
+/// A macro
+macro_rules! define_prop_link {
+    ($name:expr, $state:ty, $field:ident, $link_type:expr) => {
+        $crate::qom::Property {
+            name: $name,
+            info:
+                // SAFETY: qdev_prop_link is a static provided by QEMU or Miri mock.
+                unsafe { &$crate::qdev::qdev_prop_link as *const _ as *const _ },
+            offset: core::mem::offset_of!($state, $field) as isize,
+            link_type: $link_type,
             bitmask: 0,
             defval: 0,
             set_default: false,

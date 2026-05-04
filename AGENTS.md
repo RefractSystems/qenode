@@ -206,6 +206,7 @@ Every deployment change must be revertable. Add logging on critical paths (not i
 - All QEMU source modifications → `scripts/apply-qemu-patches.sh`. No ad-hoc `sed`/`git am` elsewhere.
 - **DEBIAN_CODENAME** in `BUILD_DEPS` is the single source of truth for all stages. Never deviate between devcontainer and release — disable incompatible QEMU features at configure time instead.
 - **Python Testing Framework**: `pytest-asyncio` is pinned to **1.3.0** (with `asyncio_default_fixture_loop_scope = "function"` in `pyproject.toml`) to ensure compatibility with Python 3.13 and solve `FixtureDef` attribute errors. Agents MUST NOT change this version.
+- **Dev Container Lockfile**: `.devcontainer/devcontainer-lock.json` MUST be tracked in version control to lock feature versions (like `docker-in-docker`) and guarantee identical environments across developer machines and CI runners.
 
 ### 7. Environment Parity (1:1 Local-to-Remote)
 
@@ -282,6 +283,7 @@ Mandatory shutdown sequence:
 - **Teardown**: every thread-spawning peripheral needs a clean-shutdown test; run under `cargo miri test`.
 
 ### 17. Python SOTA Mandates (Tooling & Testing)
+- **Infrastructure Orchestration Golden Template**: All new tests that spawn external tools (e.g., coordinator, proxies) MUST use the `ManagedSubprocess` + `asyncio.Queue` pattern to guarantee deterministic thread-safe Zenoh interoperability and interleaved logging. See `docs/guide/03-testing-strategy.md` Chapter 9 for the code template.
 - **No Path Bootstrapping**: BANNED: `sys.path.insert()`, `sys.path.append()`. Scripts MUST rely on `uv run` and the `pyproject.toml` package boundary.
 - **No Global Path Mutation**: BANNED: `os.chdir()`. Use absolute `pathlib.Path` objects or pass `cwd=` to `subprocess`.
 - **AST over Regex**: BANNED: using regex or string searches (`.find()`) to parse structured data like `.dtb`, JSON, or YAML. Use native parsers (e.g., the `fdt` library).
@@ -301,6 +303,10 @@ Mandatory shutdown sequence:
 - **QEMU Patch Automation**: never hand-edit `third_party/qemu`. All changes via `scripts/apply-qemu-patches.sh` or `apply_zenoh_hook.py`.
 - **Reference Material**: vendor SDK, firmware, and spec PDFs → `third_party/golden_references/<mcu_name>/` (gitignored). Each subfolder needs `README.md` with URL, license, date. Firmware binaries in `tests/firmware/` need `PROVENANCE.md`.
 - **No One-Shot Scripts in Root**: `patch_*.py`, `fix_*.py` etc. belong in gitignored scratch dirs or must be deleted before commit. Permanent utilities go in `scripts/`.
+
+### 19. Architectural Patterns (RAII & Dependency Injection)
+- **RAII (Resource Acquisition Is Initialization)**: All resources (memory, locks, file handles, Zenoh sessions) MUST be managed via RAII. Explicit `init()` and `deinit()`/`cleanup()` calls are BANNED for resource management; use constructors/destructors (Rust `Drop`, C++ destructors, Python context managers).
+- **Dependency Injection (DI)**: Components MUST NOT hardcode or globally discover their dependencies (e.g., transports, coordinators, configs). Pass dependencies via constructors or factories. This is critical for deterministic testing and parallel safety.
 
 ---
 

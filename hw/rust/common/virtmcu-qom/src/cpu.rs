@@ -20,7 +20,7 @@ pub struct VirtmcuQuantumTiming {
     /// A struct field
     pub quantum_delta_ns: i64,
     /// A struct field
-    pub mujoco_time_ns: i64,
+    pub absolute_vtime_ns: i64,
 }
 
 extern "C" {

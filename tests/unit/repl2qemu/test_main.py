@@ -10,8 +10,8 @@ Ensure correct functionality, performance, and deterministic execution of test_m
 
 from __future__ import annotations
 
-import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -72,14 +72,8 @@ def test_main_out_arch(tmp_path: Path) -> None:
     assert arch_file.read_text() == "arm"  # default arch
 
 
-def test_main_module() -> None:
+def test_main_module(script_runner: Callable[..., str]) -> None:
     from tools.testing.env import WORKSPACE_DIR
 
-    result = subprocess.run(
-        [sys.executable, "-m", "tools.repl2qemu", "--help"],
-        capture_output=True,
-        text=True,
-        cwd=WORKSPACE_DIR,
-    )
-    assert result.returncode == 0
-    assert "Convert Renode .repl to QEMU Device Tree" in result.stdout
+    output = script_runner(WORKSPACE_DIR / "tools/repl2qemu/__main__.py", "--help")
+    assert "Convert Renode .repl to QEMU Device Tree" in output

@@ -84,7 +84,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "type": "string"
+          "$ref": "#/$defs/NodeID"
         },
         "type": {
           "type": "string"
@@ -125,6 +125,20 @@
         "name"
       ]
     },
+    "NodeID": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "NodeID.json",
+      "type": "string",
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
     "Address": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "Address.json",
@@ -136,7 +150,7 @@
         },
         {
           "type": "string",
-          "pattern": "^0x[0-9a-fA-F]+$"
+          "pattern": "^(0x[0-9a-fA-F]+|none|sysbus)$"
         }
       ]
     },
@@ -214,20 +228,6 @@
         "name"
       ]
     },
-    "NodeID": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "NodeID.json",
-      "type": "string",
-      "oneOf": [
-        {
-          "type": "integer",
-          "minimum": 0
-        },
-        {
-          "type": "string"
-        }
-      ]
-    },
     "WireLink": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "WireLink.json",
@@ -259,7 +259,7 @@
       "$id": "Protocol.json",
       "type": "string",
       "description": "Supported inter-node communication protocols.",
-      "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$"
+      "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$"
     },
     "WirelessMedium": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -11,8 +11,6 @@ use virtmcu_qom::sync::Bql;
 use zenoh::pubsub::Subscriber;
 use zenoh::{Config, Session, Wait};
 
-use virtmcu_api::DataTransport;
-
 pub mod publisher;
 pub use publisher::{SafePublisher, SafeSessionPublisher};
 
@@ -21,19 +19,22 @@ static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new();
 /// A Zenoh-backed implementation of the `DataTransport` trait.
 pub struct ZenohDataTransport {
     session: Arc<Session>,
+    publisher: publisher::SafeSessionPublisher,
     subscriptions: std::sync::Mutex<Vec<Subscriber<()>>>,
 }
 
 impl ZenohDataTransport {
     /// Creates a new `ZenohDataTransport` using the provided Zenoh session.
     pub fn new(session: Arc<Session>) -> Self {
-        Self { session, subscriptions: std::sync::Mutex::new(Vec::new()) }
+        let publisher = publisher::SafeSessionPublisher::new(Arc::clone(&session));
+        Self { session, publisher, subscriptions: std::sync::Mutex::new(Vec::new()) }
     }
 }
 
-impl DataTransport for ZenohDataTransport {
+impl virtmcu_api::DataTransport for ZenohDataTransport {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
-        self.session.put(topic, payload).wait().map_err(|e| e.to_string())
+        self.publisher.send(topic.to_owned(), payload.to_vec());
+        Ok(())
     }
 
     fn subscribe(&self, topic: &str, callback: virtmcu_api::DataCallback) -> Result<(), String> {

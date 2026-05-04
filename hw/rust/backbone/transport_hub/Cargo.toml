@@ -1,0 +1,14 @@
+[package]
+name = "transport_hub"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+virtmcu-qom = { path = "../../common/virtmcu-qom" }
+transport-zenoh = { path = "../transport-zenoh" }
+zenoh = "1.9.0"
+
+[lib]
+crate-type = ["staticlib", "rlib"]

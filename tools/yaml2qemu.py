@@ -13,12 +13,11 @@ import sys
 from pathlib import Path
 
 import fdt
+import yaml
 
 from .repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
 from .repl2qemu.parser import ReplDevice, ReplInterrupt, ReplPlatform
-from .testing.virtmcu_test_suite.world_schema import WorldYaml
-
-#!/usr/bin/env python3
+from .testing.virtmcu_test_suite.generated import World
 
 # ==============================================================================
 # yaml2qemu.py
@@ -34,67 +33,116 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
+def get_node_ids(world: World) -> set[str]:
+    """Returns a set of all valid node IDs in this world."""
+    res = set()
+
+    # 1. Try topology.nodes
+    if world.topology and world.topology.nodes:
+        for n in world.topology.nodes:
+            res.add(str(n.name.root))
+        return res
+
+    # 2. Try top-level nodes
+    if world.nodes:
+        for n in world.nodes:
+            res.add(str(n.name.root))
+        return res
+
+    # 3. Fallback to peripherals if they look like numeric IDs
+    if world.peripherals:
+        fallback_res = set()
+        all_numeric = True
+        for p in world.peripherals:
+            name = str(p.name.root)
+            if name.isdigit():
+                fallback_res.add(name)
+            else:
+                all_numeric = False
+                break
+
+        if all_numeric and fallback_res:
+            return fallback_res
+
+    return res
+
+
 def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, object]]:
 
     with Path(yaml_path).open() as f:
         content = f.read()
-    
+
     try:
-        world = WorldYaml.from_text(content)
+        world = World.model_validate(yaml.safe_load(content))
     except Exception as e:
         raise ValueError(f"Topology validation failed: {e}") from e
 
-    valid_node_ids = world.get_node_ids()
+    has_topology_nodes = world.topology and world.topology.nodes
+    has_toplevel_nodes = world.nodes
+
+    if has_topology_nodes and has_toplevel_nodes:
+        raise ValueError("Split-brain YAML detected")
+    if world.peripherals:
+        has_numeric_periphs = any(str(p.name.root).isdigit() for p in world.peripherals)
+        if has_topology_nodes and has_numeric_periphs:
+            raise ValueError("Split-brain YAML detected")
+
+    valid_node_ids = get_node_ids(world)
 
     # Validate topology if present
     if world.topology:
         # Validate links
-        for link in world.topology.links:
-            for node_id in link.nodes:
-                if str(node_id) not in valid_node_ids:
-                    raise ValueError(f"Topology validation failed: node ID {node_id} in links not found in nodes")
+        if world.topology.links:
+            for link in world.topology.links:
+                for node_id in link.nodes:
+                    if str(node_id.root) not in valid_node_ids:
+                        raise ValueError(
+                            f"Topology validation failed: node ID {node_id.root} in links not found in nodes"
+                        )
 
         # Validate wireless
         if world.topology.wireless:
             for w_node in world.topology.wireless.nodes:
-                if str(w_node.name) not in valid_node_ids:
-                    raise ValueError(f"Topology validation failed: node ID {w_node.name} in wireless nodes not found in nodes")
+                if str(w_node.name.root) not in valid_node_ids:
+                    raise ValueError(
+                        f"Topology validation failed: node ID {w_node.name.root} in wireless nodes not found in nodes"
+                    )
 
     platform = ReplPlatform()
 
     # 1. Map CPUs
     if world.machine and world.machine.cpus:
         for cpu in world.machine.cpus:
-            cpu_type = cpu["type"]
+            cpu_type = cpu.type
             internal_type = "CPU.ARMv7A"
             if "riscv" in cpu_type.lower():
                 internal_type = "CPU.RISCV64"
 
             dev = ReplDevice.create(
-                name=cpu["name"],
+                name=cpu.name,
                 type_name=internal_type,
                 address_str="sysbus",
             )
             dev.properties["cpuType"] = cpu_type
             if internal_type == "CPU.RISCV64":
-                if "isa" in cpu:
-                    dev.properties["isa"] = cpu["isa"]
-                if "mmu-type" in cpu:
-                    dev.properties["mmu-type"] = cpu["mmu-type"]
+                if cpu.isa:
+                    dev.properties["isa"] = cpu.isa
+                if cpu.mmu_type:
+                    dev.properties["mmu-type"] = cpu.mmu_type
 
             platform.devices.append(dev)
 
     # 2. Map Memory
     if world.memory:
         for m in world.memory:
-            addr_val = m.get("address", 0)
+            addr_val = m.address.root if m.address else 0
             address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
-            size = m.get("size", 0)
+            size = m.size.root if m.size else 0
             size_str = hex(size) if isinstance(size, int) else str(size)
 
             dev = ReplDevice.create(
-                name=m["name"],
+                name=str(m.name.root),
                 type_name="Memory.MappedMemory",
                 address_str=address_str,
             )
@@ -105,33 +153,33 @@ def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, 
     if world.peripherals:
         for p in world.peripherals:
             # Support both 'renode_type' (for migrated files) or 'type' (for native ones)
-            type_name = p.get("type") or p.get("renode_type", "Unknown")
+            type_name = p.type or p.renode_type or "Unknown"
 
-            addr_val = p.get("address", "none")
+            addr_val = p.address.root if p.address else "none"
             address_str = hex(addr_val) if isinstance(addr_val, int) else str(addr_val)
 
             dev = ReplDevice.create(
-                name=p["name"],
+                name=str(p.name.root),
                 type_name=type_name,
                 address_str=address_str,
-                parent=p.get("parent"),
+                parent=p.parent,
             )
-            dev.properties = p.get("properties", {})
+            dev.properties = p.properties.model_dump() if p.properties else {}
 
             # Parse interrupts if they exist
-            for irq_entry in p.get("interrupts", []):
-                if isinstance(irq_entry, int):
-                    # Native YAML format: just the IRQ number
-                    dev.interrupts.append(ReplInterrupt("0", "none", str(irq_entry)))
-                elif isinstance(irq_entry, str) and "@" in irq_entry:
-                    # Legacy repl2yaml format: target@line
-                    target, line = irq_entry.split("@")
-                    dev.interrupts.append(ReplInterrupt("0", target, line))
+            if p.interrupts:
+                for irq_entry in p.interrupts:
+                    if isinstance(irq_entry, int):
+                        # Native YAML format: just the IRQ number
+                        dev.interrupts.append(ReplInterrupt("0", "none", str(irq_entry)))
+                    elif isinstance(irq_entry, str) and "@" in irq_entry:
+                        # Legacy repl2yaml format: target@line
+                        target, line = irq_entry.split("@")
+                        dev.interrupts.append(ReplInterrupt("0", target, line))
 
             platform.devices.append(dev)
 
     return platform, {}
-
 
 
 def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
@@ -252,6 +300,26 @@ def main() -> None:
         logger.error(f"ERROR: {e}")
         sys.exit(1)
 
+    # Extract transport from world
+    world_data = yaml.safe_load(Path(args.input).read_text())
+    world = World.model_validate(world_data)
+    transport_val = "zenoh"
+    if world.topology and world.topology.transport:
+        transport_val = world.topology.transport.value
+
+    # Inject Transport Hub
+    hub_name = "hub0"
+    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
+    hub_dev = ReplDevice.create(
+        name=hub_name,
+        type_name="Virtmcu.TransportHub",
+        address_str="none",
+    )
+    if env_router:
+        hub_dev.properties["router"] = env_router
+        
+    platform.devices.insert(0, hub_dev)
+
     original_devices = list(platform.devices)
 
     # Extract architecture
@@ -261,28 +329,41 @@ def main() -> None:
         with Path(args.out_arch).open("w") as f:
             f.write(arch)
 
-    # Extract transport from topology
-    topology: dict[str, str] = {}  # topology is parsed in coordinator instead
-    transport = topology.get("transport", "zenoh")
-
     # Extract devices that require explicit CLI instantiation.
-    # chardev: CLI-only (no DTB node).
-    # telemetry: Handled via DTB + CLI-only side effects (not anymore, DTB only now).
-    # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
-    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
     for dev in platform.devices:
         if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
             logger.error("Missing mandatory property: socket-path")
             sys.exit(1)
+
+        # Link all virtmcu peripherals to the hub
+        is_virtmcu_native = dev.type_name in (
+            "telemetry",
+            "ieee802154",
+            "zenoh-wifi",
+            "wifi",
+            "spi",
+            "spi-echo",
+            "canfd",
+            "flexray",
+            "lin",
+            "clock",
+            "ui",
+            "actuator",
+            "s32k144-lpuart",
+        )
+        if is_virtmcu_native:
+            dev.properties["transport"] = hub_name
+
         if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router") or env_router
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
 
-            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport}"
+            # chardev is not yet migrated to Hub QOM links, so we keep string transport for now.
+            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport_val}"
             if router:
                 chardev_arg += f",router={router}"
             if topic:
@@ -293,10 +374,7 @@ def main() -> None:
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
         elif dev.type_name in ("telemetry", "ieee802154"):
-            # These are now handled via DTB but need transport hint
-            dev.properties["transport"] = transport
-            if env_router and "router" not in dev.properties:
-                dev.properties["router"] = env_router
+            # These are now handled via DTB
             filtered_devices.append(dev)
         elif dev.type_name == "mmio-socket-bridge":
             # Handled via DTB (both memory map and instantiation).

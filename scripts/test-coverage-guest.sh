@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv pip install --link-mode=copy --system --break-system-packages pyelftools >/dev/null 2>&1
+# Helper for sudo if not root
+SUDO=""
+if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+fi
+
+$SUDO uv pip install --link-mode=copy --system --break-system-packages pyelftools >/dev/null 2>&1
 
 make -C tests/fixtures/guest_apps/boot_arm
 

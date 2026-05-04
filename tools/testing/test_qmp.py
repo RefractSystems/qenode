@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 if TYPE_CHECKING:
-    from tools.testing.qmp_bridge import QmpBridge
+    from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 
 
 logger = logging.getLogger(__name__)

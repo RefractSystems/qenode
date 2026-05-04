@@ -18,7 +18,7 @@ To verify that firmware is "alive," we often look for specific strings on the se
 
 ## The QmpBridge
 
-We have provided a utility called `QmpBridge` in `tools/testing/qmp_bridge.py`. It is an asynchronous Python class that wraps the `qemu.qmp` library.
+We have provided a utility called `QmpBridge` in `tools/testing/virtmcu_test_suite/qmp_bridge.py`. It is an asynchronous Python class that wraps the `qemu.qmp` library.
 
 ### Key Methods:
 - `connect(qmp_sock, uart_sock)`: Opens connections to both sockets.

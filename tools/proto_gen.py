@@ -76,11 +76,12 @@ def generate_python(defines: dict[str, int], structs: dict[str, list[tuple[str, 
     out.append("# DO NOT EDIT DIRECTLY. Edit hw/misc/virtmcu_proto.h instead.")
     out.append("# =============================================================================")
     out.append("")
+    out.append("from __future__ import annotations")
     out.append("")
     out.append("from dataclasses import asdict, dataclass")
     out.append("from dataclasses import fields as dc_fields")
     out.append("")
-    out.append("import vproto")
+    out.append("from tools import vproto")
     out.append("")
 
     # Emit defines

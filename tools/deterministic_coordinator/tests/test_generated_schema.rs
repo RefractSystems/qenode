@@ -30,7 +30,7 @@ fn test_parse_test_board_yaml() {
 
     let uart = peripherals
         .iter()
-        .find(|p| p.name.clone() == "uart0")
+        .find(|p| p.name.to_string() == "uart0")
         .unwrap();
     assert_eq!(uart.renode_type.clone().unwrap(), "UART.PL011");
 
@@ -57,12 +57,7 @@ fn test_parse_lin_topology() {
     assert_eq!(nodes.len(), 2);
 
     // NodeId is generated as an enum similar to Address
-    match nodes[0].name.clone() {
-        deterministic_coordinator::generated::topology::NodeId::String(s) => {
-            assert_eq!(s.as_str(), "0")
-        }
-        _ => panic!("Expected string node ID"),
-    }
+    assert_eq!(nodes[0].name.to_string(), "0");
 
     let links = topology.links.clone();
     assert_eq!(links.len(), 1);
@@ -70,10 +65,5 @@ fn test_parse_lin_topology() {
     let link = &links[0];
     assert_eq!(link.type_.clone().as_str(), "lin");
 
-    match link.nodes.clone()[0].clone() {
-        deterministic_coordinator::generated::topology::NodeId::String(s) => {
-            assert_eq!(s.as_str(), "0")
-        }
-        _ => panic!("Expected string node ID in link"),
-    }
+    assert_eq!(link.nodes[0].to_string(), "0");
 }
