@@ -1,4 +1,4 @@
-#![no_std]
+#![no_std] // NO_STD_EXCEPTION: Requires libc panic for aborting
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
@@ -8,7 +8,6 @@ extern crate alloc;
 use alloc::sync::Arc;
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use transport_zenoh;
 use virtmcu_qom::qdev::{SysBusDevice, SysBusDeviceClass};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::{define_prop_string, define_properties};
@@ -24,6 +23,7 @@ pub struct HubState {
     pub session: Option<Arc<zenoh::Session>>,
 }
 
+const _: () = assert!(core::mem::offset_of!(VirtmcuTransportHub, parent_obj) == 0);
 const _: () = assert!(core::mem::size_of::<VirtmcuTransportHub>() == 824);
 
 define_properties!(
@@ -58,9 +58,13 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         match transport_zenoh::open_session(router_str) {
             Ok(sess) => Some(Arc::new(sess)),
             Err(_) => {
-                // Cannot boot without the hub if a router was specified
-                // Standard library not available in no_std unless we use libc or panic
-                panic!("Failed to open transport session for hub");
+                let err_msg =
+                    alloc::ffi::CString::new("Failed to open transport session for hub").unwrap();
+                virtmcu_qom::error::virtmcu_error_setg(
+                    _errp as *mut *mut virtmcu_qom::error::Error,
+                    err_msg.as_ptr(),
+                );
+                return;
             }
         }
     };
@@ -106,6 +110,8 @@ static VIRT_HUB_TYPE_INFO: TypeInfo = TypeInfo {
 virtmcu_qom::declare_device_type!(virtmcu_transport_hub_register_types, VIRT_HUB_TYPE_INFO);
 
 /// Safe API for other peripherals to extract the session from the hub object.
+///
+/// # Safety
 /// `hub_obj` must be a valid QOM Object pointer.
 #[no_mangle]
 pub unsafe extern "C" fn virtmcu_hub_get_session(hub_obj: *mut Object) -> *mut c_void {
@@ -131,6 +137,10 @@ pub unsafe extern "C" fn virtmcu_hub_get_session(hub_obj: *mut Object) -> *mut c
     }
 }
 
+/// Safely drop a session extracted via `virtmcu_hub_get_session`.
+///
+/// # Safety
+/// `sess_ptr` must be a pointer previously returned by `virtmcu_hub_get_session`.
 #[no_mangle]
 pub unsafe extern "C" fn virtmcu_hub_drop_session(sess_ptr: *mut c_void) {
     if !sess_ptr.is_null() {
