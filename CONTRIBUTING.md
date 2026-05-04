@@ -244,7 +244,7 @@ We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, s
 
 2.  **Black-Box Orchestration (Python `pytest`)**
     *   **What goes here:** Multi-node integration tests, QMP interaction, UART verification, process management (QEMU + Zenoh + TimeAuthority), and end-to-end regression testing.
-    *   **How:** Write structured tests using `pytest` and `asyncio` using our existing fixtures in `tools/testing/qmp_bridge.py` and `conftest.py`.
+    *   **How:** Write structured tests using `pytest` and `asyncio` using our existing fixtures in `tools/testing/virtmcu_test_suite/qmp_bridge.py` and `conftest.py`.
     *   **Why:** Python handles complex multi-process orchestration, asynchronous teardowns, and string matching much better than Rust or Bash.
 
 3.  **Thin CI Wrappers (Bash)**

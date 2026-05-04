@@ -127,7 +127,9 @@ async def test_read_resource_status(server: Server) -> None:
     res = await handler(req)
     status = json.loads(res.root.contents[0].text)
     assert status["status"] == "running"
-    assert any(n["id"] == node_id and n["status"] == "running" for n in status["nodes"])  # LINT_EXCEPTION: MCP protocol status
+    assert any(
+        n["id"] == node_id and n["status"] == "running" for n in status["nodes"]  # LINT_EXCEPTION: MCP protocol
+    )  # LINT_EXCEPTION: MCP protocol status
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,33 @@
 
 To maintain "Binary Fidelity" and global determinism, VirtMCU employs a multi-layered testing strategy. We prioritize automated, deterministic verification over manual inspection at every stage of the development lifecycle.
 
+
+---
+
+## 4. Test Directory Architecture & The Transport Agnosticism Mandate
+
+Our test suite is organized strictly by **System-Under-Test (SUT)** to maintain clear separation of concerns.
+
+### Directory Structure
+
+```text
+tests/
+├── unit/                  # Fast, isolated white-box logic. No QEMU allowed.
+├── fixtures/              # Topologies and minimal guest applications.
+├── firmware/              # Golden SDK binaries for compatibility regression.
+└── integration/           # Python-orchestrated QEMU lifecycle tests.
+    ├── simulation/        # SUT: Guest Firmware & QEMU Peripherals.
+    ├── infrastructure/    # SUT: The VirtMCU Framework & Transport.
+    └── tooling/           # SUT: Out-of-band orchestration tools.
+```
+
+### The Transport Agnosticism Mandate
+Tests located in `tests/integration/simulation/` test the **firmware** and **peripherals**. They must treat the underlying network as a "dumb pipe". 
+* **BANNED**: Directly importing or orchestrating Zenoh (`import zenoh`, `zenoh_session`).
+* **REQUIRED**: All tests must use the `SimulationTransport` abstraction (`sim.transport.publish()`).
+
+Tests in `tests/integration/infrastructure/` explicitly test the Zenoh routing or PDES barrier mechanisms. They are permitted to bypass the transport layer, but **must** declare their intent at the top of the file using the `# ZENOH_HACK_EXCEPTION: <reason>` annotation.
+
 ---
 
 ## 1. The Testing Pyramid
@@ -164,3 +191,79 @@ The "FlexRay Incident" taught us that high-quality engineering requires choosing
 
 ### The "Fail Loudly" Principle
 If a bug can be caught at lint time, **write a linter**. Do not rely on a runtime test to catch a name mismatch that will only surface as a SIGSEGV in a different part of the system.
+
+---
+
+## 9. Infrastructure Orchestration: The Golden Template
+
+When testing VirtMCU's out-of-band infrastructure components (like `deterministic_coordinator` or `zenoh_router`), we must strictly avoid "shadow orchestration" (manually spinning up threads or using banned subprocess APIs).
+
+To maintain SOTA (State of the Art) test stability, deterministic timing, and interleaved logging, all infrastructure tests **must** use the `ManagedSubprocess` + `asyncio.Queue` pattern.
+
+### Why this is the "Golden Template"
+1.  **Unified Logging**: `ManagedSubprocess` automatically captures `stdout`/`stderr` and streams them via `logger.info()`. If a test fails, the background process's logs are already perfectly interleaved with `pytest` and QEMU output.
+2.  **Thread-Safe Zenoh Interop**: Zenoh callbacks fire on background threads. Directly interacting with `pytest` state from these threads causes flaky race conditions. Using `asyncio.get_running_loop().call_soon_threadsafe()` to push to an `asyncio.Queue` perfectly bridges the gap back to the test's main async loop.
+3.  **Simulation Hygiene Compliance**: It passes the strict AST lints (`TID251`) that ban manual `subprocess.run` calls in test bodies.
+
+### The Template Code
+This is the mandated pattern for any test that needs to spin up a background tool and listen to its Zenoh output:
+
+```python
+import asyncio
+import logging
+import pytest
+import zenoh
+from tools.testing.virtmcu_test_suite.conftest_core import ManagedSubprocess, get_free_endpoint
+
+logger = logging.getLogger(__name__)
+
+class InfrastructureTester:
+    """Helper to manage Zenoh subscribers and safely route them back to the async loop."""
+    def __init__(self, session: zenoh.Session):
+        self.session = session
+        self.rx_queues: dict[str, asyncio.Queue[bytes]] = {}
+        self.subscribers: list[zenoh.Subscriber] = []
+        # MUST capture the loop in the main thread
+        self.loop = asyncio.get_running_loop()
+
+    def setup_subscriber(self, topic: str) -> asyncio.Queue[bytes]:
+        q: asyncio.Queue[bytes] = asyncio.Queue()
+        self.rx_queues[topic] = q
+
+        def _on_sample(sample: zenoh.Sample) -> None:
+            # Safely bounce the Zenoh background thread callback to the async loop
+            self.loop.call_soon_threadsafe(q.put_nowait, sample.payload.to_bytes())
+
+        sub = self.session.declare_subscriber(topic, _on_sample)
+        self.subscribers.append(sub)
+        return q
+
+    async def wait_for_frame(self, topic: str, timeout: float = 5.0) -> bytes:
+        from tools.testing.utils import get_time_multiplier
+        q = self.rx_queues[topic]
+        # Automatically scales timeout for slow CI environments (e.g. ASan)
+        return await asyncio.wait_for(q.get(), timeout=timeout * get_time_multiplier())
+
+    def close(self) -> None:
+        for sub in self.subscribers:
+            sub.undeclare()
+
+@pytest.mark.asyncio
+async def test_my_infrastructure_tool(zenoh_session: zenoh.Session) -> None:
+    endpoint = get_free_endpoint()
+    cmd = ["python3", "-m", "tools.my_tool", endpoint]
+    
+    # 1. Use ManagedSubprocess for interleaved logging and automatic cleanup
+    async with ManagedSubprocess("my_tool", cmd) as _proc:
+        tester = InfrastructureTester(zenoh_session)
+        try:
+            # 2. Setup safe subscribers
+            tester.setup_subscriber("sim/my_tool/out")
+            
+            # 3. Test logic...
+            data = await tester.wait_for_frame("sim/my_tool/out")
+            assert b"expected" in data
+            
+        finally:
+            tester.close()
+```

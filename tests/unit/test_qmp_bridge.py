@@ -1,5 +1,5 @@
 """
-tests/test_qmp_bridge.py — Unit tests for tools/testing/qmp_bridge.py
+tests/test_qmp_bridge.py — Unit tests for tools/testing/virtmcu_test_suite/qmp_bridge.py
 
 Tests the virtual-time-aware timeout logic in isolation (no QEMU binary needed).
 QmpBridge.execute() is patched so QMP round-trips are never made.
@@ -25,13 +25,13 @@ if TYPE_CHECKING:
     from typing import Any
 
 
-from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import yield_now
+from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 
 
 @pytest.fixture(autouse=True)
 def mock_multiplier() -> Generator[None]:
-    with patch("tools.testing.qmp_bridge.get_time_multiplier", return_value=1.0):
+    with patch("tools.testing.virtmcu_test_suite.qmp_bridge.get_time_multiplier", return_value=1.0):
         yield
 
 

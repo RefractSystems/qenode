@@ -78,3 +78,5 @@ size_t virtmcu_sizeof_chardev_class(void);
 size_t virtmcu_sizeof_char_backend(void);
 
 #endif
+
+bool virtmcu_runstate_is_running(void);

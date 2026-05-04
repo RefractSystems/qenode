@@ -247,7 +247,7 @@ jobs:
 # ── Tier 4: Smoke Tests (amd64 only) ─────────────────────────────────────────
 
   smoke-tests:
-    name: Smoke — ${{ matrix.name }} (${{ matrix.arch }})
+    name: ${{ matrix.category }} — ${{ matrix.name }} (${{ matrix.arch }})
     needs: [changes, build-qemu, tier1-checks, generate-matrix]
     if: needs.changes.outputs.expensive == 'true'
     runs-on: ${{ matrix.os }}

@@ -26,7 +26,7 @@ To support LLM-driven debugging and lifecycle management, VirtMCU includes a sta
 
 ### Capabilities for AI Agents:
 - **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause).
-- **Introspection**: Agents can inspect raw memory, read CPU registers, and disassemble guest code dynamically via the `qmp_bridge.py` wrapper.
+- **Introspection**: Agents can inspect raw memory, read CPU registers, and disassemble guest code dynamically via the `tools/testing/virtmcu_test_suite/qmp_bridge.py` wrapper.
 - **Interactive Debugging**: Agents can interact with UART consoles, monitor network traffic, and inject faults to verify firmware resilience.
 
 ---

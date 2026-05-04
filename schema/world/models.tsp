@@ -13,9 +13,9 @@ scalar NodeID extends string;
 
 @extension("oneOf", #[
   #{ type: "integer", minimum: 0 },
-  #{ type: "string", pattern: "^0x[0-9a-fA-F]+$" }
+  #{ type: "string", pattern: "^(0x[0-9a-fA-F]+|none|sysbus)$" }
 ])
-scalar Address extends uint64;
+scalar Address extends string;
 
 model Coordinate {
   x: float64;
@@ -39,7 +39,7 @@ model Machine {
 }
 
 model Resource {
-  name: string;
+  name: NodeID;
   type?: string;
   renode_type?: string;
   address?: Address;

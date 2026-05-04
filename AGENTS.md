@@ -282,6 +282,7 @@ Mandatory shutdown sequence:
 - **Teardown**: every thread-spawning peripheral needs a clean-shutdown test; run under `cargo miri test`.
 
 ### 17. Python SOTA Mandates (Tooling & Testing)
+- **Infrastructure Orchestration Golden Template**: All new tests that spawn external tools (e.g., coordinator, proxies) MUST use the `ManagedSubprocess` + `asyncio.Queue` pattern to guarantee deterministic thread-safe Zenoh interoperability and interleaved logging. See `docs/guide/03-testing-strategy.md` Chapter 9 for the code template.
 - **No Path Bootstrapping**: BANNED: `sys.path.insert()`, `sys.path.append()`. Scripts MUST rely on `uv run` and the `pyproject.toml` package boundary.
 - **No Global Path Mutation**: BANNED: `os.chdir()`. Use absolute `pathlib.Path` objects or pass `cwd=` to `subprocess`.
 - **AST over Regex**: BANNED: using regex or string searches (`.find()`) to parse structured data like `.dtb`, JSON, or YAML. Use native parsers (e.g., the `fdt` library).

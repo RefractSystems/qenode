@@ -75,7 +75,7 @@ When a guest executes `WFI`, the vCPU stops.
 When a peripheral access blocks on an external socket (e.g., SystemC), virtual time **does not advance**. From the firmware's perspective, the external transaction takes 0 nanoseconds, regardless of host-side latency. This maintains perfect causal ordering between the CPU and external hardware models.
 
 ### Test Automation
-Our Python test harness (`qmp_bridge.py`) tracks virtual time by polling the emulator's `icount`. This allows tests to use **Virtual Time Timeouts**. A test can say "wait for this UART string, but fail if it doesn't appear within 5 *virtual* seconds," ensuring the test is immune to host CPU load or ASan-induced slowdowns.
+Our Python test harness (`tools/testing/virtmcu_test_suite/qmp_bridge.py`) tracks virtual time by polling the emulator's `icount`. This allows tests to use **Virtual Time Timeouts**. A test can say "wait for this UART string, but fail if it doesn't appear within 5 *virtual* seconds," ensuring the test is immune to host CPU load or ASan-induced slowdowns.
 
 ---
 

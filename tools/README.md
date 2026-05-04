@@ -32,7 +32,7 @@ This directory contains a suite of utilities for hardware description, protocol 
 ## Testing & Debugging
 
 ### Frameworks
-*   **`testing/`**: Contains Robot Framework keywords (`qemu_keywords.robot`), an asynchronous QMP bridge (`qmp_bridge.py`), and pytest fixtures for automated integration testing.
+*   **`testing/`**: Contains Robot Framework keywords (`qemu_keywords.robot`), an asynchronous QMP bridge (`virtmcu_test_suite/qmp_bridge.py`), and pytest fixtures for automated integration testing.
 *   **`mcp_server/`**: A Model Context Protocol (MCP) server implementation, enabling AI agents to interact with and manage VirtMCU simulations.
 
 ### Debugging Helpers

@@ -31,5 +31,4 @@ fdt==0.3.0
 flatbuffers==25.12.19
 pyelftools==0.30
 lark==1.1.9
-robotframework==7.0.0
 typing-inspection==0.4.0

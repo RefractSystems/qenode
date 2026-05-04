@@ -5,6 +5,7 @@ import contextlib
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -18,12 +19,12 @@ import zenoh
 
 from tools import vproto
 from tools.testing.env import WORKSPACE_DIR
-from tools.testing.qmp_bridge import QmpBridge
 from tools.testing.utils import get_time_multiplier, wait_for_file_creation, yield_now
 from tools.testing.virtmcu_test_suite.artifact_resolver import (
     get_rust_binary_path,
 )
 from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
+from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
@@ -43,13 +44,69 @@ __all__ = [
     "pytest_runtest_makereport",
     "qemu_launcher",
     "qmp_bridge",
+    "script_runner",
     "simulation",
     "time_authority",
     "wait_for_zenoh_discovery",
     "deterministic_coordinator",
+    "deterministic_coordinator_bin",
+    "get_free_port",
+    "guest_app_factory",
     "zenoh_router",
     "zenoh_session",
 ]
+
+
+def get_free_port(proto: str = "tcp/") -> str:
+    """
+    SOTA wrapper to allocate a free port using scripts/get-free-port.py.
+    """
+    from tools.testing.env import WORKSPACE_DIR
+
+    script = WORKSPACE_DIR / "scripts" / "get-free-port.py"
+    try:
+        # Use subprocess directly here as conftest_core.py is exempt from the test-body linter
+        return subprocess.check_output([sys.executable, str(script), "--endpoint", "--proto", proto]).decode().strip()
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"get-free-port failed: {e.stderr}") from e
+
+
+@pytest.fixture
+def script_runner() -> Callable[..., str]:
+    """
+    SOTA Fixture to run a Python script and return its output.
+    """
+
+    def _run(script_path: Path | str, *args: str, env: dict[str, str] | None = None) -> str:
+        try:
+            return (
+                subprocess.check_output([sys.executable, str(script_path), *args], env=env or os.environ.copy())
+                .decode()
+                .strip()
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Script {script_path} failed: {e.stderr}") from e
+
+    return _run
+
+
+@pytest.fixture(scope="session")
+def guest_app_factory() -> Callable[[str], Path]:
+    """
+    SOTA Session-scoped fixture that builds guest apps once and caches the result.
+    Ensures that parallel workers don't fight over the same Makefile artifacts.
+    """
+    from tools.testing.env import build_guest_app
+
+    _built: dict[str, Path] = {}
+
+    def _build(app_name: str) -> Path:
+        if app_name not in _built:
+            logger.info(f"SOTA: Session-building guest app '{app_name}'...")
+            _built[app_name] = build_guest_app(app_name)
+        return _built[app_name]
+
+    return _build
 
 
 logging.basicConfig(level=logging.INFO)
@@ -177,6 +234,7 @@ class ManagedSubprocess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=self.env,
+            start_new_session=True,
         )
         self._stdout_task = asyncio.create_task(self._stream_output(self.proc.stdout, "stdout"))
         self._stderr_task = asyncio.create_task(self._stream_output(self.proc.stderr, "stderr"))
@@ -227,11 +285,18 @@ class ManagedSubprocess:
     async def stop(self) -> None:
         if self.proc:
             if self.proc.returncode is None:
-                self.proc.terminate()
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    self.proc.terminate()
+
                 try:
                     await asyncio.wait_for(self.proc.wait(), timeout=2.0)
                 except TimeoutError:
-                    self.proc.kill()
+                    try:
+                        os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        self.proc.kill()
                     await self.proc.wait()
 
             # Wait for stream tasks to finish consuming the pipes
@@ -475,6 +540,19 @@ class VirtualTimeAuthority:
         return await asyncio.to_thread(_sync_get)
 
 
+def get_free_endpoint(proto: str = "tcp/") -> str:
+    """Find a dynamically free endpoint using get-free-port.py."""
+    get_port_script = WORKSPACE_DIR / "scripts/get-free-port.py"
+    return (
+        subprocess.check_output(
+            [sys.executable, str(get_port_script), "--endpoint", "--proto", proto],
+            env=os.environ.copy(),
+        )
+        .decode()
+        .strip()
+    )
+
+
 @pytest_asyncio.fixture
 async def zenoh_router() -> AsyncGenerator[str]:
     """
@@ -630,9 +708,38 @@ async def coordinator_subprocess(
         yield proc
 
 
+@pytest.fixture(scope="session")
+def deterministic_coordinator_bin() -> Path:
+    """
+    SOTA Session-scoped fixture that builds the deterministic_coordinator once.
+    """
+    workspace_root = WORKSPACE_DIR
+    coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
+    coord_source = VirtmcuBinary.DETERMINISTIC_COORDINATOR.source_path(workspace_root)
+
+    # Use a lock to build once in parallel runs
+    lock_file = coord_source / "build.lock"
+    import fcntl
+
+    with lock_file.open("w") as f:
+        # This blocks until the lock is acquired
+        fcntl.flock(f, fcntl.LOCK_EX)
+        if not coord_bin.exists():
+            logger.info("SOTA: Session-building deterministic_coordinator...")
+            cargo_cmd = shutil.which("cargo") or "cargo"
+            subprocess.run(
+                [cargo_cmd, "build", "--release"],
+                cwd=coord_source,
+                check=True,
+            )
+
+    # Refresh location after build
+    return get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
+
+
 @pytest_asyncio.fixture
 async def deterministic_coordinator(
-    zenoh_router: str, request: pytest.FixtureRequest
+    zenoh_router: str, request: pytest.FixtureRequest, deterministic_coordinator_bin: Path
 ) -> AsyncGenerator[ManagedSubprocess]:
     """
     Fixture that starts the deterministic_coordinator.
@@ -640,34 +747,7 @@ async def deterministic_coordinator(
     params = getattr(request, "param", {})
     n_nodes = params.get("nodes", 3)  # LINT_EXCEPTION: fixture_param
 
-    workspace_root = WORKSPACE_DIR
-
-    coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
-
-    # Use a lock to build once in parallel runs
-    if not coord_bin.exists():
-        coord_source = VirtmcuBinary.DETERMINISTIC_COORDINATOR.source_path(workspace_root)
-        lock_file = coord_source / "build.lock"
-        import fcntl
-
-        def _blocking_build() -> None:
-            with lock_file.open("w") as f:
-                # This blocks until the lock is acquired
-                fcntl.flock(f, fcntl.LOCK_EX)
-                if not coord_bin.exists():
-                    logger.info("Building deterministic_coordinator...")
-                    cargo_cmd = shutil.which("cargo") or "cargo"
-                    subprocess.run(
-                        [cargo_cmd, "build", "--release"],
-                        cwd=coord_source,
-                        check=True,
-                    )
-
-        await asyncio.to_thread(_blocking_build)
-
-        # Refresh location after build
-        coord_bin = get_rust_binary_path(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
-
+    coord_bin = deterministic_coordinator_bin
     topology = params.get("topology", None)  # LINT_EXCEPTION: fixture_param
     pdes = params.get("pdes", False)
 
@@ -682,11 +762,21 @@ async def deterministic_coordinator(
         cmd.append("--no-pdes")
 
     async with ManagedSubprocess("coordinator", cmd) as proc:
-        # Wait for session to connect to the router
+        # Wait for coordinator's Zenoh session to be accepted by the router.
+        # The coordinator floods the router with subscriptions at startup, so
+        # we retry the check-session open the same way zenoh_router does.
         check_config = make_client_config(connect=zenoh_router)
-        check_session = await asyncio.to_thread(
-            lambda: zenoh.open(check_config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
-        )
+        check_session: zenoh.Session | None = None
+        for _ in range(int(100 * get_time_multiplier())):
+            try:
+                check_session = await asyncio.to_thread(
+                    lambda: zenoh.open(check_config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+                )
+                break
+            except zenoh.ZError:
+                await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for router to accept check session
+        else:
+            raise RuntimeError(f"deterministic_coordinator check session failed to connect to {zenoh_router}")
         try:
             await wait_for_zenoh_discovery(check_session, SimTopic.COORD_ALIVE)
         finally:
@@ -764,37 +854,10 @@ async def qemu_launcher(
 
         logger.info(f"Launching QEMU: {' '.join(cmd)}")
 
-        # Start the process
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
-        )
-
-        captured_stdout: list[str] = []
-        captured_stderr: list[str] = []
-
-        async def _stream_output(
-            stream: asyncio.StreamReader, name: str, capture_list: list[str] | None = None
-        ) -> None:
-            try:
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    decoded = line.decode()
-                    if capture_list is not None:
-                        capture_list.append(decoded)
-                    logger.debug(f"QEMU {name}: {decoded.strip()}")
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"Error streaming {name}: {e}")
-
         # Task 4.2d: Stream QEMU output in background for better debuggability.
-        output_tasks = [
-            asyncio.create_task(_stream_output(proc.stdout, "STDOUT", captured_stdout)),  # type: ignore
-            asyncio.create_task(_stream_output(proc.stderr, "STDERR", captured_stderr)),  # type: ignore
-        ]
+        # Use ManagedSubprocess for unified logging.
+        proc = ManagedSubprocess("qemu", cmd)
+        await proc.start()
 
         # Wait for sockets to be created by QEMU.
         try:
@@ -803,7 +866,7 @@ async def qemu_launcher(
                 wait_tasks.append(wait_for_file_creation(uart_sock))
 
             files_task: asyncio.Future[Any] = asyncio.ensure_future(asyncio.gather(*wait_tasks))
-            exit_task: asyncio.Task[int] = asyncio.create_task(proc.wait())
+            exit_task: asyncio.Task[int] = asyncio.create_task(proc.proc.wait())  # type: ignore[union-attr]
 
             done, pending = await asyncio.wait(
                 {files_task, exit_task},
@@ -818,29 +881,10 @@ async def qemu_launcher(
 
             if exit_task in done:
                 # Process exited before sockets were created.
-                await asyncio.wait(output_tasks, timeout=0.5)
+                # Allow a tiny bit of time for output history to populate
+                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
 
-                stdout_text = "".join(captured_stdout)
-                stderr_text = "".join(captured_stderr)
-                combined_output = f"STDOUT:\n{stdout_text}\nSTDERR:\n{stderr_text}"
-
-                if "ERROR: AddressSanitizer:" in stderr_text:
-                    asan_match = __import__("re").search(
-                        r"(==\d+==ERROR: AddressSanitizer:.*?)(?:\n==\d+==ABORTING|\Z)",
-                        stderr_text,
-                        __import__("re").DOTALL,
-                    )
-                    if asan_match:
-                        raise RuntimeError(
-                            f"QEMU ASan Crash Detected (rc={proc.returncode}):\n{asan_match.group(1)}"
-                        ) from None
-
-                if (
-                    "failed to open module" in stderr_text
-                    or "undefined symbol" in stderr_text
-                    or "not a valid device model name" in stderr_text
-                ):
-                    raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{combined_output}")
+                combined_output = "\n".join(proc._output_history)
 
                 if "ERROR: AddressSanitizer:" in combined_output:
                     asan_match = __import__("re").search(
@@ -854,9 +898,13 @@ async def qemu_launcher(
                         ) from None
 
                 if (
-                    "Instrumentation Mismatch Detected" in stdout_text
-                    or "Instrumentation Mismatch Detected" in stderr_text
+                    "failed to open module" in combined_output
+                    or "undefined symbol" in combined_output
+                    or "not a valid device model name" in combined_output
                 ):
+                    raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{combined_output}")
+
+                if "Instrumentation Mismatch Detected" in combined_output:
                     raise RuntimeError(f"QEMU Sanitizer Mismatch:\n{combined_output}")
 
                 raise RuntimeError(
@@ -870,22 +918,17 @@ async def qemu_launcher(
 
         except (TimeoutError, RuntimeError) as e:
             if proc.returncode is None:
-                proc.terminate()
+                await proc.stop()
 
-            # Try to drain some output if we timed out
-            await asyncio.wait(output_tasks, timeout=0.2)
-            stdout_text = "".join(captured_stdout)
-            stderr_text = "".join(captured_stderr)
+            combined_output = "\n".join(proc._output_history)
 
-            logger.error(f"QEMU failed to start. rc={proc.returncode}\nSTDOUT: {stdout_text}\nSTDERR: {stderr_text}")
+            logger.error(f"QEMU failed to start. rc={proc.returncode}\nOUTPUT:\n{combined_output}")
             if isinstance(e, TimeoutError):
-                raise TimeoutError(
-                    f"QEMU QMP/UART sockets did not appear in time.\nSTDOUT: {stdout_text}\nSTDERR: {stderr_text}"
-                ) from e
+                raise TimeoutError(f"QEMU QMP/UART sockets did not appear in time.\nOUTPUT:\n{combined_output}") from e
             raise
 
         bridge = QmpBridge()
-        bridge.pid = proc.pid
+        bridge.pid = proc.proc.pid  # type: ignore[union-attr]
         try:
             # Extract node_id from extra_args if available
             node_id = None
@@ -917,11 +960,11 @@ async def qemu_launcher(
         except Exception as e:
             if proc.returncode is not None:
                 await yield_now()
-                stderr_text = "".join(captured_stderr)
-                if "ERROR: AddressSanitizer:" in stderr_text:
+                combined_output = "\n".join(proc._output_history)
+                if "ERROR: AddressSanitizer:" in combined_output:
                     asan_match = __import__("re").search(
                         r"(==\d+==ERROR: AddressSanitizer:.*?)(?:\n==\d+==ABORTING|\Z)",
-                        stderr_text,
+                        combined_output,
                         __import__("re").DOTALL,
                     )
                     if asan_match:
@@ -930,13 +973,13 @@ async def qemu_launcher(
                         ) from e
 
                 if (
-                    "failed to open module" in stderr_text
-                    or "undefined symbol" in stderr_text
-                    or "not a valid device model name" in stderr_text
+                    "failed to open module" in combined_output
+                    or "undefined symbol" in combined_output
+                    or "not a valid device model name" in combined_output
                 ):
-                    raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{stderr_text}") from e
+                    raise RuntimeError(f"QEMU Plugin Load Error (Check #[no_mangle]):\n{combined_output}") from e
                 raise RuntimeError(
-                    f"QEMU exited unexpectedly (rc={proc.returncode}) during QMP connect.\nSTDERR: {stderr_text}"
+                    f"QEMU exited unexpectedly (rc={proc.returncode}) during QMP connect.\nOUTPUT:\n{combined_output}"
                 ) from e
 
             logger.error(f"QEMU failed to establish connection: {e}")
@@ -947,7 +990,6 @@ async def qemu_launcher(
             "bridge": bridge,
             "tmpdir": tmpdir,
             "cmd": cmd,
-            "output_tasks": output_tasks,
         }
         instances.append(instance)
         return bridge
@@ -961,33 +1003,20 @@ async def qemu_launcher(
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Error closing bridge: {e}")
 
-        # Cancel the background stream readers so they don't deadlock with communicate()
-        for task in inst["output_tasks"]:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-        proc = inst["proc"]
-        if proc.returncode is None:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=0.5)
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
+        proc: ManagedSubprocess = inst["proc"]
+        await proc.stop()
 
         shutil.rmtree(inst["tmpdir"], ignore_errors=True)
 
 
 @pytest_asyncio.fixture
-async def qmp_bridge(qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]]) -> QmpBridge:
+async def qmp_bridge(
+    qemu_launcher: Callable[..., Coroutine[Any, Any, QmpBridge]], guest_app_factory: Callable[[str], Path]
+) -> QmpBridge:
     """Fixture that provides a connected QmpBridge."""
-    dtb = "tests/fixtures/guest_apps/boot_arm/minimal.dtb"
-    kernel = "tests/fixtures/guest_apps/boot_arm/hello.elf"
-    if not Path(dtb).exists():
-        subprocess.run(
-            [shutil.which("make") or "make", "-C", "tests/fixtures/guest_apps/boot_arm", "minimal.dtb"], check=True
-        )
+    app_dir = guest_app_factory("boot_arm")
+    dtb = app_dir / "minimal.dtb"
+    kernel = app_dir / "hello.elf"
     bridge = await qemu_launcher(dtb, kernel, extra_args=["-S"])
     await bridge.start_emulation()
     return bridge

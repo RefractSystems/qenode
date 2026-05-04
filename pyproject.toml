@@ -19,12 +19,12 @@ dependencies = [
     "anyio==4.13.0",
     "pyyaml==6.0.1",
     "lark==1.1.9",
-    "robotframework==7.0.0",
     "mcp==1.0.0",
     "typing-inspection==0.4.0",
     "psutil",
     "watchdog",
     "mypy",
+    "numpy",
     "ruff==0.15.12",
 ]
 
@@ -37,6 +37,7 @@ include = ["tools*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/fixtures --ignore=tests/firmware --ignore=third_party"
 pythonpath = [
     ".",
     "tools/lin_fbs",
@@ -68,6 +69,7 @@ select = [
     "PT",     # flake8-pytest-style
     "BLE",    # flake8-blind-except
     "TID",    # flake8-tidy-imports
+    "T201",   # flake8-print
 ]
 ignore = [
     "E501",   # line-too-long
@@ -110,6 +112,7 @@ module = [
     "pytest.*",
     "pytest_asyncio.*",
     "pkg_resources.*",
+    "numpy.*",
 ]
 ignore_missing_imports = true
 
@@ -120,11 +123,11 @@ module = [
 ]
 follow_imports = "skip"
 [[tool.mypy.overrides]]
-module = ["tools.virtmcu.core.*"]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = ['tools.virtmcu.core.*']
+module = [
+    "tools.virtmcu.core.*",
+    "tools.lin_fbs.*",
+    "tools.flexray_fbs.*",
+]
 ignore_errors = true
 
 
