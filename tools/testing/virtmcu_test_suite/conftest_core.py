@@ -245,6 +245,13 @@ class ManagedSubprocess:
             return self.proc.returncode
         return None
 
+    async def __aenter__(self) -> ManagedSubprocess:
+        await self.start()
+        return self
+
+    async def __aexit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
+        await self.stop()
+
     async def _stream_output(self, reader: asyncio.StreamReader | None, label: str) -> None:
         if not reader:
             return
@@ -310,13 +317,6 @@ class ManagedSubprocess:
                     await asyncio.wait_for(self._stderr_task, timeout=1.0)
                 except (TimeoutError, asyncio.CancelledError):
                     self._stderr_task.cancel()
-
-    async def __aenter__(self) -> ManagedSubprocess:
-        await self.start()
-        return self
-
-    async def __aexit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
-        await self.stop()
 
 
 async def ensure_session_routing(session: zenoh.Session, timeout: float = 5.0) -> None:

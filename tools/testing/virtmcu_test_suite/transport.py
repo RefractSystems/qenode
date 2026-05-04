@@ -20,6 +20,8 @@ from tools import vproto
 if TYPE_CHECKING:
     import zenoh
 
+    from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,13 @@ class SimulationTransport(abc.ABC):
 
     @abc.abstractmethod
     async def stop(self) -> None: ...
+
+    async def __aenter__(self) -> SimulationTransport:
+        await self.start()
+        return self
+
+    async def __aexit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
+        await self.stop()
 
     @abc.abstractmethod
     def get_clock_device_str(self, node_id: int) -> str: ...
@@ -67,13 +76,16 @@ class ZenohTransportImpl(SimulationTransport):
 
         write_pcap(path, self.history)
 
-    def __init__(self, router_endpoint: str, session: zenoh.Session) -> None:
+    def __init__(self, router_endpoint: str, session: zenoh.Session, vta: VirtualTimeAuthority | None = None) -> None:
         self.router_endpoint = router_endpoint
         self.session = session
         self.subs: list[Any] = []
-        from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+        if vta is None:
+            from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
 
-        self.vta = VirtualTimeAuthority(session, [0])  # Assumes single node 0 for basic tests
+            self.vta = VirtualTimeAuthority(session, [0])  # Assumes single node 0 for basic tests
+        else:
+            self.vta = vta
         self.history: list[dict[str, Any]] = []
 
     def get_vta(self, node_ids: list[int]) -> object:

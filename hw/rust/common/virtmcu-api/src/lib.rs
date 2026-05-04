@@ -172,9 +172,6 @@ pub trait ClockSyncTransport: Send + Sync {
 
     /// Sends a virtual time heartbeat signal to external listeners.
     fn send_vtime_heartbeat(&self, _vtime_ns: u64) {}
-
-    /// Closes the transport, unblocking any pending `recv_advance` calls.
-    fn close(&self) {}
 }
 
 /// Abstract responder for a specific clock advancement request.
@@ -235,14 +232,6 @@ impl ClockSyncTransport for UnixSocketClockTransport {
         let responder: Box<dyn ClockSyncResponder> =
             Box::new(UnixSocketResponder { stream: stream.try_clone().ok()? });
         Some((req, responder))
-    }
-
-    fn close(&self) {
-        if let Ok(mut guard) = self.stream.lock() {
-            if let Some(stream) = guard.as_mut() {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
-            }
-        }
     }
 }
 

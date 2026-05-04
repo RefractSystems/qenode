@@ -78,8 +78,10 @@ impl ClockSyncTransport for ZenohClockTransport {
         payload.extend_from_slice(&vtime_ns.to_le_bytes());
         self.vtime_pub.send(payload);
     }
+}
 
-    fn close(&self) {
+impl Drop for ZenohClockTransport {
+    fn drop(&mut self) {
         if let Ok(mut q) = self._queryable.lock() {
             if let Some(queryable) = q.take() {
                 let _ = queryable.undeclare().wait();
@@ -682,7 +684,6 @@ unsafe extern "C" fn clock_instance_finalize(obj: *mut Object) {
     if !s.rust_state.is_null() {
         let backend = unsafe { Arc::from_raw(s.rust_state) };
         backend.shutdown.store(true, Ordering::Release);
-        backend.transport.close();
 
         let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         backend.cond.notify_all();

@@ -38,7 +38,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 
 **Determinism migration (new — highest correctness priority):**
 1. **Phase X: Active Codebase Migration to TypeSpec Schema** (See details below)
-2. **DET-9** — Wireshark extcap plugin (Low priority / Redundant with INFRA-7).
+2. [x] **DET-9** — Wireshark extcap plugin (Completed).
 
 **Hardware / infrastructure (existing, continue in parallel with DET work):**
 3. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
@@ -170,7 +170,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 - [ ] **Milestone 23**: Bluetooth (nRF52840 RADIO emulation).
 - [ ] **Milestone 26**: Automotive Ethernet (100BASE-T1).
 - [ ] **Milestone 28**: Full Digital Twin (Multi-Medium Coordination).
-- [ ] **DET-9**: Wireshark extcap plugin (Reads the coordinator PCAP log and displays each inter-node message).
+- [x] **DET-9**: Wireshark extcap plugin (Completed).
 
 ## 3. Architectural Hardening — Concurrency, Correctness & Scale
 
