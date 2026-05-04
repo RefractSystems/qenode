@@ -206,6 +206,7 @@ Every deployment change must be revertable. Add logging on critical paths (not i
 - All QEMU source modifications → `scripts/apply-qemu-patches.sh`. No ad-hoc `sed`/`git am` elsewhere.
 - **DEBIAN_CODENAME** in `BUILD_DEPS` is the single source of truth for all stages. Never deviate between devcontainer and release — disable incompatible QEMU features at configure time instead.
 - **Python Testing Framework**: `pytest-asyncio` is pinned to **1.3.0** (with `asyncio_default_fixture_loop_scope = "function"` in `pyproject.toml`) to ensure compatibility with Python 3.13 and solve `FixtureDef` attribute errors. Agents MUST NOT change this version.
+- **Dev Container Lockfile**: `.devcontainer/devcontainer-lock.json` MUST be tracked in version control to lock feature versions (like `docker-in-docker`) and guarantee identical environments across developer machines and CI runners.
 
 ### 7. Environment Parity (1:1 Local-to-Remote)
 
