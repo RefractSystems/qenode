@@ -303,6 +303,10 @@ Mandatory shutdown sequence:
 - **Reference Material**: vendor SDK, firmware, and spec PDFs → `third_party/golden_references/<mcu_name>/` (gitignored). Each subfolder needs `README.md` with URL, license, date. Firmware binaries in `tests/firmware/` need `PROVENANCE.md`.
 - **No One-Shot Scripts in Root**: `patch_*.py`, `fix_*.py` etc. belong in gitignored scratch dirs or must be deleted before commit. Permanent utilities go in `scripts/`.
 
+### 19. Architectural Patterns (RAII & Dependency Injection)
+- **RAII (Resource Acquisition Is Initialization)**: All resources (memory, locks, file handles, Zenoh sessions) MUST be managed via RAII. Explicit `init()` and `deinit()`/`cleanup()` calls are BANNED for resource management; use constructors/destructors (Rust `Drop`, C++ destructors, Python context managers).
+- **Dependency Injection (DI)**: Components MUST NOT hardcode or globally discover their dependencies (e.g., transports, coordinators, configs). Pass dependencies via constructors or factories. This is critical for deterministic testing and parallel safety.
+
 ---
 
 ## Common Pitfalls & Troubleshooting

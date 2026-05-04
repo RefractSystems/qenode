@@ -57,9 +57,8 @@ async def _sim_transport_zenoh(zenoh_router: str, zenoh_session: zenoh.Session) 
 @pytest_asyncio.fixture
 async def _sim_transport_unix() -> AsyncGenerator[UnixTransportImpl]:
     transport = UnixTransportImpl()
-    await transport.start()
-    yield transport
-    await transport.stop()
+    async with transport:
+        yield transport
 
 
 @pytest_asyncio.fixture(params=["zenoh", "unix"])

@@ -173,8 +173,13 @@ test-results/flight_recorder/test_name.json
 test-results/flight_recorder/test_name.pcap
 ```
 
-### Wireshark Introspection
-By opening the `.pcap` artifact in Wireshark, you can observe the exact inter-node traffic, perfectly aligned by their **virtual timestamps**, providing a granular view of exactly what caused a multi-node deadlock or failure. The PCAP uses DLT_USER0 (147) and encapsulates Python-side metrics (topics, direction) directly into the Wireshark-readable payloads via Protocol 255 (sim-tracing).
+### Live Wireshark Observability
+For live debugging of a running simulation, VirtMCU provides a **Wireshark Extcap Plugin** and a **Standalone PCAP Dumper**:
+- **Extcap Plugin**: `tools/wireshark/virtmcu_extcap.py`. Install it in your Wireshark extcap directory to see "VirtMCU Zenoh Capture" in your interface list.
+- **Standalone Dumper**: `tools/zenoh_pcap_dumper.py`. Use this to record traffic from a live Zenoh session to a file.
+- **Lua Dissector**: `tools/wireshark/virtmcu_dissector.lua`. Install this in your Wireshark plugins directory to enable high-level protocol decoding (Ethernet, UART, CAN-FD, etc.) for VirtMCU packets.
+
+By using these tools, you can attach Wireshark to a live simulation and observe traffic in "virtual real-time," with timestamps matching the simulation's `delivery_vtime_ns`.
 
 ---
 

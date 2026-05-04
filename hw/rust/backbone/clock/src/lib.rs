@@ -78,8 +78,10 @@ impl ClockSyncTransport for ZenohClockTransport {
         payload.extend_from_slice(&vtime_ns.to_le_bytes());
         self.vtime_pub.send(payload);
     }
+}
 
-    fn close(&self) {
+impl Drop for ZenohClockTransport {
+    fn drop(&mut self) {
         if let Ok(mut q) = self._queryable.lock() {
             if let Some(queryable) = q.take() {
                 let _ = queryable.undeclare().wait();
@@ -156,8 +158,8 @@ pub struct VirtmcuClock {
     pub quantum_timer: *mut QemuTimer,
 
     /* Rust state */
-    /// Opaque pointer to the Rust backend state.
-    pub rust_state: *mut VirtmcuClockBackend,
+    /// Opaque pointer to the Rust manager state.
+    pub rust_state: *mut ClockManager,
     pub is_yielding: bool,
 }
 
@@ -234,6 +236,44 @@ pub struct VirtmcuClockBackend {
     pub shutdown: Arc<AtomicBool>,
 }
 
+/// A RAII manager that owns the worker thread and the shared backend state.
+pub struct ClockManager {
+    pub backend: Arc<VirtmcuClockBackend>,
+    pub worker_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for ClockManager {
+    fn drop(&mut self) {
+        // 1. Set running = false (shutdown flag)
+        self.backend.shutdown.store(true, Ordering::Release);
+
+        // 2. Broadcast condvars
+        let mut guard =
+            self.backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.backend.cond.notify_all();
+
+        // 3. Wait via drain_cond until active_vcpu_count == 0
+        while ACTIVE_HOOKS.load(Ordering::SeqCst) > 0 {
+            let bql_unlock = virtmcu_qom::sync::Bql::temporary_unlock();
+            let (new_guard, _) = self
+                .backend
+                .cond
+                .wait_timeout(guard, core::time::Duration::from_millis(100))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
+            drop(bql_unlock);
+        }
+        drop(guard);
+
+        // 4. Join background thread
+        if let Some(thread) = self.worker_thread.take() {
+            let _ = thread.join();
+        }
+
+        // 5. Arc<SharedState> is implicitly dropped here.
+    }
+}
+
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
 static GLOBAL_CLOCK: AtomicPtr<VirtmcuClock> = AtomicPtr::new(ptr::null_mut());
@@ -301,7 +341,8 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
         if s.rust_state.is_null() {
             return;
         }
-        let backend = unsafe { &*s.rust_state };
+        let manager = unsafe { &*s.rust_state };
+        let backend = &manager.backend;
 
         // Release BQL before blocking using RAII guard
         let bql_unlock = virtmcu_qom::sync::Bql::temporary_unlock();
@@ -680,23 +721,11 @@ unsafe extern "C" fn clock_instance_finalize(obj: *mut Object) {
     }
 
     if !s.rust_state.is_null() {
-        let backend = unsafe { Arc::from_raw(s.rust_state) };
-        backend.shutdown.store(true, Ordering::Release);
-        backend.transport.close();
-
-        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        backend.cond.notify_all();
-        while ACTIVE_HOOKS.load(Ordering::SeqCst) > 0 {
-            let bql_unlock = virtmcu_qom::sync::Bql::temporary_unlock();
-            let (new_guard, _) = backend
-                .cond
-                .wait_timeout(guard, core::time::Duration::from_millis(100))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard = new_guard;
-            drop(bql_unlock);
-        }
+        // Construct Box to trigger the Drop implementation
+        let _manager = unsafe { Box::from_raw(s.rust_state) };
         s.rust_state = ptr::null_mut();
     }
+
     if !s.quantum_timer.is_null() {
         unsafe {
             virtmcu_timer_free(s.quantum_timer);
@@ -760,7 +789,7 @@ fn clock_init_with_transport(
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-) -> *mut VirtmcuClockBackend {
+) -> *mut ClockManager {
     let shutdown = Arc::new(AtomicBool::new(false));
     let watchdog_threshold = if session_watchdog_ms > 0 && stall_timeout_ms > 0 {
         (session_watchdog_ms / stall_timeout_ms) as u64
@@ -791,15 +820,13 @@ fn clock_init_with_transport(
         pending_stall: AtomicBool::new(false),
         shutdown: Arc::clone(&shutdown),
     });
-    let backend_ptr = Arc::into_raw(backend);
-    let worker_backend = unsafe {
-        let b = Arc::from_raw(backend_ptr);
-        let clone = Arc::clone(&b);
-        let _ = Arc::into_raw(b);
-        clone
-    };
-    std::thread::spawn(move || clock_worker_loop(worker_backend));
-    backend_ptr.cast_mut()
+
+    let worker_backend = Arc::clone(&backend);
+    let worker_thread = Some(std::thread::spawn(move || clock_worker_loop(worker_backend)));
+
+    let manager = Box::new(ClockManager { backend, worker_thread });
+
+    Box::into_raw(manager)
 }
 
 fn clock_init_internal(
@@ -808,7 +835,7 @@ fn clock_init_internal(
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-) -> *mut VirtmcuClockBackend {
+) -> *mut ClockManager {
     let session = unsafe {
         match transport_zenoh::open_session(router) {
             Ok(s) => Arc::new(s),
