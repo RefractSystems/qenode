@@ -51,6 +51,11 @@ rust_modules = [
         'obj': 'mmio-socket-bridge',
     },
     {
+        'pkg': 'transport_hub',
+        'lib': 'libtransport_hub.a',
+        'obj': 'virtmcu-transport-hub',
+    },
+    {
         'pkg': 'remote-port',
         'lib': 'libremote_port.a',
         'obj': 'remote-port-bridge',
