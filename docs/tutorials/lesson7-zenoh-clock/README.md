@@ -116,7 +116,7 @@ not acquire BQL in the suspend path.
 ### Quick test (both modes)
 
 ```bash
-bash tests/fixtures/guest_apps/clock_suspend/smoke_test.sh
+pytest tests/integration/infrastructure/test_clock_suspend.py -v
 ```
 
 ### Manual walkthrough
@@ -131,7 +131,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
     -Wl,--section-start=.text=0x40000000 \
     /tmp/spin.S -o /tmp/spin.elf
 
-# Generate a minimal DTB (see tests/fixtures/guest_apps/clock_suspend/smoke_test.sh for full DTS)
+# Generate a minimal DTB (see tests/integration/infrastructure/test_clock_suspend.py for the full context)
 # ...
 
 # Start QEMU in suspend mode

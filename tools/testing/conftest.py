@@ -11,6 +11,7 @@ import pytest_asyncio
 from tools.testing.virtmcu_test_suite.conftest_core import (
     VirtualTimeAuthority,
     deterministic_coordinator,
+    guest_app_factory,
     inspection_bridge,
     pytest_collection_modifyitems,
     pytest_runtest_makereport,
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 # Re-exporting fixtures so pytest finds them
 __all__ = [
     "VirtualTimeAuthority",
+    "guest_app_factory",
     "inspection_bridge",
     "pytest_collection_modifyitems",
     "pytest_runtest_makereport",

@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
     import zenoh
 
-    from tools.testing.qmp_bridge import QmpBridge
+    from tools.testing.virtmcu_test_suite.conftest_core import ManagedSubprocess
+    from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
     from tools.testing.virtmcu_test_suite.transport import SimulationTransport
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,32 @@ _KNOWN_VIRTMCU_PLUGINS = [
     "telemetry",
     "s32k144-lpuart",
 ]
+
+
+class NodeHandle:
+    """High-level handle for interacting with a specific node in the simulation."""
+
+    def __init__(self, sim: Simulation, node_id: int) -> None:
+        self._sim = sim
+        self.node_id = node_id
+
+    @property
+    def bridge(self) -> QmpBridge:
+        return self._sim.bridge_for(self.node_id)
+
+    @property
+    def uart_buffer(self) -> str:
+        return self._sim.uart_buffer(self.node_id)
+
+    async def wait_for_uart(self, pattern: str, *, timeout_ns: int = 5_000_000_000, step_ns: int = 10_000_000) -> None:
+        """
+        Advance the simulation clock until the pattern appears in the node's UART buffer.
+        """
+
+        def condition() -> bool:
+            return pattern in self.uart_buffer
+
+        await self._sim.run_until(condition, timeout_ns=timeout_ns, step_ns=step_ns)
 
 
 @dataclass
@@ -165,9 +192,27 @@ class Simulation:
         # so the test can drive boot grace-period scenarios. The framework
         # still injects -S and `cont` is still issued at the end. Default True.
         self._init_barrier = init_barrier
-        # Optional transport (zenoh / unix / fault-injecting). When set, the VTA
-        # is built by the transport so per-transport semantics are honored.
-        self.transport: SimulationTransport | None = None
+        # Default to Zenoh transport. Tests can override this (e.g. to UnixTransportImpl)
+        # before entering the async context if needed.
+        from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
+        self.transport: SimulationTransport | None = ZenohTransportImpl(self._router, self._session)
+        self._app_specs: list[tuple[str, list[str], dict[str, str] | None]] = []
+        self._apps: dict[str, ManagedSubprocess] = {}
+
+    def add_background_app(self, name: str, cmd: list[str], env: dict[str, str] | None = None) -> None:
+        """
+        Register a background process (e.g. mock server, proxy) to be launched and
+        managed by the Simulation context.
+        """
+        if self._bridges:
+            raise RuntimeError("Simulation.add_background_app() must be called before entering the async context")
+        self._app_specs.append((name, cmd, env))
+
+    @property
+    def apps(self) -> dict[str, ManagedSubprocess]:
+        """Access the running background apps."""
+        return self._apps
 
     def add_node(
         self,
@@ -209,9 +254,19 @@ class Simulation:
         """Convenience accessor for guest UART output by node_id."""
         return self.bridge_for(node_id).uart_buffer
 
+    def node(self, node_id: int) -> NodeHandle:
+        """Return a high-level orchestration handle for the given node."""
+        return NodeHandle(self, node_id)
+
     async def __aenter__(self) -> Simulation:
         if not self._specs:
             raise RuntimeError("Simulation has no nodes — call add_node() before entering the context")
+
+        from tools.testing.virtmcu_test_suite.conftest_core import ManagedSubprocess
+        for name, cmd, env in self._app_specs:
+            app = ManagedSubprocess(name, cmd, env=env)
+            await app.start()
+            self._apps[name] = app
 
         prepared = [self._inject_determinism_args(spec) for spec in self._specs]
         spawn_tasks = [
@@ -223,6 +278,7 @@ class Simulation:
             )
             for spec, args in zip(self._specs, prepared, strict=True)
         ]
+        await ensure_session_routing(self._session)
         self._bridges = await asyncio.gather(*spawn_tasks)
 
         # Only nodes with orchestrated=True (default) participate in the VTA sync loop.
@@ -230,6 +286,8 @@ class Simulation:
         if self.transport is not None:
             self._vta = self.transport.get_vta(node_ids)  # type: ignore[assignment]
         else:
+            from tools.testing.virtmcu_test_suite.conftest_core import VirtualTimeAuthority
+
             self._vta = VirtualTimeAuthority(self._session, node_ids)
         assert self._vta is not None
 
@@ -240,11 +298,11 @@ class Simulation:
         # as plugins skip declaring liveliness tokens on other transports (e.g. Unix sockets).
         if self._init_barrier and node_ids:
             await self._vta.init()
-            await ensure_session_routing(self._session)
 
             is_zenoh = self.transport is None or "Zenoh" in self.transport.__class__.__name__
 
             if is_zenoh:
+                await ensure_session_routing(self._session)
                 for spec in self._specs:
                     for plugin in spec.plugins:
                         try:
@@ -262,30 +320,48 @@ class Simulation:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        if self.transport is not None:
+            await self.transport.stop()
+
         for bridge in reversed(self._bridges):
             await bridge.close()
+            
+        for app in self._apps.values():
+            await app.stop()
 
     async def run_until(
         self,
         condition: Callable[[], bool],
         *,
         timeout: float = 5.0,
+        timeout_ns: int | None = None,
         step_ns: int = 1_000_000,
     ) -> None:
         """
-        Advance virtual time in steps of `step_ns` until `condition()` is True
-        or `timeout` wall-clock seconds elapse.
+        Advance virtual time in steps of `step_ns` until `condition()` is True,
+        `timeout` wall-clock seconds elapse, or `timeout_ns` virtual nanoseconds elapse.
         """
-        if self._vta is None:
+        vta = self._vta
+        if vta is None:
             raise RuntimeError("run_until() called before Simulation context entered")
 
-        start = time.monotonic()
-        while time.monotonic() - start < timeout:
+        start_wall = time.monotonic()
+        scaled_timeout = timeout * get_time_multiplier()
+
+        def _get_vtime() -> int:
+            return max(vta.current_vtimes.values()) if vta.current_vtimes else 0
+
+        start_vtime = _get_vtime() if timeout_ns is not None else 0
+
+        while time.monotonic() - start_wall < scaled_timeout:
             if condition():
                 return
-            await self._vta.step(step_ns)
+            if timeout_ns is not None and (_get_vtime() - start_vtime) >= timeout_ns:
+                raise TimeoutError(f"Simulation.run_until: condition not met within {timeout_ns}ns virtual time")
+            await vta.step(step_ns)
+
         if not condition():
-            raise TimeoutError(f"Simulation.run_until: condition not met within {timeout}s")
+            raise TimeoutError(f"Simulation.run_until: condition not met within {scaled_timeout}s wall-clock time")
 
     def _inject_determinism_args(self, spec: _NodeSpec) -> list[str]:
         """
@@ -303,11 +379,12 @@ class Simulation:
         node_id = spec.node_id
         router = self._router
 
-        base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
+        base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "10000"))
         scaled_stall = int(base_stall * get_time_multiplier())
 
         processed: list[str] = []
         has_clock = False
+        is_unix_clock = self.transport is not None and hasattr(self.transport, "clock_sock")
 
         # Mapping from QOM type names / compatible strings to liveliness plugin names
         # Duplicate here for injection logic
@@ -347,14 +424,16 @@ class Simulation:
                 val = str(args_in[i + 1])
                 if "virtmcu-clock" in val:
                     has_clock = True
-                    if "router=" not in val:
-                        val = f"{val},router={router}"
-                    if "node=" not in val:
-                        val = f"{val},node={node_id}"
-                    if "mode=" not in val:
-                        val = f"{val},mode=slaved-icount"
-                    if "stall-timeout=" not in val:
-                        val = f"{val},stall-timeout={scaled_stall}"
+                    # Let explicitly passed clocks alone if they are fully configured
+                    if not is_unix_clock:
+                        if "router=" not in val:
+                            val = f"{val},router={router}"
+                        if "node=" not in val:
+                            val = f"{val},node={node_id}"
+                        if "mode=" not in val:
+                            val = f"{val},mode=slaved-icount"
+                        if "stall-timeout=" not in val:
+                            val = f"{val},stall-timeout={scaled_stall}"
                 elif is_virtmcu_plugin_type(val):
                     if "router=" not in val:
                         val = f"{val},router={router}"
@@ -366,14 +445,15 @@ class Simulation:
 
             if "virtmcu-clock" in arg:
                 has_clock = True
-                if "router=" not in arg:
-                    arg = f"{arg},router={router}"
-                if "node=" not in arg:
-                    arg = f"{arg},node={node_id}"
-                if "mode=" not in arg:
-                    arg = f"{arg},mode=slaved-icount"
-                if "stall-timeout=" not in arg:
-                    arg = f"{arg},stall-timeout={scaled_stall}"
+                if not is_unix_clock:
+                    if "router=" not in arg:
+                        arg = f"{arg},router={router}"
+                    if "node=" not in arg:
+                        arg = f"{arg},node={node_id}"
+                    if "mode=" not in arg:
+                        arg = f"{arg},mode=slaved-icount"
+                    if "stall-timeout=" not in arg:
+                        arg = f"{arg},stall-timeout={scaled_stall}"
                 processed.extend(["-device", arg])
             elif arg == "-global" and i + 1 < len(args_in):
                 val = str(args_in[i + 1])
@@ -394,12 +474,13 @@ class Simulation:
             i += 1
 
         if not has_clock:
-            processed.extend(
-                [
-                    "-device",
-                    (f"virtmcu-clock,node={node_id},router={router},stall-timeout={scaled_stall},mode=slaved-icount"),
-                ]
-            )
+            if is_unix_clock:
+                clock_arg = f"{self.transport.get_clock_device_str(node_id)},stall-timeout={scaled_stall}"  # type: ignore
+            else:
+                clock_arg = (
+                    f"virtmcu-clock,node={node_id},router={router},stall-timeout={scaled_stall},mode=slaved-icount"
+                )
+            processed.extend(["-device", clock_arg])
         if any("slaved-icount" in a for a in processed) and "-icount" not in processed:
             processed.extend(["-icount", "shift=0,align=off,sleep=off"])
         if "-S" not in processed:

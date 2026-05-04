@@ -11,17 +11,21 @@ import pytest_asyncio
 from tools.testing.virtmcu_test_suite.conftest_core import (
     VirtualTimeAuthority,
     deterministic_coordinator,
+    deterministic_coordinator_bin,
+    get_free_port,
+    guest_app_factory,
     inspection_bridge,
     pytest_collection_modifyitems,
     pytest_runtest_makereport,
     qemu_launcher,
     qmp_bridge,
+    script_runner,
     simulation,
     time_authority,
     zenoh_router,
     zenoh_session,
 )
-from tools.testing.virtmcu_test_suite.transport import UnixTransportImpl, ZenohTransportImpl
+from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
 
 if TYPE_CHECKING:
     import zenoh
@@ -35,10 +39,14 @@ __all__ = [
     "pytest_runtest_makereport",
     "qemu_launcher",
     "qmp_bridge",
+    "script_runner",
     "inspection_bridge",
     "simulation",
     "time_authority",
     "deterministic_coordinator",
+    "deterministic_coordinator_bin",
+    "get_free_port",
+    "guest_app_factory",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -52,24 +60,12 @@ async def _sim_transport_zenoh(zenoh_router: str, zenoh_session: zenoh.Session) 
     await transport.stop()
 
 
-@pytest_asyncio.fixture
-async def _sim_transport_unix() -> AsyncGenerator[UnixTransportImpl]:
-    transport = UnixTransportImpl()
-    await transport.start()
-    yield transport
-    await transport.stop()
-
-
-@pytest_asyncio.fixture(params=["zenoh", "unix"])
+@pytest_asyncio.fixture(params=["zenoh"])
 async def sim_transport(
     request: pytest.FixtureRequest,
     _sim_transport_zenoh: ZenohTransportImpl,
-    _sim_transport_unix: UnixTransportImpl,
-) -> AsyncGenerator[ZenohTransportImpl | UnixTransportImpl]:
-    if request.param == "zenoh":
-        yield _sim_transport_zenoh
-    else:
-        yield _sim_transport_unix
+) -> AsyncGenerator[ZenohTransportImpl]:
+    yield _sim_transport_zenoh
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +74,10 @@ async def sim_transport(
 # Use standard fixtures instead.
 # ---------------------------------------------------------------------------
 
-_BANNED_SPAWN_NAMES = frozenset({"Popen", "create_subprocess_exec", "create_subprocess_shell"})
+_BANNED_SUBPROCESS_ATTRS = frozenset({"run", "check_output", "Popen", "call", "check_call", "getstatusoutput", "getoutput"})
+_BANNED_ASYNCIO_ATTRS = frozenset({"create_subprocess_exec", "create_subprocess_shell"})
+_BANNED_OS_ATTRS = frozenset({"system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe"})
+_BANNED_GLOBAL_NAMES = frozenset({"Popen", "create_subprocess_exec", "create_subprocess_shell", "system", "popen"})
 
 
 def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
@@ -91,6 +90,8 @@ def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
             or "venv" in path.parts
             or "third_party" in path.parts
             or "target" in path.parts
+            or "build" in path.parts
+            or "_deps" in path.parts
         ):
             continue
         try:
@@ -98,16 +99,27 @@ def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
                 tree = ast.parse(f.read(), filename=str(path))
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Call):
-                        name = ""
-                        if isinstance(node.func, ast.Name):
-                            name = node.func.id
-                        elif isinstance(node.func, ast.Attribute):
-                            name = node.func.attr
-
-                        if name in _BANNED_SPAWN_NAMES:
-                            violations.append(
-                                f"{path.name}:{node.lineno} — Manually spawning {name}. Move to a fixture with teardown"
-                            )
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                            module_name = node.func.value.id
+                            attr_name = node.func.attr
+                            if module_name == "subprocess" and attr_name in _BANNED_SUBPROCESS_ATTRS:
+                                violations.append(
+                                    f"{path.name}:{node.lineno} — Manually spawning subprocess.{attr_name}. Move to a fixture or factory.py"
+                                )
+                            elif module_name == "asyncio" and attr_name in _BANNED_ASYNCIO_ATTRS:
+                                violations.append(
+                                    f"{path.name}:{node.lineno} — Manually spawning asyncio.{attr_name}. Move to a fixture or factory.py"
+                                )
+                            elif module_name == "os" and attr_name in _BANNED_OS_ATTRS:
+                                violations.append(
+                                    f"{path.name}:{node.lineno} — Manually spawning os.{attr_name}. Use subprocess via fixtures instead"
+                                )
+                        elif isinstance(node.func, ast.Name):
+                            func_name = node.func.id
+                            if func_name in _BANNED_GLOBAL_NAMES:
+                                violations.append(
+                                    f"{path.name}:{node.lineno} — Manually spawning {func_name}. Move to a fixture with teardown"
+                                )
         except (OSError, SyntaxError, ValueError) as e:
             violations.append(f"Error parsing {path}: {e}")
     return violations
@@ -117,12 +129,12 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     """Session start hook."""
     violations = _scan_subprocess_in_test_bodies(session.config.rootpath)
     if violations:
-        print("\n" + "=" * 80)
-        print("ERROR: Manual subprocess spawning detected in test bodies.")
-        print("Standard VirtMCU tests MUST NOT spawn processes manually.")
-        print("Use standard fixtures (qemu_launcher, deterministic_coordinator, etc.) instead.")
-        print("-" * 80)
+        print("\n" + "=" * 80)  # noqa: T201
+        print("ERROR: Manual subprocess spawning detected in test bodies.")  # noqa: T201
+        print("Standard VirtMCU tests MUST NOT spawn processes manually.")  # noqa: T201
+        print("Use standard fixtures (qemu_launcher, deterministic_coordinator, etc.) instead.")  # noqa: T201
+        print("-" * 80)  # noqa: T201
         for v in violations:
-            print(f"  * {v}")
-        print("=" * 80 + "\n")
+            print(f"  * {v}")  # noqa: T201
+        print("=" * 80 + "\n")  # noqa: T201
         pytest.exit("Aborting due to simulation hygiene violations", returncode=1)

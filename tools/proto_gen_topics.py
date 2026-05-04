@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -98,13 +99,13 @@ def main() -> None:
     py_path = workspace / "tools/testing/virtmcu_test_suite/topics.py"
     with open(py_path, "w") as f:
         f.write(py_content)
-    print(f"Generated {py_path}")
+    sys.stdout.write(f"Generated {py_path}\n")
 
     rs_content = generate_rust(config)
     rs_path = workspace / "tools/deterministic_coordinator/src/topics.rs"
     with open(rs_path, "w") as f:
         f.write(rs_content)
-    print(f"Generated {rs_path}")
+    sys.stdout.write(f"Generated {rs_path}\n")
 
 
 if __name__ == "__main__":

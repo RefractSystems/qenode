@@ -6,7 +6,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, RootModel, conint, constr
+from pydantic import BaseModel, ConfigDict, Field, RootModel, conint, constr
 
 
 class Model(RootModel[Any]):
@@ -14,6 +14,9 @@ class Model(RootModel[Any]):
 
 
 class Cpu(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     name: str
     type: str
     memory: str | None = None
@@ -21,12 +24,20 @@ class Cpu(BaseModel):
     mmu_type: str | None = None
 
 
-class Address(RootModel[conint(ge=0) | constr(pattern=r'^0x[0-9a-fA-F]+$')]):
-    root: conint(ge=0) | constr(pattern=r'^0x[0-9a-fA-F]+$')
+class NodeID(RootModel[conint(ge=0) | str]):
+    root: conint(ge=0) | str
+
+
+class Address(
+    RootModel[conint(ge=0) | constr(pattern=r'^(0x[0-9a-fA-F]+|none|sysbus)$')]
+):
+    root: conint(ge=0) | constr(pattern=r'^(0x[0-9a-fA-F]+|none|sysbus)$')
 
 
 class RecordUnknown(BaseModel):
-    pass
+    model_config = ConfigDict(
+        extra='allow',
+    )
 
 
 class Transport(Enum):
@@ -39,36 +50,49 @@ class Role(Enum):
     Physics = 'Physics'
 
 
-class NodeID(RootModel[conint(ge=0) | str]):
-    root: conint(ge=0) | str
+class Node(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
+    name: NodeID
+    role: Role | None = None
 
 
 class Protocol(
     RootModel[
         constr(
-            pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$'
+            pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$'
         )
     ]
 ):
     root: constr(
-        pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci)$'
+        pattern=r'^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$'
     ) = Field(..., description='Supported inter-node communication protocols.')
 
 
 class Coordinate(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     x: float
     y: float
     z: float
 
 
 class Machine(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     name: str | None = None
     type: str | None = None
     cpus: list[Cpu] | None = None
 
 
 class Resource(BaseModel):
-    name: str
+    model_config = ConfigDict(
+        extra='allow',
+    )
+    name: NodeID
     type: str | None = None
     renode_type: str | None = None
     address: Address | None = None
@@ -79,29 +103,36 @@ class Resource(BaseModel):
     properties: RecordUnknown | None = None
 
 
-class Node(BaseModel):
-    name: NodeID
-    role: Role | None = None
-
-
 class WireLink(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     type: Protocol
     nodes: list[NodeID]
     baud: conint(ge=0, le=4294967295) | None = None
 
 
 class WirelessNode(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     name: NodeID
     initial_position: Coordinate
 
 
 class WirelessMedium(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     medium: str
     max_range_m: float
     nodes: list[WirelessNode]
 
 
 class Topology(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     nodes: list[Node] | None = None
     links: list[WireLink] | None = None
     wireless: WirelessMedium | None = None
@@ -111,6 +142,9 @@ class Topology(BaseModel):
 
 
 class WorldSchema(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     machine: Machine | None = None
     peripherals: list[Resource] | None = None
     memory: list[Resource] | None = None
@@ -119,6 +153,9 @@ class WorldSchema(BaseModel):
 
 
 class World(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
     machine: Machine | None = None
     peripherals: list[Resource] | None = None
     memory: list[Resource] | None = None

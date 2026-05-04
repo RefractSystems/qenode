@@ -5,9 +5,9 @@ import logging
 import sys
 from pathlib import Path
 
-from .cli_generator import generate_cli
-from .fdt_emitter import FdtEmitter, compile_dtb
-from .parser import parse_repl
+from tools.repl2qemu.cli_generator import generate_cli
+from tools.repl2qemu.fdt_emitter import FdtEmitter, compile_dtb
+from tools.repl2qemu.parser import parse_repl
 
 logger = logging.getLogger(__name__)
 

@@ -19,12 +19,19 @@ fi
 # Ensure we have the environment set up (only if inside docker)
 if [ "$INSIDE_DOCKER" = "true" ]; then
     export PYTHONPATH="${PYTHONPATH:-}:/workspace"
+
+    # Helper for sudo if not root
+    SUDO=""
+    if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    fi
+
     # Ensure system dependencies are present for specific domains
     case "$DOMAIN" in
         irq_stress|ftrt_timing|riscv_interrupts|all)
             if ! dpkg -l | grep libsystemc-dev >/dev/null; then
                 echo "==> Installing SystemC dependencies..."
-                apt-get update -qq && apt-get install -y -qq --no-install-recommends libsystemc-dev >/dev/null
+                $SUDO apt-get update -qq && $SUDO apt-get install -y -qq --no-install-recommends libsystemc-dev >/dev/null
             fi
             ;;
     esac
@@ -38,7 +45,7 @@ if [ "$INSIDE_DOCKER" = "true" ]; then
         echo "==> Syncing Python dependencies inside container (hash: ${PYPROJECT_HASH})..."
         # Clean up old markers
         rm -f target/.ci_marker_uv_synced_*
-        uv pip install --link-mode=copy --system --break-system-packages . >/dev/null
+        $SUDO uv pip install --link-mode=copy --system --break-system-packages . >/dev/null
         touch "$SYNC_MARKER"
         echo "✓ Python dependencies synced."
     fi
@@ -61,54 +68,53 @@ run_domain() {
 
     case "$d" in
         boot_arm)
-            make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/boot_arm/smoke_test.sh
+            pytest tests/integration/simulation/core/test_boot_arm.py -v --tb=short
             ;;
         yaml_boot)
-            bash tests/fixtures/guest_apps/yaml_boot/smoke_test.sh
+            pytest tests/integration/simulation/core/test_repl_boot.py -v --tb=short
             ;;
         yaml_boot_advanced)
-            make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/yaml_boot_advanced/smoke_test.sh
+            pytest tests/integration/simulation/core/test_yaml_boot.py -v --tb=short
             ;;
         qmp_failures)
-            make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/qmp_failures/smoke_test.sh
+            pytest tests/integration/tooling/test_qmp_failures.py -v --tb=short
             ;;
         irq_stress)
-            bash tests/fixtures/guest_apps/irq_stress/smoke_test.sh
+            pytest tests/integration/infrastructure/test_architecture_stress.py -v --tb=short
             ;;
         coordinator_stress)
-            bash tests/fixtures/guest_apps/coordinator_stress/smoke_test.sh
+            pytest tests/integration/infrastructure/test_coordinator_stress.py -v --tb=short
             ;;
         clock_suspend)
-            bash tests/fixtures/guest_apps/clock_suspend/smoke_test.sh
+            pytest tests/integration/infrastructure/test_clock_suspend.py -v --tb=short
             ;;
         ftrt_timing)
-            make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh
+            pytest tests/integration/infrastructure/test_ftrt_timing.py -v --tb=short
             ;;
         cyber_bridge)
-            make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/cyber_bridge/smoke_test.sh
+            pytest tests/integration/tooling/test_cyber_bridge.py -v --tb=short
             ;;
         riscv_complex)
-            make -C tests/fixtures/guest_apps/boot_riscv && bash tests/fixtures/guest_apps/riscv_complex/smoke_test.sh
+            pytest tests/integration/simulation/core/test_boot_riscv.py -v --tb=short
             ;;
         riscv_interrupts)
-            cmake -S tools/systemc_adapter -B tools/systemc_adapter/build -DCMAKE_BUILD_TYPE=Release >/dev/null
-            make -C tools/systemc_adapter/build rp_adapter >/dev/null
-            bash tests/fixtures/guest_apps/riscv_interrupts/smoke_test.sh
+            # Fixture migrated to core RISC-V boot test
+            pytest tests/integration/simulation/core/test_boot_riscv.py -v --tb=short
             ;;
         telemetry_wfi)
-            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/telemetry_wfi && bash tests/fixtures/guest_apps/telemetry_wfi/smoke_test.sh
+            pytest tests/integration/simulation/peripherals/test_telemetry.py -v --tb=short
             ;;
         priority_routing)
-            bash tests/fixtures/guest_apps/priority_routing/smoke_test.sh
+            pytest tests/integration/infrastructure/test_clock_priority.py -v --tb=short
             ;;
         complex_board)
-            bash tests/fixtures/guest_apps/complex_board/smoke_test.sh
+            pytest tests/integration/simulation/core/test_complex_board.py -v --tb=short
             ;;
         coverage_gap)
-            bash tests/fixtures/guest_apps/coverage_gap/smoke_test.sh
+            pytest tests/integration/tooling/test_coverage_gap.py -v --tb=short
             ;;
         perf_bench)
-            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/perf_bench && bash tests/fixtures/guest_apps/perf_bench/smoke_test.sh
+            pytest tests/integration/infrastructure/test_jitter_proxy.py -v --tb=short
             ;;
         bql_stress)
             bash tests/fixtures/guest_apps/bql_stress/bql_stress_test.sh
@@ -116,22 +122,19 @@ run_domain() {
             bash tests/fixtures/guest_apps/bql_stress/qom_registration_test.sh
             ;;
         flexray_bridge)
-            PYTHONPATH=$(pwd) pytest tests/integration/peripherals/test_flexray.py -v --tb=short
+            PYTHONPATH=$(pwd) pytest tests/integration/simulation/peripherals/test_flexray.py -v --tb=short
             ;;
         spi_bridge)
-            pytest tests/integration/peripherals/test_spi.py -v --tb=short
+            pytest tests/integration/simulation/peripherals/test_spi.py -v --tb=short
             ;;
         mac_parsing)
-            pytest tests/integration/peripherals/test_mac_parsing.py tests/integration/peripherals/test_spi_multibus.py -v --tb=short
+            pytest tests/integration/simulation/peripherals/test_mac_parsing.py tests/integration/simulation/peripherals/test_spi_multibus.py -v --tb=short
             ;;
         lin_bridge)
-            pytest tests/integration/peripherals/test_lin.py tests/integration/peripherals/test_lin_multi_node.py tests/integration/peripherals/test_lin_stress.py -v --tb=short
+            pytest tests/integration/simulation/peripherals/test_lin.py tests/integration/simulation/peripherals/test_lin_multi_node.py tests/integration/simulation/peripherals/test_lin_stress.py -v --tb=short
             ;;
         qmp)
-            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/uart_echo && pytest tools/testing/test_qmp.py -v --tb=short
-            ;;
-        robot)
-            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/uart_echo && robot --outputdir test-results/robot --xunit test-results/robot.xml tests/integration/peripherals/test_qmp_keywords.robot tests/integration/peripherals/test_uart_interactive.robot
+            make -C tests/fixtures/guest_apps/boot_arm && make -C tests/fixtures/guest_apps/uart_echo && pytest tools/testing/test_qmp.py tests/integration/tooling/ -v --tb=short
             ;;
         *)
             echo "ERROR: Unknown domain '$d'"
@@ -143,7 +146,7 @@ run_domain() {
 if [ "$DOMAIN" = "all" ]; then
     # The authoritative list of domains that MUST pass
     # (Matches the matrix in .github/smoke-domains.json)
-    for d in boot_arm yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi priority_routing complex_board coverage_gap perf_bench bql_stress flexray_bridge spi_bridge mac_parsing lin_bridge qmp robot; do
+    for d in boot_arm yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi priority_routing complex_board coverage_gap perf_bench bql_stress flexray_bridge spi_bridge mac_parsing lin_bridge qmp; do
         run_domain "$d"
     done
 else

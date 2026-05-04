@@ -1,3 +1,4 @@
+use crate::generated::topology as gen;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -23,6 +24,22 @@ impl Protocol {
     }
 }
 
+impl From<gen::Protocol> for Protocol {
+    fn from(p: gen::Protocol) -> Self {
+        match p.to_string().to_lowercase().as_str() {
+            "ethernet" | "eth" => Protocol::Ethernet,
+            "uart" => Protocol::Uart,
+            "spi" => Protocol::Spi,
+            "canfd" => Protocol::CanFd,
+            "flexray" => Protocol::FlexRay,
+            "lin" => Protocol::Lin,
+            "rf802154" => Protocol::Rf802154,
+            "rfhci" => Protocol::RfHci,
+            _ => Protocol::Control,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
@@ -31,69 +48,25 @@ pub enum Transport {
     Unix,
 }
 
-// Convert from string or number to u32, gracefully skipping non-integers
-fn string_to_u32_or_max<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrU32 {
-        String(String),
-        U32(u32),
-    }
-
-    match StringOrU32::deserialize(deserializer)? {
-        StringOrU32::String(s) => {
-            match s.parse::<u32>() {
-                Ok(u) => Ok(u),
-                Err(_) => Ok(u32::MAX), // Marker for non-integer names (like 'memory')
-            }
-        }
-        StringOrU32::U32(u) => Ok(u),
-    }
-}
-
-fn vec_string_to_u32<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrU32 {
-        String(String),
-        U32(u32),
-    }
-
-    let values: Vec<StringOrU32> = Deserialize::deserialize(deserializer)?;
-    let mut out = Vec::new();
-    for v in values {
-        match v {
-            StringOrU32::String(s) => {
-                if let Ok(u) = s.parse::<u32>() {
-                    out.push(u);
-                }
-            }
-            StringOrU32::U32(u) => out.push(u),
+impl From<gen::TopologyTransport> for Transport {
+    fn from(t: gen::TopologyTransport) -> Self {
+        match t {
+            gen::TopologyTransport::Zenoh => Transport::Zenoh,
+            gen::TopologyTransport::Unix => Transport::Unix,
         }
     }
-    Ok(out)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireLink {
     #[serde(rename = "type")]
     pub protocol: Protocol,
-    #[serde(deserialize_with = "vec_string_to_u32")]
     pub nodes: Vec<u32>,
     pub baud: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WirelessNode {
-    #[serde(rename = "name", deserialize_with = "string_to_u32_or_max")]
     pub id: u32,
     pub initial_position: [f64; 3],
 }
@@ -103,38 +76,6 @@ pub struct WirelessMedium {
     pub medium: String,
     pub nodes: Vec<WirelessNode>,
     pub max_range_m: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopologyConfig {
-    #[serde(default)]
-    pub nodes: Option<Vec<YamlNode>>,
-    #[serde(default = "default_max_messages")]
-    pub max_messages_per_node_per_quantum: usize,
-    #[serde(default)]
-    pub global_seed: u64,
-    #[serde(default)]
-    pub transport: Transport,
-    #[serde(default)]
-    pub links: Vec<WireLink>,
-    pub wireless: Option<WirelessMedium>,
-}
-
-fn default_max_messages() -> usize {
-    1024
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct YamlNode {
-    #[serde(rename = "name", deserialize_with = "string_to_u32_or_max")]
-    pub id: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct YamlWorld {
-    #[serde(rename = "peripherals", default)]
-    pub legacy_peripherals: serde_yaml::Value,
-    pub topology: Option<TopologyConfig>,
 }
 
 #[derive(Debug)]
@@ -183,30 +124,25 @@ pub struct TopologyGraph {
     drop_list: HashSet<(u32, u32)>,
 }
 
+fn node_id_to_u32(nid: &gen::NodeId) -> u32 {
+    match nid {
+        gen::NodeId::Integer(i) => *i as u32,
+        gen::NodeId::String(s) => s.parse::<u32>().unwrap_or(u32::MAX),
+    }
+}
+
 impl TopologyGraph {
     pub fn from_yaml(path: &Path) -> Result<Self, TopologyError> {
         let content = fs::read_to_string(path)?;
-        let world: YamlWorld = serde_yaml::from_str(&content)?;
+        let world: gen::World = serde_yaml::from_str(&content)?;
 
         // Task 2.2: Split-Brain Schema Rejection
-        let has_topology_nodes = world
-            .topology
-            .as_ref()
-            .and_then(|t| t.nodes.as_ref())
-            .is_some_and(|n| !n.is_empty());
+        let has_topology_nodes = world.topology.as_ref().is_some_and(|t| !t.nodes.is_empty());
 
-        let mut has_numeric_periphs = false;
-        if let Some(nodes_list) = world.legacy_peripherals.as_sequence() {
-            has_numeric_periphs = nodes_list.iter().any(|item| {
-                item.get("name")
-                    .and_then(|n| match n {
-                        serde_yaml::Value::String(s) => Some(s.clone()),
-                        serde_yaml::Value::Number(num) => Some(num.to_string()),
-                        _ => None,
-                    })
-                    .is_some_and(|s| s.parse::<u32>().is_ok())
-            });
-        }
+        let has_numeric_periphs = world.peripherals.iter().any(|p| match &p.name {
+            gen::NodeId::Integer(_) => true,
+            gen::NodeId::String(s) => s.parse::<u32>().is_ok(),
+        });
 
         if has_topology_nodes && has_numeric_periphs {
             return Err(TopologyError::SplitBrainError(
@@ -218,51 +154,33 @@ impl TopologyGraph {
 
         // 1. Try to get nodes from topology.nodes
         if let Some(ref topo) = world.topology {
-            if let Some(ref nodes) = topo.nodes {
-                for node in nodes {
-                    if node.id != u32::MAX {
-                        valid_nodes.insert(node.id);
-                    }
+            for node in &topo.nodes {
+                let id = node_id_to_u32(&node.name);
+                if id != u32::MAX {
+                    valid_nodes.insert(id);
                 }
             }
         }
 
         // 2. Fallback to legacy top-level peripherals if topology.nodes is missing
-        if valid_nodes.is_empty() && !world.legacy_peripherals.is_null() {
-            if let Some(nodes_list) = world.legacy_peripherals.as_sequence() {
-                let mut fallback_nodes = Vec::new();
-                let mut all_numeric = true;
+        if valid_nodes.is_empty() {
+            let mut fallback_nodes = Vec::new();
+            let mut all_numeric = true;
 
-                for item in nodes_list {
-                    if let Some(name) = item.get("name") {
-                        let name_str = match name {
-                            serde_yaml::Value::String(s) => Some(s.clone()),
-                            serde_yaml::Value::Number(n) => Some(n.to_string()),
-                            _ => None,
-                        };
-
-                        if let Some(s) = name_str {
-                            if let Ok(id) = s.parse::<u32>() {
-                                fallback_nodes.push(id);
-                            } else {
-                                all_numeric = false;
-                                break;
-                            }
-                        } else {
-                            all_numeric = false;
-                            break;
-                        }
-                    } else {
-                        all_numeric = false;
-                        break;
-                    }
+            for p in &world.peripherals {
+                let id = node_id_to_u32(&p.name);
+                if id != u32::MAX {
+                    fallback_nodes.push(id);
+                } else {
+                    all_numeric = false;
+                    break;
                 }
+            }
 
-                if all_numeric && !fallback_nodes.is_empty() {
-                    tracing::warn!("DEPRECATION: Top-level 'peripherals' for topology nodes is deprecated. Move them to 'topology.nodes'.");
-                    for id in fallback_nodes {
-                        valid_nodes.insert(id);
-                    }
+            if all_numeric && !fallback_nodes.is_empty() {
+                tracing::warn!("DEPRECATION: Top-level 'peripherals' for topology nodes is deprecated. Move them to 'topology.nodes'.");
+                for id in fallback_nodes {
+                    valid_nodes.insert(id);
                 }
             }
         }
@@ -271,32 +189,70 @@ impl TopologyGraph {
             let mut positions = HashMap::new();
             let mut max_range = 0.0;
 
+            let mut wire_links = Vec::new();
             for link in &topo.links {
-                for node_id in &link.nodes {
-                    if !valid_nodes.contains(node_id) {
-                        return Err(TopologyError::UnknownNode(*node_id));
+                let mut nodes = Vec::new();
+                for nid in &link.nodes {
+                    let id = node_id_to_u32(nid);
+                    if !valid_nodes.contains(&id) {
+                        return Err(TopologyError::UnknownNode(id));
                     }
+                    nodes.push(id);
                 }
+                wire_links.push(WireLink {
+                    protocol: Protocol::from(link.type_.clone()),
+                    nodes,
+                    baud: link.baud,
+                });
             }
 
-            if let Some(ref wl) = topo.wireless {
+            let mut wireless_medium = None;
+            if let Some(wl) = &topo.wireless {
                 max_range = wl.max_range_m;
+                let mut nodes = Vec::new();
                 for n in &wl.nodes {
-                    if n.id != u32::MAX {
-                        if !valid_nodes.contains(&n.id) {
-                            return Err(TopologyError::UnknownNode(n.id));
+                    let id = node_id_to_u32(&n.name);
+                    if id != u32::MAX {
+                        if !valid_nodes.contains(&id) {
+                            return Err(TopologyError::UnknownNode(id));
                         }
-                        positions.insert(n.id, n.initial_position);
+                        positions.insert(
+                            id,
+                            [
+                                n.initial_position.x,
+                                n.initial_position.y,
+                                n.initial_position.z,
+                            ],
+                        );
+                        nodes.push(WirelessNode {
+                            id,
+                            initial_position: [
+                                n.initial_position.x,
+                                n.initial_position.y,
+                                n.initial_position.z,
+                            ],
+                        });
                     }
                 }
+                wireless_medium = Some(WirelessMedium {
+                    medium: wl.medium.clone(),
+                    nodes,
+                    max_range_m: wl.max_range_m,
+                });
             }
 
             Ok(TopologyGraph {
-                max_messages_per_node_per_quantum: topo.max_messages_per_node_per_quantum,
-                global_seed: topo.global_seed,
-                transport: topo.transport,
-                wire_links: topo.links,
-                wireless_medium: topo.wireless,
+                max_messages_per_node_per_quantum: topo
+                    .max_messages_per_node_per_quantum
+                    .unwrap_or(1024) as usize,
+                global_seed: topo
+                    .global_seed
+                    .as_ref()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+                transport: topo.transport.map(Transport::from).unwrap_or_default(),
+                wire_links,
+                wireless_medium,
                 node_positions: positions,
                 max_wireless_range_m: max_range,
                 is_explicit: true,

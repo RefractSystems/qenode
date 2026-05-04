@@ -16,7 +16,7 @@ CFLAGS = -mcpu=cortex-a15 -nostdlib -g
 LDFLAGS = -T linker.ld
 
 # Default target builds both the DTB and the ELF kernel
-all: minimal.dtb hello.elf
+all: minimal.dtb hello.elf busy_loop.elf
 
 # Compile the device tree source into a blob
 minimal.dtb: minimal.dts
@@ -25,6 +25,10 @@ minimal.dtb: minimal.dts
 # Cross-compile the assembly source into an ELF executable
 hello.elf: hello.S linker.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) hello.S -o hello.elf
+
+# Cross-compile the busy loop assembly source into an ELF executable
+busy_loop.elf: busy_loop.S linker.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) busy_loop.S -o busy_loop.elf
 
 # Clean up generated artifacts
 clean:

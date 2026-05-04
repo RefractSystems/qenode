@@ -19,7 +19,8 @@ uv run --with datamodel-code-generator datamodel-codegen \
     --output tools/testing/virtmcu_test_suite/generated.py \
     --input-file-type jsonschema \
     --output-model-type pydantic_v2.BaseModel \
-    --disable-timestamp
+    --disable-timestamp \
+    --allow-extra-fields
 
 echo "🦀 4. Generating Rust Models (Serde)..."
 cd schema/rust_gen

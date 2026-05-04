@@ -9,6 +9,7 @@
  * ============================================================================== */
 
 .global _start
+.type _start, %function
 _start:
     /* 
      * Load the physical address of the PL011 UART into register r0.
@@ -32,13 +33,13 @@ _start:
     /* Repeat for a newline character */
     mov r1, #'\n'
     str r1, [r0]
+.size _start, . - _start
 
+.type loop, %function
 loop:
     /* 
-     * Wait For Interrupt (wfi) puts the CPU to sleep to save power.
-     * Since we haven't configured any interrupts, it will sleep forever.
+     * Infinite loop to keep the CPU active so the branch is covered.
      */
-    nop
-    
-    /* Infinite loop just in case it wakes up */
+    wfi
     b loop
+.size loop, . - loop

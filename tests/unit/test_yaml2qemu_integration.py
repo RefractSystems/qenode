@@ -7,13 +7,12 @@ filtering logic, property injection, and validation all work together.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import sys
 import typing
 from pathlib import Path
 
 import yaml
+
+from tools.testing.virtmcu_test_suite.factory import compile_yaml, inspect_dtb
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,27 +27,11 @@ def run_yaml2qemu(yaml_data: dict[typing.Any, typing.Any], tmp_path: Path) -> tu
 
     yaml_file.write_text(yaml.dump(yaml_data))
 
-    # Run the tool
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "tools.yaml2qemu",
-            str(yaml_file),
-            "--out-dtb",
-            str(dtb_file),
-            "--out-cli",
-            str(cli_file),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    # Run the tool via SOTA factory
+    compile_yaml(yaml_file, dtb_file, out_cli=cli_file)
 
     # Decompile DTB to DTS for inspection
-    dts_content = subprocess.check_output(
-        [shutil.which("dtc") or "dtc", "-I", "dtb", "-O", "dts", str(dtb_file)], text=True
-    )
+    dts_content = inspect_dtb(dtb_file)
     cli_content = cli_file.read_text()
 
     return dts_content, cli_content
@@ -63,6 +46,7 @@ def test_roundtrip_basic_arm(tmp_path: Path) -> None:
         "machine": {"cpus": [{"name": "cpu0", "type": "cortex-a15"}]},
         "memory": [{"name": "ram", "address": 0x40000000, "size": 0x1000000}],
         "peripherals": [
+            {"name": "gic", "type": "IRQControllers.GIC", "address": 0x08000000},
             {"name": "uart0", "type": "UART.PL011", "address": 0x09000000, "interrupts": [33]},
         ],
     }
@@ -73,7 +57,7 @@ def test_roundtrip_basic_arm(tmp_path: Path) -> None:
     assert "memory@40000000" in dts
     assert "uart0@9000000 {" in dts
     assert 'compatible = "pl011";' in dts
-    assert "interrupts = <0x21>;" in dts  # 33 = 0x21
+    assert "interrupts = <0x00 0x21 0x04>;" in dts  # GIC format: SPI 33, level-high
 
 
 def test_roundtrip_wireless_devices(tmp_path: Path) -> None:
@@ -141,7 +125,7 @@ def test_roundtrip_riscv_platform(tmp_path: Path) -> None:
                     "name": "cpu0",
                     "type": "riscv64",
                     "isa": "rv64imac",
-                    "mmu-type": "riscv,sv39",
+                    "mmu_type": "riscv,sv39",
                 }
             ]
         },

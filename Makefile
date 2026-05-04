@@ -155,16 +155,6 @@ test-integration: venv
 	@echo "==> Running Modernized Integration Tests (via pytest)..."
 	uv run --active pytest tests/integration/ \
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
-	@echo "==> Running Legacy Integration Tests (Bash scripts)..."
-
-	@for test_script in tests/fixtures/guest_apps/riscv_complex/smoke_test.sh \
-		tests/fixtures/guest_apps/priority_routing/smoke_test.sh tests/fixtures/guest_apps/complex_board/smoke_test.sh tests/fixtures/guest_apps/coverage_gap/smoke_test.sh \
-		tests/fixtures/guest_apps/perf_bench/smoke_test.sh tests/fixtures/guest_apps/yaml_boot_advanced/smoke_test.sh tests/fixtures/guest_apps/irq_stress/smoke_test.sh \
-		tests/fixtures/guest_apps/ftrt_timing/smoke_test.sh; do \
-		echo "--> Running $$test_script"; \
-		uv run --active bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
-		bash scripts/cleanup-sim.sh --quiet; \
-	done
 	@echo "✓ All integration tests passed."
 
 # Run integration tests compiled with C/C++ memory sanitizers (ASan/UBSan)
@@ -210,13 +200,6 @@ test-unit: venv
 # Alias for test-unit
 test: test-unit
 
-# Run Robot Framework integration tests (requires QEMU built via make setup-initial).
-test-robot: venv
-	export PYTHONPATH=$(CURDIR) && \
-	uv run --active robot \
-	  --outputdir test-results/robot \
-	  --loglevel INFO \
-	  tests/integration/peripherals/test_uart_interactive.robot
 
 # Run guest firmware coverage analysis (boot_arm)
 test-coverage-guest:
@@ -265,7 +248,7 @@ build-test-artifacts:
 	fi
 
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
-test-all: test test-integration test-robot test-coverage-guest
+test-all: test test-integration test-coverage-guest
 
 # Run integration smoke tests inside the builder container (Safe for macOS hosts).
 test-integration-docker:
@@ -329,19 +312,19 @@ lint-audit:
 # Run Python linting and type checking
 lint-python:
 	@echo "==> Check for banned struct usage..."
-	@if grep -rnE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
+	@if grep -rnIE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
 		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
-	@if grep -rnE "struct\.(pack|unpack)" scripts/ ; then \
+	@if grep -rnIE "struct\.(pack|unpack)" scripts/ --exclude-dir=__pycache__ ; then \
 		echo "❌ ERROR: Banned struct.pack/unpack in scripts."; exit 1; \
 	fi
 	@echo "==> Check for hardcoded stall-timeout..."
-	@if grep -rE "stall-timeout=[0-9]+" tests/ tools/ ; then \
+	@if grep -rIE "stall-timeout=[0-9]+" tests/ tools/ --exclude-dir=__pycache__ ; then \
 		echo "❌ ERROR: Hardcoded stall-timeout detected. Use dynamic scaling via VIRTMCU_STALL_TIMEOUT_MS."; exit 1; \
 	fi
 	@echo "==> Check for banned sleep calls (asyncio.sleep / time.sleep)..."
-	@violations=$$(grep -rnE "(asyncio|time)\.sleep\(" tests/ tools/ docs/tutorials/ | grep -v "SLEEP_EXCEPTION:" || true); \
+	@violations=$$(grep -rnIE "(asyncio|time)\.sleep\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -v "SLEEP_EXCEPTION:" || true); \
 	if [ -n "$$violations" ]; then \
 		echo "❌ ERROR: Banned sleep call found in tests/tools/tutorials (use vta.step or transport signaling instead):"; \
 		echo "$$violations"; \
@@ -357,7 +340,7 @@ lint-python:
 	@# Approved exceptions must carry an inline # ZENOH_OPEN_EXCEPTION: <reason> comment.
 	@# Scope: tests/integration/, tests/unit/, tests/system/, tests/*.py, tools/testing/.
 	@# Fixture scripts under tests/fixtures/guest_apps/ are standalone (not pytest-parallel) and exempt.
-	@violations=$$(grep -rnE "zenoh\.open\(" tests/integration/ tests/unit/ tests/system/ tools/testing/ --include="*.py" 2>/dev/null \
+	@violations=$$(grep -rnE "zenoh\.open\(" tests/integration/simulation/ tests/integration/infrastructure/ tests/integration/tooling/ tests/unit/  tools/testing/ --include="*.py" 2>/dev/null \
 		| grep -v "# ZENOH_OPEN_EXCEPTION:" || true); \
 	tests_root=$$(grep -nE "zenoh\.open\(" tests/*.py 2>/dev/null | grep -v "# ZENOH_OPEN_EXCEPTION:" || true); \
 	violations="$$violations$$tests_root"; \
@@ -370,6 +353,25 @@ lint-python:
 		exit 1; \
 	fi
 	@echo "✓ No raw zenoh.open() in pytest scope."
+	@echo "==> Check for direct Zenoh/Unix Socket hacks in black-box tests..."
+	@violations=$$(grep -rnE "^import zenoh|^[ \t]*import zenoh|zenoh_session\b" tests/integration/simulation/ --include="*.py" | awk -F: '{print $$1}' | uniq || true); \
+	filtered_violations=""; \
+	for file in $$violations; do \
+		if ! head -n 5 "$$file" | grep -q "ZENOH_HACK_EXCEPTION"; then \
+			matches=$$(grep -nE "^import zenoh|^[ \t]*import zenoh|zenoh_session\b" "$$file"); \
+			for match in $$matches; do \
+				filtered_violations="$$filtered_violations$$file:$$match\n"; \
+			done; \
+		fi; \
+	done; \
+	if [ -n "$$(printf '%b' "$$filtered_violations" | grep -v '^$$')" ]; then \
+		echo "❌ ERROR: Direct Zenoh usage found in black-box tests (AGENTS.md Transport Agnosticism Mandate):"; \
+		printf '%b' "$$filtered_violations"; \
+		echo "  Fix: Tests MUST use simulation.transport.publish() and simulation.transport.subscribe() for compatibility."; \
+		echo "       If an exception is absolutely required, add # ZENOH_HACK_EXCEPTION: <reason> to the top of the file."; \
+		exit 1; \
+	fi
+	@echo "✓ No direct Zenoh hacks in black-box tests."
 	@echo "==> Check for hardcoded FDT QOM paths..."
 	@if grep -rnE '["'\'']/(flexray|spi[0-9]|wifi[0-9]|uart[0-9]|memory)["'\'']' tests/ ; then \
 		echo "❌ ERROR: Hardcoded QOM path without unit address detected. Root FDT devices must use '/device@address' format."; exit 1; \

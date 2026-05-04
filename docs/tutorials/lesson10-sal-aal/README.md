@@ -202,7 +202,7 @@ the SAL model reads from the same address the firmware writes to.
 ## Running the Smoke Test
 
 ```bash
-bash tests/fixtures/guest_apps/cyber_bridge/smoke_test.sh
+pytest tests/integration/tooling/test_cyber_bridge.py -v
 ```
 
 Expected output:
