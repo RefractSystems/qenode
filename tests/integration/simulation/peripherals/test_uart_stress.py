@@ -10,6 +10,7 @@ Zenoh-based stress testing tool.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -128,7 +129,7 @@ def test_clock_ready_unpacking() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(400)
+@pytest.mark.timeout(900)
 async def test_uart_stress_integration(simulation: Simulation, guest_app_factory: Any) -> None:  # noqa: ANN401
     """
     Modernized integration test: Uses the simulation fixture to launch QEMU
@@ -139,6 +140,15 @@ async def test_uart_stress_integration(simulation: Simulation, guest_app_factory
 
     app_dir_boot = guest_app_factory("boot_arm")
     dtb = app_dir_boot / "minimal.dtb"
+
+    # Use a dynamic timeout and scale down work for ASan
+    is_asan = os.environ.get("VIRTMCU_USE_ASAN") == "1"
+    total_bytes = 10_000 if is_asan else 50_000
+    chunk_size = 1024
+    baud_1mbps_interval_ns = 10_000
+    start_vtime_ns = 10_000_000
+    test_byte = b"X"
+    test_byte_val = ord("X")
 
     # Use a realistic buffer size that matches hardware rather than a hack
     extra_args = [
@@ -153,13 +163,6 @@ async def test_uart_stress_integration(simulation: Simulation, guest_app_factory
     ]
 
     simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
-
-    total_bytes = 50_000
-    chunk_size = 1024
-    baud_1mbps_interval_ns = 10_000
-    start_vtime_ns = 10_000_000
-    test_byte = b"X"
-    test_byte_val = ord("X")
 
     received_bytes = bytearray()
     received_string = ""

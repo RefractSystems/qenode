@@ -425,7 +425,7 @@ async def wait_for_zenoh_discovery(
 # QEMU reads it directly; Python adds a 10-second buffer on top.
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
 _stall_timeout_ms = int(_base_stall_timeout_ms * get_time_multiplier())
-_DEFAULT_VTA_STEP_TIMEOUT_S: float = max(60.0, _stall_timeout_ms / 1000.0 + 10.0)
+_RAW_VTA_STEP_TIMEOUT_S: float = max(60.0, _base_stall_timeout_ms / 1000.0 + 10.0)
 
 
 class VirtualTimeAuthority:
@@ -470,13 +470,13 @@ class VirtualTimeAuthority:
             self._expected_vtime_ns[nid] = vtime
             self._overshoot_ns[nid] = 0
 
-    async def step(self, delta_ns: int, timeout: float | None = _DEFAULT_VTA_STEP_TIMEOUT_S) -> dict[int, int]:
+    async def step(self, delta_ns: int, timeout: float | None = None) -> dict[int, int]:
         """
         Advances the clock of all managed nodes.
         Timeout scales with VIRTMCU_STALL_TIMEOUT_MS so ASan builds get enough headroom.
         """
-        if timeout is not None:
-            timeout *= get_time_multiplier()
+        # Scale the timeout (either the provided one or the default)
+        real_timeout = (timeout if timeout is not None else _RAW_VTA_STEP_TIMEOUT_S) * get_time_multiplier()
 
         tasks = []
         self.quantum_number += 1
@@ -488,7 +488,7 @@ class VirtualTimeAuthority:
             target_mujoco_time = self._expected_vtime_ns[nid] + delta_ns
 
             payload = pack_clock_advance(adjusted_delta, target_mujoco_time, self.quantum_number)
-            tasks.append(self._get_reply(nid, topic, payload, timeout if timeout is not None else 60.0))
+            tasks.append(self._get_reply(nid, topic, payload, real_timeout))
 
         replies = await asyncio.gather(*tasks)
 
@@ -1092,7 +1092,7 @@ class TimeAuthority(VirtualTimeAuthority):
             self._expected_vtime_ns[nid] = vtime
             self._overshoot_ns[nid] = 0
 
-    async def step(self, delta_ns: int, timeout: float | None = 60.0) -> dict[int, int]:
+    async def step(self, delta_ns: int, timeout: float | None = None) -> dict[int, int]:
         """Advances the clock and returns the new virtual time."""
         return await super().step(delta_ns, timeout)
 
@@ -1100,7 +1100,7 @@ class TimeAuthority(VirtualTimeAuthority):
 def pytest_collection_modifyitems(config: object, items: list[pytest.Item]) -> None:
     """Sets a default timeout for all tests."""
     del config  # Unused
-    computed_timeout = _DEFAULT_VTA_STEP_TIMEOUT_S + 60.0
+    computed_timeout = (_RAW_VTA_STEP_TIMEOUT_S * get_time_multiplier()) + 60.0
     for item in items:
         item.add_marker(pytest.mark.timeout(computed_timeout))
 

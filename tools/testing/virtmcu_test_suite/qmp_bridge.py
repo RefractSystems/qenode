@@ -372,6 +372,12 @@ class QmpBridge:
         """
         Closes all connections and background tasks.
         """
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
+
         if self._read_task:
             self._read_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

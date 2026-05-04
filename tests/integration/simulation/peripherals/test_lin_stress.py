@@ -12,6 +12,7 @@ from __future__ import annotations
  
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,10 +49,12 @@ def create_lin_frame(vtime_ns: int, msg_type: int, data: bytes | None) -> bytear
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_lin_stress(
     simulation: Simulation, tmp_path: Path
 ) -> None:
 
+    is_asan = os.environ.get("VIRTMCU_USE_ASAN") == "1"
     tmpdir = tmp_path
     router_endpoint = simulation._router
 
@@ -118,7 +121,7 @@ async def test_lin_stress(
 
         logger.info("Starting staggered frame injection...")
         step_ns = 1_000_000  # 1ms steps
-        total_steps = 100
+        total_steps = 20 if is_asan else 100
 
         for i in range(total_steps):
             # Send one frame every ms

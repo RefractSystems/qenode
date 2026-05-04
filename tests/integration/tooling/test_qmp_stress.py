@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_qmp_rapid_commands(qmp_bridge: QmpBridge) -> None:
     """
-    Stress test: Send 100 QMP commands in rapid succession.
+    Stress test: Send QMP commands in rapid succession.
     """
+    iters = 20 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 100
     start_time = time.time()
-    for _i in range(100):
+    for _i in range(iters):
         res = await qmp_bridge.execute("query-status")
         assert "running" in res  # type: ignore[operator]
     duration = time.time() - start_time
-    logger.info(f"100 query-status commands took {duration:.2f}s ({(100 / duration):.2f} cmd/s)")
+    logger.info(f"{iters} query-status commands took {duration:.2f}s ({(iters / duration):.2f} cmd/s)")
 
 
 @pytest.mark.asyncio
@@ -84,6 +85,6 @@ async def test_pc_polling_stress(qmp_bridge: QmpBridge) -> None:
         pc = await qmp_bridge.get_pc()
         pcs.append(pc)
 
-    assert len(pcs) == 100
+    assert len(pcs) == iters
     # PC might or might not change depending on if it's in a loop
-    logger.info(f"Sampled 100 PCs, first: {hex(pcs[0])}, last: {hex(pcs[-1])}")
+    logger.info(f"Sampled {iters} PCs, first: {hex(pcs[0])}, last: {hex(pcs[-1])}")

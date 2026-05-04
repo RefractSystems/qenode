@@ -73,9 +73,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Lowercase image name for GHCR
+      - name: Determine Image Name for GHCR
         run: |
-          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+          else
+            UPSTREAM_REPO="${{ github.repository }}"
+          fi
+          echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Build local devenv-base image
         uses: docker/bake-action@v7
@@ -202,9 +207,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name for GHCR
+      - name: Determine Image Name for GHCR
         run: |
-          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+          else
+            UPSTREAM_REPO="${{ github.repository }}"
+          fi
+          echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Check for pre-built qemu-base image
         run: |
@@ -228,7 +238,7 @@ jobs:
         env:
           ARCH: amd64
           IMAGE_TAG: sha-${{ github.sha }}
-          PUSH_CACHE: "true"
+          PUSH_CACHE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
           CI: "true"
           QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
         with:
@@ -236,8 +246,18 @@ jobs:
             base
             toolchain
             builder
-          push: true
+          load: true
           files: docker-bake.hcl
+
+      - name: Export builder image
+        run: docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64 -o /tmp/builder.tar
+
+      - name: Upload builder artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: builder-image
+          path: /tmp/builder.tar
+          retention-days: 1
 
       - name: Verify QEMU binary
         run: |
@@ -268,19 +288,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name for GHCR
+      - name: Determine Image Name for GHCR
         run: |
-          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+          else
+            UPSTREAM_REPO="${{ github.repository }}"
+          fi
+          echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Pull builder image
+      - name: Download builder artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: builder-image
+          path: /tmp
+
+      - name: Load builder image
         run: |
-          for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
-              break
-            fi
-            sleep 15
-            if [ "$i" -eq 5 ]; then exit 1; fi
-          done
+          docker load -i /tmp/builder.tar
           docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
 
       - name: Run ${{ matrix.name }}
@@ -327,19 +352,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name for GHCR
+      - name: Determine Image Name for GHCR
         run: |
-          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+          else
+            UPSTREAM_REPO="${{ github.repository }}"
+          fi
+          echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Pull builder image
+      - name: Download builder artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: builder-image
+          path: /tmp
+
+      - name: Load builder image
         run: |
-          for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
-              break
-            fi
-            sleep 15
-            if [ "$i" -eq 5 ]; then exit 1; fi
-          done
+          docker load -i /tmp/builder.tar
           docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
 
       - name: Download all coverage artifacts
@@ -384,19 +414,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name for GHCR
+      - name: Determine Image Name for GHCR
         run: |
-          echo "IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+          else
+            UPSTREAM_REPO="${{ github.repository }}"
+          fi
+          echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Pull builder image
+      - name: Download builder artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: builder-image
+          path: /tmp
+
+      - name: Load builder image
         run: |
-          for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64"; then
-              break
-            fi
-            sleep 15
-            if [ "$i" -eq 5 ]; then exit 1; fi
-          done
+          docker load -i /tmp/builder.tar
           docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/builder:sha-${{ github.sha }}-amd64" "${{ env.BUILDER_IMAGE }}:${{ github.sha }}"
 
       - name: Run coverage analysis
