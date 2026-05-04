@@ -1,0 +1,12 @@
+[package]
+name = "transport_hub"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+virtmcu-qom = { path = "../../common/virtmcu-qom" }
+transport-zenoh = { path = "../transport-zenoh" }
+zenoh = "1.9.0"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
