@@ -46,10 +46,16 @@ pub struct S32K144LpuartQemu {
     /// Enable debug logging
     pub debug: bool,
 
+    /* Links */
+    pub transport_hub: *mut virtmcu_qom::qom::Object,
+
     /* Rust state */
     /// Opaque pointer to the Rust backend state
     pub rust_state: *mut LpuartState,
 }
+
+const _: () = assert!(core::mem::offset_of!(S32K144LpuartQemu, parent_obj) == 0);
+const _: () = assert!(core::mem::size_of::<S32K144LpuartQemu>() == 1152);
 
 /// Ordered LIN frame for deterministic delivery
 pub struct OrderedLinFrame {
