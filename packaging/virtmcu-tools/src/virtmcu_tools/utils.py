@@ -19,7 +19,7 @@ async def yield_now() -> None:
     """
     SOTA Enterprise Grade yield: explicitly relinquishes control to the asyncio event loop.
     """
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # SLEEP_EXCEPTION: explicit yield to event loop
 
 
 async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0) -> None:
