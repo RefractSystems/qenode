@@ -213,7 +213,6 @@ fn telemetry_worker(
             type_: match ev.event_type {
                 0 => telemetry_fb::TraceEventType::CpuState,
                 1 => telemetry_fb::TraceEventType::Irq,
-                2 => telemetry_fb::TraceEventType::Peripheral,
                 3 => telemetry_fb::TraceEventType::PowerState,
                 _ => telemetry_fb::TraceEventType::Peripheral,
             },
