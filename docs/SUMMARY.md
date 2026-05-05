@@ -27,6 +27,7 @@
   - [The Peripheral Subsystem: Extending the Machine](architecture/06-peripheral-subsystem.md)
   - [BQL and Concurrency: Safety in High-Speed Emulation](fundamentals/10-bql-and-concurrency.md)
   - [World Specification: Declaring the Universe](architecture/10-world-specification.md)
+  - [Silicon Definition (SVD) and Register SSOT](architecture/11-svd-register-ssot.md)
 
 - [Part IV: Applied Simulation (Tutorials)](tutorials/volume-iv-intro.md)
   - [Laboratory Setup: Containerized Development](guide/02-containerized-development.md)

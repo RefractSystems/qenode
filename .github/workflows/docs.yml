@@ -24,10 +24,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Get mdBook version from BUILD_DEPS
+        id: get-version
+        run: |
+          VERSION=$(grep '^MDBOOK_VERSION=' BUILD_DEPS | cut -d '=' -f 2)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: 'latest'
+          mdbook-version: ${{ steps.get-version.outputs.version }}
       - name: Setup mdbook-mermaid
         run: |
           mkdir -p bin
@@ -41,8 +46,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y chromium-browser
-      - name: Install Mermaid JS
-        run: mdbook-mermaid install
       - name: Build with mdBook
         run: mdbook build
       - name: Upload artifact

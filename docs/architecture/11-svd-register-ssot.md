@@ -22,7 +22,7 @@ To maintain a true Single Source of Truth, we draw strict boundaries between fil
 
 ## 3. Data Flow and Generation Pipeline
 
-The architecture is strictly unidirectional: `SVD → Artifacts`.
+The architecture is strictly unidirectional: `SVD -> Artifacts`.
 
 ```mermaid
 graph TD
