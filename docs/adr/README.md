@@ -10,4 +10,5 @@ This index tracks the fundamental design decisions that have shaped the VirtMCU 
 | [ADR-012](ADR-012-data-serialization.md) | Data Serialization (FlatBuffers vs. Raw Structs) | **Accepted** |
 | [ADR-013](ADR-013-language-selection-and-native-migration.md) | Rust as the Primary Language for Core Infrastructure | **Accepted** |
 | [ADR-015](ADR-015-logging.md) | Deterministic Logging and Observability | **Accepted** |
+| [ADR-016](ADR-016-logical-domain-model.md) | Logical Domain Model for World Specification | **Proposed** |
 | [ADR-900](ADR-900-core-hardening-roadmap.md) | Core Hardening Roadmap | **Active** |
