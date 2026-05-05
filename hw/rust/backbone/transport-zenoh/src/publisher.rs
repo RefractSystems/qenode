@@ -145,8 +145,6 @@ mod tests {
     use super::*;
     use core::time::Duration;
     use std::time::Instant;
-    use zenoh::Config;
-
     const TEST_RECV_TIMEOUT: Duration = Duration::from_millis(50);
     const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(1);
     const TEST_DROP_JOIN_TIMEOUT: Duration = Duration::from_millis(500);

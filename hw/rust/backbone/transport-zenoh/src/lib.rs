@@ -9,6 +9,8 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use virtmcu_qom::sync::Bql;
 use zenoh::pubsub::Subscriber;
+#[cfg(test)]
+use zenoh::Config;
 use zenoh::{Session, Wait};
 
 pub mod publisher;
@@ -318,10 +320,9 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
-    virtmcu_zenoh_config::client_config()
+    virtmcu_zenoh_config::default_config()
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

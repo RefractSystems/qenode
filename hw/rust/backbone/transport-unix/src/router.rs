@@ -70,6 +70,7 @@ impl UnixDataRouter {
 }
 
 #[cfg(test)]
+#[cfg(not(miri))]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
