@@ -1,4 +1,4 @@
-# Chapter 2: The Temporal Core
+# The Temporal Core
 
 ## Learning Objectives
 After this chapter, you can:
@@ -18,11 +18,11 @@ In a standard emulator, time is an afterthought. The emulator typically runs as 
 
 VirtMCU (our QEMU-based Cyber Node implementation) provides three distinct clock modes to balance simulation accuracy with host performance.
 
-| Mode | QEMU Arguments | Accuracy | Throughput | Use Case |
+| Mode | How to Invoke | Accuracy | Throughput | Use Case |
 |---|---|---|---|---|
-| **Standalone** | *(omit `-device clock`)* | Wall-clock | 100% | Pure firmware unit testing; no physics engine. |
-| **Slaved-Suspend** | `-device clock` | Quantum-accurate | ~95% | **Default.** Control loops ≥ 1ms. TB-boundary pauses. |
-| **Slaved-Icount** | `-device clock,mode=icount` | Instruction-accurate | ~15–20% | PWM, bit-banging, µs-precision DMA. QEMU uses `-icount shift=0`, guaranteeing an exact 1 instruction = 1 virtual nanosecond relationship. |
+| **Standalone** | *(omit `-device virtmcu-clock`)* | Wall-clock | 100% | Pure firmware unit testing; no physics engine. |
+| **Slaved-Suspend** | `-device virtmcu-clock,mode=slaved-suspend` | Quantum-accurate | ~95% | **Default.** Control loops ≥ 1ms. TB-boundary pauses. |
+| **Slaved-Icount** | `-device virtmcu-clock,mode=slaved-icount` | Instruction-accurate | ~15–20% | PWM, µs-precision DMA. QEMU uses `-icount shift=0`, guaranteeing 1 instruction = 1 virtual ns. |
 
 ---
 
@@ -41,9 +41,15 @@ The `clock` device communicates with the `TimeAuthority` via the **Control Plane
 - `current_vtime_ns` (uint64): The actual virtual time reached by QEMU.
 - `n_frames` (uint32): Count of pending Ethernet frames (informational).
 - `error_code` (uint32):
-    - `0 (OK)`: Success.
-    - `1 (STALL)`: QEMU failed to reach the boundary within the wall-clock timeout.
-    - `2 (ERROR)`: Transport or protocol failure.
+    - **`0 (OK)`**: Success. Quantum completed.
+    - **`1 (STALL)`**: STALL DETECTED. QEMU failed to reach the TB boundary within the wall-clock timeout. QEMU stays alive for debugging.
+    - **`2 (ZENOH_ERROR)`**: Transport layer or protocol failure.
+
+### The Stall-Timeout Contract
+To prevent deadlocks in CI, every quantum has a wall-clock `stall-timeout`. 
+- **Dynamic Scaling**: Timeouts are mathematically stretched based on the environment (e.g., 5.0x multiplier under ASan).
+- **Logical Timeouts**: Developers pass ideal *logical* timeouts to the test harness; the framework handles the real-world mapping transparently.
+- **NEVER hardcode** `stall-timeout` in world YAMLs.
 
 ---
 
@@ -55,12 +61,12 @@ To achieve deterministic pauses, VirtMCU hooks into the heart of the QEMU execut
 We inject a function pointer into `accel/tcg/cpu-exec.c`. At the end of every Translation Block (TB), QEMU calls the VirtMCU hook. If the requested quantum has expired, the hook pauses the vCPU and waits for the next command.
 
 ### The BQL "Unlock-and-Park" Pattern
-QEMU uses the **Big QEMU Lock (BQL)** to protect hardware state. If we block the vCPU thread while holding the BQL, the entire process (including QMP and GDB) deadlocks. VirtMCU uses a safe RAII pattern:
+QEMU uses the **Big QEMU Lock (BQL)** to protect hardware state. VirtMCU uses a safe RAII pattern to avoid deadlocks:
 1.  **Detect** quantum expiry.
 2.  **Signal** the background thread that the quantum is done.
-3.  **Wait** on a condition variable using `virtmcu_qom::sync::Condvar::wait_yielding_bql`. This internally uses `Bql::temporary_unlock()` to safely yield the lock and automatically re-acquires it before resuming execution.
+3.  **Wait** on a condition variable using `virtmcu_qom::sync::Condvar::wait_yielding_bql`. 
 
-This ensures the emulator remains responsive even while "paused" in virtual time.
+This pattern internally uses `Bql::temporary_unlock()` to safely yield the lock, allowing GDB or QMP to inspect the guest while it is paused.
 
 ---
 
@@ -68,14 +74,16 @@ This ensures the emulator remains responsive even while "paused" in virtual time
 
 ### WFI (Wait For Interrupt)
 When a guest executes `WFI`, the vCPU stops. 
-- In **Slaved-Icount** mode, virtual time "warps" forward to the next pending timer deadline.
-- If no timers are pending, time remains frozen until an external interrupt (e.g., a packet from the coordinator) wakes the CPU.
+- In **Slaved-Suspend**, virtual time still advances during WFI. Quantum boundaries still trigger clock-halts. 
+- **Optimization**: Prefer the ARM Generic Timer at 100 Hz over tight polling to minimize host CPU wakeups.
 
 ### MMIO Socket Blocking
-When a peripheral access blocks on an external socket (e.g., SystemC), virtual time **does not advance**. From the firmware's perspective, the external transaction takes 0 nanoseconds, regardless of host-side latency. This maintains perfect causal ordering between the CPU and external hardware models.
+The `mmio-socket-bridge` blocks the QEMU TCG thread for every MMIO operation. 
+- **Zero-Time Transactions**: From the firmware's perspective, the external transaction takes 0 virtual nanoseconds.
+- **Latency Sensitivity**: High latency in the external socket leads to clock stalls. Virtual time does **NOT** advance while blocked.
 
 ### Test Automation
-Our Python test harness (`tools/testing/virtmcu_test_suite/qmp_bridge.py`) tracks virtual time by polling the emulator's `icount`. This allows tests to use **Virtual Time Timeouts**. A test can say "wait for this UART string, but fail if it doesn't appear within 5 *virtual* seconds," ensuring the test is immune to host CPU load or ASan-induced slowdowns.
+Our Python test harness uses **Virtual Time Timeouts**. A test saying `await bridge.wait_for_line("Boot Complete", timeout=5.0)` is waiting for 5 *virtual* seconds, making it immune to host slowdowns.
 
 ---
 

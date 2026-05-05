@@ -1,4 +1,4 @@
-# Chapter 3: Testing Strategy & Guidelines
+# Testing Strategy & Guidelines
 
 ## Quality at Scale
 

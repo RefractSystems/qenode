@@ -1,4 +1,4 @@
-# Chapter 10: World Specification
+# World Specification
 
 The **VirtMCU World YAML** (often referred to as the "World Manifest") is the single source of truth for a deterministic simulation. It serves as the digital blueprint for both the internal hardware of a node and the network topology connecting multiple nodes.
 
@@ -205,5 +205,5 @@ By defining this in the World Schema, Marcus invokes the Parallel Discrete Event
 ---
 
 ## See Also
-*   **[ADR-010: Platform Description](../adr/ADR-010-platform-description-format.md)**: The rationale behind the move to YAML.
+*   **[ADR-010: Platform Description](../adr/0010-platform-description-format.md)**: The rationale behind the move to YAML.
 *   **[Determinism and Chaos](./09-determinism-and-chaos.md)**: How `global_seed` and topology influence simulation stability.

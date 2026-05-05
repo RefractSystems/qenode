@@ -1,10 +1,10 @@
-# Chapter 7: Cyber-Physical Integration
+# Cyber-Physical Integration
 
 ## Bridging the Gap
 
 VirtMCU is designed specifically for **cyber-physical co-simulation**. In these systems, firmware does not exist in a vacuum; it interacts with a physical world governed by continuous time and differential equations. 
 
-To bridge this gap, we rely on the architecture introduced in Chapter 1: The **Cyber Node** (currently QEMU) must communicate seamlessly with the **Physical Node** (currently MuJoCo or Omniverse) over the **Transport Layer** (currently Zenoh or Unix Sockets).
+To bridge this gap, we rely on the architecture introduced in the System Overview: The **Cyber Node** (currently QEMU) must communicate seamlessly with the **Physical Node** (currently MuJoCo or Omniverse) over the **Transport Layer** (currently Zenoh or Unix Sockets).
 
 ---
 
@@ -22,7 +22,7 @@ Sensor peripherals (ADC, IMU, encoder) receive physical quantities from the Phys
 
 ## 2. Co-Simulation Hardware Integration
 
-While SAL/AAL connects abstract physics, the Cyber Node also integrates with external digital logic simulators (RTL/SystemC) using two distinct paths (detailed in Chapter 4):
+While SAL/AAL connects abstract physics, the Cyber Node also integrates with external digital logic simulators (RTL/SystemC) using two distinct paths (detailed in Communication Protocols):
 - **Path A (Unix Socket Bridge)**: A lightweight Transport Layer for simple custom logic.
 - **Path B (Remote Port)**: An industry-standard interface targeting Verilator models and existing Xilinx/SystemC ecosystems. It natively transports TLM-2.0 `b_transport` payloads over IPC to a Remote Port Slave implementation.
 

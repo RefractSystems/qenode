@@ -1,4 +1,4 @@
-# Chapter 8: Parallel Discrete Event Simulation (PDES)
+# Parallel Discrete Event Simulation (PDES)
 
 ## 8.1 The Causality Problem in Distributed Simulation
 When simulating a solitary microcontroller, temporal progression is trivial: the emulator's internal clock monotonically increments. However, the simulation of complex cyber-physical systems requires modeling multiple, geographically distributed MCUs interacting over shared networks (e.g., CAN buses, Ethernet, or wireless RF). 

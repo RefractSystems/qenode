@@ -1,4 +1,4 @@
-# Chapter 11: Silicon Definition (SVD) and Register SSOT
+# Silicon Definition (SVD) and Register SSOT
 
 ## 1. Introduction to CMSIS-SVD in VirtMCU
 

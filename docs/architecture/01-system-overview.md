@@ -1,4 +1,4 @@
-# Chapter 1: System Overview
+# System Overview
 
 ## Learning Objectives
 After this chapter, you can:
@@ -23,7 +23,15 @@ To understand VirtMCU, we must first establish the high-level taxonomy of a **Cy
 > Throughout this book, we will often discuss the general theory of a CPS (referring to "Cyber nodes", "Physical nodes", and "Transport"). However, when we dive into implementation details, system architecture, or specific configurations, we will refer directly to our current stack: **QEMU**, **MuJoCo/Omniverse**, and **Zenoh**.
 
 ### The "Gold Standard": Binary Fidelity
-The primary design constraint of the Cyber Node is **Binary Fidelity**: the same firmware ELF that programs a real microcontroller must run unmodified inside the simulator. This ensures that validation performed in VirtMCU is directly applicable to the physical hardware.
+The primary design constraint of the Cyber Node is **Binary Fidelity**: the same firmware ELF that programs a real microcontroller must run unmodified inside the simulator. 
+
+To achieve this, VirtMCU mandates:
+- **Exact Memory Mapping**: Peripherals are mapped at the **exact** base addresses specified in the silicon datasheet.
+- **Register-Level Accuracy**: Register layouts, reset values, and interrupt numbers must match physical silicon bit-for-bit.
+- **Invisible Infrastructure**: The `virtmcu-clock` and all co-simulation infrastructure are **invisible to the firmware**. They exist only at the QEMU/Plugin level and have no guest-visible MMIO exposure.
+- **No Guest Hooks**: No virtmcu-specific startup code, linker sections, or compile-time flags are allowed in the firmware.
+
+If a feature requires firmware modification to function, it is considered a bug in VirtMCU.
 
 ---
 
@@ -34,14 +42,14 @@ VirtMCU's architecture is built on three foundational guarantees:
 ### Pillar 1: Temporal Correctness
 Every virtual MCU shares a synchronized notion of time. VirtMCU implements **Cooperative Time Slaving**, where the Cyber Node (QEMU) acts as a time slave to an external master clock (the Physical Node). It executes instructions at full speed within a "quantum" but pauses at every boundary until granted permission to proceed.
 
-### Pillar 2: Global Determinism
-Two simulation runs with identical inputs (firmware, topology, and stochastic seed) will produce bit-identical results. This is achieved by:
-- Eliminating host-load-dependent timing.
-- Enforcing canonical message ordering in the simulation bus.
-- Using a centralized coordinator to synchronize node boundaries.
+### Pillar 2: Global Simulation Determinism
+Two simulation runs with identical inputs (firmware, topology, and stochastic seed) will produce bit-identical results. This is enforced through:
+- **Declared Topology**: The full network graph is declared in the world YAML and loaded by the `DeterministicCoordinator` at startup. Runtime "scouting" or discovery is banned.
+- **Canonical Tie-Breaking**: Messages with the same virtual timestamp are delivered in a strict, deterministic order: `(delivery_vtime_ns, source_node_id, sequence_number)`.
+- **Stochastic Seeding**: All PRNGs are derived from a `global_seed` using the formula `seed_for_quantum(global_seed, node_id, quantum_number)`. Wall-clock seeding or `rand::thread_rng()` are strictly forbidden.
 
 ### Pillar 3: Causal Ordering
-In a distributed simulation, messages must be delivered in the order they were sent in virtual time, regardless of when they arrive at the host CPU. VirtMCU's **Parallel Discrete Event Simulation (PDES)** barrier ensures that all nodes finish their current time quantum before any messages are delivered for the next, preserving causal integrity.
+In a distributed simulation, messages must be delivered in the order they were sent in virtual time, regardless of when they arrive at the host CPU. VirtMCU's **Parallel Discrete Event Simulation (PDES)** barrier ensures that the `DeterministicCoordinator` withholds quantum-Q messages until **all** nodes signal that quantum Q is complete.
 
 ---
 

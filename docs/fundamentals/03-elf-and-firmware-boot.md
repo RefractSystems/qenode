@@ -1,4 +1,4 @@
-# Chapter 3: Executable Binaries and the Boot Vector
+# Executable Binaries and the Boot Vector
 
 ## 3.1 The Philosophy of Binary Fidelity
 
