@@ -135,6 +135,12 @@ smoke_devenv_base() {
         echo '  --- Rust ---'
         cargo --version
         rustc --version
+        echo '  --- mdbook ---'
+        mdbook --version
+        mdbook-mermaid --version
+        mdbook-pdf --version
+        echo '  --- chromium ---'
+        chromium --version
         echo '  --- ARM toolchain (inherited from toolchain) ---'
         arm-none-eabi-gcc --version | head -1
         echo '  --- uv ---'

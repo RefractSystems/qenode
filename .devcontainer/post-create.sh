@@ -97,6 +97,17 @@ if ! command -v mdbook-mermaid &> /dev/null; then
     echo "✓ mdbook-mermaid installed."
 fi
 
+echo "==> Installing mdbook-pdf..."
+if ! command -v mdbook-pdf &> /dev/null; then
+    MDBOOK_ARCH=$(uname -m)
+    PDF_ARCH="$MDBOOK_ARCH"
+    if [ "$MDBOOK_ARCH" = "arm64" ]; then PDF_ARCH="aarch64"; fi
+    curl -sSL "https://github.com/HollowMan6/mdbook-pdf/releases/download/v0.1.10/mdbook-pdf-v0.1.10-${PDF_ARCH}-unknown-linux-gnu" -o /tmp/mdbook-pdf
+    chmod +x /tmp/mdbook-pdf
+    sudo mv /tmp/mdbook-pdf /usr/local/bin/mdbook-pdf
+    echo "✓ mdbook-pdf installed."
+fi
+
 echo "==> Initializing Workspace Dependencies..."
 # Ensure /workspace is a safe directory (idempotent)
 git config --global --replace-all safe.directory /workspace
