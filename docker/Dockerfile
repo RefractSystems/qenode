@@ -19,7 +19,8 @@ ARG FLATBUFFERS_VERSION=25.12.19
 ARG FLATCC_VERSION=0.6.1
 ARG HADOLINT_VERSION=2.14.0
 ARG ACTIONLINT_VERSION=1.7.12
-ARG MDBOOK_VERSION=0.4.40
+ARG MDBOOK_VERSION=0.4.52
+ARG MDBOOK_MERMAID_VERSION=0.14.0
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
@@ -30,6 +31,7 @@ ARG TARGETARCH
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-slim AS rust-builder
 ARG BINDGEN_VERSION
 ARG MDBOOK_VERSION
+ARG MDBOOK_MERMAID_VERSION
 ARG RUST_VERSION
 ENV CARGO_HOME=/usr/local/cargo
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -43,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && cargo binstall -y cargo-deny \
     && cargo binstall -y cargo-machete \
     && cargo binstall -y mdbook@"${MDBOOK_VERSION}" \
+    && cargo binstall -y mdbook-mermaid@"${MDBOOK_MERMAID_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 1: base ─────────────────────────────────────────────────────────────
@@ -196,6 +199,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-a
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
+COPY --from=rust-builder /usr/local/cargo/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
 RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
@@ -360,6 +364,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-a
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
+COPY --from=rust-builder /usr/local/cargo/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 
 COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
