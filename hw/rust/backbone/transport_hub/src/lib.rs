@@ -43,7 +43,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         return;
     }
 
-    virtmcu_qom::sim_err!(
+    virtmcu_qom::sim_info!(
         "hub_realize started for node={}, router={:?}",
         s.node_id,
         if s.router.is_null() { "null" } else { "non-null" }

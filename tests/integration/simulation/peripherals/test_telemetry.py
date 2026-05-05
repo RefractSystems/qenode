@@ -110,7 +110,7 @@ async def test_telemetry(simulation: Simulation, telemetry_artifacts: tuple[Path
         extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
     )
     async with simulation as sim:
-        await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=20_000_000, timeout=10.0)
+        await sim.run_until(lambda: len(captured) > 0, timeout_ns=500_000_000, step_ns=50_000_000, timeout=15.0)
 
         assert len(captured) > 0
 

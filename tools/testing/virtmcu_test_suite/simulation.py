@@ -266,6 +266,9 @@ class Simulation:
 
         from tools.testing.virtmcu_test_suite.conftest_core import ManagedSubprocess
 
+        # Ensure environment is set for any subprocesses (like QEMU)
+        os.environ["VIRTMCU_ZENOH_ROUTER"] = self._router
+
         for name, cmd, env in self._app_specs:
             app = ManagedSubprocess(name, cmd, env=env)
             await app.start()

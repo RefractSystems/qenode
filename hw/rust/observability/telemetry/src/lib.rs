@@ -82,6 +82,7 @@ pub struct VirtmcuTelemetryBackend {
     last_halted: Arc<[AtomicBool; 32]>,
     irq_slots: virtmcu_qom::sync::BqlGuarded<Vec<IrqSlot>>,
     _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
+    debug: bool,
 }
 
 // SAFETY: VirtmcuTelemetryBackend encapsulates cross-thread channel sender and atomic state.
@@ -151,14 +152,20 @@ fn telemetry_trace_cpu_internal(backend: &VirtmcuTelemetryBackend, cpu_index: c_
 
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
 
-    let _ = backend.sender.try_send(Some(TraceEvent {
+    let event = TraceEvent {
         timestamp_ns: vtime as u64,
         event_type: 0,
         id: cpu_index as u32,
         value: u32::from(halted),
         device_name: None,
         power_uw: 0,
-    }));
+    };
+
+    if let Err(e) = backend.sender.try_send(Some(event)) {
+        virtmcu_qom::sim_err!("telemetry: failed to send CPU event to worker: {}", e);
+    } else if backend.debug {
+        virtmcu_qom::sim_debug!("telemetry: CPU {} halt transition to {}", cpu_index, halted);
+    }
 }
 
 /*
@@ -196,7 +203,9 @@ fn telemetry_worker(
     rx: Receiver<Option<TraceEvent>>,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     topic: String,
+    debug: bool,
 ) {
+    virtmcu_qom::sim_info!("Telemetry worker thread started for topic: {}", topic);
     let mut builder = FlatBufferBuilder::new();
 
     while let Ok(Some(ev)) = rx.recv() {
@@ -222,7 +231,11 @@ fn telemetry_worker(
         builder.finish(root, None);
 
         let payload = builder.finished_data();
-        let _ = transport.publish(&topic, payload);
+        if let Err(e) = transport.publish(&topic, payload) {
+            virtmcu_qom::sim_err!("telemetry: failed to publish event to {}: {}", topic, e);
+        } else if debug {
+            virtmcu_qom::sim_debug!("telemetry: published event to {}", topic);
+        }
     }
 }
 
@@ -280,12 +293,16 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport = alloc::sync::Arc::clone(transport_ref);
 
+    virtmcu_qom::sim_info!("telemetry_realize: acquired transport from hub.");
+
     let (tx, rx) = bounded(10000);
     let node_id = s.node_id;
     let topic = format!("sim/telemetry/trace/{node_id}");
 
     let key = format!("sim/telemetry/liveliness/{node_id}");
     let _liveliness = transport.declare_liveliness(&key);
+
+    virtmcu_qom::sim_info!("telemetry_realize: topic={}, liveliness={}", topic, key);
 
     let backend = Box::new(VirtmcuTelemetryBackend {
         _transport: Arc::clone(&transport),
@@ -294,13 +311,15 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
         last_halted: Arc::new(Default::default()),
         irq_slots: virtmcu_qom::sync::BqlGuarded::new(Vec::new()),
         _liveliness,
+        debug: s.debug,
     });
 
     s.rust_state = Box::into_raw(backend);
 
     GLOBAL_TELEMETRY.store(s, Ordering::Release);
 
-    std::thread::spawn(move || telemetry_worker(rx, transport, topic));
+    let debug_flag = s.debug;
+    std::thread::spawn(move || telemetry_worker(rx, transport, topic, debug_flag));
 
     virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(Some(telemetry_cpu_halt_cb));
 
@@ -383,6 +402,7 @@ define_properties!(
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuTelemetryQOM, node_id, 0),
         define_prop_string!(c"router".as_ptr(), VirtmcuTelemetryQOM, router),
+        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuTelemetryQOM, debug, false),
     ]
 );
 
