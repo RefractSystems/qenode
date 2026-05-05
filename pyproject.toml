@@ -52,6 +52,9 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "skip_asan: marks tests that are too timing sensitive to run under ASan"
 ]
+filterwarnings = [
+    "ignore:invalid escape sequence:SyntaxWarning"
+]
 
 [tool.ruff]
 exclude = ["tools/virtmcu/core", "tools/lin_fbs", "tools/telemetry_fbs", "tools/flexray_fbs", "tests/fixtures/guest_apps/coordinator_stress/virtmcu"]
