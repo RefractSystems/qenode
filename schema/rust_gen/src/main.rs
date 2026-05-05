@@ -9,7 +9,7 @@ fn main() {
     type_space.add_root_schema(schema).unwrap();
 
     let code = format!(
-        "// Generated file, do not edit\n#![allow(warnings)]\n#![allow(clippy::all)]\nuse serde::{{Deserialize, Serialize}};\n\n{}",
+        "// Generated file, do not edit\n#![allow(warnings)]\n#![allow(clippy::all)] // ALLOW_EXCEPTION: machine-generated topology code from OpenUSD\nuse serde::{{Deserialize, Serialize}};\n\n{}",
         prettyplease::unparse(&syn::parse2::<syn::File>(type_space.to_stream()).unwrap())
     );
 

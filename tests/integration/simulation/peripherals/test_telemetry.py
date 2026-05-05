@@ -49,7 +49,12 @@ async def test_telemetry_emission(simulation: Simulation, telemetry_artifacts: t
 
     await simulation.transport.subscribe(SimTopic.telemetry_trace(0), on_telemetry)
 
-    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=["-device", "telemetry"])
+    simulation.add_node(
+        node_id=0,
+        dtb=dtb,
+        kernel=kernel,
+        extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
+    )
     async with simulation as sim:
         # Run until guest app emits something (it should at boot)
         await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=10_000_000, timeout=10.0)
@@ -71,7 +76,12 @@ async def test_telemetry_integrity(simulation: Simulation, telemetry_artifacts: 
 
     await simulation.transport.subscribe(SimTopic.telemetry_trace(0), on_telemetry)
 
-    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=["-device", "telemetry"])
+    simulation.add_node(
+        node_id=0,
+        dtb=dtb,
+        kernel=kernel,
+        extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
+    )
     async with simulation as sim:
         await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=10_000_000, timeout=10.0)
         for pkt in captured:
@@ -93,7 +103,12 @@ async def test_telemetry(simulation: Simulation, telemetry_artifacts: tuple[Path
 
     await simulation.transport.subscribe(SimTopic.telemetry_trace(0), on_telemetry)
 
-    simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=["-device", "telemetry"])
+    simulation.add_node(
+        node_id=0,
+        dtb=dtb_path,
+        kernel=kernel_path,
+        extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
+    )
     async with simulation as sim:
         await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=20_000_000, timeout=10.0)
 
@@ -106,8 +121,18 @@ async def test_coordinator_topology(simulation: Simulation, telemetry_artifacts:
     5. Topology: deterministic_coordinator must correctly link nodes via queryables [P1]
     """
     dtb, kernel = telemetry_artifacts
-    simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=["-device", "telemetry"])
-    simulation.add_node(node_id=1, dtb=dtb, kernel=kernel, extra_args=["-device", "telemetry"])
+    simulation.add_node(
+        node_id=0,
+        dtb=dtb,
+        kernel=kernel,
+        extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
+    )
+    simulation.add_node(
+        node_id=1,
+        dtb=dtb,
+        kernel=kernel,
+        extra_args=["-device", "virtmcu-transport-hub,id=hub0", "-device", "telemetry,transport=hub0"],
+    )
 
     async with simulation as sim:
         assert sim.vta is not None

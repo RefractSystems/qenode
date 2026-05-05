@@ -1,4 +1,4 @@
-# Chapter 7: Interrupt Architecture and Temporal Synchronization
+# Interrupt Architecture and Temporal Synchronization
 
 ## 7.1 The Paradigm of Asynchronous Notification
 In early computing architectures, the central processor relied exclusively on "polling"—continuously reading a peripheral's status register in a tight loop to ascertain whether a hardware event (such as a buffer filling or a timer expiring) had occurred. This paradigm is profoundly inefficient; it monopolizes the CPU's execution cycles, precluding the processor from performing useful computation while waiting for high-latency external devices.

@@ -132,43 +132,9 @@ VIRTMCU_EXPORT extern void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *t
 """
     patch_file(cpu_exec_c, marker0, insertion0, after=True)
 
-    # 3. Patch hw/core/irq.c to define the global pointers and setters
-    irq_c = Path(qemu) / "hw/core/irq.c"
-    irq_patch = """
-#include "virtmcu/hooks.h"
-
-/* Define the global function pointers used for guest synchronization */
-void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;
-void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;
-void (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;
-void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = NULL;
-
-void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
-    virtmcu_tcg_quantum_hook = cb;
-}
-void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
-    virtmcu_cpu_halt_hook = cb;
-}
-void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level)) {
-    virtmcu_irq_hook = cb;
-}
-
-VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer) {
-    if (timer) {
-        timer_mod_ns(timer, 0);
-        qemu_notify_event();
-    }
-}
-"""
-    patch_file(irq_c, '#include "hw/core/irq.h"', irq_patch, after=True)
-
-    irq_marker = "void qemu_set_irq(qemu_irq irq, int level)\n{"
-    irq_insertion = """
-    if (virtmcu_irq_hook) {
-        virtmcu_irq_hook(irq ? irq->opaque : NULL, irq ? irq->n : -1, level);
-    }
-"""
-    patch_file(irq_c, irq_marker, irq_insertion, after=True)
+    # 3. Define the global pointers and setters
+    # NOTE: Defininiton of these pointers has moved to qemu-multiple-halt-hooks.patch
+    # to support multiple subscribers to the halt hook.
 
     # 4. Add the hook invocation in cpu_exec_loop
     # Patch the inner execution loop (interrupt check) for frequent enough quantum boundaries

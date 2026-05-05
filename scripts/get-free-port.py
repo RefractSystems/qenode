@@ -22,14 +22,20 @@ def get_free_port() -> int:
     """
     Finds a free port available on all interfaces and reserves it.
     Uses a file-based registry in /tmp to avoid collisions in parallel tests.
+    Avoids the OS ephemeral port range (typically 32768+) to prevent TOCTOU 
+    conflicts where the OS assigns the released port to an outgoing connection.
     """
     os.makedirs(RESERVATION_DIR, exist_ok=True)
+    import secrets
 
-    # Try to find and reserve a port
-    for _ in range(100):
+    # Try to find and reserve a port outside the ephemeral range
+    for _ in range(1000):
+        port = 10000 + secrets.randbelow(22000)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            port = s.getsockname()[1]
+            try:
+                s.bind(("", port))
+            except OSError:
+                continue
 
         res_path = os.path.join(RESERVATION_DIR, str(port))
         try:

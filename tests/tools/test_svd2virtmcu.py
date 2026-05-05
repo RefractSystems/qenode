@@ -52,7 +52,7 @@ def test_svd2header_base_type() -> None:
     assert get_base_type("This is a float register") == "float"
     assert get_base_type("This measures in rad") == "float"
     assert get_base_type("Torque (nm)") == "float"
-    
+
     # Corner Cases
     assert get_base_type("Status register") == "uint32_t"
     assert get_base_type(None) == "uint32_t"
@@ -75,7 +75,7 @@ def test_svd2header_generation_happy_path() -> None:
 
             # Assert Enterprise SOTA checks are present
             assert "_Static_assert(sizeof(float) == 4" in content
-            
+
             # Assert Register offsets and pointers are generated
             assert "#define REG_QPOS0_OFFSET 0x0010" in content
             assert "#define REG_QPOS0_PTR ((volatile float*)(MOCK_IO_BASE + REG_QPOS0_OFFSET))" in content

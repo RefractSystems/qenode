@@ -303,10 +303,10 @@ macro_rules! device_class_set_props {
 }
 
 #[macro_export]
-/// A macro
+/// A macro to define a static array of properties.
 macro_rules! define_properties {
     ($name:ident, [$($prop:expr),* $(,)?]) => {
-        pub static $name: &[$crate::qom::Property] = &[
+        pub static $name: [$crate::qom::Property; $crate::count_items!($($prop),*)] = [
             $($prop),*
         ];
     };

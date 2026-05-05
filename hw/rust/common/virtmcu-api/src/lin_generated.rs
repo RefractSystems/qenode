@@ -81,7 +81,7 @@ pub mod virtmcu {
                 self.0.to_le()
             }
             #[inline]
-            #[allow(clippy::wrong_self_convention)]
+            #[allow(clippy::wrong_self_convention)] // ALLOW_EXCEPTION: FlatBuffers-generated code
             fn from_little_endian(v: u8) -> Self {
                 let b = u8::from_le(v);
                 Self(b)

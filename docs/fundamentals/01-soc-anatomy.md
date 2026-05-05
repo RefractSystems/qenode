@@ -1,4 +1,4 @@
-# Chapter 1: SoC Anatomy
+# SoC Anatomy
 
 To simulate an MCU, one must first understand what an MCU is. A modern microcontroller is typically a **System-on-Chip (SoC)**—a single silicon die containing a CPU core and a collection of peripherals.
 

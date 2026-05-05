@@ -264,6 +264,7 @@ mod tests {
         let hdr_ptr = &hdr as *const RpPktHdr as *const u8;
         unsafe {
             ptr::copy_nonoverlapping(
+                // COPY_EXCEPTION: testing unaligned access in test /* COPY_EXCEPTION: testing unaligned access in test */
                 hdr_ptr,
                 buf.as_mut_ptr().add(1),
                 core::mem::size_of::<RpPktHdr>(),
@@ -311,6 +312,8 @@ mod tests {
         let pkt_ptr = &pkt as *const RpPktBusaccess as *const u8;
         unsafe {
             ptr::copy_nonoverlapping(
+                // COPY_EXCEPTION: testing unaligned access in test
+                // COPY_EXCEPTION: testing unaligned access in test
                 pkt_ptr,
                 buf.as_mut_ptr().add(1),
                 core::mem::size_of::<RpPktBusaccess>(),
@@ -350,6 +353,8 @@ mod tests {
         let pkt_ptr = &pkt as *const RpPktInterrupt as *const u8;
         unsafe {
             ptr::copy_nonoverlapping(
+                // COPY_EXCEPTION: testing unaligned access in test
+                // COPY_EXCEPTION: testing unaligned access in test
                 pkt_ptr,
                 buf.as_mut_ptr().add(1),
                 core::mem::size_of::<RpPktInterrupt>(),

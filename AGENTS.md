@@ -15,7 +15,7 @@ Read automatically by Codex and Gemini CLI at session start (`GEMINI.md` is a sy
 - Peripherals mapped at the **exact** base addresses the real MCU datasheet specifies.
 - Register layouts, reset values, and interrupt numbers must match physical silicon.
 - `clock` and all co-simulation infrastructure are **invisible to the firmware** — QEMU-level only, no guest MMIO exposure.
-- Any feature requiring firmware modification is a VirtMCU bug. See [ADR-006](docs/architecture/adr/ADR-006-binary-fidelity.md).
+- Any feature requiring firmware modification is a VirtMCU bug. See [ADR-006](docs/adr/ADR-006-binary-fidelity.md).
 
 ---
 

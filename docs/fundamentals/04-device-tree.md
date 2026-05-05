@@ -1,4 +1,4 @@
-# Chapter 4: Hardware Description via Device Trees
+# Hardware Description via Device Trees
 
 ## 4.1 The Hardware Discovery Problem
 In conventional desktop computing environments, operating systems leverage dynamic discovery protocols (such as PCI Express enumeration or USB descriptors) to identify connected hardware peripherals. The kernel queries the bus, and the bus responds with a list of vendor and product identifiers, allowing the OS to load the appropriate drivers.

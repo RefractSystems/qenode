@@ -61,7 +61,7 @@ impl UnixDataRouter {
                     });
                 }
                 Err(err) => {
-                    eprintln!("UnixDataRouter accept error: {}", err);
+                    ::virtmcu_qom::sim_err!("UnixDataRouter accept error: {}", err);
                     break;
                 }
             }
@@ -70,6 +70,7 @@ impl UnixDataRouter {
 }
 
 #[cfg(test)]
+#[cfg(not(miri))]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};

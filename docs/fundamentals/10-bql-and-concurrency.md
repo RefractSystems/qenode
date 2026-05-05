@@ -1,4 +1,4 @@
-# Chapter 10: Concurrency Architecture and the Big QEMU Lock
+# Concurrency Architecture and the Big QEMU Lock
 
 ## 10.1 The Concurrency Challenge in Emulation
 Modern hardware emulation is an inherently highly-concurrent operation. While the virtual CPU executes firmware instructions in one thread, independent background threads are simultaneously required to poll network sockets, process incoming Zenoh pub/sub messages, and manage asynchronous timers. 

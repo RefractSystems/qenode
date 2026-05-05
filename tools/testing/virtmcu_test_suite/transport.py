@@ -202,11 +202,11 @@ class UnixTransportImpl(SimulationTransport):
         try:
             while True:
                 topic_len_b = await reader.readexactly(4)
-                topic_len = int.from_bytes(topic_len_b, "little")
+                topic_len = int.from_bytes(topic_len_b, "little")  # LINT_EXCEPTION: int_from_bytes
                 topic = (await reader.readexactly(topic_len)).decode()
 
                 payload_len_b = await reader.readexactly(4)
-                payload_len = int.from_bytes(payload_len_b, "little")
+                payload_len = int.from_bytes(payload_len_b, "little")  # LINT_EXCEPTION: int_from_bytes
                 payload = await reader.readexactly(payload_len)
                 logger.info(f"UnixTransportImpl rx: {topic}")
 

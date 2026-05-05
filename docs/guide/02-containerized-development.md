@@ -1,4 +1,4 @@
-# Chapter 2: Containerized Development
+# Containerized Development
 
 ## The "It Works" Guarantee
 

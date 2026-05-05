@@ -13,7 +13,7 @@ peripherals:
     address: "0x09003000"
     properties:
       node: 0
-      router: "ZENOH_ROUTER_ENDPOINT"
 
 topology:
+  transport: ZENOH_ROUTER_ENDPOINT
   links: []

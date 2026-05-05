@@ -164,6 +164,8 @@ class _NodeSpec:
                 logger.debug(f"Skipping fdt parse of {self.dtb}: {e}")
 
         plugins.discard("clock")
+        plugins.discard("transport-hub")
+        plugins.discard("transport")
         return plugins
 
 
@@ -474,6 +476,7 @@ class Simulation:
                 processed.append(arg)
             i += 1
 
+        processed.extend(["-global", f"virtmcu-transport-hub.router={router}"])
         if not has_clock:
             if is_unix_clock:
                 clock_arg = f"{self.transport.get_clock_device_str(node_id)},stall-timeout={scaled_stall}"  # type: ignore

@@ -47,13 +47,13 @@ sleep 2
 
 # 3. Generate DTB and CLI args
 echo "==> Generating DTB"
-sed "s|tcp/[^:]*:7448|$ROUTER_ENDPOINT|g" "$SCRIPT_DIR/board.yaml" > "$SCRIPT_DIR/board_local.yaml"
-python3 -m tools.yaml2qemu "$SCRIPT_DIR/board_local.yaml" --out-dtb "$SCRIPT_DIR/test.dtb" --out-cli "$SCRIPT_DIR/test.cli"
+export VIRTMCU_ZENOH_ROUTER="$ROUTER_ENDPOINT"
+python3 -m tools.yaml2qemu "$SCRIPT_DIR/board.yaml" --out-dtb "$SCRIPT_DIR/test.dtb" --out-cli "$SCRIPT_DIR/test.cli"
 
 # 4. Start Radio Responder
 echo "==> Starting Radio Responder"
 export PYTHONPATH="$WORKSPACE_DIR"
-python3 "$SCRIPT_DIR/radio_determinism.py" 0 "$ROUTER_ENDPOINT" &
+python3 "$SCRIPT_DIR/radio_determinism.py" 0 "$ROUTER_ENDPOINT" 2>&1 | tee "$SCRIPT_DIR/responder.log" &
 sleep 2
 
 # 5. Run QEMU

@@ -1,11 +1,16 @@
-use zenoh::Wait;
+unsafe extern "C" fn allow_set_link(
+    _obj: *mut virtmcu_qom::qom::Object,
+    _name: *const core::ffi::c_char,
+    _val: *mut virtmcu_qom::qom::Object,
+    _errp: *mut *mut virtmcu_qom::error::Error,
+) {
+}
 extern crate alloc;
 
 use alloc::sync::Arc;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use std::collections::HashMap;
-use transport_zenoh::SafeSubscriber;
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -17,7 +22,6 @@ use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,
 };
-use zenoh::Session;
 
 #[repr(C)]
 pub struct ZenohUiQEMU {
@@ -26,8 +30,12 @@ pub struct ZenohUiQEMU {
 
     /* Properties */
     pub node_id: u32,
+    pub transport: *mut c_char,
     pub router: *mut c_char,
     pub debug: bool,
+
+    /* Links */
+    pub transport_hub: *mut Object,
 
     /* Registers */
     pub active_led_id: u32,
@@ -37,17 +45,18 @@ pub struct ZenohUiQEMU {
     pub rust_state: *mut ZenohUiState,
 }
 
+const _: () = assert!(core::mem::offset_of!(ZenohUiQEMU, parent_obj) == 0);
+const _: () = assert!(core::mem::size_of::<ZenohUiQEMU>() == 1152);
+
 pub struct ZenohUiState {
-    _session: Arc<Session>,
-    publisher: transport_zenoh::SafeSessionPublisher,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
     node_id: u32,
     buttons: BqlGuarded<HashMap<u32, ButtonState>>,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
 struct ButtonState {
     _irq: QemuIrq,
-    subscriber: Option<SafeSubscriber>,
     pressed: bool,
 }
 
@@ -152,9 +161,27 @@ pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
 
-    let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
+    if s.transport_hub.is_null() {
+        error_setg!(errp, "Strict DI violation: transport_hub link is required.");
+        return;
+    }
 
-    s.rust_state = ui_init_internal(s.node_id, router_ptr);
+    let ptr_u64 = unsafe {
+        virtmcu_qom::qom::object_property_get_uint(
+            s.transport_hub,
+            c"transport_ptr".as_ptr(),
+            errp as *mut *mut virtmcu_qom::error::Error,
+        )
+    };
+    if ptr_u64 == 0 {
+        error_setg!(errp, "Strict DI violation: failed to acquire transport from hub.");
+        return;
+    }
+    let transport_ref =
+        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
+    let transport = alloc::sync::Arc::clone(transport_ref);
+
+    s.rust_state = ui_init_internal(s.node_id, transport);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust Zenoh UI");
     }
@@ -171,9 +198,7 @@ pub unsafe extern "C" fn ui_instance_finalize(obj: *mut Object) {
         let state = unsafe { Box::from_raw(s.rust_state) };
         {
             let mut btns = state.buttons.get_mut();
-            for (_, btn) in btns.iter_mut() {
-                btn.subscriber.take();
-            }
+            btns.clear();
         }
         drop(state);
         s.rust_state = ptr::null_mut();
@@ -199,7 +224,18 @@ pub unsafe extern "C" fn ui_class_init(klass: *mut ObjectClass, _data: *const c_
         (*dc).realize = Some(ui_realize);
         (*dc).user_creatable = true;
     }
-    virtmcu_qom::qdev::device_class_set_props_n(dc, ZENOH_UI_PROPERTIES.as_ptr(), 3);
+    virtmcu_qom::device_class_set_props!(dc, ZENOH_UI_PROPERTIES);
+
+    unsafe {
+        virtmcu_qom::qom::object_class_property_add_link(
+            klass,
+            c"transport".as_ptr(),
+            c"virtmcu-transport-hub".as_ptr(),
+            core::mem::offset_of!(ZenohUiQEMU, transport_hub) as isize,
+            Some(allow_set_link),
+            virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+        );
+    }
 }
 
 #[used]
@@ -223,22 +259,15 @@ declare_device_type!(ZENOH_UI_TYPE_INIT, ZENOH_UI_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
-fn ui_init_internal(node_id: u32, router: *const c_char) -> *mut ZenohUiState {
-    // SAFETY: get_or_init_session is safe if router is valid or null.
-    // Safety: router validity is guaranteed by the caller.
-    let session = unsafe {
-        match transport_zenoh::get_or_init_session(router) {
-            Ok(s) => s,
-            Err(_) => return ptr::null_mut(),
-        }
-    };
+fn ui_init_internal(
+    node_id: u32,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
+) -> *mut ZenohUiState {
+    let liveliness = transport.declare_liveliness(&format!("sim/ui/liveliness/{node_id}"));
 
-    let liveliness =
-        session.liveliness().declare_token(format!("sim/ui/liveliness/{node_id}")).wait().ok();
     Box::into_raw(Box::new(ZenohUiState {
         _liveliness: liveliness,
-        publisher: transport_zenoh::SafeSessionPublisher::new(Arc::clone(&session)),
-        _session: session,
+        transport,
         node_id,
         buttons: BqlGuarded::new(HashMap::new()),
     }))
@@ -247,7 +276,7 @@ fn ui_init_internal(node_id: u32, router: *const c_char) -> *mut ZenohUiState {
 fn ui_set_led(state: &ZenohUiState, led_id: u32, on: bool) {
     let topic = format!("sim/ui/{}/led/{}", state.node_id, led_id);
     let payload = if on { vec![1u8] } else { vec![0u8] };
-    state.publisher.send(topic, payload);
+    let _ = state.transport.publish(&topic, &payload);
 }
 
 fn ui_get_button(state: &ZenohUiState, btn_id: u32) -> bool {
@@ -264,21 +293,21 @@ fn ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
     let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
     let irq_ptr = irq as usize;
 
-    let subscriber = SafeSubscriber::new(&state._session, &topic, move |sample| {
-        let payload = sample.payload();
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |payload| {
         if payload.is_empty() {
             return;
         }
-        let val = payload.to_bytes()[0] != 0;
+        let val = payload[0] != 0;
 
         // SAFETY: irq_ptr is a valid QemuIrq passed during initialization.
         unsafe {
             qemu_set_irq(irq_ptr as QemuIrq, i32::from(val));
         }
-    })
-    .ok();
+    });
 
-    btns.insert(btn_id, ButtonState { _irq: irq, subscriber, pressed: false });
+    let _ = state.transport.subscribe(&topic, sub_callback);
+
+    btns.insert(btn_id, ButtonState { _irq: irq, pressed: false });
 }
 
 #[cfg(test)]

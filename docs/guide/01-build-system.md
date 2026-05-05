@@ -1,4 +1,4 @@
-# Chapter 1: The Build System
+# The Build System
 
 ## Build Architecture Overview
 

@@ -41,7 +41,13 @@ class NodeManager:
         import zenoh
 
         if self._zenoh_session is None:
-            self._zenoh_session = zenoh.open(zenoh.Config())
+            conf = zenoh.Config()
+            conf.insert_json5("scouting/multicast/enabled", "false")
+            conf.insert_json5("mode", '"client"')
+            router = os.environ.get("ZENOH_ROUTER")
+            if router:
+                conf.insert_json5("connect/endpoints", f'["{router}"]')
+            self._zenoh_session = zenoh.open(conf)
         return self._zenoh_session
 
     async def close(self) -> None:

@@ -9,12 +9,21 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use virtmcu_qom::sync::Bql;
 use zenoh::pubsub::Subscriber;
-use zenoh::{Config, Session, Wait};
+#[cfg(test)]
+use zenoh::Config;
+use zenoh::{Session, Wait};
 
 pub mod publisher;
 pub use publisher::{SafePublisher, SafeSessionPublisher};
 
 static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new();
+
+/// A wrapper for Zenoh LivelinessToken to abstract it across the FFI.
+pub struct ZenohLivelinessToken {
+    _token: zenoh::liveliness::LivelinessToken,
+}
+
+impl virtmcu_api::LivelinessToken for ZenohLivelinessToken {}
 
 /// A Zenoh-backed implementation of the `DataTransport` trait.
 pub struct ZenohDataTransport {
@@ -58,6 +67,16 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
             }
         }
         Err("No reply received".to_owned())
+    }
+
+    fn declare_liveliness(
+        &self,
+        topic: &str,
+    ) -> Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>> {
+        match self.session.liveliness().declare_token(topic).wait() {
+            Ok(token) => Some(alloc::boxed::Box::new(ZenohLivelinessToken { _token: token })),
+            Err(_) => None,
+        }
     }
 }
 
@@ -251,7 +270,7 @@ impl Drop for SafeSubscriber {
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
-    let mut config = Config::default();
+    let mut config = virtmcu_zenoh_config::client_config();
     let mut has_router = false;
 
     // Task 4.2: High-performance executor for co-simulation
@@ -281,7 +300,6 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
             let json = format!("[\"{r_str}\"]");
             let _ = config.insert_json5("mode", "\"client\"");
             let _ = config.insert_json5("connect/endpoints", &json);
-            let _ = config.insert_json5("scouting/multicast/enabled", "false");
             let _ = config.insert_json5("transport/shared_memory/enabled", "false");
             has_router = true;
         }
@@ -298,6 +316,11 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     }
 
     Ok(session)
+}
+
+#[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    virtmcu_zenoh_config::client_config()
 }
 
 #[cfg(test)]
@@ -350,7 +373,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_subscriber_lifecycle() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         // Use memory transport for fast unit tests
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let counter = Arc::new(AtomicUsize::new(0));
@@ -395,7 +418,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_subscriber_drain_completes_under_load() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let counter = Arc::new(AtomicUsize::new(0));
         let topic = "tests/fixtures/guest_apps/stress/drain";
@@ -444,7 +467,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_generation_drop_stale_callback() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
@@ -475,7 +498,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_generation_accepts_current() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
@@ -529,7 +552,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_generation_stress() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let generation = Arc::new(AtomicU64::new(0));
         let topic = "tests/fixtures/guest_apps/gen/stress";

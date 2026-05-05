@@ -225,13 +225,10 @@ async fn run_deterministic_coordinator(
     mut pcap_log: Option<MessageLog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let no_pdes = args.no_pdes;
-    let mut config = zenoh::Config::default();
+    let mut config = virtmcu_zenoh_config::default_config();
     config
         .insert_json5("mode", "\"client\"")
         .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
-    config
-        .insert_json5("scouting/multicast/enabled", "false")
-        .map_err(|e| format!("Invalid Zenoh scouting config: {}", e))?;
 
     if let Some(ref router) = args.connect {
         tracing::info!("Connecting to Zenoh router at {}", router);
@@ -334,13 +331,13 @@ async fn run_deterministic_coordinator(
                     let mut vtime = 0;
                     let mut seq = 0;
 
-                    // 1. Try RfHeader if protocol is 802.15.4
+                    // 1. Try Rf802154Header if protocol is 802.15.4
                     if proto == Protocol::Rf802154 && payload.len() >= 4 {
                         let sz = u32::from_le_bytes(payload[0..4].try_into().unwrap_or([0;4])) as usize;
                         if sz > 0 && sz <= 1024 && payload.len() >= 4 + sz {
                              let hdr_slice = &payload[4..4 + sz];
                              // SAFETY: root_unchecked bypasses strict alignment check.
-                             let hdr = unsafe { virtmcu_api::rf_header::RfHeader::unpack_slice_unchecked(hdr_slice) };
+                             let hdr = unsafe { virtmcu_api::rf802154_header::root_as_rf_802154_header_unchecked(hdr_slice) };
                              vtime = hdr.delivery_vtime_ns();
                              seq = hdr.sequence_number();
                              data_opt = Some(payload[4 + sz..].to_vec());
@@ -606,7 +603,7 @@ async fn deliver_message(
         tracing::debug!("Legacy delivery to topic: {}", legacy_rx_topic);
 
         let legacy_payload = match msg.protocol {
-            Protocol::Rf802154 => virtmcu_api::encode_rf_frame(
+            Protocol::Rf802154 => virtmcu_api::encode_rf802154_frame(
                 msg.delivery_vtime_ns,
                 msg.sequence_number,
                 &msg.payload,

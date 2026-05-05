@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
-use virtmcu_api::rf_generated::rf_header;
+use virtmcu_api::rf802154_header;
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -154,7 +154,24 @@ extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     } else {
         unsafe { CStr::from_ptr(s.transport) }.to_string_lossy().into_owned()
     };
-    let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
+
+    // We MUST keep the CString alive for the pointer!
+    let router_env = std::env::var("VIRTMCU_ZENOH_ROUTER").ok();
+    let router_cstring = if !s.router.is_null() {
+        None
+    } else if let Some(r) = router_env {
+        alloc::ffi::CString::new(r).ok()
+    } else {
+        None
+    };
+
+    let router_ptr = if !s.router.is_null() {
+        s.router.cast_const()
+    } else if let Some(ref c) = router_cstring {
+        c.as_ptr()
+    } else {
+        ptr::null()
+    };
 
     let topic = if s.topic.is_null() {
         None
@@ -319,9 +336,41 @@ fn ieee802154_init_internal(
         topic_rx = alloc::format!("sim/rf/ieee802154/{node_id}/rx");
     }
 
-    let state_ptr_raw: *mut Virtmcu802154State =
-        Box::into_raw(Box::<core::mem::MaybeUninit<Virtmcu802154State>>::new_uninit()).cast();
-    let state_ptr_usize = state_ptr_raw as usize;
+    let mut state_box = Box::new(Virtmcu802154State {
+        _liveliness: None,
+        parent_ptr: parent,
+        irq,
+        transport: Arc::clone(&transport),
+        topic_tx: topic_tx.clone(),
+        subscription: None,
+        rx_timer: None,
+        backoff_timer: None,
+        ack_timer: None,
+        tx_timer: None,
+        inner: BqlGuarded::new(Virtmcu802154Inner {
+            node_id,
+            tx_fifo: [0; 128],
+            tx_len: 0,
+            rx_fifo: [0; 128],
+            rx_len: 0,
+            rx_read_pos: 0,
+            rx_rssi: 0,
+            status: 0,
+            state: RadioState::Idle,
+            pan_id: 0xFFFF,
+            short_addr: 0xFFFF,
+            ext_addr: 0,
+            rx_queue: Vec::with_capacity(16),
+            nb: 0,
+            be: 3,
+            ack_pending: false,
+            ack_seq: 0,
+            tx_sequence: 0,
+        }),
+    });
+
+    let state_ptr = core::ptr::from_mut(&mut *state_box);
+    let state_ptr_usize = state_ptr as usize;
 
     let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
         let state = unsafe { &mut *(state_ptr_usize as *mut Virtmcu802154State) };
@@ -329,44 +378,23 @@ fn ieee802154_init_internal(
     });
 
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
-    let subscription =
+    state_box.subscription =
         virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) // BQL_EXCEPTION: Safe Zenoh integration
             .ok();
 
-    let rx_timer =
-        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr_raw as *mut c_void) };
+    state_box.rx_timer =
+        Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void) });
 
-    let backoff_timer = unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, backoff_timer_cb, state_ptr_raw as *mut c_void)
-    };
+    state_box.backoff_timer = Some(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, backoff_timer_cb, state_ptr as *mut c_void)
+    });
 
-    let ack_timer =
-        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, ack_timer_cb, state_ptr_raw as *mut c_void) };
-    let tx_timer =
-        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, tx_timer_cb, state_ptr_raw as *mut c_void) };
+    state_box.ack_timer =
+        Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, ack_timer_cb, state_ptr as *mut c_void) });
+    state_box.tx_timer =
+        Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, tx_timer_cb, state_ptr as *mut c_void) });
 
-    let inner = Virtmcu802154Inner {
-        node_id,
-        tx_fifo: [0; 128],
-        tx_len: 0,
-        rx_fifo: [0; 128],
-        rx_len: 0,
-        rx_read_pos: 0,
-        rx_rssi: 0,
-        status: 0,
-        state: RadioState::Idle,
-        pan_id: 0xFFFF,
-        short_addr: 0xFFFF,
-        ext_addr: 0,
-        rx_queue: Vec::with_capacity(16),
-        nb: 0,
-        be: 3,
-        ack_pending: false,
-        ack_seq: 0,
-        tx_sequence: 0,
-    };
-
-    let liveliness = if transport_name == "zenoh" {
+    state_box._liveliness = if transport_name == "zenoh" {
         match unsafe { transport_zenoh::get_or_init_session(router) } {
             Ok(session) => {
                 let hb_topic = format!("sim/ieee802154/liveliness/{node_id}");
@@ -377,23 +405,8 @@ fn ieee802154_init_internal(
     } else {
         None
     };
-    let state = Virtmcu802154State {
-        _liveliness: liveliness,
-        parent_ptr: parent,
-        irq,
-        transport,
-        topic_tx,
-        subscription,
-        rx_timer: Some(rx_timer),
-        backoff_timer: Some(backoff_timer),
-        ack_timer: Some(ack_timer),
-        tx_timer: Some(tx_timer),
-        inner: BqlGuarded::new(inner),
-    };
 
-    unsafe { ptr::write(state_ptr_raw, state) };
-
-    state_ptr_raw
+    Box::into_raw(state_box)
 }
 
 fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
@@ -545,10 +558,13 @@ fn tx_real(
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let seq = inner.tx_sequence;
     inner.tx_sequence += 1;
-    let hdr = rf_header::encode(vtime, seq, inner.tx_len, 0, 255);
-    let mut msg = Vec::with_capacity(hdr.len() + inner.tx_len as usize);
-    msg.extend_from_slice(&hdr);
-    msg.extend_from_slice(&inner.tx_fifo[..inner.tx_len as usize]);
+    let msg = virtmcu_api::encode_rf802154_frame(
+        vtime,
+        seq,
+        &inner.tx_fifo[..inner.tx_len as usize],
+        0,
+        255,
+    );
 
     let _ = transport.publish(topic, &msg);
     let air_time_ns = (6 + inner.tx_len as u64) * 32_000;
@@ -605,13 +621,8 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let seq = inner.tx_sequence;
     inner.tx_sequence += 1;
-    let hdr = rf_header::encode(now, seq, 3, 0, 255);
-    let mut msg = Vec::with_capacity(hdr.len() + 3);
-    msg.extend_from_slice(&hdr);
-
-    msg.push(0x02);
-    msg.push(0x00);
-    msg.push(inner.ack_seq);
+    let ack_payload = [0x02, 0x00, inner.ack_seq];
+    let msg = virtmcu_api::encode_rf802154_frame(now, seq, &ack_payload, 0, 255);
 
     let _ = s.transport.publish(&s.topic_tx, &msg);
     inner.ack_pending = false;
@@ -623,21 +634,23 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
         return;
     }
 
-    if data.len() < rf_header::MIN_ENCODED_BYTES {
+    if data.len() < 4 {
         return;
     }
 
-    let (vtime, sequence, raw_size, rssi, _lqi) = match rf_header::decode(data) {
-        Some(fields) => fields,
-        None => return,
+    let header = match rf802154_header::size_prefixed_root_as_rf_802154_header(data) {
+        Ok(h) => h,
+        Err(_) => return,
     };
+
+    let vtime = header.delivery_vtime_ns();
+    let sequence = header.sequence_number();
+    let raw_size = header.size();
+    let rssi = header.rssi();
+
     let size = raw_size as usize;
 
-    let hdr_len = if data.len() >= 4 {
-        4 + u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize
-    } else {
-        return;
-    };
+    let hdr_len = 4 + u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     if size > 128 || data.len() < hdr_len + size {
         return;

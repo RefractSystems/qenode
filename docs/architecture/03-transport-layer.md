@@ -1,14 +1,16 @@
-# Chapter 3: Transport Layer
+# Transport Layer
 
 ## The Physical Foundation
 
-The VirtMCU transport layer manages the physical movement of bytes between simulation components. It provides a unified interface that abstracts the complexities of network sockets and inter-process communication.
+As introduced in the System Overview, the **Transport Layer** is the critical interconnect bridging the **Cyber Node** (e.g., QEMU) and the **Physical Node** (e.g., MuJoCo), as well as routing traffic between multiple Cyber nodes. 
+
+The VirtMCU transport layer manages the physical movement of bytes between these simulation components. It provides a unified interface that abstracts the complexities of network sockets and inter-process communication, ensuring that the theoretical requirements of a Cyber-Physical System (CPS) are met in practice.
 
 ---
 
 ## 1. The Dual-Transport Architecture
 
-To balance performance and scalability, VirtMCU implements two primary transport mechanisms:
+While conceptually any protocol could serve as the Transport Layer, VirtMCU currently implements two primary mechanisms to balance performance and scalability:
 
 ### Unix Domain Sockets (LPSC)
 *   **Best for**: Single-host co-simulation and local integration tests.

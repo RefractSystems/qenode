@@ -9,6 +9,8 @@ pub struct Error {
 extern "C" {
     /// A function
     pub fn virtmcu_error_setg(errp: *mut *mut Error, fmt: *const c_char);
+    /// A function
+    pub fn error_free(err: *mut Error);
 }
 
 #[macro_export]

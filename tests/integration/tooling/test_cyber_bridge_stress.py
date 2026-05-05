@@ -132,7 +132,7 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
     procs = []
     env = os.environ.copy()
     # Use the new robust connector env var
-    env["ZENOH_CONNECT"] = f'["{locator}"]'
+    env["ZENOH_CONNECT"] = locator
     env["ZENOH_TOPIC_PREFIX"] = unique_prefix
 
     async with AsyncExitStack() as stack:

@@ -1,4 +1,4 @@
-# Chapter 3: Testing Strategy & Guidelines
+# Testing Strategy & Guidelines
 
 ## Quality at Scale
 
@@ -34,6 +34,9 @@ Tests in `tests/integration/infrastructure/` explicitly test the Zenoh routing o
 ---
 
 ## 1. The Testing Pyramid
+
+### Tier 0: Schema Validation (TypeSpec)
+*   **TypeSpec Compilation**: Before any tests run, the `schema/world/main.tsp` is compiled. The strict typing and constraints of the IDL act as a "Tier 0" test, catching structural bugs in the World Model before Python or Rust code is ever generated or executed.
 
 ### Tier 1: Unit Tests (Fast & Logic-Only)
 *   **Rust**: `cargo test` within each peripheral crate. Focuses on register state machines and IRQ logic without QEMU.

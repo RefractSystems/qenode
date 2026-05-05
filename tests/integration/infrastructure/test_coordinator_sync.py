@@ -260,7 +260,7 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
         nonlocal quanta_completed
         # INSTANTLY reply 'done' with the same quantum
         # If the coordinator reset race exists, it drops this because it hasn't reset yet!
-        q = int.from_bytes(sample.payload.to_bytes(), "little")
+        q = int.from_bytes(sample.payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
         s.put(done_topic, vproto.CoordDoneReq(quantum=q, vtime_limit=0xFFFFFFFFFFFFFFFF, messages=[]).pack())
         quanta_completed += 1
         loop.call_soon_threadsafe(start_event.set)

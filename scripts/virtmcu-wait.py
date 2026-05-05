@@ -21,7 +21,7 @@ from typing import Any, cast
 import zenoh
 
 # Setup basic logging to stderr
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("virtmcu-wait")
 
 
@@ -79,7 +79,7 @@ async def main() -> None:
     parser.add_argument(
         "--router",
         type=str,
-        default=os.environ.get("ZENOH_ROUTER", "tcp/localhost:7447"),
+        default=os.environ.get("ZENOH_ROUTER"),
         help="Zenoh router endpoint",
     )
     parser.add_argument("--coordinator", action="store_true", help="Wait for the simulation coordinator to be ready")

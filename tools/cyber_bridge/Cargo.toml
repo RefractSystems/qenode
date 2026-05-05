@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 zenoh = "1.9.0"
+virtmcu-zenoh-config.workspace = true
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 byteorder = "1.5"
 virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }

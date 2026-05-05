@@ -87,4 +87,4 @@ temp/
 # Schema generation artifacts
 schema/node_modules/
 schema/dist/
-schema/rust_gen/target/
+schema/rust_gen/target/mermaid*.js
