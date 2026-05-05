@@ -205,5 +205,5 @@ By defining this in the World Schema, Marcus invokes the Parallel Discrete Event
 ---
 
 ## See Also
-*   **[ADR-010: Platform Description](./adr/ADR-010-platform-description-format.md)**: The rationale behind the move to YAML.
+*   **[ADR-010: Platform Description](../adr/ADR-010-platform-description-format.md)**: The rationale behind the move to YAML.
 *   **[Determinism and Chaos](./09-determinism-and-chaos.md)**: How `global_seed` and topology influence simulation stability.
