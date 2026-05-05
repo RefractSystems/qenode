@@ -215,6 +215,7 @@ async def test_uart_stress_integration(simulation: Simulation, guest_app_factory
 
         # 3. Blast data in chunks, and wait for each chunk to be echoed before sending the next.
         for i in range(0, total_bytes, chunk_size):
+            from tools.testing.utils import yield_now
             chunk_end = min(i + chunk_size, total_bytes)
             for j in range(i, chunk_end):
                 vtime = start_vtime_ns + (j * baud_1mbps_interval_ns)
@@ -224,7 +225,7 @@ async def test_uart_stress_integration(simulation: Simulation, guest_app_factory
                 # SOTA Flakiness Prevention: Yield the event loop periodically 
                 # to allow the Zenoh router to flush TCP buffers under high CI load.
                 if j % 128 == 0:
-                    await asyncio.sleep(0)  # SLEEP_EXCEPTION: yield event loop
+                    await yield_now()  # SLEEP_EXCEPTION: yield event loop
 
             # Wait for this chunk to be echoed back by advancing the clock
             def chunk_received(target: int = chunk_end) -> bool:
