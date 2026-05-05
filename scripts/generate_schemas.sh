@@ -26,5 +26,6 @@ echo "🦀 4. Generating Rust Models (Serde)..."
 cd schema/rust_gen
 cargo run
 cd ../..
+rustfmt tools/deterministic_coordinator/src/generated/topology.rs || true
 
 echo "✅ Code generation pipeline completed successfully!"

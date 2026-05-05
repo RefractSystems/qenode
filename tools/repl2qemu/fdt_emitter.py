@@ -29,6 +29,7 @@ COMPAT_MAP = {
     "SPI.PL022": "pl022",
     "SPI.ZenohBridge": "spi",
     "SPI.Echo": "spi-echo",
+    "Virtmcu.TransportHub": "virtmcu-transport-hub",
     "telemetry": "telemetry",
     "ieee802154": "ieee802154",
 }
@@ -352,6 +353,9 @@ class FdtEmitter:
                     lines.append(f"{indent}    {k};")
             elif isinstance(v, int):
                 lines.append(f"{indent}    {k} = <0x{v:x}>;")
+            elif isinstance(v, str) and v in self.phandles:
+                # If the value matches a known device name, emit it as a phandle reference
+                lines.append(f"{indent}    {k} = <{self._get_phandle(v)}>;")
             else:
                 lines.append(f'{indent}    {k} = "{v}";')
 

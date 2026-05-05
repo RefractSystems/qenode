@@ -37,4 +37,4 @@ def test_parsing(tmp_path: Path, guest_app_factory: Any) -> None:  # noqa: ANN40
     assert "uart0@9000000 {" in dtc_output
     assert "radio0@9001000 {" in dtc_output
 
-    assert 'transport = "zenoh";' in dtc_output
+    assert "transport = <" in dtc_output

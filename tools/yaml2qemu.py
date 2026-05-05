@@ -300,6 +300,26 @@ def main() -> None:
         logger.error(f"ERROR: {e}")
         sys.exit(1)
 
+    # Extract transport from world
+    world_data = yaml.safe_load(Path(args.input).read_text())
+    world = World.model_validate(world_data)
+    transport_val = "zenoh"
+    if world.topology and world.topology.transport:
+        transport_val = world.topology.transport.value
+
+    # Inject Transport Hub
+    hub_name = "hub0"
+    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
+    hub_dev = ReplDevice.create(
+        name=hub_name,
+        type_name="Virtmcu.TransportHub",
+        address_str="none",
+    )
+    if env_router:
+        hub_dev.properties["router"] = env_router
+        
+    platform.devices.insert(0, hub_dev)
+
     original_devices = list(platform.devices)
 
     # Extract architecture
@@ -309,28 +329,41 @@ def main() -> None:
         with Path(args.out_arch).open("w") as f:
             f.write(arch)
 
-    # Extract transport from topology
-    topology: dict[str, str] = {}  # topology is parsed in coordinator instead
-    transport = topology.get("transport", "zenoh")
-
     # Extract devices that require explicit CLI instantiation.
-    # chardev: CLI-only (no DTB node).
-    # telemetry: Handled via DTB + CLI-only side effects (not anymore, DTB only now).
-    # mmio-socket-bridge: Handled via DTB (both memory map and instantiation).
     cli_args = []
     filtered_devices = []
-    env_router = os.environ.get("VIRTMCU_ZENOH_ROUTER")
     for dev in platform.devices:
         if dev.type_name == "mmio-socket-bridge" and "socket-path" not in dev.properties:
             logger.error("Missing mandatory property: socket-path")
             sys.exit(1)
+
+        # Link all virtmcu peripherals to the hub
+        is_virtmcu_native = dev.type_name in (
+            "telemetry",
+            "ieee802154",
+            "zenoh-wifi",
+            "wifi",
+            "spi",
+            "spi-echo",
+            "canfd",
+            "flexray",
+            "lin",
+            "clock",
+            "ui",
+            "actuator",
+            "s32k144-lpuart",
+        )
+        if is_virtmcu_native:
+            dev.properties["transport"] = hub_name
+
         if dev.type_name == "chardev":
             node = dev.properties.get("node", "0")
             router = dev.properties.get("router") or env_router
             topic = dev.properties.get("topic")
             chardev_id = dev.properties.get("id", f"chr_{dev.name}")
 
-            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport}"
+            # chardev is not yet migrated to Hub QOM links, so we keep string transport for now.
+            chardev_arg = f"virtmcu,id={chardev_id},node={node},transport={transport_val}"
             if router:
                 chardev_arg += f",router={router}"
             if topic:
@@ -341,10 +374,7 @@ def main() -> None:
             cli_args.append("-serial")
             cli_args.append(f"chardev:{chardev_id}")
         elif dev.type_name in ("telemetry", "ieee802154"):
-            # These are now handled via DTB but need transport hint
-            dev.properties["transport"] = transport
-            if env_router and "router" not in dev.properties:
-                dev.properties["router"] = env_router
+            # These are now handled via DTB
             filtered_devices.append(dev)
         elif dev.type_name == "mmio-socket-bridge":
             # Handled via DTB (both memory map and instantiation).
