@@ -1,4 +1,4 @@
-# Chapter 5: Emulator Internals
+# Emulator Internals
 
 ## Learning Objectives
 After this chapter, you can:

@@ -1,4 +1,4 @@
-# Chapter 8: Observability & AI Co-pilot
+# Observability & AI Co-pilot
 
 ## Seeing the Unseen
 

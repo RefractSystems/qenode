@@ -10,6 +10,9 @@ This volume explores the rigorous testing strategies that prevent regressions, t
 
 ## Volume Contents
 
+### [The VirtMCU Engineering Mandates](09-engineering-mandates.md)
+The immutable laws of the project. We define our standards for Binary Fidelity, Global Determinism, and the Enterprise Quality Mandate.
+
 ### [The Testing Strategy: From Unit to Integration](03-testing-strategy.md)
 The hierarchy of verification. We analyze how to balance fast Rust unit tests with comprehensive Python-based integration tests.
 

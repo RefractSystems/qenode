@@ -1,8 +1,8 @@
-# Chapter 3: Transport Layer
+# Transport Layer
 
 ## The Physical Foundation
 
-As introduced in Chapter 1, the **Transport Layer** is the critical interconnect bridging the **Cyber Node** (e.g., QEMU) and the **Physical Node** (e.g., MuJoCo), as well as routing traffic between multiple Cyber nodes. 
+As introduced in the System Overview, the **Transport Layer** is the critical interconnect bridging the **Cyber Node** (e.g., QEMU) and the **Physical Node** (e.g., MuJoCo), as well as routing traffic between multiple Cyber nodes. 
 
 The VirtMCU transport layer manages the physical movement of bytes between these simulation components. It provides a unified interface that abstracts the complexities of network sockets and inter-process communication, ensuring that the theoretical requirements of a Cyber-Physical System (CPS) are met in practice.
 

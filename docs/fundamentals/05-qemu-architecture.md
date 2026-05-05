@@ -1,4 +1,4 @@
-# Chapter 5: Emulation Architecture and the Tiny Code Generator
+# Emulation Architecture and the Tiny Code Generator
 
 ## 5.1 The Virtualization Discrepancy
 In the realm of computer science, "virtualization" and "emulation" are frequently conflated, yet they represent fundamentally distinct paradigms. Virtualization involves executing guest instructions directly on the host CPU, utilizing hardware extensions (such as Intel VT-x) to trap privileged operations. This mandates that the guest and host share the identical Instruction Set Architecture (ISA).

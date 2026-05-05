@@ -1,4 +1,4 @@
-# Chapter 9: Determinism & Chaos Engineering
+# Determinism & Chaos Engineering
 
 ## The Determinism Invariant
 
@@ -26,7 +26,7 @@ This ensures that even if Node A's messages arrive at the host CPU before Node B
 
 ## 2. The synchronization Barrier Protocol
 
-To maintain causal integrity, VirtMCU uses the **synchronization barrier protocol** (first introduced in Chapter 2) that prevents "clock drift" between the physics engine and the emulated nodes.
+To maintain causal integrity, VirtMCU uses the **synchronization barrier protocol** (first introduced in the Temporal Core) that prevents "clock drift" between the physics engine and the emulated nodes.
 
 1.  **TA Advance**: TimeAuthority (TA) requests a clock advance.
 2.  **Execution**: Nodes run their firmware for the requested quantum $Q$.

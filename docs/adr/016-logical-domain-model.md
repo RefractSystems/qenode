@@ -7,7 +7,7 @@ Proposed
 VirtMCU has transitioned from a flat, emulator-centric configuration format (.repl) to a hierarchical World YAML. Currently, the schema validation is fragmented:
 1.  **Python (`world_schema.py`)**: Uses Pydantic for authoring validation.
 2.  **Rust (`topology.rs`)**: Uses Serde for execution-time parsing.
-3.  **Documentation (`Chapter 10`)**: Describes the intent but is not programmatically linked to the code.
+3.  **Documentation (World Specification)**: Describes the intent but is not programmatically linked to the code.
 
 To achieve Enterprise SOTA standards and align with our OpenUSD roadmap (ADR-010), we need a **Single Source of Truth (SSoT)**. We have selected **TypeSpec** as the IDL to define this model. 
 

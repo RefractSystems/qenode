@@ -1,4 +1,4 @@
-# Chapter 6: The QEMU Object Model (QOM)
+# The QEMU Object Model (QOM)
 
 ## 6.1 The Necessity of a Runtime Type System
 QEMU is implemented primarily in the C programming language. Unlike C++ or Java, C lacks native, language-level constructs for object-oriented paradigms such as inheritance, polymorphism, and dynamic dispatch (virtual methods). However, emulating an SoC requires managing a vast taxonomy of deeply interrelated hardware components—CPUs, interrupt controllers, bus bridges, and peripheral interfaces. 

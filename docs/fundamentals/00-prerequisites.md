@@ -1,4 +1,4 @@
-# Chapter 0: Prerequisites
+# Prerequisites
 
 Welcome to the Graduate Course on VirtMCU. This course is designed for students with a strong background in software engineering who wish to master the art of deterministic multi-node firmware simulation. Before we dive into the architecture of VirtMCU, we must ensure a common baseline of technical proficiency.
 
@@ -29,9 +29,9 @@ We use `git`, `make`, `meson`, and `ninja`.
 ## 0.2 Learning Path
 
 If you are coming from:
-*   **Theoretical CS/ML:** Start with Fundamentals Chapter 1 (SoC Anatomy) and Chapter 5 (QEMU Architecture).
-*   **Embedded Engineering:** You can likely skim Chapter 2 (MMIO) but must focus on Chapter 8 (PDES and Virtual Time).
-*   **Pure Software Engineering:** Pay close attention to Chapter 4 (Device Tree) and Chapter 6 (QOM).
+*   **Theoretical CS/ML:** Start with Fundamentals the SoC Anatomy section and the QEMU Architecture section.
+*   **Embedded Engineering:** You can likely skim the MMIO section but must focus on the PDES and Virtual Time section.
+*   **Pure Software Engineering:** Pay close attention to the Device Tree section and the QOM section.
 
 ## 0.3 Exercises
 

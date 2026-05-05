@@ -1,0 +1,16 @@
+sysbus:
+    init:
+        Tag <0x09000000, 0x09001000> "UART" 0x0
+
+memory: Memory.MappedMemory @ sysbus 0x40000000
+    size: 0x08000000
+
+uart0: UART.PL011 @ sysbus 0x09000000
+    -> gic@1
+
+gic: IRQControllers.ARM_GenericInterruptController @ sysbus 0x08000000
+    architectureVersion: .GICv2
+
+cpu: CPU.ARMv7A @ sysbus
+    cpuType: "cortex-a15"
+    genericInterruptController: gic

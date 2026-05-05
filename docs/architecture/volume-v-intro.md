@@ -10,33 +10,33 @@ This volume explores the frontiers of distributed simulation. We analyze how to 
 
 ## Volume Contents
 
-### 19. [Cyber-Physical Integration: Bridging the Gap](07-cyber-physical-integration.md)
+### [Cyber-Physical Integration: Bridging the Gap](07-cyber-physical-integration.md)
 The theory of co-simulation. We analyze how to synchronize discrete virtual time with the continuous time of physical engines.
 
-### 20. [Co-simulation Strategies: SAL and AAL](../tutorials/lesson10-sal-aal/README.md)
+### [Lesson 12: Co-simulation Strategies: SAL and AAL](../tutorials/lesson12-cyber-physical-bridge/README.md)
 The Sensor/Actuator Abstraction Layers. We explore the SOTA pattern for isolating firmware from the specifics of the physical engine, ensuring "Binary Fidelity" even in complex co-simulations.
 
-### 21. [Observability & AI-Augmented Debugging](08-observability-and-ai.md)
+### [Observability & AI-Augmented Debugging](08-observability-and-ai.md)
 Seeing into the Matrix. We discuss how to capture massive telemetry streams and use AI to identify anomalies and race conditions across multi-node networks.
 
 ---
 
 ## Advanced Lab Series
 
-### [Multi-Node Networking](../tutorials/lesson6-multi-node/README.md)
+### [Lesson 7: Multi-Node Networking](../tutorials/lesson07-multi-node-networking/README.md)
 Construct your first distributed universe. Connect multiple ARM nodes over a deterministic virtual bus.
 
-### [Zenoh Clock Synchronization](../tutorials/lesson7-zenoh-clock/README.md)
+### [Lesson 8: Zenoh Clock Synchronization](../tutorials/lesson08-zenoh-clock/README.md)
 Master the "Neural Link." Implement high-speed clock synchronization across distributed host machines using the Zenoh protocol.
 
-### [Interactive UART Communication](../tutorials/lesson8-interactive-uart/README.md)
+### [Lesson 9: Interactive UART Communication](../tutorials/lesson09-interactive-uart/README.md)
 Real-time human-in-the-loop simulation. Learn how to bridge virtual UARTs to interactive terminals without breaking temporal determinism.
 
-### [SystemC & CAN Bus Integration](../tutorials/lesson9-systemc-can/README.md)
-Co-simulating with industry standards. Learn how to integrate VirtMCU with SystemC models and virtualized CAN networks.
+### [Lesson 10: Hardware Co-simulation](../tutorials/lesson10-hardware-cosimulation/README.md)
+Connecting the emulator to external hardware models via low-latency Unix sockets.
 
-### [Remote Port Extensions](../tutorials/lesson11.3-remote-port/README.md)
-Distributed execution. Learn how to offload peripheral execution to remote processes or hardware while maintaining lockstep synchronization.
+### [Lesson 11: SystemC & CAN Bus Integration](../tutorials/lesson11-systemc-can/README.md)
+Co-simulating with industry standards. Learn how to integrate VirtMCU with SystemC models and virtualized CAN networks.
 
 ---
 
