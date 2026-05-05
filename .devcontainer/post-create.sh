@@ -89,6 +89,14 @@ if ! command -v mdbook &> /dev/null; then
     echo "✓ mdbook installed."
 fi
 
+echo "==> Installing mdbook-mermaid..."
+if ! command -v mdbook-mermaid &> /dev/null; then
+    MDBOOK_ARCH=$(uname -m)
+    curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
+    sudo mv /tmp/mdbook-mermaid /usr/local/bin/mdbook-mermaid
+    echo "✓ mdbook-mermaid installed."
+fi
+
 echo "==> Initializing Workspace Dependencies..."
 # Ensure /workspace is a safe directory (idempotent)
 git config --global --replace-all safe.directory /workspace

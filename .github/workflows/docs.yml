@@ -28,6 +28,13 @@ jobs:
         uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: 'latest'
+      - name: Setup mdbook-mermaid
+        run: |
+          mkdir -p bin
+          curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C bin
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: Install Mermaid JS
+        run: mdbook-mermaid install
       - name: Build with mdBook
         run: mdbook build
       - name: Upload artifact
