@@ -420,7 +420,7 @@ lint-simulation-usage:
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
-	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json" \
+	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js" \
 		--ignore-words-list="virtmcu,zenoh,qemu,qmp,riscv,TE" .
 	@echo "✓ codespell passed."
 
