@@ -1,4 +1,4 @@
-# Chapter 2: MMIO and Registers
+# MMIO and Registers
 
 Memory-Mapped I/O (MMIO) is the interface through which software controls hardware. This chapter traces an MMIO operation from the physical silicon level up to the emulator code.
 

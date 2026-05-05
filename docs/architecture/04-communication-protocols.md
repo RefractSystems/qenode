@@ -1,8 +1,8 @@
-# Chapter 4: Communication Protocols
+# Communication Protocols
 
 ## The Logical Plane
 
-While the Transport Layer (Chapter 3) moves raw bytes, the Communication Protocol layer defines the **meaning** of those bytes. VirtMCU standardizes all logical interactions on a deterministic, schema-first Data Plane.
+While the Transport Layer (the Transport Layer chapter) moves raw bytes, the Communication Protocol layer defines the **meaning** of those bytes. VirtMCU standardizes all logical interactions on a deterministic, schema-first Data Plane.
 
 ---
 

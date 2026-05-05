@@ -145,8 +145,6 @@ mod tests {
     use super::*;
     use core::time::Duration;
     use std::time::Instant;
-    use zenoh::Config;
-
     const TEST_RECV_TIMEOUT: Duration = Duration::from_millis(50);
     const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(1);
     const TEST_DROP_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
@@ -155,7 +153,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_sends_payload() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/payload";
 
@@ -187,7 +185,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_non_blocking_under_load() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/load";
 
@@ -214,7 +212,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drop_joins_thread() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/drop";
 
@@ -238,7 +236,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drops_when_full() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/overflow";
 

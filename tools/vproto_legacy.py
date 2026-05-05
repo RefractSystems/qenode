@@ -20,6 +20,7 @@ SYSC_MSG_IRQ_CLEAR = 2
 
 SIZE_VIRTMCU_HANDSHAKE = vproto.SIZE_VIRTMCU_HANDSHAKE
 
+
 @dataclass
 class VirtmcuHandshake:
     magic: int  # uint32_t
@@ -47,7 +48,9 @@ class VirtmcuHandshake:
                 data_dict[f] = 0
         return target_cls(**data_dict).pack()
 
+
 SIZE_MMIO_REQ = vproto.SIZE_MMIO_REQ
+
 
 @dataclass
 class MmioReq:
@@ -81,7 +84,9 @@ class MmioReq:
                 data_dict[f] = 0
         return target_cls(**data_dict).pack()
 
+
 SIZE_SYSC_MSG = vproto.SIZE_SYSC_MSG
+
 
 @dataclass
 class SyscMsg:
@@ -111,7 +116,9 @@ class SyscMsg:
                 data_dict[f] = 0
         return target_cls(**data_dict).pack()
 
+
 SIZE_CLOCK_ADVANCE_REQ = vproto.SIZE_CLOCK_ADVANCE_REQ
+
 
 @dataclass
 class ClockAdvanceReq:
@@ -140,7 +147,9 @@ class ClockAdvanceReq:
                 data_dict[f] = 0
         return target_cls(**data_dict).pack()
 
+
 SIZE_CLOCK_READY_RESP = vproto.SIZE_CLOCK_READY_RESP
+
 
 @dataclass
 class ClockReadyResp:
@@ -169,4 +178,3 @@ class ClockReadyResp:
             if f not in data_dict:
                 data_dict[f] = 0
         return target_cls(**data_dict).pack()
-

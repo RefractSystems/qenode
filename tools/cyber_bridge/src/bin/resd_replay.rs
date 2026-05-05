@@ -36,13 +36,16 @@ async fn main() {
     );
 
     // Zenoh session
-    let mut config = zenoh::Config::default();
-    config.insert_json5("mode", "\"client\"").unwrap();
-    config
-        .insert_json5("scouting/multicast/enabled", "false")
-        .unwrap();
+    let mut config = virtmcu_zenoh_config::client_config();
     if let Ok(connect) = env::var("ZENOH_CONNECT") {
-        config.insert_json5("connect/endpoints", &connect).unwrap();
+        let json_connect = if connect.starts_with('[') && connect.ends_with(']') {
+            connect
+        } else {
+            format!("[\"{connect}\"]")
+        };
+        config
+            .insert_json5("connect/endpoints", &json_connect)
+            .unwrap();
     }
     let session = zenoh::open(config).await.unwrap();
 

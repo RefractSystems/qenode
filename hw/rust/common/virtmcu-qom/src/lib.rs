@@ -7,6 +7,14 @@ extern crate alloc;
 extern crate std;
 
 /// Character device (Chardev) bindings.
+#[macro_export]
+/// A macro to count the number of items in a list.
+macro_rules! count_items {
+    () => { 0 };
+    ($head:expr $(, $tail:expr)* $(,)?) => { 1 + $crate::count_items!($($tail),*) };
+}
+
+/// Character device (Chardev) bindings.
 pub mod chardev;
 /// Co-simulation bridging abstractions.
 pub mod cosim;

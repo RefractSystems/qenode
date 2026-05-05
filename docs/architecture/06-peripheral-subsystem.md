@@ -1,4 +1,4 @@
-# Chapter 6: Peripheral Subsystem
+# Peripheral Subsystem
 
 ## Native Rust Peripherals
 
@@ -39,29 +39,45 @@ let response = self.bridge.send_and_wait(request, TIMEOUT_MS);
 
 ---
 
-## 2. Peripheral Fidelity & Timing
+## 2. Strict Dependency Injection (DI)
 
-VirtMCU prioritizes **Software-Observable Fidelity** over microscopic cycle-accuracy. We model the physical duration of transmissions to ensure that firmware sees realistic baud rates and bus contention.
-
-### The Problem of Immediate Execution
-In a simple emulator, writing to a UART is "instant." A CPU could blast 1,000 bytes into a UART in 1,000 virtual nanoseconds. This creates a "virtual time flood" that violates physical laws and hides real firmware bugs (like buffer overflows).
-
-### The Solution: Event-Driven Backpressure
-VirtMCU standardizes on **Event-Driven Virtual Timers** (Option C). 
-1.  **Accept**: The peripheral accepts the data into a software FIFO instantly from the CPU's perspective.
-2.  **Schedule**: It calculates the physical transmission delay (e.g., 86.8 µs for a UART byte) and schedules a `QEMUTimer` tied to `QEMU_CLOCK_VIRTUAL`.
-3.  **Execute**: Only when the timer fires is the byte "dispatched" to the simulation bus and the `TX_EMPTY` interrupt raised.
-
-This ensures the firmware is naturally throttled to the hardware's physical limits while maintaining the high execution speed required for CI/CD.
+...
 
 ---
 
-## 3. Serialization & The Wire
+## 3. The Engineering Standards
 
-All data sent over the simulation bus must be deterministic and cross-platform.
-- **Explicit Endianness**: Always use `.to_le_bytes()`.
-- **FlatBuffers**: Use the core schema (`core.fbs`) for all inter-process messages.
-- **Zero-Copy**: Telemetry and high-volume data use zero-copy FlatBuffers construction to minimize host overhead.
+To ensure enterprise-grade reliability and binary fidelity, every peripheral must adhere to the following standards.
+
+### 1. The FFI Gate (Layout Verification)
+QEMU is written in C; VirtMCU peripherals are written in Rust. The boundary between them is a set of shared `struct` layouts. If these layouts drift (e.g., after a QEMU version bump), the result is a catastrophic segfault.
+- **Mandatory Asserts**: All core QOM structs in Rust MUST contain `assert!` checks for `size_of` and `offset_of` within their `TypeInit`.
+- **The Gate**: Before any build is promoted, `./scripts/check-ffi.py` must be executed to verify ground truth against the QEMU binary. Use `--fix` to auto-sync Rust layouts to C.
+
+### 2. MMIO Relative Offsets
+The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute guest addresses. 
+- **Rule**: Peripheral models must NEVER attempt to add a base address to the received offset. 
+- **Endianness**: VirtMCU standardizes on **Little Endian** for the simulation wire. `0xDEADC0DE` is sent as `DE C0 AD DE`.
+
+### 3. Safe Peripheral Teardown
+Thread-spawning peripherals are the #1 source of "Stale Process" and "Use-After-Free" bugs. Every peripheral must implement the **Canonical Shutdown Sequence**:
+1.  **Set `running = false`** (while holding the state lock).
+2.  **Broadcast** all condition variables to wake blocked threads.
+3.  **Wait via `drain_cond`** until `active_vcpu_count == 0`. We use a "Drain Pattern" rather than bounded spinloops to avoid time-bomb UAFs.
+4.  **Join** the background thread.
+5.  **Drop** the `Arc<SharedState>`.
+
+### 4. Unsafe Rust: Precise Rules
+- **Packed Structs**: Always use `ptr::read_unaligned` when accessing fields of a `#[repr(packed)]` struct to avoid undefined behavior.
+- **Serialization**: Use `to_le_bytes()` and `from_le_bytes()`. Never use `mem::transmute` for wire protocols.
+- **NE_BYTES Ban**: `to_ne_bytes()` and `from_ne_bytes()` are strictly BANNED for any value that leaves the process.
+- **FFI Scoping**: Limit `unsafe` blocks to a single FFI call. Never aggregate multiple operations into one block.
+
+---
+
+## 4. Peripheral Fidelity & Timing
+
+...
 
 ---
 

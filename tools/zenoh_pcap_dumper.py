@@ -9,6 +9,7 @@ for standalone recording.
 import argparse
 import asyncio
 import logging
+import os
 
 from tools.wireshark.virtmcu_extcap import capture_loop
 
@@ -16,15 +17,15 @@ logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    
+
     parser = argparse.ArgumentParser(description="VirtMCU Zenoh PCAP Dumper")
     parser.add_argument("-o", "--output", required=True, help="Output PCAP file path (use '-' for stdout)")
-    parser.add_argument("-s", "--session", default="tcp/localhost:7447", help="Zenoh router endpoint")
+    parser.add_argument("-s", "--session", default=os.environ.get("ZENOH_ROUTER"), help="Zenoh router endpoint")
     parser.add_argument("-t", "--topic", default="sim/coord/**/rx", help="Zenoh topic to subscribe to")
     parser.add_argument("--legacy", action="store_true", help="Subscribe to legacy sim/comm/** topics")
 
     args = parser.parse_args()
-    
+
     topic = args.topic
     if args.legacy and topic == "sim/coord/**/rx":
         topic = "sim/comm/**"

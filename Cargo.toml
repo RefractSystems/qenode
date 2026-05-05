@@ -24,7 +24,7 @@ members = [
     "hw/rust/comms/spi",
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
-    "tools/deterministic_coordinator", "tools/stress_adapter",
+    "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
 ]
 resolver = "2"
 
@@ -42,6 +42,7 @@ flatbuffers = "25.12.19"
 crossbeam-channel = "0.5"
 byteorder = "1.5"
 virtmcu-api = { path = "hw/rust/common/virtmcu-api" }
+virtmcu-zenoh-config = { path = "hw/rust/common/virtmcu-zenoh-config" }
 virtmcu-qom = { path = "hw/rust/common/virtmcu-qom" }
 transport-zenoh = { path = "hw/rust/backbone/transport-zenoh" }
 transport-unix = { path = "hw/rust/backbone/transport-unix" }

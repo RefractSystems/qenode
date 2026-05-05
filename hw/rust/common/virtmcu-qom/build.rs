@@ -1,13 +1,7 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Build script for virtmcu-qom.
-
-use std::env;
-use std::path::PathBuf;
-
 #[allow(clippy::too_many_lines)]
 fn main() {
-    println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)");
-    println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)");
+    println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)"); // PRINT_EXCEPTION: cargo build script protocol
+    println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)"); // PRINT_EXCEPTION: cargo build script protocol
 
     // Skip everything if running under Miri as it cannot handle FFI/C
     if std::env::var("CARGO_CFG_MIRI").is_ok() || std::env::var("MIRI_SYSROOT").is_ok() {
@@ -15,7 +9,7 @@ fn main() {
         std::fs::write(out_path.join("bindings.rs"), "").unwrap();
         let wrapper_path = out_path.join("qemu_bindings.rs");
         std::fs::write(&wrapper_path, "pub mod qemu {}").unwrap();
-        println!("cargo:rustc-cfg=qemu_headers_missing");
+        println!("cargo:rustc-cfg=qemu_headers_missing"); // PRINT_EXCEPTION: cargo build script protocol
         return;
     }
 
@@ -35,6 +29,7 @@ fn main() {
     if !osdep_h.exists() {
         if std::env::var("VIRTMCU_SKIP_QEMU_HEADERS_WARNING").is_err() {
             println!(
+                // PRINT_EXCEPTION: cargo build script protocol
                 "cargo:warning=QEMU headers not found at {}. Skipping binding and FFI generation.",
                 osdep_h.display()
             );
@@ -45,14 +40,14 @@ fn main() {
                                                                                                     // Create an empty wrapper too
         let wrapper_path = out_path.join("qemu_bindings.rs");
         std::fs::write(&wrapper_path, "pub mod qemu {}").unwrap();
-        println!("cargo:rustc-cfg=qemu_headers_missing");
+        println!("cargo:rustc-cfg=qemu_headers_missing"); // PRINT_EXCEPTION: cargo build script protocol
         return;
     }
 
-    println!("cargo:rustc-cfg=qemu_headers_present");
-    println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-changed=src/ffi.c");
-    println!("cargo:rerun-if-changed=src/ffi.h");
+    println!("cargo:rustc-cfg=qemu_headers_present"); // PRINT_EXCEPTION: cargo build script protocol
+    println!("cargo:rerun-if-changed=wrapper.h"); // PRINT_EXCEPTION: cargo build script protocol
+    println!("cargo:rerun-if-changed=src/ffi.c"); // PRINT_EXCEPTION: cargo build script protocol
+    println!("cargo:rerun-if-changed=src/ffi.h"); // PRINT_EXCEPTION: cargo build script protocol
 
     let mut builder = cc::Build::new();
     builder.define("_GNU_SOURCE", None);
@@ -62,7 +57,7 @@ fn main() {
     }
 
     builder
-        .file("src/ffi.c")
+        .include("src")
         .include(format!("{qemu_dir}/include"))
         .include(&qemu_build_dir)
         .include(format!("{qemu_build_dir}/qapi"))
@@ -70,16 +65,14 @@ fn main() {
         .include("/usr/include/glib-2.0")
         .include("/usr/lib/aarch64-linux-gnu/glib-2.0/include")
         .include("/usr/lib/x86_64-linux-gnu/glib-2.0/include")
-        .warnings(false)
-        .flag_if_supported("-Wno-unused-parameter")
-        .flag_if_supported("-Wno-sign-compare");
+        .flag("-w")
+        .flag("-Wno-unused-parameter")
+        .flag("-Wno-sign-compare")
+        .file("src/ffi.c")
+        .compile("virtmcu-qom-ffi");
 
-    if std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1" {
-        builder.flag("-fsanitize=address");
-        builder.flag("-fsanitize=undefined");
-    }
-
-    builder.compile("virtmcu_ffi");
+    let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let bindings_file = out_path.join("bindings.rs");
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
@@ -89,39 +82,41 @@ fn main() {
         .clang_arg(format!("-I{qemu_dir}/linux-headers"))
         .clang_arg("-I/usr/include/glib-2.0")
         .clang_arg("-I/usr/lib/aarch64-linux-gnu/glib-2.0/include")
-        .clang_arg("-I/usr/lib/x86_64-linux-gnu/glib-2.0/include") // support x86_64 too just in case
-        .allowlist_type("TypeInfo")
-        .allowlist_type("ObjectClass")
-        .allowlist_type("Property")
+        .clang_arg("-I/usr/lib/x86_64-linux-gnu/glib-2.0/include")
+        .clang_arg("-D_GNU_SOURCE")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_type("DeviceState")
-        .allowlist_type("DeviceClass")
         .allowlist_type("SysBusDevice")
         .allowlist_type("MemoryRegion")
-        .allowlist_type("MemoryRegionOps")
-        .allowlist_type("Chardev")
-        .allowlist_type("ChardevClass")
+        .allowlist_type("CharBackend")
         .allowlist_type("NetClientState")
         .allowlist_type("NetClientInfo")
-        .allowlist_type("CPUState")
-        .allowlist_type("QemuMutex")
-        .allowlist_type("QemuCond")
-        .allowlist_type("CanBusClientState")
-        .allowlist_type("CanBusClientInfo")
-        .allowlist_type("qemu_can_frame")
-        .allowlist_type("CanHostState")
-        .layout_tests(true)
-        .use_core()
+        .allowlist_type("QemuOpts")
+        .allowlist_type("Error")
+        .allowlist_type("SSIPeripheral")
+        .allowlist_type("SSIBus")
+        .allowlist_type("QEMUTimer")
+        .allowlist_type("QEMUClockType")
+        .allowlist_function("qdev_.*")
+        .allowlist_function("sysbus_.*")
+        .allowlist_function("memory_region_.*")
+        .allowlist_function("qemu_chr_fe_.*")
+        .allowlist_function("qemu_new_timer_.*")
+        .allowlist_function("timer_.*")
+        .allowlist_function("qemu_clock_get_ns")
+        .allowlist_function("virtmcu_.*")
+        .allowlist_function("object_.*")
+        .allowlist_function("ssi_.*")
+        .allowlist_var("TYPE_.*")
         .generate()
-        .unwrap_or_else(|_| std::process::abort()); // "Unable to generate bindings");
+        .expect("Unable to generate bindings");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let bindings_file = out_path.join("bindings.rs");
-    bindings.write_to_file(&bindings_file).unwrap_or_else(|_| std::process::abort()); // "Couldn't write bindings!");
+    bindings.write_to_file(&bindings_file).expect("Couldn't write bindings!");
 
     // Create a self-contained wrapper module to isolate lints
     let wrapper_path = out_path.join("qemu_bindings.rs");
     let wrapper_content = format!(
-        "#[allow(dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all, clippy::pedantic, unnecessary_transmutes)]\n\
+        "#[allow(dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all, clippy::pedantic, unnecessary_transmutes)] // ALLOW_EXCEPTION: Bindgen-generated QEMU bindings\n\
          pub mod qemu {{\n\
              include!({:?});\n\
          }}",

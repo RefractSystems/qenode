@@ -1,4 +1,4 @@
-# Chapter 8: Observability & AI Co-pilot
+# Observability & AI Co-pilot
 
 ## Seeing the Unseen
 
@@ -40,7 +40,7 @@ Because VirtMCU is deterministic, we can perform **Record & Replay** debugging.
 
 This removes the "Heisenbug" problem from embedded software development, making even the most complex multi-node races reliably reproducible.
 
-### PCAP Link-Layer Schema
+### PCAP Link-Layer Schema and Wireshark Integration
 VirtMCU exports binary network and telemetry traces using the **DLT_USER0 (147)** link layer. We multiplex the different node protocols via a 2-byte protocol identifier immediately following the standard 8-byte src/dst routing header:
 *   Protocol `1`: Ethernet
 *   Protocol `2`: UART
@@ -48,3 +48,9 @@ VirtMCU exports binary network and telemetry traces using the **DLT_USER0 (147)*
 *   Protocol `4`: CAN-FD
 *   Protocol `5`: FlexRay
 *   Protocol `255`: VirtMCU Test Infrastructure (Python topics, direction markers).
+
+**Live Observability**:
+To bring this data to life, VirtMCU now provides deep integration with Wireshark. This allows engineers to analyze distributed, multi-node communication in "virtual real-time."
+- **Extcap Plugin**: The `tools/wireshark/virtmcu_extcap.py` plugin enables Wireshark to natively capture live traffic streaming over the VirtMCU Zenoh bus. 
+- **Lua Dissector**: The `tools/wireshark/virtmcu_dissector.lua` script provides high-level protocol decoding (e.g., UART payloads, CAN-FD frames) within the Wireshark UI, perfectly aligning the capture timestamps with the simulation's deterministic `delivery_vtime_ns`.
+- **Offline Analysis**: Alternatively, traffic can be recorded headlessly using the `tools/zenoh_pcap_dumper.py` utility for later analysis.

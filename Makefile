@@ -283,12 +283,13 @@ lint-exports:
 	@uv run --active python3 scripts/verify-exports.py
 	@echo "✓ Plugin exports verified."
 
-# Check Rust documentation for warnings
+# Check mdbook documentation
 lint-docs:
 	@echo "==> Checking Rust documentation..."
 	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 	@echo "✓ Rust documentation check passed."
 	@echo "==> Checking mdbook documentation..."
+	@mdbook-mermaid install
 	@mdbook build
 	@rm -rf target/book
 	@echo "✓ mdbook documentation check passed."
@@ -313,7 +314,11 @@ lint-audit:
 lint-python:
 	@echo "==> Check for banned struct usage..."
 	@if grep -rnIE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
-		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
+		echo "❌ ERROR: Banned struct usage detected. Use vproto.py or FlatBuffers wrappers."; exit 1; \
+	fi
+	@echo "==> Check for banned path bootstrapping bypasses..."
+	@if grep -rnIE "noqa: TID251" tests/ tools/ scripts/ --exclude-dir=__pycache__ ; then \
+		echo "❌ ERROR: Bypassing TID251 (path bootstrapping ban) is strictly forbidden. Rely on uv package boundaries."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
 	@if grep -rnIE "struct\.(pack|unpack)" scripts/ --exclude-dir=__pycache__ ; then \
@@ -416,7 +421,7 @@ lint-simulation-usage:
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
-	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json" \
+	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js" \
 		--ignore-words-list="virtmcu,zenoh,qemu,qmp,riscv,TE" .
 	@echo "✓ codespell passed."
 
@@ -517,6 +522,8 @@ lint-rust:
 	@echo "==> Checking for stale QEMU plugins..."
 	@uv run --active python3 scripts/check-stale-so.py
 	@echo "✓ No banned thread::sleep found."
+	@echo "==> Checking for banned ptr::copy_nonoverlapping in hw/rust/ (Mandate 15)..."
+	@python3 scripts/lint_rust_mandate_15.py
 	@echo "==> Checking for banned Mutex<T> in peripheral state structs..."
 	@# std::sync::Mutex<T> is banned in zenoh-* peripheral state structs because every
 	@# caller already holds the BQL, making the Mutex permanently uncontended and its
@@ -1026,15 +1033,17 @@ distclean: clean
 # Documentation
 # ------------------------------------------------------------------------------
 
-# Build the mdBook documentation
+# Build the mdBook documentation (HTML + PDF)
 book:
-	@echo "==> Building mdBook..."
+	@echo "==> Building mdBook (HTML + PDF)..."
 	@if command -v mdbook >/dev/null 2>&1; then \
+		if ! command -v mdbook-mermaid >/dev/null 2>&1; then echo "❌ mdbook-mermaid not installed."; exit 1; fi; \
+		if ! command -v mdbook-pdf >/dev/null 2>&1; then echo "❌ mdbook-pdf not installed."; exit 1; fi; \
 		mdbook build; \
 	else \
 		echo "❌ mdbook not installed. Please restart devcontainer or run: cargo install mdbook"; exit 1; \
 	fi
-	@echo "✓ mdBook built in target/book."
+	@echo "✓ mdBook built in target/book (HTML and PDF)."
 
 # Serve the mdBook documentation locally (uses Python to avoid WebSocket/DevContainer port forwarding issues)
 book-serve: book

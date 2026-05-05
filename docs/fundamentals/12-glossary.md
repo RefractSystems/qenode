@@ -1,4 +1,4 @@
-# Chapter 12: Glossary of Architectural Terminology
+# Glossary of Architectural Terminology
 
 This glossary serves as the definitive reference for the precise technical nomenclature utilized throughout the VirtMCU architectural documentation and source code. 
 

@@ -10,19 +10,19 @@ VirtMCU is a unique synthesis of high-performance emulation and distributed syst
 
 ## Volume Contents
 
-### 13. [System Overview: The Control and Data Planes](01-system-overview.md)
+### [System Overview: The Control and Data Planes](01-system-overview.md)
 An exploration of the bifurcated architecture: the **Control Plane** (Virtual Time synchronization) and the **Data Plane** (High-speed communication).
 
-### 15. [Emulator Internals: TCG and Memory Routing](05-emulator-internals.md)
+### [Emulator Internals: TCG and Memory Routing](05-emulator-internals.md)
 A deep-dive into the engine's "hot loop." We explore Tiny Code Generator (TCG) hooks, MemoryRegion routing, and the dynamic construction of machines from Device Trees.
 
-### 16. [The Peripheral Subsystem: Extending the Machine](06-peripheral-subsystem.md)
+### [The Peripheral Subsystem: Extending the Machine](06-peripheral-subsystem.md)
 The architecture of extensibility. We discuss native Rust QOM plugins, timing fidelity in peripheral models, and our "Binary Fidelity" mandate.
 
-### 17. [BQL and Concurrency: Safety in High-Speed Emulation](fundamentals/10-bql-and-concurrency.md)
+### [BQL and Concurrency: Safety in High-Speed Emulation](fundamentals/10-bql-and-concurrency.md)
 Solving the concurrency problem. We analyze the Big QEMU Lock (BQL) safety patterns and how to prevent deadlocks in multi-threaded simulation environments.
 
-### 18. [World Specification: Declaring the Universe](10-world-specification.md)
+### [World Specification: Declaring the Universe](10-world-specification.md)
 The topology of the Matrix. We explore how YAML is used to declare the entire simulation universe—from CPU counts to network graphs.
 
 ---

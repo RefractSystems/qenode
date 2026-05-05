@@ -24,10 +24,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Get mdBook version from BUILD_DEPS
+        id: get-version
+        run: |
+          VERSION=$(grep '^MDBOOK_VERSION=' BUILD_DEPS | cut -d '=' -f 2)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: 'latest'
+          mdbook-version: ${{ steps.get-version.outputs.version }}
+      - name: Setup mdbook-mermaid
+        run: |
+          mkdir -p bin
+          curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C bin
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: Setup mdbook-pdf
+        run: |
+          curl -sSL "https://github.com/HollowMan6/mdbook-pdf/releases/download/v0.1.10/mdbook-pdf-v0.1.10-x86_64-unknown-linux-gnu" -o bin/mdbook-pdf
+          chmod +x bin/mdbook-pdf
+      - name: Install Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
       - name: Build with mdBook
         run: mdbook build
       - name: Upload artifact

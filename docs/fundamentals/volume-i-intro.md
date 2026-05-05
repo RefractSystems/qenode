@@ -10,22 +10,22 @@ In this volume, we move from the high-level academic baseline to the low-level p
 
 ## Volume Contents
 
-### 1. [SoC Anatomy - The Physical Blueprint](01-soc-anatomy.md)
+### [SoC Anatomy - The Physical Blueprint](01-soc-anatomy.md)
 An architectural overview of the microcontroller. We examine the relationship between the CPU core, the bus matrix, and the peripheral registers.
 
-### 2. [Memory-Mapped I/O (MMIO) and Registers](02-mmio-and-registers.md)
+### [Memory-Mapped I/O (MMIO) and Registers](02-mmio-and-registers.md)
 The language of hardware. We explore how software interacts with physical silicon through memory addresses and register bitfields.
 
-### 3. [ELF, Firmware, and the Boot Sequence](03-elf-and-firmware-boot.md)
+### [ELF, Firmware, and the Boot Sequence](03-elf-and-firmware-boot.md)
 From binary to execution. We follow the lifecycle of a firmware image, from the ELF linker script to the reset vector and the first instruction of `main()`.
 
-### 4. [Device Tree - The Topology of Silicon](04-device-tree.md)
+### [Device Tree - The Topology of Silicon](04-device-tree.md)
 The map of the machine. We analyze the Flattened Device Tree (FDT) format and how it allows us to dynamically define complex hardware models without re-compiling the emulator.
 
-### 5. [Interrupts and Timers - The Pulse of the Machine](07-interrupts-and-timers.md)
+### [Interrupts and Timers - The Pulse of the Machine](07-interrupts-and-timers.md)
 Managing asynchronous events. We explore the Nested Vectored Interrupt Controller (NVIC) and the timers that drive the timing-critical logic of embedded systems.
 
-### 6. [The QEMU Architecture - A Modern Emulator](05-qemu-architecture.md)
+### [The QEMU Architecture - A Modern Emulator](05-qemu-architecture.md)
 The engine of our universe. An introduction to QEMU's high-performance emulation strategy and why it is the SOTA choice for VirtMCU.
 
 ---

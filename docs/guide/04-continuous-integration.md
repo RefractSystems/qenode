@@ -1,4 +1,4 @@
-# Chapter 4: Continuous Integration & Delivery
+# Continuous Integration & Delivery
 
 ## The Reliability Engine
 

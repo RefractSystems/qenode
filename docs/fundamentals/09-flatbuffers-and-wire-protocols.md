@@ -1,4 +1,4 @@
-# Chapter 9: Schema-Driven Serialization and Wire Protocols
+# Schema-Driven Serialization and Wire Protocols
 
 ## 9.1 The Fragility of Ad-Hoc Binary Packing
 In distributed simulation environments, data must continually traverse process boundaries via Inter-Process Communication (IPC) or network sockets. The naive approach to this serialization—commonly seen in rapid prototyping—involves casting memory-resident C structs directly to byte arrays or utilizing dynamic struct-packing libraries (e.g., Python's `struct.pack`). 
@@ -28,15 +28,24 @@ The FlatBuffers compiler (`flatc`) generates strongly-typed accessor classes for
 A distributed simulation may involve a QEMU instance running on an x86_64 host (Little-Endian) communicating with a physics engine running on an older PowerPC or SPARC architecture (Big-Endian). To guarantee binary consistency, the wire protocol must mandate a strict byte-ordering policy.
 
 VirtMCU enforces **Little-Endian** byte ordering for all network payloads. Consequently, the invocation of "native endian" conversion functions (e.g., `to_ne_bytes()` or `from_ne_bytes()` in Rust) is strictly prohibited within the peripheral serialization logic. Utilizing native endianness injects host-architecture dependencies into the simulation, irrevocably violating the core tenet of Global Determinism.
-
 ## 9.4 Zenoh: The High-Performance Data Fabric
-While FlatBuffers dictates the payload structure, **Zenoh** provides the transport methodology. Zenoh is a high-performance, decentral data routing protocol optimized for edge computing and robotics. VirtMCU leverages Zenoh's publish/subscribe semantics to orchestrate communication across the emulation topology.
+While FlatBuffers dictates the payload structure, **Zenoh** provides the transport methodology. Zenoh is a high-performance, decentralized data routing protocol optimized for edge computing and robotics. VirtMCU leverages Zenoh's publish/subscribe semantics to orchestrate communication across the emulation topology.
+
+### The Bifurcated Transport Layer
+VirtMCU strictly decouples its communication into two distinct planes:
+1.  **The Control Plane (Clock Sync)**: A low-latency, 1:1 RPC channel for time synchronization. It uses a separate `ClockSyncTransport` to ensure that clock-halts are not delayed by heavy network traffic on the emulated bus.
+2.  **The Data Plane (Emulated Comms)**: A coordinated bus for all inter-node traffic (Ethernet, UART, CAN). All data plane traffic is routed through the `DeterministicCoordinator` to enforce causal ordering and topology constraints.
+
+### Python Abstraction: `vproto.py`
+To simplify the use of FlatBuffers in our Python tooling (like `yaml2qemu.py` or the test suite), we provide `tools/vproto.py`. This utility encapsulates the FlatBuffers logic, providing high-level serialization and deserialization methods that guarantee adherence to the project's endianness and schema standards.
 
 To maintain architectural sanity, VirtMCU adheres to a rigorous topological naming convention for all Zenoh topics:
 *   **Clock Synchronization Plane:** `sim/clock/advance/{node_id}`
 *   **Peripheral Data Plane:** `virtmcu/{node_id}/{peripheral_name}/{tx|rx}`
 
 This hierarchical namespace allows the Deterministic Coordinator to efficiently filter, intercept, and order messages without deeply inspecting the payload contents.
+
+---
 
 ## 9.5 Summary
 Robust distributed emulation requires a hardened communication layer. By enforcing schema-driven, zero-copy serialization via FlatBuffers and mandating strict Little-Endian byte semantics, VirtMCU eliminates a vast class of architecture-dependent communication failures and protocol synchronization defects.

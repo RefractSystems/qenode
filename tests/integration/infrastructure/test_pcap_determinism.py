@@ -91,7 +91,7 @@ async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session,
         quantum_event = asyncio.Event()
 
         def on_start(sample: object) -> None:
-            q = int.from_bytes(cast(Any, sample).payload.to_bytes(), "little")
+            q = int.from_bytes(cast(Any, sample).payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
             if q == 2:
                 loop.call_soon_threadsafe(quantum_event.set)
 

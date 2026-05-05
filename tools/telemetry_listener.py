@@ -69,6 +69,7 @@ def main() -> None:
     logger.info(f"Listening on {topic}...")
 
     conf = zenoh.Config()
+    conf.insert_json5("scouting/multicast/enabled", "false")
     if args.router:
         conf.insert_json5("mode", '"client"')
         conf.insert_json5("connect/endpoints", f'["{args.router}"]')
