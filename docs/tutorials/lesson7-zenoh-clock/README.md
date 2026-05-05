@@ -90,7 +90,7 @@ not acquire BQL in the suspend path.
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 8 | `delta_ns` | Nanoseconds to advance virtual time |
-| 8 | 8 | `mujoco_time_ns` | MuJoCo wall time (informational) |
+| 8 | 8 | `absolute_vtime_ns` | MuJoCo wall time (informational) |
 | 16 | 8 | `quantum_number` | Monotonically increasing quantum ID |
 
 ### Reply payload (`ClockReadyPayload`, 24 bytes, little-endian)
