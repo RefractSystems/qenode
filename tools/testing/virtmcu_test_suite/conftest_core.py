@@ -494,7 +494,7 @@ class VirtualTimeAuthority:
 
         for nid, reply in zip(self.node_ids, replies, strict=True):
             if not reply:
-                raise TimeoutError(f"Node {nid} failed to respond to clock advance within {timeout}s")
+                raise TimeoutError(f"Node {nid} failed to respond to clock advance within {real_timeout}s")
 
             ok_reply = reply.ok
             if not ok_reply:
