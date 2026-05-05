@@ -23,6 +23,22 @@ VirtMCU (our QEMU-based Cyber Node implementation) provides three distinct clock
 | **Standalone** | *(omit `-device virtmcu-clock`)* | Wall-clock | 100% | Pure firmware unit testing; no physics engine. |
 | **Slaved-Suspend** | `-device virtmcu-clock,mode=slaved-suspend` | Quantum-accurate | ~95% | **Default.** Control loops ≥ 1ms. TB-boundary pauses. |
 | **Slaved-Icount** | `-device virtmcu-clock,mode=slaved-icount` | Instruction-accurate | ~15–20% | PWM, µs-precision DMA. QEMU uses `-icount shift=0`, guaranteeing 1 instruction = 1 virtual ns. |
+| **Slaved-Unix** | `-device virtmcu-clock,mode=slaved-unix` | Quantum-accurate | ~98% | High-performance local co-simulation via Unix Sockets. |
+
+---
+
+## 1.1 Clock Transport Modes
+
+The `mode` parameter also determines which transport layer is used to communicate with the `TimeAuthority`.
+
+| `mode` parameter   | Transport                    | `sim/clock/start` needed? |
+|--------------------|------------------------------|---------------------------|
+| `standalone`       | None (QEMU free-runs)        | No                        |
+| `slaved-unix`      | `UnixSocketClockTransport`   | **No**                    |
+| `slaved-suspend`   | `ZenohClockTransport`        | Only if `coordinated=true`|
+| `slaved-icount`    | `ZenohClockTransport`        | Only if `coordinated=true`|
+
+The `sim/clock/start` Zenoh topic is only relevant when `coordinated=true` AND using Zenoh transport. It is not subscribed to and has no effect in `slaved-unix` mode.
 
 ---
 
