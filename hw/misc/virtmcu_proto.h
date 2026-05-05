@@ -62,7 +62,7 @@ struct sysc_msg {
 
 struct clock_advance_req {
   uint64_t delta_ns;
-  uint64_t mujoco_time_ns;
+  uint64_t absolute_vtime_ns;
 } __attribute__((packed));
 
 struct clock_ready_resp {
