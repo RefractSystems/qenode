@@ -1032,15 +1032,17 @@ distclean: clean
 # Documentation
 # ------------------------------------------------------------------------------
 
-# Build the mdBook documentation
+# Build the mdBook documentation (HTML + PDF)
 book:
-	@echo "==> Building mdBook..."
+	@echo "==> Building mdBook (HTML + PDF)..."
 	@if command -v mdbook >/dev/null 2>&1; then \
+		if ! command -v mdbook-mermaid >/dev/null 2>&1; then echo "❌ mdbook-mermaid not installed."; exit 1; fi; \
+		if ! command -v mdbook-pdf >/dev/null 2>&1; then echo "❌ mdbook-pdf not installed."; exit 1; fi; \
 		mdbook build; \
 	else \
 		echo "❌ mdbook not installed. Please restart devcontainer or run: cargo install mdbook"; exit 1; \
 	fi
-	@echo "✓ mdBook built in target/book."
+	@echo "✓ mdBook built in target/book (HTML and PDF)."
 
 # Serve the mdBook documentation locally (uses Python to avoid WebSocket/DevContainer port forwarding issues)
 book-serve: book
