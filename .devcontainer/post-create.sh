@@ -84,7 +84,7 @@ make install-hooks
 echo "==> Installing mdbook..."
 if ! command -v mdbook &> /dev/null; then
     MDBOOK_ARCH=$(uname -m)
-    curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v0.5.2/mdbook-v0.5.2-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
+    curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v0.4.52/mdbook-v0.4.52-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
     sudo mv /tmp/mdbook /usr/local/bin/mdbook
     echo "✓ mdbook installed."
 fi

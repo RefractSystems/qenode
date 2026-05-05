@@ -222,6 +222,25 @@ def sync() -> None:
                 with Path(pyproject_path).open("w") as f:
                     f.write(new_content)
 
+    # 7. Update devcontainer post-create.sh
+    post_create_path = ".devcontainer/post-create.sh"
+    mdbook_ver = versions.get("MDBOOK_VERSION")
+    mdbook_mermaid_ver = versions.get("MDBOOK_MERMAID_VERSION")
+    if Path(post_create_path).exists():
+        with Path(post_create_path).open() as f:
+            content = f.read()
+            
+        new_content = content
+        if mdbook_ver:
+            new_content = re.sub(r'download/v[0-9\.]+/mdbook-v[0-9\.]+', f'download/v{mdbook_ver}/mdbook-v{mdbook_ver}', new_content)
+        if mdbook_mermaid_ver:
+            new_content = re.sub(r'download/v[0-9\.]+/mdbook-mermaid-v[0-9\.]+', f'download/v{mdbook_mermaid_ver}/mdbook-mermaid-v{mdbook_mermaid_ver}', new_content)
+            
+        if content != new_content:
+            logger.info(f"Updating {post_create_path} to mdbook v{mdbook_ver} and mdbook-mermaid v{mdbook_mermaid_ver}")
+            with Path(post_create_path).open("w") as f:
+                f.write(new_content)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
