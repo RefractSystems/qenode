@@ -196,6 +196,10 @@ fn telemetry_trace_irq_internal(
 }
 */
 
+use virtmcu_api::telemetry_generated::virtmcu::telemetry::{
+    TraceEvent as GenTraceEvent, TraceEventArgs, TraceEventType,
+};
+
 fn telemetry_worker(
     rx: Receiver<Option<TraceEvent>>,
     transport: Arc<dyn virtmcu_api::DataTransport>,
@@ -207,10 +211,6 @@ fn telemetry_worker(
         builder.reset();
 
         let device_name_off = ev.device_name.as_deref().map(|s| builder.create_string(s));
-
-        use virtmcu_api::telemetry_generated::virtmcu::telemetry::{
-            TraceEvent, TraceEventArgs, TraceEventType,
-        };
 
         let args = TraceEventArgs {
             timestamp_ns: ev.timestamp_ns,
@@ -226,12 +226,13 @@ fn telemetry_worker(
             power_uw: ev.power_uw,
         };
 
-        let root = TraceEvent::create(&mut builder, &args);
+        let root = GenTraceEvent::create(&mut builder, &args);
         builder.finish(root, None);
 
         let payload = builder.finished_data();
         let _ = transport.publish(&topic, payload);
-    }}
+    }
+}
 
 /* ── QOM Methods ──────────────────────────────────────────────────────────── */
 
@@ -354,6 +355,7 @@ unsafe extern "C" fn telemetry_class_init(klass: *mut ObjectClass, _data: *const
     unsafe {
         (*dc).realize = Some(telemetry_realize);
         (*dc).unrealize = Some(telemetry_unrealize);
+        (*dc).user_creatable = true;
     }
 
     device_class_set_props!(dc, TELEMETRY_PROPERTIES);

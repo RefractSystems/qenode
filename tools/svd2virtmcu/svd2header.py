@@ -1,6 +1,7 @@
 import argparse
 import os
 
+from cmsis_svd.model import SVDPeripheral, SVDRegister
 from cmsis_svd.parser import SVDParser
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -20,8 +21,12 @@ def generate_header(svd_path: str, template_path: str, output_path: str) -> None
     # Process data for template
     peripherals = []
     for periph in device.peripherals:
+        if not isinstance(periph, SVDPeripheral) or periph.registers is None:
+            continue
         registers = []
         for reg in periph.registers:
+            if not isinstance(reg, SVDRegister) or reg.name is None:
+                continue
             # We enforce 32-bit alignment in the template/assertions
             # Determine C type based on description or standard tags if they existed
             c_type = get_base_type(reg.description)

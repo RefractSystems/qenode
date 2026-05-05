@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 
+from cmsis_svd.model import SVDPeripheral, SVDRegister
 from cmsis_svd.parser import SVDParser
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -14,7 +15,11 @@ def generate_schema(svd_path: str, template_path: str, output_path: str, world_i
     telemetry = []
 
     for periph in device.peripherals:
+        if not isinstance(periph, SVDPeripheral) or periph.registers is None:
+            continue
         for reg in periph.registers:
+            if not isinstance(reg, SVDRegister) or reg.name is None:
+                continue
             # Better attribute matching using descriptions or names
             if "TARGET" in reg.name:
                 idx = reg.name[-1]

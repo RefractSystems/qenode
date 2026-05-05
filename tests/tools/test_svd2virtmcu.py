@@ -113,7 +113,7 @@ def test_svd2schema_generation() -> None:
         with open(out_path) as f:
             data = json.load(f)
             assert data["world_id"] == "test_world"
-            node = data["nodes"]["cyber-arm-ctrl"]
+            node = data["nodes"]["cyber-arm-ctrl"]  # LINT_EXCEPTION: test fixture
 
             # We expect TARGET0 to map to Shoulder Target
             assert len(node["controls"]) == 1
