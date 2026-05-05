@@ -270,7 +270,7 @@ impl Drop for SafeSubscriber {
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
-    let mut config = virtmcu_zenoh_config::default_config();
+    let mut config = virtmcu_zenoh_config::client_config();
     let mut has_router = false;
 
     // Task 4.2: High-performance executor for co-simulation
@@ -320,7 +320,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
-    virtmcu_zenoh_config::default_config()
+    virtmcu_zenoh_config::client_config()
 }
 
 #[cfg(test)]
