@@ -1,10 +1,15 @@
-//! Virtmcu FlexRay controller with pluggable transport.
-//! Restoration of known-working version from commit 1435f0c39b5.
-use zenoh::Wait;
+unsafe extern "C" fn allow_set_link(
+    _obj: *mut virtmcu_qom::qom::Object,
+    _name: *const core::ffi::c_char,
+    _val: *mut virtmcu_qom::qom::Object,
+    _errp: *mut *mut virtmcu_qom::error::Error,
+) {
+}
+// Virtmcu FlexRay controller with pluggable transport.
+// Restoration of known-working version from commit 1435f0c39b5.
 
 extern crate alloc;
 
-use alloc::ffi::CString;
 use alloc::sync::Arc;
 use core::ffi::CStr;
 use core::ffi::{c_char, c_uint, c_void};
@@ -29,6 +34,11 @@ pub struct FlexRay {
     pub router: *mut c_char,
     pub topic: *mut c_char,
     pub debug: bool,
+
+    /* Links */
+    pub transport_hub: *mut Object,
+
+    /* Rust state */
     pub rust_state: *mut FlexRayState,
 
     // Bosch E-Ray registers
@@ -68,6 +78,9 @@ pub struct FlexRay {
     pub msg_ram_data: [u8; 8192],
 }
 
+const _: () = assert!(core::mem::offset_of!(FlexRay, parent_obj) == 0);
+const _: () = assert!(core::mem::size_of::<FlexRay>() == 10976);
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct FlexRayMsgHeader {
@@ -97,7 +110,7 @@ pub struct FlexRayState {
     pending_packet: BqlGuarded<Option<OrderedFlexRayPacket>>,
     current_cycle: Arc<AtomicUsize>,
     is_valid: Arc<AtomicBool>,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
 impl PartialEq for OrderedFlexRayPacket {
@@ -124,7 +137,7 @@ unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     virtmcu_qom::sim_err!("flexray_realize starting");
     let s = &mut *(dev as *mut FlexRay);
 
-    let router = if s.router.is_null() {
+    let _router = if s.router.is_null() {
         None
     } else {
         Some(CStr::from_ptr(s.router).to_string_lossy().into_owned())
@@ -146,13 +159,47 @@ unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         core::mem::offset_of!(FlexRay, vrc),
         core::mem::offset_of!(FlexRay, wrhs3),
     );
-    match flexray_init_internal(s, s.node_id, router, topic, s.debug) {
+
+    if s.transport_hub.is_null() {
+        virtmcu_qom::error_setg!(errp, "Strict DI violation: transport_hub link is required.");
+        return;
+    }
+
+    unsafe {
+        virtmcu_qom::qom::object_property_set_bool(
+            s.transport_hub,
+            c"realized".as_ptr(),
+            true,
+            errp as *mut *mut virtmcu_qom::error::Error,
+        );
+    }
+    let ptr_u64 = unsafe {
+        virtmcu_qom::qom::object_property_get_uint(
+            s.transport_hub,
+            c"transport_ptr".as_ptr(),
+            errp as *mut *mut virtmcu_qom::error::Error,
+        )
+    };
+    if ptr_u64 == 0 {
+        virtmcu_qom::sim_err!("flexray_realize FAILED because ptr_u64 is 0!");
+        virtmcu_qom::error_setg!(
+            errp,
+            "Strict DI violation: failed to acquire transport from hub."
+        );
+        return;
+    }
+    virtmcu_qom::sim_err!("flexray_realize got ptr_u64={}", ptr_u64);
+    let transport_ref =
+        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
+    let transport_arc = alloc::sync::Arc::clone(transport_ref);
+
+    match flexray_init_internal(s, s.node_id, topic, s.debug, transport_arc) {
         Ok(state) => {
             s.rust_state = state;
             virtmcu_qom::sim_err!("flexray_realize finished");
         }
         Err(e) => {
-            virtmcu_qom::error_setg!(errp, "FlexRay: Zenoh initialization failed: {}", e);
+            virtmcu_qom::error_setg!(errp, "FlexRay: initialization failed: {}", e);
         }
     }
 }
@@ -401,6 +448,15 @@ unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c
     let dc = klass as *mut virtmcu_qom::qdev::DeviceClass;
     (*dc).realize = Some(flexray_realize);
     virtmcu_qom::device_class_set_props!(dc, FLEXRAY_PROPS);
+
+    virtmcu_qom::qom::object_class_property_add_link(
+        klass,
+        c"transport".as_ptr(),
+        c"virtmcu-transport-hub".as_ptr(),
+        core::mem::offset_of!(FlexRay, transport_hub) as isize,
+        Some(allow_set_link),
+        virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+    );
 }
 
 unsafe extern "C" fn flexray_instance_finalize(obj: *mut Object) {
@@ -483,24 +539,13 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
 pub fn flexray_init_internal(
     s_ptr: *mut FlexRay,
     node_id: u32,
-    router: Option<String>,
     topic: String,
     debug: bool,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> Result<*mut FlexRayState, String> {
     let (tx, rx) = bounded::<OrderedFlexRayPacket>(100);
 
-    let router_cstring = router
-        .as_deref()
-        .map(|r| CString::new(r).expect("router endpoint must not contain interior NUL"));
-    let router_ptr = router_cstring.as_ref().map_or(ptr::null(), |c| c.as_ptr());
-
-    let session =
-        unsafe { transport_zenoh::get_or_init_session(router_ptr).map_err(|e| e.to_string())? };
-    let transport: Arc<dyn virtmcu_api::DataTransport> =
-        Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(&session)));
-
-    let liveliness =
-        session.liveliness().declare_token(format!("sim/flexray/liveliness/{node_id}")).wait().ok();
+    let liveliness = transport.declare_liveliness(&format!("sim/flexray/liveliness/{node_id}"));
     let mut state = Box::new(FlexRayState {
         _liveliness: liveliness,
         _node_id: node_id,

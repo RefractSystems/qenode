@@ -131,8 +131,9 @@ topology:
 ### "Topology Declared, Not Discovered"
 VirtMCU enforces a strict "No Scouting" policy. All inter-node traffic must be authorized by a `link` or `wireless` entry in the World YAML. The `DeterministicCoordinator` rejects any message that does not follow a declared path.
 
-### Split-Brain Prevention
-To ensure a clean migration from legacy formats, VirtMCU rejects YAMLs that attempt to define nodes in multiple sections. Node IDs must be declared exclusively within `topology.nodes`.
+### Parallel Discrete Event Simulation (PDES) Barrier
+VirtMCU enforces causality through a Parallel Discrete Event Simulation (PDES) barrier. The simulation executes in discrete time steps (quanta). A global coordinator ensures that no node advances to quantum Q+1 until all nodes have completed quantum Q. 
+The World Specification acts as the definitive manifest for the PDES coordinator. It uses the `topology` and `links` definitions to construct the exact routing graph. A recent stabilization of the architecture enforces that this barrier mechanism is robust against jitter and routing storms, rejecting messages that do not conform to the predefined YAML topology.
 
 ### Address Normalization
 While the YAML supports multiple address formats, `yaml2qemu.py` normalizes all addresses to 64-bit integers before emitting the Device Tree. Peripherals mapped without an address are treated as "floating" and must be manually attached to a parent bus (e.g., SPI sub-nodes).
@@ -206,4 +207,3 @@ By defining this in the World Schema, Marcus invokes the Parallel Discrete Event
 ## See Also
 *   **[ADR-010: Platform Description](./adr/ADR-010-platform-description-format.md)**: The rationale behind the move to YAML.
 *   **[Determinism and Chaos](./09-determinism-and-chaos.md)**: How `global_seed` and topology influence simulation stability.
-*   **[Lesson 3: Parsing .repl to DTB](../tutorials/lesson3-repl2qemu/README.md)**: Hands-on usage of `yaml2qemu.py`.

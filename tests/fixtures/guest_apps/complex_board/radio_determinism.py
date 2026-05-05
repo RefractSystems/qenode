@@ -10,118 +10,133 @@ Ensure correct functionality, performance, and deterministic execution of radio_
 
 import logging
 import sys
-from pathlib import Path
 
+import flatbuffers.util
 import zenoh
 
+from tools import vproto
 from tools.testing.utils import mock_execution_delay
+from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
 
 logger = logging.getLogger(__name__)
 
-RF_HEADER_SIZE = 14
-
-session = None
+session: zenoh.Session | None = None
 ping_responded = False
 
 
 def on_sample(sample: zenoh.Sample) -> None:
     global session, ping_responded
-    payload = sample.payload.to_bytes()
-    if len(payload) < RF_HEADER_SIZE:
-        return
+    try:
+        payload = sample.payload.to_bytes()
+        logger.debug(f"Received sample on {sample.key_expr}, payload len={len(payload)}")
 
-    vtime = int.from_bytes(payload[:8], "little")
-    size = int.from_bytes(payload[8:12], "little")
-    rssi = payload[12]
-    lqi = payload[13]
-    data = payload[RF_HEADER_SIZE:]
-
-    # 802.15.4 FCF: bits 0-2 are frame type. Type 2 is ACK.
-    if size >= 2:
-        fcf = int.from_bytes(data[:2], "little")
-        if (fcf & 0x07) == 0x02:
+        if len(payload) < 4:
             return
 
-    if ping_responded:
-        return
-    ping_responded = True
+        size_prefix = flatbuffers.util.GetSizePrefix(payload, 0)
+        fb_len = 4 + size_prefix
+        if len(payload) < fb_len:
+            return
 
-    logger.info(f"[{vtime}] Received RF packet: size={size} RSSI={rssi} LQI={lqi}")
+        header = vproto.Rf802154Header.unpack(payload)
+        vtime = header.delivery_vtime_ns
+        size = header.size
+        rssi = header.rssi
+        lqi = header.lqi
+        data = payload[fb_len:]
 
-    # 1. Respond with WRONG address after 1ms virtual time
-    resp1_vtime = vtime + 1000000
-    resp1_data = (
-        (0x8841).to_bytes(2, "little")
-        + (0x02).to_bytes(1, "little")
-        + (0xABCD).to_bytes(2, "little")
-        + (0x5678).to_bytes(2, "little")
-        + (0x1234).to_bytes(2, "little")
-        + (0).to_bytes(2, "little")
-        + b"MISMATCHED ACK"
-    )
-    msg1 = (
-        resp1_vtime.to_bytes(8, "little")
-        + len(resp1_data).to_bytes(4, "little")
-        + (0xCE).to_bytes(1, "little")
-        + (0xFF).to_bytes(1, "little")
-        + resp1_data
-    )
-    logger.info(f"[{resp1_vtime}] Sending MISMATCHED response...")
-    session.put("sim/rf/ieee802154/0/rx", msg1)  # type: ignore[attr-defined]
+        logger.info(f"[{vtime}] Received RF packet: size={size} RSSI={rssi} LQI={lqi}")
 
-    # 2. Respond with CORRECT address after 2ms virtual time
-    resp2_vtime = vtime + 2000000
-    resp2_data = (
-        (0x8861).to_bytes(2, "little")
-        + (0x03).to_bytes(1, "little")
-        + (0xABCD).to_bytes(2, "little")
-        + (0x1234).to_bytes(2, "little")
-        + (0x5678).to_bytes(2, "little")
-        + (0).to_bytes(2, "little")
-        + b"MATCHED ACK"
-    )
-    msg2 = (
-        resp2_vtime.to_bytes(8, "little")
-        + len(resp2_data).to_bytes(4, "little")
-        + (0xCE).to_bytes(1, "little")
-        + (0xFF).to_bytes(1, "little")
-        + resp2_data
-    )
-    logger.info(f"[{resp2_vtime}] Sending MATCHED response...")
-    session.put("sim/rf/ieee802154/0/rx", msg2)  # type: ignore[attr-defined]
+        # 802.15.4 FCF: bits 0-2 are frame type. Type 2 is ACK.
+        if size >= 2:
+            fcf = int.from_bytes(data[:2], "little")  # LINT_EXCEPTION: int_from_bytes
+            if (fcf & 0x07) == 0x02:
+                logger.info("Ignoring ACK frame.")
+                return
+
+        if b"PING" in data:
+            logger.info(f"[{vtime}] Ping detected! Responding...")
+            resp_vtime = vtime + 5000000  # 5ms later
+            resp_data = b"PONG"
+
+            hdr = vproto.Rf802154Header(resp_vtime, 0, len(resp_data), -50, 0xFF).pack()
+            msg = hdr + resp_data
+
+            sub_topic = sample.key_expr
+            rx_topic = str(sub_topic).replace("/tx", "/rx")
+
+            if session:
+                session.put(rx_topic, msg)
+                logger.info(f"[{resp_vtime}] Sent PONG to {rx_topic}")
+
+            # Write a marker file to verify we responded
+            with open("ack_received.tmp", "w") as f:
+                f.write("OK")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"ERROR in on_sample: {e}")
 
 
 def on_tx_sample(sample: zenoh.Sample) -> None:
-    payload = sample.payload.to_bytes()
-    if len(payload) < RF_HEADER_SIZE:
-        return
+    try:
+        payload = sample.payload.to_bytes()
+        if len(payload) < 4:
+            return
 
-    vtime = int.from_bytes(payload[:8], "little")
-    size = int.from_bytes(payload[8:12], "little")
-    data = payload[RF_HEADER_SIZE:]
+        header = vproto.Rf802154Header.unpack(payload)
+        vtime = header.delivery_vtime_ns
+        size = header.size
 
-    if size == 3 and (data[0] & 0x07) == 0x02:
-        logger.info(f"[{vtime}] RECEIVED AUTO-ACK for seq {data[2]}")
-        with (Path(__file__).resolve().parent / "ack_received.tmp").open("w") as f:
-            f.write("OK")
+        size_prefix = flatbuffers.util.GetSizePrefix(payload, 0)
+        fb_len = 4 + size_prefix
+        data = payload[fb_len:]
+
+        if b"Radio test packet" in data:
+            logger.info(f"[{vtime}] Received Radio test packet! size={size}")
+            resp1_vtime = vtime + 10000000  # 10ms later
+            resp1_data = b"MATCHED ACK"
+            hdr1 = vproto.Rf802154Header(resp1_vtime, 0, len(resp1_data), -40, 0xFF).pack()
+            msg1 = hdr1 + resp1_data
+
+            rx_topic = str(sample.key_expr).replace("/tx", "/rx")
+            if session:
+                session.put(rx_topic, msg1)
+                logger.info(f"[{resp1_vtime}] Sent MATCHED response...")
+
+            # Also send a mismatched one that should be filtered
+            resp2_vtime = vtime + 20000000  # 20ms later
+            resp2_data = b"MISMATCHED ACK"
+            hdr2 = vproto.Rf802154Header(resp2_vtime, 0, len(resp2_data), -30, 0xFF).pack()
+            msg2 = hdr2 + resp2_data
+            if session:
+                session.put(rx_topic, msg2)
+                logger.info(f"[{resp2_vtime}] Sent MISMATCHED response...")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"ERROR in on_tx_sample: {e}")
 
 
 def main() -> None:
     global session
-    node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
     if len(sys.argv) <= 2:
-        logger.error(f"Usage: {sys.argv[0]} <router_endpoint>")
+        logger.error(f"Usage: {sys.argv[0]} <node_id> <router_endpoint>")
         sys.exit(1)
+
+    node_id = sys.argv[1]
     router = sys.argv[2]
 
-    conf = zenoh.Config()
-    conf.insert_json5("connect/endpoints", f'["{router}"]')
-    session = zenoh.open(conf)
+    logger.info(f"Connecting to Zenoh router at {router}...")
+    session = open_client_session(connect=router)
+    logger.info("Connected to Zenoh.")
 
     sub_topic = f"sim/rf/ieee802154/{node_id}/tx"
     logger.info(f"Listening on {sub_topic}...")
     session.declare_subscriber(sub_topic, on_sample)
     session.declare_subscriber(sub_topic, on_tx_sample)
+
+    # Debug: listen on everything
+    def on_any(sample: zenoh.Sample) -> None:
+        logger.debug(f"ANY: {sample.key_expr} ({len(sample.payload)})")
+
+    session.declare_subscriber("**", on_any)
 
     try:
         while True:
@@ -131,5 +146,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
     main()

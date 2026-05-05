@@ -317,7 +317,7 @@ def main() -> None:
     )
     if env_router:
         hub_dev.properties["router"] = env_router
-        
+
     platform.devices.insert(0, hub_dev)
 
     original_devices = list(platform.devices)

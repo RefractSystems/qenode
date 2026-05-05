@@ -583,6 +583,7 @@ dependencies = [
  "byteorder",
  "tokio",
  "virtmcu-api",
+ "virtmcu-zenoh-config",
  "zenoh",
 ]
 
@@ -681,6 +682,7 @@ dependencies = [
  "tracing-subscriber",
  "typify",
  "virtmcu-api",
+ "virtmcu-zenoh-config",
  "zenoh",
 ]
 
@@ -3384,6 +3386,7 @@ dependencies = [
  "crossbeam-channel",
  "tempfile",
  "virtmcu-api",
+ "virtmcu-qom",
 ]
 
 [[package]]
@@ -3393,6 +3396,7 @@ dependencies = [
  "crossbeam-channel",
  "virtmcu-api",
  "virtmcu-qom",
+ "virtmcu-zenoh-config",
  "zenoh",
 ]
 
@@ -3401,6 +3405,7 @@ name = "transport_hub"
 version = "0.1.0"
 dependencies = [
  "transport-zenoh",
+ "virtmcu-api",
  "virtmcu-qom",
  "zenoh",
 ]
@@ -3516,9 +3521,8 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
- "transport-zenoh",
+ "virtmcu-api",
  "virtmcu-qom",
- "zenoh",
 ]
 
 [[package]]
@@ -3670,6 +3674,13 @@ name = "virtmcu-test-devices"
 version = "0.1.0"
 dependencies = [
  "virtmcu-qom",
+]
+
+[[package]]
+name = "virtmcu-zenoh-config"
+version = "0.1.0"
+dependencies = [
+ "zenoh",
 ]
 
 [[package]]
@@ -4826,6 +4837,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "virtmcu-api",
+ "virtmcu-zenoh-config",
  "zenoh",
 ]
 

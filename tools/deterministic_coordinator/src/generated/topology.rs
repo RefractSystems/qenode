@@ -1,6 +1,6 @@
 // Generated file, do not edit
 #![allow(warnings)]
-#![allow(clippy::all)]
+#![allow(clippy::all)] // ALLOW_EXCEPTION: machine-generated topology code from OpenUSD
 use serde::{Deserialize, Serialize};
 
 /// Error types.

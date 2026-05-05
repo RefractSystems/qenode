@@ -14,8 +14,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -23,8 +23,8 @@ use alloc::vec::Vec;
     clippy::extra_unused_lifetimes
 )]
 pub mod can_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -32,8 +32,8 @@ pub mod can_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod core_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -41,8 +41,8 @@ pub mod core_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod flexray_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -50,18 +50,18 @@ pub mod flexray_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod lin_generated;
-pub use rf_generated::rf_header;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+pub use rf802154_generated::virtmcu::rf_802154 as rf802154_header;
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
     clippy::undocumented_unsafe_blocks,
     clippy::extra_unused_lifetimes
 )]
-pub mod rf_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+pub mod rf802154_generated;
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -69,8 +69,8 @@ pub mod rf_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod telemetry_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
-    clippy::all,
+#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
+    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -316,8 +316,8 @@ pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]
     out
 }
 
-/// Encode an `RfHeader` + payload into a byte vector (little-endian, size-prefixed).
-pub fn encode_rf_frame(
+/// Encode an `Rf802154Header` + payload into a byte vector (little-endian, size-prefixed).
+pub fn encode_rf802154_frame(
     delivery_vtime_ns: u64,
     sequence_number: u64,
     payload: &[u8],
@@ -325,7 +325,7 @@ pub fn encode_rf_frame(
     lqi: u8,
 ) -> Vec<u8> {
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64);
-    let mut args = rf_header::RfHeaderBuilder::new(&mut builder);
+    let mut args = rf802154_header::Rf802154HeaderBuilder::new(&mut builder);
     args.add_delivery_vtime_ns(delivery_vtime_ns);
     args.add_sequence_number(sequence_number);
     args.add_size(payload.len() as u32);
@@ -362,6 +362,16 @@ pub type DataCallback = Box<dyn Fn(&[u8]) + Send + Sync>;
 ///
 /// This trait abstracts the underlying communication mechanism (e.g., Zenoh, Unix Sockets)
 /// used for peripheral data traffic.
+/// Represents an active liveliness declaration on the network.
+pub trait LivelinessToken: Send + Sync {
+    /// Drops or explicitly undeclares the liveliness token.
+    fn drop_token(&mut self) {}
+}
+
+/// Abstract transport for emulated data plane (packets, signals).
+///
+/// This trait abstracts the underlying communication mechanism (e.g., Zenoh, Unix Sockets)
+/// used for peripheral data traffic.
 pub trait DataTransport: Send + Sync {
     /// Publishes a message to the emulated network on the given topic.
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String>;
@@ -374,6 +384,11 @@ pub trait DataTransport: Send + Sync {
     /// Performs a synchronous query (Request/Response) on the given topic.
     fn query(&self, _topic: &str, _payload: &[u8]) -> Result<Vec<u8>, String> {
         Err("Query not supported by this transport".to_owned())
+    }
+
+    /// Declares liveliness on the network for a specific topic.
+    fn declare_liveliness(&self, _topic: &str) -> Option<alloc::boxed::Box<dyn LivelinessToken>> {
+        None
     }
 
     /// Closes the transport.

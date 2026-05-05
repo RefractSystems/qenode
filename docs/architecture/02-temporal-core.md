@@ -8,15 +8,15 @@ After this chapter, you can:
 
 ## The Philosophy of Time: Physics as the Master
 
-In a standard emulator, time is an afterthought. QEMU typically runs as fast as possible, using the host's wall-clock to drive its internal timers. In the VirtMCU digital twin ecosystem, this is unacceptable. The firmware interacts with a physical world (e.g., a drone in MuJoCo) governed by continuous differential equations. If QEMU runs free, the firmware's control loops will desynchronize from the physics.
+In a standard emulator, time is an afterthought. The emulator typically runs as fast as possible, using the host's wall-clock to drive its internal timers. In the VirtMCU digital twin ecosystem, this is unacceptable. The firmware in the **Cyber Node** interacts with a physical world (simulated by the **Physical Node**, such as a drone in MuJoCo) governed by continuous differential equations. If the Cyber Node runs free, the firmware's control loops will desynchronize from the physics.
 
-**The Golden Rule of VirtMCU**: The Physics Engine (TimeAuthority) owns the clock. Virtual time only advances when the external authority explicitly grants a "quantum" of time.
+**The Golden Rule of VirtMCU**: The Physical Node (acting as the TimeAuthority) owns the clock. Virtual time inside the Cyber Node only advances when the external authority explicitly grants a "quantum" of time over the Transport Layer.
 
 ---
 
 ## 1. The Three Modes of Time
 
-VirtMCU provides three distinct clock modes to balance simulation accuracy with host performance.
+VirtMCU (our QEMU-based Cyber Node implementation) provides three distinct clock modes to balance simulation accuracy with host performance.
 
 | Mode | QEMU Arguments | Accuracy | Throughput | Use Case |
 |---|---|---|---|---|

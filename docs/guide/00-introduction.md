@@ -23,8 +23,9 @@ You can write bare-metal C in your sleep, but the idea of writing an emulator pl
 ### Path 3: The Distributed Systems Architect
 Your primary concern is determinism, virtual time synchronization, and orchestrating complex cyber-physical co-simulations.
 1. **Part II: Mechanics of Virtual Time**: Master Parallel Discrete Event Simulation (PDES) theory and the Causality Problem.
-2. **Part V: Distributed & Cyber-Physical Systems**: Dive into the Temporal Core, Zenoh transport, and SAL/AAL integration.
-3. **Part VI: War Stories (Postmortems)**: Read how non-determinism and silent failures manifest in real-world distributed emulators.
+2. **Part V: Distributed & Cyber-Physical Systems**: Dive into the Temporal Core, Zenoh transport, and SAL/AAL integration. Explore the new **Observability & AI-Augmented Debugging** chapter to learn about PCAP and live Wireshark integration.
+3. **Part III: Core Architecture**: Review the **World Specification** chapter to understand how the TypeSpec Single Source of Truth (SSoT) governs the simulation topology.
+4. **Part VI: War Stories (Postmortems)**: Read how non-determinism and silent failures manifest in real-world distributed emulators.
 
 ---
 

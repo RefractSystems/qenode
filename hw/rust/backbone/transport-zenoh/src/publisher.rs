@@ -155,7 +155,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_sends_payload() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/payload";
 
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_non_blocking_under_load() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/load";
 
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drop_joins_thread() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/drop";
 
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drops_when_full() -> Result<(), zenoh::Error> {
-        let config = Config::default();
+        let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         let topic = "tests/fixtures/guest_apps/safe/pub/overflow";
 

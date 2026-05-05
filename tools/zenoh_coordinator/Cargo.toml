@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 zenoh = "1.9.0"
+virtmcu-zenoh-config.workspace = true
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 clap = { version = "=4.4.18", features = ["derive"] }
 byteorder = "1.5"

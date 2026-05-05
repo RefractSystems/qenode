@@ -115,7 +115,7 @@ class QmpBridge:
             loop = asyncio.get_running_loop()
 
             def on_vtime(sample: zenoh.Sample) -> None:
-                vtime = int.from_bytes(sample.payload.to_bytes(), "little")
+                vtime = int.from_bytes(sample.payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
 
                 async def update() -> None:
                     async with self.vtime_condition:

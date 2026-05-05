@@ -313,7 +313,11 @@ lint-audit:
 lint-python:
 	@echo "==> Check for banned struct usage..."
 	@if grep -rnIE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
-		echo "❌ ERROR: Banned struct usage detected. Use vproto.py, FlatBuffers, or int.from_bytes/to_bytes instead."; exit 1; \
+		echo "❌ ERROR: Banned struct usage detected. Use vproto.py or FlatBuffers wrappers."; exit 1; \
+	fi
+	@echo "==> Check for banned path bootstrapping bypasses..."
+	@if grep -rnIE "noqa: TID251" tests/ tools/ scripts/ --exclude-dir=__pycache__ ; then \
+		echo "❌ ERROR: Bypassing TID251 (path bootstrapping ban) is strictly forbidden. Rely on uv package boundaries."; exit 1; \
 	fi
 	@echo "==> Check for banned struct in scripts (limited)..."
 	@if grep -rnIE "struct\.(pack|unpack)" scripts/ --exclude-dir=__pycache__ ; then \
@@ -517,6 +521,8 @@ lint-rust:
 	@echo "==> Checking for stale QEMU plugins..."
 	@uv run --active python3 scripts/check-stale-so.py
 	@echo "✓ No banned thread::sleep found."
+	@echo "==> Checking for banned ptr::copy_nonoverlapping in hw/rust/ (Mandate 15)..."
+	@python3 scripts/lint_rust_mandate_15.py
 	@echo "==> Checking for banned Mutex<T> in peripheral state structs..."
 	@# std::sync::Mutex<T> is banned in zenoh-* peripheral state structs because every
 	@# caller already holds the BQL, making the Mutex permanently uncontended and its
