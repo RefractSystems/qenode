@@ -101,6 +101,8 @@ pub struct ZenohClockResponder {
 
 impl ClockSyncResponder for ZenohClockResponder {
     fn send_ready(&self, resp: ClockReadyResp) -> Result<(), String> {
+        // Only the Zenoh coordinated path waits for sim/clock/start before
+        // advancing the first quantum. Unix-mode federates never reach this branch.
         if self.is_coordinated {
             // 1. Send 'done' signal to coordinator: [quantum (8), current_vtime_ns (8)]
             let mut payload = alloc::vec::Vec::with_capacity(16);
@@ -642,6 +644,20 @@ fn report_contention(backend: &VirtmcuClockBackend, last_report: &mut Instant) {
     *last_report = Instant::now();
 }
 
+/// Realise the virtmcu-clock QOM device and select a transport.
+///
+/// # Transport dispatch
+///
+/// | `mode` parameter   | Transport                    | `sim/clock/start` needed? |
+/// |--------------------|------------------------------|---------------------------|
+/// | `standalone`       | None (QEMU free-runs)        | No                        |
+/// | `slaved-unix`      | `UnixSocketClockTransport`   | **No** — exits via `clock_init_with_transport()`, Zenoh code never runs |
+/// | `slaved-suspend`   | `ZenohClockTransport`        | Only if `is_coordinated=true` |
+/// | `slaved-icount`    | `ZenohClockTransport`        | Only if `is_coordinated=true` |
+///
+/// The `sim/clock/start` Zenoh topic is only relevant in the Zenoh path and
+/// only when `is_coordinated = true`. If you are using `mode=slaved-unix`, do
+/// not send or wait for `sim/clock/start` — it has no effect.
 unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut VirtmcuClock);
     virtmcu_qom::telemetry::update_global_node_id(s.node_id);
@@ -846,6 +862,11 @@ fn clock_init_internal(
     let (start_tx, start_rx) = crossbeam_channel::unbounded();
     let start_topic = format!("sim/clock/start/{node_id}");
     let start_transport = Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(&session)));
+    // NOTE: `sim/clock/start` is only subscribed here when `is_coordinated = true`.
+    // The Unix path (`slaved-unix`) never reaches this function — it exits via
+    // `clock_init_with_transport()` in `clock_realize()`. Operators running
+    // `slaved-unix` mode should NOT include `sim/clock/start` signals in their
+    // world configuration; they have no effect and will mislead operators.
     let _start_sub = virtmcu_qom::sync::SafeSubscription::new(
         start_transport.as_ref(),
         &start_topic,
