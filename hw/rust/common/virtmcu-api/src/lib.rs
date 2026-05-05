@@ -733,19 +733,18 @@ mod tests {
 
     #[test]
     fn test_clock_ready_resp_ok() {
-        let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99, 123);
+        let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99);
         let bytes = resp.pack();
         let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
         assert_eq!({ resp2.current_vtime_ns() }, 10_000_000u64);
         assert_eq!({ resp2.n_frames() }, 50u32);
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_OK);
         assert_eq!({ resp2.quantum_number() }, 99u64);
-        assert_eq!({ resp2.jitter_ns() }, 123u64);
     }
 
     #[test]
     fn test_clock_ready_resp_stall() {
-        let resp = ClockReadyResp::new(0, 0, CLOCK_ERROR_STALL, 0, 0);
+        let resp = ClockReadyResp::new(0, 0, CLOCK_ERROR_STALL, 0);
         let bytes = resp.pack();
         let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_STALL);

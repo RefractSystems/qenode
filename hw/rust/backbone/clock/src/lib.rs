@@ -211,7 +211,7 @@ pub struct VirtmcuClockBackend {
     /// Current virtual time in nanoseconds as known by the backend.
     pub vtime_ns: AtomicU64,
     /// Absolute simulation time in nanoseconds as reported by TimeAuthority.
-    pub absolute_vtime_ns: AtomicU64,
+    pub mujoco_time_ns: AtomicU64,
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,
 
@@ -527,25 +527,21 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         };
 
         let delta = req.delta_ns();
-        let absolute_time = req.absolute_vtime_ns();
+        let absolute_time = req.mujoco_time_ns();
 
         backend.delta_ns.store(delta, Ordering::SeqCst);
-        backend.absolute_vtime_ns.store(absolute_time, Ordering::SeqCst);
+        backend.mujoco_time_ns.store(absolute_time, Ordering::SeqCst);
 
-        let wait_start = Instant::now();
         let mut error_code = wait_for_ready_and_execute(&backend, delta, timeout, is_first);
 
         if backend.pending_stall.swap(false, Ordering::SeqCst) {
             error_code = CLOCK_ERROR_STALL;
         }
 
-        let jitter_ns = wait_start.elapsed().as_nanos() as u64;
-
         let current_vtime = backend.vtime_ns.load(Ordering::SeqCst);
         backend.transport.send_vtime_heartbeat(current_vtime);
 
-        let resp =
-            ClockReadyResp::new(current_vtime, 0, error_code, req.quantum_number(), jitter_ns);
+        let resp = ClockReadyResp::new(current_vtime, 0, error_code, req.quantum_number());
 
         if let Err(e) = responder.send_ready(resp) {
             virtmcu_qom::sim_err!("{}", e);
@@ -814,7 +810,7 @@ fn clock_init_with_transport(
         state: core::sync::atomic::AtomicU8::new(QuantumState::Waiting as u8),
         delta_ns: AtomicU64::new(0),
         vtime_ns: AtomicU64::new(0),
-        absolute_vtime_ns: AtomicU64::new(0),
+        mujoco_time_ns: AtomicU64::new(0),
         stall_count: AtomicU64::new(0),
         total_bql_wait_ns: AtomicU64::new(0),
         total_iterations: AtomicU64::new(0),

@@ -14,7 +14,7 @@ fn test_firmware_studio_struct_sizes() {
     assert_eq!(size_of::<MmioReq>(), 32);
     assert_eq!(size_of::<SyscMsg>(), 16);
     assert_eq!(size_of::<ClockAdvanceReq>(), 24);
-    assert_eq!(size_of::<ClockReadyResp>(), 32);
+    assert_eq!(size_of::<ClockReadyResp>(), 24);
     assert_eq!(size_of::<ZenohFrameHeader>(), 24);
 }
 

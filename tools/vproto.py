@@ -134,7 +134,7 @@ class SyscMsg:
 @dataclass
 class ClockAdvanceReq:
     delta_ns: int
-    absolute_vtime_ns: int
+    mujoco_time_ns: int
     quantum_number: int
 
     @classmethod
@@ -143,11 +143,11 @@ class ClockAdvanceReq:
             raise ValueError(f"Expected {SIZE_CLOCK_ADVANCE_REQ} bytes")
         fb = FBClockAdvanceReq()
         fb.Init(data, 0)
-        return cls(fb.DeltaNs(), fb.AbsoluteVtimeNs(), fb.QuantumNumber())
+        return cls(fb.DeltaNs(), fb.MujocoTimeNs(), fb.QuantumNumber())
 
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
-        CreateClockAdvanceReq(b, self.delta_ns, self.absolute_vtime_ns, self.quantum_number)
+        CreateClockAdvanceReq(b, self.delta_ns, self.mujoco_time_ns, self.quantum_number)
         return bytes(b.Bytes[b.Head() :])
 
 
