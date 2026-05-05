@@ -16,9 +16,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use virtmcu_api::rf_generated::rf_header;
+use virtmcu_api::rf802154_header;
 use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
-use zenoh::config::Config;
+
 use zenoh::Wait;
 
 #[derive(Parser, Debug)]
@@ -556,16 +556,23 @@ async fn handle_rf_msg(
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
     let (vt, seq, sz, _, lqi, off) = if has_hdr {
-        match rf_header::decode(&p) {
-            Some((vt, seq, sz, _, lqi)) => {
+        match rf802154_header::size_prefixed_root_as_rf_802154_header(&p) {
+            Ok(hdr) => {
                 let fbl = if p.len() >= 4 {
                     4 + u32::from_le_bytes([p[0], p[1], p[2], p[3]]) as usize
                 } else {
                     return out;
                 };
-                (vt, seq, sz, 0, lqi, fbl)
+                (
+                    hdr.delivery_vtime_ns(),
+                    hdr.sequence_number(),
+                    hdr.size(),
+                    0,
+                    hdr.lqi(),
+                    fbl,
+                )
             }
-            None => return out,
+            Err(_) => return out,
         }
     } else {
         if p.len() < 12 {
@@ -620,9 +627,7 @@ async fn handle_rf_msg(
         }
         let vt2 = vt.saturating_add(d);
         let p2 = if has_hdr {
-            let mut b = rf_header::encode(vt2, seq, sz, rssi.clamp(-128.0, 127.0) as i8, lqi);
-            b.extend_from_slice(data);
-            b
+            virtmcu_api::encode_rf802154_frame(vt2, seq, data, rssi.clamp(-128.0, 127.0) as i8, lqi)
         } else {
             let mut b = Vec::with_capacity(12 + data.len());
             let _ = b.write_u64::<LittleEndian>(vt2);
@@ -687,16 +692,13 @@ async fn main() {
     // causes parallel pytest workers' coordinators to silently discover each
     // other across the container's network namespace and cross-talk on shared
     // topics like `sim/coord/*/done`.
-    let mut config = Config::default();
+    let mut config = virtmcu_zenoh_config::default_config();
     if let Some(ref c) = args.connect {
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", c))
             .unwrap();
     }
     config.insert_json5("mode", "\"client\"").unwrap();
-    config
-        .insert_json5("scouting/multicast/enabled", "false")
-        .unwrap();
     let session = zenoh::open(config).await.unwrap();
 
     let eth_sub = session

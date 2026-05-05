@@ -89,7 +89,7 @@ def test_roundtrip_wireless_devices(tmp_path: Path) -> None:
     assert "radio0@9001000 {" in dts
     assert 'compatible = "ieee802154";' in dts
     assert "transport = <0x02>;" in dts or "transport = <" in dts
-    
+
     assert 'compatible = "virtmcu-transport-hub";' in dts
     assert "node = <0x00>;" in dts
 

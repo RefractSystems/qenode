@@ -122,5 +122,11 @@ if ! grep -q "VIRTMCU-PATCH: error_prepend() crashes" qom/object.c; then
     git apply "$WORKSPACE_DIR/patches/qemu-module-crash-fix.patch"
 fi
 
+cd "$QEMU_DIR"
+echo "  -> Applying QEMU multiple halt hooks patch..."
+if ! grep -q "virtmcu_execute_halt_hooks" hw/core/irq.c; then
+    git apply "$WORKSPACE_DIR/patches/qemu-multiple-halt-hooks.patch"
+fi
+
 cd "$WORKSPACE_DIR"
 echo "✓ All patches applied successfully."

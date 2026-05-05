@@ -10,6 +10,9 @@ npx tsp compile world/main.tsp --output-dir ./dist
 cp dist/@typespec/json-schema/virtmcu_world.schema.json world_schema.json
 cd ..
 
+echo "🥞 1.5. Regenerating FlatBuffers Python bindings..."
+flatc --python -o tools/ hw/rust/common/virtmcu-api/src/core.fbs hw/rust/common/virtmcu-api/src/rf802154.fbs hw/rust/common/virtmcu-api/src/can.fbs hw/rust/common/virtmcu-api/src/lin.fbs hw/rust/common/virtmcu-api/src/flexray.fbs
+
 echo "🔧 2. Fixing JSON Schema References..."
 python3 scripts/fix_json_schema.py
 

@@ -87,36 +87,43 @@ class JitterProxy:
 
         signal.signal(signal.SIGTERM, handle_sigterm)
 
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=self.concurrency_limit + 10)
+
         def handle_query(query: zenoh.Query) -> None:
-            with self._lock:
-                self._in_flight += 1
-                if self._in_flight % 5 == 0:
-                    logger.info(f"Concurrency check: in_flight={self._in_flight}")
-
-                if self._in_flight > self.concurrency_limit:
-                    self._in_flight -= 1
-                    logger.error(
-                        f"Infinite recursion or query storm detected (limit={self.concurrency_limit})! Failing fast."
-                    )
-                    query.reply_err(b"proxy: routing loop detected")
-                    return
-
-            try:
-                topic = str(query.key_expr)
-                payload = query.payload.to_bytes() if query.payload else b""
-                replies = list(backend_session.get(topic, payload=payload, timeout=5.0))
-
-                if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
-                    jitter_us = self._rng.uniform(0, self.max_jitter_us)
-                    mock_execution_delay(jitter_us / 1_000_000)
-                    with self._lock:
-                        self.injected_delays_us.append(jitter_us)
-                    query.reply(topic, replies[0].ok.payload.to_bytes())
-                else:
-                    query.reply_err(b"proxy: no QEMU reply")
-            finally:
+            def process_query(q: zenoh.Query) -> None:
                 with self._lock:
-                    self._in_flight -= 1
+                    self._in_flight += 1
+                    if self._in_flight % 5 == 0:
+                        logger.info(f"Concurrency check: in_flight={self._in_flight}")
+
+                    if self._in_flight > self.concurrency_limit:
+                        self._in_flight -= 1
+                        logger.error(
+                            f"Infinite recursion or query storm detected (limit={self.concurrency_limit})! Failing fast."
+                        )
+                        q.reply_err(b"proxy: routing loop detected")
+                        return
+
+                try:
+                    topic = str(q.key_expr)
+                    payload = q.payload.to_bytes() if q.payload else b""
+                    replies = list(backend_session.get(topic, payload=payload, timeout=5.0))
+
+                    if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
+                        jitter_us = self._rng.uniform(0, self.max_jitter_us)
+                        mock_execution_delay(jitter_us / 1_000_000)
+                        with self._lock:
+                            self.injected_delays_us.append(jitter_us)
+                        q.reply(topic, replies[0].ok.payload.to_bytes())
+                    else:
+                        q.reply_err(b"proxy: no QEMU reply")
+                finally:
+                    with self._lock:
+                        self._in_flight -= 1
+
+            executor.submit(process_query, query)
 
         queryable = frontend_session.declare_queryable(f"{CLOCK_ADVANCE_PREFIX}*", handle_query)
         logger.info("ready — waiting for queries")
@@ -126,6 +133,7 @@ class JitterProxy:
         except KeyboardInterrupt:
             pass
         finally:
+            executor.shutdown(wait=False)
             typing.cast(typing.Any, queryable).undeclare()
             typing.cast(typing.Any, frontend_session).close()
             typing.cast(typing.Any, backend_session).close()

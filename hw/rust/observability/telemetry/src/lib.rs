@@ -1,11 +1,17 @@
-//! Virtmcu telemetry peripheral with pluggable transport.
+unsafe extern "C" fn allow_set_link(
+    _obj: *mut virtmcu_qom::qom::Object,
+    _name: *const core::ffi::c_char,
+    _val: *mut virtmcu_qom::qom::Object,
+    _errp: *mut *mut virtmcu_qom::error::Error,
+) {
+}
+// Virtmcu telemetry peripheral with pluggable transport.
 
 use core::ffi::{c_char, c_int, c_void};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use flatbuffers::FlatBufferBuilder;
 extern crate alloc;
 use alloc::sync::Arc;
-use core::ffi::CStr;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use virtmcu_api::TraceEvent;
@@ -21,25 +27,6 @@ use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     device_class_set_props,
 };
-use zenoh::Wait;
-
-fn create_transport(
-    transport_name: &str,
-    router: *const c_char,
-) -> Result<Arc<dyn virtmcu_api::DataTransport>, String> {
-    if transport_name == "unix" {
-        let path = "/tmp/virtmcu_telemetry.sock";
-        match transport_unix::UnixDataTransport::new(path) {
-            Ok(t) => Ok(Arc::new(t)),
-            Err(e) => Err(e),
-        }
-    } else {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(session) => Ok(Arc::new(transport_zenoh::ZenohDataTransport::new(session))),
-            Err(e) => Err(format!("FAILED to open Zenoh session: {e}")),
-        }
-    }
-}
 
 /* ── QOM Object ───────────────────────────────────────────────────────────── */
 
@@ -58,6 +45,9 @@ pub struct VirtmcuTelemetryQOM {
     pub router: *mut c_char,
     /// Debug flag
     pub debug: bool,
+
+    /* Links */
+    pub transport_hub: *mut Object,
 
     /* Rust state */
     /// Opaque pointer to the Rust backend state.
@@ -89,7 +79,7 @@ pub struct VirtmcuTelemetryBackend {
     _node_id: u32,
     last_halted: Arc<[AtomicBool; 32]>,
     irq_slots: virtmcu_qom::sync::BqlGuarded<Vec<IrqSlot>>,
-    _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+    _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
 // SAFETY: VirtmcuTelemetryBackend encapsulates cross-thread channel sender and atomic state.
@@ -249,37 +239,46 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
     let dev = dev_state as *mut virtmcu_qom::qdev::DeviceState;
     let s = &mut *(dev as *mut VirtmcuTelemetryQOM);
 
+    if s.transport_hub.is_null() {
+        error_setg!(
+            _errp as *mut *mut virtmcu_qom::error::Error,
+            "Strict DI violation: transport_hub link is required."
+        );
+        return;
+    }
+
+    unsafe {
+        virtmcu_qom::qom::object_property_set_bool(
+            s.transport_hub,
+            c"realized".as_ptr(),
+            true,
+            core::ptr::null_mut(),
+        );
+    }
+    let ptr_u64 = unsafe {
+        virtmcu_qom::qom::object_property_get_uint(
+            s.transport_hub,
+            c"transport_ptr".as_ptr(),
+            core::ptr::null_mut(),
+        )
+    };
+    if ptr_u64 == 0 {
+        error_setg!(
+            _errp as *mut *mut virtmcu_qom::error::Error,
+            "Strict DI violation: failed to acquire transport from hub."
+        );
+        return;
+    }
+    let transport_ref =
+        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
+    let transport = alloc::sync::Arc::clone(transport_ref);
+
     let (tx, rx) = bounded(10000);
-
-    let transport_name = if s.transport.is_null() {
-        "zenoh".to_owned()
-    } else {
-        CStr::from_ptr(s.transport).to_string_lossy().into_owned()
-    };
-
-    let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
-    let transport = match create_transport(&transport_name, router_ptr) {
-        Ok(t) => t,
-        Err(e) => {
-            error_setg!(_errp, "Failed to create transport: {}", e);
-            return;
-        }
-    };
-
     let node_id = s.node_id;
     let topic = format!("sim/telemetry/trace/{node_id}");
 
-    let liveliness = if transport_name == "zenoh" {
-        match transport_zenoh::get_or_init_session(router_ptr) {
-            Ok(session) => {
-                let key = format!("sim/telemetry/liveliness/{node_id}");
-                session.liveliness().declare_token(key).wait().ok()
-            }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    let key = format!("sim/telemetry/liveliness/{node_id}");
+    let liveliness = transport.declare_liveliness(&key);
 
     let backend = Box::new(VirtmcuTelemetryBackend {
         _transport: Arc::clone(&transport),
@@ -359,13 +358,23 @@ unsafe extern "C" fn telemetry_class_init(klass: *mut ObjectClass, _data: *const
     }
 
     device_class_set_props!(dc, TELEMETRY_PROPERTIES);
+
+    unsafe {
+        virtmcu_qom::qom::object_class_property_add_link(
+            klass,
+            c"transport".as_ptr(),
+            c"virtmcu-transport-hub".as_ptr(),
+            core::mem::offset_of!(VirtmcuTelemetryQOM, transport_hub) as isize,
+            Some(allow_set_link),
+            virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+        );
+    }
 }
 
 define_properties!(
     TELEMETRY_PROPERTIES,
     [
-        define_prop_uint32!(c"node-id".as_ptr(), VirtmcuTelemetryQOM, node_id, 0),
-        define_prop_string!(c"transport".as_ptr(), VirtmcuTelemetryQOM, transport),
+        define_prop_uint32!(c"node".as_ptr(), VirtmcuTelemetryQOM, node_id, 0),
         define_prop_string!(c"router".as_ptr(), VirtmcuTelemetryQOM, router),
     ]
 );

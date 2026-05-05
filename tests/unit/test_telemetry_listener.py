@@ -147,7 +147,8 @@ def test_run_main() -> None:
     ):
         mock_session = MagicMock()
         mock_zenoh.open.return_value = mock_session
-        mock_zenoh.Config.return_value = "mock_config"
+        mock_config = MagicMock()
+        mock_zenoh.Config.return_value = mock_config
 
         # Call main directly
         main()

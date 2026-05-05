@@ -47,7 +47,7 @@ def main() -> None:
             # Parse header using vproto
             header = vproto.ZenohSPIHeader.unpack(payload[:header_size])
             data = payload[header_size : header_size + 4]
-            val = int.from_bytes(data, "little")
+            val = int.from_bytes(data, "little")  # LINT_EXCEPTION: int_from_bytes
             logger.info(f"Received SPI transfer: 0x{val:08x} at vtime {header.delivery_vtime_ns}")
             # Echo back
             query.reply(topic, data)

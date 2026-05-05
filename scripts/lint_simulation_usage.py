@@ -85,6 +85,30 @@ def lint_file(path: Path) -> list[str]:
                                 "`tools.testing.virtmcu_test_suite.generated` instead."
                             )
 
+        # Ban manual struct packing and int.from_bytes (Mandate 10)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "from_bytes" and isinstance(node.func.value, ast.Name) and node.func.value.id == "int":
+                with path.open("r") as f:
+                    lines = f.readlines()
+                if node.lineno <= len(lines) and "LINT_EXCEPTION: int_from_bytes" not in lines[node.lineno - 1]:
+                    violations.append(
+                        f"{path}:{node.lineno}: Banned manual protocol deserialization via int.from_bytes. "
+                        "Use vproto.py FlatBuffer wrappers. "
+                        "If you are parsing non-protocol raw integers, append '# LINT_EXCEPTION: int_from_bytes'."
+                    )
+            elif (
+                node.func.attr in ("pack", "unpack", "unpack_from")
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "struct"
+            ):
+                with path.open("r") as f:
+                    lines = f.readlines()
+                if node.lineno <= len(lines) and "LINT_EXCEPTION: struct_pack" not in lines[node.lineno - 1]:
+                    violations.append(
+                        f"{path}:{node.lineno}: Banned manual struct packing/unpacking. "
+                        "Use vproto.py FlatBuffer wrappers."
+                    )
+
         # Ban raw subprocess.Popen
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if (

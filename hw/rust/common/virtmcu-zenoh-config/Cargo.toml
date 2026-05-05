@@ -1,0 +1,12 @@
+[package]
+name = "virtmcu-zenoh-config"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+zenoh.workspace = true

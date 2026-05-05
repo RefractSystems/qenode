@@ -10,7 +10,7 @@ proptest! {
         if data.len() >= size_of::<ZenohFrameHeader>() {
             let mut header = ZenohFrameHeader::default();
             unsafe {
-                core::ptr::copy_nonoverlapping(
+                core::ptr::copy_nonoverlapping( // COPY_EXCEPTION: fuzzing binary data into struct // COPY_EXCEPTION: fuzzing binary data into struct
                     data.as_ptr(),
                     core::ptr::from_mut(&mut header).cast::<u8>(),
                     size_of::<ZenohFrameHeader>(),

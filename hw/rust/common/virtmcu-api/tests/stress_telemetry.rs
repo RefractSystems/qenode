@@ -38,4 +38,6 @@ fn test_stress_telemetry_serialization() {
     }
     let duration = start.elapsed();
     println!("Serialized and deserialized {num_events} events in {duration:?}");
+    // PRINT_EXCEPTION: test measurement reporting
+    // PRINT_EXCEPTION: manual benchmark results
 }

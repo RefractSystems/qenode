@@ -61,7 +61,7 @@ impl UnixDataRouter {
                     });
                 }
                 Err(err) => {
-                    eprintln!("UnixDataRouter accept error: {}", err);
+                    ::virtmcu_qom::sim_err!("UnixDataRouter accept error: {}", err);
                     break;
                 }
             }

@@ -1,0 +1,68 @@
+diff --git a/hw/core/irq.c b/hw/core/irq.c
+index 106805e..49a291f 100644
+--- a/hw/core/irq.c
++++ b/hw/core/irq.c
+@@ -23,11 +23,61 @@
+  */
+ #include "qemu/osdep.h"
+ #include "qemu/main-loop.h"
+-#include "hw/core/irq.h"
++#include "hw/core/irq.h"/* virtmcu-patch-2d42b61d */
++#include "virtmcu/hooks.h"
++
++/* Define the global function pointers used for guest synchronization */
++void (*virtmcu_tcg_quantum_hook)(CPUState *cpu) = NULL;
++void (*virtmcu_get_quantum_timing)(VirtmcuQuantumTiming *timing) = NULL;
++void (*virtmcu_irq_hook)(void *opaque, int n, int level) = NULL;
++
++#define MAX_HALT_HOOKS 8
++void (*virtmcu_cpu_halt_hooks[MAX_HALT_HOOKS])(CPUState *cpu, bool halted) = {NULL};
++
++static void virtmcu_execute_halt_hooks(CPUState *cpu, bool halted) {
++    for (int i = 0; i < MAX_HALT_HOOKS; i++) {
++        if (virtmcu_cpu_halt_hooks[i]) {
++            virtmcu_cpu_halt_hooks[i](cpu, halted);
++        }
++    }
++}
++void (*virtmcu_cpu_halt_hook)(CPUState *cpu, bool halted) = virtmcu_execute_halt_hooks;
++
++
++void virtmcu_cpu_set_tcg_hook(void (*cb)(CPUState *cpu)) {
++    virtmcu_tcg_quantum_hook = cb;
++}
++
++void virtmcu_cpu_set_halt_hook(void (*cb)(CPUState *cpu, bool halted)) {
++    if (!cb) return;
++    for (int i = 0; i < MAX_HALT_HOOKS; i++) {
++        if (virtmcu_cpu_halt_hooks[i] == cb) return;
++        if (!virtmcu_cpu_halt_hooks[i]) {
++            virtmcu_cpu_halt_hooks[i] = cb;
++            return;
++        }
++    }
++}
++
++void virtmcu_set_irq_hook(void (*cb)(void *opaque, int n, int level)) {
++    virtmcu_irq_hook = cb;
++}
++
++VIRTMCU_EXPORT void virtmcu_timer_kick(QEMUTimer *timer) {
++    if (timer) {
++        timer_mod_ns(timer, 0);
++        qemu_notify_event();
++    }
++}
++
+ #include "qom/object.h"
+ 
+ void qemu_set_irq(qemu_irq irq, int level)
+-{
++{/* virtmcu-patch-22eca342 */
++    if (virtmcu_irq_hook) {
++        virtmcu_irq_hook(irq ? irq->opaque : NULL, irq ? irq->n : -1, level);
++    }
++
+     if (!irq)
+         return;
+ 

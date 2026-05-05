@@ -49,7 +49,6 @@ def create_lin_frame(vtime_ns: int, msg_type: int, data: bytes | None) -> bytear
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(600)
 async def test_lin_stress(simulation: Simulation, tmp_path: Path) -> None:
 
     is_asan = os.environ.get("VIRTMCU_USE_ASAN") == "1"
@@ -127,7 +126,7 @@ async def test_lin_stress(simulation: Simulation, tmp_path: Path) -> None:
             frame = create_lin_frame(i * step_ns, LinMessageType.LinMessageType.Data, b"S")
             await sim.transport.publish(rx_topic, bytes(frame))
 
-            # Advance clock by 1ms
+            # Advance clock by 1ms (give ASan extra time per step)
             await sim.vta.step(step_ns)  # LINT_EXCEPTION: vta_step_loop
 
         logger.info(f"Received {received_count} echo responses, {errors} errors.")

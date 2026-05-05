@@ -39,7 +39,20 @@ let response = self.bridge.send_and_wait(request, TIMEOUT_MS);
 
 ---
 
-## 2. Peripheral Fidelity & Timing
+## 2. Strict Dependency Injection (DI)
+
+VirtMCU mandates a **Universal Strict Dependency Injection (DI)** architecture for all peripherals. Peripherals must never hardcode or globally discover their dependencies (e.g., transport layers, simulation coordinators, configuration files).
+
+Instead, all dependencies must be passed into the peripheral during its instantiation phase via the QOM (QEMU Object Model) property interface.
+
+### Benefits of Strict DI
+1. **Deterministic Testing**: By injecting mocked transports, developers can test complex peripheral state machines entirely within Rust `cargo test` environments without booting a full QEMU machine or binding to real network sockets.
+2. **Parallel Safety**: Global state is strictly banned. DI ensures that multiple instances of the same peripheral can run in parallel tests (`pytest -n auto`) without port collisions or shared memory conflicts.
+3. **Architectural Clarity**: The dependencies of a peripheral are explicitly defined in its QOM properties, making the system architecture transparent and preventing hidden coupling.
+
+---
+
+## 3. Peripheral Fidelity & Timing
 
 VirtMCU prioritizes **Software-Observable Fidelity** over microscopic cycle-accuracy. We model the physical duration of transmissions to ensure that firmware sees realistic baud rates and bus contention.
 

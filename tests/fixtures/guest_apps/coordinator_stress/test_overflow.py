@@ -9,6 +9,7 @@ Ensure correct functionality, performance, and deterministic execution of test_o
 """
 
 import logging
+import os
 import sys
 import typing
 
@@ -16,13 +17,14 @@ import zenoh
 
 from tools import vproto
 from tools.testing.utils import mock_execution_delay
+from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    conf = zenoh.Config()
-    s = zenoh.open(conf)
+    router = os.environ.get("ZENOH_ROUTER", "tcp/localhost:7447")
+    s = open_client_session(connect=router)  # ZENOH_OPEN_EXCEPTION: canonical wrapper
 
     rx_frames = []
 
@@ -47,8 +49,9 @@ def main() -> None:
         logger.error("FAIL: No frame received")
         sys.exit(1)
 
-    vtime = int.from_bytes(rx_frames[0][:8], "little")
-    _size = int.from_bytes(rx_frames[0][8:12], "little")
+    header = vproto.ZenohFrameHeader.unpack(rx_frames[0][: vproto.SIZE_ZENOH_FRAME_HEADER])
+    vtime = header.delivery_vtime_ns
+    _size = header.size
     logger.info(f"Original vtime: {orig_vtime}")
     logger.info(f"Forwarded vtime: {vtime}")
 

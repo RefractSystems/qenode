@@ -33,6 +33,7 @@ async def test_actuator_zenoh_publish(
     """
     Test that the actuator device correctly publishes to Zenoh.
     """
+    from tools import vproto
     from tools.testing.virtmcu_test_suite.factory import compile_yaml
 
     app_dir = guest_app_factory("actuator")
@@ -50,10 +51,11 @@ async def test_actuator_zenoh_publish(
     received_msgs: list[dict[str, Any]] = []
 
     def on_sample(topic: str, payload: bytes) -> None:
-        if len(payload) < 8:
+        if len(payload) < vproto.SIZE_ZENOH_FRAME_HEADER:
             return
-        vtime_ns = int.from_bytes(payload[:8], "little")
-        data_bytes = payload[8:]
+        header = vproto.ZenohFrameHeader.unpack(payload[: vproto.SIZE_ZENOH_FRAME_HEADER])
+        vtime_ns = header.delivery_vtime_ns
+        data_bytes = payload[vproto.SIZE_ZENOH_FRAME_HEADER :]
         import array
 
         a = array.array("d", data_bytes)

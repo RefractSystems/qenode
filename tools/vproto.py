@@ -48,6 +48,16 @@ from tools.virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
 from tools.virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
 from tools.virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
 from tools.virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
+from tools.virtmcu.rf802154.Rf802154Header import Rf802154Header as FBRf802154Header
+from tools.virtmcu.rf802154.Rf802154Header import (
+    Rf802154HeaderAddDeliveryVtimeNs,
+    Rf802154HeaderAddLqi,
+    Rf802154HeaderAddRssi,
+    Rf802154HeaderAddSequenceNumber,
+    Rf802154HeaderAddSize,
+    Rf802154HeaderEnd,
+    Rf802154HeaderStart,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +225,41 @@ class ZenohSPIHeader:
 
 
 @dataclass
+class Rf802154Header:
+    delivery_vtime_ns: int
+    sequence_number: int
+    size: int
+    rssi: int
+    lqi: int
+
+    @classmethod
+    def unpack(cls, data: bytes) -> Rf802154Header:
+        # Tables in VirtMCU are size-prefixed (4 bytes)
+        if len(data) < 4:
+            raise ValueError("Data too short for size prefix")
+        fb = FBRf802154Header.GetRootAs(data, 4)  # type: ignore[no-untyped-call]
+        return cls(
+            fb.DeliveryVtimeNs(),
+            fb.SequenceNumber(),
+            fb.Size(),
+            fb.Rssi(),
+            fb.Lqi(),
+        )
+
+    def pack(self) -> bytes:
+        b = flatbuffers.Builder(64)
+        Rf802154HeaderStart(b)  # type: ignore[no-untyped-call]
+        Rf802154HeaderAddDeliveryVtimeNs(b, self.delivery_vtime_ns)  # type: ignore[no-untyped-call]
+        Rf802154HeaderAddSequenceNumber(b, self.sequence_number)  # type: ignore[no-untyped-call]
+        Rf802154HeaderAddSize(b, self.size)  # type: ignore[no-untyped-call]
+        Rf802154HeaderAddRssi(b, self.rssi)  # type: ignore[no-untyped-call]
+        Rf802154HeaderAddLqi(b, self.lqi)  # type: ignore[no-untyped-call]
+        res = Rf802154HeaderEnd(b)  # type: ignore[no-untyped-call]
+        b.FinishSizePrefixed(res)
+        return bytes(b.Output())
+
+
+@dataclass
 class CoordMessage:
     src_node_id: int
     dst_node_id: int
@@ -246,6 +291,12 @@ class CoordMessage:
         CoordMessageAddProtocol(b, self.protocol)  # type: ignore[no-untyped-call]
         CoordMessageAddPayload(b, payload_offset)  # type: ignore[no-untyped-call]
         return CoordMessageEnd(b)  # type: ignore[no-untyped-call, no-any-return]
+
+    def pack(self) -> bytes:
+        b = flatbuffers.Builder(1024)
+        res = self._pack_to_builder(b)
+        b.Finish(res)
+        return bytes(b.Output())
 
 
 @dataclass

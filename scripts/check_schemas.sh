@@ -40,4 +40,19 @@ if ! cmp -s tools/deterministic_coordinator/src/generated/topology.rs "$TEMP_DIR
     exit 1
 fi
 
-echo "✅ Generated schema artifacts are perfectly synchronized with the TypeSpec source."
+echo "🥞 4. Verifying FlatBuffers Python bindings..."
+# Check a few key files to ensure they are synchronized
+FB_FILES=(
+    "tools/virtmcu/core/CoordMessage.py"
+    "tools/virtmcu/rf802154/Rf802154Header.py"
+    "tools/virtmcu/can/CanFdFrame.py"
+)
+
+for f in "${FB_FILES[@]}"; do
+    if ! cmp -s "$f" "$TEMP_DIR/$f"; then
+        echo "❌ Error: $f is out of date. Please run ./scripts/generate_schemas.sh"
+        exit 1
+    fi
+done
+
+echo "✅ Generated schema artifacts are perfectly synchronized with the TypeSpec and FlatBuffers sources."

@@ -146,7 +146,6 @@ async def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Sessi
                 typing.cast(typing.Any, ta_session).close()
 
 
-@pytest.mark.skip(reason="Zenoh Python API handles queries sequentially, preventing in_flight from exceeding limit")
 @pytest.mark.asyncio
 async def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[zenoh.Session, str]) -> None:
     """Intentionally creates a query storm."""

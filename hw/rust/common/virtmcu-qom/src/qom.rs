@@ -50,10 +50,57 @@ extern "C" {
         v: *const u32,
         flags: c_int,
     );
+    /// A function
+    /// Sets a bool property
+    /// Gets a bool property
+    pub fn object_property_get_bool(
+        obj: *mut Object,
+        name: *const c_char,
+        errp: *mut *mut crate::error::Error,
+    ) -> bool;
+    /// Sets a bool property
+    pub fn object_property_set_bool(
+        obj: *mut Object,
+        name: *const c_char,
+        v: bool,
+        errp: *mut *mut crate::error::Error,
+    ) -> bool;
+    /// Gets a uint property
+    pub fn object_property_get_uint(
+        obj: *mut Object,
+        name: *const c_char,
+        errp: *mut *mut crate::error::Error,
+    ) -> u64;
+    /// A function
+    pub fn qdev_prop_allow_set_link_before_realize(
+        obj: *mut Object,
+        name: *const c_char,
+        val: *mut Object,
+        errp: *mut *mut crate::error::Error,
+    );
+
+    /// Add a link property
+    pub fn object_class_property_add_link(
+        klass: *mut ObjectClass,
+        name: *const c_char,
+        type_: *const c_char,
+        offset: isize,
+        check: Option<
+            unsafe extern "C" fn(
+                obj: *mut Object,
+                name: *const c_char,
+                val: *mut Object,
+                errp: *mut *mut crate::error::Error,
+            ),
+        >,
+        flags: c_int,
+    );
 }
 
 /// A constant
 pub const OBJ_PROP_FLAG_READ: c_int = 1;
+/// Strong link flag
+pub const OBJ_PROP_LINK_STRONG: c_int = 1;
 /// A constant
 pub const OBJ_PROP_FLAG_WRITE: c_int = 2;
 /// A constant

@@ -1,5 +1,11 @@
-//! Virtmcu actuator device with pluggable transport.
-use zenoh::Wait;
+unsafe extern "C" fn allow_set_link(
+    _obj: *mut virtmcu_qom::qom::Object,
+    _name: *const core::ffi::c_char,
+    _val: *mut virtmcu_qom::qom::Object,
+    _errp: *mut *mut virtmcu_qom::error::Error,
+) {
+}
+// Virtmcu actuator device with pluggable transport.
 
 extern crate alloc;
 
@@ -37,6 +43,9 @@ pub struct VirtmcuActuatorQEMU {
     pub topic_prefix: *mut c_char,
     pub debug: bool,
 
+    /* Links */
+    pub transport_hub: *mut Object,
+
     /* Registers */
     pub actuator_id: u32,
     pub data_size: u32,
@@ -54,7 +63,7 @@ struct ActuatorPacket {
 pub struct VirtmcuActuatorState {
     shared: Arc<SharedState>,
     bg_thread: Option<JoinHandle<()>>,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
 pub struct InnerState {
@@ -135,13 +144,10 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
         let offset = ((addr - REG_DATA_START) % 8) as usize;
         let mut ret: u64 = 0;
         if offset + (size as usize) <= 8 {
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    (s.data.as_ptr().add(idx) as *const u8).add(offset),
-                    &raw mut ret as *mut u8,
-                    size as usize,
-                );
-            }
+            let bytes = s.data[idx].to_le_bytes();
+            let mut ret_bytes = [0u8; 8];
+            ret_bytes[..size as usize].copy_from_slice(&bytes[offset..offset + size as usize]);
+            ret = u64::from_le_bytes(ret_bytes);
         }
         ret
     } else {
@@ -174,13 +180,10 @@ pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64
         let idx = ((addr - REG_DATA_START) / 8) as usize;
         let offset = ((addr - REG_DATA_START) % 8) as usize;
         if offset + (size as usize) <= 8 {
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    &raw const val as *const u8,
-                    (s.data.as_mut_ptr().add(idx) as *mut u8).add(offset),
-                    size as usize,
-                );
-            }
+            let val_bytes = val.to_le_bytes();
+            let mut data_bytes = s.data[idx].to_le_bytes();
+            data_bytes[offset..offset + size as usize].copy_from_slice(&val_bytes[..size as usize]);
+            s.data[idx] = f64::from_le_bytes(data_bytes);
         }
     } else if s.debug {
         virtmcu_qom::sim_warn!("actuator_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
@@ -227,20 +230,44 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
 
-    let router_ptr = if s.router.is_null() { ptr::null() } else { s.router.cast_const() };
-    let transport_name = if s.transport.is_null() {
-        "zenoh".to_owned()
-    } else {
-        unsafe { CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
-    };
-
     let prefix = if s.topic_prefix.is_null() {
         "firmware/control".to_owned()
     } else {
         unsafe { CStr::from_ptr(s.topic_prefix).to_string_lossy().into_owned() }
     };
 
-    s.rust_state = actuator_init_internal(s.node_id, transport_name, router_ptr, prefix);
+    if s.transport_hub.is_null() {
+        error_setg!(errp, "Strict DI violation: transport_hub link is required.");
+        return;
+    }
+
+    unsafe {
+        virtmcu_qom::qom::object_property_set_bool(
+            s.transport_hub,
+            c"realized".as_ptr(),
+            true,
+            errp as *mut *mut virtmcu_qom::error::Error,
+        );
+    }
+    let ptr_u64 = unsafe {
+        virtmcu_qom::qom::object_property_get_uint(
+            s.transport_hub,
+            c"transport_ptr".as_ptr(),
+            errp as *mut *mut virtmcu_qom::error::Error,
+        )
+    };
+    if ptr_u64 == 0 {
+        virtmcu_qom::error_setg!(
+            errp,
+            "Strict DI violation: failed to acquire transport from hub."
+        );
+        return;
+    }
+    let transport_ref =
+        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
+    let transport_arc = alloc::sync::Arc::clone(transport_ref);
+
+    s.rust_state = actuator_init_internal(s.node_id, prefix, transport_arc);
     if s.rust_state.is_null() {
         error_setg!(errp, "actuator: failed to initialize Rust backend");
     }
@@ -272,7 +299,6 @@ define_properties!(
     VIRTMCU_ACTUATOR_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuActuatorQEMU, node_id, 0),
-        define_prop_string!(c"transport".as_ptr(), VirtmcuActuatorQEMU, transport),
         define_prop_string!(c"router".as_ptr(), VirtmcuActuatorQEMU, router),
         define_prop_string!(c"topic-prefix".as_ptr(), VirtmcuActuatorQEMU, topic_prefix),
         virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuActuatorQEMU, debug, false),
@@ -288,7 +314,18 @@ pub unsafe extern "C" fn actuator_class_init(klass: *mut ObjectClass, _data: *co
         (*dc).realize = Some(actuator_realize);
         (*dc).user_creatable = true;
     }
-    virtmcu_qom::qdev::device_class_set_props_n(dc, VIRTMCU_ACTUATOR_PROPERTIES.as_ptr(), 5);
+    virtmcu_qom::device_class_set_props!(dc, VIRTMCU_ACTUATOR_PROPERTIES);
+
+    unsafe {
+        virtmcu_qom::qom::object_class_property_add_link(
+            klass,
+            c"transport".as_ptr(),
+            c"virtmcu-transport-hub".as_ptr(),
+            core::mem::offset_of!(VirtmcuActuatorQEMU, transport_hub) as isize,
+            Some(allow_set_link),
+            virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+        );
+    }
 }
 
 #[used]
@@ -332,30 +369,12 @@ fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> Jo
 
 fn actuator_init_internal(
     node_id: u32,
-    transport_name: String,
-    router: *const c_char,
     topic_prefix: String,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut VirtmcuActuatorState {
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node_id })
-        } else {
-            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
-        };
-        match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
-            Err(_) => return ptr::null_mut(),
-        }
-    } else {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(session) => Arc::new(transport_zenoh::ZenohDataTransport::new(session)),
-            Err(_) => return ptr::null_mut(),
-        }
-    };
-
     let (tx, rx) = bounded(1024);
     let shared = Arc::new(SharedState {
-        transport,
+        transport: Arc::clone(&transport),
         node_id,
         topic_prefix,
         tx_sender: tx,
@@ -365,17 +384,9 @@ fn actuator_init_internal(
 
     let bg_thread = start_tx_thread(Arc::clone(&shared), rx);
 
-    let liveliness = if transport_name == "zenoh" {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(session) => {
-                let hb_topic = format!("sim/actuator/liveliness/{node_id}");
-                session.liveliness().declare_token(hb_topic).wait().ok()
-            }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    let hb_topic = format!("sim/actuator/liveliness/{node_id}");
+    let liveliness = transport.declare_liveliness(&hb_topic);
+
     Box::into_raw(Box::new(VirtmcuActuatorState {
         shared,
         bg_thread: Some(bg_thread),
@@ -403,11 +414,11 @@ fn actuator_publish(
             as u64;
 
     let topic = format!("{}/{}/{}", state.shared.topic_prefix, state.shared.node_id, actuator_id);
-    let mut payload = Vec::with_capacity(8 + (data_size as usize) * 8);
-    payload.extend_from_slice(&vtime_ns.to_le_bytes());
+    let mut data_payload = Vec::with_capacity((data_size as usize) * 8);
     for val in data.iter().take(data_size as usize) {
-        payload.extend_from_slice(&val.to_le_bytes());
+        data_payload.extend_from_slice(&val.to_le_bytes());
     }
+    let payload = virtmcu_api::encode_frame(vtime_ns, 0, &data_payload);
 
     match state.shared.tx_sender.try_send(ActuatorPacket { topic, payload }) {
         Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}
@@ -418,6 +429,89 @@ fn actuator_publish(
 mod tests {
     use super::*;
 
+    // Dummy symbols to satisfy the linker during cargo test
+    #[no_mangle]
+    pub extern "C" fn qemu_clock_get_ns(_: i32) -> i64 {
+        0
+    }
+    #[no_mangle]
+    pub extern "C" fn register_dso_module_init(_: *const c_void, _: i32) {}
+    #[no_mangle]
+    pub extern "C" fn type_register_static(_: *const c_void) {}
+    #[no_mangle]
+    pub extern "C" fn object_class_dynamic_cast_assert(
+        _: *mut c_void,
+        _: *const c_char,
+        _: *const c_char,
+        _: i32,
+        _: *const c_char,
+    ) -> *mut c_void {
+        ptr::null_mut()
+    }
+    #[no_mangle]
+    pub extern "C" fn device_class_set_props_n(_: *mut c_void, _: *const c_void) {}
+    #[no_mangle]
+    pub extern "C" fn object_class_property_add_link(
+        _: *mut c_void,
+        _: *const c_char,
+        _: *const c_char,
+        _: isize,
+        _: Option<unsafe extern "C" fn()>,
+        _: i32,
+    ) {
+    }
+    #[no_mangle]
+    pub extern "C" fn memory_region_init_io(
+        _: *mut c_void,
+        _: *mut c_void,
+        _: *const c_void,
+        _: *mut c_void,
+        _: *const c_char,
+        _: u64,
+    ) {
+    }
+    #[no_mangle]
+    pub extern "C" fn sysbus_init_mmio(_: *mut c_void, _: *mut c_void) {}
+    #[no_mangle]
+    pub extern "C" fn object_property_set_bool(
+        _: *mut c_void,
+        _: *const c_char,
+        _: bool,
+        _: *mut *mut c_void,
+    ) {
+    }
+    #[no_mangle]
+    pub extern "C" fn object_property_get_uint(
+        _: *mut c_void,
+        _: *const c_char,
+        _: *mut *mut c_void,
+    ) -> u64 {
+        0
+    }
+    #[no_mangle]
+    pub static mut qdev_prop_uint32: [u8; 1] = [0];
+    #[no_mangle]
+    pub static mut qdev_prop_string: [u8; 1] = [0];
+    #[no_mangle]
+    pub static mut qdev_prop_bool: [u8; 1] = [0];
+    #[no_mangle]
+    pub extern "C" fn virtmcu_is_bql_locked() -> bool {
+        false
+    }
+    #[no_mangle]
+    pub extern "C" fn virtmcu_safe_bql_unlock() {}
+    #[no_mangle]
+    pub extern "C" fn virtmcu_safe_bql_force_lock() {}
+    #[no_mangle]
+    pub unsafe extern "C" fn error_setg_internal(
+        _: *mut *mut c_void,
+        _: *const c_char,
+        _: i32,
+        _: *const c_char,
+        _: *const c_char,
+    ) {
+    }
+
     #[test]
     fn test_actuator_qemu_layout() {
         assert_eq!(
@@ -425,5 +519,57 @@ mod tests {
             0,
             "SysBusDevice must be the first field"
         );
+    }
+
+    #[test]
+    fn test_actuator_mmio_access() {
+        let mut device = VirtmcuActuatorQEMU {
+            parent_obj: unsafe { core::mem::zeroed() },
+            mmio: unsafe { core::mem::zeroed() },
+            node_id: 1,
+            transport: ptr::null_mut(),
+            router: ptr::null_mut(),
+            topic_prefix: ptr::null_mut(),
+            debug: false,
+            transport_hub: ptr::null_mut(),
+            actuator_id: 0x1234,
+            data_size: 0,
+            data: [0.0; 8],
+            rust_state: ptr::null_mut(),
+        };
+        let opaque = &mut device as *mut _ as *mut c_void;
+
+        // Test reading fixed registers
+        assert_eq!(unsafe { actuator_read(opaque, REG_ACTUATOR_ID, 4) }, 0x1234);
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_SIZE, 4) }, 0);
+
+        // Test writing fixed registers
+        unsafe { actuator_write(opaque, REG_DATA_SIZE, 5, 4) };
+        assert_eq!(device.data_size, 5);
+
+        // Test data array access (full u64/f64)
+        let val: f64 = 1.23456789;
+        let val_u64 = u64::from_le_bytes(val.to_le_bytes());
+        unsafe { actuator_write(opaque, REG_DATA_START, val_u64, 8) };
+        assert_eq!(device.data[0], val);
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START, 8) }, val_u64);
+
+        // Test partial access (offset 4, size 4)
+        let val2: u32 = 0xDEADBEEF;
+        unsafe { actuator_write(opaque, REG_DATA_START + 4, val2 as u64, 4) };
+        let data_bytes = device.data[0].to_le_bytes();
+        let high_bytes =
+            u32::from_le_bytes([data_bytes[4], data_bytes[5], data_bytes[6], data_bytes[7]]);
+        assert_eq!(high_bytes, val2);
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START + 4, 4) }, val2 as u64);
+
+        // Test unaligned/partial access (offset 1, size 4)
+        let val3: u32 = 0x11223344;
+        unsafe { actuator_write(opaque, REG_DATA_START + 1, val3 as u64, 4) };
+        let data_bytes = device.data[0].to_le_bytes();
+        let partial_bytes =
+            u32::from_le_bytes([data_bytes[1], data_bytes[2], data_bytes[3], data_bytes[4]]);
+        assert_eq!(partial_bytes, val3);
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START + 1, 4) }, val3 as u64);
     }
 }
