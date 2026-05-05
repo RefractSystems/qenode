@@ -170,9 +170,9 @@ def _json5_str_array(values: list[str]) -> str:
     return "[" + ",".join(f'"{v}"' for v in escaped) + "]"
 
 
-def pack_clock_advance(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
+def pack_clock_advance(delta_ns: int, absolute_vtime_ns: int = 0, quantum_number: int = 0) -> bytes:
 
-    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
+    return vproto.ClockAdvanceReq(delta_ns, absolute_vtime_ns, quantum_number).pack()
 
 
 def unpack_clock_ready(data: bytes) -> tuple[int, int, int, int]:

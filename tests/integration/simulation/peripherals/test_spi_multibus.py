@@ -25,7 +25,6 @@ async def test_spi_bus_stress(inspection_bridge: object, tmp_path: Path) -> None
     Verify that hardening handles multiple buses and devices correctly.
     """
 
-
     # 4 SPI buses, each with 4 devices (QEMU might have some limits)
     num_buses = 4
     devs_per_bus = 4
@@ -69,7 +68,6 @@ async def test_mac_stress(inspection_bridge: object, tmp_path: Path) -> None:
     """
     Stress test: multiple devices with different MAC addresses.
     """
-
 
     num_devs = 8
     yml = "machine:\n  cpus:\n    - name: cpu0\n      type: cortex-a15\nperipherals:\n"

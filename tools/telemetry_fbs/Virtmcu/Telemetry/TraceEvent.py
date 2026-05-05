@@ -2,17 +2,15 @@
 
 # namespace: Telemetry
 
-
 import flatbuffers
 from flatbuffers.compat import import_numpy
-
 np = import_numpy()
 
-class TraceEvent:
+class TraceEvent(object):
     __slots__ = ['_tab']
 
     @classmethod
-    def GetRootAs(cls, buf, offset: int = 0):
+    def GetRootAs(cls, buf, offset=0):
         n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
         x = TraceEvent()
         x.Init(buf, n + offset)
@@ -23,9 +21,10 @@ class TraceEvent:
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
     # TraceEvent
-    def Init(self, buf: bytes, pos: int):
+    def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # Virtual timestamp in nanoseconds since simulation start.
     # TraceEvent
     def TimestampNs(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -33,6 +32,7 @@ class TraceEvent:
             return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
         return 0
 
+    # Type of trace event (CPU, IRQ, Peripheral, Power).
     # TraceEvent
     def Type(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -40,6 +40,7 @@ class TraceEvent:
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
+    # Optional ID (e.g. IRQ number or peripheral address).
     # TraceEvent
     def Id(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
@@ -47,6 +48,7 @@ class TraceEvent:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
+    # Value associated with the event.
     # TraceEvent
     def Value(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
@@ -54,51 +56,129 @@ class TraceEvent:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
+    # Human-readable device name.
     # TraceEvent
-    def DeviceName(self) -> str | None:
+    def DeviceName(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
 
-def TraceEventStart(builder: flatbuffers.Builder):
-    builder.StartObject(5)
+    # Simulated power consumption in microwatts (uW).
+    # TraceEvent
+    def PowerUw(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
 
-def Start(builder: flatbuffers.Builder):
+def TraceEventStart(builder):
+    builder.StartObject(6)
+
+def Start(builder):
     TraceEventStart(builder)
 
-def TraceEventAddTimestampNs(builder: flatbuffers.Builder, timestampNs: int):
+def TraceEventAddTimestampNs(builder, timestampNs):
     builder.PrependUint64Slot(0, timestampNs, 0)
 
-def AddTimestampNs(builder: flatbuffers.Builder, timestampNs: int):
+def AddTimestampNs(builder, timestampNs):
     TraceEventAddTimestampNs(builder, timestampNs)
 
-def TraceEventAddType(builder: flatbuffers.Builder, type: int):
+def TraceEventAddType(builder, type):
     builder.PrependInt8Slot(1, type, 0)
 
-def AddType(builder: flatbuffers.Builder, type: int):
+def AddType(builder, type):
     TraceEventAddType(builder, type)
 
-def TraceEventAddId(builder: flatbuffers.Builder, id: int):
+def TraceEventAddId(builder, id):
     builder.PrependUint32Slot(2, id, 0)
 
-def AddId(builder: flatbuffers.Builder, id: int):
+def AddId(builder, id):
     TraceEventAddId(builder, id)
 
-def TraceEventAddValue(builder: flatbuffers.Builder, value: int):
+def TraceEventAddValue(builder, value):
     builder.PrependUint32Slot(3, value, 0)
 
-def AddValue(builder: flatbuffers.Builder, value: int):
+def AddValue(builder, value):
     TraceEventAddValue(builder, value)
 
-def TraceEventAddDeviceName(builder: flatbuffers.Builder, deviceName: int):
+def TraceEventAddDeviceName(builder, deviceName):
     builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(deviceName), 0)
 
-def AddDeviceName(builder: flatbuffers.Builder, deviceName: int):
+def AddDeviceName(builder, deviceName):
     TraceEventAddDeviceName(builder, deviceName)
 
-def TraceEventEnd(builder: flatbuffers.Builder) -> int:
+def TraceEventAddPowerUw(builder, powerUw):
+    builder.PrependUint32Slot(5, powerUw, 0)
+
+def AddPowerUw(builder, powerUw):
+    TraceEventAddPowerUw(builder, powerUw)
+
+def TraceEventEnd(builder):
     return builder.EndObject()
 
-def End(builder: flatbuffers.Builder) -> int:
+def End(builder):
     return TraceEventEnd(builder)
+
+
+class TraceEventT(object):
+
+    # TraceEventT
+    def __init__(
+        self,
+        timestampNs = 0,
+        type = 0,
+        id = 0,
+        value = 0,
+        deviceName = None,
+        powerUw = 0,
+    ):
+        self.timestampNs = timestampNs  # type: int
+        self.type = type  # type: int
+        self.id = id  # type: int
+        self.value = value  # type: int
+        self.deviceName = deviceName  # type: Optional[str]
+        self.powerUw = powerUw  # type: int
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        traceEvent = TraceEvent()
+        traceEvent.Init(buf, pos)
+        return cls.InitFromObj(traceEvent)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, traceEvent):
+        x = TraceEventT()
+        x._UnPack(traceEvent)
+        return x
+
+    # TraceEventT
+    def _UnPack(self, traceEvent):
+        if traceEvent is None:
+            return
+        self.timestampNs = traceEvent.TimestampNs()
+        self.type = traceEvent.Type()
+        self.id = traceEvent.Id()
+        self.value = traceEvent.Value()
+        self.deviceName = traceEvent.DeviceName()
+        self.powerUw = traceEvent.PowerUw()
+
+    # TraceEventT
+    def Pack(self, builder):
+        if self.deviceName is not None:
+            deviceName = builder.CreateString(self.deviceName)
+        TraceEventStart(builder)
+        TraceEventAddTimestampNs(builder, self.timestampNs)
+        TraceEventAddType(builder, self.type)
+        TraceEventAddId(builder, self.id)
+        TraceEventAddValue(builder, self.value)
+        if self.deviceName is not None:
+            TraceEventAddDeviceName(builder, deviceName)
+        TraceEventAddPowerUw(builder, self.powerUw)
+        traceEvent = TraceEventEnd(builder)
+        return traceEvent

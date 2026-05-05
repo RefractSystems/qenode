@@ -9,7 +9,7 @@ Ensure correct functionality, performance, and deterministic execution of test_l
 """
 
 from __future__ import annotations
- 
+
 import hashlib
 import logging
 import os
@@ -50,9 +50,7 @@ def create_lin_frame(vtime_ns: int, msg_type: int, data: bytes | None) -> bytear
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
-async def test_lin_stress(
-    simulation: Simulation, tmp_path: Path
-) -> None:
+async def test_lin_stress(simulation: Simulation, tmp_path: Path) -> None:
 
     is_asan = os.environ.get("VIRTMCU_USE_ASAN") == "1"
     tmpdir = tmp_path
@@ -99,6 +97,7 @@ async def test_lin_stress(
     async with simulation as sim:
         if sim.transport is None:
             from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
             sim.transport = ZenohTransportImpl(sim._router, sim._session)
         assert sim.transport is not None
 

@@ -28,14 +28,13 @@ if TYPE_CHECKING:
     from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
-
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
 def flexray_artifacts(guest_app_factory: Callable[[str], Path], tmp_path: Path) -> tuple[Path, Path]:
     app_dir = guest_app_factory("flexray_bridge")
-    
+
     yaml_src = """
 machine:
   cpus:
@@ -96,8 +95,10 @@ async def test_flexray_zenoh_tx(
 
     if simulation.transport is None:
         from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
         simulation.transport = ZenohTransportImpl(simulation._router, simulation._session)
     assert simulation.transport is not None
+
     def on_msg(payload: bytes) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, payload)
 
@@ -153,6 +154,7 @@ async def test_flexray_zenoh_rx(
     # Declare publisher BEFORE entering the simulation context.
     if simulation.transport is None:
         from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
         simulation.transport = ZenohTransportImpl(simulation._router, simulation._session)
     assert simulation.transport is not None
 
@@ -215,6 +217,7 @@ async def test_flexray_stress(
     # Declare publisher BEFORE entering the simulation context.
     if simulation.transport is None:
         from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
         simulation.transport = ZenohTransportImpl(simulation._router, simulation._session)
     assert simulation.transport is not None
 

@@ -74,21 +74,21 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
 
     # Declare Zenoh subscribers BEFORE entering the simulation context
     # so the framework's routing barrier covers them.
-    
+
     received_data = bytearray()
     received_event = asyncio.Event()
     expected_count = 50
 
-
-
     # Initialize transport before subscribing to not miss any startup messages
     if simulation.transport is None:
         from tools.testing.virtmcu_test_suite.transport import ZenohTransportImpl
+
         simulation.transport = ZenohTransportImpl(simulation._router, simulation._session)
     assert simulation.transport is not None
-    
+
     def on_payload(payload: bytes) -> None:
         _on_tx(payload, received_data, received_event, expected_count, loop)
+
     await simulation.transport.subscribe(tx_topic, on_payload)
 
     async with simulation as sim:
@@ -121,7 +121,6 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
         while len(received_data) < expected_count:
             # 60s base timeout scales to 300s in ASan via get_time_multiplier()
             await sim.vta.step(10_000_000, timeout=60.0)  # LINT_EXCEPTION: vta_step_loop
-
 
             if asyncio.get_running_loop().time() - start_time > timeout:
                 break

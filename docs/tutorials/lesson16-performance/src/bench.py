@@ -47,7 +47,7 @@ def _get_free_endpoint() -> str:
 
 
 def pack_req(delta_ns: int, quantum_number: int = 0) -> bytes:
-    return ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0, quantum_number=quantum_number).pack()
+    return ClockAdvanceReq(delta_ns=delta_ns, absolute_vtime_ns=0, quantum_number=quantum_number).pack()
 
 
 def unpack_rep(data: bytes) -> ClockReadyResp:

@@ -109,7 +109,7 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
             node_id = int(str(query.key_expr).split("/")[-1])
             payload = cast(Any, query.payload).to_bytes()
             req = vproto.ClockAdvanceReq.unpack(payload)
-            delta_ns, _mujoco_time, qn = req.delta_ns, req.mujoco_time_ns, req.quantum_number
+            delta_ns, _absolute_vtime, qn = req.delta_ns, req.absolute_vtime_ns, req.quantum_number
             logger.info(f"DEBUG: Node {node_id} advance: delta={delta_ns}, qn={qn}")
 
             # Atomically update vtime

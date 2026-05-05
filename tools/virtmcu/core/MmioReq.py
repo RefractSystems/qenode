@@ -42,3 +42,58 @@ def CreateMmioReq(builder, type_, size, reserved1, reserved2, vtimeNs, addr, dat
     builder.PrependUint8(size)
     builder.PrependUint8(type_)
     return builder.Offset()
+
+
+class MmioReqT(object):
+
+    # MmioReqT
+    def __init__(
+        self,
+        type_ = 0,
+        size = 0,
+        reserved1 = 0,
+        reserved2 = 0,
+        vtimeNs = 0,
+        addr = 0,
+        data = 0,
+    ):
+        self.type_ = type_  # type: int
+        self.size = size  # type: int
+        self.reserved1 = reserved1  # type: int
+        self.reserved2 = reserved2  # type: int
+        self.vtimeNs = vtimeNs  # type: int
+        self.addr = addr  # type: int
+        self.data = data  # type: int
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        mmioReq = MmioReq()
+        mmioReq.Init(buf, pos)
+        return cls.InitFromObj(mmioReq)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, mmioReq):
+        x = MmioReqT()
+        x._UnPack(mmioReq)
+        return x
+
+    # MmioReqT
+    def _UnPack(self, mmioReq):
+        if mmioReq is None:
+            return
+        self.type_ = mmioReq.Type_()
+        self.size = mmioReq.Size()
+        self.reserved1 = mmioReq.Reserved1()
+        self.reserved2 = mmioReq.Reserved2()
+        self.vtimeNs = mmioReq.VtimeNs()
+        self.addr = mmioReq.Addr()
+        self.data = mmioReq.Data()
+
+    # MmioReqT
+    def Pack(self, builder):
+        return CreateMmioReq(builder, self.type_, self.size, self.reserved1, self.reserved2, self.vtimeNs, self.addr, self.data)

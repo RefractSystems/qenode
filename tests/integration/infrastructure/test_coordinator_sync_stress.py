@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 async def test_stress(
     simulation: Simulation,
     tmp_path: Path,
-    guest_app_factory: Callable[[str], Path], deterministic_coordinator: object,
+    guest_app_factory: Callable[[str], Path],
+    deterministic_coordinator: object,
 ) -> None:
     """
     Stress tests the TA/Coordinator Synchronization Protocol using the REAL deterministic_coordinator.

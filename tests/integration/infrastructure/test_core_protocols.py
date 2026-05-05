@@ -62,15 +62,15 @@ def decode_zenoh_frame(data: bytes) -> tuple[int, int, int, bytes]:
     return header.delivery_vtime_ns, header.sequence_number, header.size, data[ZENOH_FRAME_HEADER_SIZE:]
 
 
-def encode_clock_advance_req(delta_ns: int, mujoco_time_ns: int = 0, quantum_number: int = 0) -> bytes:
-    return vproto.ClockAdvanceReq(delta_ns, mujoco_time_ns, quantum_number).pack()
+def encode_clock_advance_req(delta_ns: int, absolute_vtime_ns: int = 0, quantum_number: int = 0) -> bytes:
+    return vproto.ClockAdvanceReq(delta_ns, absolute_vtime_ns, quantum_number).pack()
 
 
 def decode_clock_advance_req(data: bytes) -> tuple[int, int, int]:
     if len(data) < CLOCK_ADVANCE_REQ_SIZE:
         raise ValueError(f"ClockAdvanceReq too short: {len(data)}")
     req = vproto.ClockAdvanceReq.unpack(data[:CLOCK_ADVANCE_REQ_SIZE])
-    return req.delta_ns, req.mujoco_time_ns, req.quantum_number
+    return req.delta_ns, req.absolute_vtime_ns, req.quantum_number
 
 
 def encode_clock_ready_resp(
