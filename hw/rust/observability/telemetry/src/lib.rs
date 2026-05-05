@@ -54,6 +54,8 @@ pub struct VirtmcuTelemetryQOM {
     pub rust_state: *mut VirtmcuTelemetryBackend,
 }
 
+const _: () = assert!(core::mem::offset_of!(VirtmcuTelemetryQOM, parent_obj) == 0);
+
 struct IrqSlot {
     #[allow(dead_code)] // ALLOW_EXCEPTION: Reserved for future GPIO support
     opaque: *mut c_void,
@@ -233,11 +235,16 @@ unsafe extern "C" fn telemetry_init(obj: *mut Object) {
     s.router = ptr::null_mut();
     s.debug = false;
     s.rust_state = ptr::null_mut();
+    s.transport_hub = ptr::null_mut();
 }
 
 unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut c_void) {
     let dev = dev_state as *mut virtmcu_qom::qdev::DeviceState;
     let s = &mut *(dev as *mut VirtmcuTelemetryQOM);
+
+    if !s.rust_state.is_null() {
+        return;
+    }
 
     if s.transport_hub.is_null() {
         error_setg!(
@@ -278,7 +285,7 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
     let topic = format!("sim/telemetry/trace/{node_id}");
 
     let key = format!("sim/telemetry/liveliness/{node_id}");
-    let liveliness = transport.declare_liveliness(&key);
+    let _liveliness = transport.declare_liveliness(&key);
 
     let backend = Box::new(VirtmcuTelemetryBackend {
         _transport: Arc::clone(&transport),
@@ -286,7 +293,7 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
         _node_id: node_id,
         last_halted: Arc::new(Default::default()),
         irq_slots: virtmcu_qom::sync::BqlGuarded::new(Vec::new()),
-        _liveliness: liveliness,
+        _liveliness,
     });
 
     s.rust_state = Box::into_raw(backend);

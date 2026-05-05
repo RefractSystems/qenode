@@ -218,6 +218,10 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
 pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = unsafe { &mut *(dev as *mut VirtmcuActuatorQEMU) };
 
+    if !s.rust_state.is_null() {
+        return;
+    }
+
     unsafe {
         memory_region_init_io(
             &raw mut s.mmio,

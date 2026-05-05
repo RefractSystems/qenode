@@ -38,13 +38,16 @@ define_properties!(
 );
 
 unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
-    let s_tmp = unsafe { &mut *(dev as *mut VirtmcuTransportHub) };
+    let s = &mut *(dev as *mut VirtmcuTransportHub);
+    if !s.rust_state.is_null() {
+        return;
+    }
+
     virtmcu_qom::sim_err!(
         "hub_realize started for node={}, router={:?}",
-        s_tmp.node_id,
-        if s_tmp.router.is_null() { "null" } else { "non-null" }
+        s.node_id,
+        if s.router.is_null() { "null" } else { "non-null" }
     );
-    let s = &mut *(dev as *mut VirtmcuTransportHub);
 
     let router_str = if s.router.is_null() { ptr::null() } else { s.router as *const c_char };
 
@@ -71,16 +74,17 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         None
     };
 
-    let _transport = if let Some(t) = transport {
-        let b = alloc::boxed::Box::new(t);
-        s.transport_ptr = &*b as *const Arc<dyn virtmcu_api::DataTransport> as u64;
-        Some(b)
-    } else {
-        s.transport_ptr = 0;
-        None
-    };
+    let _transport = transport.map(alloc::boxed::Box::new);
 
     let state = alloc::boxed::Box::new(HubState { session, _transport });
+
+    // Set transport_ptr to the address of the Arc inside the Box inside the state Box.
+    if let Some(t) = &state._transport {
+        s.transport_ptr = &**t as *const Arc<dyn virtmcu_api::DataTransport> as u64;
+    } else {
+        s.transport_ptr = 0;
+    }
+
     s.rust_state = alloc::boxed::Box::into_raw(state);
     virtmcu_qom::sim_err!("hub_realize finished. transport_ptr={}", s.transport_ptr);
 }
