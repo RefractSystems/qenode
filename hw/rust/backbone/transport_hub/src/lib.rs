@@ -28,23 +28,7 @@ const _: () = assert!(core::mem::size_of::<VirtmcuTransportHub>() == 824);
 
 define_properties!(
     VIRT_HUB_PROPERTIES,
-    [
-        define_prop_string!(c"router".as_ptr(), VirtmcuTransportHub, router),
-        virtmcu_qom::qom::Property {
-            name: core::ptr::null(),
-            info: core::ptr::null(),
-            offset: 0,
-            bitnr: 0,
-            bitmask: 0,
-            set_default: false,
-            defval: 0,
-            arrayinfo: core::ptr::null(),
-            arrayfieldsize: 0,
-            arrayoffset: 0,
-            link_type: core::ptr::null(),
-            _padding: [0; 6],
-        },
-    ]
+    [define_prop_string!(c"router".as_ptr(), VirtmcuTransportHub, router),]
 );
 
 unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
