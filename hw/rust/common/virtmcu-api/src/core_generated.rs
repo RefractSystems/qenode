@@ -748,7 +748,7 @@ pub mod virtmcu {
             fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                 f.debug_struct("ClockAdvanceReq")
                     .field("delta_ns", &self.delta_ns())
-                    .field("mujoco_time_ns", &self.mujoco_time_ns())
+                    .field("absolute_vtime_ns", &self.absolute_vtime_ns())
                     .field("quantum_number", &self.quantum_number())
                     .finish()
             }
@@ -799,10 +799,10 @@ pub mod virtmcu {
 
         impl<'a> ClockAdvanceReq {
             #[allow(clippy::too_many_arguments)]
-            pub fn new(delta_ns: u64, mujoco_time_ns: u64, quantum_number: u64) -> Self {
+            pub fn new(delta_ns: u64, absolute_vtime_ns: u64, quantum_number: u64) -> Self {
                 let mut s = Self([0; 24]);
                 s.set_delta_ns(delta_ns);
-                s.set_mujoco_time_ns(mujoco_time_ns);
+                s.set_absolute_vtime_ns(absolute_vtime_ns);
                 s.set_quantum_number(quantum_number);
                 s
             }
@@ -838,7 +838,7 @@ pub mod virtmcu {
                 }
             }
 
-            pub fn mujoco_time_ns(&self) -> u64 {
+            pub fn absolute_vtime_ns(&self) -> u64 {
                 let mut mem = ::core::mem::MaybeUninit::<
                     <u64 as ::flatbuffers::EndianScalar>::Scalar,
                 >::uninit();
@@ -855,7 +855,7 @@ pub mod virtmcu {
                 })
             }
 
-            pub fn set_mujoco_time_ns(&mut self, x: u64) {
+            pub fn set_absolute_vtime_ns(&mut self, x: u64) {
                 let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
                 // Safety:
                 // Created from a valid Table for this object
@@ -980,6 +980,7 @@ pub mod virtmcu {
                 s
             }
 
+            /// Current virtual time in nanoseconds.
             pub fn current_vtime_ns(&self) -> u64 {
                 let mut mem = ::core::mem::MaybeUninit::<
                     <u64 as ::flatbuffers::EndianScalar>::Scalar,
@@ -1011,6 +1012,7 @@ pub mod virtmcu {
                 }
             }
 
+            /// Number of outbound frames bundled in this response.
             pub fn n_frames(&self) -> u32 {
                 let mut mem = ::core::mem::MaybeUninit::<
                     <u32 as ::flatbuffers::EndianScalar>::Scalar,
@@ -1042,6 +1044,7 @@ pub mod virtmcu {
                 }
             }
 
+            /// Error code (0 = OK, 1 = STALL).
             pub fn error_code(&self) -> u32 {
                 let mut mem = ::core::mem::MaybeUninit::<
                     <u32 as ::flatbuffers::EndianScalar>::Scalar,
@@ -1073,6 +1076,7 @@ pub mod virtmcu {
                 }
             }
 
+            /// Global quantum sequence number.
             pub fn quantum_number(&self) -> u64 {
                 let mut mem = ::core::mem::MaybeUninit::<
                     <u64 as ::flatbuffers::EndianScalar>::Scalar,

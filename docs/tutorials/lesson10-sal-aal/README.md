@@ -37,19 +37,19 @@ firmware MMIO write
 ## Clock Suspend → Cyber Bridge Timing Link
 
 Task 7.7 added `VirtmcuQuantumTiming` to `include/virtmcu/hooks.h` and wired it
-into `clock.c`. The `ClockAdvancePayload.mujoco_time_ns` field carries the
+into `clock.c`. The `ClockAdvancePayload.absolute_vtime_ns` field carries the
 physics-engine simulation time to QEMU, where `virtmcu-clock` stores it in
-`s->mujoco_time_ns`. QEMU-internal SAL models can then call:
+`s->absolute_vtime_ns`. QEMU-internal SAL models can then call:
 
 ```c
 VirtmcuQuantumTiming t;
 virtmcu_get_quantum_timing(&t);
 // t.quantum_start_vtime_ns + fraction * t.quantum_delta_ns = interpolated_ns
-// t.mujoco_time_ns = MuJoCo time at the start of this quantum
+// t.absolute_vtime_ns = MuJoCo time at the start of this quantum
 ```
 
 External tools (`mujoco_bridge`, `resd_replay`) receive `current_vtime_ns` in the
-Zenoh reply and send `mujoco_time_ns` in the next request, keeping the loop closed.
+Zenoh reply and send `absolute_vtime_ns` in the next request, keeping the loop closed.
 
 ## Two Operating Modes
 
@@ -95,7 +95,7 @@ The bridge reads those values and publishes them to
 struct MjSharedLayout {        /* at offset 0 in /virtmcu_mujoco_{node_id} */
     uint32_t nsensordata;      /* written by bridge on startup */
     uint32_t nu;               /* written by bridge on startup */
-    uint64_t mujoco_time_ns;   /* written by MuJoCo each step */
+    uint64_t absolute_vtime_ns;   /* written by MuJoCo each step */
     double sensordata[nsensordata]; /* written by MuJoCo, read by bridge */
     double ctrl[nu];                /* written by bridge (Zenoh), read by MuJoCo */
 };
@@ -116,7 +116,7 @@ data  = mujoco.MjData(model)
 while True:
     mujoco.mj_step(model, data)
 
-    # Write mujoco_time_ns and sensordata into shared memory
+    # Write absolute_vtime_ns and sensordata into shared memory
     offset = 0
     ctypes.c_uint32.from_buffer(buf, offset).value = model.nsensordata
     ctypes.c_uint32.from_buffer(buf, offset + 4).value = model.nu

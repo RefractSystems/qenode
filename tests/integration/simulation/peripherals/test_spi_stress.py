@@ -31,7 +31,11 @@ if TYPE_CHECKING:
 
 @pytest.mark.asyncio
 async def test_spi_stress_baremetal(
-    simulation: Simulation, zenoh_session: zenoh.Session, zenoh_router: str, tmp_path: Path, guest_app_factory: Callable[[str], Path]
+    simulation: Simulation,
+    zenoh_session: zenoh.Session,
+    zenoh_router: str,
+    tmp_path: Path,
+    guest_app_factory: Callable[[str], Path],
 ) -> None:
     """
     Stress test for Perform 10,000 rapid SPI transactions

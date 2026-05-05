@@ -263,6 +263,7 @@ class Simulation:
             raise RuntimeError("Simulation has no nodes — call add_node() before entering the context")
 
         from tools.testing.virtmcu_test_suite.conftest_core import ManagedSubprocess
+
         for name, cmd, env in self._app_specs:
             app = ManagedSubprocess(name, cmd, env=env)
             await app.start()
@@ -325,7 +326,7 @@ class Simulation:
 
         for bridge in reversed(self._bridges):
             await bridge.close()
-            
+
         for app in self._apps.values():
             await app.stop()
 

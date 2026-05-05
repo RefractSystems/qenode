@@ -206,6 +206,14 @@ extern "C" {
     pub fn sysbus_init_irq(sbd: *mut SysBusDevice, irq: *mut crate::irq::QemuIrq);
     /// A function
     pub fn sysbus_get_connected_irq(sbd: *mut SysBusDevice, n: c_int) -> crate::irq::QemuIrq;
+    /// A function
+    pub fn qdev_get_gpio_out_connector(dev: *mut DeviceState, n: c_int) -> crate::irq::QemuIrq;
+    /// A function
+    pub fn qemu_irq_intercept_in(
+        irq: crate::irq::QemuIrq,
+        handler: Option<unsafe extern "C" fn(opaque: *mut c_void, n: c_int, level: c_int)>,
+        opaque: *mut c_void,
+    );
 }
 
 #[cfg(miri)]

@@ -30,3 +30,46 @@ def CreateSyscMsg(builder, type_, irqNum, data):
     builder.PrependUint32(irqNum)
     builder.PrependUint32(type_)
     return builder.Offset()
+
+
+class SyscMsgT(object):
+
+    # SyscMsgT
+    def __init__(
+        self,
+        type_ = 0,
+        irqNum = 0,
+        data = 0,
+    ):
+        self.type_ = type_  # type: int
+        self.irqNum = irqNum  # type: int
+        self.data = data  # type: int
+
+    @classmethod
+    def InitFromBuf(cls, buf, pos):
+        syscMsg = SyscMsg()
+        syscMsg.Init(buf, pos)
+        return cls.InitFromObj(syscMsg)
+
+    @classmethod
+    def InitFromPackedBuf(cls, buf, pos=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, pos)
+        return cls.InitFromBuf(buf, pos+n)
+
+    @classmethod
+    def InitFromObj(cls, syscMsg):
+        x = SyscMsgT()
+        x._UnPack(syscMsg)
+        return x
+
+    # SyscMsgT
+    def _UnPack(self, syscMsg):
+        if syscMsg is None:
+            return
+        self.type_ = syscMsg.Type_()
+        self.irqNum = syscMsg.IrqNum()
+        self.data = syscMsg.Data()
+
+    # SyscMsgT
+    def Pack(self, builder):
+        return CreateSyscMsg(builder, self.type_, self.irqNum, self.data)

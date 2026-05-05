@@ -43,6 +43,7 @@ async def test_telemetry_emission(simulation: Simulation, telemetry_artifacts: t
     captured = []
 
     assert simulation.transport is not None
+
     def on_telemetry(payload: bytes) -> None:
         captured.append(payload)
 
@@ -64,6 +65,7 @@ async def test_telemetry_integrity(simulation: Simulation, telemetry_artifacts: 
     captured = []
 
     assert simulation.transport is not None
+
     def on_telemetry(payload: bytes) -> None:
         captured.append(payload)
 
@@ -85,6 +87,7 @@ async def test_telemetry(simulation: Simulation, telemetry_artifacts: tuple[Path
     captured = []
 
     assert simulation.transport is not None
+
     def on_telemetry(payload: bytes) -> None:
         captured.append(payload)
 

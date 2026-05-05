@@ -25,6 +25,8 @@ extern "C" {
     /// A function
     pub fn object_get_canonical_path(obj: *mut Object) -> *mut c_char;
     /// A function
+    pub fn g_free(ptr: *mut c_void);
+    /// A function
     pub fn object_get_root() -> *mut Object;
     /// A function
     pub fn object_dynamic_cast(obj: *mut Object, typename: *const c_char) -> *mut Object;

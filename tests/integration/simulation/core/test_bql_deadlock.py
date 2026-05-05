@@ -25,6 +25,7 @@ async def _qmp_worker(sim: Simulation) -> None:
     for _ in range(50):
         await sim.bridge.execute("query-status")
 
+
 @pytest.mark.asyncio
 async def test_bql_qmp_deadlock(simulation: Simulation, guest_app_factory: Callable[[str], Path]) -> None:
 
@@ -32,7 +33,12 @@ async def test_bql_qmp_deadlock(simulation: Simulation, guest_app_factory: Calla
     dtb = app_dir / "minimal.dtb"
     kernel = app_dir / "hello.elf"
     # Use slaved-icount for deterministic boundary blocking
-    extra_args = ["-icount", "shift=0,align=off,sleep=off", "-device", f"virtmcu-clock,node=0,mode=slaved-icount,router={simulation._router}"]
+    extra_args = [
+        "-icount",
+        "shift=0,align=off,sleep=off",
+        "-device",
+        f"virtmcu-clock,node=0,mode=slaved-icount,router={simulation._router}",
+    ]
 
     simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
     async with simulation as sim:

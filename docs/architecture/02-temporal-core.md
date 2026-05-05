@@ -34,7 +34,7 @@ The `clock` device communicates with the `TimeAuthority` via the **Control Plane
 **Topic**: `sim/clock/advance/{node_id}`
 **Payload** (16-byte FlatBuffer struct):
 - `delta_ns` (uint64): The size of the quantum to execute in virtual nanoseconds.
-- `mujoco_time_ns` (uint64): The current absolute time in the physics world.
+- `absolute_vtime_ns` (uint64): The current absolute time in the physics world.
 
 ### Reply: Node → TimeAuthority
 **Payload** (16-byte FlatBuffer struct):

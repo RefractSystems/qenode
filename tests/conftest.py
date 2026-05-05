@@ -74,9 +74,13 @@ async def sim_transport(
 # Use standard fixtures instead.
 # ---------------------------------------------------------------------------
 
-_BANNED_SUBPROCESS_ATTRS = frozenset({"run", "check_output", "Popen", "call", "check_call", "getstatusoutput", "getoutput"})
+_BANNED_SUBPROCESS_ATTRS = frozenset(
+    {"run", "check_output", "Popen", "call", "check_call", "getstatusoutput", "getoutput"}
+)
 _BANNED_ASYNCIO_ATTRS = frozenset({"create_subprocess_exec", "create_subprocess_shell"})
-_BANNED_OS_ATTRS = frozenset({"system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe"})
+_BANNED_OS_ATTRS = frozenset(
+    {"system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe"}
+)
 _BANNED_GLOBAL_NAMES = frozenset({"Popen", "create_subprocess_exec", "create_subprocess_shell", "system", "popen"})
 
 

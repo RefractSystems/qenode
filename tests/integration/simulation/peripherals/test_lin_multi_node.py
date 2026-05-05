@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-
     from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
@@ -122,7 +121,6 @@ async def test_multi_node_lin(
     assert simulation.transport is not None
 
     bus_messages: list[tuple[str, int, bytes]] = []
-
 
     def on_bus_msg(topic: str, payload: bytes) -> None:
         try:

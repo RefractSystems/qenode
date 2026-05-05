@@ -41,7 +41,9 @@ async def test_coordinator(zenoh_router: str, deterministic_coordinator: Managed
     env = os.environ.copy()
     env["ZENOH_ROUTER"] = zenoh_router
     env["PYTHONPATH"] = (
-        str(Path(workspace_root) / "tools")
+        str(workspace_root)
+        + ":"
+        + str(Path(workspace_root) / "tools")
         + ":"
         + str(Path(workspace_root) / "tests" / "fixtures" / "guest_apps" / "coordinator_stress")
         + ":"

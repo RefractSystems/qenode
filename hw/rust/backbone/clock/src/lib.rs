@@ -211,7 +211,7 @@ pub struct VirtmcuClockBackend {
     /// Current virtual time in nanoseconds as known by the backend.
     pub vtime_ns: AtomicU64,
     /// Absolute simulation time in nanoseconds as reported by TimeAuthority.
-    pub mujoco_time_ns: AtomicU64,
+    pub absolute_vtime_ns: AtomicU64,
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,
 
@@ -527,10 +527,10 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         };
 
         let delta = req.delta_ns();
-        let mujoco = req.mujoco_time_ns();
+        let absolute_time = req.absolute_vtime_ns();
 
         backend.delta_ns.store(delta, Ordering::SeqCst);
-        backend.mujoco_time_ns.store(mujoco, Ordering::SeqCst);
+        backend.absolute_vtime_ns.store(absolute_time, Ordering::SeqCst);
 
         let mut error_code = wait_for_ready_and_execute(&backend, delta, timeout, is_first);
 
@@ -810,7 +810,7 @@ fn clock_init_with_transport(
         state: core::sync::atomic::AtomicU8::new(QuantumState::Waiting as u8),
         delta_ns: AtomicU64::new(0),
         vtime_ns: AtomicU64::new(0),
-        mujoco_time_ns: AtomicU64::new(0),
+        absolute_vtime_ns: AtomicU64::new(0),
         stall_count: AtomicU64::new(0),
         total_bql_wait_ns: AtomicU64::new(0),
         total_iterations: AtomicU64::new(0),

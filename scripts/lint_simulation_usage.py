@@ -87,7 +87,11 @@ def lint_file(path: Path) -> list[str]:
 
         # Ban raw subprocess.Popen
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "Popen" and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess":
+            if (
+                node.func.attr == "Popen"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+            ):
                 with path.open("r") as f:
                     lines = f.readlines()
                 if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
@@ -99,17 +103,28 @@ def lint_file(path: Path) -> list[str]:
         # Ban vta.step inside loops
         if isinstance(node, (ast.For, ast.While)):
             for subnode in ast.walk(node):
-                if isinstance(subnode, ast.Call) and isinstance(subnode.func, ast.Attribute) and subnode.func.attr == "step":
+                if (
+                    isinstance(subnode, ast.Call)
+                    and isinstance(subnode.func, ast.Attribute)
+                    and subnode.func.attr == "step"
+                ):
                     if isinstance(subnode.func.value, ast.Attribute) and subnode.func.value.attr in ("vta", "clock"):
                         with path.open("r") as f:
                             lines = f.readlines()
-                        if subnode.lineno <= len(lines) and "LINT_EXCEPTION: vta_step_loop" not in lines[subnode.lineno - 1]:
+                        if (
+                            subnode.lineno <= len(lines)
+                            and "LINT_EXCEPTION: vta_step_loop" not in lines[subnode.lineno - 1]
+                        ):
                             violations.append(
                                 f"{path}:{subnode.lineno}: Banned vta.step() inside a loop. "
                                 "This is polling. Use sim.run_until() or node.wait_for_uart() instead. "
                                 "If this is a deterministic iteration over quanta, add '# LINT_EXCEPTION: vta_step_loop'."
                             )
-                elif isinstance(subnode, ast.Call) and isinstance(subnode.func, ast.Attribute) and subnode.func.attr == "sleep":
+                elif (
+                    isinstance(subnode, ast.Call)
+                    and isinstance(subnode.func, ast.Attribute)
+                    and subnode.func.attr == "sleep"
+                ):
                     if isinstance(subnode.func.value, ast.Name) and subnode.func.value.id in ("asyncio", "time"):
                         with path.open("r") as f:
                             lines = f.readlines()
@@ -123,7 +138,9 @@ def lint_file(path: Path) -> list[str]:
 
 
 def main() -> None:
-    root = Path("/workspace")
+    # Use the directory where the script is located to find the project root
+    script_dir = Path(__file__).resolve().parent
+    root = script_dir.parent
     tests_dir = root / "tests"
     tools_testing_dir = root / "tools/testing"
 

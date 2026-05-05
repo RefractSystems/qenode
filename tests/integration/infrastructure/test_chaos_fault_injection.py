@@ -21,8 +21,6 @@ from tools.testing.utils import get_time_multiplier, yield_now
 from tools.testing.virtmcu_test_suite.transport import FaultInjectingTransport
 
 if TYPE_CHECKING:
-    
-
     from tools.testing.virtmcu_test_suite.simulation import Simulation
     from tools.testing.virtmcu_test_suite.transport import SimulationTransport
 
