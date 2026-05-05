@@ -283,12 +283,13 @@ lint-exports:
 	@uv run --active python3 scripts/verify-exports.py
 	@echo "✓ Plugin exports verified."
 
-# Check Rust documentation for warnings
+# Check mdbook documentation
 lint-docs:
 	@echo "==> Checking Rust documentation..."
 	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 	@echo "✓ Rust documentation check passed."
 	@echo "==> Checking mdbook documentation..."
+	@mdbook-mermaid install
 	@mdbook build
 	@rm -rf target/book
 	@echo "✓ mdbook documentation check passed."

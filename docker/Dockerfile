@@ -343,6 +343,11 @@ LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu development environment base — toolchain + AI tools"
 LABEL org.opencontainers.image.licenses=MIT
 
+# Install Chromium for mdbook-pdf headless rendering
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pre-install Python dependencies for the simulation tools
 COPY pyproject.toml /tmp/pyproject.toml
 ENV UV_LINK_MODE=copy
