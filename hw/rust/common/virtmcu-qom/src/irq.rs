@@ -35,7 +35,12 @@ extern "C" {
     );
 }
 
+use alloc::vec::Vec;
+
+#[cfg(any(test, miri, feature = "standalone"))]
 use std::sync::Mutex;
+
+#[cfg(any(test, miri, feature = "standalone"))]
 static IRQ_HOOKS: Mutex<
     Vec<
         extern "C" fn(opaque: *mut core::ffi::c_void, n: core::ffi::c_int, level: core::ffi::c_int),
@@ -49,13 +54,17 @@ pub fn virtmcu_set_irq_hook(
     >,
 ) {
     let Some(cb) = cb else { return };
-    let mut hooks = IRQ_HOOKS.lock().unwrap();
-    if hooks.is_empty() {
-        unsafe {
-            qemu_virtmcu_set_irq_hook(Some(multiplexed_irq_hook));
+
+    #[cfg(any(test, miri, feature = "standalone"))]
+    {
+        let mut hooks = IRQ_HOOKS.lock().unwrap();
+        if hooks.is_empty() {
+            unsafe {
+                qemu_virtmcu_set_irq_hook(Some(multiplexed_irq_hook));
+            }
         }
+        hooks.push(cb);
     }
-    hooks.push(cb);
 }
 
 extern "C" fn multiplexed_irq_hook(
@@ -63,8 +72,11 @@ extern "C" fn multiplexed_irq_hook(
     n: core::ffi::c_int,
     level: core::ffi::c_int,
 ) {
-    let hooks = IRQ_HOOKS.lock().unwrap();
-    for hook in hooks.iter() {
-        hook(opaque, n, level);
+    #[cfg(any(test, miri, feature = "standalone"))]
+    {
+        let hooks = IRQ_HOOKS.lock().unwrap();
+        for hook in hooks.iter() {
+            hook(opaque, n, level);
+        }
     }
 }

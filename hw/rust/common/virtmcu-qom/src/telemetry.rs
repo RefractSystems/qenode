@@ -1,13 +1,15 @@
 //! Enterprise Lock-Free Telemetry System.
 
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
+use alloc::format;
+#[cfg(not(any(miri, feature = "standalone")))]
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
 use crossbeam_channel::{bounded, Sender};
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
 use std::sync::OnceLock;
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
 use std::thread;
 
 /// Global Node ID for this QEMU process.
@@ -17,7 +19,7 @@ pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0);
 /// Number of logs dropped due to queue overflow.
 pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
 static LOG_CHANNEL: OnceLock<Sender<LogEntry>> = OnceLock::new();
 
 /// Severity level of the log entry.
@@ -115,7 +117,7 @@ pub fn update_global_node_id(node_id: u32) {
     let _ = GLOBAL_NODE_ID.compare_exchange(0, node_id, Ordering::Relaxed, Ordering::Relaxed);
 }
 
-#[cfg(not(miri))]
+#[cfg(not(any(miri, feature = "standalone")))]
 fn init_logger_thread() -> Sender<LogEntry> {
     let (tx, rx) = bounded::<LogEntry>(4096);
     thread::Builder::new()
@@ -153,26 +155,28 @@ fn init_logger_thread() -> Sender<LogEntry> {
     tx
 }
 
-#[cfg(miri)]
-#[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri requires direct printing as FFI is unavailable
-fn miri_output(node_id: u32, level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
-    // In Miri, we use eprintln! directly as FFI is unavailable.
+#[cfg(any(miri, feature = "standalone"))]
+#[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri and standalone require direct printing as FFI is unavailable
+fn standalone_output(node_id: u32, level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
+    use std::eprintln; // Add this to import the macro from std
+    // In Miri and standalone, we use eprintln! directly as FFI is unavailable.
     // But to satisfy the lint, we add the exception comment.
     eprintln!("[Node: {}] [{}] [{}] {}", node_id, level.as_str(), module, args);
-    // PRINT_EXCEPTION: Miri requires direct printing as FFI is unavailable
+    // PRINT_EXCEPTION: Miri/standalone require direct printing as FFI is unavailable
 }
 
 #[doc(hidden)]
 pub fn sim_log(level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
-    #[cfg(miri)]
+    #[cfg(any(miri, feature = "standalone"))]
     {
         let node_id = GLOBAL_NODE_ID.load(Ordering::Relaxed);
-        miri_output(node_id, level, module, args);
+        standalone_output(node_id, level, module, args);
         return;
     }
 
-    #[cfg(not(miri))]
+    #[cfg(not(any(miri, feature = "standalone")))]
     {
+        use core::fmt::Write;
         let tx = LOG_CHANNEL.get_or_init(init_logger_thread);
 
         let mut entry = LogEntry {
