@@ -42,7 +42,9 @@ extern "C" {
 
     /// Register a new CPU halt hook in QEMU.
     pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
+
+    /// Get the CPU index from QEMU to avoid FFI layout issues across architectures.
+    pub fn virtmcu_cpu_get_index(cpu: *mut CPUState) -> core::ffi::c_int;
 }
 
 const _: () = assert!(core::mem::size_of::<CPUState>() == 16624);
-const _: () = assert!(core::mem::offset_of!(CPUState, cpu_index) == 816);

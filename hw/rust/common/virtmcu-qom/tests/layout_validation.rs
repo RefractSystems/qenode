@@ -98,7 +98,6 @@ fn test_qom_layouts() {
     assert_layout_match!(CPUState, CPUState);
     static_assertions::assert_eq_size!(CPUState, qemu::CPUState);
     static_assertions::assert_eq_align!(CPUState, qemu::CPUState);
-    assert_offset_match!(CPUState, CPUState, cpu_index);
 
     assert_layout_match!(QemuMutex, QemuMutex);
     static_assertions::assert_eq_size!(QemuMutex, qemu::QemuMutex);
