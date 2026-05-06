@@ -58,7 +58,9 @@ pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, ha
             qemu_virtmcu_cpu_set_halt_hook(Some(multiplexed_halt_hook));
         }
     }
-    hooks.push(cb);
+    if !hooks.contains(&cb) {
+        hooks.push(cb);
+    }
 }
 
 extern "C" fn multiplexed_halt_hook(cpu: *mut CPUState, halted: bool) {
