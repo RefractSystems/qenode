@@ -34,11 +34,11 @@ The `mode` parameter also determines which transport layer is used to communicat
 | `mode` parameter   | Transport                    | `sim/clock/start` needed? |
 |--------------------|------------------------------|---------------------------|
 | `standalone`       | None (QEMU free-runs)        | No                        |
-| `slaved-unix`      | `UnixSocketClockTransport`   | **No**                    |
-| `slaved-suspend`   | `ZenohClockTransport`        | Only if `coordinated=true`|
-| `slaved-icount`    | `ZenohClockTransport`        | Only if `coordinated=true`|
+| `slaved-unix`      | `UnixSocketClockTransport`   | **No** — exits via `clock_init_with_transport()`, Zenoh code never runs |
+| `slaved-suspend`   | `ZenohClockTransport`        | Only if `is_coordinated=true` |
+| `slaved-icount`    | `ZenohClockTransport`        | Only if `is_coordinated=true` |
 
-The `sim/clock/start` Zenoh topic is only relevant when `coordinated=true` AND using Zenoh transport. It is not subscribed to and has no effect in `slaved-unix` mode.
+The `sim/clock/start` Zenoh topic is only relevant when `is_coordinated=true` AND using Zenoh transport. It is not subscribed to and has no effect in `slaved-unix` mode.
 
 ---
 

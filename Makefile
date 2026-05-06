@@ -312,104 +312,10 @@ lint-audit:
 	@echo "✓ Audit checks completed."
 # Run Python linting and type checking
 lint-python:
-	@echo "==> Check for banned struct usage..."
-	@if grep -rnIE "struct\.(pack|unpack|Struct)|import struct|from struct|Struct\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -vE "proto_gen.py|vproto\.py|tools/README\.md" ; then \
-		echo "❌ ERROR: Banned struct usage detected. Use vproto.py or FlatBuffers wrappers."; exit 1; \
-	fi
-	@echo "==> Check for banned path bootstrapping bypasses..."
-	@if grep -rnIE "noqa: TID251" tests/ tools/ scripts/ --exclude-dir=__pycache__ ; then \
-		echo "❌ ERROR: Bypassing TID251 (path bootstrapping ban) is strictly forbidden. Rely on uv package boundaries."; exit 1; \
-	fi
-	@echo "==> Check for banned struct in scripts (limited)..."
-	@if grep -rnIE "struct\.(pack|unpack)" scripts/ --exclude-dir=__pycache__ ; then \
-		echo "❌ ERROR: Banned struct.pack/unpack in scripts."; exit 1; \
-	fi
-	@echo "==> Check for hardcoded stall-timeout..."
-	@if grep -rIE "stall-timeout=[0-9]+" tests/ tools/ --exclude-dir=__pycache__ ; then \
-		echo "❌ ERROR: Hardcoded stall-timeout detected. Use dynamic scaling via VIRTMCU_STALL_TIMEOUT_MS."; exit 1; \
-	fi
-	@echo "==> Check for banned sleep calls (asyncio.sleep / time.sleep)..."
-	@violations=$$(grep -rnIE "(asyncio|time)\.sleep\(" tests/ tools/ docs/tutorials/ --exclude-dir=__pycache__ | grep -v "SLEEP_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "❌ ERROR: Banned sleep call found in tests/tools/tutorials (use vta.step or transport signaling instead):"; \
-		echo "$$violations"; \
-		exit 1; \
-	fi
-	@echo "==> Check for raw zenoh.open() in pytest scope (must use make_client_config / zenoh_session fixture)..."
-	@# Default zenoh.Config() opens in peer mode with multicast scouting enabled,
-	@# causing parallel pytest workers to silently discover each other across the
-	@# container's network namespace and cross-talk on shared topics. CLAUDE.md
-	@# Second Priority / ADR-014 BANS runtime peer-mode scouting.
-	@# All Zenoh sessions in pytest-collected tests and shared testing infrastructure
-	@# MUST use make_client_config() (or the zenoh_session fixture, which wraps it).
-	@# Approved exceptions must carry an inline # ZENOH_OPEN_EXCEPTION: <reason> comment.
-	@# Scope: tests/integration/, tests/unit/, tests/system/, tests/*.py, tools/testing/.
-	@# Fixture scripts under tests/fixtures/guest_apps/ are standalone (not pytest-parallel) and exempt.
-	@violations=$$(grep -rnE "zenoh\.open\(" tests/integration/simulation/ tests/integration/infrastructure/ tests/integration/tooling/ tests/unit/  tools/testing/ --include="*.py" 2>/dev/null \
-		| grep -v "# ZENOH_OPEN_EXCEPTION:" || true); \
-	tests_root=$$(grep -nE "zenoh\.open\(" tests/*.py 2>/dev/null | grep -v "# ZENOH_OPEN_EXCEPTION:" || true); \
-	violations="$$violations$$tests_root"; \
-	if [ -n "$$violations" ]; then \
-		echo "❌ ERROR: Raw zenoh.open() found in pytest scope. Use make_client_config() / zenoh_session fixture (CLAUDE.md Second Priority, ADR-014):"; \
-		echo "$$violations"; \
-		echo "  Fix: import open_client_session from tools.testing.virtmcu_test_suite.conftest_core"; \
-		echo "       and call open_client_session(connect=<endpoint>) instead — or take 'zenoh_session' as a fixture."; \
-		echo "       Or, if a non-client-mode session is genuinely required, add inline # ZENOH_OPEN_EXCEPTION: <reason>."; \
-		exit 1; \
-	fi
-	@echo "✓ No raw zenoh.open() in pytest scope."
-	@echo "==> Check for direct Zenoh/Unix Socket hacks in black-box tests..."
-	@violations=$$(grep -rnE "^import zenoh|^[ \t]*import zenoh|zenoh_session\b" tests/integration/simulation/ --include="*.py" | awk -F: '{print $$1}' | uniq || true); \
-	filtered_violations=""; \
-	for file in $$violations; do \
-		if ! head -n 5 "$$file" | grep -q "ZENOH_HACK_EXCEPTION"; then \
-			matches=$$(grep -nE "^import zenoh|^[ \t]*import zenoh|zenoh_session\b" "$$file"); \
-			for match in $$matches; do \
-				filtered_violations="$$filtered_violations$$file:$$match\n"; \
-			done; \
-		fi; \
-	done; \
-	if [ -n "$$(printf '%b' "$$filtered_violations" | grep -v '^$$')" ]; then \
-		echo "❌ ERROR: Direct Zenoh usage found in black-box tests (AGENTS.md Transport Agnosticism Mandate):"; \
-		printf '%b' "$$filtered_violations"; \
-		echo "  Fix: Tests MUST use simulation.transport.publish() and simulation.transport.subscribe() for compatibility."; \
-		echo "       If an exception is absolutely required, add # ZENOH_HACK_EXCEPTION: <reason> to the top of the file."; \
-		exit 1; \
-	fi
-	@echo "✓ No direct Zenoh hacks in black-box tests."
-	@echo "==> Check for hardcoded FDT QOM paths..."
-	@if grep -rnE '["'\'']/(flexray|spi[0-9]|wifi[0-9]|uart[0-9]|memory)["'\'']' tests/ ; then \
-		echo "❌ ERROR: Hardcoded QOM path without unit address detected. Root FDT devices must use '/device@address' format."; exit 1; \
-	fi
-	@echo "==> Check for non-deterministic uuid.uuid4() in tests..."
-	@# uuid.uuid4() is banned in tests: parallel workers get different IDs each run,
-	@# causing Zenoh key collisions and topology mismatches. Use os.getpid(),
-	@# the pytest worker_id fixture, or tmp_path-derived values for unique IDs.
-	@# Approved exceptions: add # UUID_EXCEPTION: <reason> on the same line.
-	@violations=$$(grep -rnE "uuid\.uuid4\(\)" tests/ --include="*.py" \
-		| grep -v "fixtures/guest_apps" \
-		| grep -v "# UUID_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "❌ ERROR: Non-deterministic uuid.uuid4() found in tests (use os.getpid()/worker_id instead):"; \
-		echo "$$violations"; \
-		exit 1; \
-	fi
-	@echo "✓ No non-deterministic uuid.uuid4() in tests."
-	@echo "==> Check for oversized hardcoded timeouts in tests..."
-	@# Timeouts >= 200 s in test code bypass the CI time-multiplier and mask deadlocks
-	@# on slow/ASan runners. Use vta.step(timeout=T) or bridge.wait_for_line(timeout=T)
-	@# with logical T — the framework scales it via get_time_multiplier() automatically.
-	@# Approved exceptions: add # TIMEOUT_EXCEPTION: <reason> on the same line.
-	@violations=$$(grep -rnE "\btimeout=[2-9][0-9]{2,}|\btimeout=[0-9]{4,}" tests/ --include="*.py" \
-		| grep -v "fixtures/guest_apps" \
-		| grep -v "# TIMEOUT_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "❌ ERROR: Oversized hardcoded timeout (>= 200 s) in tests — use get_time_multiplier() scaling:"; \
-		echo "$$violations"; \
-		exit 1; \
-	fi
-	@echo "✓ No oversized hardcoded timeouts in tests."
-	@$(MAKE) lint-simulation-usage
+	@echo "==> Python banned patterns lint..."
+	@uv run --active python3 scripts/lints/python_banned_patterns.py
+	@echo "==> Simulation usage lint..."
+	@uv run --active python3 scripts/lints/simulation_usage.py
 	@echo "==> ruff check..."
 	@uv run --active ruff check .
 	@echo "✓ ruff passed."
@@ -417,7 +323,7 @@ lint-python:
 # Run Simulation Usage Lint
 lint-simulation-usage:
 	@echo "==> Simulation usage lint..."
-	@uv run --active python3 scripts/lint_simulation_usage.py
+	@uv run --active python3 scripts/lints/simulation_usage.py
 # Run codespell to catch typos
 lint-spelling:
 	@echo "==> codespell..."
@@ -427,17 +333,7 @@ lint-spelling:
 
 # Run shellcheck on all bash scripts
 lint-shell:
-	@echo "==> shellcheck..."
-	@shellcheck --version >/dev/null 2>&1 || { echo "❌ Error: shellcheck is not installed. Install with: sudo apt-get install shellcheck"; exit 1; }
-	@find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 shellcheck --severity=warning
-	@echo "==> Checking bash safety flags (set -euo pipefail)..."
-	@MISSING=$$(find . -type f -name "*.sh" -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/.cargo-cache/*" -print0 | xargs -0 grep -rL "set -euo pipefail" 2>/dev/null || true); \
-	if [ -n "$$MISSING" ]; then \
-		echo "❌ Error: Missing 'set -euo pipefail' in:"; \
-		echo "$$MISSING"; \
-		exit 1; \
-	fi
-	@echo "✓ shellcheck passed."
+	@uv run --active python3 scripts/lints/shell_lints.py
 
 
 # Run hadolint on Dockerfiles
@@ -507,124 +403,16 @@ lint-rust:
 	@cargo fmt --all --check
 	@echo "==> Running cargo machete..."
 	@cargo machete
-	@echo "==> Checking for banned thread::sleep in hw/rust/..."
-	@# thread::sleep is banned in the simulation hot path (MMIO, clock, network callbacks)
-	@# because it introduces non-determinism and can starve QEMU of the BQL.
-	@# Approved exceptions must carry an inline // SLEEP_EXCEPTION: <reason> comment.
-	@# To add an exception: append the comment on the same line as the sleep call.
-	@violations=$$(grep -rn "thread::sleep" hw/rust/ --include="*.rs" | grep -v "SLEEP_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned thread::sleep found in hw/rust/:"; \
-		echo "$$violations"; \
-		echo "  Fix: replace with condvar/channel, or add // SLEEP_EXCEPTION: <reason> inline."; \
-		exit 1; \
-	fi
+	@echo "==> Rust banned patterns lint..."
+	@uv run --active python3 scripts/lints/rust_banned_patterns.py
 	@echo "==> Checking for stale QEMU plugins..."
 	@uv run --active python3 scripts/check-stale-so.py
-	@echo "✓ No banned thread::sleep found."
-	@echo "==> Checking for banned ptr::copy_nonoverlapping in hw/rust/ (Mandate 15)..."
-	@python3 scripts/lint_rust_mandate_15.py
-	@echo "==> Checking for banned Mutex<T> in peripheral state structs..."
-	@# std::sync::Mutex<T> is banned in zenoh-* peripheral state structs because every
-	@# caller already holds the BQL, making the Mutex permanently uncontended and its
-	@# presence actively misleading. Use BqlGuarded<T> from virtmcu-qom::sync instead.
-	@# Approved exceptions must carry an inline // MUTEX_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "Mutex<" hw/rust/comms/*/src/lib.rs hw/rust/mcu/*/src/lib.rs hw/rust/observability/*/src/lib.rs | \
-		grep -v "Arc<Mutex\|// MUTEX_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned Mutex<T> in peripheral state (use BqlGuarded<T> instead):"; \
-		echo "$$violations"; \
-		echo "  Fix: replace Mutex<T> with BqlGuarded<T> from virtmcu_qom::sync."; \
-		exit 1; \
-	fi
-	@echo "✓ No banned peripheral Mutex<T> found."
-	@echo "==> Checking for banned Bql::lock() and SafeSubscription in hw/rust/comms/..."
-	@# Peripherals in hw/rust/comms/ must be independent of the Big QEMU Lock (BQL)
-	@# because they interact with asynchronous Zenoh callbacks. Using Bql::lock()
-	@# or SafeSubscription (which locks BQL) inside these crates is an anti-pattern
-	@# that leads to deadlocks and non-determinism.
-	@# Approved exceptions must carry an inline // BQL_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "Bql::lock()\|SafeSubscription" hw/rust/comms/ | grep -v "BQL_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned BQL usage found in hw/rust/comms/:"; \
-		echo "$$violations"; \
-		echo "  Fix: remove Bql::lock()/SafeSubscription, or use lock-free channels to communicate with QEMU threads."; \
-		exit 1; \
-	fi
-	@echo "✓ No banned BQL usage in comms found."
-	@echo "==> Checking for misleading #![no_std] in hw/rust/..."
-	@# #![no_std] is banned in peripheral crates because they implicitly link against std
-	@# via virtmcu-qom or zenoh. It provides a false sense of environment safety.
-	@# Approved exceptions must carry an inline // NO_STD_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "#!\[no_std\]" hw/rust/ --include="*.rs" | grep -v "NO_STD_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Misleading #![no_std] found in hw/rust/:"; \
-		echo "$$violations"; \
-		echo "  Fix: remove #![no_std] or add // NO_STD_EXCEPTION: <reason> inline."; \
-		exit 1; \
-	fi
-	@echo "✓ No misleading #![no_std] found."
-	@echo "==> Checking for banned to_ne_bytes/from_ne_bytes in hw/rust/..."
-	@# to_ne_bytes/from_ne_bytes are banned for any value that crosses a process or machine
-	@# boundary (socket, Zenoh, shared memory) because they silently corrupt data on
-	@# big-endian hosts. Use to_le_bytes/to_be_bytes with a comment stating wire byte order.
-	@# to_ne_bytes is permitted only for intra-process data that never leaves the process.
-	@# Approved exceptions must carry an inline // NE_BYTES_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "to_ne_bytes\|from_ne_bytes" hw/rust/ --include="*.rs" | grep -v "NE_BYTES_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned to_ne_bytes/from_ne_bytes found in hw/rust/:"; \
-		echo "$$violations"; \
-		echo "  Fix: use to_le_bytes()/from_le_bytes() with a wire-order comment, or add // NE_BYTES_EXCEPTION: <reason>."; \
-		exit 1; \
-	fi
-	@echo "✓ No banned to_ne_bytes/from_ne_bytes found."
-	@echo "==> Checking for banned rand::thread_rng in hw/rust/..."
-	@# rand::thread_rng() is banned in simulation code because it seeds from wall-clock
-	@# entropy, breaking determinism. Use seed_for_quantum(global_seed, node_id, quantum)
-	@# from transport-zenoh for all stochastic simulation behaviour.
-	@# Approved exceptions must carry an inline // RNG_EXCEPTION: <reason> comment.
-	@violations=$$(grep -rn "rand::thread_rng\b" hw/rust/ --include="*.rs" | grep -v "RNG_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned rand::thread_rng found in hw/rust/:"; \
-		echo "$$violations"; \
-		echo "  Fix: use seed_for_quantum() from transport-zenoh, or add // RNG_EXCEPTION: <reason>."; \
-		exit 1; \
-	fi
-	@echo "✓ No banned rand::thread_rng found."
-	@echo "==> Checking for banned #[allow(] in hw/rust/ production code..."
-	@# #[allow(...)] suppresses clippy/rustc diagnostics and is banned in production code.
-	@# All = "deny" in [workspace.lints.clippy] means every warning is already an error;
-	@# an allow annotation silently creates a hole in that guarantee.
-	@# Fix the underlying issue instead. Test-only exceptions (#[cfg(test)] scope) are
-	@# permitted; document the reason with // ALLOW_EXCEPTION: <reason> on the same line.
-	@violations=$$(grep -rn "#\[allow(" hw/rust/ --include="*.rs" \
-		--exclude-dir=target \
-		--exclude-dir=tests \
-		--exclude="*_generated.rs" \
-		--exclude="build.rs" \
-		| grep -v "// ALLOW_EXCEPTION:" || true); \
-	if [ -n "$$violations" ]; then \
-		echo "ERROR: Banned #[allow(] found in hw/rust/ — fix the underlying lint instead:"; \
-		echo "$$violations"; \
-		exit 1; \
-	fi
-	@echo "✓ No banned #[allow(] in hw/rust/."
+	@echo "==> Rust Safe Serialization lint..."
+	@uv run --active python3 scripts/lints/rust_safe_serialization.py
 	@echo "==> Checking QOM TypeInfo / DTS / Meson name alignment..."
-	@# A QOM type name in Rust TypeInfo MUST match (a) the meson.build 'obj' field
-	@# for that crate, (b) the DTS 'compatible' string used by integration tests,
-	@# and (c) the -global prefix used in test extra_args. Gemini's flexray crash
-	@# (rc=-11) was a NULL-deref inside QEMU's error_prepend triggered by a
-	@# 4-way mismatch (lib.rs c"virtmcu,flexray", DTS "flexray",
-	@# meson 'obj': 'flexray', test -global flexray.*).
 	@uv run --active python3 scripts/check-qom-alignment.py || exit 1
 	@echo "✓ QOM TypeInfo / DTS / Meson alignment OK."
 	@echo "==> Checking Cargo lib name vs Meson 'lib' field..."
-	@# Each Rust peripheral package's static lib output must match the 'lib' field
-	@# in third_party/qemu/hw/virtmcu/meson.build. A mismatch causes Meson to link
-	@# a stale .a file, producing a working-looking .so that contains old code.
-	@# Detection rule: for each crate under hw/rust/{comms,mcu,observability,backbone},
-	@# the package name's underscore form must equal the meson 'lib' field stripped
-	@# of 'lib' prefix and '.a' suffix.
 	@uv run --active python3 scripts/check-cargo-meson-lib-alignment.py || exit 1
 	@echo "✓ Cargo / Meson library names aligned."
 	@echo "==> Running cargo clippy..."
@@ -1044,6 +832,7 @@ book:
 		echo "❌ mdbook not installed. Please restart devcontainer or run: cargo install mdbook"; exit 1; \
 	fi
 	@echo "✓ mdBook built in target/book (HTML and PDF)."
+	@mv target/book/pdf/output.pdf target/book/pdf/virtmcu_book.pdf
 
 # Serve the mdBook documentation locally (uses Python to avoid WebSocket/DevContainer port forwarding issues)
 book-serve: book
