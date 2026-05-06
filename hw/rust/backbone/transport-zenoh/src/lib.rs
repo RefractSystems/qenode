@@ -316,7 +316,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
     if session_res.is_err() && has_router {
         // Retry for ASan/slow CI environments where the router might be slightly behind
         // even if the orchestrator thinks it's ready.
-        for i in 1..=20 {
+        for i in 1..=100 {
             virtmcu_qom::sim_warn!(
                 "transport-zenoh: Zenoh session open failed (attempt {}). Retrying in 200ms...",
                 i

@@ -29,6 +29,7 @@ async def test_actuator_zenoh_publish(
     simulation: Simulation,
     tmp_path: Path,
     guest_app_factory: Any,  # noqa: ANN401
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     Test that the actuator device correctly publishes to Zenoh.
@@ -48,8 +49,7 @@ async def test_actuator_zenoh_publish(
 
     tmp_yaml.write_text(yaml_content)
 
-    import os
-    os.environ["VIRTMCU_ZENOH_ROUTER"] = simulation._router
+    monkeypatch.setenv("VIRTMCU_ZENOH_ROUTER", simulation._router)
     compile_yaml(tmp_yaml, dtb)
 
     received_msgs: list[dict[str, Any]] = []
