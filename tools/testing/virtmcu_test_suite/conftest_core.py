@@ -186,10 +186,6 @@ def get_zenoh_router_endpoint(session: zenoh.Session) -> str:
     Returns the first connected endpoint from a Zenoh session.
     Used by tests to dynamically find the router address.
     """
-    # Prefer environment variable if set
-    if "VIRTMCU_ZENOH_ROUTER" in os.environ:
-        return os.environ["VIRTMCU_ZENOH_ROUTER"]
-
     # In some versions of zenoh-python info is a property, in others a method.
     try:
         info = session.info if not callable(session.info) else session.info()
@@ -206,7 +202,7 @@ def get_zenoh_router_endpoint(session: zenoh.Session) -> str:
         logger.debug(f"Note: Zenoh session info not available yet: {e}")
 
     raise RuntimeError(
-        "Failed to discover Zenoh router endpoint from session and VIRTMCU_ZENOH_ROUTER is not set. "
+        "Failed to discover Zenoh router endpoint from session. "
         "Ensure the Zenoh router is started and the session is connected."
     )
 
