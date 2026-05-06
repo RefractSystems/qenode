@@ -113,7 +113,6 @@ __attribute__((weak)) void virtmcu_safe_bql_force_lock(void) {}
 __attribute__((weak)) void virtmcu_safe_bql_force_unlock(void) {}
 
 /* CPU Hooks */
-__attribute__((weak)) void *virtmcu_cpu_halt_hooks[8] = { NULL };
 __attribute__((weak)) void virtmcu_cpu_set_halt_hook(void (*cb)(void *, bool)) { (void)cb; }
 __attribute__((weak)) void virtmcu_cpu_set_tcg_hook(void (*cb)(void *)) { (void)cb; }
 __attribute__((weak)) bool virtmcu_vcpu_should_yield(void *cpu) { return false; }

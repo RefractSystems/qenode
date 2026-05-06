@@ -40,35 +40,8 @@ extern "C" {
     /// A function
     pub fn cpu_exit(cpu: *mut CPUState);
 
-    /// The multiplexed halt hooks array in QEMU (from qemu-multiple-halt-hooks.patch)
-    #[link_name = "virtmcu_cpu_halt_hooks"]
-    pub static mut VIRTMCU_CPU_HALT_HOOKS:
-        [Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>; 8];
-}
-
-/// Register a new CPU halt hook.
-/// This allows multiple devices to observe halt events.
-pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>) {
-    if let Some(cb) = cb {
-        unsafe {
-            // Find an empty slot or a duplicate
-            let mut i = 0;
-            while i < 8 {
-                if let Some(h) = VIRTMCU_CPU_HALT_HOOKS[i] {
-                    if h as *const () == cb as *const () {
-                        return;
-                    }
-                } else {
-                    VIRTMCU_CPU_HALT_HOOKS[i] = Some(cb);
-                    return;
-                }
-                i += 1;
-            }
-            // If we reach here, we are out of slots.
-            // This is a catastrophic failure for the simulation.
-            std::process::abort();
-        }
-    }
+    /// Register a new CPU halt hook in QEMU.
+    pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
 }
 
 const _: () = assert!(core::mem::size_of::<CPUState>() == 16624);
