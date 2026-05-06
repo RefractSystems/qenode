@@ -6,7 +6,6 @@
 #   sim-tools — FROM toolchain + flatcc + zenoh-c (simulation specific)
 #   builder   — FROM sim-tools: clones QEMU, compiles everything
 #   devenv    — FROM toolchain + Rust + Node.js + AI tools + pre-built QEMU
-#   runtime   — FROM base (lean): only runtime libs + Python + the installed QEMU binaries
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0
@@ -15,6 +14,8 @@ ARG CMAKE_VERSION=4.3.1
 ARG MESON_VERSION=1.8.0
 ARG RUST_VERSION=1.95.0
 ARG BINDGEN_VERSION=0.72.1
+ARG CARGO_BINSTALL_VERSION=1.10.4
+ARG UV_VERSION=0.11.10
 ARG FLATBUFFERS_VERSION=25.12.19
 ARG FLATCC_VERSION=0.6.1
 ARG HADOLINT_VERSION=2.14.0
@@ -28,6 +29,9 @@ ARG PYTHON_VERSION=3.13
 ARG ARM_TOOLCHAIN_VERSION=13.3.rel1
 ARG TARGETARCH
 
+# Alias stage for uv to bypass COPY --from variable expansion limits
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
+
 # ── Stage 0: rust-builder ─────────────────────────────────────────────────────
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-slim AS rust-builder
 ARG BINDGEN_VERSION
@@ -35,13 +39,18 @@ ARG MDBOOK_VERSION
 ARG MDBOOK_MERMAID_VERSION
 ARG MDBOOK_PDF_VERSION
 ARG RUST_VERSION
+ARG CARGO_BINSTALL_VERSION
 ENV CARGO_HOME=/usr/local/cargo
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL -o /tmp/binstall.tgz "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz" \
+    && tar -xzf /tmp/binstall.tgz -C /usr/local/cargo/bin \
+    && rm /tmp/binstall.tgz \
     && rustup toolchain install nightly --profile minimal --component miri \
     && rustup component add rustfmt clippy rust-analyzer \
+    && GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || echo "") && export GITHUB_TOKEN \
     && cargo binstall -y bindgen-cli@"${BINDGEN_VERSION}" \
     && cargo binstall -y cargo-audit \
     && cargo binstall -y cargo-deny \
@@ -114,7 +123,7 @@ RUN sh -c "$(curl -fsSL \
     && sed -i 's/\/root/\/home\/vscode/g' /home/vscode/.zshrc \
     && chown -R vscode:vscode /home/vscode/.oh-my-zsh /home/vscode/.zshrc
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+COPY --from=uv-bin /uv /uvx /usr/bin/
 
 # ── Stage 2: toolchain ────────────────────────────────────────────────────────
 FROM base AS toolchain
@@ -170,171 +179,7 @@ ARG MESON_VERSION
 ENV UV_LINK_MODE=copy
 RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} --break-system-packages
 
-# ── Stage 3: flatcc-builder ───────────────────────────────────────────────────
-# Built only when needed for simulation (QEMU)
-FROM base AS flatcc-builder
-ARG FLATCC_VERSION
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake ninja-build \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /build/flatcc
-RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs/flatcc.git . \
-    && cmake -B build -G Ninja -Wno-dev \
-       -DCMAKE_BUILD_TYPE=Release \
-       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-       -DFLATCC_TEST=OFF \
-       -DFLATCC_CXX_TEST=OFF \
-       -DFLATCC_INSTALL=ON \
-       -DCMAKE_INSTALL_PREFIX=/usr/local \
-       -DCMAKE_C_FLAGS="-w" \
-    && cmake --build build --target install
-
-# ── Stage 4: simulation-toolchain ─────────────────────────────────────────────
-# Inherits from toolchain and adds sim-only requirements (flatcc, zenoh-c)
-FROM toolchain AS simulation-toolchain
-
-COPY --from=flatcc-builder /usr/local/bin/flatcc /usr/local/bin/
-COPY --from=flatcc-builder /usr/local/include/flatcc /usr/local/include/flatcc
-COPY --from=flatcc-builder /usr/local/lib/libflatcc* /usr/local/lib/
-
-ARG ZENOH_C_REF
-COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
-COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
-COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
-COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
-COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
-COPY --from=rust-builder /usr/local/cargo/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
-COPY --from=rust-builder /usr/local/cargo/bin/mdbook-pdf /usr/local/bin/mdbook-pdf
-COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
-COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
-RUN chown -R vscode:vscode /usr/local/rustup /usr/local/cargo
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:${PATH}
-
-WORKDIR /build
-RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
-       https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src
-WORKDIR /build/zenoh-c-build
-RUN cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
-    -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
-    && cmake --build /build/zenoh-c-build -j"$(nproc)" \
-    && cmake --install /build/zenoh-c-build \
-    && rm -rf /build/zenoh-c-src /build/zenoh-c-build
-
-# ── Stage 5: qemu-builder ─────────────────────────────────────────────────────
-FROM simulation-toolchain AS qemu-builder
-
-ARG QEMU_REPO
-ARG QEMU_REF
-ARG TARGETARCH
-
-COPY --from=simulation-toolchain /build/zenoh-c /build/zenoh-c
-
-ENV ARCH=arm
-WORKDIR /build
-RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
-
-COPY patches/ /build/patches/
-COPY scripts/ /build/scripts/
-COPY BUILD_DEPS VERSION /build/
-
-# Apply all patches using the centralized script
-RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu
-
-# Pre-configure with a dummy virtmcu directory to cache the core build.
-# This ensures that changing files in hw/ only triggers a module rebuild.
-RUN mkdir -p qemu/hw/virtmcu \
-    && echo "hw_virtmcu_modules = {}" > qemu/hw/virtmcu/meson.build \
-    && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build \
-    && grep -q "subdir('virtmcu')" qemu/hw/meson.build || echo "subdir('virtmcu')" >> qemu/hw/meson.build
-
-ARG USE_CCACHE=false
-ENV CCACHE_DIR=/var/cache/ccache \
-    CCACHE_MAXSIZE=2G \
-    CCACHE_SLOPPINESS=time_macros,include_file_mtime
-
-WORKDIR /build/qemu/build-virtmcu
-RUN if [ "${USE_CCACHE}" = "true" ]; then \
-        ../configure \
-        --prefix=/opt/virtmcu \
-        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
-        --cc="ccache gcc" --cxx="ccache g++" \
-        --enable-rust \
-        --enable-modules \
-        --enable-fdt \
-        --enable-plugins \
-        --enable-debug \
-        --enable-gcov \
-        --disable-werror \
-        --disable-docs \
-        --disable-dbus-display \
-        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
-    else \
-        ../configure \
-        --prefix=/opt/virtmcu \
-        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
-        --enable-rust \
-        --enable-modules \
-        --enable-fdt \
-        --enable-plugins \
-        --enable-debug \
-        --enable-gcov \
-        --disable-werror \
-        --disable-docs \
-        --disable-dbus-display \
-        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
-    fi
-RUN --mount=type=cache,target=/var/cache/ccache \
-    make -j"$(nproc)"
-
-# ── Stage 6: builder ──────────────────────────────────────────────────────────
-FROM qemu-builder AS builder
-
-COPY Cargo.toml Cargo.lock /build/virtmcu/
-COPY hw/ /build/virtmcu/hw/
-COPY tools/ /build/virtmcu/tools/
-RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
-    && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build || echo "subdir('virtmcu')" >> /build/qemu/hw/meson.build \
-    && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
-    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
-    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
-
-WORKDIR /build/qemu/build-virtmcu
-ARG VIRTMCU_USE_ASAN=0
-ARG TARGETARCH
-# hadolint ignore=SC2016
-RUN --mount=type=cache,target=/var/cache/ccache \
-    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/qemu/build-virtmcu/hw/virtmcu/target \
-    --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
-    VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
-    && make install \
-    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target \
-    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/deterministic_coordinator /opt/virtmcu/bin/ \
-    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/mujoco_bridge /opt/virtmcu/bin/ \
-    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/resd_replay /opt/virtmcu/bin/
-
-
-# hadolint ignore=SC2016
-RUN mkdir -p /opt/virtmcu/lib/qemu/plugins \
-    && mkdir -p /opt/virtmcu/include \
-    && cp -R /build/zenoh-c/include/* /opt/virtmcu/include/ \
-    && cp -R /usr/local/include/flatcc /opt/virtmcu/include/ \
-    && find contrib/plugins -name "*.so" -exec cp {} /opt/virtmcu/lib/qemu/plugins/ \; 2>/dev/null || true \
-    && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /opt/virtmcu/lib/ \; 2>/dev/null || true \
-    && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
-    && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN:$ORIGIN/..:$ORIGIN/../..:$ORIGIN/../../..' {} + \
-    && find /opt/virtmcu/lib -name "hw-uefi-vars.so" -delete 2>/dev/null || true \
-    && find /build/qemu/build-virtmcu -maxdepth 1 -name "qemu-system-*" -type f -delete \
-    && ls -R /opt/virtmcu/lib
-
-ENV PATH="/opt/virtmcu/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
-ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
-
-# ── Stage 7: devenv-base ──────────────────────────────────────────────────────
+# ── Stage 3: devenv-base ──────────────────────────────────────────────────────
 FROM toolchain AS devenv-base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -388,13 +233,154 @@ WORKDIR /workspace
 # devenv-base remains root by default for CI robustness.
 ENV PATH="/home/vscode/.local/bin:${PATH}"
 
+# ── Stage 4: flatcc-builder ───────────────────────────────────────────────────
+# Built only when needed for simulation (QEMU)
+FROM base AS flatcc-builder
+ARG FLATCC_VERSION
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/flatcc
+RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs/flatcc.git . \
+    && cmake -B build -G Ninja -Wno-dev \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+       -DFLATCC_TEST=OFF \
+       -DFLATCC_CXX_TEST=OFF \
+       -DFLATCC_INSTALL=ON \
+       -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_C_FLAGS="-w" \
+    && cmake --build build --target install
+
+# ── Stage 5: qemu-builder ─────────────────────────────────────────────────────
+FROM devenv-base AS qemu-builder
+
+COPY --from=flatcc-builder /usr/local/bin/flatcc /usr/local/bin/
+COPY --from=flatcc-builder /usr/local/include/flatcc /usr/local/include/flatcc
+COPY --from=flatcc-builder /usr/local/lib/libflatcc* /usr/local/lib/
+
+ARG ZENOH_C_REF
+WORKDIR /build
+RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
+       https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src \
+    && cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
+       -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
+    && cmake --build /build/zenoh-c-build -j"$(nproc)" \
+    && cmake --install /build/zenoh-c-build \
+    && rm -rf /build/zenoh-c-src /build/zenoh-c-build
+
+ARG QEMU_REPO
+ARG QEMU_REF
+ARG TARGETARCH
+
+
+ENV ARCH=arm
+WORKDIR /build
+RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
+
+COPY patches/ /build/patches/
+COPY BUILD_DEPS /build/
+RUN mkdir -p /build/scripts
+COPY scripts/apply-qemu-patches.sh /build/scripts/apply-qemu-patches.sh
+
+# Apply all patches using the centralized script
+RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu
+
+# Pre-configure with a dummy virtmcu directory to cache the core build.
+# This ensures that changing files in hw/ only triggers a module rebuild.
+RUN mkdir -p qemu/hw/virtmcu \
+    && echo "hw_virtmcu_modules = {}" > qemu/hw/virtmcu/meson.build \
+    && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build \
+    && grep -q "subdir('virtmcu')" qemu/hw/meson.build || echo "subdir('virtmcu')" >> qemu/hw/meson.build
+
+ARG USE_CCACHE=false
+ENV CCACHE_DIR=/var/cache/ccache \
+    CCACHE_MAXSIZE=2G \
+    CCACHE_SLOPPINESS=time_macros,include_file_mtime
+
+WORKDIR /build/qemu/build-virtmcu
+RUN if [ "${USE_CCACHE}" = "true" ]; then \
+        ../configure \
+        --prefix="$(pwd)/install" \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+        --cc="ccache gcc" --cxx="ccache g++" \
+        --enable-rust \
+        --enable-modules \
+        --enable-fdt \
+        --enable-plugins \
+        --enable-debug \
+        --enable-gcov \
+        --disable-werror \
+        --disable-docs \
+        --disable-dbus-display \
+        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
+    else \
+        ../configure \
+        --prefix="$(pwd)/install" \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+        --enable-rust \
+        --enable-modules \
+        --enable-fdt \
+        --enable-plugins \
+        --enable-debug \
+        --enable-gcov \
+        --disable-werror \
+        --disable-docs \
+        --disable-dbus-display \
+        --extra-ldflags="-fuse-ld=lld -rdynamic"; \
+    fi
+RUN --mount=type=cache,target=/var/cache/ccache \
+    make -j"$(nproc)"
+
+# ── Stage 6: builder ──────────────────────────────────────────────────────────
+FROM qemu-builder AS builder
+
+COPY Cargo.toml Cargo.lock /build/virtmcu/
+COPY hw/ /build/virtmcu/hw/
+COPY tools/ /build/virtmcu/tools/
+RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
+    && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build || echo "subdir('virtmcu')" >> /build/qemu/hw/meson.build \
+    && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
+    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
+
+WORKDIR /build/qemu/build-virtmcu
+ARG VIRTMCU_USE_ASAN=0
+ARG TARGETARCH
+# hadolint ignore=SC2016
+RUN --mount=type=cache,target=/var/cache/ccache \
+    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/qemu/build-virtmcu/hw/virtmcu/target \
+    --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)" \
+    && make install \
+    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/deterministic_coordinator /usr/local/bin/ \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/mujoco_bridge /usr/local/bin/ \
+    && cp /build/qemu/build-virtmcu/hw/virtmcu/target/release/resd_replay /usr/local/bin/
+
+
+# hadolint ignore=SC2016
+RUN mkdir -p /usr/local/lib/qemu/plugins \
+    && mkdir -p /usr/local/include \
+    && cp -R /build/zenoh-c/include/* /usr/local/include/ \
+    && cp -R /usr/local/include/flatcc /usr/local/include/ \
+    && find contrib/plugins -name "*.so" -exec cp {} /usr/local/lib/qemu/plugins/ \; 2>/dev/null || true \
+    && find /build/zenoh-c -name "libzenohc.so" -exec cp {} /usr/local/lib/ \; 2>/dev/null || true \
+    && find /usr/local/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
+    && find /usr/local/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN:$ORIGIN/..:$ORIGIN/../..:$ORIGIN/../../..' {} + \
+    && find /usr/local/lib -name "hw-uefi-vars.so" -delete 2>/dev/null || true \
+    && find /build/qemu/build-virtmcu -maxdepth 1 -name "qemu-system-*" -type f -delete \
+    && ls -R /usr/local/lib
+
+
 # ── Stage 8: devenv ───────────────────────────────────────────────────────────
 FROM devenv-base AS devenv
 
 LABEL org.opencontainers.image.description="virtmcu development environment — toolchain + AI tools + QEMU"
 
 # PRE-CACHE QEMU: Copy pre-built QEMU from builder stage at the end to maximize cache
-COPY --from=builder /opt/virtmcu /opt/virtmcu
 
 # Pre-populate the Cargo registry so the first `make build` in a new devcontainer
 # only needs to compile, not download hundreds of crates over the network.
@@ -407,44 +393,7 @@ RUN cargo fetch --manifest-path /tmp/virtmcu/Cargo.toml \
     && mkdir -p /workspace/target \
     && chown -R vscode:vscode /workspace/target
 
-ENV PATH="/opt/virtmcu/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
-ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # Switch to vscode for interactive use
 USER vscode
 
-# ── Stage 9: runtime ──────────────────────────────────────────────────────────
-FROM base AS runtime
-LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
-LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
-LABEL org.opencontainers.image.licenses=MIT
-
-ARG TARGETARCH
-ENV ARCH=arm
-ENV DEBIAN_FRONTEND=noninteractive
-
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 libglib2.0-0t64 libpixman-1-0 libslirp0 libfdt1 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY pyproject.toml /tmp/pyproject.toml
-WORKDIR /tmp
-ENV UV_LINK_MODE=copy
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system --break-system-packages -r /tmp/pyproject.toml
-
-COPY tools/ /app/tools/
-RUN chown -R vscode:vscode /app/tools
-
-COPY --from=builder /opt/virtmcu /opt/virtmcu
-
-WORKDIR /app
-# Keep runtime as root by default for system-level simulation.
-# USER vscode
-
-ENV PATH="/opt/virtmcu/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
-ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
-
-CMD ["sh", "-c", "qemu-system-${ARCH} --version && echo 'virtmcu ready — set CMD in your world compose file'"]

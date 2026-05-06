@@ -65,6 +65,7 @@ jobs:
         env:
           ARCH: amd64
           PUSH_CACHE: "false"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           targets: devenv-base
           load: true
@@ -76,7 +77,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party
-          key: asan-qemu-${{ runner.os }}-${{ env.QEMU_VERSION }}-${{ hashFiles('scripts/setup-qemu.sh', 'scripts/apply-qemu-patches.sh', 'patches/**') }}
+          key: asan-qemu-${{ runner.os }}-${{ env.QEMU_VERSION }}-${{ hashFiles('scripts/install-deps.sh', 'scripts/apply-qemu-patches.sh', 'patches/**') }}
           restore-keys: |
             asan-qemu-${{ runner.os }}-${{ env.QEMU_VERSION }}-
             asan-qemu-${{ runner.os }}-

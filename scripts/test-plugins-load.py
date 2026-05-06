@@ -16,7 +16,6 @@ import re
 import socket
 import subprocess
 import sys
-from pathlib import Path
 
 from tools.testing.env import WORKSPACE_DIR
 
@@ -34,11 +33,8 @@ def main() -> int:
     module_dir = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"
 
     if not qemu_bin.exists():
-        logger.info("Local QEMU build not found, trying /opt/virtmcu...")
-        qemu_bin = Path("/opt/virtmcu/bin/qemu-system-arm")
-        module_dir = Path("/opt/virtmcu/lib/aarch64-linux-gnu/qemu")
-        if not module_dir.exists():
-            module_dir = Path("/opt/virtmcu/lib/x86_64-linux-gnu/qemu")
+        logger.error("Local QEMU build not found.")
+        sys.exit(1)
 
     if not qemu_bin.exists():
         logger.error("QEMU binary not found. Run 'make build' first.")

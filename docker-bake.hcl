@@ -28,6 +28,8 @@ variable "CMAKE_VERSION" {}
 variable "RUST_VERSION" {}
 variable "FLATBUFFERS_VERSION" {}
 variable "FLATCC_VERSION" {}
+variable "UV_VERSION" {}
+variable "CARGO_BINSTALL_VERSION" {}
 
 # Architecture handling
 variable "ARCH" {
@@ -59,11 +61,11 @@ variable "QEMU_CACHE_TAG" {
 # ── Groups ────────────────────────────────────────────────────────────────────
 
 group "default" {
-  targets = ["base", "toolchain", "devenv-base"]
+  targets = ["base", "rust-builder", "toolchain", "devenv-base"]
 }
 
 group "all" {
-  targets = ["base", "toolchain", "devenv-base", "qemu-base", "builder", "devenv", "runtime"]
+  targets = ["base", "rust-builder", "toolchain", "devenv-base", "c-libs-builder", "qemu-base", "builder"]
 }
 
 # ── Common Configuration ──────────────────────────────────────────────────────
@@ -71,6 +73,9 @@ group "all" {
 target "_common" {
   context = "."
   dockerfile = "docker/Dockerfile"
+  secrets = [
+    "GITHUB_TOKEN"
+  ]
   args = {
     HADOLINT_VERSION      = HADOLINT_VERSION
     ACTIONLINT_VERSION    = ACTIONLINT_VERSION
@@ -87,6 +92,8 @@ target "_common" {
     RUST_VERSION          = RUST_VERSION
     FLATBUFFERS_VERSION   = FLATBUFFERS_VERSION
     FLATCC_VERSION        = FLATCC_VERSION
+    UV_VERSION            = UV_VERSION
+    CARGO_BINSTALL_VERSION= CARGO_BINSTALL_VERSION
     USE_CCACHE            = USE_CCACHE
     VIRTMCU_USE_ASAN      = "${VIRTMCU_USE_ASAN}"
   }
@@ -112,6 +119,23 @@ target "base" {
   ) : []
 }
 
+
+target "rust-builder" {
+  inherits = ["_common"]
+  target   = "rust-builder"
+  cache-from = [
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH}",
+    "type=gha,scope=virtmcu-rust-builder-${ARCH}"
+  ]
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-rust-builder-${ARCH},mode=max"
+    ]
+  ) : []
+}
+
 target "toolchain" {
   inherits = ["_common"]
   target   = "toolchain"
@@ -131,6 +155,7 @@ target "toolchain" {
   ) : []
 }
 
+
 target "devenv-base" {
   inherits = ["_common"]
   target   = "devenv-base"
@@ -138,6 +163,10 @@ target "devenv-base" {
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
     "type=gha,scope=virtmcu-devenv-base-${ARCH}"
   ]
   cache-to = CI == "true" ? (
@@ -152,12 +181,38 @@ target "devenv-base" {
 # ── qemu-base: frozen QEMU core, keyed by QEMU version + patches hash ────────
 # Written only by ci-main.yml (never by ci-pr.yml, which excludes this target).
 # ci-pr.yml reads it via the builder target's cache-from list below.
+target "c-libs-builder" {
+  inherits = ["_common"]
+  target   = "c-libs-builder"
+  cache-from = [
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:c-libs-builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
+    "type=gha,scope=virtmcu-c-libs-builder-${ARCH}"
+  ]
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:c-libs-builder-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-c-libs-builder-${ARCH},mode=max"
+    ]
+  ) : []
+}
+
 target "qemu-base" {
   inherits = ["_common"]
   target   = "qemu-builder"
   tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/qemu-base:${QEMU_CACHE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/qemu-base:${QEMU_CACHE_TAG}-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:c-libs-builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
     "type=gha,scope=virtmcu-qemu-base-${ARCH}"
   ]
@@ -179,7 +234,12 @@ target "builder" {
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/qemu-base:${QEMU_CACHE_TAG}-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/builder:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:c-libs-builder-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:rust-builder-${ARCH}",
     "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
     "type=gha,scope=virtmcu-builder-${ARCH}"
   ]
   cache-to = CI == "true" ? (
@@ -191,42 +251,3 @@ target "builder" {
   ) : []
 }
 
-target "devenv" {
-  inherits = ["_common"]
-  target   = "devenv"
-  tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:latest-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-base-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
-    "type=gha,scope=virtmcu-devenv-${ARCH}"
-  ]
-  cache-to = CI == "true" ? (
-    PUSH_CACHE == "true" ? [
-      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:devenv-${ARCH},mode=max"
-    ] : [
-      "type=gha,scope=virtmcu-devenv-${ARCH}"
-    ]
-  ) : []
-}
-
-target "runtime" {
-  inherits = ["_common"]
-  target   = "runtime"
-  tags     = ["${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:${IMAGE_TAG}-${ARCH}"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:runtime-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:latest-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:base-${ARCH}",
-    "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:builder-${ARCH}",
-    "type=gha,scope=virtmcu-runtime-${ARCH}"
-  ]
-  cache-to = CI == "true" ? (
-    PUSH_CACHE == "true" ? [
-      "type=registry,ref=${REGISTRY}/${IMAGE_NAME_LOWER}/build-cache:runtime-${ARCH},mode=max"
-    ] : [
-      "type=gha,scope=virtmcu-runtime-${ARCH}"
-    ]
-  ) : []
-}
