@@ -16,10 +16,11 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent)) # noqa: TID251
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: TID251
 from lint_utils import DEFAULT_EXCLUDES, ENTERPRISE_MANDATE, iter_target_files, setup_lint_logging
 
 logger = logging.getLogger(__name__)
+
 
 def lint_file(path: Path) -> list[str]:
     try:
@@ -179,31 +180,34 @@ def run_lint(targets: list[Path], excludes: list[str]) -> bool:
     for path in iter_target_files(targets, excludes, "*.py"):
         if "fixtures" in path.parts or "__pycache__" in path.parts:
             continue
-            
+
         all_violations.extend(lint_file(path))
 
     if all_violations:
         for v in all_violations:
             logger.error(v)
         return False
-        
+
     logger.info("✓ Simulation usage lint passed.")
     return True
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lint Simulation Framework Usage via AST.")
-    parser.add_argument("targets", type=Path, nargs="*", default=[Path("tests"), Path("tools/testing")], help="Target directories or files")
     parser.add_argument(
-        "--exclude", 
-        nargs="*", 
-        default=DEFAULT_EXCLUDES, 
-        help="Directories to exclude"
+        "targets",
+        type=Path,
+        nargs="*",
+        default=[Path("tests"), Path("tools/testing")],
+        help="Target directories or files",
     )
+    parser.add_argument("--exclude", nargs="*", default=DEFAULT_EXCLUDES, help="Directories to exclude")
     args = parser.parse_args()
 
     setup_lint_logging()
     success = run_lint(args.targets, args.exclude)
     sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

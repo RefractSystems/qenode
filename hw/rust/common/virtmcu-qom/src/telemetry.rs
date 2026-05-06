@@ -2,8 +2,6 @@
 
 #[cfg(not(any(miri, feature = "standalone")))]
 use alloc::format;
-#[cfg(not(any(miri, feature = "standalone")))]
-use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 #[cfg(not(any(miri, feature = "standalone")))]
 use crossbeam_channel::{bounded, Sender};
@@ -157,10 +155,15 @@ fn init_logger_thread() -> Sender<LogEntry> {
 
 #[cfg(any(miri, feature = "standalone"))]
 #[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri and standalone require direct printing as FFI is unavailable
-fn standalone_output(node_id: u32, level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
+fn standalone_output(
+    node_id: u32,
+    level: LogLevel,
+    module: &'static str,
+    args: core::fmt::Arguments,
+) {
     use std::eprintln; // Add this to import the macro from std
-    // In Miri and standalone, we use eprintln! directly as FFI is unavailable.
-    // But to satisfy the lint, we add the exception comment.
+                       // In Miri and standalone, we use eprintln! directly as FFI is unavailable.
+                       // But to satisfy the lint, we add the exception comment.
     eprintln!("[Node: {}] [{}] [{}] {}", node_id, level.as_str(), module, args);
     // PRINT_EXCEPTION: Miri/standalone require direct printing as FFI is unavailable
 }

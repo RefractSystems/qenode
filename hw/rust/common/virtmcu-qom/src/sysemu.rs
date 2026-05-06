@@ -11,7 +11,9 @@ pub fn runstate_is_running() -> bool {
     #[cfg(not(any(test, miri, feature = "standalone")))]
     // SAFETY: virtmcu_runstate_is_running is a safe wrapper around QEMU's
     // runstate_is_running() which just checks a global state variable.
-    unsafe { virtmcu_runstate_is_running() }
+    unsafe {
+        virtmcu_runstate_is_running()
+    }
 
     #[cfg(any(test, miri, feature = "standalone"))]
     true

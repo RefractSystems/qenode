@@ -37,7 +37,7 @@ async def test_halt_hook_multiplexing(simulation: Simulation, wfi_artifacts: tup
     """
     Test that when both `telemetry` and `clock` (injected automatically by simulation)
     are loaded, they both receive halt hooks.
-    
+
     If multiplexing fails:
     - If `clock` overwrites `telemetry`: We capture 0 telemetry events.
     - If `telemetry` overwrites `clock`: Virtual time stalls, and sim.run_until times out.
@@ -58,22 +58,19 @@ async def test_halt_hook_multiplexing(simulation: Simulation, wfi_artifacts: tup
         dtb=dtb,
         kernel=kernel,
         extra_args=[
-            "-device", "virtmcu-transport-hub,id=hub0",
-            "-device", "telemetry,transport=hub0",
+            "-device",
+            "virtmcu-transport-hub,id=hub0",
+            "-device",
+            "telemetry,transport=hub0",
         ],
     )
-    
+
     async with simulation as sim:
-        # Advance virtual time. 
+        # Advance virtual time.
         # If the clock plugin didn't get its hook, vta.step() will hang/timeout.
         # If the telemetry plugin didn't get its hook, captured will remain empty.
-        await sim.run_until(
-            lambda: len(captured) > 0, 
-            timeout_ns=100_000_000, 
-            step_ns=10_000_000, 
-            timeout=10.0
-        )
-        
+        await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=10_000_000, timeout=10.0)
+
         assert len(captured) > 0, "Telemetry plugin did not receive CPU halt events!"
-        
+
         # We successfully advanced time AND received telemetry. Multiplexing works.
