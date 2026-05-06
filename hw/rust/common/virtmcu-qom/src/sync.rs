@@ -632,9 +632,49 @@ impl<T> BqlGuarded<T> {
     }
 }
 
+use crate::timer::{QomTimer, QEMU_CLOCK_REALTIME};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use crossbeam_channel::{unbounded, Receiver};
 use virtmcu_api::{DataCallback, DataTransport};
+
+struct SubscriptionInternal {
+    callback: DataCallback,
+    rx: Receiver<alloc::vec::Vec<u8>>,
+    is_valid: Arc<AtomicBool>,
+    active_count: Arc<AtomicUsize>,
+    drain_cond: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
+    generation: Arc<AtomicU64>,
+    expected_generation: u64,
+}
+
+extern "C" fn safe_subscription_timer_cb(opaque: *mut core::ffi::c_void) {
+    // SAFETY: opaque is a valid pointer to SubscriptionInternal managed by Arc.
+    let internal = unsafe { &*(opaque as *const SubscriptionInternal) };
+
+    internal.active_count.fetch_add(1, Ordering::SeqCst);
+    {
+        // Mandate: Timer callbacks on the main loop always hold the BQL.
+        // We do NOT acquire it here to avoid premature unlocking when the guard is dropped.
+
+        // Drain the queue
+        while let Ok(payload) = internal.rx.try_recv() {
+            // Re-check validity.
+            if internal.is_valid.load(Ordering::Acquire)
+                && internal.generation.load(Ordering::Acquire) == internal.expected_generation
+            {
+                (internal.callback)(&payload);
+            }
+        }
+    }
+    internal.active_count.fetch_sub(1, Ordering::SeqCst);
+
+    // Notify any waiting Drop call that we are done.
+    let (lock, cvar) = &*internal.drain_cond;
+    if let Ok(_guard) = lock.lock() {
+        cvar.notify_all();
+    }
+}
 
 /// A thread-safe, RAII-enabled subscription for VirtMCU QOM devices.
 ///
@@ -649,6 +689,8 @@ pub struct SafeSubscription {
     drain_cond: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
     _generation: Arc<AtomicU64>,
     _expected_generation: u64,
+    _timer: Arc<QomTimer>,
+    _internal: Arc<SubscriptionInternal>,
 }
 
 impl SafeSubscription {
@@ -660,40 +702,40 @@ impl SafeSubscription {
         callback: DataCallback,
     ) -> Result<Self, String> {
         let expected_generation = generation.load(Ordering::Acquire);
-        let generation_clone = Arc::clone(&generation);
         let is_valid = Arc::new(AtomicBool::new(true));
-        let valid_clone = Arc::clone(&is_valid);
         let active_count = Arc::new(AtomicUsize::new(0));
-        let active_clone = Arc::clone(&active_count);
         let drain_cond = Arc::new((std::sync::Mutex::new(()), std::sync::Condvar::new()));
-        let drain_clone = Arc::clone(&drain_cond);
 
-        let wrapper_callback: DataCallback = Box::new(move |payload| {
-            // Increment active count before acquiring BQL
-            active_clone.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = unbounded();
 
-            {
-                // Automatically acquire BQL.
-                let _bql = Bql::lock();
-
-                // Re-check validity after acquiring BQL.
-                if valid_clone.load(Ordering::Acquire)
-                    && generation_clone.load(Ordering::Acquire) == expected_generation
-                {
-                    callback(payload);
-                }
-            }
-
-            // Decrement active count when finished.
-            active_clone.fetch_sub(1, Ordering::SeqCst);
-
-            // Notify any waiting Drop call that we are done.
-            let (lock, cvar) = &*drain_clone;
-            if let Ok(_guard) = lock.lock() {
-                cvar.notify_all();
-            }
+        let internal = Arc::new(SubscriptionInternal {
+            callback,
+            rx,
+            is_valid: Arc::clone(&is_valid),
+            active_count: Arc::clone(&active_count),
+            drain_cond: Arc::clone(&drain_cond),
+            generation: Arc::clone(&generation),
+            expected_generation,
         });
 
+        let timer_internal = Arc::clone(&internal);
+        // SAFETY: We are creating a timer during device realization/init which holds BQL.
+        let timer = unsafe {
+            QomTimer::new(
+                QEMU_CLOCK_REALTIME,
+                safe_subscription_timer_cb,
+                Arc::as_ptr(&timer_internal) as *mut core::ffi::c_void,
+            )
+        };
+
+        let timer_clone = Arc::new(timer);
+        let timer_kick = Arc::clone(&timer_clone);
+        let valid_clone = Arc::clone(&is_valid);
+        let wrapper_callback: DataCallback = Box::new(move |payload| {
+            if valid_clone.load(Ordering::Acquire) && tx.send(payload.to_vec()).is_ok() {
+                timer_kick.kick();
+            }
+        });
         transport.subscribe(topic, wrapper_callback)?;
 
         Ok(Self {
@@ -702,6 +744,8 @@ impl SafeSubscription {
             drain_cond,
             _generation: generation,
             _expected_generation: expected_generation,
+            _timer: timer_clone,
+            _internal: internal,
         })
     }
 }
@@ -711,10 +755,13 @@ impl Drop for SafeSubscription {
         // 1. Mark as invalid
         self.is_valid.store(false, Ordering::Release);
 
-        // 2. Temporarily release BQL if held to avoid deadlocks with background threads
+        // 2. Cancel the timer to stop future firings.
+        self._timer.del();
+
+        // 3. Temporarily release BQL if held to avoid deadlocks with background threads
         let _unlock = Bql::temporary_unlock();
 
-        // 3. Wait for any remaining active callbacks to finish
+        // 4. Wait for any remaining active callbacks to finish
         let (lock, cvar) = &*self.drain_cond;
         if let Ok(mut guard) = lock.lock() {
             while self.active_count.load(Ordering::SeqCst) > 0 {
