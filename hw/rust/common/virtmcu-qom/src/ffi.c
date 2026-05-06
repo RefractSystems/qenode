@@ -113,11 +113,11 @@ __attribute__((weak)) void virtmcu_safe_bql_force_lock(void) {}
 __attribute__((weak)) void virtmcu_safe_bql_force_unlock(void) {}
 
 /* CPU Hooks */
-__attribute__((weak)) void *virtmcu_cpu_halt_hooks[8] = { NULL };
 __attribute__((weak)) void virtmcu_cpu_set_halt_hook(void (*cb)(void *, bool)) { (void)cb; }
 __attribute__((weak)) void virtmcu_cpu_set_tcg_hook(void (*cb)(void *)) { (void)cb; }
 __attribute__((weak)) bool virtmcu_vcpu_should_yield(void *cpu) { return false; }
 __attribute__((weak)) void virtmcu_kick_first_cpu_for_quantum(void) {}
+__attribute__((weak)) int virtmcu_cpu_get_index(void *cpu) { (void)cpu; return 0; }
 
 /* GLib stubs */
 __attribute__((weak)) void *g_malloc0(size_t n) { return calloc(1, n); }
@@ -273,6 +273,11 @@ void virtmcu_cpu_exit_all(void)
     CPU_FOREACH(cpu) {
         cpu_exit(cpu);
     }
+}
+
+int virtmcu_cpu_get_index(CPUState *cpu)
+{
+    return cpu->cpu_index;
 }
 
 /* ── Runstate / Control ──────────────────────────────────────────────────── */
