@@ -6,7 +6,7 @@ In this lesson, we will explore how **virtmcu** handles multiple CPU architectur
 
 - RISC-V cross-compiler: `gcc-riscv64-linux-gnu`
 - Device Tree Compiler: `dtc`
-- virtmcu QEMU built with RISC-V targets (run `scripts/setup-qemu.sh` to ensure this)
+- virtmcu QEMU built with RISC-V targets (run `scripts/install-deps.sh` to ensure this)
 
 ## Architecture Agnosticism in virtmcu
 

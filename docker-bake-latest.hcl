@@ -48,16 +48,3 @@ target "builder" {
   ]
 }
 
-target "devenv" {
-  tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:latest-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"
-  ]
-}
-
-target "runtime" {
-  tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:latest-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:${IMAGE_TAG}-${ARCH}"
-  ]
-}

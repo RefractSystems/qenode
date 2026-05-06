@@ -108,7 +108,7 @@ not acquire BQL in the suspend path.
 
 ### Prerequisites
 
-- QEMU built with the clock module (see `scripts/setup-qemu.sh`).
+- QEMU built with the clock module (see `scripts/install-deps.sh`).
 - `zenoh-c` library in `third_party/zenoh-c/`.
 - `eclipse-zenoh` Python package (`uv sync` or `uv pip install eclipse-zenoh`).
 - `arm-none-eabi-gcc` and `dtc` on PATH.

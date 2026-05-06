@@ -99,10 +99,10 @@ In `slaved-suspend`, virtual time advances during WFI. Quantum boundaries still 
 
 ## Development Efficiency
 
-- **`make setup`**: initial setup or QEMU dependency changes only — triggers massive rebuilds.
-- **`make build`**: standard incremental builds for `hw/` peripherals.
+- **`make install-deps`**: **MANDATORY for first-time use.** Clones and builds QEMU, Zenoh-C, and flatcc from source into `third_party/`. Ensures absolute environment parity.
+- **`make build`**: standard incremental builds for `hw/` peripherals and core tools.
 - **Targeted ninja**: `ninja -C third_party/qemu/build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" ) hw-virtmcu-<name>.so`
-- **Pre-installed QEMU**: available at `/opt/virtmcu`; rebuild only when modifying the emulator or plugins.
+- **Environment Parity**: The devcontainer uses `devenv-base`, which omits pre-built binaries to ensure 1:1 parity with CI. Everything executed is built from your local source tree.
 
 ---
 
@@ -319,7 +319,7 @@ Mandatory shutdown sequence:
 - **Interactive debugging**: run without `-monitor none`/`-serial file:...`, use `-nographic`. Exit: `Ctrl+A X`.
 - **SysBus mapping**: `-device`-only → not in guest memory. Declare in YAML. QOM path has no `@<address>` suffix; verify with `qom-list /`.
 - **MMIO offsets**: bridge delivers region-relative offsets, not absolute addresses. ARM is Little Endian (`0xDEADC0DE` on wire: `DE C0 AD DE`).
-- **Local vs. CI drift**: hand-edits to `third_party/qemu` don't survive CI clone. Run `git status` after debugging; fix must be reproducible from `git clone` + `make setup`.
+- **Local vs. CI drift**: hand-edits to `third_party/qemu` don't survive CI clone. Run `git status` after debugging; fix must be reproducible from `git clone` + `make install-deps`.
 
 ---
 

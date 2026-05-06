@@ -87,6 +87,7 @@ jobs:
         env:
           ARCH: amd64
           PUSH_CACHE: "false"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           targets: devenv-base
           load: true
@@ -171,7 +172,7 @@ jobs:
 
   build-qemu:
     name: Build QEMU — amd64
-    needs: [changes]
+    needs: [changes, tier1-checks]
     if: needs.changes.outputs.expensive == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -241,6 +242,7 @@ jobs:
           PUSH_CACHE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
           CI: "true"
           QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           targets: |
             base

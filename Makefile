@@ -25,14 +25,12 @@ endif
 # in the `scripts/` directory or to the QEMU build system.
 #
 # Most developers will only need:
-#   make setup-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
+#   make install-deps-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
 #   make build   — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
 #   make run     — Launch QEMU using the minimal boot_arm test DTB.
 #
 # Environment Variables / Flags:
-#   VIRTMCU_SKIP_BUILD_DIR=1  — Forces `scripts/run.sh` to bypass the local build 
 #			       directory (`third_party/qemu/build-virtmcu`) and 
-#			       strictly use installed artifacts in `/opt/virtmcu`. 
 #			       Essential for CI and Docker targets testing final images.
 #   VIRTMCU_STALL_TIMEOUT_MS  — Milliseconds the Python orchestrator and clock 
 #			       will wait for a QEMU TCG quantum to complete before 
@@ -104,8 +102,8 @@ check-versions:
 
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 # WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
-setup-initial:
-	@bash scripts/setup-qemu.sh
+install-deps-initial:
+	@bash scripts/install-deps.sh
 
 # Incremental rebuild: useful when you only modify files in the `hw/` directory.
 build:
@@ -123,15 +121,6 @@ run:
 	  -m 128M \
 	  $(EXTRA_ARGS)
 
-# Launch the emulator using strictly the installed binaries in /opt/virtmcu 
-# (ignores local build directory).
-run-installed:
-	@VIRTMCU_SKIP_BUILD_DIR=1 bash scripts/run.sh \
-	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
-	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
-	  -nographic \
-	  -m 128M \
-	  $(EXTRA_ARGS)
 
 # ------------------------------------------------------------------------------
 # Python & Testing Targets
@@ -160,7 +149,7 @@ test-integration: venv
 # Run integration tests compiled with C/C++ memory sanitizers (ASan/UBSan)
 test-asan: venv
 	@echo "==> Building QEMU with ASan/UBSan enabled..."
-	VIRTMCU_USE_ASAN=1 bash scripts/setup-qemu.sh --force
+	VIRTMCU_USE_ASAN=1 bash scripts/install-deps.sh --force
 	@bash scripts/cleanup-sim.sh --quiet
 	@echo "==> Running integration tests under ASan/UBSan..."
 	VIRTMCU_USE_ASAN=1 \
@@ -219,7 +208,7 @@ test-coverage-guest:
 		-e CI=true \
 		$(BUILDER_IMG) \
 		bash -c "make -C tests/fixtures/guest_apps/boot_arm && \
-			 DRCOV_SO=\$$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
+			 DRCOV_SO=\$$(find third_party/qemu/build-virtmcu /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
 			 qemu-system-arm -M arm-generic-fdt,hw-dtb=tests/fixtures/guest_apps/boot_arm/minimal.dtb \
 			   -kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic -m 128M -display none \
 			   -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin & \
@@ -817,12 +806,12 @@ clean:
 	@echo "✓ Clean complete (QEMU sources and .venv remain)."
 
 # Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
-# You will need to run 'make setup-initial' again after this.
+# You will need to run 'make install-deps-initial' again after this.
 distclean: clean
 	rm -rf .venv
 	rm -rf third_party
 	rm -rf test-results
-	@echo "✓ Deep clean complete. Run 'make setup-initial' to rebuild the environment."
+	@echo "✓ Deep clean complete. Run 'make install-deps-initial' to rebuild the environment."
 # ------------------------------------------------------------------------------
 # Documentation
 # ------------------------------------------------------------------------------

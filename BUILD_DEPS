@@ -55,3 +55,9 @@ MDBOOK_PDF_VERSION=0.1.10
 # Python Testing Framework
 PYTEST_VERSION=8.3.4
 PYTEST_ASYNCIO_VERSION=1.3.0
+
+# Python package manager (pinned for deterministic environment resolution)
+UV_VERSION=0.11.10
+
+# Cargo binary installer (pinned to prevent silent installer updates)
+CARGO_BINSTALL_VERSION=1.10.4
