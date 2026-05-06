@@ -32,9 +32,6 @@ extern "C" {
     pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>;
 
     /// A setter
-    #[link_name = "virtmcu_cpu_set_halt_hook"]
-    fn qemu_virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>);
-    /// A setter
     pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(cpu: *mut CPUState)>);
     /// A static
     pub static mut virtmcu_get_quantum_timing:
@@ -42,31 +39,35 @@ extern "C" {
 
     /// A function
     pub fn cpu_exit(cpu: *mut CPUState);
-}
 
-use std::sync::Mutex;
-static HALT_HOOKS: Mutex<Vec<extern "C" fn(cpu: *mut CPUState, halted: bool)>> =
-    Mutex::new(Vec::new());
+    /// The multiplexed halt hooks array in QEMU (from qemu-multiple-halt-hooks.patch)
+    #[link_name = "virtmcu_cpu_halt_hooks"]
+    pub static mut VIRTMCU_CPU_HALT_HOOKS:
+        [Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>; 8];
+}
 
 /// Register a new CPU halt hook.
 /// This allows multiple devices to observe halt events.
 pub fn virtmcu_cpu_set_halt_hook(cb: Option<extern "C" fn(cpu: *mut CPUState, halted: bool)>) {
-    let Some(cb) = cb else { return };
-    let mut hooks = HALT_HOOKS.lock().unwrap();
-    if hooks.is_empty() {
+    if let Some(cb) = cb {
         unsafe {
-            qemu_virtmcu_cpu_set_halt_hook(Some(multiplexed_halt_hook));
+            // Find an empty slot or a duplicate
+            let mut i = 0;
+            while i < 8 {
+                if let Some(h) = VIRTMCU_CPU_HALT_HOOKS[i] {
+                    if h as *const () == cb as *const () {
+                        return;
+                    }
+                } else {
+                    VIRTMCU_CPU_HALT_HOOKS[i] = Some(cb);
+                    return;
+                }
+                i += 1;
+            }
+            // If we reach here, we are out of slots.
+            // This is a catastrophic failure for the simulation.
+            std::process::abort();
         }
-    }
-    if !hooks.contains(&cb) {
-        hooks.push(cb);
-    }
-}
-
-extern "C" fn multiplexed_halt_hook(cpu: *mut CPUState, halted: bool) {
-    let hooks = HALT_HOOKS.lock().unwrap();
-    for hook in hooks.iter() {
-        hook(cpu, halted);
     }
 }
 

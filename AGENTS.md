@@ -293,6 +293,8 @@ Mandatory shutdown sequence:
 
 ### 18. Lessons Learned (Anti-Patterns — Do Not Repeat)
 
+- **DSO Boundary Isolation Trap**: Never use Rust `static` or `static mut` (like `lazy_static!`, `Mutex`, `Atomic`) for state or registries that must be shared *across* different hardware peripherals if those peripherals might be compiled into separate `.so` files (e.g. multiplexing arrays). Each DSO gets its own distinct copy of Rust static data. Shared state must live in the QEMU main binary and be exported via `VIRTMCU_EXPORT`.
+- **Single-Slot Global Callbacks**: Avoid single-slot function pointers (e.g., `void (*hook)(...)`) for event subscription. They lead to silent overwrites when multiple modules register. Always use chained arrays (e.g., `hook[8]`) or explicitly passed Dependency Injection (DI) properties.
 - **SafeSubscription Teardown**: never bound a drain loop. Use `Condvar::notify_all()` in callback + unconditional `Condvar::wait()` in Drop (see §12). `SafeSubscription` encapsulates this logic.
 - **PDES Tie-Breaking**: direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator` for canonical ordering.
 - **DSO TLS Trap**: never call QEMU TLS macros (e.g., `bql_locked()`) from a plugin DSO — use `virtmcu_is_bql_locked()` from the main-binary header.
