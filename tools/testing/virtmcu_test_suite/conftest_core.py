@@ -422,10 +422,10 @@ async def wait_for_zenoh_discovery(
 
 # VTA step timeout: always longer than the QEMU stall-timeout so QEMU can reply
 # with STALL before Python gives up. VIRTMCU_STALL_TIMEOUT_MS drives both sides:
-# QEMU reads it directly; Python adds a 10-second buffer on top.
+# QEMU reads it directly; Python adds a 60-second buffer on top.
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
 _stall_timeout_ms = int(_base_stall_timeout_ms * get_time_multiplier())
-_RAW_VTA_STEP_TIMEOUT_S: float = max(60.0, _base_stall_timeout_ms / 1000.0 + 10.0)
+_RAW_VTA_STEP_TIMEOUT_S: float = max(60.0, _base_stall_timeout_ms / 1000.0 + 60.0)
 
 
 class VirtualTimeAuthority:
