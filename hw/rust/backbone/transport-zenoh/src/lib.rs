@@ -305,8 +305,28 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         }
     }
 
-    let session = zenoh::open(config)
-        .wait()
+    let mut session_res = zenoh::open(config.clone()).wait();
+    if session_res.is_err() && has_router {
+        // Retry for ASan/slow CI environments where the router might be slightly behind
+        // even if the orchestrator thinks it's ready.
+        for i in 1..=20 {
+            virtmcu_qom::sim_warn!(
+                "transport-zenoh: Zenoh session open failed (attempt {}). Retrying in 200ms...",
+                i
+            );
+            std::thread::sleep(core::time::Duration::from_millis(200)); // SLEEP_EXCEPTION: transient connection retry
+            session_res = zenoh::open(config.clone()).wait();
+            if session_res.is_ok() {
+                virtmcu_qom::sim_info!(
+                    "transport-zenoh: Zenoh session opened after {} retries.",
+                    i
+                );
+                break;
+            }
+        }
+    }
+
+    let session = session_res
         .map_err(|e| zenoh::Error::from(format!("Failed to open Zenoh session: {e}")))?;
     virtmcu_qom::vlog!("transport-zenoh: zenoh::open() finished. has_router={}", has_router);
 
