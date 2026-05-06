@@ -54,7 +54,7 @@ SystemC handles the *bus*, while QEMU handles the *CPU*. Because all communicati
 ### Prerequisites
 
 - QEMU built with the `arm-generic-fdt` patches and `mmio-socket-bridge` module.
-  Run `scripts/setup-qemu.sh` if not already done.
+  Run `scripts/install-deps.sh` if not already done.
 - CMake ≥ 3.14, a C++17 compiler, `zenoh-c` built in `third_party/zenoh-c/`.
 - `arm-none-eabi-gcc`, `dtc`, and `python3` on `PATH`.
 - `eclipse-zenoh` Python package: `uv sync` or `uv pip install eclipse-zenoh`

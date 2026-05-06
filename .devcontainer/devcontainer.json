@@ -37,5 +37,5 @@
       ]
     }
   },
-  "image": "ghcr.io/refractsystems/virtmcu/devenv:latest"
+  "image": "ghcr.io/refractsystems/virtmcu/devenv-base:latest"
 }

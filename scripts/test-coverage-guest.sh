@@ -12,9 +12,9 @@ $SUDO uv pip install --link-mode=copy --system --break-system-packages pyelftool
 make -C tests/fixtures/guest_apps/boot_arm
 
 # Find drcov plugin (priority: installed prefix, then build tree)
-DRCOV_SO=$(find /opt/virtmcu/lib/qemu/plugins /build/qemu -name "libdrcov.so" 2>/dev/null | head -n 1)
+DRCOV_SO=$(find /build/qemu third_party/qemu/build-virtmcu -name "libdrcov.so" 2>/dev/null | head -n 1)
 if [ -z "$DRCOV_SO" ]; then
-    echo "Error: libdrcov.so not found in /opt/virtmcu or /build/qemu"
+    echo "Error: libdrcov.so not found in third_party or /build/qemu"
     exit 1
 fi
 echo "Using drcov plugin: $DRCOV_SO"
