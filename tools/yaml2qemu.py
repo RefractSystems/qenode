@@ -186,13 +186,13 @@ def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, 
                     svd_path_raw = dev.properties["svd"]
                     if not isinstance(svd_path_raw, str):
                         raise TypeError(f"svd property must be a string, got {type(svd_path_raw)}")
-                    
+
                     svd_path: str = str(svd_path_raw)
-                    
+
                     # Provide an absolute path if necessary based on some workspace context, or assume it's relative to current dir
                     if not os.path.exists(svd_path) and "VIRTMCU_WORKSPACE" in os.environ:
                         svd_path = os.path.join(os.environ["VIRTMCU_WORKSPACE"], svd_path)
-                    
+
                     if os.path.exists(svd_path):
                         parser = SVDParser.for_xml_file(svd_path)
                         svd_device = parser.get_device()
@@ -201,18 +201,18 @@ def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, 
                             first_periph = svd_device.peripherals[0]
                             if not isinstance(first_periph, SVDPeripheral):
                                 raise TypeError("Expected SVDPeripheral")
-                                
+
                             # Update address if it was not explicitly provided or was "none"
                             if address_str == "none" and first_periph.base_address is not None:
                                 address_str = hex(first_periph.base_address)
                                 dev.address_str = address_str
-                            
+
                             # If size is missing, try to infer it
                             if "size" not in dev.properties and "region-size" not in dev.properties:
                                 if first_periph.address_blocks and first_periph.address_blocks[0].size is not None:
                                     dev.properties["size"] = hex(first_periph.address_blocks[0].size)
                                 else:
-                                    dev.properties["size"] = "0x1000" # Fallback
+                                    dev.properties["size"] = "0x1000"  # Fallback
                 except (FileNotFoundError, ValueError, ImportError, TypeError) as e:
                     logger.warning(f"Could not parse SVD file {dev.properties['svd']} for {dev.name}: {e}")
 
@@ -275,7 +275,7 @@ def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
                     prefix = "memory"
             else:
                 prefix = dev.name
-                
+
             dev_node = find_node_recursive(dtb.root, prefix)
 
             if not dev_node:
@@ -428,26 +428,26 @@ def main() -> None:
         elif dev.type_name == "mmio-socket-bridge":
             # Handled via DTB (both memory map and instantiation) but we also need a -device CLI arg.
             filtered_devices.append(dev)
-            
+
             # Auto-generate the CLI arguments for mmio-socket-bridge
             base_addr = dev.address_str
             region_size = dev.properties.get("region-size", dev.properties.get("size", "0x1000"))
             socket_path = dev.properties.get("socket-path", "")
-            
+
             # If base_addr is hex string, keep it, else maybe fallback to properties
             if not base_addr or base_addr == "none":
-                 if "base-addr" in dev.properties:
-                     base_addr = str(dev.properties["base-addr"])
-                 else:
-                     base_addr = "0"
+                if "base-addr" in dev.properties:
+                    base_addr = str(dev.properties["base-addr"])
+                else:
+                    base_addr = "0"
 
             bridge_id = dev.properties.get("id", dev.name)
-            
+
             dev_arg = f"mmio-socket-bridge,id={bridge_id},base-addr={base_addr},region-size={region_size},socket-path={socket_path}"
-            
+
             if "reconnect-ms" in dev.properties:
                 dev_arg += f",reconnect-ms={dev.properties['reconnect-ms']}"
-                
+
             cli_args.append("-device")
             cli_args.append(dev_arg)
         else:

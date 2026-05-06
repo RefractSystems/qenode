@@ -45,7 +45,7 @@ async def test_actuator_zenoh_publish(
 
     # Copy and substitute the router endpoint in the YAML
     # We remove the router property and replace it with transport: hub0
-    yaml_content = yaml_file.read_text().replace("router: \"ZENOH_ROUTER_ENDPOINT\"", "transport: hub0")
+    yaml_content = yaml_file.read_text().replace('router: "ZENOH_ROUTER_ENDPOINT"', "transport: hub0")
 
     tmp_yaml.write_text(yaml_content)
 

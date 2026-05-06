@@ -1,6 +1,7 @@
 """
 Common utilities and constants for VirtMCU linting scripts.
 """
+
 import logging
 from collections.abc import Iterable
 from pathlib import Path
@@ -14,24 +15,26 @@ ENTERPRISE_MANDATE = (
 )
 
 DEFAULT_EXCLUDES = [
-    ".venv", 
-    ".venv-docker", 
-    "third_party", 
-    "build", 
-    "target", 
-    ".git", 
-    ".claude", 
-    "__pycache__", 
-    ".cargo-cache"
+    ".venv",
+    ".venv-docker",
+    "third_party",
+    "build",
+    "target",
+    ".git",
+    ".claude",
+    "__pycache__",
+    ".cargo-cache",
 ]
+
 
 def setup_lint_logging() -> None:
     """Set up standard logging for lint scripts."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+
 def iter_target_files(targets: list[Path], excludes: list[str], pattern: str) -> Iterable[Path]:
     """
-    Yields all files matching `pattern` in `targets` that do not contain 
+    Yields all files matching `pattern` in `targets` that do not contain
     any of the `excludes` in their path parts.
     """
     for target in targets:
