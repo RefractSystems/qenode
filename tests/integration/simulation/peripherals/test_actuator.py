@@ -43,9 +43,13 @@ async def test_actuator_zenoh_publish(
     kernel = app_dir / "actuator.elf"
 
     # Copy and substitute the router endpoint in the YAML
-    yaml_content = yaml_file.read_text().replace("ZENOH_ROUTER_ENDPOINT", simulation._router)
+    # We remove the router property and replace it with transport: hub0
+    yaml_content = yaml_file.read_text().replace("router: \"ZENOH_ROUTER_ENDPOINT\"", "transport: hub0")
+
     tmp_yaml.write_text(yaml_content)
 
+    import os
+    os.environ["VIRTMCU_ZENOH_ROUTER"] = simulation._router
     compile_yaml(tmp_yaml, dtb)
 
     received_msgs: list[dict[str, Any]] = []

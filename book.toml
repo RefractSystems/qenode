@@ -1,5 +1,5 @@
 [book]
-authors = ["VirtMCU Developers"]
+authors = ["Marcin Szczodrak"]
 language = "en"
 src = "docs"
 title = "VirtMCU Documentation"
@@ -8,9 +8,10 @@ title = "VirtMCU Documentation"
 command = "mdbook-mermaid"
 
 [output.html]
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-js = ["docs/assets/mermaid.min.js", "docs/assets/mermaid-init.js"]
 
 [output.pdf]
+enable = true
 
 [build]
 build-dir = "target/book"

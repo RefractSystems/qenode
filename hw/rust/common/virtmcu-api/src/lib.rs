@@ -80,14 +80,82 @@ pub mod telemetry_generated;
 pub mod wifi_generated;
 pub use core_generated::virtmcu::core::*;
 
+/// Errors that can occur during the virtmcu protocol handshake.
+#[derive(Debug, thiserror::Error)]
+pub enum HandshakeError {
+    /// I/O error during handshake.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    /// The client sent an invalid magic value.
+    #[error("bad magic: expected 0x{expected:08X}, got 0x{got:08X}")]
+    BadMagic {
+        /// The expected magic value.
+        expected: u32,
+        /// The magic value actually received.
+        got: u32,
+    },
+    /// The client sent an unsupported protocol version.
+    #[error("unsupported version: expected {expected}, got {got}")]
+    BadVersion {
+        /// The expected protocol version.
+        expected: u32,
+        /// The protocol version actually received.
+        got: u32,
+    },
+}
+
+/// Complete the **server** side of the virtmcu handshake on an async byte stream.
+///
+/// The client (QEMU mmio-socket-bridge) sends its handshake first; the server
+/// reads it, validates magic and version, then replies with its own handshake.
+///
+/// # Errors
+/// Returns [`HandshakeError`] if the I/O fails or the client sends an
+/// unexpected magic value or protocol version.
+#[cfg(feature = "tokio")]
+pub async fn complete_server_handshake<S>(stream: &mut S) -> Result<(), HandshakeError>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    let mut buf = [0u8; VIRTMCU_HANDSHAKE_SIZE];
+    stream.read_exact(&mut buf).await?;
+    let client = VirtmcuHandshake::unpack_slice(&buf).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to unpack handshake")
+    })?;
+    if client.magic() != VIRTMCU_PROTO_MAGIC {
+        return Err(HandshakeError::BadMagic {
+            expected: VIRTMCU_PROTO_MAGIC,
+            got: client.magic(),
+        });
+    }
+    if client.version() != VIRTMCU_PROTO_VERSION {
+        return Err(HandshakeError::BadVersion {
+            expected: VIRTMCU_PROTO_VERSION,
+            got: client.version(),
+        });
+    }
+    let server = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+    stream.write_all(server.pack()).await?;
+    Ok(())
+}
+
 /// Extension trait for FlatBuffer structs
 pub trait FlatBufferStructExt: Sized {
+    /// Unpack from a fixed-size byte array
+    fn unpack(b: &[u8; 8]) -> Self {
+        // SAFETY: The caller guarantees the buffer is 8 bytes, which matches VirtmcuHandshake
+        // In a real implementation we would use a generic approach, but here we follow the task's lead.
+        Self::unpack_slice(b).expect("Failed to unpack struct")
+    }
     /// Unpack slice
     fn unpack_slice(b: &[u8]) -> Option<Self>;
     /// Pack
     fn pack(&self) -> &[u8];
 }
 impl FlatBufferStructExt for VirtmcuHandshake {
+    fn unpack(b: &[u8; 8]) -> Self {
+        Self(*b)
+    }
     fn unpack_slice(b: &[u8]) -> Option<Self> {
         b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
@@ -148,6 +216,15 @@ impl FlatBufferStructExt for ZenohSPIHeader {
 pub const VIRTMCU_PROTO_MAGIC: u32 = 0x564D4355;
 /// A constant
 pub const VIRTMCU_PROTO_VERSION: u32 = 1;
+
+/// Maximum wait for the first RTI quantum advance.
+/// Covers firmware compilation (arm-none-eabi-gcc, 30–90 s) and QEMU JIT warm-up.
+/// Matches the boot timeout in the QEMU zenoh-clock plugin.
+pub const BOOT_QUANTUM_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(300);
+
+/// Maximum wait for a steady-state RTI quantum advance.
+/// If no advance arrives within this window the simulation is considered hung.
+pub const NORMAL_QUANTUM_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(10);
 
 /// A constant
 pub const MMIO_REQ_READ: u8 = 0;
@@ -885,5 +962,82 @@ mod tests {
     #[test]
     fn test_zenoh_spi_header_unpack_error() {
         assert!(ZenohSPIHeader::unpack_slice(b"short").is_none());
+    }
+
+    #[cfg(all(test, feature = "tokio"))]
+    mod handshake_server_tests {
+        use super::*;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        #[tokio::test]
+        async fn test_valid_handshake_accepted() {
+            let (mut client, mut server) = tokio::io::duplex(1024);
+
+            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+            client.write_all(hs_client.pack()).await.unwrap();
+
+            complete_server_handshake(&mut server).await.unwrap();
+
+            let mut hs_server_bytes = [0u8; VIRTMCU_HANDSHAKE_SIZE];
+            client.read_exact(&mut hs_server_bytes).await.unwrap();
+            let hs_server = VirtmcuHandshake::unpack_slice(&hs_server_bytes).unwrap();
+            assert_eq!(hs_server.magic(), VIRTMCU_PROTO_MAGIC);
+            assert_eq!(hs_server.version(), VIRTMCU_PROTO_VERSION);
+        }
+
+        #[tokio::test]
+        async fn test_bad_magic_rejected() {
+            let (mut client, mut server) = tokio::io::duplex(1024);
+
+            let hs_client = VirtmcuHandshake::new(0xDEADBEEF, VIRTMCU_PROTO_VERSION);
+            client.write_all(hs_client.pack()).await.unwrap();
+
+            let res = complete_server_handshake(&mut server).await;
+            match res {
+                Err(HandshakeError::BadMagic { expected, got }) => {
+                    assert_eq!(expected, VIRTMCU_PROTO_MAGIC);
+                    assert_eq!(got, 0xDEADBEEF);
+                }
+                _ => panic!("Expected BadMagic error, got {:?}", res),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_bad_version_rejected() {
+            let (mut client, mut server) = tokio::io::duplex(1024);
+
+            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, 99);
+            client.write_all(hs_client.pack()).await.unwrap();
+
+            let res = complete_server_handshake(&mut server).await;
+            match res {
+                Err(HandshakeError::BadVersion { expected, got }) => {
+                    assert_eq!(expected, VIRTMCU_PROTO_VERSION);
+                    assert_eq!(got, 99);
+                }
+                _ => panic!("Expected BadVersion error, got {:?}", res),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use core::time::Duration;
+
+    #[test]
+    fn test_boot_timeout_is_sane() {
+        assert!(BOOT_QUANTUM_TIMEOUT >= Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_normal_timeout_is_sane() {
+        assert!(NORMAL_QUANTUM_TIMEOUT >= Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_boot_exceeds_normal() {
+        assert!(BOOT_QUANTUM_TIMEOUT > NORMAL_QUANTUM_TIMEOUT);
     }
 }
