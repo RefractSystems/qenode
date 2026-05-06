@@ -60,7 +60,13 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
     }
 
     fn query(&self, topic: &str, payload: &[u8]) -> Result<Vec<u8>, String> {
-        let replies = self.session.get(topic).payload(payload).wait().map_err(|e| e.to_string())?;
+        let replies = self
+            .session
+            .get(topic)
+            .payload(payload)
+            .timeout(core::time::Duration::from_secs(3599))
+            .wait()
+            .map_err(|e| e.to_string())?;
         while let Ok(reply) = replies.recv() {
             if let Ok(sample) = reply.result() {
                 return Ok(sample.payload().to_bytes().to_vec());

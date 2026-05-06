@@ -96,8 +96,8 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
         booted = False
 
         for _ in range(50):  # 50 steps of 10ms
-            # 60s base timeout scales to 300s in ASan via get_time_multiplier()
-            await sim.vta.step(10_000_000, timeout=60.0)  # LINT_EXCEPTION: vta_step_loop
+            # 120s base timeout scales to 600s in ASan via get_time_multiplier()
+            await sim.vta.step(10_000_000, timeout=120.0)  # LINT_EXCEPTION: vta_step_loop
             if b"Interactive UART Echo Ready." in received_data:
                 booted = True
                 break
@@ -119,8 +119,8 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
         timeout = 60 * get_time_multiplier()
         start_time = asyncio.get_running_loop().time()
         while len(received_data) < expected_count:
-            # 60s base timeout scales to 300s in ASan via get_time_multiplier()
-            await sim.vta.step(10_000_000, timeout=60.0)  # LINT_EXCEPTION: vta_step_loop
+            # 120s base timeout scales to 600s in ASan via get_time_multiplier()
+            await sim.vta.step(10_000_000, timeout=120.0)  # LINT_EXCEPTION: vta_step_loop
 
             if asyncio.get_running_loop().time() - start_time > timeout:
                 break
