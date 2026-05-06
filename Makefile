@@ -197,6 +197,14 @@ test-unit: venv
 		tests/unit/ \
 		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
 
+# Run all Rust unit tests (no QEMU required).
+test-unit-rust: venv
+	@echo "==> Running Rust Unit Tests..."
+	@VIRTMCU_UNIT_TEST=1 QEMU_SRC_DIR=/nonexistent VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
+		RUSTFLAGS="-C link-arg=-Wl,--unresolved-symbols=ignore-all --cfg virtmcu_unit_test" \
+		cargo test --workspace
+
+
 # Alias for test-unit
 test: test-unit
 

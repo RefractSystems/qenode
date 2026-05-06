@@ -1,4 +1,4 @@
-#![cfg(qemu_headers_present)]
+#![cfg(all(qemu_headers_present, not(virtmcu_unit_test)))]
 include!(concat!(env!("OUT_DIR"), "/qemu_bindings.rs"));
 
 use virtmcu_qom::chardev::{Chardev, ChardevClass};

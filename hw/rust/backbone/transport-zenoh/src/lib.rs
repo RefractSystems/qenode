@@ -271,6 +271,13 @@ impl Drop for SafeSubscriber {
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
     let mut config = virtmcu_zenoh_config::client_config();
+
+    // Use peer mode for unit tests to allow standalone operation without a router.
+    if option_env!("VIRTMCU_UNIT_TEST").is_some() && router.is_null() {
+        let _ = config.insert_json5("mode", "\"peer\"");
+        let _ = config.insert_json5("scouting/multicast/enabled", "true");
+    }
+
     let mut has_router = false;
 
     // Task 4.2: High-performance executor for co-simulation
@@ -340,7 +347,10 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
-    virtmcu_zenoh_config::client_config()
+    let mut config = virtmcu_zenoh_config::client_config();
+    // Use peer mode for unit tests to allow standalone operation without a router.
+    let _ = config.insert_json5("mode", "\"peer\"");
+    config
 }
 
 #[cfg(test)]
