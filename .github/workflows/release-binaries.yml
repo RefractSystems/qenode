@@ -74,6 +74,7 @@ jobs:
           # the cache key for the frozen QEMU core, resulting in a cache miss and
           # a 40+ minute full recompilation from scratch on arm64 runners.
           QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           targets: builder
           load: true

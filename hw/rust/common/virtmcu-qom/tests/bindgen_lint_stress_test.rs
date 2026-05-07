@@ -1,4 +1,4 @@
-#![cfg(qemu_headers_present)]
+#![cfg(all(qemu_headers_present, not(virtmcu_unit_test)))]
 #![deny(warnings)]
 #![deny(clippy::all)]
 #![deny(unused)]

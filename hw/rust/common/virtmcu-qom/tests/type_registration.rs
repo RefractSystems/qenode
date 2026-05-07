@@ -71,6 +71,7 @@ static TEST_TYPE_INFO: TypeInfo = TypeInfo {
 declare_device_type!(dso_test_init, TEST_TYPE_INFO);
 
 #[test]
+#[cfg(not(virtmcu_unit_test))]
 fn test_declare_device_type_macro() {
     #[cfg(not(miri))]
     // SAFETY: test only

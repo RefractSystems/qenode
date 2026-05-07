@@ -30,16 +30,3 @@ variable "ARCH" {
   default = "amd64"
 }
 
-target "devenv" {
-  tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"
-  ]
-}
-
-target "runtime" {
-  tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/runtime:${IMAGE_TAG}-${ARCH}"
-  ]
-}

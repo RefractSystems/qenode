@@ -102,7 +102,8 @@ extern "C" fn telemetry_cpu_halt_cb(cpu: *mut CPUState, halted: bool) {
     }
     unsafe {
         let backend = &*s.rust_state;
-        telemetry_trace_cpu_internal(backend, (*cpu).cpu_index, halted);
+        let cpu_index = virtmcu_qom::cpu::virtmcu_cpu_get_index(cpu);
+        telemetry_trace_cpu_internal(backend, cpu_index, halted);
     }
 }
 

@@ -131,10 +131,12 @@ pub static DSO_INIT_PTR: extern "C" fn() = {
         {
             // SAFETY: register_dso_module_init is a QEMU-provided function.
             unsafe {
-                virtmcu_qom::qom::register_dso_module_init(
-                    test_devices_type_init,
-                    virtmcu_qom::qom::MODULE_INIT_QOM,
-                );
+                if option_env!("VIRTMCU_UNIT_TEST").is_none() {
+                    virtmcu_qom::qom::register_dso_module_init(
+                        test_devices_type_init,
+                        virtmcu_qom::qom::MODULE_INIT_QOM,
+                    );
+                }
             }
         }
     }

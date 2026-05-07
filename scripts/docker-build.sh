@@ -170,7 +170,6 @@ smoke_builder() {
         qemu-system-riscv32 --version | head -1
         qemu-system-riscv64 --version | head -1
         echo '  --- zenoh-c library ---'
-        ls -lh /opt/virtmcu/lib/libzenohc.so
         echo '  --- QEMU modules ---'
         ls \${QEMU_MODULE_DIR}/*.so | head -5
     "

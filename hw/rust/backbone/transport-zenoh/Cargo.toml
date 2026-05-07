@@ -8,6 +8,10 @@ authors.workspace = true
 [lints] 
 workspace = true 
 
+[features]
+default = []
+standalone = ["virtmcu-qom/standalone"]
+
 [dependencies]
 zenoh.workspace = true
 virtmcu-zenoh-config.workspace = true

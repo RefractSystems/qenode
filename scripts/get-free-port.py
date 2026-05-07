@@ -22,7 +22,7 @@ def get_free_port() -> int:
     """
     Finds a free port available on all interfaces and reserves it.
     Uses a file-based registry in /tmp to avoid collisions in parallel tests.
-    Avoids the OS ephemeral port range (typically 32768+) to prevent TOCTOU 
+    Avoids the OS ephemeral port range (typically 32768+) to prevent TOCTOU
     conflicts where the OS assigns the released port to an outgoing connection.
     """
     os.makedirs(RESERVATION_DIR, exist_ok=True)

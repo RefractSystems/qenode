@@ -60,7 +60,13 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
     }
 
     fn query(&self, topic: &str, payload: &[u8]) -> Result<Vec<u8>, String> {
-        let replies = self.session.get(topic).payload(payload).wait().map_err(|e| e.to_string())?;
+        let replies = self
+            .session
+            .get(topic)
+            .payload(payload)
+            .timeout(core::time::Duration::from_secs(3599))
+            .wait()
+            .map_err(|e| e.to_string())?;
         while let Ok(reply) = replies.recv() {
             if let Ok(sample) = reply.result() {
                 return Ok(sample.payload().to_bytes().to_vec());
@@ -271,6 +277,13 @@ impl Drop for SafeSubscriber {
 /// C string that remains valid for the duration of this call.
 pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
     let mut config = virtmcu_zenoh_config::client_config();
+
+    // Use peer mode for unit tests to allow standalone operation without a router.
+    if option_env!("VIRTMCU_UNIT_TEST").is_some() && router.is_null() {
+        let _ = config.insert_json5("mode", "\"peer\"");
+        let _ = config.insert_json5("scouting/multicast/enabled", "true");
+    }
+
     let mut has_router = false;
 
     // Task 4.2: High-performance executor for co-simulation
@@ -305,8 +318,28 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         }
     }
 
-    let session = zenoh::open(config)
-        .wait()
+    let mut session_res = zenoh::open(config.clone()).wait();
+    if session_res.is_err() && has_router {
+        // Retry for ASan/slow CI environments where the router might be slightly behind
+        // even if the orchestrator thinks it's ready.
+        for i in 1..=100 {
+            virtmcu_qom::sim_warn!(
+                "transport-zenoh: Zenoh session open failed (attempt {}). Retrying in 200ms...",
+                i
+            );
+            std::thread::sleep(core::time::Duration::from_millis(200)); // SLEEP_EXCEPTION: transient connection retry
+            session_res = zenoh::open(config.clone()).wait();
+            if session_res.is_ok() {
+                virtmcu_qom::sim_info!(
+                    "transport-zenoh: Zenoh session opened after {} retries.",
+                    i
+                );
+                break;
+            }
+        }
+    }
+
+    let session = session_res
         .map_err(|e| zenoh::Error::from(format!("Failed to open Zenoh session: {e}")))?;
     virtmcu_qom::vlog!("transport-zenoh: zenoh::open() finished. has_router={}", has_router);
 
@@ -320,7 +353,10 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
-    virtmcu_zenoh_config::client_config()
+    let mut config = virtmcu_zenoh_config::client_config();
+    // Use peer mode for unit tests to allow standalone operation without a router.
+    let _ = config.insert_json5("mode", "\"peer\"");
+    config
 }
 
 #[cfg(test)]

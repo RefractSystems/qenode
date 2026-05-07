@@ -54,7 +54,7 @@ This file serves as a historical record of completed milestones and tasks in the
 ## Milestone 1 — QEMU Build with arm-generic-fdt ✅
 
 ### Tasks
-- [x] **1.1** `scripts/setup-qemu.sh`.
+- [x] **1.1** `scripts/install-deps.sh`.
 - [x] **1.2** Minimal `tests/fixtures/guest_apps/boot_arm/minimal.dts`.
 - [x] **1.3** `scripts/run.sh` skeleton.
 - [x] **1.4** Smoke-test: boot minimal DTB.

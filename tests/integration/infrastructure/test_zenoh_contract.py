@@ -63,9 +63,8 @@ def test_zenoh_version_contract() -> None:
 
     python_version = get_python_zenoh_version()
 
-    # In the runtime image, it's at /opt/virtmcu/lib/libzenohc.so
     # Locally, it might be in LD_LIBRARY_PATH or next to the script
-    lib_paths = ["/opt/virtmcu/lib/libzenohc.so", "libzenohc.so", "./third_party/zenoh-c/lib/libzenohc.so"]
+    lib_paths = ["libzenohc.so", "./third_party/zenoh-c/lib/libzenohc.so"]
 
     c_version = None
     for lib_path in lib_paths:
@@ -101,7 +100,7 @@ def test_zenoh_version_contract() -> None:
 if __name__ == "__main__":
     # Allow running directly for manual verification
     py_ver = get_python_zenoh_version()
-    c_ver = get_libzenohc_version("/opt/virtmcu/lib/libzenohc.so") or get_libzenohc_version("libzenohc.so")
+    c_ver = get_libzenohc_version("libzenohc.so")
 
     logger.info(f"Python eclipse-zenoh: {py_ver}")
     logger.info(f"C libzenohc.so:      {c_ver}")

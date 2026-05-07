@@ -111,7 +111,15 @@ def sync() -> None:
         new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)
 
         # Update new ARGs
-        for key in ["DEBIAN_CODENAME", "NODE_VERSION", "PYTHON_VERSION", "ARM_TOOLCHAIN_VERSION", "MDBOOK_VERSION", "MDBOOK_MERMAID_VERSION", "MDBOOK_PDF_VERSION"]:
+        for key in [
+            "DEBIAN_CODENAME",
+            "NODE_VERSION",
+            "PYTHON_VERSION",
+            "ARM_TOOLCHAIN_VERSION",
+            "MDBOOK_VERSION",
+            "MDBOOK_MERMAID_VERSION",
+            "MDBOOK_PDF_VERSION",
+        ]:
             val = versions.get(key)
             if val:
                 new_content = re.sub(f"ARG {key}=[^\n]+", f"ARG {key}={val}", new_content)
@@ -230,17 +238,29 @@ def sync() -> None:
     if Path(post_create_path).exists():
         with Path(post_create_path).open() as f:
             content = f.read()
-            
+
         new_content = content
         if mdbook_ver:
-            new_content = re.sub(r'download/v[0-9\.]+/mdbook-v[0-9\.]+', f'download/v{mdbook_ver}/mdbook-v{mdbook_ver}', new_content)
+            new_content = re.sub(
+                r"download/v[0-9\.]+/mdbook-v[0-9\.]+", f"download/v{mdbook_ver}/mdbook-v{mdbook_ver}", new_content
+            )
         if mdbook_mermaid_ver:
-            new_content = re.sub(r'download/v[0-9\.]+/mdbook-mermaid-v[0-9\.]+', f'download/v{mdbook_mermaid_ver}/mdbook-mermaid-v{mdbook_mermaid_ver}', new_content)
+            new_content = re.sub(
+                r"download/v[0-9\.]+/mdbook-mermaid-v[0-9\.]+",
+                f"download/v{mdbook_mermaid_ver}/mdbook-mermaid-v{mdbook_mermaid_ver}",
+                new_content,
+            )
         if mdbook_pdf_ver:
-            new_content = re.sub(r'download/v[0-9\.]+/mdbook-pdf-v[0-9\.]+', f'download/v{mdbook_pdf_ver}/mdbook-pdf-v{mdbook_pdf_ver}', new_content)
-            
+            new_content = re.sub(
+                r"download/v[0-9\.]+/mdbook-pdf-v[0-9\.]+",
+                f"download/v{mdbook_pdf_ver}/mdbook-pdf-v{mdbook_pdf_ver}",
+                new_content,
+            )
+
         if content != new_content:
-            logger.info(f"Updating {post_create_path} to mdbook v{mdbook_ver}, mdbook-mermaid v{mdbook_mermaid_ver}, and mdbook-pdf v{mdbook_pdf_ver}")
+            logger.info(
+                f"Updating {post_create_path} to mdbook v{mdbook_ver}, mdbook-mermaid v{mdbook_mermaid_ver}, and mdbook-pdf v{mdbook_pdf_ver}"
+            )
             with Path(post_create_path).open("w") as f:
                 f.write(new_content)
 

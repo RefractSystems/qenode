@@ -392,5 +392,6 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
         logger.error(f"Error compiling DTB: {e.stderr}")
         return False
     finally:
-        if Path(dts_path).exists():
-            Path(dts_path).unlink()
+        pass
+        # if Path(dts_path).exists():
+        #     Path(dts_path).unlink()

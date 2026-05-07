@@ -259,7 +259,12 @@ macro_rules! declare_device_type {
                 // a module initialization function. It is safe to call during global
                 // constructors as long as the parameters are valid.
                 unsafe {
-                    $crate::qom::register_dso_module_init(real_init, $crate::qom::MODULE_INIT_QOM);
+                    if option_env!("VIRTMCU_UNIT_TEST").is_none() {
+                        $crate::qom::register_dso_module_init(
+                            real_init,
+                            $crate::qom::MODULE_INIT_QOM,
+                        );
+                    }
                 }
             }
             unsafe extern "C" fn real_init() {
