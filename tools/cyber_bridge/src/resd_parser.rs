@@ -261,16 +261,17 @@ mod tests {
         assert!(!p.init());
 
         // Create a truncated file
-        let mut f = File::create("/tmp/trunc.resd").unwrap();
-        f.write_all(b"RES").unwrap();
+        let mut f = File::create("/tmp/trunc.resd").expect("IO error during parsing"); // virtmcu-allow: absolute_path reasoning="Test fixture"
+        f.write_all(b"RES").expect("IO error during parsing");
         drop(f);
-        let mut p = ResdParser::new("/tmp/trunc.resd");
+        let mut p = ResdParser::new("/tmp/trunc.resd"); // virtmcu-allow: absolute_path reasoning="Test fixture"
         assert!(!p.init());
 
-        let mut f = File::create("/tmp/bad_magic.resd").unwrap();
-        f.write_all(b"BADM\x01\x00\x00\x00").unwrap();
+        let mut f = File::create("/tmp/bad_magic.resd").expect("IO error during parsing"); // virtmcu-allow: absolute_path reasoning="Test fixture"
+        f.write_all(b"BADM\x01\x00\x00\x00")
+            .expect("IO error during parsing");
         drop(f);
-        let mut p = ResdParser::new("/tmp/bad_magic.resd");
+        let mut p = ResdParser::new("/tmp/bad_magic.resd"); // virtmcu-allow: absolute_path reasoning="Test fixture"
         assert!(!p.init());
     }
 }

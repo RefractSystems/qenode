@@ -32,7 +32,7 @@ fn stress_barrier() {
                 }
                 barrier_clone
                     .submit_done(node_id as u32, 0, 0, msgs)
-                    .unwrap()
+                    .expect("test should succeed")
             }));
         }
 
@@ -40,7 +40,7 @@ fn stress_barrier() {
         let mut final_msgs = None;
 
         for handle in handles {
-            if let Some(msgs) = handle.join().unwrap() {
+            if let Some(msgs) = handle.join().expect("test should succeed") {
                 some_count += 1;
                 final_msgs = Some(msgs);
             }
@@ -51,7 +51,7 @@ fn stress_barrier() {
             "Round {} must return exactly one Some",
             round
         );
-        let final_msgs = final_msgs.unwrap();
+        let final_msgs = final_msgs.expect("test should succeed");
         assert_eq!(
             final_msgs.len(),
             10 * n_nodes,

@@ -42,7 +42,7 @@ def main() -> None:
 
         deadline = time.perf_counter() + 30.0
         while received_count < args.count and time.perf_counter() < deadline:
-            time.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for determinism test
+            time.sleep(0.1)  # virtmcu-allow: sleep reasoning="Intentional delay for determinism test"
     finally:
         typing.cast(typing.Any, sub).undeclare()
         typing.cast(typing.Any, session).close()

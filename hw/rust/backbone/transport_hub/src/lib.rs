@@ -1,4 +1,14 @@
-#![no_std] // NO_STD_EXCEPTION: Requires libc panic for aborting
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
+#![no_std] // virtmcu-allow: no_std reasoning="Requires libc panic for aborting"
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]

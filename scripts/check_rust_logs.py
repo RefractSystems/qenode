@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-import os
 import re
 import subprocess
+from pathlib import Path
 
 
 def check_rust_prints():
-    hw_rust_dir = "hw/rust"
-    if not os.path.exists(hw_rust_dir):
+    hw_rust_dir = Path("hw/rust")
+    if not hw_rust_dir.exists():
         return
 
     # Find all println! and eprintln! calls
@@ -39,15 +39,14 @@ def check_rust_prints():
             continue
 
         # Check surrounding lines (up to 5 lines after)
-        with open(file_path, "r") as f:
-            lines = f.readlines()
-            found = False
-            for i in range(line_num, min(line_num + 5, len(lines))):
-                if "PRINT_EXCEPTION" in lines[i]:
-                    found = True
-                    break
-            if found:
-                continue
+        lines = Path(file_path).read_text().splitlines()
+        found = False
+        for i in range(line_num, min(line_num + 5, len(lines))):
+            if "PRINT_EXCEPTION" in lines[i]:
+                found = True
+                break
+        if found:
+            continue
 
         violations.append(line)
 
@@ -55,7 +54,7 @@ def check_rust_prints():
         print("❌ ERROR: Banned println!/eprintln! found in hw/rust/:")
         for v in violations:
             print(v)
-        print("  Fix: replace with sim_info!/sim_err!, or add // PRINT_EXCEPTION: <reason> inline.")
+        print('  Fix: replace with sim_info!/sim_err!, or add // virtmcu-allow: print reasoning="<reason>" inline.')
         exit(1)
     else:
         print("✓ No banned println!/eprintln! found.")

@@ -20,7 +20,7 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     echo "ERROR: Could not find scripts/common.sh" >&2
     exit 1
 fi
-TMPDIR_LOCAL="$(mktemp -d /tmp/uart_stress_XXXXXX)"
+TMPDIR_LOCAL="$(mktemp -d -t uart_stress_XXXXXX)"
 QEMU_PID=""
 ROUTER_PID=""
 ROUTER_ENDPOINT=${1:-""}

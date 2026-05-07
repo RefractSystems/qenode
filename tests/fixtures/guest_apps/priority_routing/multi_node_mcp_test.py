@@ -41,14 +41,14 @@ async def main() -> None:
             sys.stderr.write(f"[server] {line.decode()}")
             sys.stderr.flush()
 
-    asyncio.create_task(forward_stderr())  # noqa: RUF006
+    asyncio.create_task(forward_stderr())
 
     async def send_json(obj: dict[typing.Any, typing.Any]) -> None:
         data = json.dumps(obj) + "\n"
         proc.stdin.write(data.encode())  # type: ignore[union-attr]
         await proc.stdin.drain()  # type: ignore[union-attr]
 
-    async def recv_json() -> typing.Any:  # noqa: ANN401
+    async def recv_json() -> typing.Any:
         line = await proc.stdout.readline()  # type: ignore[union-attr]
         if not line:
             return None
@@ -130,11 +130,9 @@ async def main() -> None:
                 break
         except (KeyError, IndexError, TypeError, json.JSONDecodeError):
             pass
-        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: RPC polling backoff
+        await asyncio.sleep(0.1)  # virtmcu-allow: sleep reasoning="RPC polling backoff"
     else:
-        logger.warning("Warning: Nodes did not reach 'running' status in time.")
-
-    # Read PC from both
+        logger.error("Nodes did not reach 'running' status in time.")
     for i in range(2):
         node_id = f"node{i}"
         logger.info(f"Reading CPU state for {node_id}...")

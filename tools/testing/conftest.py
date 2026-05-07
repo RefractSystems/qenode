@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 # Re-exporting fixtures so pytest finds them
 __all__ = [
     "VirtualTimeAuthority",
+    "deterministic_coordinator",
     "guest_app_factory",
     "inspection_bridge",
     "pytest_collection_modifyitems",
@@ -40,7 +41,6 @@ __all__ = [
     "qmp_bridge",
     "simulation",
     "time_authority",
-    "deterministic_coordinator",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -102,6 +102,6 @@ def _scan_subprocess_in_test_bodies(root: pathlib.Path) -> list[str]:
                             violations.append(
                                 f"{path.name}:{node.lineno} — Manually spawning {name}. Move to a fixture with teardown"
                             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             violations.append(f"Error parsing {path}: {e}")
     return violations

@@ -18,7 +18,7 @@ __attribute__((weak)) void register_dso_module_init(void (*fn)(void), int type) 
 __attribute__((weak)) void *type_register_static(const void *info) { (void)info; return NULL; }
 __attribute__((weak)) int qemu_loglevel = 0;
 __attribute__((weak)) void virtmcu_log(const char *fmt) { fprintf(stderr, "%s", fmt); }
-__attribute__((weak)) void virtmcu_error_setg(void **errp, const char *fmt, ...) { (void)errp; (void)fmt; }
+__attribute__((weak)) void virtmcu_error_setg(void **errp, const char *fmt) { (void)errp; (void)fmt; }
 __attribute__((weak)) bool virtmcu_runstate_is_running(void) { return true; }
 __attribute__((weak)) void virtmcu_cpu_exit_all(void) {}
 
@@ -120,10 +120,10 @@ __attribute__((weak)) void virtmcu_kick_first_cpu_for_quantum(void) {}
 __attribute__((weak)) int virtmcu_cpu_get_index(void *cpu) { (void)cpu; return 0; }
 
 /* GLib stubs */
-__attribute__((weak)) void *g_malloc0(size_t n) { return calloc(1, n); }
-__attribute__((weak)) void g_free(void *p) { free(p); }
-__attribute__((weak)) char *g_strdup(const char *s) { return s ? strdup(s) : NULL; }
-__attribute__((weak)) char *g_strdup_printf(const char *fmt, ...) { (void)fmt; return NULL; }
+void *g_malloc0(size_t n) { return calloc(1, n); }
+void g_free(void *p) { free(p); }
+char *g_strdup(const char *s) { return s ? strdup(s) : NULL; }
+char *g_strdup_printf(const char *fmt, ...) { (void)fmt; return NULL; }
 
 /* CAN stubs */
 __attribute__((weak)) void can_bus_client_send(void *c, void *f, int n) { (void)c; (void)f; (void)n; }

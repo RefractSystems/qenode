@@ -100,6 +100,7 @@ NON_PLUGIN_COMPATIBLES = {
     "qemu:system-memory",
     "qemu-memory-region",
     "cortex-a15-arm-cpu",
+    "cortex-a9-arm-cpu",
     "riscv,rv32",
     "riscv,rv64",
     "riscv-virtio",

@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 /*
  * virtmcu Zenoh Coordinator
  *
@@ -290,7 +291,7 @@ async fn handle_eth_msg(
     if p.len() < 20 {
         return out;
     }
-    let h = ZenohFrameHeader::unpack_slice(&p).unwrap();
+    let h = ZenohFrameHeader::unpack_slice(&p).expect("Failed to unpack ZenohFrameHeader");
     if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
@@ -363,7 +364,7 @@ async fn handle_uart_msg(
     if p.len() < 20 {
         return out;
     }
-    let h = ZenohFrameHeader::unpack_slice(&p).unwrap();
+    let h = ZenohFrameHeader::unpack_slice(&p).expect("Failed to unpack ZenohFrameHeader");
     if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
@@ -680,8 +681,9 @@ async fn main() {
     };
     let seed = tg_raw.global_seed.unwrap_or(args.seed);
     let obstacles = if let Some(ref p) = args.obstacles {
-        let f = std::fs::File::open(p).unwrap();
-        let c: ObstaclesConfig = serde_yaml::from_reader(f).unwrap();
+        let f = std::fs::File::open(p).expect("Failed to open obstacles file");
+        let c: ObstaclesConfig =
+            serde_yaml::from_reader(f).expect("Failed to parse obstacles YAML");
         tracing::info!("Obstacles loaded: {}", p);
         c.obstacles
     } else {
@@ -696,51 +698,55 @@ async fn main() {
     if let Some(ref c) = args.connect {
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", c))
-            .unwrap();
+            .expect("Failed to configure Zenoh");
     }
-    config.insert_json5("mode", "\"client\"").unwrap();
-    let session = zenoh::open(config).await.unwrap();
+    config
+        .insert_json5("mode", "\"client\"")
+        .expect("Failed to configure Zenoh");
+    let session = zenoh::open(config)
+        .await
+        .expect("Failed to open Zenoh session");
 
     let eth_sub = session
         .declare_subscriber("**/sim/eth/frame/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let uart_sub = session
         .declare_subscriber("**/virtmcu/uart/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let sysc_sub = session
         .declare_subscriber("**/sim/systemc/frame/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let rf_802154_sub = session
         .declare_subscriber("**/sim/rf/ieee802154/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let rf_hci_sub = session
         .declare_subscriber("**/sim/rf/hci/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let lin_sub = session
         .declare_subscriber("**/sim/lin/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let tx_sub = session
         .declare_subscriber("**/sim/coord/**/tx")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let ctrl_sub = session
         .declare_subscriber("**/sim/network/control")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let pos_sub = session
         .declare_subscriber("**/sim/telemetry/position")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
     let done_sub = session
         .declare_subscriber("**/sim/coord/**/done")
         .await
-        .unwrap();
+        .expect("Failed to declare Zenoh subscriber");
 
     let _ready_q = session
         .declare_queryable("sim/coordinator/ready_probe")
@@ -748,13 +754,13 @@ async fn main() {
             let _ = query.reply(query.key_expr(), b"ok").wait();
         })
         .await
-        .unwrap();
+        .expect("Failed to declare ready_probe queryable");
 
     let _liveliness = session
         .liveliness()
         .declare_token("sim/coordinator/liveliness")
         .await
-        .unwrap();
+        .expect("Failed to declare liveliness token");
 
     let mut k_eth = HashMap::new();
     let mut k_uart = HashMap::new();
@@ -811,7 +817,11 @@ async fn main() {
     tracing::info!(
         "PDES: {}",
         if args.pdes {
-            format!("ENABLED ({} nodes)", args.nodes.unwrap())
+            format!(
+                "ENABLED ({} nodes)",
+                args.nodes
+                    .expect("--nodes must be specified when --pdes is enabled")
+            )
         } else {
             "DISABLED".to_owned()
         }

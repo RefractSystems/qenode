@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 """
 SOTA Test Module: test_pcap_determinism
 
@@ -18,11 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 import yaml
 
-from tools import vproto
-from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
-from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
-from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
-from tools.testing.virtmcu_test_suite.generated import (
+from generated.world_schema import (
     Node,
     NodeID,
     Protocol,
@@ -30,6 +26,10 @@ from tools.testing.virtmcu_test_suite.generated import (
     WireLink,
     World,
 )
+from tools import vproto
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 if TYPE_CHECKING:
@@ -91,7 +91,9 @@ async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session,
         quantum_event = asyncio.Event()
 
         def on_start(sample: object) -> None:
-            q = int.from_bytes(cast(Any, sample).payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
+            q = int.from_bytes(  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+                cast(Any, sample).payload.to_bytes()[:8], "little"
+            )
             if q == 2:
                 loop.call_soon_threadsafe(quantum_event.set)
 
@@ -152,13 +154,17 @@ async def test_pcap_determinism(zenoh_router: str, zenoh_session: zenoh.Session,
                     await asyncio.to_thread(pub1.put, done1.pack())
 
                     try:
-                        await asyncio.wait_for(rx_event.wait(), timeout=0.2)
+                        from tools.testing.parameters import TestParams
+
+                        await asyncio.wait_for(rx_event.wait(), timeout=TestParams.scale_timeout(0.2))
                     except TimeoutError:
                         q += 1
 
                 # Wait for the next quantum start just to be sure coordinator fully flushed
                 try:
-                    await asyncio.wait_for(quantum_event.wait(), timeout=1.0)
+                    from tools.testing.parameters import TestParams
+
+                    await asyncio.wait_for(quantum_event.wait(), timeout=TestParams.scale_timeout(1.0))
                 except TimeoutError:
                     pass
         finally:

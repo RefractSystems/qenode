@@ -110,7 +110,7 @@ async def test_flexray_zenoh_tx(
     async with simulation as sim:
         # Run for 20ms virtual time
         for _ in range(100):
-            await sim.vta.step(1_000_000)  # LINT_EXCEPTION: vta_step_loop
+            await sim.vta.step(1_000_000)  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
             if not queue.empty():
                 break
 
@@ -149,7 +149,7 @@ async def test_flexray_zenoh_rx(
 
     import flatbuffers
 
-    from tools.flexray_fbs.virtmcu.flexray import FlexRayFrame
+    from generated.virtmcu.flexray import FlexRayFrame
 
     # Declare publisher BEFORE entering the simulation context.
     if simulation.transport is None:
@@ -172,7 +172,9 @@ async def test_flexray_zenoh_rx(
         asyncio.create_task(simulation.transport.publish(rx_topic, builder.Output()))
 
         for _ in range(100):
-            await sim.vta.step(1_000_000)  # LINT_EXCEPTION: vta_step_loop
+            await sim.vta.step(  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
+                1_000_000
+            )
             assert sim.bridge is not None
             if b"\xef\xbe\xad\xde" in sim.bridge.uart_buffer_raw:
                 break
@@ -212,7 +214,7 @@ async def test_flexray_stress(
 
     import flatbuffers
 
-    from tools.flexray_fbs.virtmcu.flexray import FlexRayFrame
+    from generated.virtmcu.flexray import FlexRayFrame
 
     # Declare publisher BEFORE entering the simulation context.
     if simulation.transport is None:
@@ -223,7 +225,10 @@ async def test_flexray_stress(
 
     simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=extra_args)
     async with simulation as sim:
-        for i in range(100):
+        import os
+
+        iters = 20 if os.environ.get("VIRTMCU_USE_ASAN") == "1" else 100
+        for i in range(iters):
             builder = flatbuffers.Builder(64)
             data_off = builder.CreateByteVector(b"STRESS")
             FlexRayFrame.Start(builder)

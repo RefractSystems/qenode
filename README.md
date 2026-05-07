@@ -11,6 +11,7 @@ simulation clock and QEMU runs firmware in lockstep with the physical world.
 
 ---
 
+
 ## What Problem This Solves
 
 Embedded firmware for cyber-physical systems (drones, robots, motor controllers) does not
@@ -167,7 +168,6 @@ entry in `hw/meson.build`. Run `make build` then:
 
 **Run the repl2qemu tool**:
 ```bash
-source .venv/bin/activate
 ./scripts/run.sh --repl tests/fixtures/guest_apps/yaml_boot/test_board.repl --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
@@ -210,9 +210,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # All platforms
 make install-deps-initial # clones QEMU, applies patches, and builds (~10 min first run)
-make venv          # synchronize Python environment with uv
-source .venv/bin/activate
-make run           # smoke-test
+make setup-python         # synchronize Python environment with uv
+make run                  # dev-integration
 ```
 
 > **macOS note**: Native builds work for basic tests. Advanced tests require Docker — a

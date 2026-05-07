@@ -53,6 +53,18 @@ impl<Resp> CoSimContext<Resp> {
         self.inner.running.load(Ordering::Acquire)
     }
 
+    /// Sleeps up to `timeout` but wakes up early if the simulation stops.
+    pub fn sleep_interruptible(&self, timeout: core::time::Duration) {
+        let guard = self.inner.state.lock();
+        if !self.inner.running.load(Ordering::Acquire) {
+            return;
+        }
+        let _ = self
+            .inner
+            .connected_cond
+            .wait_timeout(guard, u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX));
+    }
+
     /// Delivers a received response to the blocked vCPU thread.
     pub fn dispatch_response(&self, resp: Resp) {
         let mut guard = self.inner.state.lock();
@@ -159,7 +171,7 @@ impl<T: CoSimTransport + 'static> CoSimBridge<T> {
         // 4. Safely block the vCPU, yielding the BQL to prevent deadlocks.
         let mut guard = self.inner.state.lock();
         let start = std::time::Instant::now();
-        let timeout_duration = core::time::Duration::from_millis(timeout_ms as u64);
+        let timeout_duration = core::time::Duration::from_millis(u64::from(timeout_ms));
 
         while self.inner.running.load(Ordering::Acquire) && !guard.has_resp {
             let elapsed = start.elapsed();
@@ -167,7 +179,10 @@ impl<T: CoSimTransport + 'static> CoSimBridge<T> {
                 sim_info!("timeout waiting for response");
                 break;
             }
-            let remaining_ms = timeout_duration.checked_sub(elapsed).unwrap().as_millis() as u32;
+            let remaining_ms = u32::try_from(
+                timeout_duration.checked_sub(elapsed).unwrap_or_default().as_millis(),
+            )
+            .unwrap_or(u32::MAX);
 
             // ENTERPRISE SAFETY: Atomically yield BQL, wait, and re-acquire BQL without Lock Inversion.
             let (new_guard, result) = self.inner.resp_cond.wait_yielding_bql(guard, remaining_ms);
@@ -186,14 +201,17 @@ impl<T: CoSimTransport + 'static> CoSimBridge<T> {
     pub fn wait_connected(&self, timeout_ms: u32) -> bool {
         let mut guard = self.inner.state.lock();
         let start = std::time::Instant::now();
-        let timeout_duration = core::time::Duration::from_millis(timeout_ms as u64);
+        let timeout_duration = core::time::Duration::from_millis(u64::from(timeout_ms));
 
         while self.inner.running.load(Ordering::Acquire) && !guard.is_connected {
             let elapsed = start.elapsed();
             if elapsed >= timeout_duration {
                 return false;
             }
-            let remaining_ms = timeout_duration.checked_sub(elapsed).unwrap().as_millis() as u32;
+            let remaining_ms = u32::try_from(
+                timeout_duration.checked_sub(elapsed).unwrap_or_default().as_millis(),
+            )
+            .unwrap_or(u32::MAX);
             let (new_guard, _result) =
                 self.inner.connected_cond.wait_yielding_bql(guard, remaining_ms);
             guard = new_guard;

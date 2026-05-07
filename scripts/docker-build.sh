@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Build and smoke-test virtmcu Docker image stages.
+# Build and integration virtmcu Docker image stages.
 #
 # Usage:
 #   scripts/docker-build.sh [TARGET] [IMAGE_TAG]
 #
-#   TARGET    dev (default) | all | base | toolchain | devenv-base | devenv | builder | runtime
+#   TARGET    dev (default) | all | base | toolchain | devenv | ci | ci-asan | runtime
 #   IMAGE_TAG local tag suffix, default: dev
 #
 # Examples:
-#   scripts/docker-build.sh             # build base → toolchain → devenv-base, smoke-test each
-#   scripts/docker-build.sh all         # same + builder (slow: ~40 min) + devenv + runtime
-#   scripts/docker-build.sh toolchain   # build a single stage only, no smoke test
+#   scripts/docker-build.sh             # build base → toolchain → devenv each
+#   scripts/docker-build.sh all         # same + ci (slow: ~40 min) + runtime
+#   scripts/docker-build.sh toolchain   # build a single stage only, no integration test
 #   IMAGE_TAG=ci scripts/docker-build.sh dev
 #
 # All versions are read from the BUILD_DEPS file at the repo root.
@@ -41,11 +41,30 @@ section() { echo ""; echo "═════════════════�
 ok()      { echo "  ✓ $*"; }
 fail()    { echo "  ✗ $*" >&2; exit 1; }
 
+# ── Derived versions ───────────────────────────────────────────────────────────
+PATCHES_HASH=$( (cat BUILD_DEPS; find patches -type f | sort | xargs cat) | sha256sum | head -c 12 )
+export QEMU_CACHE_TAG="${QEMU_VERSION}-${PATCHES_HASH}"
+
 image_for() { 
     local ARCH
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
-    echo "ghcr.io/refractsystems/virtmcu/${1}:${IMAGE_TAG}-${ARCH}" 
+    
+    local package="${1}"
+    local tag="${IMAGE_TAG}"
+    
+    # ASAN builds are flavors of the main packages
+    if [[ "$package" == "ci-asan" ]]; then
+        package="ci"
+        tag="${IMAGE_TAG}-asan"
+    elif [[ "$package" == "qemu-base-asan" ]]; then
+        package="qemu-base"
+        tag="${QEMU_CACHE_TAG}-asan"
+    elif [[ "$package" == qemu-base* ]]; then
+        tag="${QEMU_CACHE_TAG}"
+    fi
+    
+    echo "ghcr.io/refractsystems/virtmcu/${package}:${tag}-${ARCH}" 
 }
 
 build_stage() {
@@ -69,6 +88,7 @@ build_stage() {
     # Use Docker Bake for consistent builds (reads docker-bake.hcl)
     # --load: loads the built image into the local Docker daemon
     ARCH="${ARCH}" IMAGE_TAG="${IMAGE_TAG}" USE_CCACHE="${USE_CCACHE}" \
+    VIRTMCU_USE_ASAN="${VIRTMCU_USE_ASAN:-0}" QEMU_CACHE_TAG="${QEMU_CACHE_TAG}" \
     docker buildx bake "${stage}" --load
     
     ok "Built ${img}"
@@ -87,7 +107,7 @@ smoke_base() {
         sudo -n true
         echo '  --- shell ---'
         zsh --version
-        test -d /home/vscode/.oh-my-zsh || (echo 'oh-my-zsh missing' && exit 1)
+        test -d /home/vscode/.oh-my-zsh || (echo 'oh-my-zsh missing' && exit 1) # virtmcu-allow: absolute_path reasoning="Legacy script"
         echo '  --- locale ---'
         locale | grep 'LANG=en_US.UTF-8'
         echo '  --- uv ---'
@@ -119,9 +139,9 @@ smoke_toolchain() {
     ok "toolchain smoke test passed"
 }
 
-smoke_devenv_base() {
-    local img; img="$(image_for devenv-base)"
-    section "Smoke test: devenv-base"
+smoke_devenv() {
+    local img; img="$(image_for devenv)"
+    section "Smoke test: devenv"
     # Run as vscode — the expected interactive user
     docker run --rm --user vscode "${img}" bash -c "
         set -e
@@ -146,23 +166,12 @@ smoke_devenv_base() {
         echo '  --- uv ---'
         uv --version
     "
-    ok "devenv-base smoke test passed"
-}
-
-smoke_devenv() {
-    local img; img="$(image_for devenv)"
-    section "Smoke test: devenv"
-    docker run --rm --user vscode "${img}" bash -c "
-        set -e
-        echo '  --- QEMU binary (added in devenv) ---'
-        qemu-system-arm --version
-    "
     ok "devenv smoke test passed"
 }
 
-smoke_builder() {
-    local img; img="$(image_for builder)"
-    section "Smoke test: builder"
+smoke_ci() {
+    local img; img="$(image_for ci)"
+    section "Smoke test: ci"
     docker run --rm "${img}" bash -c "
         set -e
         echo '  --- QEMU binary ---'
@@ -173,7 +182,20 @@ smoke_builder() {
         echo '  --- QEMU modules ---'
         ls \${QEMU_MODULE_DIR}/*.so | head -5
     "
-    ok "builder smoke test passed"
+    ok "ci smoke test passed"
+}
+
+smoke_ci_asan() {
+    local img; img="$(image_for ci-asan)"
+    section "Smoke test: ci-asan"
+    docker run --rm "${img}" bash -c "
+        set -e
+        echo '  --- QEMU binary (ASan) ---'
+        qemu-system-arm --version
+        echo '  --- check for ASan symbols ---'
+        nm /build/qemu/build-virtmcu/install/bin/qemu-system-arm | grep -q __asan || (echo 'ASan symbols NOT found' && exit 1)
+    "
+    ok "ci-asan smoke test passed"
 }
 
 smoke_runtime() {
@@ -205,34 +227,41 @@ case "${TARGET}" in
     toolchain)
         build_stage toolchain
         ;;
-    devenv-base)
-        build_stage devenv-base
-        ;;
     devenv)
         build_stage devenv
         ;;
-    builder)
-        build_stage builder
+    ci)
+        build_stage ci
+        ;;
+    ci-asan)
+        build_stage ci-asan
+        ;;
+    qemu-builder)
+        if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+            build_stage qemu-base-asan
+        else
+            build_stage qemu-base
+        fi
         ;;
     runtime)
         build_stage runtime
         ;;
     dev)
-        # One-stop for local development: base → toolchain → devenv-base with smoke tests
+        # One-stop for local development: base → toolchain → devenv with smoke tests
         # This provides a full tool-rich environment but skips the slow QEMU build.
         build_stage base
         smoke_base
         build_stage toolchain
         smoke_toolchain
-        build_stage devenv-base
-        smoke_devenv_base
+        build_stage devenv
+        smoke_devenv
         section "All dev-base stages built and verified"
         echo "  Images ready:"
         echo "    $(image_for base)"
         echo "    $(image_for toolchain)"
-        echo "    $(image_for devenv-base)"
+        echo "    $(image_for devenv)"
         echo ""
-        echo "  To build QEMU locally:  scripts/docker-build.sh devenv"
+        echo "  To build QEMU locally:  scripts/docker-build.sh ci"
         ;;
     all)
         # Full pipeline including the slow QEMU build
@@ -240,24 +269,24 @@ case "${TARGET}" in
         smoke_base
         build_stage toolchain
         smoke_toolchain
-        build_stage devenv-base
-        smoke_devenv_base
-        echo ""
-        echo "  NOTE: builder stage compiles QEMU (~40 min on first run, cached after)"
-        build_stage builder
-        smoke_builder
         build_stage devenv
         smoke_devenv
+        echo ""
+        echo "  NOTE: ci stage compiles QEMU (~40 min on first run, cached after)"
+        build_stage ci
+        smoke_ci
+        build_stage ci-asan
+        smoke_ci_asan
         build_stage runtime
         smoke_runtime
         section "All stages built and verified"
-        for s in base toolchain devenv-base builder devenv runtime; do
+        for s in base toolchain devenv ci ci-asan runtime; do
             echo "    $(image_for "${s}")"
         done
         ;;
     *)
         echo "error: unknown target '${TARGET}'" >&2
-        echo "usage: $0 [dev|all|base|toolchain|devenv-base|devenv|builder|runtime]" >&2
+        echo "usage: $0 [dev|all|base|toolchain|devenv|qemu-builder|ci|ci-asan|runtime]" >&2
         exit 1
         ;;
 esac

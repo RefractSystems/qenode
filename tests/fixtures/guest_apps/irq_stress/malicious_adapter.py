@@ -55,7 +55,6 @@ def main() -> None:
     logger.info("Sent handshake")
 
     # 2. Wait for first MMIO request
-    # req_data = conn.recv(32) # mmio_req is 32 bytes
     req_data = b""
     while len(req_data) < 32:
         chunk = conn.recv(32 - len(req_data))

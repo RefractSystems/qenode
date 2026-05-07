@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_faster_than_real_time(simulation: Simulation, zenoh_router: str, guest_app_factory: Any) -> None:  # noqa: ANN401
+async def test_faster_than_real_time(simulation: Simulation, zenoh_router: str, guest_app_factory: Any) -> None:
     """
     Proves that the simulation runs Faster-Than-Real-Time (FTRT)
     when pacing is disabled (multiplier = 0.0), unbound by pseudo-polling bottlenecks.
@@ -55,8 +55,9 @@ async def test_faster_than_real_time(simulation: Simulation, zenoh_router: str, 
         # Chunk the execution into 1.0s blocks to reduce Zenoh GET overhead
         chunk_ns = 1_000_000_000
         for _ in range(target_virtual_ns // chunk_ns):
-            await sim.vta.step(chunk_ns)  # LINT_EXCEPTION: vta_step_loop
-
+            await sim.vta.step(  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
+                chunk_ns
+            )
         end_wall = loop.time()
         elapsed_wall = end_wall - start_wall
 

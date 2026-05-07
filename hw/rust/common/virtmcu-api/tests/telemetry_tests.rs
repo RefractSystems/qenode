@@ -28,7 +28,7 @@ fn test_trace_event_power_uw_serialization() {
     // Verify using the generated root type
     let event =
         flatbuffers::root::<virtmcu_api::telemetry_generated::virtmcu::telemetry::TraceEvent>(buf)
-            .unwrap();
+            .expect("test should succeed");
 
     assert_eq!(event.timestamp_ns(), 1000);
     assert_eq!(event.type_().0, 3); // POWER_STATE

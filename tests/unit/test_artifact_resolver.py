@@ -34,7 +34,7 @@ def test_get_rust_binary_path_cargo_target_dir(monkeypatch: pytest.MonkeyPatch, 
     dummy_bin.parent.mkdir(parents=True, exist_ok=True)
     dummy_bin.touch()
 
-    resolved = get_rust_binary_path("dummy_bin")  # LINT_EXCEPTION: hardcoded_binary
+    resolved = get_rust_binary_path("dummy_bin")
     assert resolved == dummy_bin
 
 
@@ -48,13 +48,13 @@ def test_get_rust_binary_path_workspace_fallback(mock_exists: MagicMock, monkeyp
 
     # Just check that if nothing exists it returns the default workspace path
     mock_exists.return_value = False
-    resolved = get_rust_binary_path("dummy_bin")  # LINT_EXCEPTION: hardcoded_binary
+    resolved = get_rust_binary_path("dummy_bin")
     assert resolved.parts[-3:] == ("target", "release", "dummy_bin")
 
 
 def test_resolve_rust_binary_missing() -> None:
     with pytest.raises(FileNotFoundError, match=r"Did you run 'cargo build'\?"):
-        resolve_rust_binary("some_nonexistent_binary_12345")  # LINT_EXCEPTION: hardcoded_binary
+        resolve_rust_binary("some_nonexistent_binary_12345")
 
 
 def test_get_rust_binary_path_enum() -> None:

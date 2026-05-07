@@ -12,7 +12,7 @@ peripherals:
     type: mmio-socket-bridge
     address: 0x10000000
     properties:
-      socket-path: "/tmp/mmio.sock"
+      socket-path: "mmio.sock"
       region-size: 0x1000
 
 topology:

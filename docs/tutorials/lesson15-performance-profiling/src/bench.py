@@ -143,7 +143,7 @@ class BenchmarkRunner:
                         logger.info(f"  [Test] Reply error: {r.err}")
             if ready:
                 break
-            mock_execution_delay(0.2)  # SLEEP_EXCEPTION: waiting for Zenoh queryable discovery
+            mock_execution_delay(0.2)  # virtmcu-allow: sleep reasoning="waiting for Zenoh queryable discovery"
             q_num += 1
 
         if not ready:
@@ -236,7 +236,7 @@ class BenchmarkRunner:
                     if time.perf_counter() > deadline:
                         logger.error(f"  ERROR: [{self.mode}] timed out ({STANDALONE_TIMEOUT} s)")
                         break
-                    mock_execution_delay(0.05)  # SLEEP_EXCEPTION: polling for process exit
+                    mock_execution_delay(0.05)  # virtmcu-allow: sleep reasoning="polling for process exit"
                 self.wall_time = time.perf_counter() - t0
                 success = True
             else:
@@ -253,7 +253,7 @@ class BenchmarkRunner:
             retries -= 1
             if retries > 0:
                 logger.info(f"  [{self.mode}] retrying… ({retries} left)")
-                mock_execution_delay(2)  # SLEEP_EXCEPTION: backoff before retry
+                mock_execution_delay(2)  # virtmcu-allow: sleep reasoning="backoff before retry"
 
 
 def main() -> None:

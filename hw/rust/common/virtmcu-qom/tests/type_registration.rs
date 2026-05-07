@@ -3,10 +3,10 @@ use virtmcu_qom::declare_device_type;
 use virtmcu_qom::qom::TypeInfo;
 
 // A simple static to track if our mock was called
-static mut MOCK_CALLED: bool = false;
+static mut MOCK_CALLED: bool = false; // virtmcu-allow: static_state reasoning="Mock verification in local test"
 
 #[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // ALLOW_EXCEPTION: FFI callback for testing - pointers are managed by the mock test runner
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="FFI callback for testing - pointers are managed by the mock test runner"
 pub extern "C" fn register_dso_module_init(fn_: unsafe extern "C" fn(), _type_: core::ffi::c_int) {
     // Mock for testing - we need to execute the function to test type_register_static
     // SAFETY: test only
@@ -32,7 +32,7 @@ pub static qdev_prop_string: u64 = 0;
 pub static qdev_prop_macaddr: u64 = 0;
 
 #[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // ALLOW_EXCEPTION: FFI callback for testing - pointers are managed by the mock test runner
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="FFI callback for testing - pointers are managed by the mock test runner"
 pub extern "C" fn type_register_static(info: *const TypeInfo) -> *mut c_void {
     // SAFETY: test only
     unsafe {

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tools.testing.utils import get_time_multiplier, yield_now
+from tools.testing.utils import yield_now
 from tools.testing.virtmcu_test_suite.transport import FaultInjectingTransport
 
 if TYPE_CHECKING:
@@ -86,8 +86,7 @@ async def test_fault_injection(sim_transport: SimulationTransport) -> None:
 
     # Ensure all pending call_soon_threadsafe(rx_event.set) are processed
     await yield_now()
-    await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: explicit backoff for threadsafe signaling race
-
+    await asyncio.sleep(0.01)  # virtmcu-allow: sleep reasoning="explicit backoff for threadsafe signaling race"
     assert b"dropped_rx" not in received, f"RX messages should have been dropped, but got {received}"
 
     # 3. Test 0% drop rate with delay and jitter
@@ -102,7 +101,9 @@ async def test_fault_injection(sim_transport: SimulationTransport) -> None:
     await chaos.publish("tests/fixtures/guest_apps/chaos", b"delayed_msg")
 
     try:
-        await asyncio.wait_for(rx_event.wait(), timeout=2.0 * get_time_multiplier())
+        from tools.testing.parameters import TestParams
+
+        await asyncio.wait_for(rx_event.wait(), timeout=TestParams.scale_timeout(2.0))
     except TimeoutError:
         # Debugging info
         history = chaos.dump_flight_recorder()

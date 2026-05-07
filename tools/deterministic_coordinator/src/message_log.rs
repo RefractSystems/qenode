@@ -119,21 +119,21 @@ mod tests {
             "test_pcap_{}.pcap",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("test should succeed")
                 .as_nanos()
         ));
-        let log = MessageLog::create(&path).unwrap();
+        let log = MessageLog::create(&path).expect("test should succeed");
         (log, path)
     }
 
     #[test]
     fn test_pcap_global_header_bytes() {
         let (mut log, path) = setup_temp_log();
-        log.flush().unwrap();
+        log.flush().expect("test should succeed");
 
         let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).unwrap();
-        file.read_to_end(&mut buf).unwrap();
+        let mut file = std::fs::File::open(&path).expect("test should succeed");
+        file.read_to_end(&mut buf).expect("test should succeed");
 
         assert_eq!(buf.len(), 24);
 
@@ -171,17 +171,17 @@ mod tests {
             payload: vec![],
             base_topic: None,
         };
-        log.write_message(&msg).unwrap();
-        log.flush().unwrap();
+        log.write_message(&msg).expect("test should succeed");
+        log.flush().expect("test should succeed");
 
         let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).unwrap();
-        file.read_to_end(&mut buf).unwrap();
+        let mut file = std::fs::File::open(&path).expect("test should succeed");
+        file.read_to_end(&mut buf).expect("test should succeed");
 
         assert_eq!(buf.len(), 24 + 16 + 10);
 
-        let ts_sec = u32::from_le_bytes(buf[24..28].try_into().unwrap());
-        let ts_usec = u32::from_le_bytes(buf[28..32].try_into().unwrap());
+        let ts_sec = u32::from_le_bytes(buf[24..28].try_into().expect("test should succeed"));
+        let ts_usec = u32::from_le_bytes(buf[28..32].try_into().expect("test should succeed"));
 
         assert_eq!(ts_sec, 1);
         assert_eq!(ts_usec, 500_000);
@@ -199,28 +199,28 @@ mod tests {
             payload: vec![0x11, 0x22],
             base_topic: None,
         };
-        log.write_message(&msg).unwrap();
-        log.flush().unwrap();
+        log.write_message(&msg).expect("test should succeed");
+        log.flush().expect("test should succeed");
 
         let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).unwrap();
-        file.read_to_end(&mut buf).unwrap();
+        let mut file = std::fs::File::open(&path).expect("test should succeed");
+        file.read_to_end(&mut buf).expect("test should succeed");
 
         let packet_payload_start = 24 + 16;
         let src = u32::from_le_bytes(
             buf[packet_payload_start..packet_payload_start + 4]
                 .try_into()
-                .unwrap(),
+                .expect("test should succeed"),
         );
         let dst = u32::from_le_bytes(
             buf[packet_payload_start + 4..packet_payload_start + 8]
                 .try_into()
-                .unwrap(),
+                .expect("test should succeed"),
         );
         let proto = u16::from_le_bytes(
             buf[packet_payload_start + 8..packet_payload_start + 10]
                 .try_into()
-                .unwrap(),
+                .expect("test should succeed"),
         );
 
         assert_eq!(src, 2);
@@ -272,25 +272,37 @@ mod tests {
             base_topic: None,
         };
 
-        log.write_message(&msg1).unwrap();
-        log.write_message(&msg2).unwrap();
-        log.write_message(&msg3).unwrap();
-        log.flush().unwrap();
+        log.write_message(&msg1).expect("test should succeed");
+        log.write_message(&msg2).expect("test should succeed");
+        log.write_message(&msg3).expect("test should succeed");
+        log.flush().expect("test should succeed");
 
         let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).unwrap();
-        file.read_to_end(&mut buf).unwrap();
+        let mut file = std::fs::File::open(&path).expect("test should succeed");
+        file.read_to_end(&mut buf).expect("test should succeed");
 
         let start1 = 24;
-        let ts1 = u32::from_le_bytes(buf[start1 + 4..start1 + 8].try_into().unwrap());
+        let ts1 = u32::from_le_bytes(
+            buf[start1 + 4..start1 + 8]
+                .try_into()
+                .expect("test should succeed"),
+        );
         assert_eq!(ts1, 10_000);
 
         let start2 = start1 + 16 + 10;
-        let ts2 = u32::from_le_bytes(buf[start2 + 4..start2 + 8].try_into().unwrap());
+        let ts2 = u32::from_le_bytes(
+            buf[start2 + 4..start2 + 8]
+                .try_into()
+                .expect("test should succeed"),
+        );
         assert_eq!(ts2, 20_000);
 
         let start3 = start2 + 16 + 10;
-        let ts3 = u32::from_le_bytes(buf[start3 + 4..start3 + 8].try_into().unwrap());
+        let ts3 = u32::from_le_bytes(
+            buf[start3 + 4..start3 + 8]
+                .try_into()
+                .expect("test should succeed"),
+        );
         assert_eq!(ts3, 30_000);
     }
 }

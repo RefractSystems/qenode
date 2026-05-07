@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tools.testing.virtmcu_test_suite.generated import WorldSchema
+from generated.world_schema import WorldSchema
 
 
 def test_reject_invalid_protocol() -> None:

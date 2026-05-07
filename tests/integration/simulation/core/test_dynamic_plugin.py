@@ -14,7 +14,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_dynamic_plugin(
     inspection_bridge: Callable[..., Coroutine[Any, Any, Any]],
-    guest_app_factory: Any,  # noqa: ANN401
+    guest_app_factory: Any,
 ) -> None:
     app_dir = guest_app_factory("boot_arm")
     dtb = app_dir / "minimal.dtb"

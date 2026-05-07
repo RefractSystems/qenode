@@ -19,8 +19,8 @@ def test_trace_event_serialization() -> None:
     can correctly serialize and deserialize a message.
     """
 
-    from Virtmcu.Telemetry import TraceEvent as TraceEventBuilder
-    from Virtmcu.Telemetry.TraceEvent import TraceEvent
+    from generated.virtmcu.Telemetry import TraceEvent as TraceEventBuilder
+    from generated.virtmcu.Telemetry.TraceEvent import TraceEvent
 
     builder = flatbuffers.Builder(1024)
 

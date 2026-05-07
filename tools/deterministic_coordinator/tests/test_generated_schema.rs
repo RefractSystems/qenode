@@ -12,18 +12,27 @@ fn test_parse_test_board_yaml() {
     let yaml_path = Path::new("../../tests/fixtures/guest_apps/yaml_boot/test_board.yaml");
     assert!(yaml_path.exists(), "Test board YAML not found");
 
-    let content = fs::read_to_string(yaml_path).unwrap();
-    let world: WorldSchema = serde_yaml::from_str(&content).unwrap();
+    let content = fs::read_to_string(yaml_path).expect("test should succeed");
+    let world: WorldSchema = serde_yaml::from_str(&content).expect("test should succeed");
 
-    let machine = world.machine.clone().unwrap();
-    assert_eq!(machine.name.clone().unwrap(), "test_board");
-    assert_eq!(machine.type_.clone().unwrap(), "arm-generic-fdt");
+    let machine = world.machine.clone().expect("test should succeed");
+    assert_eq!(
+        machine.name.clone().expect("test should succeed"),
+        "test_board"
+    );
+    assert_eq!(
+        machine.type_.clone().expect("test should succeed"),
+        "arm-generic-fdt"
+    );
 
     let cpus = machine.cpus.clone();
     assert_eq!(cpus.len(), 1);
     assert_eq!(cpus[0].name.clone(), "cpu");
     assert_eq!(cpus[0].type_.clone(), "cortex-a15");
-    assert_eq!(cpus[0].memory.clone().unwrap(), "sysmem");
+    assert_eq!(
+        cpus[0].memory.clone().expect("test should succeed"),
+        "sysmem"
+    );
 
     let peripherals = world.peripherals.clone();
     assert_eq!(peripherals.len(), 3);
@@ -31,12 +40,15 @@ fn test_parse_test_board_yaml() {
     let uart = peripherals
         .iter()
         .find(|p| p.name.to_string() == "uart0")
-        .unwrap();
-    assert_eq!(uart.renode_type.clone().unwrap(), "UART.PL011");
+        .expect("test should succeed");
+    assert_eq!(
+        uart.renode_type.clone().expect("test should succeed"),
+        "UART.PL011"
+    );
 
     // Check address and interrupts
     // Address is generated as an enum (Address::String or Address::Integer)
-    match uart.address.clone().unwrap() {
+    match uart.address.clone().expect("test should succeed") {
         deterministic_coordinator::generated::topology::Address::String(s) => {
             assert_eq!(s.as_str(), "0x09000000");
         }
@@ -49,10 +61,10 @@ fn test_parse_lin_topology() {
     let yaml_path = Path::new("../../tests/fixtures/topologies/lin_2node.yml");
     assert!(yaml_path.exists(), "LIN topology YAML not found");
 
-    let content = fs::read_to_string(yaml_path).unwrap();
-    let world: WorldSchema = serde_yaml::from_str(&content).unwrap();
+    let content = fs::read_to_string(yaml_path).expect("test should succeed");
+    let world: WorldSchema = serde_yaml::from_str(&content).expect("test should succeed");
 
-    let topology = world.topology.clone().unwrap();
+    let topology = world.topology.clone().expect("test should succeed");
     let nodes = topology.nodes.clone();
     assert_eq!(nodes.len(), 2);
 

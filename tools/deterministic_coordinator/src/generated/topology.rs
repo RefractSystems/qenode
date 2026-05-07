@@ -1,6 +1,6 @@
 // Generated file, do not edit
 #![allow(warnings)]
-#![allow(clippy::all)] // ALLOW_EXCEPTION: machine-generated topology code from OpenUSD
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="machine-generated topology code from OpenUSD
 use serde::{Deserialize, Serialize};
 
 /// Error types.

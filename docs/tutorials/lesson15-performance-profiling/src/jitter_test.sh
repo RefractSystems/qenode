@@ -141,7 +141,7 @@ while time.perf_counter() < deadline:
     if replies and hasattr(replies[0], "ok") and replies[0].ok is not None:
         ready = True
         break
-    mock_execution_delay(0.2)  # SLEEP_EXCEPTION: infrastructure jitter proxy
+    mock_execution_delay(0.2)  # virtmcu-allow: sleep reasoning="infrastructure jitter proxy"
     q_num += 1
     payload0 = ClockAdvanceReq(delta_ns=0, absolute_vtime_ns=0, quantum_number=q_num).pack()
 

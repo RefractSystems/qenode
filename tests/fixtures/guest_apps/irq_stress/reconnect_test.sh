@@ -17,17 +17,18 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     exit 1
 fi
 
-SOCK_PATH="/tmp/virtmcu-reconnect-$$.sock"
-DTB_PATH="/tmp/virtmcu-reconnect-$$.dtb"
-DTS_PATH="/tmp/virtmcu-reconnect-$$.dts"
-ELF_PATH="/tmp/virtmcu-reconnect-$$.elf"
-LD_PATH="/tmp/virtmcu-reconnect-$$.ld"
-QEMU_LOG="/tmp/virtmcu-reconnect-qemu-$$.log"
+TMPDIR_LOCAL="$(mktemp -d -t virtmcu-reconnect.XXXXXX)"
+SOCK_PATH="$TMPDIR_LOCAL/reconnect.sock"
+DTB_PATH="$TMPDIR_LOCAL/reconnect.dtb"
+DTS_PATH="$TMPDIR_LOCAL/reconnect.dts"
+ELF_PATH="$TMPDIR_LOCAL/reconnect.elf"
+LD_PATH="$TMPDIR_LOCAL/reconnect.ld"
+QEMU_LOG="$TMPDIR_LOCAL/qemu.log"
 
 cleanup() {
     kill "${QEMU_PID:-}"    2>/dev/null || true
     kill "${ADAPTER_PID:-}" 2>/dev/null || true
-    rm -f "$SOCK_PATH" "$DTB_PATH" "$DTS_PATH" "$ELF_PATH" "$LD_PATH"
+    rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 
@@ -39,7 +40,7 @@ SECTIONS {
     .text : { *(.text*) }
 }
 EOF
-cat > /tmp/reconnect.S <<'EOF'
+cat > $TMPDIR_LOCAL/reconnect.S <<'EOF'
 .global _start
 _start:
     ldr r0, =0x70000000
@@ -58,7 +59,7 @@ loop:
 end:
     b end
 EOF
-arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T "$LD_PATH" /tmp/reconnect.S -o "$ELF_PATH"
+arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T "$LD_PATH" $TMPDIR_LOCAL/reconnect.S -o "$ELF_PATH"
 
 echo "[reconnect] Compiling device tree..."
 cat > "$DTS_PATH" <<EOF
@@ -112,7 +113,7 @@ g++ -O3 "$SCRIPT_DIR/stress_adapter.cpp" -o "$SCRIPT_DIR/reconnect_adapter"
 # Modify adapter to return 0x42 on MMIO
 # (My stress_adapter echoes back data, so I'll just use a python mock instead)
 
-cat > /tmp/mock_adapter.py <<EOF
+cat > $TMPDIR_LOCAL/mock_adapter.py <<EOF
 import os, socket, struct, time, logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ def run():
     # Trigger IRQ
     logger.info("Sending IRQ SET...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())
-    mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    mock_execution_delay(0.1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     logger.info("Sending IRQ CLEAR...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 0, 0).pack())
 
@@ -151,7 +152,7 @@ def run():
 run()
 EOF
 
-python3 /tmp/mock_adapter.py &
+python3 $TMPDIR_LOCAL/mock_adapter.py &
 ADAPTER_PID=$!
 
 echo "[reconnect] Waiting for OK from QEMU..."

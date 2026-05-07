@@ -106,8 +106,7 @@ class FdtEmitter:
             parts = addr_str.strip("<>").split(",")
             base = int(parts[0].strip(), 16)
             size_part = parts[1].strip()
-            if size_part.startswith("+"):
-                size_part = size_part[1:]
+            size_part = size_part.removeprefix("+")
             size = int(size_part, 16)
             return base, size
         try:
@@ -226,7 +225,7 @@ class FdtEmitter:
 
         is_native = dev.type_name not in COMPAT_MAP and "." not in dev.type_name
         if dev.type_name not in COMPAT_MAP and not is_native:
-            logger.warning(f"Warning: no QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)")
+            logger.info(f"No QEMU mapping for Renode type '{dev.type_name}' (device '{dev.name}' skipped)")
             return []
 
         compat_str = dev.type_name if is_native else COMPAT_MAP[dev.type_name]
@@ -386,12 +385,8 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
             text=True,
         )
         if "Warning" in res.stderr:
-            logger.warning(f"DTC Warnings detected:\n{res.stderr}")
+            logger.error(f"DTC Warnings detected:\n{res.stderr}")
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Error compiling DTB: {e.stderr}")
         return False
-    finally:
-        pass
-        # if Path(dts_path).exists():
-        #     Path(dts_path).unlink()

@@ -24,12 +24,12 @@ def get_python_zenoh_version() -> str:
             import pkg_resources
 
             return cast(str, pkg_resources.get_distribution("eclipse-zenoh").version)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # If all version discovery methods fail, we return empty string
             return ""
 
 
-def get_libzenohc_version(lib_path: str) -> str:  # noqa: ARG001
+def get_libzenohc_version(lib_path: str) -> str:
     """
     Extracts the expected zenoh-c version.
     Since the binary no longer reliably embeds its version, we read it

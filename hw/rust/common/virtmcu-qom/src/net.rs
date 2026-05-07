@@ -197,6 +197,7 @@ mod stubs {
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn qemu_new_net_client(
         _info: *const NetClientInfo,
         _peer: *mut NetClientState,
@@ -208,12 +209,14 @@ mod stubs {
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn qemu_can_receive_packet(_nc: *mut NetClientState) -> bool {
         unimplemented!("Stub for qemu_can_receive_packet")
     }
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn qemu_send_packet(
         _nc: *mut NetClientState,
         _buf: *const u8,
@@ -224,6 +227,7 @@ mod stubs {
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn can_bus_insert_client(
         _bus: *mut c_void,
         _client: *mut CanBusClientState,
@@ -233,12 +237,14 @@ mod stubs {
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn can_bus_remove_client(_client: *mut CanBusClientState) -> c_int {
         unimplemented!("Stub for can_bus_remove_client")
     }
 
     /// Stub
     #[no_mangle]
+    #[allow(clippy::unimplemented, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
     pub unsafe extern "C" fn can_bus_client_send(
         _client: *mut CanBusClientState,
         _frames: *const QemuCanFrame,
@@ -250,6 +256,7 @@ mod stubs {
     /// Stub
     #[no_mangle]
     pub static mut virtmcu_netdev_hook: Option<
+        // virtmcu-allow: callback reasoning="QEMU FFI"
         unsafe extern "C" fn(
             netdev: *const Netdev,
             name: *const c_char,
@@ -266,6 +273,7 @@ pub use stubs::*;
 extern "C" {
     /// A function
     pub static mut virtmcu_netdev_hook: Option<
+        // virtmcu-allow: callback reasoning="QEMU FFI"
         unsafe extern "C" fn(
             netdev: *const Netdev,
             name: *const c_char,

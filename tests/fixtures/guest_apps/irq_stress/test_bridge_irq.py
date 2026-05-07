@@ -42,12 +42,12 @@ s.listen(1)
 conn, addr = s.accept()
 hs = conn.recv(8)
 conn.sendall(hs)
-mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
 # Send IRQs
 conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
-mock_execution_delay(0.1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+mock_execution_delay(0.1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
 conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
-mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
 conn.close()
 """.replace("{sock_path}", sock_path)
 
@@ -100,13 +100,11 @@ conn.close()
     )
 
     # 3. Start QEMU
-    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
-    qemu_bin = f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm"
     qemu_proc = subprocess.Popen(
         [
-            qemu_bin,
-            "-M",
-            "arm-generic-fdt,hw-dtb=/tmp/irq.dtb",
+            "/workspace/scripts/run.sh",
+            "--dtb",
+            str(Path(tempfile.gettempdir()) / "irq.dtb"),
             "-kernel",
             str(Path(tempfile.gettempdir()) / "irq.elf"),
             "-nographic",
@@ -117,7 +115,7 @@ conn.close()
         stderr=subprocess.PIPE,
     )
 
-    mock_execution_delay(5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    mock_execution_delay(5)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     qemu_proc.terminate()
     adapter_proc.terminate()
 

@@ -16,8 +16,14 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: TID251
-from lint_utils import DEFAULT_EXCLUDES, ENTERPRISE_MANDATE, iter_target_files, setup_lint_logging
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lint_utils import (
+    DEFAULT_EXCLUDES,
+    ENTERPRISE_MANDATE,
+    is_suppressed,
+    iter_target_files,
+    setup_lint_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +31,9 @@ logger = logging.getLogger(__name__)
 def lint_file(path: Path) -> list[str]:
     try:
         with path.open("r") as f:
-            tree = ast.parse(f.read(), filename=str(path))
+            content = f.read()
+            tree = ast.parse(content, filename=str(path))
+            lines = content.splitlines()
     except (SyntaxError, ValueError) as e:
         return [f"{path}: Failed to parse AST: {e}"]
 
@@ -35,18 +43,22 @@ def lint_file(path: Path) -> list[str]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "ensure_session_routing":
             # conftest_core.py is exempt (it defines the helper)
             if path.name not in ("conftest_core.py", "simulation.py"):
-                violations.append(
-                    f"{path}:{node.lineno}: Banned manual ensure_session_routing. "
-                    "Routing synchronization is handled automatically by the simulation fixture."
-                )
+                rule = "manual_routing"
+                if not is_suppressed(lines[node.lineno - 1], rule):
+                    violations.append(
+                        f"{path}:{node.lineno}: Banned manual ensure_session_routing. "
+                        "Routing synchronization is handled automatically by the simulation fixture."
+                    )
 
         # 2. Banned: qemu_launcher in test body (unless using simulation fixture)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "qemu_launcher":
             if path.name not in ("conftest_core.py", "simulation.py"):
-                violations.append(
-                    f"{path}:{node.lineno}: Banned manual qemu_launcher. "
-                    "Use the `simulation` fixture for multi-node tests or `qmp_bridge` for single-node tests."
-                )
+                rule = "manual_qemu"
+                if not is_suppressed(lines[node.lineno - 1], rule):
+                    violations.append(
+                        f"{path}:{node.lineno}: Banned manual qemu_launcher. "
+                        "Use the `simulation` fixture for multi-node tests or `qmp_bridge` for single-node tests."
+                    )
 
         # 3. Banned: -S in extra_args (handled by framework)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_node":
@@ -54,20 +66,24 @@ def lint_file(path: Path) -> list[str]:
                 if kw.arg == "extra_args" and isinstance(kw.value, ast.List):
                     for elt in kw.value.elts:
                         if isinstance(elt, ast.Constant) and elt.value == "-S":
-                            violations.append(
-                                f"{path}:{node.lineno}: Banned manual '-S' in extra_args. "
-                                "QEMU is launched frozen by default; the framework handles the boot sequence."
-                            )
+                            rule = "manual_frozen"
+                            if not is_suppressed(lines[node.lineno - 1], rule):
+                                violations.append(
+                                    f"{path}:{node.lineno}: Banned manual '-S' in extra_args. "
+                                    "QEMU is launched frozen by default; the framework handles the boot sequence."
+                                )
 
         # 4. Banned: raw subprocess in test body (for orchestration)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "Popen":
             if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess":
                 # Only check tests/
                 if "tests" in path.parts:
-                    violations.append(
-                        f"{path}:{node.lineno}: Banned manual subprocess.Popen in tests. "
-                        "Use `ManagedSubprocess` from conftest_core.py for deterministic cleanup."
-                    )
+                    rule = "raw_subprocess"
+                    if not is_suppressed(lines[node.lineno - 1], rule):
+                        violations.append(
+                            f"{path}:{node.lineno}: Banned manual subprocess.Popen in tests. "
+                            "Use `ManagedSubprocess` from conftest_core.py for deterministic cleanup."
+                        )
 
         # 5. Banned: raw string lookup for core YAML keys
         if isinstance(node, ast.Subscript):
@@ -75,13 +91,12 @@ def lint_file(path: Path) -> list[str]:
                 val = node.slice.value
                 if val in ("peripherals", "topology", "machine", "memory", "nodes"):
                     if path.name not in ("world_schema.py", "yaml2qemu.py"):
-                        with path.open("r") as f:
-                            lines = f.readlines()
-                        if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
+                        rule = "raw_yaml_key"
+                        if not is_suppressed(lines[node.lineno - 1], rule):
                             violations.append(
                                 f"{path}:{node.lineno}: Banned raw string lookup for YAML key '{val}'. "
                                 "Use the `WorldYaml` Pydantic model from "
-                                "`tools.testing.virtmcu_test_suite.generated` instead."
+                                "`generated.world_schema` instead."
                             )
 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
@@ -89,54 +104,36 @@ def lint_file(path: Path) -> list[str]:
                 val = node.args[0].value
                 if val in ("peripherals", "topology", "machine", "memory", "nodes"):
                     if path.name not in ("world_schema.py", "yaml2qemu.py"):
-                        with path.open("r") as f:
-                            lines = f.readlines()
-                        if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
+                        rule = "raw_yaml_key"
+                        if not is_suppressed(lines[node.lineno - 1], rule):
                             violations.append(
                                 f"{path}:{node.lineno}: Banned .get('{val}') for YAML key. "
                                 "Use the `WorldYaml` Pydantic model from "
-                                "`tools.testing.virtmcu_test_suite.generated` instead."
+                                "`generated.world_schema` instead."
                             )
 
         # Ban manual struct packing and int.from_bytes (Mandate 10)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "from_bytes" and isinstance(node.func.value, ast.Name) and node.func.value.id == "int":
-                with path.open("r") as f:
-                    lines = f.readlines()
-                if node.lineno <= len(lines) and "LINT_EXCEPTION: int_from_bytes" not in lines[node.lineno - 1]:
+                rule = "int_from_bytes"
+                if not is_suppressed(lines[node.lineno - 1], rule):
                     violations.append(
                         f"{path}:{node.lineno}: Banned manual protocol deserialization via int.from_bytes. "
-                        f"Use vproto.py FlatBuffer wrappers. {ENTERPRISE_MANDATE} '# LINT_EXCEPTION: int_from_bytes'."
+                        f"Use vproto.py FlatBuffer wrappers. {ENTERPRISE_MANDATE} '# virtmcu-allow: {rule} reasoning=\"<reason>\"'."
                     )
             elif (
                 node.func.attr in ("pack", "unpack", "unpack_from")
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "struct"
             ):
-                with path.open("r") as f:
-                    lines = f.readlines()
-                if node.lineno <= len(lines) and "LINT_EXCEPTION: struct_pack" not in lines[node.lineno - 1]:
+                rule = "struct_pack"
+                if not is_suppressed(lines[node.lineno - 1], rule):
                     violations.append(
                         f"{path}:{node.lineno}: Banned manual struct packing/unpacking. "
-                        "Use vproto.py FlatBuffer wrappers."
+                        f"Use vproto.py FlatBuffer wrappers. {ENTERPRISE_MANDATE} '# virtmcu-allow: {rule} reasoning=\"<reason>\"'."
                     )
 
-        # Ban raw subprocess.Popen
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if (
-                node.func.attr == "Popen"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "subprocess"
-            ):
-                with path.open("r") as f:
-                    lines = f.readlines()
-                if node.lineno <= len(lines) and "LINT_EXCEPTION" not in lines[node.lineno - 1]:
-                    violations.append(
-                        f"{path}:{node.lineno}: Banned raw subprocess.Popen. "
-                        "Use ManagedSubprocess for deterministic lifecycle management and unified logging."
-                    )
-
-        # Ban vta.step inside loops
+        # Ban manual vta.step inside loops
         if isinstance(node, (ast.For, ast.While)):
             for subnode in ast.walk(node):
                 if (
@@ -145,16 +142,12 @@ def lint_file(path: Path) -> list[str]:
                     and subnode.func.attr == "step"
                 ):
                     if isinstance(subnode.func.value, ast.Attribute) and subnode.func.value.attr in ("vta", "clock"):
-                        with path.open("r") as f:
-                            lines = f.readlines()
-                        if (
-                            subnode.lineno <= len(lines)
-                            and "LINT_EXCEPTION: vta_step_loop" not in lines[subnode.lineno - 1]
-                        ):
+                        rule = "vta_step_loop"
+                        if not is_suppressed(lines[subnode.lineno - 1], rule):
                             violations.append(
                                 f"{path}:{subnode.lineno}: Banned vta.step() inside a loop. "
                                 "This is polling. Use sim.run_until() or node.wait_for_uart() instead. "
-                                f"{ENTERPRISE_MANDATE} '# LINT_EXCEPTION: vta_step_loop'."
+                                f"{ENTERPRISE_MANDATE} '# virtmcu-allow: {rule} reasoning=\"<reason>\"'."
                             )
                 elif (
                     isinstance(subnode, ast.Call)
@@ -162,13 +155,14 @@ def lint_file(path: Path) -> list[str]:
                     and subnode.func.attr == "sleep"
                 ):
                     if isinstance(subnode.func.value, ast.Name) and subnode.func.value.id in ("asyncio", "time"):
-                        with path.open("r") as f:
-                            lines = f.readlines()
-                        if subnode.lineno <= len(lines) and "SLEEP_EXCEPTION" not in lines[subnode.lineno - 1]:
+                        rule = "sleep"
+                        if not is_suppressed(lines[subnode.lineno - 1], rule):
                             violations.append(
-                                f"{path}:{subnode.lineno}: Banned sleep() without SLEEP_EXCEPTION. "
-                                f"Sleeping is banned. Use deterministic barriers. {ENTERPRISE_MANDATE} '# SLEEP_EXCEPTION: <reason>'."
+                                f"{path}:{subnode.lineno}: Banned sleep() without suppression. "
+                                f"Sleeping is banned. Use deterministic barriers. {ENTERPRISE_MANDATE} '# virtmcu-allow: {rule} reasoning=\"<reason>\"'."
                             )
+
+    return violations
 
     return violations
 

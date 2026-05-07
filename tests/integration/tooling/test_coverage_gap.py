@@ -93,7 +93,7 @@ uart0: UART.PL011 @ sysbus 0x09000000
 
     migrate(str(repl_file), str(yaml_file))
 
-    from tools.testing.virtmcu_test_suite.generated import World
+    from generated.world_schema import World
 
     assert Path(yaml_file).exists()
     with Path(yaml_file).open() as f:

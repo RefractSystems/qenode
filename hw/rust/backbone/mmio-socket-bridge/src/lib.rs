@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! # MMIO Socket Bridge
 //!
 //! Lock ordering: BQL -> SharedState Mutex -> (Condvar releases Mutex temporarily).
@@ -38,7 +48,7 @@ use virtmcu_qom::{
     error_setg,
 };
 
-static MAPPED_IDS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+static MAPPED_IDS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None); // virtmcu-allow: static_state reasoning="Singleton state workaround for adapter registration"
 
 fn is_id_mapped(id: &str) -> bool {
     let mut lock = MAPPED_IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -100,7 +110,7 @@ impl CoSimTransport for MmioTransport {
                     if self.reconnect_ms == 0 {
                         break;
                     }
-                    std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(u64::from(self.reconnect_ms)));
+                    ctx.sleep_interruptible(Duration::from_millis(u64::from(self.reconnect_ms)));
                     continue;
                 }
             };
@@ -128,7 +138,8 @@ impl CoSimTransport for MmioTransport {
             };
 
             {
-                let mut lock = self.stream.lock().unwrap();
+                let mut lock =
+                    self.stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *lock = Some(stream);
                 virtmcu_qom::sim_info!("connected to {}", self.socket_path);
             }
@@ -156,7 +167,8 @@ impl CoSimTransport for MmioTransport {
                     }
                 } else {
                     {
-                        let mut lock = self.stream.lock().unwrap();
+                        let mut lock =
+                            self.stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         *lock = None;
                     }
                     ctx.notify_disconnected();
@@ -168,7 +180,7 @@ impl CoSimTransport for MmioTransport {
     }
 
     fn send_request(&self, req: Self::Request) -> bool {
-        let mut lock = self.stream.lock().unwrap();
+        let mut lock = self.stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(s) = lock.as_mut() {
             s.write_all(req.pack()).is_ok()
         } else {
@@ -177,7 +189,7 @@ impl CoSimTransport for MmioTransport {
     }
 
     fn interrupt_rx(&self) {
-        let mut lock = self.stream.lock().unwrap();
+        let mut lock = self.stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(s) = lock.as_mut() {
             let _ = s.shutdown(std::net::Shutdown::Both);
         }
@@ -196,10 +208,10 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
     let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_READ,
-        size as u8,
+        u8::try_from(size).unwrap_or(u8::MAX),
         0,
         0,
-        qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64,
+        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).unwrap_or(0),
         addr,
         0,
     );
@@ -222,10 +234,10 @@ unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size
     let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_WRITE,
-        size as u8,
+        u8::try_from(size).unwrap_or(u8::MAX),
         0,
         0,
-        qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) as u64,
+        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).unwrap_or(0),
         addr,
         val,
     );
@@ -270,7 +282,9 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     }
 
     for i in 0..32 {
-        sysbus_init_irq(dev as *mut SysBusDevice, &raw mut qemu.irqs[i]);
+        if let Some(irq) = qemu.irqs.get_mut(i) {
+            sysbus_init_irq(dev as *mut SysBusDevice, &raw mut *irq);
+        }
     }
 
     let transport = MmioTransport {

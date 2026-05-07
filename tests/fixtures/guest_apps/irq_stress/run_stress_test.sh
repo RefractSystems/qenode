@@ -17,17 +17,18 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     exit 1
 fi
 
-SOCK_PATH="/tmp/virtmcu-stress-$$.sock"
-DTB_PATH="/tmp/virtmcu-stress-$$.dtb"
-DTS_PATH="/tmp/virtmcu-stress-$$.dts"
-ELF_PATH="/tmp/virtmcu-stress-$$.elf"
-LD_PATH="/tmp/virtmcu-stress-$$.ld"
-QEMU_LOG="/tmp/virtmcu-stress-qemu-$$.log"
+TMPDIR_LOCAL="$(mktemp -d -t virtmcu-stress.XXXXXX)"
+SOCK_PATH="$TMPDIR_LOCAL/stress.sock"
+DTB_PATH="$TMPDIR_LOCAL/stress.dtb"
+DTS_PATH="$TMPDIR_LOCAL/stress.dts"
+ELF_PATH="$TMPDIR_LOCAL/stress.elf"
+LD_PATH="$TMPDIR_LOCAL/stress.ld"
+QEMU_LOG="$TMPDIR_LOCAL/qemu.log"
 
 cleanup() {
     kill "${QEMU_PID:-}"    2>/dev/null || true
     kill "${ADAPTER_PID:-}" 2>/dev/null || true
-    rm -f "$SOCK_PATH" "$DTB_PATH" "$DTS_PATH" "$ELF_PATH" "$LD_PATH"
+    rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 

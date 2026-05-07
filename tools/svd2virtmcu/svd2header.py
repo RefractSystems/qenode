@@ -1,5 +1,5 @@
 import argparse
-import os
+from pathlib import Path
 
 from cmsis_svd.model import SVDPeripheral, SVDRegister
 from cmsis_svd.parser import SVDParser
@@ -51,15 +51,14 @@ def generate_header(svd_path: str, template_path: str, output_path: str) -> None
         )
 
     env = Environment(
-        loader=FileSystemLoader(os.path.dirname(template_path)),
+        loader=FileSystemLoader(Path(template_path).parent),
         autoescape=select_autoescape(),
     )
-    template = env.get_template(os.path.basename(template_path))
+    template = env.get_template(Path(template_path).name)
 
     rendered = template.render(device_name=device.name, peripherals=peripherals)
 
-    with open(output_path, "w") as f:
-        f.write(rendered)
+    Path(output_path).write_text(rendered)
 
 
 if __name__ == "__main__":

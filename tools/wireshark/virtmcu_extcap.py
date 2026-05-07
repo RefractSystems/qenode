@@ -11,8 +11,10 @@ It can also be used as a standalone PCAP dumper:
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import zenoh
@@ -36,26 +38,26 @@ PROTO_MAP = {
 def list_interfaces() -> None:
     print(
         "interface {value=virtmcu0}{display=VirtMCU Zenoh Capture}"
-    )  # PRINT_EXCEPTION: Wireshark extcap protocol requirement
+    )  # virtmcu-allow: print reasoning="Wireshark extcap protocol requirement"
 
 
 def list_dlts() -> None:
     print(
         "dlt {number=147}{name=DLT_USER0}{display=VirtMCU Custom Link Type}"
-    )  # PRINT_EXCEPTION: Wireshark extcap protocol requirement
+    )  # virtmcu-allow: print reasoning="Wireshark extcap protocol requirement"
 
 
 def list_config() -> None:
     default_session = os.environ.get("ZENOH_ROUTER", "")
     print(
         f"arg {{number=0}}{{call=--session}}{{display=Zenoh Session}}{{type=string}}{{default={default_session}}}{{tooltip=Zenoh router endpoint}}"
-    )  # PRINT_EXCEPTION: Wireshark extcap protocol requirement
+    )  # virtmcu-allow: print reasoning="Wireshark extcap protocol requirement"
     print(
         "arg {number=1}{call=--topic}{display=Zenoh Topic}{type=string}{default=sim/coord/**/rx}{tooltip=Zenoh topic to subscribe to}"
-    )  # PRINT_EXCEPTION: Wireshark extcap protocol requirement
+    )  # virtmcu-allow: print reasoning="Wireshark extcap protocol requirement"
     print(
         "arg {number=2}{call=--legacy}{display=Use Legacy Topics}{type=boolflag}{default=false}{tooltip=Subscribe to sim/comm/** for raw traffic}"
-    )  # PRINT_EXCEPTION: Wireshark extcap protocol requirement
+    )  # virtmcu-allow: print reasoning="Wireshark extcap protocol requirement"
 
 
 class PcapDumper:
@@ -67,7 +69,7 @@ class PcapDumper:
         if self.fifo_path == "-":
             self.fifo = sys.stdout.buffer
         else:
-            self.fifo = open(self.fifo_path, "wb")
+            self.fifo = Path(self.fifo_path).open("wb")
 
         # PCAP Global Header
         self.fifo.write((0xA1B2C3D4).to_bytes(4, "little"))
@@ -116,7 +118,7 @@ async def capture_loop(fifo_path: str, session_url: str, topic_pattern: str, use
     if session_url:
         conf.insert_json5("connect/endpoints", f'["{session_url}"]')
 
-    session = zenoh.open(conf)  # ZENOH_OPEN_EXCEPTION: manual config for Wireshark integration
+    session = zenoh.open(conf)  # virtmcu-allow: zenoh_open reasoning="manual config for Wireshark integration"
 
     def on_sample(sample: zenoh.Sample) -> None:
         try:
@@ -132,7 +134,7 @@ async def capture_loop(fifo_path: str, session_url: str, topic_pattern: str, use
                         msg.delivery_vtime_ns, msg.src_node_id, msg.dst_node_id, msg.protocol, msg.payload
                     )
                     return
-            except Exception:  # noqa: BLE001, S110, S110
+            except Exception:
                 pass
 
             # 2. Try decoding as Legacy ZenohFrameHeader
@@ -149,10 +151,8 @@ async def capture_loop(fifo_path: str, session_url: str, topic_pattern: str, use
                     for i, part in enumerate(parts):
                         if part in ["eth", "uart", "can", "lin", "spi"]:
                             if i + 1 < len(parts):
-                                try:
+                                with contextlib.suppress(ValueError):
                                     node_id = int(parts[i + 1])
-                                except ValueError:
-                                    pass
 
                             if part == "eth":
                                 proto_id = 0
@@ -170,17 +170,17 @@ async def capture_loop(fifo_path: str, session_url: str, topic_pattern: str, use
                             break
 
                     dumper.write_packet(header.delivery_vtime_ns, 0, node_id, proto_id, payload)
-            except Exception:  # noqa: BLE001, S110, S110
+            except Exception:
                 pass
 
-        except Exception:  # noqa: BLE001, S110
+        except Exception:
             pass
 
     sub = session.declare_subscriber(topic_pattern, on_sample)
 
     try:
         while True:
-            await asyncio.sleep(1)  # SLEEP_EXCEPTION: Live capture event loop yield
+            await asyncio.sleep(1)  # virtmcu-allow: sleep reasoning="Live capture event loop yield"
     except asyncio.CancelledError:
         pass
     finally:
@@ -213,23 +213,23 @@ if __name__ == "__main__":
         list_config()
     elif args.capture:
         if not args.fifo:
-            print("Error: --fifo is required for capture", file=sys.stderr)  # PRINT_EXCEPTION: CLI error reporting
+            print(
+                "Error: --fifo is required for capture", file=sys.stderr
+            )  # virtmcu-allow: print reasoning="CLI error reporting"
             sys.exit(1)
 
         if not args.session:
             print(
                 "Error: Zenoh session endpoint must be specified via --session or ZENOH_ROUTER environment variable",
                 file=sys.stderr,
-            )  # PRINT_EXCEPTION: CLI error reporting
+            )  # virtmcu-allow: print reasoning="CLI error reporting"
             sys.exit(1)
 
         topic = args.topic
         if args.legacy and topic == "sim/coord/**/rx":
             topic = "sim/comm/**"
 
-        try:
+        with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(capture_loop(args.fifo, args.session, topic, args.legacy))
-        except KeyboardInterrupt:
-            pass
     else:
         parser.print_help()

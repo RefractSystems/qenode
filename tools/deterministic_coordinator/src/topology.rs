@@ -377,9 +377,9 @@ topology:
     - type: uart
       nodes: [1, 2]
 "#;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "{}", content).unwrap();
-        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
+        let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
         assert!(graph.is_link_allowed(1, 2, Protocol::Uart));
     }
 
@@ -394,9 +394,9 @@ topology:
     - type: uart
       nodes: [1, 2]
 "#;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "{}", content).unwrap();
-        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
+        let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
         assert!(graph.is_link_allowed(1, 2, Protocol::Uart));
     }
 
@@ -411,9 +411,9 @@ topology:
     - name: "1"
   links: []
 "#;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "{}", content).unwrap();
-        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
+        let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
         // Should not fail parsing 'uart0' because it's not falling back
         assert!(graph.is_explicit);
     }
@@ -428,8 +428,8 @@ topology:
     - name: "2"
   links: []
 "#;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "{}", content).unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
         let res = TopologyGraph::from_yaml(file.path());
         assert!(res.is_err());
         assert!(format!("{}", res.unwrap_err()).contains("Split-brain"));
@@ -441,9 +441,9 @@ topology:
 peripherals:
   - name: "1"
 "#;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "{}", content).unwrap();
-        let graph = TopologyGraph::from_yaml(file.path()).unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
+        let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
         assert!(!graph.is_explicit);
     }
 }

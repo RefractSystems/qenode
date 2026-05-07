@@ -43,10 +43,9 @@ Open the repo in VS Code and accept **"Reopen in Container"** when prompted.
 The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
-3. Runs `make setup-initial` — patches and builds QEMU (~10 min, runs once)
-4. Synchronizes the Python environment using `uv sync`
-5. Activates the venv in every new terminal
-6. Configures Git to use `gh auth git-credential` for push/pull.
+3. Runs `make install-deps-initial` — patches and builds QEMU (~10 min, runs once)
+4. Synchronizes the system-wide Python environment using `uv pip`
+5. Configures Git to use `gh auth git-credential` for push/pull.
 
 **Authentication & Cloning (CRITICAL):**
 To avoid painful SSH socket forwarding issues inside the devcontainer, **you must use the GitHub CLI (`gh`) for authentication and clone via HTTPS.**
@@ -81,13 +80,6 @@ git submodule update --init --recursive
 
 # 3. Build QEMU with all patches applied (~10 min first run)
 make setup
-
-# 4. Set up Python environment
-make venv
-source .venv/bin/activate
-
-# 5. Smoke-test
-make run
 ```
 
 After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/` (or `build-virtmcu-asan/install/` if `VIRTMCU_USE_ASAN=1` is used).
@@ -149,13 +141,15 @@ make clean-sim
 
 This command runs `scripts/cleanup-sim.sh`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `deterministic_coordinator`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
 
-*Note: The `make test-integration` target automatically runs this cleanup script before and after every test.*
-
 ### Python Tools (`tools/`)
 
 ```bash
-source .venv/bin/activate
-uv run python -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+# In DevContainer (system-wide):
+python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+pytest tests/ -v
+
+# Native Linux:
+uv run python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
 uv run pytest tests/ -v
 ```
 
@@ -165,7 +159,7 @@ Before opening a PR or pushing code to `main`, you should run our local CI valid
 
 *   **Fast Pre-Push Check (~2 mins):** Run `make ci-local` to run all static analysis, version checks, and unit tests.
 *   **Static Analyzers & Memory Sanitizers:** Run `make ci-miri` (for Rust Undefined Behavior) and `make ci-asan` (for Memory Sanitizers).
-*   **Full Pipeline Validation (~40 mins cold, fast if cached):** Run `make ci-full` to execute the complete matrix of smoke tests exactly as they run on GitHub Actions inside the isolated builder container. This also includes the Miri and ASan checks. Passing this guarantees GitHub CI will pass.
+*   **Full Pipeline Validation (~40 mins cold, fast if cached):** Run `make ci-full` to execute the complete matrix of smoke tests exactly as they run on GitHub Actions inside the isolated ci container. This also includes the Miri and ASan checks. Passing this guarantees GitHub CI will pass.
 
 **For a detailed breakdown of how our CI pipeline works, how it uses Docker layer caching via GHCR, and how to debug specific failures, please read the [CI/CD Guide](docs/guide/04-continuous-integration.md).**
 
@@ -192,22 +186,21 @@ They are located in `tests/fixtures/guest_apps/<domain>/smoke_test.sh`.
 **To run all integration smoke tests locally:**
 The Makefile automatically handles building required test artifacts (like ELFs) and setting up the Python environment before running the tests.
 ```bash
-make smoke-tests
+make dev-integtation
 ```
-*(Note: `make test-integration` is an exact alias for this command.)*
 
 **Running in a Mirrored CI Environment (Docker):**
-If a test passes locally but fails on CI, you can run the test inside the exact `virtmcu-builder` container used by GitHub Actions.
+If a test passes locally but fails on CI, you can run the test inside the exact `virtmcu-ci` container used by GitHub Actions.
 ```bash
-# 1. Build the builder image from scratch
-docker build -t virtmcu-builder -f docker/Dockerfile --target builder .
+# 1. Build the ci image from scratch
+docker build -t virtmcu-ci -f docker/Dockerfile --target ci .
 
 # 2. Run a specific domain smoke test (e.g., boot_arm)
 docker run --rm \
   -v "$(pwd):/workspace" \
   -w /workspace \
-  -e PYTHONPATH=/workspace \
-  virtmcu-builder \
+  -e PYTHONPATH=/workspace:/workspace/generated \
+  virtmcu-ci \
   bash -c "make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/boot_arm/smoke_test.sh"
 ```
 
@@ -225,8 +218,8 @@ For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge
 
 **To run unit/automation tests:**
 ```bash
-# Make sure your virtual environment is synchronized!
-make test
+# Make sure your Python environment is synchronized!
+make dev-all
 ```
 
 When implementing a feature for a new Domain, you **MUST** provide a corresponding `smoke_test.sh` (or `pytest` suite for later domains) before submitting your PR. This prevents regressions.
@@ -248,7 +241,7 @@ We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, s
     *   **Why:** Python handles complex multi-process orchestration, asynchronous teardowns, and string matching much better than Rust or Bash.
 
 3.  **Thin CI Wrappers (Bash)**
-    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
+    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make dev-integration` contract).
     *   **Never** write complex background process setup/teardown loops in Bash. Just call `pytest` or `cargo test`.
 
 ---

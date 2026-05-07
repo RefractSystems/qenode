@@ -55,6 +55,7 @@ no-default-features = false
 feature-depth = 1
 
 [advisories]
+db-path = ".cargo-cache/advisory-db"
 ignore = [
     "RUSTSEC-2026-0041", # lz4_flex (via zenoh)
     "RUSTSEC-2024-0436", # paste (via zenoh)

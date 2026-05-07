@@ -1,8 +1,12 @@
 import asyncio
 import os
+from pathlib import Path
+
+from watchdog.events import FileCreatedEvent, FileSystemEventHandler
+from watchdog.observers import Observer
 
 
-def get_time_multiplier() -> float:
+def get_time_multiplier() -> float:  # virtmcu-allow: time_multiplier reasoning="external package API"
     """
     Returns a global timeout multiplier based on the execution environment.
     """
@@ -19,21 +23,16 @@ async def yield_now() -> None:
     """
     SOTA Enterprise Grade yield: explicitly relinquishes control to the asyncio event loop.
     """
-    await asyncio.sleep(0)  # SLEEP_EXCEPTION: explicit yield to event loop
+    await asyncio.sleep(0)  # virtmcu-allow: sleep reasoning="explicit yield to event loop"
 
 
 async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0) -> None:
     """
     Deterministic wait for a file to appear on the filesystem using watchdog (inotify).
     """
-    from pathlib import Path
-
     path = Path(path)
     if path.exists():
         return
-
-    from watchdog.events import FileCreatedEvent, FileSystemEventHandler
-    from watchdog.observers import Observer
 
     loop = asyncio.get_running_loop()
     event = asyncio.Event()
@@ -50,7 +49,9 @@ async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0)
     try:
         if path.exists():
             return
-        await asyncio.wait_for(event.wait(), timeout=timeout * get_time_multiplier())
+        await asyncio.wait_for(
+            event.wait(), timeout=timeout * get_time_multiplier()  # virtmcu-allow: time_multiplier reasoning="legacy script compatibility"
+        )  # virtmcu-allow: time_multiplier reasoning="external package API)"
     finally:
         observer.stop()
         observer.join()

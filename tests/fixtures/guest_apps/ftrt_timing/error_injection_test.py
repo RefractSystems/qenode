@@ -43,7 +43,7 @@ def connect_to_adapter(path: str, timeout: int = 5) -> socket.socket:
                 return client  # type: ignore[no-any-return]
             except OSError:
                 pass
-        mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+        mock_execution_delay(0.5)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     return None  # type: ignore[return-value]
 
 
@@ -97,8 +97,7 @@ def test_abrupt_disconnect() -> None:
         # Let's just close the socket while it's connected.
         client.close()
         logger.info("Client closed socket.")
-        mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+        mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
         # Reconnect should work because of my fix
         logger.info("Attempting to reconnect...")
         client2 = connect_to_adapter(SOCKET_PATH)

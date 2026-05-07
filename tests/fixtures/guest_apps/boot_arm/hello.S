@@ -40,6 +40,6 @@ loop:
     /* 
      * Infinite loop to keep the CPU active so the branch is covered.
      */
-    wfi
+    nop
     b loop
 .size loop, . - loop

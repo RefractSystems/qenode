@@ -34,8 +34,7 @@ def main() -> None:
     config.insert_json5("scouting/multicast/enabled", "false")
 
     logger.info(f"Connecting to Zenoh on {router}...")
-    session = zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: standalone script executed by test
-
+    session = zenoh.open(config)  # virtmcu-allow: zenoh_open reasoning="standalone script executed by test"
     topic = SimTopic.spi_base("spi0", 0)
 
     def on_query(query: zenoh.Query) -> None:
@@ -47,7 +46,7 @@ def main() -> None:
             # Parse header using vproto
             header = vproto.ZenohSPIHeader.unpack(payload[:header_size])
             data = payload[header_size : header_size + 4]
-            val = int.from_bytes(data, "little")  # LINT_EXCEPTION: int_from_bytes
+            val = int.from_bytes(data, "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
             logger.info(f"Received SPI transfer: 0x{val:08x} at vtime {header.delivery_vtime_ns}")
             # Echo back
             query.reply(topic, data)

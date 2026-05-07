@@ -36,15 +36,14 @@ def main() -> None:
     with contextlib.suppress(Exception):
         config.insert_json5("transport/shared/task_workers", "16")
     logger.info(f"Starting persistent Zenoh mock router on {endpoint}...")
-    session = zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: router-mode session required
-
+    session = zenoh.open(config)  # virtmcu-allow: zenoh_open reasoning="router-mode session required"
     logger.info("Zenoh router started. Declaring liveliness...")
     _liveliness = session.liveliness().declare_token(SimTopic.ROUTER_CHECK)
     logger.info("Liveliness declared. Ready.")
 
     try:
         while True:
-            mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
+            mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="keepalive loop"
     except KeyboardInterrupt:
         pass
     typing.cast(typing.Any, session).close()

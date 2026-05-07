@@ -1,14 +1,14 @@
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
-schema_path = sys.argv[1] if len(sys.argv) > 1 else "schema/world_schema.json"
+schema_path = Path(sys.argv[1] if len(sys.argv) > 1 else "schema/world_schema.json")
 
-with open(schema_path) as f:
-    schema = json.load(f)
+schema = json.loads(schema_path.read_text())
 
 
-def fix_refs(obj: Any) -> None:  # noqa: ANN401
+def fix_refs(obj: Any) -> None:
     if isinstance(obj, dict):
         if "$ref" in obj and isinstance(obj["$ref"], str) and not obj["$ref"].startswith("#"):
             # Machine.json -> #/$defs/Machine
@@ -23,5 +23,4 @@ def fix_refs(obj: Any) -> None:  # noqa: ANN401
 
 fix_refs(schema)
 
-with open(schema_path, "w") as f:
-    json.dump(schema, f, indent=2)
+schema_path.write_text(json.dumps(schema, indent=2))

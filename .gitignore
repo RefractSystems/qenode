@@ -69,6 +69,7 @@ third_party/golden_references/**/*
 third_party/
 
 target/
+.ci-target/
 .cargo-cache/
 tools/deterministic_coordinator/target/
 hw/rust-dummy/target/
@@ -88,3 +89,5 @@ temp/
 schema/node_modules/
 schema/dist/
 schema/rust_gen/target/mermaid*.js
+target-asan/
+tools/*/target-asan/

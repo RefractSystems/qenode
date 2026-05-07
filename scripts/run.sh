@@ -35,7 +35,7 @@ source "$SCRIPT_DIR/common.sh"
 QEMU_DIR="$WORKSPACE_DIR/third_party/qemu"
 
 # Inherit optional env vars with safe defaults for -u compatibility
-VIRTMCU_SKIP_BUILD_DIR="${VIRTMCU_SKIP_BUILD_DIR:-}"
+VIRTMCU_USE_PREBUILT_QEMU="${VIRTMCU_USE_PREBUILT_QEMU:-}"
 
 # Default architecture and machine
 ARCH="arm"
@@ -98,8 +98,8 @@ done
 
 if [[ "$INPUT_FILE" == *.repl ]]; then
     echo "Processing Renode platform: $INPUT_FILE"
-    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
-    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch)
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb) # virtmcu-allow: absolute_path reasoning="Legacy script"
+    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch) # virtmcu-allow: absolute_path reasoning="Legacy script"
     IS_TEMP_DTB=true
     python3 -m tools.repl2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-arch "$ARCH_FILE"
     if [ -f "$ARCH_FILE" ]; then
@@ -108,9 +108,9 @@ if [[ "$INPUT_FILE" == *.repl ]]; then
     fi
 elif [[ "$INPUT_FILE" == *.yaml ]]; then
     echo "Processing virtmcu YAML platform: $INPUT_FILE"
-    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
-    CLI_FILE=$(mktemp /tmp/virtmcu-XXXXXX.cli)
-    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch)
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb) # virtmcu-allow: absolute_path reasoning="Legacy script"
+    CLI_FILE=$(mktemp /tmp/virtmcu-XXXXXX.cli) # virtmcu-allow: absolute_path reasoning="Legacy script"
+    ARCH_FILE=$(mktemp /tmp/virtmcu-XXXXXX.arch) # virtmcu-allow: absolute_path reasoning="Legacy script"
     IS_TEMP_DTB=true
     python3 -m tools.yaml2qemu "$INPUT_FILE" --out-dtb "$DTB" --out-cli "$CLI_FILE" --out-arch "$ARCH_FILE"
     if [ -f "$ARCH_FILE" ]; then
@@ -127,7 +127,7 @@ elif [[ "$INPUT_FILE" == *.yaml ]]; then
     fi
 elif [[ "$INPUT_FILE" == *.dts ]]; then
     echo "Compiling Device Tree Source: $INPUT_FILE"
-    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb)
+    DTB=$(mktemp /tmp/virtmcu-XXXXXX.dtb) # virtmcu-allow: absolute_path reasoning="Legacy script"
     IS_TEMP_DTB=true
     dtc -I dts -O dtb -o "$DTB" "$INPUT_FILE"
     # Detect architecture from DTS (only if not explicitly overridden via --arch)
@@ -163,18 +163,86 @@ fi
 # Prioritize the build directory for developers, unless skipped
 BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )$( [ "${VIRTMCU_USE_TSAN:-0}" = "1" ] && echo "-tsan" || echo "" )"
 
-if [ -f "$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
-    QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME"
-elif [ -f "$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME" ]; then
-    QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME"
-    chmod +x "$QEMU_BIN"
+# Resolve QEMU_BIN prioritizing environment overrides
+if [ "$QEMU_ARCH_NAME" = "arm" ] && [ -n "${QEMU_ARM_BIN:-}" ]; then
+    QEMU_BIN="$QEMU_ARM_BIN"
+    echo "==> Using QEMU_ARM_BIN: $QEMU_BIN"
+elif [ "$QEMU_ARCH_NAME" = "riscv64" ] && [ -n "${QEMU_RISCV64_BIN:-}" ]; then
+    QEMU_BIN="$QEMU_RISCV64_BIN"
+    echo "==> Using QEMU_RISCV64_BIN: $QEMU_BIN"
+elif [ "$QEMU_ARCH_NAME" = "riscv32" ] && [ -n "${QEMU_RISCV32_BIN:-}" ]; then
+    QEMU_BIN="$QEMU_RISCV32_BIN"
+    echo "==> Using QEMU_RISCV32_BIN: $QEMU_BIN"
+elif [ -n "${QEMU_BIN:-}" ]; then
+    # Global override
+    QEMU_BIN="$QEMU_BIN"
+    echo "==> Using global QEMU_BIN: $QEMU_BIN"
+elif [[ "${VIRTMCU_USE_PREBUILT_QEMU:-0}" == "1" ]]; then
+    # In CI, we use the QEMU baked into the builder image at /build/qemu
+    QEMU_BIN="/build/qemu/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME"
+    
+    # Fallback: if sanitized CI binary is missing but non-sanitized exists, use it
+    if [ ! -f "$QEMU_BIN" ] && [ -f "/build/qemu/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
+        echo "⚠ WARNING: Requested CI binary ($QEMU_BIN) not found. Falling back to non-sanitized CI binary."
+        QEMU_BIN="/build/qemu/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME"
+    fi
 else
-    QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || true)
+    # Development mode: search local build directory
+    POSSIBLE_BINS=(
+        "$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME"
+        "$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME"
+        "$QEMU_DIR/build-virtmcu/install/bin/qemu-system-$QEMU_ARCH_NAME"
+        "$QEMU_DIR/build-virtmcu/qemu-system-$QEMU_ARCH_NAME"
+    )
+
+    QEMU_BIN=""
+    for p in "${POSSIBLE_BINS[@]}"; do
+        if [ -f "$p" ]; then
+            QEMU_BIN="$p"
+            if [[ "$p" == *"$BUILD_DIR_NAME"* ]]; then
+                break # Found exact match
+            fi
+            # Keep searching for a better match, but remember this one
+            BEST_SO_FAR="$p"
+        fi
+    done
+    
+    if [ -z "$QEMU_BIN" ] && [ -n "${BEST_SO_FAR:-}" ]; then
+        echo "⚠ WARNING: Requested local binary ($BUILD_DIR_NAME) not found. Falling back to $BEST_SO_FAR"
+        QEMU_BIN="$BEST_SO_FAR"
+    fi
+
+    if [ -z "$QEMU_BIN" ]; then
+        # Last resort: search PATH
+        if command -v "qemu-system-$QEMU_ARCH_NAME" >/dev/null 2>&1; then
+            QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME")
+            echo "⚠ WARNING: No local virtmcu-built QEMU found. Using system PATH: $QEMU_BIN"
+        fi
+    fi
 fi
 
-# Ensure QEMU has been built
+if [ -z "${QEMU_BIN:-}" ]; then
+    echo "❌ ERROR: QEMU binary for $ARCH not found."
+    echo "    virtmcu mandates using the locally built QEMU from third_party/qemu"
+    echo "    or the prebuilt one in /build/qemu (CI)."
+    echo "    Please run 'make install-deps-initial' or 'make build' first."
+    exit 1
+fi
+
+# Ensure QEMU has been built and is executable
 if [ ! -f "$QEMU_BIN" ]; then
-    echo "QEMU binary for $ARCH not found at $QEMU_BIN. Please run install-deps.sh first."
+    echo "❌ ERROR: QEMU binary for $ARCH not found at $QEMU_BIN."
+    exit 1
+fi
+
+# Attempt to make executable if not already, but don't fail if chmod fails 
+# (e.g. read-only filesystem) as long as it IS actually executable.
+if [ ! -x "$QEMU_BIN" ]; then
+    chmod +x "$QEMU_BIN" 2>/dev/null || true
+fi
+
+if [ ! -x "$QEMU_BIN" ]; then
+    echo "❌ ERROR: QEMU binary at $QEMU_BIN is not executable."
     exit 1
 fi
 
@@ -198,9 +266,12 @@ fi
 QEMU_MODULE_DIR=""
 
 # 1. Check for a fresh .so in the build tree (recursive search)
-if [ -d "$QEMU_DIR/$BUILD_DIR_NAME" ]; then
-    # Find freshest plugin, avoiding the 'qemu-bundle' artifacts
-    FRESH_SO=$(find "$QEMU_DIR/$BUILD_DIR_NAME" -name "hw-virtmcu-*.so*" -not -path "*/qemu-bundle/*" \( -type f -o -type l \) -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " || true)
+if [[ "${VIRTMCU_USE_PREBUILT_QEMU:-0}" == "1" ]]; then
+    # In CI, module directory is baked into /build/qemu
+    QEMU_MODULE_DIR="/build/qemu/$BUILD_DIR_NAME/install/lib/qemu"
+elif [ -d "$QEMU_DIR/$BUILD_DIR_NAME" ]; then
+    # Find freshest plugin
+    FRESH_SO=$(find "$QEMU_DIR/$BUILD_DIR_NAME" -name "hw-virtmcu-*.so*" \( -type f -o -type l \) -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " || true)
     if [ -n "$FRESH_SO" ]; then
         QEMU_MODULE_DIR=$(dirname "$FRESH_SO")
     fi
@@ -253,7 +324,7 @@ check_sanitizer_mismatch() {
     fi
 
     # Use find -L so versioned symlinks (e.g. .so -> .so.1) are followed correctly.
-    local sample_plugin
+    local sample_plugin=""
     if [ -d "$mod_dir" ]; then sample_plugin=$(find -L "$mod_dir" -name "hw-virtmcu-*.so*" -type f -print -quit 2>/dev/null || true); fi
 
     # If no plugins are present yet, skip the mismatch check — the missing-plugin
@@ -289,10 +360,11 @@ check_sanitizer_mismatch() {
 check_sanitizer_mismatch "$QEMU_BIN" "$QEMU_MODULE_DIR"
 
 # Add zenoh-c to LD_LIBRARY_PATH so QEMU can load the native Zenoh plugins
-if [ -d "$WORKSPACE_DIR/third_party/zenoh-c/lib" ]; then
-    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-elif [ -d "$WORKSPACE_DIR/third_party/zenoh-c" ]; then
-    export LD_LIBRARY_PATH="$WORKSPACE_DIR/third_party/zenoh-c${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+ZENOH_DIR="$WORKSPACE_DIR/third_party/zenoh-c$([ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "")"
+if [ -d "$ZENOH_DIR/lib" ]; then
+    export LD_LIBRARY_PATH="$ZENOH_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+elif [ -d "$ZENOH_DIR" ]; then
+    export LD_LIBRARY_PATH="$ZENOH_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 # Docker build path

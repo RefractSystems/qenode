@@ -19,7 +19,7 @@ import typing
 logger = logging.getLogger(__name__)
 
 
-def qmp_cmd(sock: socket.socket, cmd: str, args: dict[typing.Any, typing.Any] | None = None) -> typing.Any:  # noqa: ANN401
+def qmp_cmd(sock: socket.socket, cmd: str, args: dict[typing.Any, typing.Any] | None = None) -> typing.Any:
     req = {"execute": cmd}
     if args:
         req["arguments"] = args  # type: ignore[assignment]

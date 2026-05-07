@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 pub mod router;
 
 use crossbeam_channel::{unbounded, Sender};
@@ -52,7 +62,7 @@ impl UnixDataTransport {
                 (topic, payload)
             };
 
-            let subs = subscriptions_clone.lock().unwrap();
+            let subs = subscriptions_clone.lock().expect("unix transport error");
             for (sub_topic, callback) in subs.iter() {
                 if sub_topic == &topic || topic.starts_with(sub_topic) {
                     callback(&payload);
@@ -71,7 +81,7 @@ impl UnixDataTransport {
                 buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                 buf.extend_from_slice(&payload);
 
-                let mut stream = stream_clone_tx.lock().unwrap();
+                let mut stream = stream_clone_tx.lock().expect("unix transport error");
                 if stream.write_all(&buf).is_err() {
                     break;
                 }
@@ -88,7 +98,10 @@ impl DataTransport for UnixDataTransport {
     }
 
     fn subscribe(&self, topic: &str, callback: DataCallback) -> Result<(), String> {
-        self.subscriptions.lock().unwrap().push((topic.to_string(), callback));
+        self.subscriptions
+            .lock()
+            .expect("unix transport error")
+            .push((topic.to_string(), callback));
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -73,8 +74,7 @@ class FdtEmitter:
             parts = addr_str.strip("<>").split(",")
             base = int(parts[0].strip(), 16)
             size_part = parts[1].strip()
-            if size_part.startswith("+"):
-                size_part = size_part[1:]
+            size_part = size_part.removeprefix("+")
             size = int(size_part, 16)
             return base, size
         try:
@@ -246,8 +246,6 @@ def compile_dtb(dts_content: str, out_path: str) -> bool:
     try:
         with Path(dts_path).open("w") as f:
             f.write(dts_content)
-
-        import shutil
 
         dtc_path = shutil.which("dtc")
         if not dtc_path:

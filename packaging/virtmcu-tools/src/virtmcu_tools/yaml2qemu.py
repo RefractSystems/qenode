@@ -8,6 +8,7 @@
 
 import argparse
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -85,8 +86,6 @@ def validate_dtb(dtb_path: str, devices: list[ReplDevice]) -> None:
     Decompiles the DTB back to DTS and ensures each peripheral is present.
     """
     try:
-        import shutil
-
         dtc_path = shutil.which("dtc")
         if not dtc_path:
             raise RuntimeError("dtc executable not found in PATH")
@@ -216,8 +215,7 @@ def main() -> None:
 
     if args.out_cli:
         with Path(args.out_cli).open("w") as f:
-            for arg in cli_args:
-                f.write(arg + "\n")
+            f.writelines(arg + "\n" for arg in cli_args)
 
     logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):

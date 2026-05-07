@@ -100,8 +100,7 @@ class JitterProxy:
 
             # Inject jitter before forwarding.
             jitter_us = secrets.SystemRandom().uniform(0, self.max_jitter_us)
-            mock_execution_delay(jitter_us / 1_000_000)  # SLEEP_EXCEPTION: infrastructure jitter proxy
-
+            mock_execution_delay(jitter_us / 1_000_000)  # virtmcu-allow: sleep reasoning="infrastructure jitter proxy"
             with self._lock:
                 self.injected_delays_us.append(jitter_us)
 
@@ -121,7 +120,7 @@ class JitterProxy:
         logger.info("[jitter_proxy] ready — press Ctrl+C to stop")
         try:
             while True:
-                mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
+                mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="keepalive loop"
         except KeyboardInterrupt:
             pass
         finally:

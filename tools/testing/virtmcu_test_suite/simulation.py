@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 from tools.testing.virtmcu_test_suite.conftest_core import (
     VirtualTimeAuthority,
     ensure_session_routing,
@@ -142,14 +142,14 @@ class _NodeSpec:
             import fdt
 
             try:
-                with open(self.dtb, "rb") as f:
+                with Path(self.dtb).open("rb") as f:
                     dtb = fdt.parse_dtb(f.read())
                     for _path, _nodes, props in dtb.walk():
                         for p in props:
-                            if p.name == "compatible":
-                                # 'compatible' can be a single string or a list of strings
-                                # the fdt library usually returns a list for strings
-                                comps = p.data if isinstance(p.data, list) else [p.data]
+                            p_name = getattr(p, "name", None)
+                            p_data = getattr(p, "data", None)
+                            if p_name == "compatible":
+                                comps = p_data if isinstance(p_data, list) else [p_data]
                                 for c in comps:
                                     if not isinstance(c, str):
                                         continue
@@ -157,7 +157,7 @@ class _NodeSpec:
                                         plugins.add(type_to_plugin[c])
                                     elif c.startswith("virtmcu-"):
                                         plugins.add(c[len("virtmcu-") :])
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # self.dtb might be a .yaml file or corrupted dtb; fail gracefully.
                 # Catching Exception is intentional here as fdt.parse_dtb can throw
                 # various undocumented errors on malformed DTBs or YAML input.
@@ -313,7 +313,7 @@ class Simulation:
                                 self._session, SimTopic.plugin_liveliness(plugin, spec.node_id)
                             )
                         except TimeoutError:
-                            logger.warning(
+                            logger.error(
                                 f"Timeout waiting for liveliness token of plugin '{plugin}' on node {spec.node_id}"
                             )
 
@@ -349,7 +349,7 @@ class Simulation:
             raise RuntimeError("run_until() called before Simulation context entered")
 
         start_wall = time.monotonic()
-        scaled_timeout = timeout * get_time_multiplier()
+        scaled_timeout = TestParams.scale_timeout(timeout)
 
         def _get_vtime() -> int:
             return max(vta.current_vtimes.values()) if vta.current_vtimes else 0
@@ -383,7 +383,7 @@ class Simulation:
         router = self._router
 
         base_stall = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "10000"))
-        scaled_stall = int(base_stall * get_time_multiplier())
+        scaled_stall = TestParams.get_stall_timeout_ms(base_stall)
 
         processed: list[str] = []
         has_clock = False
@@ -406,7 +406,7 @@ class Simulation:
         }
 
         def is_virtmcu_plugin_type(val: str) -> bool:
-            type_name = val.split(",")[0]
+            type_name = val.split(",", maxsplit=1)[0]
             return type_name in type_to_plugin or type_name.startswith("virtmcu-")
 
         i = 0

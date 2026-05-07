@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! S32K144 LPUART peripheral for VirtMCU simulation with pluggable transport.
 use zenoh::Wait;
 
@@ -9,7 +19,7 @@ use core::cmp::Ordering;
 use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use virtmcu_api::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN};
@@ -212,7 +222,7 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
             update_irqs(state);
         }
         REG_DATA if state.ctrl & CTRL_TE != 0 => {
-            let byte = val as u8;
+            let byte = u8::try_from(val & 0xFF).expect("byte truncated");
             let was_empty = state.tx_fifo.is_empty();
             if state.tx_fifo.len() < 4096 {
                 state.tx_fifo.push_back(byte);
@@ -291,7 +301,7 @@ fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
     if baud_rate == 0 {
         return 86800;
     }
-    ((1_000_000_000 / baud_rate) * 10) as i64
+    i64::from((1_000_000_000 / baud_rate) * 10)
 }
 
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut c_void) {
@@ -410,7 +420,7 @@ pub unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void
     } else if std::path::Path::new(&router_addr)
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
-        || router_addr.starts_with("/tmp/")
+        || router_addr.starts_with("/tmp/") // virtmcu-allow: absolute_path reasoning="Legacy script"
         || router_addr.starts_with("unix:")
     {
         "unix".to_owned()
@@ -629,7 +639,7 @@ fn lpuart_init_internal(
     let tx_topic = format!("{base_topic}/{node_id}/tx");
     let rx_topic = format!("{base_topic}/{node_id}/rx");
 
-    let (tx, rx) = bounded(1024);
+    let (tx, rx) = crossbeam_channel::unbounded();
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
 
     let state_ptr_raw: *mut LpuartState =

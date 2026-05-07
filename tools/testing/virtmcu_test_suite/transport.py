@@ -202,11 +202,11 @@ class UnixTransportImpl(SimulationTransport):
         try:
             while True:
                 topic_len_b = await reader.readexactly(4)
-                topic_len = int.from_bytes(topic_len_b, "little")  # LINT_EXCEPTION: int_from_bytes
+                topic_len = int.from_bytes(topic_len_b, "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
                 topic = (await reader.readexactly(topic_len)).decode()
 
                 payload_len_b = await reader.readexactly(4)
-                payload_len = int.from_bytes(payload_len_b, "little")  # LINT_EXCEPTION: int_from_bytes
+                payload_len = int.from_bytes(payload_len_b, "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
                 payload = await reader.readexactly(payload_len)
                 logger.info(f"UnixTransportImpl rx: {topic}")
 
@@ -382,8 +382,7 @@ class FaultInjectingTransport(SimulationTransport):
 
         delay = self._get_delay(payload)
         if delay > 0.0:
-            await asyncio.sleep(delay)  # SLEEP_EXCEPTION: Chaos Engineering delay injection
-
+            await asyncio.sleep(delay)  # virtmcu-allow: sleep reasoning="Chaos Engineering delay injection"
         await self.inner.publish(topic, payload)
 
     async def subscribe(self, topic: str, callback: Callable[[bytes], None]) -> None:
@@ -403,8 +402,7 @@ class FaultInjectingTransport(SimulationTransport):
 
             delay = self._get_delay(payload)
             if delay > 0.0:
-                await asyncio.sleep(delay)  # SLEEP_EXCEPTION: Chaos Engineering delay injection
-
+                await asyncio.sleep(delay)  # virtmcu-allow: sleep reasoning="Chaos Engineering delay injection"
             if asyncio.iscoroutinefunction(callback):
                 await callback(payload)
             else:

@@ -44,6 +44,7 @@ async def test_canfd_plugin_loads() -> None:
         "-S",
     ]
 
+    timeout = 2.0
     async with AsyncManagedProcess(*cmd, env=env) as proc:
         with pytest.raises(TimeoutError, match=r".*"):
-            await proc.wait(timeout=2.0)
+            await proc.wait(timeout=timeout)

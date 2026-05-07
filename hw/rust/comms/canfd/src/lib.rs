@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! Virtmcu virtual CAN FD device with pluggable transport.
 use zenoh::Wait;
 
@@ -21,7 +31,7 @@ use virtmcu_qom::net::{
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
+use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
 pub const TYPE_CAN_HOST_VIRTMCU: *const c_char = c"can-host-virtmcu".as_ptr();
@@ -65,7 +75,7 @@ impl Ord for OrderedCanFrame {
 
 pub struct State {
     transport: Arc<dyn virtmcu_api::DataTransport>,
-    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: Safe Zenoh integration
+    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="Safe Zenoh integration"
     tx_sender: Sender<Vec<u8>>,
     rx_sender: Sender<OrderedCanFrame>,
     rx_receiver: Receiver<OrderedCanFrame>,
@@ -109,7 +119,8 @@ unsafe extern "C" fn virtmcu_can_receive_frames(
 
     for frame in slice {
         let mut builder = flatbuffers::FlatBufferBuilder::new();
-        let data_vec = builder.create_vector(&frame.data[..frame.can_dlc as usize]);
+        let data_vec =
+            builder.create_vector(frame.data.get(..frame.can_dlc as usize).unwrap_or(&[]));
         let seq = unsafe { (*state).tx_sequence.fetch_add(1, AtomicOrdering::SeqCst) };
         let fbs_frame = CanFdFrame::create(
             &mut builder,
@@ -276,7 +287,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
 
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
         let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{node}.sock")
+            format!("/tmp/virtmcu-coord-{node}.sock") // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };
@@ -349,7 +360,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
 
     let generation = Arc::new(AtomicU64::new(0));
     state.subscription =
-        SafeSubscription::new(&*state.transport, &topic_str, generation, sub_callback).ok(); // BQL_EXCEPTION: Safe Zenoh integration
+        SafeSubscription::new(&*state.transport, &topic_str, generation, sub_callback).ok(); // virtmcu-allow: bql reasoning="Safe Zenoh integration"
     state.rx_timer = Some(rx_timer);
 
     unsafe {

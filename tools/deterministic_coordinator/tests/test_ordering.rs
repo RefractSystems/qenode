@@ -43,15 +43,27 @@ async fn test_tx_done_ordering() {
     let b_clone2 = barrier.clone();
     let b_clone3 = barrier.clone();
 
-    let t1 = task::spawn(async move { b_clone1.submit_done(0, 0, 0, vec![msg1, msg2]).unwrap() });
+    let t1 = task::spawn(async move {
+        b_clone1
+            .submit_done(0, 0, 0, vec![msg1, msg2])
+            .expect("test should succeed")
+    });
 
-    let t2 = task::spawn(async move { b_clone2.submit_done(1, 0, 0, vec![msg3]).unwrap() });
+    let t2 = task::spawn(async move {
+        b_clone2
+            .submit_done(1, 0, 0, vec![msg3])
+            .expect("test should succeed")
+    });
 
-    let t3 = task::spawn(async move { b_clone3.submit_done(2, 0, 0, vec![]).unwrap() });
+    let t3 = task::spawn(async move {
+        b_clone3
+            .submit_done(2, 0, 0, vec![])
+            .expect("test should succeed")
+    });
 
-    let res1 = t1.await.unwrap();
-    let res2 = t2.await.unwrap();
-    let res3 = t3.await.unwrap();
+    let res1 = t1.await.expect("test should succeed");
+    let res2 = t2.await.expect("test should succeed");
+    let res3 = t3.await.expect("test should succeed");
 
     let mut batch = None;
     if res1.is_some() {
@@ -65,7 +77,7 @@ async fn test_tx_done_ordering() {
     }
 
     assert!(batch.is_some());
-    let batch = batch.unwrap();
+    let batch = batch.expect("test should succeed");
 
     assert_eq!(batch.len(), 3);
 

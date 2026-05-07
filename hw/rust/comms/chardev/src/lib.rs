@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 use zenoh::Wait;
 extern crate alloc;
 
@@ -136,10 +146,10 @@ pub struct SharedState {
     pub transport: Box<dyn virtmcu_api::DataTransport>,
     pub topic: String,
     pub node: String,
-    pub subscription: Mutex<Option<virtmcu_qom::sync::SafeSubscription>>, // MUTEX_EXCEPTION: shared with QEMU callbacks // BQL_EXCEPTION: Safe Zenoh integration
+    pub subscription: Mutex<Option<virtmcu_qom::sync::SafeSubscription>>, // virtmcu-allow: mutex reasoning="shared with QEMU callbacks // virtmcu-allow: bql reasoning="Safe Zenoh integration""
     pub tx_sender: Sender<TxPacket>,
     pub drain_cond: Condvar,
-    pub state: Mutex<InnerState>, // MUTEX_EXCEPTION: shared for lifecycle
+    pub state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="shared for lifecycle"
 }
 
 extern "C" {
@@ -710,7 +720,7 @@ fn create_chardev_transport(
 ) -> Option<Box<dyn virtmcu_api::DataTransport>> {
     if transport_name == "unix" {
         let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node })
+            format!("/tmp/virtmcu-coord-{}.sock", { node }) // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };
@@ -892,8 +902,7 @@ pub unsafe extern "C" fn virtmcu_chr_open(
 
     let generation = Arc::new(AtomicU64::new(0)); // chardev doesn't use generations yet
     #[rustfmt::skip]
-    let sub = virtmcu_qom::sync::SafeSubscription::new( // BQL_EXCEPTION: Safe Zenoh integration 
-        
+    let sub = virtmcu_qom::sync::SafeSubscription::new( // virtmcu-allow: bql reasoning="Safe Zenoh integration"
         &*shared.transport,
         &rx_topic,
         generation,
@@ -942,7 +951,7 @@ pub unsafe extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
             }
             state.timer_ptr.store(0, AtomicOrdering::Release);
 
-            // Dropping the SafeSubscription automatically undeclares and waits // BQL_EXCEPTION: docs
+            // Dropping the SafeSubscription automatically undeclares and waits // virtmcu-allow: bql reasoning="docs"
             {
                 let mut lock = state
                     .shared

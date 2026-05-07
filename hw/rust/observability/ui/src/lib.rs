@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 unsafe extern "C" fn allow_set_link(
     _obj: *mut virtmcu_qom::qom::Object,
     _name: *const core::ffi::c_char,
@@ -100,14 +110,14 @@ pub unsafe extern "C" fn ui_write(opaque: *mut c_void, addr: u64, val: u64, _siz
         virtmcu_qom::sim_warn!("ui_write: addr=0x{:x} val=0x{:x}", addr, val);
     }
     if addr == REG_LED_ID {
-        s.active_led_id = val as u32;
+        s.active_led_id = u32::try_from(val).unwrap_or(u32::MAX);
     } else if addr == REG_LED_STATE {
         if !s.rust_state.is_null() {
             // SAFETY: rust_state is non-null and owned by the device.
             ui_set_led(unsafe { &*s.rust_state }, s.active_led_id, val != 0);
         }
     } else if addr == REG_BTN_ID {
-        s.active_btn_id = val as u32;
+        s.active_btn_id = u32::try_from(val).unwrap_or(u32::MAX);
         // SAFETY: opaque is a valid pointer to SysBusDevice.
         let irq = unsafe {
             sysbus_get_connected_irq(opaque as *mut SysBusDevice, s.active_btn_id as c_int)
@@ -297,7 +307,7 @@ fn ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
         if payload.is_empty() {
             return;
         }
-        let val = payload[0] != 0;
+        let val = payload.first().is_some_and(|&b| b != 0);
 
         // SAFETY: irq_ptr is a valid QemuIrq passed during initialization.
         unsafe {

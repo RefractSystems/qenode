@@ -2,13 +2,13 @@ from pathlib import Path
 
 import yaml
 
-from tools.testing.virtmcu_test_suite.generated import WorldSchema
+from generated.world_schema import WorldSchema
 
 
 def test_parse_pendulum_yaml() -> None:
     yaml_path = Path("worlds/pendulum.yml")
     assert yaml_path.exists(), "Pendulum YAML not found"
-    with open(yaml_path) as f:
+    with yaml_path.open() as f:
         _data = yaml.safe_load(f)
     # Pendulum is a docker-compose file technically in the root, wait, worlds/pendulum.yml is a docker-compose file!
     # We should test a true world yaml like tests/fixtures/guest_apps/yaml_boot/test_board.yaml
@@ -18,7 +18,7 @@ def test_parse_test_board_yaml() -> None:
     yaml_path = Path("tests/fixtures/guest_apps/yaml_boot/test_board.yaml")
     assert yaml_path.exists(), "Test board YAML not found"
 
-    with open(yaml_path) as f:
+    with yaml_path.open() as f:
         data = yaml.safe_load(f)
 
     world = WorldSchema.model_validate(data)
@@ -48,7 +48,7 @@ def test_parse_lin_topology() -> None:
     yaml_path = Path("tests/fixtures/topologies/lin_2node.yml")
     assert yaml_path.exists(), "LIN topology YAML not found"
 
-    with open(yaml_path) as f:
+    with yaml_path.open() as f:
         data = yaml.safe_load(f)
 
     world = WorldSchema.model_validate(data)

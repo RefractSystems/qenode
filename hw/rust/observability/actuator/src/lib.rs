@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 unsafe extern "C" fn allow_set_link(
     _obj: *mut virtmcu_qom::qom::Object,
     _name: *const core::ffi::c_char,
@@ -78,7 +88,7 @@ struct SharedState {
 
     tx_sender: Sender<ActuatorPacket>,
     drain_cond: Condvar,
-    state: Mutex<InnerState>, // MUTEX_EXCEPTION: used with Condvar for teardown
+    state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="used with Condvar for teardown"
 }
 
 impl Drop for VirtmcuActuatorState {
@@ -144,10 +154,14 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
         let offset = ((addr - REG_DATA_START) % 8) as usize;
         let mut ret: u64 = 0;
         if offset + (size as usize) <= 8 {
-            let bytes = s.data[idx].to_le_bytes();
+            let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
             let mut ret_bytes = [0u8; 8];
-            ret_bytes[..size as usize].copy_from_slice(&bytes[offset..offset + size as usize]);
-            ret = u64::from_le_bytes(ret_bytes);
+            if let (Some(dest), Some(src)) =
+                (ret_bytes.get_mut(..size as usize), bytes.get(offset..offset + size as usize))
+            {
+                dest.copy_from_slice(src);
+                ret = u64::from_le_bytes(ret_bytes);
+            }
         }
         ret
     } else {
@@ -165,9 +179,9 @@ pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64
     let s = unsafe { &mut *(opaque as *mut VirtmcuActuatorQEMU) };
 
     if addr == REG_ACTUATOR_ID {
-        s.actuator_id = val as u32;
+        s.actuator_id = u32::try_from(val).expect("actuator_id truncated");
     } else if addr == REG_DATA_SIZE {
-        s.data_size = val as u32;
+        s.data_size = u32::try_from(val).expect("data_size truncated");
         if s.data_size > 8 {
             s.data_size = 8;
         }
@@ -181,9 +195,13 @@ pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64
         let offset = ((addr - REG_DATA_START) % 8) as usize;
         if offset + (size as usize) <= 8 {
             let val_bytes = val.to_le_bytes();
-            let mut data_bytes = s.data[idx].to_le_bytes();
-            data_bytes[offset..offset + size as usize].copy_from_slice(&val_bytes[..size as usize]);
-            s.data[idx] = f64::from_le_bytes(data_bytes);
+            let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
+            if let (Some(dest), Some(src)) =
+                (data_bytes.get_mut(offset..offset + size as usize), val_bytes.get(..size as usize))
+            {
+                dest.copy_from_slice(src);
+                *s.data.get_mut(idx).expect("idx out of bounds") = f64::from_le_bytes(data_bytes);
+            }
         }
     } else if s.debug {
         virtmcu_qom::sim_warn!("actuator_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
@@ -413,9 +431,10 @@ fn actuator_publish(
     }
     let _guard = VcpuCountGuard(&state.shared);
 
-    let vtime_ns =
-        unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) }
-            as u64;
+    let vtime_ns = u64::try_from(unsafe {
+        virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
+    })
+    .expect("vtime is negative");
 
     let topic = format!("{}/{}/{}", state.shared.topic_prefix, state.shared.node_id, actuator_id);
     let mut data_payload = Vec::with_capacity((data_size as usize) * 8);
@@ -432,89 +451,6 @@ fn actuator_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Dummy symbols to satisfy the linker during cargo test
-    #[no_mangle]
-    pub extern "C" fn qemu_clock_get_ns(_: i32) -> i64 {
-        0
-    }
-    #[no_mangle]
-    pub extern "C" fn register_dso_module_init(_: *const c_void, _: i32) {}
-    #[no_mangle]
-    pub extern "C" fn type_register_static(_: *const c_void) {}
-    #[no_mangle]
-    pub extern "C" fn object_class_dynamic_cast_assert(
-        _: *mut c_void,
-        _: *const c_char,
-        _: *const c_char,
-        _: i32,
-        _: *const c_char,
-    ) -> *mut c_void {
-        ptr::null_mut()
-    }
-    #[no_mangle]
-    pub extern "C" fn device_class_set_props_n(_: *mut c_void, _: *const c_void) {}
-    #[no_mangle]
-    pub extern "C" fn object_class_property_add_link(
-        _: *mut c_void,
-        _: *const c_char,
-        _: *const c_char,
-        _: isize,
-        _: Option<unsafe extern "C" fn()>,
-        _: i32,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn memory_region_init_io(
-        _: *mut c_void,
-        _: *mut c_void,
-        _: *const c_void,
-        _: *mut c_void,
-        _: *const c_char,
-        _: u64,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn sysbus_init_mmio(_: *mut c_void, _: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn object_property_set_bool(
-        _: *mut c_void,
-        _: *const c_char,
-        _: bool,
-        _: *mut *mut c_void,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn object_property_get_uint(
-        _: *mut c_void,
-        _: *const c_char,
-        _: *mut *mut c_void,
-    ) -> u64 {
-        0
-    }
-    #[no_mangle]
-    pub static mut qdev_prop_uint32: [u8; 1] = [0];
-    #[no_mangle]
-    pub static mut qdev_prop_string: [u8; 1] = [0];
-    #[no_mangle]
-    pub static mut qdev_prop_bool: [u8; 1] = [0];
-    #[no_mangle]
-    pub extern "C" fn virtmcu_is_bql_locked() -> bool {
-        false
-    }
-    #[no_mangle]
-    pub extern "C" fn virtmcu_safe_bql_unlock() {}
-    #[no_mangle]
-    pub extern "C" fn virtmcu_safe_bql_force_lock() {}
-    #[no_mangle]
-    pub unsafe extern "C" fn error_setg_internal(
-        _: *mut *mut c_void,
-        _: *const c_char,
-        _: i32,
-        _: *const c_char,
-        _: *const c_char,
-    ) {
-    }
 
     #[test]
     fn test_actuator_qemu_layout() {

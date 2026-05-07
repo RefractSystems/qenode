@@ -78,7 +78,7 @@ impl QuantumBarrier {
     }
 
     pub fn reset(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("state lock poisoned");
         state.quanta.clear();
     }
 
@@ -89,7 +89,7 @@ impl QuantumBarrier {
         _expected_quantum: u64,
         mut messages: Vec<CoordMessage>,
     ) -> Result<Option<Vec<CoordMessage>>, BarrierError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("state lock poisoned");
         let current = self.current_quantum.load(AtomicOrdering::SeqCst);
 
         if quantum < current {
@@ -118,7 +118,10 @@ impl QuantumBarrier {
         while let Some(current_q_data) = state.quanta.get(&current_q) {
             if current_q_data.done_nodes.len() == self.n_nodes {
                 // We have a complete quantum!
-                let mut data = state.quanta.remove(&current_q).unwrap();
+                let mut data = state
+                    .quanta
+                    .remove(&current_q)
+                    .expect("quantum data missing despite get() succeeding");
                 data.messages.sort();
                 all_sorted_msgs.extend(data.messages);
 
@@ -146,8 +149,11 @@ impl QuantumBarrier {
     }
 
     pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
-        let state = self.state.lock().unwrap();
-        let (_state, wait_result) = self.all_done_cond.wait_timeout(state, timeout).unwrap();
+        let state = self.state.lock().expect("state lock poisoned");
+        let (_state, wait_result) = self
+            .all_done_cond
+            .wait_timeout(state, timeout)
+            .expect("all_done_cond wait poisoned");
 
         if wait_result.timed_out() {
             Err(BarrierError::Timeout)
@@ -178,15 +184,15 @@ mod tests {
         let barrier = QuantumBarrier::new(3, 1024);
         assert!(barrier
             .submit_done("0".to_owned(), 1, 1, vec![])
-            .unwrap()
+            .expect("test should succeed")
             .is_none());
         assert!(barrier
             .submit_done("1".to_owned(), 1, 1, vec![])
-            .unwrap()
+            .expect("test should succeed")
             .is_none());
         assert!(barrier
             .submit_done("2".to_owned(), 1, 1, vec![])
-            .unwrap()
+            .expect("test should succeed")
             .is_some());
     }
 
@@ -195,14 +201,14 @@ mod tests {
         let barrier = QuantumBarrier::new(3, 1024);
         barrier
             .submit_done("2".to_owned(), 1, 1, vec![dummy_msg(10, 0, "2")])
-            .unwrap();
+            .expect("test should succeed");
         barrier
             .submit_done("0".to_owned(), 1, 1, vec![dummy_msg(10, 0, "0")])
-            .unwrap();
+            .expect("test should succeed");
         let sorted = barrier
             .submit_done("1".to_owned(), 1, 1, vec![dummy_msg(10, 0, "1")])
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
 
         assert_eq!(sorted.len(), 3);
         assert_eq!(sorted[0].src_node_id, "0");
@@ -215,14 +221,14 @@ mod tests {
         let barrier = QuantumBarrier::new(3, 1024);
         barrier
             .submit_done("0".to_owned(), 1, 1, vec![dummy_msg(30, 0, "0")])
-            .unwrap();
+            .expect("test should succeed");
         barrier
             .submit_done("1".to_owned(), 1, 1, vec![dummy_msg(10, 0, "1")])
-            .unwrap();
+            .expect("test should succeed");
         let sorted = barrier
             .submit_done("2".to_owned(), 1, 1, vec![dummy_msg(20, 0, "2")])
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
 
         assert_eq!(sorted.len(), 3);
         assert_eq!(sorted[0].delivery_vtime_ns, 10);
@@ -233,25 +239,31 @@ mod tests {
     #[test]
     fn test_barrier_reset_allows_next_quantum() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
-        barrier.submit_done("1".to_owned(), 1, 1, vec![]).unwrap();
+        barrier
+            .submit_done("0".to_owned(), 1, 1, vec![])
+            .expect("test should succeed");
+        barrier
+            .submit_done("1".to_owned(), 1, 1, vec![])
+            .expect("test should succeed");
 
         barrier.reset();
 
         assert!(barrier
             .submit_done("0".to_owned(), 2, 2, vec![])
-            .unwrap()
+            .expect("test should succeed")
             .is_none());
         assert!(barrier
             .submit_done("1".to_owned(), 2, 2, vec![])
-            .unwrap()
+            .expect("test should succeed")
             .is_some());
     }
 
     #[test]
     fn test_barrier_duplicate_done_rejected() {
         let barrier = QuantumBarrier::new(2, 1024);
-        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
+        barrier
+            .submit_done("0".to_owned(), 1, 1, vec![])
+            .expect("test should succeed");
         assert!(matches!(
             barrier.submit_done("0".to_owned(), 1, 1, vec![]),
             Err(BarrierError::DuplicateDone)
@@ -266,14 +278,20 @@ mod tests {
         let barrier = QuantumBarrier::new(2, 1024);
 
         // Quantum 1
-        barrier.submit_done("0".to_owned(), 1, 1, vec![]).unwrap();
-        let res = barrier.submit_done("1".to_owned(), 1, 1, vec![]).unwrap();
+        barrier
+            .submit_done("0".to_owned(), 1, 1, vec![])
+            .expect("test should succeed");
+        let res = barrier
+            .submit_done("1".to_owned(), 1, 1, vec![])
+            .expect("test should succeed");
         assert!(res.is_some()); // Quantum 1 finished
 
         // Node 0 is fast and sends 'done' for Quantum 2 immediately.
         // Even if the coordinator loop hasn't reached its own b.reset() call,
         // the barrier is already fresh.
-        let res2 = barrier.submit_done("0".to_owned(), 2, 2, vec![]).unwrap();
+        let res2 = barrier
+            .submit_done("0".to_owned(), 2, 2, vec![])
+            .expect("test should succeed");
 
         assert!(
             res2.is_none(),
@@ -294,8 +312,8 @@ mod tests {
 
         let result = barrier
             .submit_done("0".to_owned(), 1, 1, msgs)
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
         assert_eq!(result.len(), 3);
     }
 
@@ -325,8 +343,8 @@ mod tests {
             let barrier = QuantumBarrier::new(1, max_msgs);
             let result = barrier
                 .submit_done("0".to_owned(), 1, 1, msgs)
-                .unwrap()
-                .unwrap();
+                .expect("test should succeed")
+                .expect("test should succeed");
             assert_eq!(result.len(), 2);
 
             if let Some(expected) = &expected_result {
@@ -353,8 +371,8 @@ mod tests {
 
         let result = barrier
             .submit_done("0".to_owned(), 1, 1, msgs)
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].delivery_vtime_ns, 5);
@@ -378,8 +396,8 @@ mod tests {
 
         let result = barrier
             .submit_done("0".to_owned(), 1, 1, msgs)
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
         assert_eq!(result.len(), 3);
     }
 
@@ -388,8 +406,8 @@ mod tests {
         let barrier = QuantumBarrier::new(1, 3);
         let result = barrier
             .submit_done("0".to_owned(), 1, 1, vec![])
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
         assert_eq!(result.len(), 0);
     }
 
@@ -406,8 +424,8 @@ mod tests {
 
         let result = barrier
             .submit_done("0".to_owned(), 1, 1, msgs)
-            .unwrap()
-            .unwrap();
+            .expect("test should succeed")
+            .expect("test should succeed");
 
         assert_eq!(result.len(), max_msgs);
         assert_eq!(result[0].delivery_vtime_ns, 0);

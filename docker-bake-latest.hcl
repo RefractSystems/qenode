@@ -34,10 +34,10 @@ target "toolchain" {
   ]
 }
 
-target "devenv-base" {
+target "devenv" {
   tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:latest-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv-base:${IMAGE_TAG}-${ARCH}"
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:latest-${ARCH}",
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"
   ]
 }
 

@@ -35,18 +35,18 @@ if TYPE_CHECKING:
 # Re-exporting fixtures so pytest finds them
 __all__ = [
     "VirtualTimeAuthority",
+    "deterministic_coordinator",
+    "deterministic_coordinator_bin",
+    "get_free_port",
+    "guest_app_factory",
+    "inspection_bridge",
     "pytest_collection_modifyitems",
     "pytest_runtest_makereport",
     "qemu_launcher",
     "qmp_bridge",
     "script_runner",
-    "inspection_bridge",
     "simulation",
     "time_authority",
-    "deterministic_coordinator",
-    "deterministic_coordinator_bin",
-    "get_free_port",
-    "guest_app_factory",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -133,12 +133,6 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     """Session start hook."""
     violations = _scan_subprocess_in_test_bodies(session.config.rootpath)
     if violations:
-        print("\n" + "=" * 80)  # noqa: T201
-        print("ERROR: Manual subprocess spawning detected in test bodies.")  # noqa: T201
-        print("Standard VirtMCU tests MUST NOT spawn processes manually.")  # noqa: T201
-        print("Use standard fixtures (qemu_launcher, deterministic_coordinator, etc.) instead.")  # noqa: T201
-        print("-" * 80)  # noqa: T201
-        for v in violations:
-            print(f"  * {v}")  # noqa: T201
-        print("=" * 80 + "\n")  # noqa: T201
+        for _v in violations:
+            pass
         pytest.exit("Aborting due to simulation hygiene violations", returncode=1)

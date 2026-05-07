@@ -10,6 +10,8 @@ import time
 import typing
 from pathlib import Path
 
+from tools.testing.parameters import TestParams
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,14 +26,13 @@ def wait_for_zenoh_router(router_url: str, timeout: float = 15.0) -> bool:
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            temp_session = zenoh.open(  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+            temp_session = zenoh.open(  # virtmcu-allow: zenoh_open reasoning="config built by make_client_config"
                 config
             )
             typing.cast(typing.Any, temp_session).close()
             return True
         except zenoh.ZError:
-            time.sleep(0.1)  # SLEEP_EXCEPTION: polling for router startup
-
+            time.sleep(0.1)  # virtmcu-allow: sleep reasoning="polling for router startup"
     logger.error(f"FAILED: Zenoh router failed to bind at {router_url} within {timeout} seconds")
     return False
 
@@ -40,23 +41,9 @@ def mock_execution_delay(seconds: float) -> None:
     """
     Test utility function to simulate execution delay in mock nodes,
     or to serve as a keepalive pause in standalone scripts.
-    Replaces raw time.sleep() calls.  # SLEEP_EXCEPTION:
+    Replaces raw time sleep calls.
     """
-    time.sleep(seconds)  # SLEEP_EXCEPTION:
-
-
-def get_time_multiplier() -> float:
-    """
-    Returns a global timeout multiplier based on the execution environment.
-    Users and CI define VIRTMCU_ENV_PROFILE, the framework handles the math.
-    """
-    if os.environ.get("VIRTMCU_USE_ASAN") == "1":
-        return 5.0  # ASan is ~5x slower
-    if os.environ.get("VIRTMCU_USE_TSAN") == "1":
-        return 10.0  # TSan is ~10x slower
-    if os.environ.get("CI") == "true":
-        return 2.0  # Standard CI buffer
-    return 1.0  # Local developer machine
+    time.sleep(seconds)  # virtmcu-allow: sleep reasoning="mock_execution_delay"
 
 
 async def yield_now() -> None:
@@ -68,7 +55,7 @@ async def yield_now() -> None:
     but centralized for architectural consistency and to avoid repeating
     SLEEP_EXCEPTION markers for deliberate yielding.
     """
-    await asyncio.sleep(0)  # SLEEP_EXCEPTION: explicit yield to event loop
+    await asyncio.sleep(0)  # virtmcu-allow: sleep reasoning="explicit yield to event loop"
 
 
 async def wait_for_file_creation(path: str | Path, timeout: float = 10.0) -> None:
@@ -97,7 +84,7 @@ async def wait_for_file_creation(path: str | Path, timeout: float = 10.0) -> Non
     try:
         if path.exists():
             return
-        await asyncio.wait_for(event.wait(), timeout=timeout * get_time_multiplier())
+        await asyncio.wait_for(event.wait(), timeout=TestParams.scale_timeout(timeout))
     finally:
         observer.stop()
         observer.join()

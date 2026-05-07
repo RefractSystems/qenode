@@ -2,8 +2,8 @@
 set -euo pipefail
 
 echo "==> Seeding Claude configuration..."
-HOST_CLAUDE_JSON="/home/vscode/.claude.json.host"
-DEST_CLAUDE_JSON="/home/vscode/.claude.json"
+HOST_CLAUDE_JSON="/home/vscode/.claude.json.host" # virtmcu-allow: absolute_path reasoning="Legacy script"
+DEST_CLAUDE_JSON="/home/vscode/.claude.json" # virtmcu-allow: absolute_path reasoning="Legacy script"
 if [ -f "$HOST_CLAUDE_JSON" ] && python3 -c "import json; json.load(open('$HOST_CLAUDE_JSON'))" 2>/dev/null; then
     cp "$HOST_CLAUDE_JSON" "$DEST_CLAUDE_JSON"
     echo "    Copied valid .claude.json from host."

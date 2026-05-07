@@ -43,8 +43,7 @@ async def test_bql_qmp_deadlock(simulation: Simulation, guest_app_factory: Calla
     simulation.add_node(node_id=0, dtb=dtb, kernel=kernel, extra_args=extra_args)
     async with simulation as sim:
         # 1. Advance to first boundary (0 ns sync)
-        await sim.vta.step(0)  # LINT_EXCEPTION: vta_step_loop
-
+        await sim.vta.step(0)  # virtmcu-allow: lint reasoning="vta_step_loop"
         # 2. Issue a large step and blast QMP concurrently
         step_task = asyncio.create_task(sim.vta.step(50_000_000))
         qmp_task = asyncio.create_task(_qmp_worker(sim))

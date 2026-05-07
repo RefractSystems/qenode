@@ -33,8 +33,7 @@ async def test_wireshark_extcap_capture(zenoh_router: str, zenoh_session: zenoh.
 
     async with ManagedSubprocess("extcap", extcap_cmd) as _proc:
         # Wait a bit for it to connect and write the global header
-        await asyncio.sleep(2)  # SLEEP_EXCEPTION: observability capture wait
-
+        await asyncio.sleep(2)  # virtmcu-allow: sleep reasoning="observability capture wait"
         # 2. Publish some CoordMessages to Zenoh
         from tools import vproto
 
@@ -57,11 +56,10 @@ async def test_wireshark_extcap_capture(zenoh_router: str, zenoh_session: zenoh.
         zenoh_session.put("sim/coord/2/rx", msg_data)
 
         # Wait for capture
-        await asyncio.sleep(2)  # SLEEP_EXCEPTION: observability capture wait
-
+        await asyncio.sleep(2)  # virtmcu-allow: sleep reasoning="observability capture wait"
     # 3. Verify PCAP file
     assert pcap_path.exists()
-    with open(pcap_path, "rb") as f:
+    with pcap_path.open("rb") as f:
         data = f.read()
 
     # PCAP Global Header (24 bytes)
@@ -70,18 +68,16 @@ async def test_wireshark_extcap_capture(zenoh_router: str, zenoh_session: zenoh.
 
     # Packet Header (16 bytes) + DLT_USER0 Header (10 bytes) + Payload
     packet_start = 24
-    ts_sec = int.from_bytes(data[packet_start : packet_start + 4], "little")  # LINT_EXCEPTION: int_from_bytes
-    ts_usec = int.from_bytes(data[packet_start + 4 : packet_start + 8], "little")  # LINT_EXCEPTION: int_from_bytes
-
+    ts_sec = int.from_bytes(data[packet_start : packet_start + 4], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+    ts_usec = int.from_bytes(data[packet_start + 4 : packet_start + 8], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
     assert ts_sec == 1
     assert ts_usec == 234_567
 
     # DLT_USER0 Header
     dlt_start = packet_start + 16
-    p_src = int.from_bytes(data[dlt_start : dlt_start + 4], "little")  # LINT_EXCEPTION: int_from_bytes
-    p_dst = int.from_bytes(data[dlt_start + 4 : dlt_start + 8], "little")  # LINT_EXCEPTION: int_from_bytes
-    p_proto = int.from_bytes(data[dlt_start + 8 : dlt_start + 10], "little")  # LINT_EXCEPTION: int_from_bytes
-
+    p_src = int.from_bytes(data[dlt_start : dlt_start + 4], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+    p_dst = int.from_bytes(data[dlt_start + 4 : dlt_start + 8], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+    p_proto = int.from_bytes(data[dlt_start + 8 : dlt_start + 10], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
     assert p_src == src
     assert p_dst == dst
     assert p_proto == 2  # UART
@@ -107,8 +103,7 @@ async def test_wireshark_extcap_stress(zenoh_router: str, zenoh_session: zenoh.S
     ]
 
     async with ManagedSubprocess("extcap_stress", extcap_cmd) as _proc:
-        await asyncio.sleep(2)  # SLEEP_EXCEPTION: observability capture wait
-
+        await asyncio.sleep(2)  # virtmcu-allow: sleep reasoning="observability capture wait"
         from tools import vproto
 
         payload = b"STRESS"
@@ -126,12 +121,10 @@ async def test_wireshark_extcap_stress(zenoh_router: str, zenoh_session: zenoh.S
             zenoh_session.put("sim/coord/2/rx", msg_data)
 
             if i % 100 == 0:
-                await asyncio.sleep(0.01)  # SLEEP_EXCEPTION: yield to let dumper process
-
-        await asyncio.sleep(3)  # SLEEP_EXCEPTION: observability capture wait
-
+                await asyncio.sleep(0.01)  # virtmcu-allow: sleep reasoning="yield to let dumper process"
+        await asyncio.sleep(3)  # virtmcu-allow: sleep reasoning="observability capture wait"
     assert pcap_path.exists()
-    with open(pcap_path, "rb") as f:
+    with pcap_path.open("rb") as f:
         data = f.read()
 
     expected_packet_size = 16 + 10 + 6
@@ -158,8 +151,7 @@ async def test_wireshark_extcap_legacy_capture(zenoh_router: str, zenoh_session:
     ]
 
     async with ManagedSubprocess("extcap_legacy", extcap_cmd) as _proc:
-        await asyncio.sleep(2)  # SLEEP_EXCEPTION: observability capture wait
-
+        await asyncio.sleep(2)  # virtmcu-allow: sleep reasoning="observability capture wait"
         from tools import vproto
 
         vtime = 2_000_000_000
@@ -168,13 +160,14 @@ async def test_wireshark_extcap_legacy_capture(zenoh_router: str, zenoh_session:
 
         zenoh_session.put("sim/comm/uart/5/rx", header + payload)
 
-        await asyncio.sleep(2)  # SLEEP_EXCEPTION: observability capture wait
-
+        await asyncio.sleep(2)  # virtmcu-allow: sleep reasoning="observability capture wait"
     assert pcap_path.exists()
-    with open(pcap_path, "rb") as f:
+    with pcap_path.open("rb") as f:
         data = f.read()
 
     assert len(data) > 24 + 16 + 10
     packet_start = 24
-    ts_sec = int.from_bytes(data[packet_start : packet_start + 4], "little")  # LINT_EXCEPTION: int_from_bytes
+    ts_sec = int.from_bytes(  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+        data[packet_start : packet_start + 4], "little"
+    )
     assert ts_sec == 2

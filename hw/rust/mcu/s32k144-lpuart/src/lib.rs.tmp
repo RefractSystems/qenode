@@ -1,0 +1,13 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_s32k144_lpuart_qemu_layout() {
+        assert_eq!(
+            core::mem::offset_of!(S32K144LpuartQemu, parent_obj),
+            0,
+            "SysBusDevice must be the first field"
+        );
+    }
+}

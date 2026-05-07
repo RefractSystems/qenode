@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from tools.testing.virtmcu_test_suite.simulation import Simulation
 
 
-from tools.lin_fbs.virtmcu.lin import LinFrame, LinMessageType
+from generated.virtmcu.lin import LinFrame, LinMessageType
 from tools.testing.virtmcu_test_suite.factory import compile_dtb, compile_firmware
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ async def test_multi_node_lin(
             data = bytes([frame.Data(i) for i in range(data_len)])  # type: ignore[misc]
             logger.info(f"Bus: {topic} type={msg_type} data={data!r}")
             bus_messages.append((topic, msg_type, data))
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Ignored")
 
     from tools.testing.virtmcu_test_suite.topics import SimTopic

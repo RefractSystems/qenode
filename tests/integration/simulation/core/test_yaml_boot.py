@@ -5,6 +5,7 @@ Verify that a platform defined in YAML can boot and print "HI".
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("VIRTMCU_USE_ASAN") == "1",
+    reason="YAML boot uses too much memory under ASan and triggers OOM killer (rc=-9) in CI",
+)
 async def test_yaml_platform_boot(
     simulation: Simulation, tmp_path: Path, guest_app_factory: Callable[[str], Path]
 ) -> None:
@@ -35,6 +40,6 @@ async def test_yaml_platform_boot(
     # Boot and check UART using Simulation
     simulation.add_node(node_id=0, dtb=dtb, kernel=kernel)
     async with simulation as sim:
-        await sim.vta.step(100_000_000)  # LINT_EXCEPTION: vta_step_loop
+        await sim.vta.step(100_000_000)  # virtmcu-allow: lint reasoning="vta_step_loop"
         assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("HI", timeout=5.0)

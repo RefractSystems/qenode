@@ -113,9 +113,16 @@ def main() -> None:
         ]
     )
 
-    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+
+    try:
+        qemu_bin = str(resolve_qemu_binary(arch="arm"))
+    except Exception:
+        build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+        qemu_bin = f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm"
+
     qemu_cmd = [
-        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
+        qemu_bin,
         "-M",
         "arm-generic-fdt,hw-dtb=" + dtb_path,
         "-kernel",
@@ -151,7 +158,7 @@ def main() -> None:
     conn.sendall(hs)
 
     logger.info("Starting IRQ stress test...")
-    NUM_IRQS = 1000  # noqa: N806
+    NUM_IRQS = 1000
     start_time = time.time()
     for i in range(NUM_IRQS):
         conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 0, 0).pack())

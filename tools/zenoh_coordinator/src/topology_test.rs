@@ -10,7 +10,7 @@ topology:
     - type: uart
       nodes: [0, 1]
     "#;
-    let world: YamlWorld = serde_yaml::from_str(yaml_str).unwrap();
-    let topo = world.topology.unwrap();
+    let world: YamlWorld = serde_yaml::from_str(yaml_str).expect("test should succeed");
+    let topo = world.topology.expect("test should succeed");
     assert_eq!(topo.links[0].nodes[0], "0");
 }

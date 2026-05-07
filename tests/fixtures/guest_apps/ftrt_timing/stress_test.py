@@ -23,7 +23,7 @@ def main() -> None:
         try:
             z_session = open_client_session(connect=os.environ.get("VIRTMCU_ZENOH_ROUTER", "tcp/localhost:7447"))
             typing.cast(typing.Any, z_session).close()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"Worker failed: {e}")
 
     threads = []

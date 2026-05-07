@@ -57,7 +57,7 @@ This file serves as a historical record of completed milestones and tasks in the
 - [x] **1.1** `scripts/install-deps.sh`.
 - [x] **1.2** Minimal `tests/fixtures/guest_apps/boot_arm/minimal.dts`.
 - [x] **1.3** `scripts/run.sh` skeleton.
-- [x] **1.4** Smoke-test: boot minimal DTB.
+- [x] **1.4** System Integration: boot minimal DTB.
 - [x] **1.5** Tutorial lesson 1.
 
 ---

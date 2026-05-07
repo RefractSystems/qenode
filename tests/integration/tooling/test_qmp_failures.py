@@ -54,7 +54,7 @@ async def test_qemu_crash_handling(simulation: Simulation, tmp_path: Path) -> No
         async def poll_until_fail() -> None:
             for _ in range(20):
                 await bridge.execute("query-status")
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: waiting for OS to reclaim resources
+                await asyncio.sleep(0.1)  # virtmcu-allow: sleep reasoning="waiting for OS to reclaim resources"
 
         with pytest.raises(Exception, match=".*"):
             await poll_until_fail()

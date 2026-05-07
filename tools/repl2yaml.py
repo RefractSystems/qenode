@@ -29,7 +29,7 @@ def migrate(repl_path: str, yaml_path: str) -> None:
     # We try to infer a sensible machine name from the filename
     machine_name = Path(repl_path).stem
 
-    output: dict[str, Any] = {
+    output: dict[str, Any] = {  # virtmcu-allow: raw_yaml_lookup reasoning="Legacy script"
         "machine": {"name": machine_name, "type": "arm-generic-fdt", "cpus": []},
         "peripherals": [],
     }
@@ -38,7 +38,7 @@ def migrate(repl_path: str, yaml_path: str) -> None:
         # Separate CPUs from Peripherals for better hierarchical structure
         if "CPU" in dev.type_name:
             cpu_info = {"name": dev.name, "type": dev.properties.get("cpuType", "cortex-a15"), "memory": "sysmem"}
-            output["machine"]["cpus"].append(cpu_info)
+            output["machine"]["cpus"].append(cpu_info)  # virtmcu-allow: raw_yaml_key reasoning="Legacy script"
             continue
 
         # Normal peripheral
@@ -60,7 +60,7 @@ def migrate(repl_path: str, yaml_path: str) -> None:
         # Standard virtmcu requirement: everything connects to sysmem
         p["container"] = "sysmem"
 
-        output["peripherals"].append(p)
+        output["peripherals"].append(p)  # virtmcu-allow: raw_yaml_key reasoning="Legacy script"
 
     logger.info(f"Writing virtmcu YAML: {yaml_path}")
     with Path(yaml_path).open("w") as f:
@@ -74,7 +74,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    out_path = args.out if args.out else Path(args.input).stem + ".yaml"
+    out_path = args.out or Path(args.input).stem + ".yaml"
     migrate(args.input, out_path)
 
 

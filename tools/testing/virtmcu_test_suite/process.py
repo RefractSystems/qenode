@@ -11,7 +11,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,7 +45,7 @@ class AsyncManagedProcess:
 
     async def wait_for_line(self, pattern: str, target: str = "stdout", timeout: float = 10.0) -> bool | None:
         if timeout is not None:
-            timeout *= get_time_multiplier()
+            timeout *= TestParams.multiplier()
         import re
 
         regex = re.compile(pattern)
@@ -128,7 +128,7 @@ class AsyncManagedProcess:
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=self.graceful_timeout)
             except TimeoutError:
-                logger.warning(f"Process {self.args[0]} did not terminate gracefully, killing it.")
+                logger.error(f"Process {self.args[0]} did not terminate gracefully, killing it.")
                 self.proc.kill()
                 await self.proc.wait()
 

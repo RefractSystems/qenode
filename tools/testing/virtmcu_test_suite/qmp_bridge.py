@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, cast
 from qemu.qmp import QMPClient
 from qemu.qmp.protocol import StateError
 
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 # Suppress expected EOFError noise from qemu.qmp.protocol when QEMU stops
@@ -69,7 +69,7 @@ class QmpBridge:
 
         while True:
             try:
-                await asyncio.sleep(2.0)  # SLEEP_EXCEPTION: watchdog check frequency
+                await asyncio.sleep(2.0)  # virtmcu-allow: sleep reasoning="watchdog check frequency"
                 if not self.qmp:
                     continue
                 current_vtime = await self.get_virtual_time_ns()
@@ -84,7 +84,7 @@ class QmpBridge:
                     self._stalled_error = f"Guest OS deadlocked! Virtual time stalled at {current_vtime}ns for {max_stalls * 2}s of wall-clock time."
                     logger.error(self._stalled_error)
                     break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 break
 
     def start_hang_watchdog(self) -> None:
@@ -115,7 +115,7 @@ class QmpBridge:
             loop = asyncio.get_running_loop()
 
             def on_vtime(sample: zenoh.Sample) -> None:
-                vtime = int.from_bytes(sample.payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
+                vtime = int.from_bytes(sample.payload.to_bytes(), "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
 
                 async def update() -> None:
                     async with self.vtime_condition:
@@ -173,7 +173,7 @@ class QmpBridge:
         """
         self._check_stalled()
         if timeout is not None:
-            timeout *= get_time_multiplier()
+            timeout *= TestParams.multiplier()
 
         start_vtime = await self.get_virtual_time_ns()
         start_wall = asyncio.get_running_loop().time()
@@ -238,7 +238,7 @@ class QmpBridge:
         """
         self._check_stalled()
         if timeout is not None:
-            timeout *= get_time_multiplier()
+            timeout *= TestParams.multiplier()
 
         loop = asyncio.get_running_loop()
         start_wall_time = loop.time()
@@ -270,7 +270,7 @@ class QmpBridge:
         """
         self._check_stalled()
         if timeout_wall is not None:
-            timeout_wall *= get_time_multiplier()
+            timeout_wall *= TestParams.multiplier()
 
         loop = asyncio.get_running_loop()
         start_wall = loop.time()

@@ -44,7 +44,7 @@ def main() -> None:
     logger.info("Router running. Press Ctrl+C to exit.")
     try:
         while True:
-            mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
+            mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="keepalive loop"
     except KeyboardInterrupt:
         pass
     typing.cast(typing.Any, session).close()

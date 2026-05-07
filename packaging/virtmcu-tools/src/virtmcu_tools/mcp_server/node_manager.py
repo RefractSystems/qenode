@@ -4,17 +4,19 @@ import asyncio
 import io
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import zenoh
 
 from virtmcu_tools.qmp_bridge import QmpBridge
-
-if TYPE_CHECKING:
-    import zenoh
+from virtmcu_tools.repl2qemu.__main__ import main as repl2qemu_main
+from virtmcu_tools.utils import wait_for_file_creation, yield_now
+from virtmcu_tools.yaml2qemu import main as yaml2qemu_main
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,6 @@ class NodeManager:
 
     def get_zenoh_session(self) -> zenoh.Session:
         """Returns the Zenoh session, opening it if necessary."""
-        import zenoh
 
         if self._zenoh_session is None:
             conf = zenoh.Config()
@@ -92,8 +93,6 @@ class NodeManager:
         try:
             with redirect_stdout(f_out), redirect_stderr(f_err):
                 if config_type == "yaml":
-                    from virtmcu_tools.yaml2qemu import main as yaml2qemu_main
-
                     old_argv = sys.argv
                     sys.argv = ["yaml2qemu", "--out-dtb", dtb_path, path]
                     try:
@@ -105,7 +104,6 @@ class NodeManager:
                         sys.argv = old_argv
                 else:
                     # REPL validation
-                    from virtmcu_tools.repl2qemu.__main__ import main as repl2qemu_main
 
                     old_argv = sys.argv
                     sys.argv = ["repl2qemu", path, "--out-dtb", dtb_path]
@@ -183,8 +181,6 @@ class NodeManager:
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
 
-        from virtmcu_tools.utils import wait_for_file_creation, yield_now
-
         # Wait for sockets deterministically
         try:
             wait_tasks = [
@@ -232,8 +228,6 @@ class NodeManager:
             raise
 
         try:
-            import re
-
             match = re.search(r"node(\d+)", node_id)
             n_id = int(match.group(1)) if match else None
 

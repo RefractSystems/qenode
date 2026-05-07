@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 """
 SOTA Test Module: test_topology_enforcement
 
@@ -20,11 +20,7 @@ import pytest
 import yaml
 import zenoh
 
-from tools import vproto
-from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
-from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
-from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
-from tools.testing.virtmcu_test_suite.generated import (
+from generated.world_schema import (
     Node,
     NodeID,
     Protocol,
@@ -32,6 +28,10 @@ from tools.testing.virtmcu_test_suite.generated import (
     WireLink,
     World,
 )
+from tools import vproto
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,9 @@ async def test_topology_enforcement(zenoh_router: str, zenoh_session: zenoh.Sess
         while not rx_event.is_set():
             pub_uart_tx0.put(header + msg)
             try:
-                await asyncio.wait_for(rx_event.wait(), timeout=0.1)
+                from tools.testing.parameters import TestParams
+
+                await asyncio.wait_for(rx_event.wait(), timeout=TestParams.scale_timeout(0.1))
             except TimeoutError:
                 pass
 
@@ -116,7 +118,9 @@ async def test_topology_enforcement(zenoh_router: str, zenoh_session: zenoh.Sess
             pub_eth_tx0.put(header + b"BANNED")
             pub_uart_tx0.put(header + b"PROBE")
             try:
-                await asyncio.wait_for(rx_event.wait(), timeout=1.0)
+                from tools.testing.parameters import TestParams
+
+                await asyncio.wait_for(rx_event.wait(), timeout=TestParams.scale_timeout(1.0))
                 if any(b"PROBE" in m for m in received_uart_node1):
                     break
                 rx_event.clear()

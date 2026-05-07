@@ -8,9 +8,9 @@ async fn main() {
         std::process::exit(1);
     }
     let resd_file = &args[1];
-    let node_id: u32 = args[2].parse().unwrap();
+    let node_id: u32 = args[2].parse().expect("IO error during setup");
     let delta_ns: u64 = if args.len() >= 4 {
-        args[3].parse().unwrap()
+        args[3].parse().expect("IO error during setup")
     } else {
         1_000_000
     };
@@ -45,9 +45,9 @@ async fn main() {
         };
         config
             .insert_json5("connect/endpoints", &json_connect)
-            .unwrap();
+            .expect("IO error during setup");
     }
-    let session = zenoh::open(config).await.unwrap();
+    let session = zenoh::open(config).await.expect("IO error during setup");
 
     println!("Zenoh session opened successfully.");
     let topic_prefix = env::var("ZENOH_TOPIC_PREFIX").unwrap_or_else(|_| "sim/clock".to_owned());
@@ -66,7 +66,7 @@ async fn main() {
             .get(&advance_topic)
             .payload(req_bytes.to_vec())
             .await
-            .unwrap();
+            .expect("IO error during setup");
         let mut got_reply = false;
 
         while let Ok(reply) = replies.recv_async().await {
@@ -75,7 +75,7 @@ async fn main() {
                 if payload.len() == virtmcu_api::CLOCK_READY_RESP_SIZE {
                     let mut arr = [0u8; virtmcu_api::CLOCK_READY_RESP_SIZE];
                     arr.copy_from_slice(&payload);
-                    let resp = ClockReadyResp::unpack_slice(&arr).unwrap();
+                    let resp = ClockReadyResp::unpack_slice(&arr).expect("IO error during setup");
                     current_vtime_ns = resp.current_vtime_ns();
                     got_reply = true;
                 } else {

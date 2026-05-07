@@ -67,7 +67,7 @@ def wait_for_socket(path: str, timeout: float = 5.0) -> bool:
     while time.time() < deadline:
         if Path(path).is_socket():
             return True
-        mock_execution_delay(0.05)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+        mock_execution_delay(0.05)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     return False
 
 
@@ -84,7 +84,7 @@ def run_tests(adapter_bin: str) -> bool | None:
                     out, err = proc.communicate(timeout=2)
                     stdout_str = out.decode() if out else ""
                     stderr_str = err.decode() if err else ""
-                except Exception:  # noqa: BLE001
+                except Exception:
                     stdout_str = "failed to capture"
                     stderr_str = "failed to capture"
 
@@ -201,7 +201,7 @@ def run_tests(adapter_bin: str) -> bool | None:
                     logger.info("T7 PASS: Asynchronous IRQ CLEAR")
 
                 # ── T6: throughput / latency benchmark ────────────────────────────
-                N = 1000  # noqa: N806
+                N = 1000
                 t0 = time.monotonic()
                 for i in range(N):
                     send_req(s, MMIO_REQ_WRITE, 4, addr=0, data=i)

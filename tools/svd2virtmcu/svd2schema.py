@@ -1,6 +1,6 @@
 import argparse
 import json
-import os
+from pathlib import Path
 
 from cmsis_svd.model import SVDPeripheral, SVDRegister
 from cmsis_svd.parser import SVDParser
@@ -54,10 +54,10 @@ def generate_schema(svd_path: str, template_path: str, output_path: str, world_i
                 )
 
     env = Environment(
-        loader=FileSystemLoader(os.path.dirname(template_path)),
+        loader=FileSystemLoader(Path(template_path).parent),
         autoescape=select_autoescape(),
     )
-    template = env.get_template(os.path.basename(template_path))
+    template = env.get_template(Path(template_path).name)
 
     rendered = template.render(
         world_id=world_id,
@@ -66,10 +66,9 @@ def generate_schema(svd_path: str, template_path: str, output_path: str, world_i
         telemetry=telemetry,
     )
 
-    with open(output_path, "w") as f:
-        # Re-parse and dump to ensure valid formatting
-        data = json.loads(rendered)
-        json.dump(data, f, indent=2)
+    # Re-parse and dump to ensure valid formatting
+    data = json.loads(rendered)
+    Path(output_path).write_text(json.dumps(data, indent=2))
 
 
 if __name__ == "__main__":

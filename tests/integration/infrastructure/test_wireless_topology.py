@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 """
 SOTA Test Module: test_wireless_topology
 
@@ -21,10 +21,7 @@ import yaml
 import zenoh
 
 import tools.vproto as vproto
-from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
-from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
-from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
-from tools.testing.virtmcu_test_suite.generated import (
+from generated.world_schema import (
     Coordinate,
     Node,
     NodeID,
@@ -33,6 +30,9 @@ from tools.testing.virtmcu_test_suite.generated import (
     WirelessNode,
     World,
 )
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
+from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 from tools.testing.virtmcu_test_suite.topics import SimTopic
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,9 @@ async def test_wireless_topology(zenoh_router: str, zenoh_session: zenoh.Session
         while not rx_event.is_set():
             pub_rf_tx0.put(header + msg)
             try:
-                await asyncio.wait_for(rx_event.wait(), timeout=0.1)
+                from tools.testing.parameters import TestParams
+
+                await asyncio.wait_for(rx_event.wait(), timeout=TestParams.scale_timeout(0.1))
             except TimeoutError:
                 pass
 

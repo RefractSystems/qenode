@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 import flatbuffers
 
-from tools.lin_fbs.virtmcu.lin import LinFrame, LinMessageType
+from generated.virtmcu.lin import LinFrame, LinMessageType
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ async def test_lin_stress(simulation: Simulation, tmp_path: Path) -> None:
                 # Count any data frame received on node 0 TX topic
                 if frame.Type() == LinMessageType.LinMessageType.Data:
                     received_count += 1
-            except Exception:  # noqa: BLE001
+            except Exception:
                 errors += 1
 
         tx_topic = f"{lin_topic}/0/tx"
@@ -127,8 +127,9 @@ async def test_lin_stress(simulation: Simulation, tmp_path: Path) -> None:
             await sim.transport.publish(rx_topic, bytes(frame))
 
             # Advance clock by 1ms (give ASan extra time per step)
-            await sim.vta.step(step_ns)  # LINT_EXCEPTION: vta_step_loop
-
+            await sim.vta.step(  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
+                step_ns
+            )
         logger.info(f"Received {received_count} echo responses, {errors} errors.")
         assert received_count > 0, "No responses received!"
         logger.info(f"SUCCESS: Received {received_count} responses.")

@@ -190,10 +190,10 @@ def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, 
                     svd_path: str = str(svd_path_raw)
 
                     # Provide an absolute path if necessary based on some workspace context, or assume it's relative to current dir
-                    if not os.path.exists(svd_path) and "VIRTMCU_WORKSPACE" in os.environ:
-                        svd_path = os.path.join(os.environ["VIRTMCU_WORKSPACE"], svd_path)
+                    if not Path(svd_path).exists() and "VIRTMCU_WORKSPACE" in os.environ:
+                        svd_path = str(Path(os.environ["VIRTMCU_WORKSPACE"]) / svd_path)
 
-                    if os.path.exists(svd_path):
+                    if Path(svd_path).exists():
                         parser = SVDParser.for_xml_file(svd_path)
                         svd_device = parser.get_device()
                         # Assuming the first peripheral in SVD corresponds to this device
@@ -214,7 +214,7 @@ def parse_yaml_platform(yaml_path: str | Path) -> tuple[ReplPlatform, dict[str, 
                                 else:
                                     dev.properties["size"] = "0x1000"  # Fallback
                 except (FileNotFoundError, ValueError, ImportError, TypeError) as e:
-                    logger.warning(f"Could not parse SVD file {dev.properties['svd']} for {dev.name}: {e}")
+                    logger.error(f"Could not parse SVD file {dev.properties['svd']} for {dev.name}: {e}")
 
             platform.devices.append(dev)
 
@@ -307,11 +307,9 @@ def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
                                 )
                                 missing.append(f"{dev.name} (size mismatch)")
                         else:
-                            logger.warning(
-                                f"⚠️ Warning: Memory node '{dev.name}' has unexpected reg property length: {len(cells)}"
-                            )
+                            logger.error(f"Memory node '{dev.name}' has unexpected reg property length: {len(cells)}")
                     except (ValueError, TypeError, IndexError) as e:
-                        logger.warning(f"⚠️ Warning: Could not verify size for {dev.name}: {e}")
+                        logger.error(f"⚠️ Warning: Could not verify size for {dev.name}: {e}")
                 else:
                     logger.error(f"ERROR: Memory node '{dev.name}' is missing 'reg' property!")
                     missing.append(f"{dev.name} (missing reg)")
@@ -324,7 +322,7 @@ def validate_dtb(dtb_path: str | Path, devices: list[ReplDevice]) -> None:
             logger.error("FAILED: DTB validation failed.")
             sys.exit(1)
         logger.info("✓ Validation successful.")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"ERROR: Could not validate DTB: {e}")
         sys.exit(1)
 
@@ -436,10 +434,7 @@ def main() -> None:
 
             # If base_addr is hex string, keep it, else maybe fallback to properties
             if not base_addr or base_addr == "none":
-                if "base-addr" in dev.properties:
-                    base_addr = str(dev.properties["base-addr"])
-                else:
-                    base_addr = "0"
+                base_addr = str(dev.properties["base-addr"]) if "base-addr" in dev.properties else "0"
 
             bridge_id = dev.properties.get("id", dev.name)
 
@@ -462,8 +457,7 @@ def main() -> None:
 
     if args.out_cli:
         with Path(args.out_cli).open("w") as f:
-            for arg in cli_args:
-                f.write(arg + "\n")
+            f.writelines(arg + "\n" for arg in cli_args)
 
     logger.info(f"Compiling into '{args.out_dtb}'...")
     if compile_dtb(dts, args.out_dtb):

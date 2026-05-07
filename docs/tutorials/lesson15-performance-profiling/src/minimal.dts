@@ -78,7 +78,6 @@
     pl011@9000000 {
         compatible = "pl011";
         reg = <0x0 0x09000000 0x0 0x1000>; /* Starts at 0x09000000, takes up 4KB (0x1000) */
-        interrupts = <0 1 4>;
         chardev = <0x00>;
     };
 };

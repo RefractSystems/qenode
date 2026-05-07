@@ -21,12 +21,8 @@ The `repl2qemu`, `yaml2qemu`, and `virtmcu-mcp` tools are now packaged as a stan
 ### Installation
 
 ```bash
-# It is always recommended to use a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install the tools (assuming they are published to PyPI or using the local wheel)
-pip install virtmcu-tools
+# Use uv to manage the environment and install the tools
+uv tool install virtmcu-tools
 ```
 
 Once installed, you can verify the tools are available:

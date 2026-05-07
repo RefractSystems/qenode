@@ -39,3 +39,12 @@ TOOLS_DIR="$WORKSPACE_DIR/tools"
 RUN_SH="$SCRIPTS_DIR/run.sh"
 
 export WORKSPACE_DIR SCRIPTS_DIR TOOLS_DIR RUN_SH
+
+# SOTA: Centralized PYTHONPATH management
+# We include the workspace root for tools/ imports and 'generated/' for FlatBuffers code.
+export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/generated${PYTHONPATH:+:${PYTHONPATH}}"
+
+# Redirect LLVM profiling data to coverage-data/ to avoid root clutter if coverage is enabled.
+# Using an absolute path ensures files end up in the correct location regardless of CWD.
+export LLVM_PROFILE_FILE="${WORKSPACE_DIR}/coverage-data/virtmcu-%m-%p.profraw"
+mkdir -p "${WORKSPACE_DIR}/coverage-data"

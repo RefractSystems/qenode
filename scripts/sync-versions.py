@@ -91,7 +91,7 @@ def sync() -> None:
                 subprocess.run([uv_path, "lock"], check=True)
                 logger.info("✓ Updated uv.lock")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                logger.warning(f"Warning: could not run uv lock: {e}")
+                logger.error(f"Error: could not run uv lock: {e}")
 
     # 4. Update docker/Dockerfile
     dockerfile_path = "docker/Dockerfile"

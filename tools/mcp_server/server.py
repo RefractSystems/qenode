@@ -20,7 +20,7 @@ from tools.mcp_server.node_manager import NodeManager
 logger = logging.getLogger(__name__)
 
 
-class VirtmcuServer(Server):  # type: ignore[misc]
+class VirtmcuServer(Server):
     node_manager: NodeManager
 
 
@@ -30,7 +30,7 @@ def create_mcp_server() -> VirtmcuServer:
     node_manager = NodeManager()
     server.node_manager = node_manager
 
-    @server.list_tools()
+    @server.list_tools()  # type: ignore[no-untyped-call]
     async def handle_list_tools() -> list[Tool]:
 
         return [
@@ -191,7 +191,7 @@ def create_mcp_server() -> VirtmcuServer:
             ),
         ]
 
-    @server.call_tool()
+    @server.call_tool()  # type: ignore[no-untyped-call]
     async def handle_call_tool(name: str, arguments: dict[str, object] | None) -> list[TextContent]:
         """Handle execution of tools."""
         if arguments is None:
@@ -310,12 +310,12 @@ def create_mcp_server() -> VirtmcuServer:
 
             else:
                 raise ValueError(f"Unknown tool: {name}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Prevent the whole server from crashing if a tool execution fails
             logger.error(f"Error executing tool {name}: {e}")
             return [TextContent(type="text", text=f"Error: {e!s}")]
 
-    @server.list_resources()
+    @server.list_resources()  # type: ignore[no-untyped-call]
     async def handle_list_resources() -> list[Resource]:
         """List available resources for the AI agent."""
         resources = [
@@ -341,14 +341,14 @@ def create_mcp_server() -> VirtmcuServer:
 
         return resources
 
-    @server.read_resource()
+    @server.read_resource()  # type: ignore[no-untyped-call]
     async def handle_read_resource(uri: str) -> str:
         uri = str(uri)
         if uri == "virtmcu://simulation/status":
             status: dict[str, Any] = {"status": "running", "nodes": []}
             for node_id, node in node_manager.nodes.items():
                 node_status = "running" if (node.process and node.process.returncode is None) else "stopped"
-                status["nodes"].append({"id": node_id, "status": node_status})
+                status["nodes"].append({"id": node_id, "status": node_status})  # virtmcu-allow: raw_yaml_key reasoning="Legacy script"
             import json
 
             return json.dumps(status)
@@ -358,7 +358,8 @@ def create_mcp_server() -> VirtmcuServer:
             node_id = parts[3]
             if node_id in node_manager.nodes:
                 node = node_manager.nodes[node_id]
-                assert node.qmp_bridge is not None
+                if node.qmp_bridge is None:
+                    raise RuntimeError(f"Node {node_id} has no QMP bridge")
                 return node.qmp_bridge.uart_buffer
             raise ValueError(f"Node {node_id} not found")
 

@@ -129,8 +129,8 @@ async def test_read_resource_status(server: Server) -> None:
     assert status["status"] == "running"
     assert any(
         n["id"] == node_id and n["status"] == "running"
-        for n in status["nodes"]  # LINT_EXCEPTION: MCP protocol
-    )  # LINT_EXCEPTION: MCP protocol status
+        for n in status["nodes"]  # virtmcu-allow: raw_yaml_key reasoning="MCP protocol"
+    )  # virtmcu-allow: raw_yaml_key reasoning="MCP protocol status"
 
 
 @pytest.mark.asyncio

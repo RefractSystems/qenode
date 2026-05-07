@@ -1,0 +1,29 @@
+name: "Setup VirtMCU Environment"
+description: "Loads build deps, computes image names, and calculates the QEMU cache tag."
+runs:
+  using: "composite"
+  steps:
+    - name: Load BUILD_DEPS
+      shell: bash
+      run: grep -E -v '^#|^$' BUILD_DEPS >> "$GITHUB_ENV"
+
+    - name: Compute QEMU cache tag
+      shell: bash
+      run: |
+        PATCHES_HASH=$(
+          { find patches/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null
+            sha256sum scripts/apply-qemu-patches.sh 2>/dev/null
+            sha256sum BUILD_DEPS 2>/dev/null
+          } | sha256sum | cut -c1-12
+        )
+        echo "QEMU_CACHE_TAG=${QEMU_VERSION}-${PATCHES_HASH}" >> "$GITHUB_ENV"
+
+    - name: Determine Image Name for GHCR
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
+          UPSTREAM_REPO="${{ github.event.pull_request.base.repo.full_name }}"
+        else
+          UPSTREAM_REPO="${{ github.repository }}"
+        fi
+        echo "IMAGE_NAME_LOWER=$(echo "$UPSTREAM_REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"

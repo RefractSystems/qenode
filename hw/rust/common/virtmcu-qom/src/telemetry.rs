@@ -1,24 +1,24 @@
 //! Enterprise Lock-Free Telemetry System.
 
-#[cfg(not(any(miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use alloc::format;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-#[cfg(not(any(miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use crossbeam_channel::{bounded, Sender};
-#[cfg(not(any(miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use std::sync::OnceLock;
-#[cfg(not(any(miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use std::thread;
 
 /// Global Node ID for this QEMU process.
-pub static GLOBAL_NODE_ID: AtomicU32 = AtomicU32::new(0);
+pub static GLOBAL_NODE_ID: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Safely exported singleton"
 /// Global Virtual Time in nanoseconds.
-pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0);
+pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static_state reasoning="Safely exported singleton"
 /// Number of logs dropped due to queue overflow.
-pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0);
+pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Global metric accumulator"
 
-#[cfg(not(any(miri, feature = "standalone")))]
-static LOG_CHANNEL: OnceLock<Sender<LogEntry>> = OnceLock::new();
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+static LOG_CHANNEL: OnceLock<Sender<LogEntry>> = OnceLock::new(); // virtmcu-allow: static_state reasoning="Safely exported channel"
 
 /// Severity level of the log entry.
 #[repr(u8)]
@@ -115,7 +115,7 @@ pub fn update_global_node_id(node_id: u32) {
     let _ = GLOBAL_NODE_ID.compare_exchange(0, node_id, Ordering::Relaxed, Ordering::Relaxed);
 }
 
-#[cfg(not(any(miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 fn init_logger_thread() -> Sender<LogEntry> {
     let (tx, rx) = bounded::<LogEntry>(4096);
     thread::Builder::new()
@@ -129,8 +129,9 @@ fn init_logger_thread() -> Sender<LogEntry> {
                     sim_warn!("Logger queue overflow: dropped {dropped} messages");
                 }
 
-                let msg_str =
-                    core::str::from_utf8(&entry.msg[..entry.msg_len]).unwrap_or("<invalid utf8>");
+                let msg_str = entry.msg.get(..entry.msg_len).map_or("<missing msg>", |b| {
+                    core::str::from_utf8(b).unwrap_or("<invalid utf8>")
+                });
 
                 let vtime_ms = entry.vtime as f64 / 1_000_000.0;
 
@@ -153,8 +154,8 @@ fn init_logger_thread() -> Sender<LogEntry> {
     tx
 }
 
-#[cfg(any(miri, feature = "standalone"))]
-#[allow(clippy::print_stderr)] // ALLOW_EXCEPTION: Miri and standalone require direct printing as FFI is unavailable
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[allow(clippy::print_stderr)] // virtmcu-allow: allow reasoning="Miri and standalone require direct printing as FFI is unavailable"
 fn standalone_output(
     node_id: u32,
     level: LogLevel,
@@ -165,19 +166,18 @@ fn standalone_output(
                        // In Miri and standalone, we use eprintln! directly as FFI is unavailable.
                        // But to satisfy the lint, we add the exception comment.
     eprintln!("[Node: {}] [{}] [{}] {}", node_id, level.as_str(), module, args);
-    // PRINT_EXCEPTION: Miri/standalone require direct printing as FFI is unavailable
+    // virtmcu-allow: print reasoning="Miri/standalone require direct printing as FFI is unavailable"
 }
 
 #[doc(hidden)]
 pub fn sim_log(level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
-    #[cfg(any(miri, feature = "standalone"))]
+    #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
     {
         let node_id = GLOBAL_NODE_ID.load(Ordering::Relaxed);
         standalone_output(node_id, level, module, args);
-        return;
     }
 
-    #[cfg(not(any(miri, feature = "standalone")))]
+    #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
     {
         use core::fmt::Write;
         let tx = LOG_CHANNEL.get_or_init(init_logger_thread);

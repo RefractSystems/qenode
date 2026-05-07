@@ -43,8 +43,7 @@
         bridge@50000000 {
             compatible = "mmio-socket-bridge";
             reg = <0x0 0x50000000 0x0 0x1000>;
-            socket-path = "/tmp/virtmcu-systemc.sock";
-            region-size = <0x1000>;
+            socket-path = "virtmcu-systemc.sock";            region-size = <0x1000>;
             /* The adapter base_addr property will do the mapping manually via sysbus_mmio_map 
                if we pass it via CLI. BUT let's also pass container = <0x01> just in case FDT can map it? 
                Wait, sysbus devices aren't mapped via container in FDT generic. They are mapped via FDT generic framework automatically if they use fdt_init_sysbus.
