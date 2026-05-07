@@ -96,7 +96,7 @@ async def test_call_tool_read_memory(server: Server) -> None:
                 side_effect=[
                     # First open in node_manager is for some other reason?
                     # No, server.py uses it.
-                    MagicMock(__enter__=lambda s: MagicMock(read=lambda: b"\xde\xad\xbe\xef"))  # noqa: ARG005
+                    MagicMock(__enter__=lambda s: MagicMock(read=lambda: b"\xde\xad\xbe\xef"))
                 ]
             ),
         ),

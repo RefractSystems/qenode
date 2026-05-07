@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 """
 SOTA Test Module: test_coordinator_stress
 
@@ -12,6 +12,7 @@ Ensure correct functionality, performance, and deterministic execution of test_c
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -21,7 +22,6 @@ import pytest
 import zenoh
 
 from tools import vproto
-from tools.testing.utils import get_time_multiplier
 from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
 from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
 from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
@@ -75,7 +75,7 @@ async def test_coordinator_scalability(zenoh_router: str, zenoh_session: zenoh.S
 
     import yaml
 
-    from tools.testing.virtmcu_test_suite.generated import Node, NodeID, Protocol, Topology, WireLink, World
+    from generated.world_schema import Node, NodeID, Protocol, Topology, WireLink, World
 
     world = World(
         topology=Topology(
@@ -112,7 +112,9 @@ async def test_coordinator_scalability(zenoh_router: str, zenoh_session: zenoh.S
                 # 3. Wait for NEXT quantum start
                 if i < msgs_per_node - 1:
                     try:
-                        await asyncio.wait_for(q.get(), timeout=5.0 * get_time_multiplier())
+                        from tools.testing.parameters import TestParams
+
+                        await asyncio.wait_for(q.get(), timeout=TestParams.scale_timeout(5.0))
                     except TimeoutError:
                         logger.error(f"Node {node_id} timed out waiting for quantum {quantum + 1}")
                         break
@@ -120,7 +122,9 @@ async def test_coordinator_scalability(zenoh_router: str, zenoh_session: zenoh.S
             # Keep pumping DONEs to flush any delayed TX messages due to Zenoh topic racing
             while not done_event.is_set():
                 try:
-                    await asyncio.wait_for(q.get(), timeout=0.1)
+                    from tools.testing.parameters import TestParams
+
+                    await asyncio.wait_for(q.get(), timeout=TestParams.scale_timeout(0.1))
                     quantum += 1
                     done_pub.put(quantum.to_bytes(8, "little"))
                 except TimeoutError:
@@ -130,11 +134,11 @@ async def test_coordinator_scalability(zenoh_router: str, zenoh_session: zenoh.S
         await asyncio.gather(*(mock_node(i) for i in range(num_nodes)))
 
         # Wait for delivery
-        timeout = 5.0 * get_time_multiplier()
-        try:
+        from tools.testing.parameters import TestParams
+
+        timeout = TestParams.scale_timeout(5.0)
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(done_event.wait(), timeout=timeout)
-        except TimeoutError:
-            pass
 
         end_time = time.time()
         duration = end_time - start_time

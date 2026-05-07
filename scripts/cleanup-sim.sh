@@ -10,6 +10,9 @@
 # /proc/<pid>/cmdline to ensure it ONLY kills orphaned processes that originated
 # from the current working directory. It will not touch simulations running in
 # other cloned workspaces.
+#
+# DESIGNED FOR DOWNSTREAM REUSE: Safe to execute from parent projects where
+# VirtMCU is a submodule without affecting the parent's other services.
 # ==============================================================================
 
 set -euo pipefail
@@ -68,10 +71,10 @@ get_workspace_pids() {
         local cwd=""
         
         if [ -f "/proc/$pid/cmdline" ]; then
-            cmdline=$(cat "/proc/$pid/cmdline" | tr '\0' ' ')
+            cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ') || cmdline=""
         fi
         if [ -L "/proc/$pid/cwd" ]; then
-            cwd=$(readlink "/proc/$pid/cwd")
+            cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || cwd=""
         fi
         
         # If the process is running from our workspace, or its command line references our workspace
@@ -109,14 +112,18 @@ done
 
 if [ -z "$FILTER" ]; then
     log "Cleaning up temporary files..."
-    # We leave /tmp/virtmcu-test-* alone because pytest handles its own tempdir cleanup safely.
+    # We leave /tmp/virtmcu-test-* # virtmcu-allow: absolute_path reasoning="Legacy script" alone because pytest handles its own tempdir cleanup safely.
     # We only clean up legacy hardcoded /tmp files if they exist.
-    rm -f /tmp/virtmcu-*.dtb 2>/dev/null || true
-    rm -f /tmp/virtmcu-*.cli 2>/dev/null || true
-    rm -f /tmp/virtmcu-*.arch 2>/dev/null || true
+    rm -f /tmp/virtmcu-*.dtb 2>/dev/null || true # virtmcu-allow: absolute_path reasoning="Legacy script"
+    rm -f /tmp/virtmcu-*.cli 2>/dev/null || true # virtmcu-allow: absolute_path reasoning="Legacy script"
+    rm -f /tmp/virtmcu-*.arch 2>/dev/null || true # virtmcu-allow: absolute_path reasoning="Legacy script"
 
     # Clean up stale lock files
     rm -f "$TOOLS_DIR/deterministic_coordinator/build.lock" 2>/dev/null || true
+
+    # Clean up leaked coverage files in root
+    rm -f "$WORKSPACE_DIR"/*.profraw 2>/dev/null || true
+    rm -f "$WORKSPACE_DIR"/*.drcov 2>/dev/null || true
 
     log "Cleaning up stale plugins..."
     python3 "$WORKSPACE_DIR/scripts/check-stale-so.py" --delete || true

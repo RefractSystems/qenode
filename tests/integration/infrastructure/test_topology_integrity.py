@@ -25,8 +25,7 @@ async def test_spi_topology_integrity(inspection_bridge: object, tmp_path: Path)
     """
     Verify via QMP that child peripherals are correctly linked to their parent buses.
     """
-    from tools.testing.virtmcu_test_suite.factory import compile_yaml
-    from tools.testing.virtmcu_test_suite.generated import (
+    from generated.world_schema import (
         Address,
         Cpu,
         Machine,
@@ -34,6 +33,7 @@ async def test_spi_topology_integrity(inspection_bridge: object, tmp_path: Path)
         Resource,
         World,
     )
+    from tools.testing.virtmcu_test_suite.factory import compile_yaml
 
     test_yaml = tmp_path / "test_spi_topology.yml"
     world = World(

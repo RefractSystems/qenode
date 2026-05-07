@@ -92,19 +92,17 @@ def main() -> None:
     workspace = Path(__file__).parent.parent
     toml_path = workspace / "tools/deterministic_coordinator/protocol/topics.toml"
 
-    with open(toml_path, "rb") as f:
+    with toml_path.open("rb") as f:
         config = tomllib.load(f)
 
     py_content = generate_python(config)
     py_path = workspace / "tools/testing/virtmcu_test_suite/topics.py"
-    with open(py_path, "w") as f:
-        f.write(py_content)
+    py_path.write_text(py_content)
     sys.stdout.write(f"Generated {py_path}\n")
 
     rs_content = generate_rust(config)
     rs_path = workspace / "tools/deterministic_coordinator/src/topics.rs"
-    with open(rs_path, "w") as f:
-        f.write(rs_content)
+    rs_path.write_text(rs_content)
     sys.stdout.write(f"Generated {rs_path}\n")
 
 

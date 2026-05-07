@@ -13,10 +13,18 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: TID251
-from lint_utils import DEFAULT_EXCLUDES, ENTERPRISE_MANDATE, iter_target_files, setup_lint_logging
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lint_utils import (
+    DEFAULT_EXCLUDES,
+    ENTERPRISE_MANDATE,
+    is_suppressed,
+    iter_target_files,
+    setup_lint_logging,
+)
 
 logger = logging.getLogger(__name__)
+
+RULE_NAME = "copy"
 
 
 def lint_rust_file(path: Path) -> list[str]:
@@ -29,18 +37,12 @@ def lint_rust_file(path: Path) -> list[str]:
     lines = content.splitlines()
     for i, line in enumerate(lines):
         if "ptr::copy_nonoverlapping" in line:
-            has_exception = "COPY_EXCEPTION:" in line
-            if not has_exception and i > 0:
-                has_exception = "COPY_EXCEPTION:" in lines[i - 1]
-            if not has_exception and i < len(lines) - 1:
-                has_exception = "COPY_EXCEPTION:" in lines[i + 1]
-
-            if not has_exception:
-                violations.append(
-                    f"{path}:{i + 1}: Banned ptr::copy_nonoverlapping found (Safe Endianness Serialization Mandate).\n"
-                    f"  Fix: Use .to_le_bytes() / .from_le_bytes() instead. {ENTERPRISE_MANDATE} '// COPY_EXCEPTION: <reason>'."
-                )
-
+            if is_suppressed(line, RULE_NAME):
+                continue
+            violations.append(
+                f"{path}:{i + 1}: Banned ptr::copy_nonoverlapping found (Safe Endianness Serialization Mandate).\n"
+                f"  Fix: Use .to_le_bytes() / .from_le_bytes() instead. {ENTERPRISE_MANDATE}"
+            )
     return violations
 
 

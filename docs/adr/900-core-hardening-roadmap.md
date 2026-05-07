@@ -11,7 +11,7 @@ This document serves as a living inventory of identified architectural risks and
 
 ---
 
-## 1. Accomplishments (Tier 1 Completed)
+## 1. Accomplishments (Completed)
 
 We have successfully mitigated the most immediate "CRITICAL" failure modes:
 
@@ -57,7 +57,7 @@ We have successfully mitigated the most immediate "CRITICAL" failure modes:
 
 Hardening is enforced through a multi-layered defense:
 
-1.  **Static Analysis**: `make lint` enforces bans on raw `Mutex<T>`, `thread::sleep`, and `asyncio.sleep` (without annotations).
+1.  **Static Analysis**: `make dev-lint` enforces bans on raw `Mutex<T>`, `thread::sleep`, and `asyncio.sleep` (without annotations).
 2.  **Binary Auditing**: `verify-exports.py` ensures FFI symbols are visible.
 3.  **Chaos Integration**: Jitter profiles deliberately stress the coordinator barrier to expose timing races.
 4.  **Property-Based Testing**: Use `proptest` to fuzz FlatBuffers decoders for malicious or malformed packets.

@@ -82,11 +82,19 @@ conn.close()
         ]
     )
 
-    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+
+    try:
+        qemu_bin = str(resolve_qemu_binary(arch="arm"))
+    except Exception:
+        build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+        qemu_bin = f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm"
+
+    handshake_dtb = str(Path(tempfile.gettempdir()) / "handshake.dtb")
     qemu_cmd = [
-        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
+        qemu_bin,
         "-M",
-        "arm-generic-fdt,hw-dtb=/tmp/handshake.dtb",
+        f"arm-generic-fdt,hw-dtb={handshake_dtb}",
         "-kernel",
         str(Path(tempfile.gettempdir()) / "dummy.elf"),
         "-nographic",

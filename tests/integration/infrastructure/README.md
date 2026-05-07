@@ -10,5 +10,5 @@ To validate the `zenoh_coordinator` or peer-to-peer determinism, these tests mus
 
 **Rule**: Any file in this directory that imports Zenoh directly MUST declare its exception reason at the very top of the file:
 ```python
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 ```

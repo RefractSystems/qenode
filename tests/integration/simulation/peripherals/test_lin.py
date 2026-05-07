@@ -6,6 +6,7 @@ This module implements tests for the test_lin subsystem.
 
 Objective:
 Ensure correct functionality, performance, and deterministic execution of test_lin.
+This includes verifying LPUART communication with unbounded channel buffering.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
 
 # LIN protocol helpers
-from tools.lin_fbs.virtmcu.lin import LinFrame, LinMessageType
+from generated.virtmcu.lin import LinFrame, LinMessageType
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ async def test_lin_lpuart(
             data = bytes([frame.Data(i) for i in range(data_len)])  # type: ignore[misc]
             logger.info(f"Received from QEMU: type={msg_type}, data={data!r}")
             received.append((msg_type, data))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Subscription callbacks should not crash the transport thread on malformed payloads
             logger.error(f"Callback error: {e}")
 
@@ -133,17 +134,15 @@ async def test_lin_lpuart(
         await yield_now()
 
         frame = create_lin_frame(1_000_000, LinMessageType.LinMessageType.Data, b"X")
-        await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
+        await sim_transport.publish(rx_topic, bytes(frame))
         # Advance clock to process 'X'
-        await sim.vta.step(5_000_000)  # LINT_EXCEPTION: vta_step_loop
-
+        await sim.vta.step(5_000_000)  # virtmcu-allow: lint reasoning="vta_step_loop"
         logger.info("Sending Break to QEMU RX...")
         frame = create_lin_frame(6_000_000, LinMessageType.LinMessageType.Break, None)
-        await sim_transport.publish(rx_topic, frame)  # type: ignore[arg-type]
+        await sim_transport.publish(rx_topic, bytes(frame))
 
         # Advance clock to process Break
-        await sim.vta.step(5_000_000)  # LINT_EXCEPTION: vta_step_loop
-
+        await sim.vta.step(5_000_000)  # virtmcu-allow: lint reasoning="vta_step_loop"
         # Deterministic check for responses
         logger.info("Checking responses...")
 

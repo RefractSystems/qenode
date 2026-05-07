@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Global exemption for now while tests are refactored.
+# virtmcu-allow: zenoh_hack reasoning="Global exemption for now while tests are refactored."
 """
 SOTA Test Module: test_priority
 
@@ -42,23 +42,24 @@ async def _flood(noise_count: int, transport: SimulationTransport, topic: str, n
 async def test_clock_priority_isolation(
     simulation: Simulation,
     tmp_path: Path,
-    guest_app_factory: Any,  # noqa: ANN401
+    guest_app_factory: Any,
 ) -> None:
     """
     STRESS TEST for Clock Session Priority Isolation.
     """
-    from tools.testing.env import WORKSPACE_ROOT
 
     app_dir = guest_app_factory("boot_arm")
     firmware_path = app_dir / "hello.elf"
 
-    workspace_root = WORKSPACE_ROOT
+    from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_rust_binary
+    from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
 
-    coordinator_bin = workspace_root / "target/release/deterministic_coordinator"
-    if not coordinator_bin.exists():
+    try:
+        coordinator_bin = resolve_rust_binary(VirtmcuBinary.DETERMINISTIC_COORDINATOR)
+    except FileNotFoundError:
         pytest.fail("deterministic_coordinator not found")
 
-    from tools.testing.virtmcu_test_suite.generated import (
+    from generated.world_schema import (
         Address,
         Cpu,
         Machine,
@@ -189,9 +190,12 @@ async def test_clock_priority_isolation(
                 logger.info(f"Stress Clock RTT: {avg_stress * 1000:.2f} ms")
 
                 # Isolation ensures separate executors, so data plane flood shouldn't block clock.
+                from tools.testing.parameters import TestParams
+
+                threshold = TestParams.scale_timeout(0.200)
                 assert (
-                    avg_stress < 0.200  # Relaxed for slow CI containers
-                ), f"Clock synchronization starved! RTT={avg_stress * 1000:.2f}ms"
+                    avg_stress < threshold  # Relaxed for slow CI containers
+                ), f"Clock synchronization starved! RTT={avg_stress * 1000:.2f}ms (threshold={threshold * 1000:.2f}ms)"
 
                 logger.info(f"Clock Jitter Increase: {(avg_stress - avg_baseline) * 1000:.2f} ms")
 

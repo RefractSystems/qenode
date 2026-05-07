@@ -58,13 +58,9 @@ sleep 2
 
 # 5. Run QEMU
 echo "==> Running QEMU with Radio Test Firmware"
-BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )"
-BUNDLE_ROOT="$WORKSPACE_DIR/third_party/qemu/$BUILD_DIR_NAME/install"
-QEMU_BIN="$BUNDLE_ROOT/bin/qemu-system-arm"
-export QEMU_MODULE_DIR="$BUNDLE_ROOT/lib/aarch64-linux-gnu/qemu"
 
 # We override -serial to see output on stdout for easier verification
-$QEMU_BIN -M arm-generic-fdt,hw-dtb="$SCRIPT_DIR/test.dtb" \
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$SCRIPT_DIR/test.dtb" \
     -kernel "$SCRIPT_DIR/radio_test.elf" \
     -nographic -serial stdio -monitor none \
     -icount shift=0,align=off,sleep=off \

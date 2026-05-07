@@ -19,7 +19,8 @@ import zenoh
 
 from tools import vproto
 from tools.testing.env import WORKSPACE_DIR
-from tools.testing.utils import get_time_multiplier, wait_for_file_creation, yield_now
+from tools.testing.parameters import TestParams
+from tools.testing.utils import wait_for_file_creation, yield_now
 from tools.testing.virtmcu_test_suite.artifact_resolver import (
     get_rust_binary_path,
 )
@@ -35,8 +36,11 @@ __all__ = [
     "QmpBridge",
     "VirtualTimeAuthority",
     "coordinator_subprocess",
+    "deterministic_coordinator",
+    "deterministic_coordinator_bin",
     "ensure_session_routing",
-    "get_time_multiplier",
+    "get_free_port",
+    "guest_app_factory",
     "inspection_bridge",
     "make_client_config",
     "open_client_session",
@@ -48,10 +52,6 @@ __all__ = [
     "simulation",
     "time_authority",
     "wait_for_zenoh_discovery",
-    "deterministic_coordinator",
-    "deterministic_coordinator_bin",
-    "get_free_port",
-    "guest_app_factory",
     "zenoh_router",
     "zenoh_session",
 ]
@@ -131,7 +131,7 @@ def make_client_config(
 
     All Zenoh sessions in tests/ and tools/testing/ MUST be opened from a
     config built by this helper (or via the `zenoh_session` fixture, which
-    wraps it). The lint gate `make lint-python` enforces this.
+    wraps it). The lint gate `make dev-lint-python` enforces this.
     """
     cfg = zenoh.Config()
     endpoints = [connect] if isinstance(connect, str) else list(connect)
@@ -159,7 +159,7 @@ def open_client_session(
     Use this from non-async code paths and from tests that need a session
     distinct from the `zenoh_session` fixture (e.g. multi-router topologies).
     """
-    return zenoh.open(  # ZENOH_OPEN_EXCEPTION: canonical wrapper enforcing client mode + scouting=false
+    return zenoh.open(  # virtmcu-allow: zenoh_open reasoning="canonical wrapper enforcing client mode + scouting=false"
         make_client_config(connect=connect, listen=listen, multicast=multicast)
     )
 
@@ -268,7 +268,7 @@ class ManagedSubprocess:
         """Wait until a line matching the pattern appears in the output."""
         import re
 
-        real_timeout = timeout * get_time_multiplier()
+        real_timeout = TestParams.scale_timeout(timeout)
         deadline = asyncio.get_running_loop().time() + real_timeout
 
         while True:
@@ -332,7 +332,7 @@ async def ensure_session_routing(session: zenoh.Session, timeout: float = 5.0) -
     session's declaration backlog. Subsequent puts/queries on subscribers
     declared *before* this call are guaranteed to be routed.
     """
-    real_timeout = timeout * get_time_multiplier()
+    real_timeout = TestParams.scale_timeout(timeout)
     probe_topic = SimTopic.test_probe(f"{os.getpid()}/{id(session):x}")
 
     token = await asyncio.to_thread(lambda: session.liveliness().declare_token(probe_topic))
@@ -349,7 +349,7 @@ async def wait_for_zenoh_discovery(
     Blocks until Zenoh discovery confirms the network mesh is established.
     Uses the Zenoh Liveliness API for deterministic signaling without polling or sleeps.
     """
-    real_timeout: float = (timeout if timeout is not None else 15.0) * get_time_multiplier()
+    real_timeout: float = (timeout if timeout is not None else 15.0) * TestParams.multiplier()
 
     logger.info(f"Zenoh: waiting for liveliness on {topic} (expected={expected_count})...")
 
@@ -382,7 +382,7 @@ async def wait_for_zenoh_discovery(
                 # VERIFY: In addition to liveliness, check if we can actually perform a GET
                 # to the corresponding advance topic if applicable.
                 if "/liveliness/" in topic:
-                    nid = topic.split("/")[-1]
+                    nid = topic.rsplit("/", maxsplit=1)[-1]
                     advance_topic = SimTopic.clock_advance(nid)
 
                     # Try a very short-timeout GET with dummy payload
@@ -420,7 +420,7 @@ async def wait_for_zenoh_discovery(
 # with STALL before Python gives up. VIRTMCU_STALL_TIMEOUT_MS drives both sides:
 # QEMU reads it directly; Python adds a 60-second buffer on top.
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
-_stall_timeout_ms = int(_base_stall_timeout_ms * get_time_multiplier())
+_stall_timeout_ms = TestParams.get_stall_timeout_ms(_base_stall_timeout_ms)
 _RAW_VTA_STEP_TIMEOUT_S: float = max(60.0, _base_stall_timeout_ms / 1000.0 + 60.0)
 
 
@@ -472,7 +472,7 @@ class VirtualTimeAuthority:
         Timeout scales with VIRTMCU_STALL_TIMEOUT_MS so ASan builds get enough headroom.
         """
         # Scale the timeout (either the provided one or the default)
-        real_timeout = (timeout if timeout is not None else _RAW_VTA_STEP_TIMEOUT_S) * get_time_multiplier()
+        real_timeout = (timeout if timeout is not None else _RAW_VTA_STEP_TIMEOUT_S) * TestParams.multiplier()
 
         tasks = []
         self.quantum_number += 1
@@ -529,8 +529,8 @@ class VirtualTimeAuthority:
             try:
                 for r in self.session.get(topic, payload=payload, timeout=timeout):
                     return r
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[VTA] Node {nid} GET error on {topic}: {e}")
+            except Exception as e:
+                logger.error(f"[VTA] Node {nid} GET error on {topic}: {e}")
             return None
 
         return await asyncio.to_thread(_sync_get)
@@ -581,14 +581,17 @@ async def zenoh_router() -> AsyncGenerator[str]:
         config = make_client_config(connect=endpoint)
 
         check_session: zenoh.Session | None = None
-        for _ in range(int(100 * get_time_multiplier())):
+        for _ in range(TestParams.scale_iters(100)):
             try:
                 check_session = await asyncio.to_thread(
-                    lambda: zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+                    lambda: zenoh.open(  # virtmcu-allow: zenoh_open reasoning="fixture implementation"
+
+                        config
+                    )  # virtmcu-allow: zenoh_open reasoning="config built by make_client_config"
                 )
                 break
             except zenoh.ZError:
-                await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for Zenoh router TCP port
+                await asyncio.sleep(0.05)  # virtmcu-allow: sleep reasoning="waiting for Zenoh router TCP port"
         else:
             raise RuntimeError(f"Zenoh Router failed to listen on {endpoint}")
 
@@ -605,7 +608,8 @@ async def zenoh_session(zenoh_router: str) -> AsyncGenerator[zenoh.Session]:
     """Fixture that provides a Zenoh session connected to the router."""
     config = make_client_config(connect=zenoh_router)
     session = await asyncio.to_thread(
-        lambda: zenoh.open(config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+        lambda: zenoh.open(  # virtmcu-allow: zenoh_open reasoning="fixture implementation"
+config)  # virtmcu-allow: zenoh_open reasoning="config built by make_client_config"
     )
 
     # Wait for session to connect to the router by waiting for the router's liveliness token
@@ -741,10 +745,9 @@ async def deterministic_coordinator(
     Fixture that starts the deterministic_coordinator.
     """
     params = getattr(request, "param", {})
-    n_nodes = params.get("nodes", 3)  # LINT_EXCEPTION: fixture_param
-
+    n_nodes = params.get("nodes", 3)  # virtmcu-allow: raw_yaml_key reasoning="fixture_param"
     coord_bin = deterministic_coordinator_bin
-    topology = params.get("topology", None)  # LINT_EXCEPTION: fixture_param
+    topology = params.get("topology", None)  # virtmcu-allow: raw_yaml_key reasoning="fixture_param"
     pdes = params.get("pdes", False)
 
     logger.info(
@@ -763,14 +766,17 @@ async def deterministic_coordinator(
         # we retry the check-session open the same way zenoh_router does.
         check_config = make_client_config(connect=zenoh_router)
         check_session: zenoh.Session | None = None
-        for _ in range(int(100 * get_time_multiplier())):
+        for _ in range(TestParams.scale_iters(100)):
             try:
                 check_session = await asyncio.to_thread(
-                    lambda: zenoh.open(check_config)  # ZENOH_OPEN_EXCEPTION: config built by make_client_config
+                    lambda: zenoh.open(  # virtmcu-allow: zenoh_open reasoning="fixture implementation"
+
+                        check_config
+                    )  # virtmcu-allow: zenoh_open reasoning="config built by make_client_config"
                 )
                 break
             except zenoh.ZError:
-                await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: waiting for router to accept check session
+                await asyncio.sleep(0.05)  # virtmcu-allow: sleep reasoning="waiting for router to accept check session"
         else:
             raise RuntimeError(f"deterministic_coordinator check session failed to connect to {zenoh_router}")
         try:
@@ -804,6 +810,27 @@ async def qemu_launcher(
         # Build the command using run.sh
         workspace_root = WORKSPACE_DIR
         run_script = Path(workspace_root) / "scripts/run.sh"
+
+        # Detect architecture to provide a helpful QEMU_BIN override if possible
+        arch = "arm"
+        if extra_args:
+            for i, arg in enumerate(extra_args):
+                if arg == "--arch" and i + 1 < len(extra_args):
+                    arch = extra_args[i + 1]
+                    break
+
+        from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+
+        env = os.environ.copy()
+        try:
+            qemu_bin = resolve_qemu_binary(arch=arch)
+            if qemu_bin.exists():
+                # Set arch-specific override to be safe
+                env[f"QEMU_{arch.upper().replace('-', '_')}_BIN"] = str(qemu_bin)
+                # Also set the global one as a broad fallback
+                env["QEMU_BIN"] = str(qemu_bin)
+        except Exception as e:
+            logger.debug(f"Could not resolve QEMU binary for {arch}: {e}")
 
         cmd: list[str] = [str(run_script), "--dtb", str(Path(dtb_path).resolve())]
         if kernel_path:
@@ -852,7 +879,7 @@ async def qemu_launcher(
 
         # Task 4.2d: Stream QEMU output in background for better debuggability.
         # Use ManagedSubprocess for unified logging.
-        proc = ManagedSubprocess("qemu", cmd)
+        proc = ManagedSubprocess("qemu", cmd, env=env)
         await proc.start()
 
         # Wait for sockets to be created by QEMU.
@@ -867,7 +894,7 @@ async def qemu_launcher(
             done, pending = await asyncio.wait(
                 {files_task, exit_task},
                 return_when=asyncio.FIRST_COMPLETED,
-                timeout=10.0 * get_time_multiplier(),
+                timeout=TestParams.scale_timeout(30.0),
             )
 
             for task in pending:
@@ -878,8 +905,7 @@ async def qemu_launcher(
             if exit_task in done:
                 # Process exited before sockets were created.
                 # Allow a tiny bit of time for output history to populate
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
-
+                await asyncio.sleep(0.1)  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
                 combined_output = "\n".join(proc._output_history)
 
                 if "ERROR: AddressSanitizer:" in combined_output:
@@ -938,8 +964,8 @@ async def qemu_launcher(
                             if match:
                                 node_id = int(match.group(1))
                                 break
-                        except Exception as e:  # noqa: BLE001
-                            logger.debug(f"Ignored error: {e}")  # noqa: BLE001
+                        except Exception as e:
+                            logger.debug(f"Ignored error: {e}")
                             pass
 
             # Cleanly retrieve zenoh_session if the current test is using it
@@ -996,8 +1022,8 @@ async def qemu_launcher(
     for inst in instances:
         try:
             await asyncio.wait_for(inst["bridge"].close(), timeout=1.0)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Error closing bridge: {e}")
+        except Exception as e:
+            logger.error(f"Error closing bridge: {e}")
 
         proc: ManagedSubprocess = inst["proc"]
         await proc.stop()
@@ -1096,7 +1122,7 @@ class TimeAuthority(VirtualTimeAuthority):
 def pytest_collection_modifyitems(config: object, items: list[pytest.Item]) -> None:
     """Sets a default timeout for all tests."""
     del config  # Unused
-    computed_timeout = (_RAW_VTA_STEP_TIMEOUT_S * get_time_multiplier()) + 60.0
+    computed_timeout = (_RAW_VTA_STEP_TIMEOUT_S * TestParams.multiplier()) + 60.0
     for item in items:
         item.add_marker(pytest.mark.timeout(computed_timeout))
 
@@ -1130,5 +1156,5 @@ def pytest_runtest_makereport(item: pytest.Item, call: object) -> Generator[None
                 if hasattr(t, "dump_pcap"):
                     t.dump_pcap(pcap_file)
                 logger.info(f"\n✈️ FLIGHT RECORDER DUMPED TO: {log_file} and {pcap_file}\n")
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.info(f"\n❌ Failed to dump flight recorder: {e}\n")

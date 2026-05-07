@@ -10,6 +10,9 @@
 #   4. Symlinks the project's custom `hw/` directory into QEMU's build tree.
 #   5. Configures QEMU (handling macOS specific flags if necessary).
 #   6. Compiles and installs the QEMU binaries to `third_party/qemu/build-virtmcu/install`.
+#
+# DESIGNED FOR DOWNSTREAM REUSE: Automatically resolves paths to support being
+# run within a parent project where VirtMCU is embedded.
 # ==============================================================================
 
 set -euo pipefail
@@ -54,23 +57,37 @@ bash "$SCRIPTS_DIR/apply-qemu-patches.sh" "$QEMU_DIR"
 
 # Compile Zenoh-C from source for native QOM plugins (guarantees parity with CI)
 ZENOHC_VER="${ZENOH_VERSION:-1.9.0}"
-ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
+if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+    ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c-asan"
+    export RUSTC_BOOTSTRAP=1
+    # Fix for proc-macro compilation with ASan: force separate host/target builds
+    TRIPLE="$(rustc -vV | grep 'host:' | awk '{print $2}')"
+    export CARGO_BUILD_TARGET="${TRIPLE}"
+    TRIPLE_UPPER="$(echo "${TRIPLE}" | tr '[:lower:]-' '[:upper:]_')"
+    export "CARGO_TARGET_${TRIPLE_UPPER}_RUSTFLAGS=-Zsanitizer=address"
+    export "CFLAGS_${TRIPLE}=-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
+    export "CXXFLAGS_${TRIPLE}=-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
+    export LDFLAGS="-fsanitize=address -fsanitize=undefined"
+    export HOST_CFLAGS=""
+    export HOST_CXXFLAGS=""
+    export CARGO_HOST_RUSTFLAGS=""
+    echo "==> Configuring Zenoh-C for ASan build..."
+else
+    ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
+fi
 
 if [ ! -d "$ZENOHC_DIR/include" ]; then
-    echo "==> Compiling Zenoh-C $ZENOHC_VER from source..."
-    rm -rf "$ZENOHC_DIR" "/tmp/zenoh-c-src" "/tmp/zenoh-c-build"
+    echo "==> Compiling Zenoh-C $ZENOHC_VER from source into $ZENOHC_DIR..."
+    rm -rf "$ZENOHC_DIR" "/tmp/zenoh-c-src" "/tmp/zenoh-c-build" # virtmcu-allow: absolute_path reasoning="Legacy script"
     git clone --depth=1 --branch "$ZENOHC_VER" \
-        https://github.com/eclipse-zenoh/zenoh-c.git /tmp/zenoh-c-src
+        https://github.com/eclipse-zenoh/zenoh-c.git /tmp/zenoh-c-src # virtmcu-allow: absolute_path reasoning="Legacy script"
     
-    cmake -S /tmp/zenoh-c-src -B /tmp/zenoh-c-build \
-       -DCMAKE_BUILD_TYPE=Release \
-       -DCMAKE_INSTALL_PREFIX="$ZENOHC_DIR" \
-       -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF
+    cmake -S /tmp/zenoh-c-src -B /tmp/zenoh-c-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ZENOHC_DIR" -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF # virtmcu-allow: absolute_path reasoning="Legacy script"
        
-    cmake --build /tmp/zenoh-c-build -j"$(nproc)"
-    cmake --install /tmp/zenoh-c-build
+    cmake --build /tmp/zenoh-c-build -j"$(nproc)" # virtmcu-allow: absolute_path reasoning="Legacy script"
+    cmake --install /tmp/zenoh-c-build # virtmcu-allow: absolute_path reasoning="Legacy script"
     
-    rm -rf "/tmp/zenoh-c-src" "/tmp/zenoh-c-build"
+    rm -rf "/tmp/zenoh-c-src" "/tmp/zenoh-c-build" # virtmcu-allow: absolute_path reasoning="Legacy script"
 fi
 
 # Compile flatcc from source for Telemetry (guarantees parity with CI)
@@ -107,10 +124,6 @@ fi
 ln -sfn "$WORKSPACE_DIR/hw" "$QEMU_DIR/hw/virtmcu"
 ln -sfn "$WORKSPACE_DIR/Cargo.toml" "$QEMU_DIR/hw/Cargo.toml"
 ln -sfn "$WORKSPACE_DIR/Cargo.lock" "$QEMU_DIR/hw/Cargo.lock"
-# Inject 'subdir('virtmcu')' into QEMU's hw/meson.build if not already there
-if ! grep -q "subdir('virtmcu')" "$QEMU_DIR/hw/meson.build"; then
-    echo "subdir('virtmcu')" >> "$QEMU_DIR/hw/meson.build"
-fi
 
 # Configure and build QEMU in a dedicated build directory
 cd "$QEMU_DIR"
@@ -147,7 +160,10 @@ if [ "$VIRTMCU_USE_ASAN" = "1" ]; then
     CONFIGURE_ARGS+=(--enable-asan --enable-ubsan "-Db_sanitize=address,undefined")
     export VIRTMCU_USE_ASAN
     # Ensure all Rust targets (including QEMU's own and our plugins) link with sanitizers
-    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined"
+    export RUSTC_BOOTSTRAP=1
+    export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address"
+    export HOST_CFLAGS=""
+    export HOST_CXXFLAGS=""
 elif [ "$VIRTMCU_USE_TSAN" = "1" ]; then
     echo "TSAN enabled: adding --enable-tsan -Db_sanitize=thread to QEMU build"
     CONFIGURE_ARGS+=(--enable-tsan -Db_sanitize=thread)
@@ -170,13 +186,8 @@ fi
 
 ../configure "${CONFIGURE_ARGS[@]}"
 
-# Compile QEMU. In CI environments, we limit parallelism to 1 to prevent OOM
-# during heavy compilation (debug + gcov) on standard 2-core runners.
-if [ "$CI" = "true" ]; then
-    JOBS=1
-else
-    JOBS=$(nproc)
-fi
+# Compile QEMU.
+JOBS=$(nproc)
 
 make -j"$JOBS"
 # Install QEMU binaries to the prefix directory (build-virtmcu/install)

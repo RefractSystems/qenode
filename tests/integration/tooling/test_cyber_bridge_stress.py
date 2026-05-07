@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: cyber_bridge mock requires declare_queryable which is not in SimulationTransport
+# virtmcu-allow: zenoh_hack reasoning="cyber_bridge mock requires declare_queryable which is not in SimulationTransport"
 """
 SOTA Test Module: test_cyber_bridge_stress
 
@@ -58,7 +58,6 @@ def create_resd(filename: str | Path, duration_ms: int) -> None:
         f.write((1).to_bytes(1, "little"))
         f.write(b"\x00\x00\x00")
 
-        # Block: ACCELERATION
         f.write((0x01).to_bytes(1, "little") + (0x0002).to_bytes(2, "little") + (0).to_bytes(2, "little"))
         # data_size: start_time(8) + metadata_size(8) + N samples
         num_samples = duration_ms
@@ -66,13 +65,13 @@ def create_resd(filename: str | Path, duration_ms: int) -> None:
         f.write((0).to_bytes(8, "little"))  # start_time
         f.write((0).to_bytes(8, "little"))  # metadata_size
 
-        for i in range(num_samples):
-            f.write(
-                (i * 1_000_000).to_bytes(8, "little")
-                + i.to_bytes(4, "little", signed=True)
-                + (i * 2).to_bytes(4, "little", signed=True)
-                + (i * 3).to_bytes(4, "little", signed=True)
-            )
+        f.writelines(
+            (i * 1_000_000).to_bytes(8, "little")
+            + i.to_bytes(4, "little", signed=True)
+            + (i * 2).to_bytes(4, "little", signed=True)
+            + (i * 3).to_bytes(4, "little", signed=True)
+            for i in range(num_samples)
+        )
 
 
 @pytest.mark.asyncio
@@ -103,7 +102,6 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
     node_vtimes = manager.dict(dict.fromkeys(range(num_nodes), 0))
 
     def on_query(query: zenoh.Query) -> None:
-        # topic: sim/clock/advance/{id}
         logger.info(f"DEBUG: Received query on {query.key_expr}")
         try:
             node_id = int(str(query.key_expr).split("/")[-1])
@@ -118,7 +116,7 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
             # Reply with ClockReadyPayload { current_vtime_ns, n_frames, error_code, quantum_number }
             reply_payload = vproto.ClockReadyResp(node_vtimes[node_id], 1, 0, qn).pack()
             query.reply(query.key_expr, reply_payload)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # In a stress test, we log and continue to keep the simulation session alive
             logger.error(f"DEBUG ERROR in on_query: {e}")
 
@@ -149,10 +147,10 @@ async def test_multi_node_stress(zenoh_router: str, tmp_path: Path) -> None:
             procs.append(p)
 
         # Wait for completion or timeout
-        try:
-            from tools.testing.utils import get_time_multiplier
+        from tools.testing.parameters import TestParams
 
-            await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs)), timeout=30.0 * get_time_multiplier())
+        try:
+            await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs)), timeout=TestParams.scale_timeout(30.0))
         except TimeoutError:
             logger.error("DEBUG: Stress test timed out!")
             pytest.fail("Timeout in multi-node stress test")
@@ -189,8 +187,7 @@ async def mujoco_bridge_process() -> AsyncGenerator[tuple[AsyncManagedProcess, P
         while not shm_path.exists() and time.time() - start_time < 5.0:
             if p.returncode is not None:
                 break
-            await asyncio.sleep(0.05)  # SLEEP_EXCEPTION: polling for shm creation
-
+            await asyncio.sleep(0.05)  # virtmcu-allow: sleep reasoning="polling for shm creation"
         yield p, shm_path, nu, nsensordata
 
     # Cleanup

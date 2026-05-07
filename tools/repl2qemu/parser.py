@@ -168,7 +168,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
                     included_platform = parse_repl(f.read(), str(Path(full_path).parent))
                     platform.devices.extend(included_platform.devices)
             else:
-                logger.warning(f"Warning: Included file not found: {full_path}")
+                logger.error(f"Included file not found: {full_path}")
             continue
 
         # Start of a new device block (no leading whitespace)

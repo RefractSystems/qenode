@@ -40,8 +40,7 @@ def main() -> None:
     # Wait for samples
     deadline = time.perf_counter() + 60.0
     while len(received_times) < count and time.perf_counter() < deadline:
-        time.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for bench
-
+        time.sleep(0.1)  # virtmcu-allow: sleep reasoning="Intentional delay for bench"
     typing.cast(typing.Any, sub).undeclare()
     typing.cast(typing.Any, session).close()
 

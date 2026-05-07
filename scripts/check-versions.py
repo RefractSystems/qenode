@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import logging
 import re
 import sys
@@ -7,9 +8,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def get_versions() -> dict[str, str]:
+def get_versions(root: Path) -> dict[str, str]:
     versions = {}
-    with Path("BUILD_DEPS").open() as f:
+    build_deps = root / "BUILD_DEPS"
+    if not build_deps.exists():
+        return versions
+    with build_deps.open() as f:
         for line in f:
             if "=" in line and not line.startswith("#"):
                 key, value = line.strip().split("=")
@@ -17,14 +21,18 @@ def get_versions() -> dict[str, str]:
     return versions
 
 
-def check() -> None:
-    versions = get_versions()
+def check(root: Path) -> None:
+    versions = get_versions(root)
+    if not versions:
+        logger.info(f"No BUILD_DEPS found in {root}. Skipping version check.")
+        return
+
     errors = []
 
     # 1. Check docker/Dockerfile
-    dockerfile_path = "docker/Dockerfile"
-    if Path(dockerfile_path).exists():
-        with Path(dockerfile_path).open() as f:
+    dockerfile_path = root / "docker/Dockerfile"
+    if dockerfile_path.exists():
+        with dockerfile_path.open() as f:
             content = f.read()
 
         mappings = {
@@ -53,9 +61,9 @@ def check() -> None:
                 errors.append(f"{dockerfile_path}: {key} mismatch. Expected {expected}, found {match.group(1)}")
 
     # 2. Check pyproject.toml
-    pyproject_path = "pyproject.toml"
-    if Path(pyproject_path).exists():
-        with Path(pyproject_path).open() as f:
+    pyproject_path = root / "pyproject.toml"
+    if pyproject_path.exists():
+        with pyproject_path.open() as f:
             content = f.read()
 
         zenoh_ver = versions.get("ZENOH_VERSION")
@@ -75,9 +83,9 @@ def check() -> None:
                 errors.append(f"{pyproject_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
     # 3. Check requirements.txt
-    req_path = "requirements.txt"
-    if Path(req_path).exists():
-        with Path(req_path).open() as f:
+    req_path = root / "requirements.txt"
+    if req_path.exists():
+        with req_path.open() as f:
             content = f.read()
 
         zenoh_ver = versions.get("ZENOH_VERSION")
@@ -99,13 +107,14 @@ def check() -> None:
     # 4. Check ci workflows hardcoded PYTHON_VERSION matches BUILD_DEPS
     py_ver = versions.get("PYTHON_VERSION")
     if py_ver:
-        for ci_path in [
+        for ci_rel_path in [
             ".github/workflows/ci-main.yml",
             ".github/workflows/ci-pr.yml",
             ".github/workflows/ci-asan.yml",
         ]:
-            if Path(ci_path).exists():
-                with Path(ci_path).open() as f:
+            ci_path = root / ci_rel_path
+            if ci_path.exists():
+                with ci_path.open() as f:
                     content = f.read()
                 match = re.search(r'PYTHON_VERSION:\s*"([^"]+)"', content)
                 if not match:
@@ -114,9 +123,9 @@ def check() -> None:
                     errors.append(f"{ci_path}: PYTHON_VERSION mismatch. Expected {py_ver}, found {match.group(1)}")
 
     # 5. Check Cargo.toml (workspace)
-    cargo_path = "Cargo.toml"
-    if Path(cargo_path).exists():
-        with Path(cargo_path).open() as f:
+    cargo_path = root / "Cargo.toml"
+    if cargo_path.exists():
+        with cargo_path.open() as f:
             content = f.read()
 
         zenoh_ver = versions.get("ZENOH_VERSION")
@@ -136,9 +145,10 @@ def check() -> None:
                 errors.append(f"{cargo_path}: flatbuffers mismatch. Expected {fb_ver}, found {match.group(1)}")
 
     # 6. Check tools/*/Cargo.toml
-    for child_cargo in ["tools/deterministic_coordinator/Cargo.toml"]:
-        if Path(child_cargo).exists():
-            with Path(child_cargo).open() as f:
+    for child_rel_cargo in ["tools/deterministic_coordinator/Cargo.toml"]:
+        child_cargo = root / child_rel_cargo
+        if child_cargo.exists():
+            with child_cargo.open() as f:
                 content = f.read()
             if zenoh_ver and "zenoh =" in content:
                 match = re.search(r'zenoh = "([^"]+)"', content)
@@ -148,15 +158,19 @@ def check() -> None:
                     errors.append(f"{child_cargo}: zenoh mismatch. Expected {zenoh_ver}, found {match.group(1)}")
 
     if errors:
-        logger.info("Version check FAILED:")
+        logger.info(f"Version check FAILED for root {root}:")
         for err in errors:
             logger.info(f"  - {err}")
         logger.info("\nRun 'make sync-versions' to fix.")
         sys.exit(1)
     else:
-        logger.info("Version check PASSED")
+        logger.info(f"Version check PASSED for root {root}")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Check version synchronization.")
+    parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    check()
+    check(args.root)

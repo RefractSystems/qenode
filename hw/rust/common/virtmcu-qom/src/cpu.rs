@@ -29,14 +29,12 @@ extern "C" {
     pub fn virtmcu_cpu_exit_all();
 
     /// A static
-    pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>;
-
+    pub static mut virtmcu_tcg_quantum_hook: Option<extern "C" fn(cpu: *mut CPUState)>; // virtmcu-allow: callback reasoning="QEMU core hook"
     /// A setter
     pub fn virtmcu_cpu_set_tcg_hook(cb: Option<extern "C" fn(cpu: *mut CPUState)>);
     /// A static
     pub static mut virtmcu_get_quantum_timing:
-        Option<extern "C" fn(timing: *mut VirtmcuQuantumTiming)>;
-
+        Option<extern "C" fn(timing: *mut VirtmcuQuantumTiming)>; // virtmcu-allow: callback reasoning="QEMU core hook"
     /// A function
     pub fn cpu_exit(cpu: *mut CPUState);
 

@@ -23,7 +23,7 @@ peripherals:
 "#;
     let world: WorldSchema = serde_yaml::from_str(valid_yaml).expect("Valid YAML should parse");
     let peripherals = world.peripherals;
-    let addr = peripherals[0].address.clone().unwrap();
+    let addr = peripherals[0].address.clone().expect("test should succeed");
     match addr {
         deterministic_coordinator::generated::topology::Address::String(s) => {
             assert_eq!(s.as_str(), "0x1A2B3C");
@@ -50,7 +50,7 @@ nodes:
   - name: "0"
   - name: "1"
 "#;
-    let world: WorldSchema = serde_yaml::from_str(yaml).unwrap();
+    let world: WorldSchema = serde_yaml::from_str(yaml).expect("test should succeed");
     let nodes = world.nodes;
     assert_eq!(nodes.len(), 2);
     match &nodes[0].name {

@@ -1,4 +1,24 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 // std is required: flatbuffers dependency requires std
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 #![deny(missing_docs)]
 #![doc = "The crate"]
 
@@ -14,8 +34,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -23,8 +43,8 @@ use alloc::vec::Vec;
     clippy::extra_unused_lifetimes
 )]
 pub mod can_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -32,8 +52,8 @@ pub mod can_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod core_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -41,8 +61,8 @@ pub mod core_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod flexray_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -51,8 +71,8 @@ pub mod flexray_generated;
 )]
 pub mod lin_generated;
 pub use rf802154_generated::virtmcu::rf_802154 as rf802154_header;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -60,8 +80,8 @@ pub use rf802154_generated::virtmcu::rf_802154 as rf802154_header;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf802154_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -69,8 +89,8 @@ pub mod rf802154_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod telemetry_generated;
-#[allow( // ALLOW_EXCEPTION: FlatBuffers-generated module
-    clippy::all, // ALLOW_EXCEPTION: FlatBuffers-generated module — machine-generated code, not hand-written
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
     clippy::missing_safety_doc,
@@ -142,10 +162,8 @@ where
 /// Extension trait for FlatBuffer structs
 pub trait FlatBufferStructExt: Sized {
     /// Unpack from a fixed-size byte array
-    fn unpack(b: &[u8; 8]) -> Self {
-        // SAFETY: The caller guarantees the buffer is 8 bytes, which matches VirtmcuHandshake
-        // In a real implementation we would use a generic approach, but here we follow the task's lead.
-        Self::unpack_slice(b).expect("Failed to unpack struct")
+    fn unpack(b: &[u8; 8]) -> Option<Self> {
+        Self::unpack_slice(b)
     }
     /// Unpack slice
     fn unpack_slice(b: &[u8]) -> Option<Self>;
@@ -153,8 +171,8 @@ pub trait FlatBufferStructExt: Sized {
     fn pack(&self) -> &[u8];
 }
 impl FlatBufferStructExt for VirtmcuHandshake {
-    fn unpack(b: &[u8; 8]) -> Self {
-        Self(*b)
+    fn unpack(b: &[u8; 8]) -> Option<Self> {
+        Some(Self(*b))
     }
     fn unpack_slice(b: &[u8]) -> Option<Self> {
         b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
@@ -423,13 +441,12 @@ pub fn encode_rf802154_frame(
 /// Returns `None` if `data` is shorter than `ZENOH_FRAME_HEADER_SIZE`.
 /// Decode a `ZenohFrameHeader` from the first 24 bytes of `data`.
 pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
-    if data.len() < ZENOH_FRAME_HEADER_SIZE {
-        return None;
-    }
+    let header_bytes = data.get(..ZENOH_FRAME_HEADER_SIZE)?;
+    let remaining = data.get(ZENOH_FRAME_HEADER_SIZE..)?;
     let mut buf = [0u8; 24];
-    buf.copy_from_slice(&data[..ZENOH_FRAME_HEADER_SIZE]);
+    buf.copy_from_slice(header_bytes);
     let header = ZenohFrameHeader(buf);
-    Some((header, &data[ZENOH_FRAME_HEADER_SIZE..]))
+    Some((header, remaining))
 }
 
 /// Callback type for data transport subscriptions.
@@ -475,6 +492,7 @@ pub trait DataTransport: Send + Sync {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
 mod tests {
     use super::*;
 
@@ -744,7 +762,7 @@ mod tests {
     fn test_clock_advance_req_round_trip() {
         let req = ClockAdvanceReq::new(10_000_000, 42, 123);
         let bytes = req.pack();
-        let req2 = ClockAdvanceReq::unpack_slice(bytes).unwrap();
+        let req2 = ClockAdvanceReq::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ req.delta_ns() }, { req2.delta_ns() });
         assert_eq!({ req.absolute_vtime_ns() }, { req2.absolute_vtime_ns() });
         assert_eq!({ req.quantum_number() }, { req2.quantum_number() });
@@ -771,7 +789,7 @@ mod tests {
     fn test_clock_ready_resp_ok() {
         let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99);
         let bytes = resp.pack();
-        let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
+        let resp2 = ClockReadyResp::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ resp2.current_vtime_ns() }, 10_000_000u64);
         assert_eq!({ resp2.n_frames() }, 50u32);
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_OK);
@@ -782,7 +800,7 @@ mod tests {
     fn test_clock_ready_resp_stall() {
         let resp = ClockReadyResp::new(0, 0, CLOCK_ERROR_STALL, 0);
         let bytes = resp.pack();
-        let resp2 = ClockReadyResp::unpack_slice(bytes).unwrap();
+        let resp2 = ClockReadyResp::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_STALL);
     }
 
@@ -836,7 +854,7 @@ mod tests {
     fn test_mmio_req_round_trip() {
         let req = MmioReq::new(MMIO_REQ_WRITE, 4, 0, 0, 999_999, 0x1000_0000, 0xDEAD_BEEF);
         let bytes = req.pack();
-        let req2 = MmioReq::unpack_slice(bytes).unwrap();
+        let req2 = MmioReq::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ req2.type_() }, MMIO_REQ_WRITE);
         assert_eq!({ req2.size() }, 4u8);
         assert_eq!({ req2.vtime_ns() }, 999_999u64);
@@ -857,7 +875,7 @@ mod tests {
     fn test_sysc_msg_irq_round_trip() {
         let msg = SyscMsg::new(SYSC_MSG_IRQ_SET, 7, 1);
         let bytes = msg.pack();
-        let msg2 = SyscMsg::unpack_slice(bytes).unwrap();
+        let msg2 = SyscMsg::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ msg2.type_() }, SYSC_MSG_IRQ_SET);
         assert_eq!({ msg2.irq_num() }, 7u32);
         assert_eq!({ msg2.data() }, 1u64);
@@ -883,7 +901,7 @@ mod tests {
     fn test_handshake_round_trip() {
         let hs = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
         let bytes = hs.pack();
-        let hs2 = VirtmcuHandshake::unpack_slice(bytes).unwrap();
+        let hs2 = VirtmcuHandshake::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ hs2.magic() }, VIRTMCU_PROTO_MAGIC);
         assert_eq!({ hs2.version() }, VIRTMCU_PROTO_VERSION);
     }
@@ -892,7 +910,7 @@ mod tests {
     fn test_header_roundtrip() {
         let h = ZenohFrameHeader::new(12345, 7, 100);
         let bytes = h.pack();
-        let h2 = ZenohFrameHeader::unpack_slice(bytes).unwrap();
+        let h2 = ZenohFrameHeader::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ h.delivery_vtime_ns() }, { h2.delivery_vtime_ns() });
         assert_eq!({ h.sequence_number() }, { h2.sequence_number() });
         assert_eq!({ h.size() }, { h2.size() });
@@ -974,13 +992,14 @@ mod tests {
             let (mut client, mut server) = tokio::io::duplex(1024);
 
             let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
-            client.write_all(hs_client.pack()).await.unwrap();
+            client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
-            complete_server_handshake(&mut server).await.unwrap();
+            complete_server_handshake(&mut server).await.expect("API conversion failed");
 
             let mut hs_server_bytes = [0u8; VIRTMCU_HANDSHAKE_SIZE];
-            client.read_exact(&mut hs_server_bytes).await.unwrap();
-            let hs_server = VirtmcuHandshake::unpack_slice(&hs_server_bytes).unwrap();
+            client.read_exact(&mut hs_server_bytes).await.expect("API conversion failed");
+            let hs_server =
+                VirtmcuHandshake::unpack_slice(&hs_server_bytes).expect("API conversion failed");
             assert_eq!(hs_server.magic(), VIRTMCU_PROTO_MAGIC);
             assert_eq!(hs_server.version(), VIRTMCU_PROTO_VERSION);
         }
@@ -990,7 +1009,7 @@ mod tests {
             let (mut client, mut server) = tokio::io::duplex(1024);
 
             let hs_client = VirtmcuHandshake::new(0xDEADBEEF, VIRTMCU_PROTO_VERSION);
-            client.write_all(hs_client.pack()).await.unwrap();
+            client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;
             match res {
@@ -1007,7 +1026,7 @@ mod tests {
             let (mut client, mut server) = tokio::io::duplex(1024);
 
             let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, 99);
-            client.write_all(hs_client.pack()).await.unwrap();
+            client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;
             match res {

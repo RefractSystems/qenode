@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Global exemption for now while tests are refactored.
+# virtmcu-allow: zenoh_hack reasoning="Global exemption for now while tests are refactored."
 """
 SOTA Test Module: test_uart_echo
 

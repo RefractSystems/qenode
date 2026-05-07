@@ -21,10 +21,19 @@ if command -v lld >/dev/null 2>&1; then
 fi
 
 if [ "${VIRTMCU_USE_ASAN:-}" = "1" ]; then
-    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined"
+    export RUSTC_BOOTSTRAP=1
+    export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address"
+    # Fix for proc-macro compilation with ASan: force separate host/target builds
+    export CARGO_BUILD_TARGET
+    CARGO_BUILD_TARGET="$(rustc -vV | grep 'host:' | awk '{print $2}')"
+    export HOST_CFLAGS=""
+    export HOST_CXXFLAGS=""
 elif [ "${VIRTMCU_USE_TSAN:-}" = "1" ]; then
     export RUSTC_BOOTSTRAP=1
     export RUSTFLAGS="${RUSTFLAGS:-} -Z sanitizer=thread"
+    # Fix for proc-macro compilation with TSan: force separate host/target builds
+    export CARGO_BUILD_TARGET
+    CARGO_BUILD_TARGET="$(rustc -vV | grep 'host:' | awk '{print $2}')"
 fi
 
 echo "Building Rust workspace in $RUST_DIR with target-dir $TARGET_DIR"
@@ -38,7 +47,7 @@ if [ -z "$FS_TYPE" ]; then
 fi
 
 if [ "$FS_TYPE" = "virtiofs" ] || [ "$FS_TYPE" = "fakeowner" ] || [ "$FS_TYPE" = "9p" ]; then
-    SAFE_TARGET_DIR="/tmp/virtmcu-rust-target-$(id -u)"
+    SAFE_TARGET_DIR="/tmp/virtmcu-rust-target-$(id -u)" # virtmcu-allow: absolute_path reasoning="Legacy script"
     echo "WARNING: $TARGET_DIR is on a $FS_TYPE mount. Redirecting Cargo target-dir to $SAFE_TARGET_DIR to avoid Bus errors."
     TARGET_DIR="$SAFE_TARGET_DIR"
 fi
@@ -49,13 +58,20 @@ mkdir -p "$TARGET_DIR"
 # parallel builds. Only MAKEFLAGS carries the jobserver token; unsetting it is
 # sufficient. Cargo then manages its own thread pool independently.
 unset MAKEFLAGS
-cargo build --release --workspace --target-dir "$TARGET_DIR"
+
+# Allow Cargo to utilize all available logical cores explicitly
+NUM_JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+cargo build --release --workspace --target-dir "$TARGET_DIR" --jobs "$NUM_JOBS" ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"}
 
 for pair in "$@"; do
     _pkg="${pair%%:*}"
     lib="${pair#*:}"
-    echo "Copying $TARGET_DIR/release/$lib to $OUT_DIR/$lib"
-    cp "$TARGET_DIR/release/$lib" "$OUT_DIR/$lib"
+    _src_path="$TARGET_DIR/release/$lib"
+    if [ -n "${CARGO_BUILD_TARGET:-}" ]; then
+        _src_path="$TARGET_DIR/$CARGO_BUILD_TARGET/release/$lib"
+    fi
+    echo "Copying $_src_path to $OUT_DIR/$lib"
+    cp "$_src_path" "$OUT_DIR/$lib"
 done
 
 echo "Listing outputs in $OUT_DIR:"

@@ -1,7 +1,8 @@
 ARCH ?= $(shell uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
 IMAGE_TAG ?= dev
-DEVENV_BASE_IMG ?= ghcr.io/refractsystems/virtmcu/devenv-base:$(IMAGE_TAG)-$(ARCH)
-BUILDER_IMG ?= ghcr.io/refractsystems/virtmcu/builder:$(IMAGE_TAG)-$(ARCH)
+DEVENV_IMG ?= ghcr.io/refractsystems/virtmcu/devenv:$(IMAGE_TAG)-$(ARCH)
+CI_IMG ?= ghcr.io/refractsystems/virtmcu/ci:$(IMAGE_TAG)-$(ARCH)
+CI_ASAN_IMG ?= ghcr.io/refractsystems/virtmcu/ci:$(IMAGE_TAG)-asan-$(ARCH)
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
 
@@ -17,37 +18,16 @@ unexport VIRTUAL_ENV
 endif
 endif
 
-# ==============================================================================
-# Top-level Makefile for virtmcu
-#
-# This Makefile provides convenient shorthand commands for common development 
-# tasks. It delegates the actual heavy lifting to the shell scripts located 
-# in the `scripts/` directory or to the QEMU build system.
-#
-# Most developers will only need:
-#   make install-deps-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
-#   make build   — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
-#   make run     — Launch QEMU using the minimal boot_arm test DTB.
-#
-# Environment Variables / Flags:
-#			       directory (`third_party/qemu/build-virtmcu`) and 
-#			       Essential for CI and Docker targets testing final images.
-#   VIRTMCU_STALL_TIMEOUT_MS  — Milliseconds the Python orchestrator and clock 
-#			       will wait for a QEMU TCG quantum to complete before 
-#			       declaring a clock stall. Increased for ASan (e.g., 300000ms).
-#   VIRTMCU_USE_ASAN=1	— Compiles QEMU and Rust plugins with Memory Sanitizer 
-#			       (ASan) and UndefinedBehaviorSanitizer (UBSan) enabled. 
-#			       Output goes to `build-virtmcu-asan`.
-#   PYTEST_WORKERS=N	  — Number of parallel workers for `pytest -n`. Defaults to `auto`.
-#
-# Advanced CI/Testing Flags:
-#   ASAN_OPTIONS	      — Runtime options for AddressSanitizer (e.g., detect_leaks=0).
-#   UBSAN_OPTIONS	     — Runtime options for UndefinedBehaviorSanitizer.
-#   MIRIFLAGS		 — Flags passed to cargo miri test (e.g., -Zmiri-disable-isolation).
-#   VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 — Silences warning about missing QEMU headers in local-ci.
-#   UV_PROJECT_ENVIRONMENT    — Path to the isolated virtual environment for Docker test runs.
-#   GCOV_PREFIX / GCOV_PREFIX_STRIP — Used to correctly map host-side C coverage paths inside Docker.
-# ==============================================================================
+# Detection for container environment (system-wide Python mandate)
+IN_CONTAINER := $(shell [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ "$$USER" = "vscode" ] && echo 1 || echo 0)
+ifeq ($(IN_CONTAINER),1)
+  UV_RUN_OPTS := --no-project
+else
+  # On bare metal, we still use uv but avoid workspace-local .venv if the mandate is "venv must go".
+  # However, for local dev, --active is usually safer to avoid messing with system python.
+  # If the user really wants it gone, they might be using a global uv environment.
+  UV_RUN_OPTS := --active
+endif
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   BUILD_SUFFIX := -asan
@@ -60,14 +40,40 @@ endif
 # Environment configuration defaults
 QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
-# Automatically determine the number of parallel jobs for make
-ifeq ($(CI),true)
-  JOBS ?= 1
-else
-  JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
-endif
 
-.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv fmt fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint lint-python lint-simulation-usage lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling check-ffi build-test-artifacts build-tools install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-smoke ci-full perf-bench perf-check perf-baseline tag
+# Helper macros for running commands in Docker
+DOCKER_RUN_DEVENV_IMG = docker run --rm \
+	-e HOST_UID=$$(id -u) \
+	-e HOST_GID=$$(id -g) \
+	-e HOME=/home/vscode \
+	-e USER=vscode \
+	-e CI=true \
+	-e CARGO_TARGET_DIR=/tmp/ci-target$(BUILD_SUFFIX) \
+	-e VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
+	-v "$(CURDIR):/workspace" \
+	-v "$(CURDIR)/.ci-target$(BUILD_SUFFIX):/tmp/ci-target$(BUILD_SUFFIX)" \
+	-v ci-cargo-registry:/usr/local/cargo/registry \
+	-w /workspace
+
+DOCKER_RUN_DEVENV = $(DOCKER_RUN_DEVENV_IMG) $(DEVENV_IMG)
+
+DOCKER_RUN_CI_IMG = docker run --rm \
+	-v "$(CURDIR):/workspace" -w /workspace \
+	-e HOST_UID=$$(id -u) \
+	-e HOST_GID=$$(id -g) \
+	-e PYTHONPATH=/workspace:/workspace/generated \
+	-e CI=true \
+	-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
+	-e VIRTMCU_USE_PREBUILT_QEMU=1
+
+DOCKER_RUN_CI = $(DOCKER_RUN_CI_IMG) $(CI_IMG)
+DOCKER_RUN_CI_ASAN = $(DOCKER_RUN_CI_IMG) $(CI_ASAN_IMG)
+
+.PHONY: all build run clean clean-sim clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag
+.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-full ci-build-qemu ci-build-qemu-asan
+
+# Automatically determine the number of parallel jobs for make
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
 # By default, perform an incremental build
 all: build
@@ -79,7 +85,7 @@ all: build
 # Verify that Rust struct layouts match the QEMU binary ground truth.
 check-ffi:
 	@echo "==> Verifying FFI layouts..."
-	@uv run --active python3 scripts/check-ffi.py
+	@uv run $(UV_RUN_OPTS) python3 scripts/check-ffi.py
 
 # ------------------------------------------------------------------------------
 # Version Management
@@ -88,13 +94,13 @@ check-ffi:
 # Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
-	@uv run --active python3 scripts/sync-versions.py
+	@uv run $(UV_RUN_OPTS) python3 scripts/sync-versions.py
 	@echo "✓ Versions synchronized."
 
 # Verify that all versions are in sync across the codebase.
 check-versions:
 	@echo "==> Checking version synchronization..."
-	@uv run --active python3 scripts/check-versions.py
+	@uv run $(UV_RUN_OPTS) python3 scripts/check-versions.py
 
 # ------------------------------------------------------------------------------
 # Build Targets
@@ -112,123 +118,6 @@ build:
 	@$(MAKE) -C $(QEMU_BUILD) install
 	@echo "✓ Done."
 
-# Launch the emulator using the test DTB and default arguments.
-run:
-	@bash scripts/run.sh \
-	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
-	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
-	  -nographic \
-	  -m 128M \
-	  $(EXTRA_ARGS)
-
-
-# ------------------------------------------------------------------------------
-# Python & Testing Targets
-# ------------------------------------------------------------------------------
-
-# Create a Python virtual environment and install dependencies using uv.
-venv:
-	@if ! command -v uv >/dev/null 2>&1; then \
-		echo "==> uv not found, installing..."; \
-		curl -LsSf https://astral.sh/uv/install.sh | sh; \
-		export PATH="$$HOME/.local/bin:$$PATH"; \
-	fi
-	uv sync --active --link-mode=copy
-	@echo "✓ Virtual environment synchronized with uv."
-	@echo "✓ Activate with: source .venv/bin/activate"
-
-# Run integration smoke tests (Bash/QEMU level tests for boot_arm and other domains)
-test-integration: venv
-	uv run --active $(MAKE) build-test-artifacts
-	@bash scripts/cleanup-sim.sh --quiet
-	@echo "==> Running Modernized Integration Tests (via pytest)..."
-	uv run --active pytest tests/integration/ \
-		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
-	@echo "✓ All integration tests passed."
-
-# Run integration tests compiled with C/C++ memory sanitizers (ASan/UBSan)
-test-asan: venv
-	@echo "==> Building QEMU with ASan/UBSan enabled..."
-	VIRTMCU_USE_ASAN=1 bash scripts/install-deps.sh --force
-	@bash scripts/cleanup-sim.sh --quiet
-	@echo "==> Running integration tests under ASan/UBSan..."
-	VIRTMCU_USE_ASAN=1 \
-	VIRTMCU_STALL_TIMEOUT_MS=300000 \
-	ASAN_OPTIONS=detect_leaks=0,halt_on_error=1,detect_stack_use_after_return=1 \
-	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-	$(MAKE) test-integration
-	@echo "✓ All ASan integration tests passed."
-
-# Run Miri to detect Undefined Behavior in pure-Rust logic and safe FFI wrappers
-test-miri:
-	@echo "==> Running cargo miri test..."
-	@if ! rustup component list --toolchain nightly 2>/dev/null | grep -q "miri.*(installed)"; then \
-		echo "Installing Rust nightly toolchain and Miri..."; \
-		rustup toolchain install nightly --profile minimal --component miri; \
-	fi
-	@cargo +nightly miri setup
-	@MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
-	@echo "✓ Miri tests passed."
-
-
-# Parallelism for pytest (default to auto, can be overridden in CI or hooks)
-PYTEST_WORKERS ?= auto
-
-test-plugins-load: build
-	@echo "==> Running plugin smoke test..."
-	@uv run --active python3 scripts/test-plugins-load.py
-
-# Run all Python unit tests (no QEMU required).
-test-unit: venv
-	@echo "==> Running Tier 1 Unit Tests (no QEMU)..."
-	@./scripts/cleanup-sim.sh --quiet
-	PYTHONPATH=$(CURDIR) uv run --active pytest \
-		tests/unit/ \
-		-v -n $(PYTEST_WORKERS) --tb=short --capture=sys
-
-# Run all Rust unit tests (no QEMU required).
-test-unit-rust: venv
-	@echo "==> Running Rust Unit Tests..."
-	@VIRTMCU_UNIT_TEST=1 QEMU_SRC_DIR=/nonexistent VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
-		RUSTFLAGS="-C link-arg=-Wl,--unresolved-symbols=ignore-all --cfg virtmcu_unit_test" \
-		cargo test --workspace
-
-
-# Alias for test-unit
-test: test-unit
-
-
-# Run guest firmware coverage analysis (boot_arm)
-test-coverage-guest:
-	@echo "==> Running guest firmware coverage (drcov) inside builder..."
-	@bash scripts/docker-build.sh builder
-	@docker run --rm \
-		-v "$(CURDIR):/workspace" -w /workspace \
-		-e PYTHONPATH=/workspace \
-		-e CI=true \
-		$(BUILDER_IMG) \
-		bash -c "make -C tests/fixtures/guest_apps/boot_arm && \
-			 DRCOV_SO=\$$(find third_party/qemu/build-virtmcu /build/qemu -name 'libdrcov.so' 2>/dev/null | head -n 1) && \
-			 qemu-system-arm -M arm-generic-fdt,hw-dtb=tests/fixtures/guest_apps/boot_arm/minimal.dtb \
-			   -kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic -m 128M -display none \
-			   -plugin \"\$$DRCOV_SO\",filename=hello.drcov -d plugin & \
-			 sleep 2 && kill -INT \$$! && wait \$$! || true; \
-			 python3 tools/analyze_coverage.py hello.drcov tests/fixtures/guest_apps/boot_arm/hello.elf --fail-under 80"
-	@echo "✓ Guest coverage check passed."
-
-# Generate host-side C/Rust coverage report (requires lcov)
-coverage-report:
-	@echo "==> Generating host-side coverage report..."
-	@mkdir -p test-results/coverage
-	@# Search for .gcda files in both the build directory and the isolated coverage data directory
-	lcov --quiet --capture \
-		--directory $(QEMU_BUILD) \
-		--directory $(CURDIR)/target/coverage \
-		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
-	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
-	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
-	@echo "✓ Report generated: test-results/coverage/html/index.html"
-
 # Builds all test artifacts across all domains
 build-test-artifacts:
 	@$(MAKE) -C tests/fixtures/guest_apps/boot_arm -j$(JOBS)
@@ -241,183 +130,14 @@ build-test-artifacts:
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
 		echo "==> Building test tools (deterministic_coordinator, cyber_bridge)..."; \
-		cargo build --release -j$(JOBS) -p deterministic_coordinator -p cyber_bridge; \
+		ASAN_FLAG=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] && echo "-Zsanitizer=address" || echo ""); \
+		TSAN_FLAG=$$([ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "-Zsanitizer=thread" || echo ""); \
+		BOOTSTRAP=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] || [ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "1" || echo "0"); \
+		RUSTFLAGS="$$ASAN_FLAG $$TSAN_FLAG"; \
+		TRIPLE=$$(rustc -vV | grep "host:" | awk "{print \$$2}"); \
+		RUSTC_BOOTSTRAP=$$BOOTSTRAP HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo build --release -j$(JOBS) -p deterministic_coordinator -p cyber_bridge --target "$$TRIPLE"; \
 	fi
 
-# Run the complete test suite: unit tests, integration smoke tests, Robot tests.
-test-all: test test-integration test-coverage-guest
-
-# Run integration smoke tests inside the builder container (Safe for macOS hosts).
-test-integration-docker:
-	@echo "==> Running integration tests inside builder container..."
-	@bash scripts/docker-build.sh builder
-	docker run --rm \
-		--user $$(id -u):$$(id -g) \
-		-e HOME=/tmp \
-		-e USER=vscode \
-		-e CI=true \
-		-e CARGO_TARGET_DIR=/tmp/ci-target \
-		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
-		-v "$(CURDIR):/workspace" -w /workspace \
-		-v ci-cargo-registry:/usr/local/cargo/registry \
-		-e PYTHONPATH=/workspace \
-		-e VIRTMUC_SKIP_QEMU_HEADERS_WARNING=1 \
-		-e VIRTMCU_SKIP_BUILD_DIR=1 \
-		$(BUILDER_IMG) \
-		bash -c "make test-integration"
-	@echo "✓ All integration tests passed inside container."
-# ------------------------------------------------------------------------------
-# Lint & Format
-# ------------------------------------------------------------------------------
-
-# Run all linting and static analysis checks
-lint: venv check-versions check-ffi lint-exports lint-python lint-python-types lint-rust lint-c lint-shell lint-docker lint-yaml lint-actions lint-meson lint-spelling lint-audit lint-docs
-	@echo "All linting and static analysis checks passed!"
-
-# Verify that plugins export required unmangled FFI symbols
-lint-exports:
-	@echo "==> Verifying plugin exports..."
-	@uv run --active python3 scripts/verify-exports.py
-	@echo "✓ Plugin exports verified."
-
-# Check mdbook documentation
-lint-docs:
-	@echo "==> Checking Rust documentation..."
-	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-	@echo "✓ Rust documentation check passed."
-	@echo "==> Checking mdbook documentation..."
-	@mdbook build
-	@rm -rf target/book	@echo "✓ mdbook documentation check passed."
-
-# Run Rust security audit and supply chain checks
-lint-audit:
-	@echo "==> Security Audit (Rust)..."
-	@if command -v cargo-audit >/dev/null 2>&1; then \
-		cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 -f Cargo.lock; \
-	else \
-		echo "❌ cargo-audit not installed. Run 'cargo install cargo-audit' to enable."; exit 1; \
-	fi
-
-	@echo "==> cargo deny (supply chain security)..."
-	@if command -v cargo-deny >/dev/null 2>&1; then \
-		cargo deny check && echo "✓ cargo deny passed." || { echo "❌ cargo deny failed"; exit 1; }; \
-	else \
-		echo "❌ cargo-deny not installed. Run 'cargo install cargo-deny' to enable."; exit 1; \
-	fi
-	@echo "✓ Audit checks completed."
-# Run Python linting and type checking
-lint-python:
-	@echo "==> Python banned patterns lint..."
-	@uv run --active python3 scripts/lints/python_banned_patterns.py
-	@echo "==> Simulation usage lint..."
-	@uv run --active python3 scripts/lints/simulation_usage.py
-	@echo "==> ruff check..."
-	@uv run --active ruff check .
-	@echo "✓ ruff passed."
-
-# Run Simulation Usage Lint
-lint-simulation-usage:
-	@echo "==> Simulation usage lint..."
-	@uv run --active python3 scripts/lints/simulation_usage.py
-# Run codespell to catch typos
-lint-spelling:
-	@echo "==> codespell..."
-	@uvx codespell --skip="./third_party/*,./.venv/*,**/build/*,**/target/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js" \
-		--ignore-words-list="virtmcu,zenoh,qemu,qmp,riscv,TE" .
-	@echo "✓ codespell passed."
-
-# Run shellcheck on all bash scripts
-lint-shell:
-	@uv run --active python3 scripts/lints/shell_lints.py
-
-
-# Run hadolint on Dockerfiles
-lint-docker:
-	@echo "==> hadolint..."
-	@hadolint --version >/dev/null 2>&1 || { echo "❌ Error: hadolint is not installed. Install from: https://github.com/hadolint/hadolint"; exit 1; }
-	@hadolint docker/Dockerfile
-	@echo "✓ hadolint passed."
-
-# Run actionlint on GitHub Actions workflows
-lint-actions:
-	@echo "==> actionlint..."
-	@actionlint -version >/dev/null 2>&1 || { echo "❌ Error: actionlint is not installed. Install with: (curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash) && sudo mv actionlint /usr/local/bin/"; exit 1; }
-	@actionlint
-	@echo "✓ actionlint passed."
-
-
-# Run yamllint on YAML configuration files
-lint-yaml:
-	@echo "==> yamllint..."
-	@uvx yamllint --strict -d "{extends: relaxed, rules: {line-length: disable}}" $$(find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -not -path "*/build/*" -not -path "*/target/*" -not -path "*/.claude/*" -not -path "*/.cargo-cache/*" -not -path "*/schema/node_modules/*")
-	@echo "✓ yamllint passed."
-# Run mypy static type checking
-lint-python-types:
-	@echo "==> mypy..."
-	@uv run --active mypy tools/ tests/ patches/
-	@echo "✓ mypy passed."
-# Run clang-format and cppcheck on C/C++ files
-lint-c:
-	@echo "==> clang-format (dry-run)..."
-	@clang-format --version >/dev/null 2>&1 || { echo "❌ Error: clang-format is not installed. Install with: sudo apt-get install clang-format"; exit 1; }
-	@find hw tools tests -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.cc" -o -name "*.hpp" \) \
-		-not -path "*/rust/*" \
-		-not -path "*/remote-port/*" \
-		-not -path "*/third_party/*" \
-		-not -path "*/build/*" \
-		-not -path "*/.venv*" \
-		-not -path "*/target/*" \
-		-print0 | xargs -0 clang-format -Werror --dry-run
-	@echo "✓ clang-format passed."
-	@echo "==> cppcheck..."
-	@cppcheck --version >/dev/null 2>&1 || { echo "❌ Error: cppcheck is not installed. Install with: sudo apt-get install cppcheck"; exit 1; }
-	@cppcheck --error-exitcode=1 --enable=warning,style,performance,portability --quiet --std=c11 \
-		--suppress=unusedFunction \
-		--suppress=arithOperationsOnVoidPointer \
-		--suppress=normalCheckLevelMaxBranches \
-		--suppress=uninitvar --suppress=legacyUninitvar \
-		--suppress=knownConditionTrueFalse \
-		--suppress=identicalInnerCondition \
-		--suppress=dangerousTypeCast \
-		--suppress=constVariablePointer --suppress=constParameterPointer \
-		--suppress=redundantAssignment --suppress=noExplicitConstructor \
-		--suppress=constParameterCallback --suppress=unusedVariable \
-		-i tools/systemc_adapter/build/ \
-		-DDEFINE_TYPES= -DHWADDR_PRIx=\"lx\" -DPRIx64=\"llx\" \
-		hw/misc/ tools/systemc_adapter/
-	@echo "✓ cppcheck passed."
-
-
-# Run cargo fmt, clippy, and structural checks on Rust files
-lint-rust:
-	@echo "==> Checking Cargo workspace version synchronization..."
-	@cargo metadata --no-deps --format-version 1 | \
-		python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"
-	@echo "✓ Cargo workspace versions aligned."
-	@echo "==> Running cargo fmt --check..."
-	@cargo fmt --all --check
-	@echo "==> Running cargo machete..."
-	@cargo machete
-	@echo "==> Rust banned patterns lint..."
-	@uv run --active python3 scripts/lints/rust_banned_patterns.py
-	@echo "==> Checking for stale QEMU plugins..."
-	@uv run --active python3 scripts/check-stale-so.py
-	@echo "==> Rust Safe Serialization lint..."
-	@uv run --active python3 scripts/lints/rust_safe_serialization.py
-	@echo "==> Checking QOM TypeInfo / DTS / Meson name alignment..."
-	@uv run --active python3 scripts/check-qom-alignment.py || exit 1
-	@echo "✓ QOM TypeInfo / DTS / Meson alignment OK."
-	@echo "==> Checking Cargo lib name vs Meson 'lib' field..."
-	@uv run --active python3 scripts/check-cargo-meson-lib-alignment.py || exit 1
-	@echo "✓ Cargo / Meson library names aligned."
-	@echo "==> Running cargo clippy..."
-	@cargo clippy --workspace -- -D warnings
-
-# Run meson format check
-lint-meson:
-	@echo "==> Running meson format..."
-	@uvx meson format -q hw/meson.build
-	@echo "✓ meson format passed."
 # Build Python host orchestration tools
 build-tools:
 	@echo "==> Building virtmcu-tools package..."
@@ -429,268 +149,210 @@ build-tools:
 		unzip -l "$$WHEEL_FILE" | grep "virtmcu_tools/qmp_bridge.py" >/dev/null && \
 		echo "✓ virtmcu-tools package build passed."
 
-# Run all formatters
-fmt: fmt-python fmt-rust fmt-meson fmt-c fmt-yaml
+# Launch the emulator using the test DTB and default arguments.
+run:
+	@bash scripts/run.sh \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
+	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
+	  -nographic \
+	  -m 128M \
+	  $(EXTRA_ARGS)
 
-# Format Python files using ruff
-fmt-python: venv
-	@echo "==> ruff format + fix..."
-	uv run --active ruff format .
-	uv run --active ruff check . --fix
-
-# Format Rust files using cargo fmt
-fmt-rust:
-	@echo "==> cargo fmt..."
-	@cargo fmt --all
-
-# Format Meson build files
-fmt-meson:
-	@echo "==> meson format..."
-	@meson fmt -i hw/meson.build && echo "✓ meson format passed." || { echo "❌ meson format failed"; exit 1; }
-
-# Format C/C++ files using clang-format
-fmt-c:
-	@echo "==> clang-format..."
-	@find hw -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/rust/*" -not -path "*/third_party/*" -print0 | xargs -0 clang-format -i && echo "✓ clang-format passed." || { echo "❌ clang-format failed"; exit 1; }
-
-# Format YAML files (strip trailing whitespace)
-fmt-yaml:
-	@echo "==> stripping trailing whitespace from YAMLs..."
-	@find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -not -path "*/.venv*" -print0 | xargs -0 sed -i 's/[[:space:]]*$$//'
-
-# Install pre-commit and pre-push git hooks
-install-hooks:
-	@echo "==> Installing Git hooks..."
-	@mkdir -p .git/hooks
-	# Hooks run directly in the current environment (devcontainer or native).
-	# We set PYTEST_WORKERS=4 to provide parallelism while remaining pipe-safe.
-	# Standard stdin is redirected from /dev/null to prevent interactive hangs.
-	@printf '#!/bin/sh\nset -e\nPYTEST_WORKERS=4 make lint < /dev/null && PYTEST_WORKERS=4 make test-unit < /dev/null\n' > .git/hooks/pre-commit
-	@printf '#!/bin/sh\nset -e\nPYTEST_WORKERS=4 make lint < /dev/null && PYTEST_WORKERS=4 make test-unit < /dev/null\n' > .git/hooks/pre-push
-	@chmod +x .git/hooks/pre-push .git/hooks/pre-commit
-	@echo "✓ hooks installed: pre-commit and pre-push run 'make lint && make test-unit' directly."
 
 # ------------------------------------------------------------------------------
-# Performance Benchmarking & Trend Tracking (boot_arm6)
+# Python & Testing Targets (Unified dev/ci pairs)
 # ------------------------------------------------------------------------------
 
-# Run the full performance benchmark and save results to tests/fixtures/guest_apps/perf_bench/last_results.json.
-perf-bench: venv
-	@$(MAKE) -C tests/fixtures/guest_apps/perf_bench bench.elf
-	PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/perf_bench/bench.py
-
-# Save the current benchmark results as the performance baseline.
-perf-baseline: perf-bench
-	uv run --active python3 scripts/perf_trend.py --save-baseline
-	@echo "✓ Performance baseline updated."
-
-# Check current benchmark results against the saved baseline; exit 1 on regression.
-perf-check: venv
-	@if [ ! -f tests/fixtures/guest_apps/perf_bench/last_results.json ]; then \
-		$(MAKE) -C tests/fixtures/guest_apps/perf_bench bench.elf && PYTHONPATH=$(CURDIR) uv run --active python3 tests/fixtures/guest_apps/perf_bench/bench.py; \
+# Configure Python environment using uv.
+# In a container, this target is effectively a no-op that verifies the system install.
+setup-python:
+	@if [ "$(IN_CONTAINER)" = "1" ]; then \
+		echo "==> Running in container: using system-wide Python environment."; \
+		sudo uv pip install --system -r pyproject.toml -r requirements.txt --break-system-packages; \
+	else \
+		echo "==> Bare-metal detected: venv is BANNED in this project."; \
+		echo "    Please use the provided DevContainer or manage your own system-wide dependencies."; \
+		if ! command -v uv >/dev/null 2>&1; then \
+			echo "    (uv is still recommended for tool execution)"; \
+		fi; \
 	fi
-	uv run --active python3 scripts/perf_trend.py --check
+
 
 # ------------------------------------------------------------------------------
-# Local CI Simulation
-# Mirrors the GitHub CI tier structure so you can validate locally before push.
-#
-# Three escalating gates — each one is a strict superset of the previous:
-#
-#   Hooks (pre-commit / pre-push)
-#     make lint && make test-unit   — run directly in the devcontainer.
-#     Fast (~3-5 min). No Docker spawn. Use --no-verify to skip in an emergency.
-#
-#   make ci-local   — GitHub Tier 1 simulation in a fresh devenv-base container.
-#     Runs lint → build-tools → test-unit in the SAME image and with the SAME
-#     flags that .github/workflows/ci-main.yml uses.  No CARGO_HOME override.
-#     Run this before opening a pull request.
-#
-#   make ci-smoke DOMAIN=N — Run a single CI integration domain inside the builder Docker image.
-#     Perfect for testing exactly what GitHub will run for a specific integration test.
-#
-#   make ci-full    — Full pipeline: ci-local + ci-asan + ci-miri + builder image
-#     (full QEMU compile) + all integration domains run sequentially inside the builder.
-#     This is the authoritative "will GitHub be green?" answer.
-#     Run this before merging to main.
-#
-# Mount strategy for all 'docker run devenv-base' invocations:
-#
-#   /workspace (bind-mount $(CURDIR))
-#     Source code + generated Python .venv-docker + test-results.
-#     The host's own 'target/' directory is NOT used by the container.
-#
-#   CARGO_TARGET_DIR=/tmp/ci-target  (ephemeral inside the container)
-#     Compiled Rust artifacts stay inside the container and disappear when it
-#     exits.  This is the critical fix: sharing target/ between environments
-#     with different CARGO_HOME values corrupts Cargo's fingerprint cache and
-#     causes "can't find crate" errors on proc-macro crates.
-#
-#   ci-cargo-registry (named Docker volume → /usr/local/cargo/registry)
-#     Crate source tarballs are cached in a named volume that persists across
-#     'docker run' calls without ever touching the host filesystem.  The
-#     container's own /usr/local/cargo is used (matching GitHub CI exactly —
-#     GitHub's docker run also carries no CARGO_HOME override).
-#
-#   UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker
-#     Python venv isolated from the host's .venv so tool versions don't bleed.
+# Continuous Integration Targets (Docker/CI)
 # ------------------------------------------------------------------------------
 
-# Run the local equivalent of CI Tier 1 (Linting, build, unit tests)
-ci-local:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Tier 1 — GitHub-identical: lint → build-tools → test-unit"
-	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh devenv-base
-	@echo ""
-	# Ensure the cargo registry named volume is owned by the current user.
-	# Docker initialises new named volumes from the image layer (root-owned),
-	# so --user runs would fail on first crate download without this step.
-	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
-		sh -c "chown -R $$(id -u):$$(id -g) /vol"
-	# Mirrors the three 'docker run devenv-base' steps from .github/workflows/ci-main.yml.
-	# CARGO_HOME is NOT overridden — container uses its baked-in /usr/local/cargo,
-	# exactly as GitHub CI does.  See mount strategy comment above for full details.
-	docker run --rm \
-		--user $$(id -u):$$(id -g) \
-		-e HOME=/tmp \
-		-e USER=vscode \
-		-e CI=true \
-		-e CARGO_TARGET_DIR=/tmp/ci-target \
-		-e VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
-		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
-		-v "$(CURDIR):/workspace" \
-		-v ci-cargo-registry:/usr/local/cargo/registry \
-		-w /workspace \
-		$(DEVENV_BASE_IMG) bash -c "make lint && ./scripts/check_schemas.sh && make build-tools && make test-unit"	@echo ""
-	@echo "✓ ci-local passed (1:1 with GitHub CI Tier 1)."
-	@echo "  To run the full pipeline (builder ~40 min + all integration domains): make ci-full"
+ci-lint:
+	@bash scripts/docker-build.sh devenv
+	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-lint.sh
 
-# Run host-side C coverage for peripheral plugins (inside builder)
-test-coverage-peripheral:
-	@echo "==> Running peripheral C coverage (gcovr)..."
-	@bash scripts/docker-build.sh builder
-	@mkdir -p test-results
-	@docker run --rm \
-		-v "$(CURDIR):/workspace" -w /workspace \
-		-e CI=true \
-		$(BUILDER_IMG) \
-		bash -c "gcovr -r /build/qemu/hw/virtmcu \
-			--gcov-executable gcov \
-			--object-directory /build/qemu/build-virtmcu \
-			--object-directory /workspace/coverage-data \
-			--xml /workspace/test-results/peripheral-coverage.xml \
-			--html-details /workspace/test-results/peripheral-coverage.html \
-			--print-summary"
+ci-unit:
+	@bash scripts/docker-build.sh devenv
+	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit.sh
 
-# Run the full pipeline: ci-local + ci-asan + ci-miri + builder image tests
-ci-full: ci-local ci-asan ci-miri
+ci-unit-coverage:
+	@bash scripts/docker-build.sh devenv
+	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-coverage.sh
+
+# Run Miri tests to detect Undefined Behavior inside devenv
+ci-unit-miri:
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI Miri — Docker: devenv"
+	@echo "════════════════════════════════════════════════════"
+	@bash scripts/docker-build.sh devenv
+	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-miri.sh
+	@echo ""
+	@echo "✓ ci-unit-miri passed."
+
+ci-integration:
+	@if [ -z "$(DOMAIN)" ]; then \
+		echo "❌ Error: DOMAIN is required for ci-integration."; \
+		echo "==> Example: make ci-integration DOMAIN=boot_arm"; \
+		exit 1; \
+	fi
+	@bash scripts/docker-build.sh ci
+	@$(DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
+
+ci-integration-coverage:
+	@bash scripts/docker-build.sh ci
+	@$(DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
+
+ci-integration-asan:
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI ASan — Docker: ci-asan"
+	@echo "════════════════════════════════════════════════════"
+	@bash scripts/docker-build.sh ci-asan
+	@$(DOCKER_RUN_CI_ASAN) bash scripts/testing/run-integration-asan.sh
+	@echo ""
+	@echo "✓ ci-integration-asan passed."
+
+ci-peripheral-coverage:
+	@bash scripts/docker-build.sh ci
+	@$(DOCKER_RUN_CI) bash scripts/testing/run-peripheral-coverage.sh
+
+# Helper for local reproduction of QEMU container builds
+ci-build-qemu:
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI QEMU Build — Docker: qemu-builder"
+	@echo "════════════════════════════════════════════════════"
+	@$(MAKE) docker-qemu-builder
+	@echo "✓ ci-build-qemu complete."
+
+ci-build-qemu-asan:
+	@echo "════════════════════════════════════════════════════"
+	@echo "  CI QEMU ASan Build — Docker: qemu-builder (ASan)"
+	@echo "════════════════════════════════════════════════════"
+	@VIRTMCU_USE_ASAN=1 $(MAKE) docker-qemu-builder
+	@echo "✓ ci-build-qemu-asan complete."
+
+# Helper for persistent container builds
+prepare-ci-target:
+	@mkdir -p .ci-target$(BUILD_SUFFIX)
+
+ci-local: prepare-ci-target
+	@bash scripts/docker-build.sh devenv
+	@$(DOCKER_RUN_DEVENV) bash -c "make dev-lint && ./scripts/check_schemas.sh && make build-tools && make dev-unit"
+
+# Run the full pipeline: ci-local + ci-integration-asan + ci-unit-miri + all integration domains
+ci-full: ci-local ci-integration-asan ci-unit-miri
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Docker: builder + runtime"
+	@echo "  CI Full — Docker: ci + runtime"
 	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh builder
+	@bash scripts/docker-build.sh ci
 	@bash scripts/docker-build.sh runtime
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Integration smoke tests matrix (inside builder)"
+	@echo "  CI Full — Integration smoke tests matrix (inside ci)"
 	@echo "════════════════════════════════════════════════════"
 	@mkdir -p coverage-data
-	@echo "==> Running full smoke test matrix (Equivalent to GitHub CI)..."
-	docker run --rm \
-		-v "$(CURDIR):/workspace" -w /workspace \
-		-e PYTHONPATH=/workspace \
-		-e CI=true \
-		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
-		-e GCOV_PREFIX=/workspace/coverage-data \
-		-e GCOV_PREFIX_STRIP=3 \
-		-e VIRTMCU_SKIP_BUILD_DIR=1 \
-		$(BUILDER_IMG) \
-		bash scripts/ci-integration-tier.sh all
+	@$(DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(CI_IMG) bash scripts/testing/run-integration.sh all
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
 	@echo "════════════════════════════════════════════════════"
-	$(MAKE) test-coverage-guest
-	$(MAKE) test-coverage-peripheral
+	@$(MAKE) ci-integration-coverage
+	@$(MAKE) ci-peripheral-coverage
 	@echo ""
 	@echo "✓ ci-full passed."
+# ------------------------------------------------------------------------------
+# Development Targets (Local)
+# ------------------------------------------------------------------------------
 
-# Run a single CI integration domain in Docker (e.g., make ci-smoke DOMAIN=2)
-ci-smoke:
-	@if [ -z "$(DOMAIN)" ]; then \
-		echo "Usage: make ci-smoke DOMAIN=<domain_name>"; \
-		echo "Example: make ci-smoke DOMAIN=2"; \
-		exit 1; \
-	fi
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Integration Domain $(DOMAIN) — Docker: builder"
-	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh builder
-	@mkdir -p coverage-data
-	docker run --rm \
-		-v "$(CURDIR):/workspace" -w /workspace \
-		-e PYTHONPATH=/workspace \
-		-e CI=true \
-		-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
-		-e GCOV_PREFIX=/workspace/coverage-data \
-		-e GCOV_PREFIX_STRIP=3 \
-		-e VIRTMCU_SKIP_BUILD_DIR=1 \
-		$(BUILDER_IMG) \
-		bash scripts/ci-integration-tier.sh $(DOMAIN)
+# --- General ---
 
-# Run integration tests compiled with ASan/UBSan inside devenv-base
-ci-asan:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI ASan — Docker: devenv-base"
-	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh devenv-base
-	@echo ""
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI ASan — Building and testing under ASan"
-	@echo "════════════════════════════════════════════════════"
-	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
-		sh -c "chown -R $$(id -u):$$(id -g) /vol"
-	docker run --rm \
-		--user $$(id -u):$$(id -g) \
-		-e HOME=/tmp \
-		-e USER=vscode \
-		-e CI=true \
-		-e CARGO_TARGET_DIR=/tmp/ci-target \
-		-e VIRTMCU_SKIP_QEMU_HEADERS_WARNING=1 \
-		-e UV_PROJECT_ENVIRONMENT=/workspace/.venv-docker \
-		-e VIRTMCU_STALL_TIMEOUT_MS=300000 \
-		-v "$(CURDIR):/workspace" \
-		-v ci-cargo-registry:/usr/local/cargo/registry \
-		-w /workspace \
-		$(DEVENV_BASE_IMG) make test-asan
-	@echo ""
-	@echo "✓ ci-asan passed."
+# Setup developer environment: dependencies, version sync, and full build.
+setup-dev: install-deps-initial sync-versions build
 
-# Run Miri tests to detect Undefined Behavior inside devenv-base
-ci-miri:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Miri — Docker: devenv-base"
-	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh devenv-base
-	@echo ""
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Miri — Running Miri tests"
-	@echo "════════════════════════════════════════════════════"
-	docker run --rm -v ci-cargo-registry:/vol $(DEVENV_BASE_IMG) \
-		sh -c "chown -R $$(id -u):$$(id -g) /vol"
-	docker run --rm \
-		--user $$(id -u):$$(id -g) \
-		-e HOME=/tmp \
-		-e USER=vscode \
-		-e CI=true \
-		-e CARGO_TARGET_DIR=/tmp/ci-target \
-		-v "$(CURDIR):/workspace" \
-		-v ci-cargo-registry:/usr/local/cargo/registry \
-		-w /workspace \
-		$(DEVENV_BASE_IMG) make test-miri
-	@echo ""
-	@echo "✓ ci-miri passed."
+# Run the full development pipeline: build QEMU, build guest artifacts, lint, unit tests, integration tests, and peripheral coverage.
+dev-all: build build-test-artifacts dev-check dev-integration dev-peripheral-coverage
+
+# --- Linting ---
+# Unified developer check: Lint + Unit Tests (Tier 1 parity)
+dev-check: dev-lint dev-unit
+
+dev-lint: setup-python
+	@bash scripts/testing/run-lint.sh
+
+# --- Unit Tests ---
+dev-unit: setup-python
+	@bash scripts/testing/run-unit.sh
+
+dev-unit-coverage: setup-python
+	@bash scripts/testing/run-unit-coverage.sh
+
+dev-unit-miri: setup-python
+	@bash scripts/testing/run-unit-miri.sh
+
+# --- Integration Tests ---
+dev-integration: setup-python
+	@uv run $(UV_RUN_OPTS) $(MAKE) build-test-artifacts
+	@bash scripts/testing/run-integration.sh $(DOMAIN)
+
+dev-integration-coverage: setup-python
+	@bash scripts/testing/run-integration-coverage.sh
+
+dev-integration-asan: setup-python
+	@bash scripts/testing/run-integration-asan.sh
+
+# Run host-side C coverage for peripheral plugins (inside ci)
+dev-peripheral-coverage:
+	@bash scripts/testing/run-peripheral-coverage.sh
+
+# --- Git Hooks ---
+install-git-hooks:
+	@echo "==> Installing Git hooks..."
+	@mkdir -p .git/hooks
+	@printf '#!/bin/sh\nset -e\nmake dev-lint\n' > .git/hooks/pre-commit
+	@printf '#!/bin/sh\nset -e\nmake dev-unit\n' > .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push .git/hooks/pre-commit
+	@echo "✓ Git hooks installed: pre-commit (lint) and pre-push (unit)."
+
+# Aliases for backward compatibility
+fmt-all: fmt-python fmt-rust fmt-meson fmt-c fmt-yaml
+
+# Individual format targets
+fmt-python: setup-python
+	@echo "==> ruff format + fix..."
+	@uv run $(UV_RUN_OPTS) ruff format .
+	@uv run $(UV_RUN_OPTS) ruff check . --fix
+
+fmt-rust:
+	@echo "==> cargo fmt..."
+	@cargo fmt --all
+
+fmt-meson:
+	@echo "==> meson format..."
+	@meson fmt -i hw/meson.build && echo "✓ meson format passed." || { echo "❌ meson format failed"; exit 1; }
+
+fmt-c:
+	@echo "==> clang-format..."
+	@find hw tools tests -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.cc" -o -name "*.hpp" \) \
+		-not -path "*/rust/*" -not -path "*/third_party/*" -print0 | xargs -0 clang-format -i && echo "✓ clang-format passed." || { echo "❌ clang-format failed"; exit 1; }
+
+fmt-yaml:
+	@echo "==> stripping trailing whitespace from YAMLs..."
+	@find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "*/third_party/*" -print0 | xargs -0 sed -i 's/[[:space:]]*$$//'
 
 # ------------------------------------------------------------------------------
 # Docker Image Targets
@@ -699,14 +361,14 @@ ci-miri:
 # Pass IMAGE_TAG=<tag> to override the local tag (default: dev).
 #
 #   make docker-dev    — base → toolchain → devenv with smoke tests (fast path)
-#   make docker-all    — full pipeline including builder (~40 min) and runtime
+#   make docker-all    — full pipeline including ci (~40 min) and runtime
 #   make docker-base   — build a single stage (no smoke test, for debugging)
 
 # Build docker base -> toolchain -> devenv with smoke tests
 docker-dev:
 	@bash scripts/docker-build.sh dev
 
-# Build all docker stages including builder and runtime
+# Build all docker stages including ci and runtime
 docker-all:
 	@bash scripts/docker-build.sh all
 
@@ -722,9 +384,17 @@ docker-toolchain:
 docker-devenv:
 	@bash scripts/docker-build.sh devenv
 
-# Build only the docker builder stage
-docker-builder:
-	@bash scripts/docker-build.sh builder
+# Build only the docker qemu-builder stage
+docker-qemu-builder:
+	@bash scripts/docker-build.sh qemu-builder
+
+# Build only the docker ci stage
+docker-ci:
+	@bash scripts/docker-build.sh ci
+
+# Build only the docker ci-asan stage
+docker-ci-asan:
+	@bash scripts/docker-build.sh ci-asan
 
 # Build only the docker runtime stage
 docker-runtime:
@@ -791,7 +461,7 @@ clean:
 	find . -name "virtmcu-timeout-*" -delete
 	find . -name "qmp-timeout-*" -delete
 	rm -f .coverage
-	rm -rf .pytest_cache .ruff_cache
+	rm -rf .pytest_cache .ruff_cache .hypothesis
 	rm -rf test-results/
 	rm -rf tests/fixtures/guest_apps/*/results/
 	rm -rf install/
@@ -803,14 +473,14 @@ clean:
 	rm -rf hw/rust/target
 	rm -rf $(QEMU_SRC)/build-virtmcu/install
 	rm -rf $(QEMU_SRC)/build-virtmcu-asan/install
-	@echo "✓ Clean complete (QEMU sources and .venv remain)."
+	@echo "✓ Clean complete (QEMU sources remain)."
 
-# Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
+# Deep clean: completely remove downloaded sources and all artifacts.
 # You will need to run 'make install-deps-initial' again after this.
 distclean: clean
-	rm -rf .venv
 	rm -rf third_party
 	rm -rf test-results
+	rm -rf .ci-target*
 	@echo "✓ Deep clean complete. Run 'make install-deps-initial' to rebuild the environment."
 # ------------------------------------------------------------------------------
 # Documentation

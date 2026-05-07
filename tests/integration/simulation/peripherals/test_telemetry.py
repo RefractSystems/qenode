@@ -136,7 +136,7 @@ async def test_coordinator_topology(simulation: Simulation, telemetry_artifacts:
 
     async with simulation as sim:
         assert sim.vta is not None
-        res: dict[int, int] = await sim.vta.step(10_000_000)  # LINT_EXCEPTION: vta_step_loop
+        res: dict[int, int] = await sim.vta.step(10_000_000)  # virtmcu-allow: lint reasoning="vta_step_loop"
         assert 0 in res
         assert 1 in res
         assert res[0] == 10_000_000

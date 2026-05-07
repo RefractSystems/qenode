@@ -17,13 +17,6 @@ def write_pcap(path: Path, history: list[dict[str, Any]]) -> None:
     try:
         with path.open("wb") as f:
             # Global Header (24 bytes)
-            # magic_number: u32 = 0xa1b2c3d4
-            # version_major: u16 = 2
-            # version_minor: u16 = 4
-            # thiszone: i32 = 0
-            # sigfigs: u32 = 0
-            # snaplen: u32 = 65535
-            # network: u32 = 147 (DLT_USER0)
             f.write((0xA1B2C3D4).to_bytes(4, "little"))
             f.write((2).to_bytes(2, "little"))
             f.write((4).to_bytes(2, "little"))
@@ -75,8 +68,8 @@ def write_pcap(path: Path, history: list[dict[str, Any]]) -> None:
                     f.write(orig_len.to_bytes(4, "little"))
 
                     f.write(pcap_payload[:incl_len])
-                except Exception as pkt_e:  # noqa: BLE001
-                    logger.warning(f"Failed to write PCAP packet: {pkt_e}")
+                except Exception as pkt_e:
+                    logger.error(f"Failed to write PCAP packet: {pkt_e}")
                     continue
     except OSError as e:
         logger.error(f"Failed to open/write PCAP file {path}: {e}")

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def on_sample(sample: Sample) -> None:
     """Callback for incoming telemetry samples."""
-    from Virtmcu.Telemetry.TraceEvent import TraceEvent
+    from generated.virtmcu.Telemetry.TraceEvent import TraceEvent
 
     payload = sample.payload.to_bytes()
     try:
@@ -32,7 +32,7 @@ def on_sample(sample: Sample) -> None:
         ev_id = ev.Id()
         val = ev.Value()
         name = ev.DeviceName()
-        name_str = name.decode("utf-8") if name else ""
+        name_str = name.decode("utf-8") if isinstance(name, bytes) else str(name) if name else ""
 
         if ev_type == 0:  # CPU_STATE
             type_str = "CPU_STATE"
@@ -53,7 +53,7 @@ def on_sample(sample: Sample) -> None:
 
         logger.info(f"[{ts:15}] {type_str:10} {id_str} val={val:3}")
     except (ValueError, TypeError, IndexError) as e:
-        logger.warning(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
+        logger.error(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
 
 
 def main() -> None:

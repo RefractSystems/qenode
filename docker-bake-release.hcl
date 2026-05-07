@@ -30,3 +30,31 @@ variable "ARCH" {
   default = "amd64"
 }
 
+target "base" {
+  tags = [
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/base:${RELEASE_TAG}-${ARCH}",
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/base:${IMAGE_TAG}-${ARCH}"
+  ]
+}
+
+target "toolchain" {
+  tags = [
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:${RELEASE_TAG}-${ARCH}",
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:${IMAGE_TAG}-${ARCH}"
+  ]
+}
+
+target "devenv" {
+  tags = [
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${RELEASE_TAG}-${ARCH}",
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"
+  ]
+}
+
+target "ci" {
+  tags = [
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/ci:${RELEASE_TAG}-${ARCH}",
+    "${REGISTRY}/${IMAGE_NAME_LOWER}/ci:${IMAGE_TAG}-${ARCH}"
+  ]
+}
+

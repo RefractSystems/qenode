@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     router = os.environ.get("ZENOH_ROUTER", "tcp/localhost:7447")
-    s = open_client_session(connect=router)  # ZENOH_OPEN_EXCEPTION: canonical wrapper
-
+    s = open_client_session(connect=router)  # virtmcu-allow: zenoh_open reasoning="canonical wrapper"
     rx_frames = []
 
     def on_rx(sample: zenoh.Sample) -> None:
@@ -36,15 +35,13 @@ def main() -> None:
     pub1 = s.declare_publisher("sim/eth/frame/1/tx")
     pub2 = s.declare_publisher("sim/eth/frame/2/tx")
 
-    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
+    mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     pub2.put(vproto.ZenohFrameHeader(0, 0, 0).pack())
-    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+    mock_execution_delay(0.5)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     orig_vtime = 0xFFFFFFFFFFFFFFFF - 500000
     pub1.put(vproto.ZenohFrameHeader(orig_vtime, 0, 4).pack() + b"DEAD")
 
-    mock_execution_delay(1)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+    mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     if len(rx_frames) == 0:
         logger.error("FAIL: No frame received")
         sys.exit(1)

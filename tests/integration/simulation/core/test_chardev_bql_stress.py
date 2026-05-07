@@ -14,7 +14,6 @@ import pytest
 
 from tools import vproto
 from tools.testing.env import WORKSPACE_ROOT
-from tools.testing.utils import get_time_multiplier
 
 if TYPE_CHECKING:
     from tools.testing.virtmcu_test_suite.simulation import Simulation
@@ -96,8 +95,10 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
         booted = False
 
         for _ in range(50):  # 50 steps of 10ms
-            # 120s base timeout scales to 600s in ASan via get_time_multiplier()
-            await sim.vta.step(10_000_000, timeout=120.0)  # LINT_EXCEPTION: vta_step_loop
+            # 120s base timeout scales to 600s in ASan via TestParams.multiplier()
+            await sim.vta.step(  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
+                10_000_000, timeout=120.0
+            )
             if b"Interactive UART Echo Ready." in received_data:
                 booted = True
                 break
@@ -116,16 +117,17 @@ async def test_chardev_flow_control_stress(simulation: Simulation) -> None:
         asyncio.create_task(sim.transport.publish(rx_topic, packet))
 
         # Final time advancement to ensure all data is processed
-        timeout = 60 * get_time_multiplier()
+        timeout = 60
         start_time = asyncio.get_running_loop().time()
         while len(received_data) < expected_count:
-            # 120s base timeout scales to 600s in ASan via get_time_multiplier()
-            await sim.vta.step(10_000_000, timeout=120.0)  # LINT_EXCEPTION: vta_step_loop
-
+            # 120s base timeout scales to 600s in ASan via TestParams.multiplier()
+            await sim.vta.step(10_000_000, timeout=120.0)  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
             if asyncio.get_running_loop().time() - start_time > timeout:
                 break
             try:
-                await asyncio.wait_for(received_event.wait(), timeout=0.01)
+                from tools.testing.parameters import TestParams
+
+                await asyncio.wait_for(received_event.wait(), timeout=TestParams.scale_timeout(0.01))
                 received_event.clear()
             except TimeoutError:
                 continue

@@ -14,7 +14,7 @@ pub struct QemuCond {
     _opaque: [u8; 56],
 }
 
-#[cfg(not(any(test, miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 extern "C" {
     /// A function
     pub fn virtmcu_bql_locked() -> bool;
@@ -60,7 +60,7 @@ extern "C" {
     pub fn virtmcu_cond_broadcast(cond: *mut QemuCond);
 }
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 mod mock {
     use super::*;
     use std::collections::HashMap;
@@ -69,8 +69,8 @@ mod mock {
 
     // Thread-local BQL flag: each test thread has isolated BQL state, preventing
     // interference when cargo test runs test functions in parallel.
-    thread_local! {
-        static BQL_HELD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    thread_local! { // virtmcu-allow: static_state reasoning="Thread local mock state for local testing"
+        static BQL_HELD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) }; // virtmcu-allow: static_state reasoning="Used purely for local testing."
     }
 
     // Per-condvar state: a generation counter incremented on every signal/broadcast.
@@ -78,7 +78,7 @@ mod mock {
     // This approach is immune to lost wakeups (signal before wait) and stale entries
     // from previous tests that reused the same stack address.
     /// A registry of condition variables and mutexes for mocks.
-    static MOCK_REGISTRY: Mutex<Option<HashMap<usize, Arc<MockState>>>> = Mutex::new(None);
+    static MOCK_REGISTRY: Mutex<Option<HashMap<usize, Arc<MockState>>>> = Mutex::new(None); // virtmcu-allow: static_state reasoning="Global mock registry for local testing."
 
     pub struct MockState {
         pub cv: Condvar,
@@ -182,7 +182,7 @@ mod mock {
             );
             true
         } else {
-            let timeout = core::time::Duration::from_millis(ms as u64);
+            let timeout = core::time::Duration::from_millis(u64::from(ms));
             let guard = state.gen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let result = state
                 .cv
@@ -216,13 +216,13 @@ pub struct Bql;
 impl Bql {
     /// Acquires the BQL and returns a guard. The lock is released when the guard is dropped.
     pub fn lock() -> BqlGuard {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: virtmcu_bql_lock is a QEMU-provided function to acquire the
         // global lock. It is safe to call from any thread.
         unsafe {
             virtmcu_bql_lock();
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_lock();
         BqlGuard
     }
@@ -230,13 +230,13 @@ impl Bql {
     /// Acquires the BQL but does NOT return a guard. The lock will remain held.
     /// This is used when transferring lock ownership to a C caller.
     pub fn lock_forget() {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: virtmcu_bql_lock is safe to call. Ownership is explicitly
         // managed by the caller.
         unsafe {
             virtmcu_bql_lock();
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_lock();
     }
 
@@ -245,29 +245,29 @@ impl Bql {
     /// # Safety
     /// The caller must ensure the BQL is currently held.
     pub unsafe fn unlock() {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         virtmcu_bql_unlock();
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_unlock();
     }
 
     /// Temporarily unlocks the BQL and returns a guard that will relock it when dropped.
     /// Returns None if the BQL was not held.
     pub fn temporary_unlock() -> Option<BqlUnlockGuard> {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: virtmcu_bql_locked is safe to call from any thread to check
         // lock status.
         let was_locked = unsafe { virtmcu_bql_locked() };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         let was_locked = mock::virtmcu_bql_locked();
 
         if was_locked {
-            #[cfg(not(any(test, miri, feature = "standalone")))]
+            #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
             // SAFETY: virtmcu_bql_force_unlock is safe when the lock is held.
             unsafe {
                 virtmcu_bql_force_unlock();
             }
-            #[cfg(any(test, miri, feature = "standalone"))]
+            #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
             mock::virtmcu_bql_force_unlock();
             Some(BqlUnlockGuard)
         } else {
@@ -277,12 +277,12 @@ impl Bql {
 
     /// Returns true if the BQL is currently held by the calling thread.
     pub fn is_held() -> bool {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Safe FFI call.
         unsafe {
             virtmcu_bql_locked()
         }
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_locked()
     }
 }
@@ -292,12 +292,12 @@ pub struct BqlGuard;
 
 impl Drop for BqlGuard {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Releasing the lock is safe if held.
         unsafe {
             virtmcu_bql_unlock();
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_unlock();
     }
 }
@@ -307,12 +307,12 @@ pub struct BqlUnlockGuard;
 
 impl Drop for BqlUnlockGuard {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Re-acquiring the lock is safe.
         unsafe {
             virtmcu_bql_force_lock();
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_bql_force_lock();
     }
 }
@@ -341,12 +341,12 @@ impl QemuMutexGuard<'_> {
 impl QemuMutex {
     /// A method
     pub fn lock(&mut self) -> QemuMutexGuard<'_> {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Mutex pointer is valid.
         unsafe {
             virtmcu_mutex_lock(core::ptr::from_ref(self).cast_mut());
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_lock(core::ptr::from_ref(self).cast_mut());
         QemuMutexGuard {
             mutex: core::ptr::from_ref(self).cast_mut(),
@@ -357,12 +357,12 @@ impl QemuMutex {
 
 impl Drop for QemuMutexGuard<'_> {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Mutex pointer is valid and locked by current thread.
         unsafe {
             virtmcu_mutex_unlock(self.mutex);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_unlock(self.mutex);
     }
 }
@@ -370,18 +370,18 @@ impl Drop for QemuMutexGuard<'_> {
 impl QemuCond {
     /// A method
     pub fn wait(&self, mutex: &mut QemuMutex) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Both pointers are valid.
         unsafe {
             virtmcu_cond_wait(core::ptr::from_ref(self).cast_mut(), core::ptr::from_mut(mutex));
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_wait(core::ptr::from_ref(self).cast_mut(), core::ptr::from_mut(mutex));
     }
 
     /// A method
     pub fn wait_timeout(&self, mutex: &mut QemuMutex, ms: u32) -> bool {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Both pointers are valid.
         unsafe {
             virtmcu_cond_timedwait(
@@ -390,7 +390,7 @@ impl QemuCond {
                 ms,
             ) != 0
         }
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         {
             mock::virtmcu_cond_timedwait(
                 core::ptr::from_ref(self).cast_mut(),
@@ -402,23 +402,23 @@ impl QemuCond {
 
     /// A method
     pub fn signal(&self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Condition variable pointer is valid.
         unsafe {
             virtmcu_cond_signal(core::ptr::from_ref(self).cast_mut());
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_signal(core::ptr::from_ref(self).cast_mut());
     }
 
     /// A method
     pub fn broadcast(&self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Condition variable pointer is valid.
         unsafe {
             virtmcu_cond_broadcast(core::ptr::from_ref(self).cast_mut());
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_broadcast(core::ptr::from_ref(self).cast_mut());
     }
 
@@ -435,7 +435,7 @@ impl QemuCond {
         // 2. Wait on the condition variable.
         // SAFETY: We use the raw mutex from the guard.
         let signaled = {
-            #[cfg(not(any(test, miri, feature = "standalone")))]
+            #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
             // SAFETY: Both pointers are valid.
             unsafe {
                 virtmcu_cond_timedwait(
@@ -444,7 +444,7 @@ impl QemuCond {
                     timeout_ms,
                 ) != 0
             }
-            #[cfg(any(test, miri, feature = "standalone"))]
+            #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
             {
                 mock::virtmcu_cond_timedwait(
                     core::ptr::from_ref(self).cast_mut(),
@@ -456,24 +456,24 @@ impl QemuCond {
 
         // 3. To avoid lock order inversion (BQL -> mutex vs mutex -> BQL),
         // we must release the peripheral mutex before re-acquiring the BQL.
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Mutex pointer is valid and locked.
         unsafe {
             virtmcu_mutex_unlock(guard.mutex);
         }
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_unlock(guard.mutex);
 
         // 4. Re-acquire BQL.
         drop(bql_unlock);
 
         // 5. Re-acquire peripheral mutex to restore caller's invariants.
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         // SAFETY: Mutex pointer is valid.
         unsafe {
             virtmcu_mutex_lock(guard.mutex);
         }
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_lock(guard.mutex);
 
         signaled
@@ -795,13 +795,13 @@ unsafe impl<T: Send> Sync for Mutex<T> {}
 impl<T> Mutex<T> {
     /// Creates a new QEMU-backed mutex in an unlocked state ready for use.
     pub fn new(val: T) -> Self {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         let raw = unsafe {
             let m = virtmcu_mutex_new();
             qemu_mutex_init(m);
             m
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         let raw = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<QemuMutex>() }));
 
         Self { raw, data: core::cell::UnsafeCell::new(val) }
@@ -809,11 +809,11 @@ impl<T> Mutex<T> {
 
     /// Acquires a mutex, blocking the current thread until it is able to do so.
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_mutex_lock(self.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_lock(self.raw);
 
         MutexGuard { mutex: self }
@@ -822,12 +822,12 @@ impl<T> Mutex<T> {
 
 impl<T> Drop for Mutex<T> {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             qemu_mutex_destroy(self.raw);
             virtmcu_mutex_free(self.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         unsafe {
             let _ = Box::from_raw(self.raw);
         }
@@ -856,11 +856,11 @@ impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
 
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_mutex_unlock(self.mutex.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_unlock(self.mutex.raw);
     }
 }
@@ -877,13 +877,13 @@ unsafe impl Sync for Condvar {}
 impl Condvar {
     /// Creates a new condition variable which is ready to be waited on and notified.
     pub fn new() -> Self {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         let raw = unsafe {
             let c = virtmcu_cond_new();
             qemu_cond_init(c);
             c
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         let raw = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<QemuCond>() }));
 
         Self { raw }
@@ -891,21 +891,21 @@ impl Condvar {
 
     /// Wakes up one blocked thread on this condvar.
     pub fn notify_one(&self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_cond_signal(self.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_signal(self.raw);
     }
 
     /// Wakes up all blocked threads on this condvar.
     pub fn notify_all(&self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_cond_broadcast(self.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_broadcast(self.raw);
     }
 
@@ -926,11 +926,11 @@ impl Condvar {
 
         // 2. Wait on the condition variable.
         let signaled = {
-            #[cfg(not(any(test, miri, feature = "standalone")))]
+            #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
             unsafe {
                 virtmcu_cond_timedwait(self.raw, guard.mutex.raw, timeout_ms) != 0
             }
-            #[cfg(any(test, miri, feature = "standalone"))]
+            #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
             {
                 mock::virtmcu_cond_timedwait(self.raw, guard.mutex.raw, timeout_ms) != 0
             }
@@ -938,22 +938,22 @@ impl Condvar {
 
         // 3. To avoid lock order inversion (BQL -> mutex vs mutex -> BQL),
         // we must release the peripheral mutex before re-acquiring the BQL.
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_mutex_unlock(guard.mutex.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_unlock(guard.mutex.raw);
 
         // 4. Re-acquire BQL.
         drop(bql_unlock);
 
         // 5. Re-acquire peripheral mutex to restore caller's invariants.
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_mutex_lock(guard.mutex.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_mutex_lock(guard.mutex.raw);
 
         (guard, signaled)
@@ -961,11 +961,11 @@ impl Condvar {
 
     /// Standard wait without yielding BQL (only safe if BQL is NOT held!).
     pub fn wait<'a, T>(&self, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             virtmcu_cond_wait(self.raw, guard.mutex.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         mock::virtmcu_cond_wait(self.raw, guard.mutex.raw);
         guard
     }
@@ -977,11 +977,11 @@ impl Condvar {
         ms: u32,
     ) -> (MutexGuard<'a, T>, bool) {
         let res = {
-            #[cfg(not(any(test, miri, feature = "standalone")))]
+            #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
             unsafe {
                 virtmcu_cond_timedwait(self.raw, guard.mutex.raw, ms) != 0
             }
-            #[cfg(any(test, miri, feature = "standalone"))]
+            #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
             {
                 mock::virtmcu_cond_timedwait(self.raw, guard.mutex.raw, ms) != 0
             }
@@ -992,12 +992,12 @@ impl Condvar {
 
 impl Drop for Condvar {
     fn drop(&mut self) {
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         unsafe {
             qemu_cond_destroy(self.raw);
             virtmcu_cond_free(self.raw);
         };
-        #[cfg(any(test, miri, feature = "standalone"))]
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
         unsafe {
             let _ = Box::from_raw(self.raw);
         }
@@ -1041,26 +1041,32 @@ impl VcpuDrain {
             return;
         }
 
-        #[cfg(not(any(test, miri, feature = "standalone")))]
+        #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
         let start_ns =
             unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_REALTIME) };
-        #[cfg(any(test, miri, feature = "standalone"))]
-        let start_ns =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-                as i64;
+        #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+        let start_ns = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+        )
+        .unwrap_or(i64::MAX);
 
-        let limit_ns = (timeout_ms as i64).saturating_mul(1_000_000);
+        let limit_ns = i64::from(timeout_ms).saturating_mul(1_000_000);
 
         while *count > 0 {
-            #[cfg(not(any(test, miri, feature = "standalone")))]
+            #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
             let now_ns =
                 unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_REALTIME) };
-            #[cfg(any(test, miri, feature = "standalone"))]
-            let now_ns = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as i64;
-
+            #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+            let now_ns = i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos(),
+            )
+            .unwrap_or(i64::MAX);
             let elapsed_ns = now_ns.saturating_sub(start_ns);
             if elapsed_ns >= limit_ns {
                 crate::sim_err!(
@@ -1071,7 +1077,8 @@ impl VcpuDrain {
                 break;
             }
 
-            let remaining_ms = ((limit_ns - elapsed_ns) / 1_000_000) as u32;
+            let remaining_ms =
+                u32::try_from((limit_ns - elapsed_ns) / 1_000_000).unwrap_or(u32::MAX);
             let (new_count, _) = self.cond.wait_yielding_bql(count, remaining_ms);
             count = new_count;
         }

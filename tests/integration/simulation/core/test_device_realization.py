@@ -24,7 +24,7 @@ async def test_dynamic_devices_realization(
     if not Path(yaml_path).exists():
         pytest.skip(f"{yaml_path} not found")
 
-    from tools.testing.virtmcu_test_suite.generated import World
+    from generated.world_schema import World
 
     # Modifying the yaml to remove the mmio-socket-bridge for this test
     # because it blocks realization if it can't connect.

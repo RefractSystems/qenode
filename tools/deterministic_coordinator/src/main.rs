@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use clap::Parser;
 use deterministic_coordinator::message_log::MessageLog;
@@ -336,11 +337,13 @@ async fn run_deterministic_coordinator(
                         let sz = u32::from_le_bytes(payload[0..4].try_into().unwrap_or([0;4])) as usize;
                         if sz > 0 && sz <= 1024 && payload.len() >= 4 + sz {
                              let hdr_slice = &payload[4..4 + sz];
-                             // SAFETY: root_unchecked bypasses strict alignment check.
-                             let hdr = unsafe { virtmcu_api::rf802154_header::root_as_rf_802154_header_unchecked(hdr_slice) };
-                             vtime = hdr.delivery_vtime_ns();
-                             seq = hdr.sequence_number();
-                             data_opt = Some(payload[4 + sz..].to_vec());
+                             let mut aligned = vec![0u8; hdr_slice.len()];
+                             aligned.copy_from_slice(hdr_slice);
+                             if let Ok(hdr) = flatbuffers::root::<virtmcu_api::rf802154_header::Rf802154Header>(&aligned) {
+                                 vtime = hdr.delivery_vtime_ns();
+                                 seq = hdr.sequence_number();
+                                 data_opt = Some(payload[4 + sz..].to_vec());
+                             }
                         }
                     }
 
@@ -415,7 +418,7 @@ async fn run_deterministic_coordinator(
 
                         let is_legacy = payload.len() == 8 || payload.len() == 16;
                         let (quantum, vtime_limit, mut batched_msgs) = if !is_legacy && flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).is_ok() {
-                            let req = flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).unwrap();
+                            let req = flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).expect("test should succeed");
                             let mut msgs = Vec::new();
                             if let Some(fb_msgs) = req.messages() {
                                 for i in 0..fb_msgs.len() {

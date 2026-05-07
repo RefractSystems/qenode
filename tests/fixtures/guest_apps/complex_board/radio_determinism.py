@@ -10,6 +10,7 @@ Ensure correct functionality, performance, and deterministic execution of radio_
 
 import logging
 import sys
+from pathlib import Path
 
 import flatbuffers.util
 import zenoh
@@ -49,7 +50,7 @@ def on_sample(sample: zenoh.Sample) -> None:
 
         # 802.15.4 FCF: bits 0-2 are frame type. Type 2 is ACK.
         if size >= 2:
-            fcf = int.from_bytes(data[:2], "little")  # LINT_EXCEPTION: int_from_bytes
+            fcf = int.from_bytes(data[:2], "little")
             if (fcf & 0x07) == 0x02:
                 logger.info("Ignoring ACK frame.")
                 return
@@ -70,9 +71,9 @@ def on_sample(sample: zenoh.Sample) -> None:
                 logger.info(f"[{resp_vtime}] Sent PONG to {rx_topic}")
 
             # Write a marker file to verify we responded
-            with open("ack_received.tmp", "w") as f:
+            with Path("ack_received.tmp").open("w") as f:
                 f.write("OK")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"ERROR in on_sample: {e}")
 
 
@@ -110,7 +111,7 @@ def on_tx_sample(sample: zenoh.Sample) -> None:
             if session:
                 session.put(rx_topic, msg2)
                 logger.info(f"[{resp2_vtime}] Sent MISMATCHED response...")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"ERROR in on_tx_sample: {e}")
 
 
@@ -140,7 +141,7 @@ def main() -> None:
 
     try:
         while True:
-            mock_execution_delay(1)  # SLEEP_EXCEPTION: keepalive loop
+            mock_execution_delay(1)  # virtmcu-allow: sleep reasoning="keepalive loop"
     except KeyboardInterrupt:
         pass
 

@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! Virtmcu deterministic clock with pluggable transport.
 //!
 //! This module provides the `VirtmcuClock` QOM device, which synchronizes
@@ -38,7 +48,7 @@ use zenoh::Wait;
 
 /// Zenoh-based clock synchronization transport.
 pub struct ZenohClockTransport {
-    _queryable: Mutex<Option<Queryable<()>>>, // MUTEX_EXCEPTION: used for thread shutdown synchronization
+    _queryable: Mutex<Option<Queryable<()>>>, // virtmcu-allow: mutex reasoning="used for thread shutdown synchronization"
     _liveliness: Option<LivelinessToken>,
     query_rx: Receiver<Query>,
     start_rx: Receiver<()>,
@@ -202,7 +212,7 @@ pub struct VirtmcuClockBackend {
 
     /* Communication state */
     /// Mutex for protecting communication state.
-    pub mutex: Mutex<()>, // MUTEX_EXCEPTION: used with Condvar for cross-thread sync (vCPU <-> Worker)
+    pub mutex: Mutex<()>, // virtmcu-allow: mutex reasoning="used with Condvar for cross-thread sync (vCPU <-> Worker)"
     /// Condvar for signaling quantum events.
     pub cond: Condvar,
 
@@ -278,8 +288,8 @@ impl Drop for ClockManager {
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
-static GLOBAL_CLOCK: AtomicPtr<VirtmcuClock> = AtomicPtr::new(ptr::null_mut());
-static ACTIVE_HOOKS: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_CLOCK: AtomicPtr<VirtmcuClock> = AtomicPtr::new(ptr::null_mut()); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
+static ACTIVE_HOOKS: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 
 extern "C" {
     fn virtmcu_kick_first_cpu_for_quantum();
@@ -337,7 +347,7 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
 
     // SAFETY: Calling qemu_clock_get_ns is safe under BQL or from vCPU thread.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-    virtmcu_qom::telemetry::update_global_vtime(now as u64);
+    virtmcu_qom::telemetry::update_global_vtime(u64::try_from(now).expect("vtime is negative"));
 
     if now >= s.next_quantum_ns {
         if s.rust_state.is_null() {
@@ -349,7 +359,11 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
         // Release BQL before blocking using RAII guard
         let bql_unlock = virtmcu_qom::sync::Bql::temporary_unlock();
 
-        let raw_delta = clock_quantum_wait_internal(backend, now as u64, s.is_yielding);
+        let raw_delta = clock_quantum_wait_internal(
+            backend,
+            u64::try_from(now).expect("vtime is negative"),
+            s.is_yielding,
+        );
         s.is_yielding = false;
         // On stall the sentinel is returned; treat as zero advance (hold position).
         let delta = if raw_delta == QUANTUM_WAIT_STALL_SENTINEL {
@@ -364,7 +378,7 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
         if bql_unlock.is_some() {
             let bql_start = Instant::now();
             drop(bql_unlock); // Re-acquires BQL
-            let bql_wait = bql_start.elapsed().as_nanos() as u64;
+            let bql_wait = u64::try_from(bql_start.elapsed().as_nanos()).expect("nanos truncated");
             backend.total_bql_wait_ns.fetch_add(bql_wait, Ordering::Relaxed);
             backend.total_iterations.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -672,7 +686,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 
     let mut stall_ms = s.stall_timeout;
     if stall_ms == 0 {
-        stall_ms = NORMAL_QUANTUM_TIMEOUT.as_millis() as u32;
+        stall_ms = u32::try_from(NORMAL_QUANTUM_TIMEOUT.as_millis()).expect("millis truncated");
     }
 
     let is_coordinated = s.coordinated;

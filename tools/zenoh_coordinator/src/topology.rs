@@ -226,8 +226,9 @@ topology:
     - type: ethernet
       nodes: ["2", "3"]
         "#;
-        let world: YamlWorld = serde_yaml::from_str(yaml_str).unwrap();
-        let topo = world.topology.unwrap();
+        let world: YamlWorld =
+            serde_yaml::from_str(yaml_str).expect("expected valid configuration");
+        let topo = world.topology.expect("expected valid configuration");
         assert_eq!(topo.global_seed, Some(42));
         assert_eq!(topo.links.len(), 2);
         assert_eq!(topo.links[0].nodes, vec!["0".to_owned(), "1".to_owned()]);

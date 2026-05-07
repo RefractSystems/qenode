@@ -23,7 +23,7 @@ extern "C" {
     pub fn qemu_set_irq(irq: QemuIrq, level: i32);
 }
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 extern "C" {
     /// A setter
     #[link_name = "virtmcu_set_irq_hook"]
@@ -38,14 +38,15 @@ extern "C" {
     );
 }
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 use alloc::vec::Vec;
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 use std::sync::Mutex;
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 static IRQ_HOOKS: Mutex<
+    // virtmcu-allow: static_state reasoning="Mock state for local testing"
     Vec<
         extern "C" fn(opaque: *mut core::ffi::c_void, n: core::ffi::c_int, level: core::ffi::c_int),
     >,
@@ -57,10 +58,10 @@ pub fn virtmcu_set_irq_hook(
         extern "C" fn(opaque: *mut core::ffi::c_void, n: core::ffi::c_int, level: core::ffi::c_int),
     >,
 ) {
-    #[cfg(any(test, miri, feature = "standalone"))]
+    #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
     {
         let Some(cb) = _cb else { return };
-        let mut hooks = IRQ_HOOKS.lock().unwrap();
+        let mut hooks = IRQ_HOOKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if hooks.is_empty() {
             unsafe {
                 qemu_virtmcu_set_irq_hook(Some(multiplexed_irq_hook));
@@ -70,13 +71,13 @@ pub fn virtmcu_set_irq_hook(
     }
 }
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 extern "C" fn multiplexed_irq_hook(
     opaque: *mut core::ffi::c_void,
     n: core::ffi::c_int,
     level: core::ffi::c_int,
 ) {
-    let hooks = IRQ_HOOKS.lock().unwrap();
+    let hooks = IRQ_HOOKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     for hook in hooks.iter() {
         hook(opaque, n, level);
     }

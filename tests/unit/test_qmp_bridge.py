@@ -31,7 +31,7 @@ from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 
 @pytest.fixture(autouse=True)
 def mock_multiplier() -> Generator[None]:
-    with patch("tools.testing.virtmcu_test_suite.qmp_bridge.get_time_multiplier", return_value=1.0):
+    with patch("tools.testing.parameters.TestParams.multiplier", return_value=1.0):
         yield
 
 
@@ -146,7 +146,7 @@ async def test_wait_for_line_match_before_timeout() -> None:
 
     with patch.object(bridge, "execute", new_callable=AsyncMock) as mock_execute:
         mock_execute.return_value = {"mode": "none", "icount": 0}
-        asyncio.create_task(populate_buffer())  # noqa: RUF006
+        asyncio.create_task(populate_buffer())
         assert bridge is not None
         result = await bridge.wait_for_line_on_uart("boot complete", timeout=5.0)
         assert result is True

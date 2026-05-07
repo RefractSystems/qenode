@@ -97,9 +97,16 @@ def main() -> None:
         ]
     )
 
-    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+    from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+
+    try:
+        qemu_bin = str(resolve_qemu_binary(arch="arm"))
+    except Exception:
+        build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
+        qemu_bin = f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm"
+
     qemu_cmd = [
-        f"/workspace/third_party/qemu/{build_dir}/install/bin/qemu-system-arm",
+        qemu_bin,
         "-M",
         "arm-generic-fdt,hw-dtb=" + dtb_path,
         "-kernel",
@@ -140,8 +147,7 @@ def main() -> None:
     # 3. Trigger IRQ and verify
     logger.info("Triggering IRQ 5...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_SET, 5, 0).pack())
-    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+    mock_execution_delay(0.5)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     # Check NVIC state via HMP (through QMP)
     # We use human-monitor-command "info irq" or "info pic"
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})  # type: ignore[arg-type]
@@ -154,8 +160,7 @@ def main() -> None:
 
     logger.info("Clearing IRQ 5...")
     conn.sendall(vproto.SyscMsg(SYSC_MSG_IRQ_CLEAR, 5, 0).pack())
-    mock_execution_delay(0.5)  # SLEEP_EXCEPTION: mock test simulating execution/spacing
-
+    mock_execution_delay(0.5)  # virtmcu-allow: sleep reasoning="mock test simulating execution/spacing"
     resp = run_qmp_cmd(qmp_path, {"execute": "human-monitor-command", "arguments": {"command-line": "info pic"}})  # type: ignore[arg-type]
     logger.info(f"NVIC state (IRQ CLEAR):\n{resp.get('return', '')}")  # type: ignore[attr-defined]
 

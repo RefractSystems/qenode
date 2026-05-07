@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 // std is required: virtmcu-qom dependency brings in std
 #![allow(missing_docs)]
 #![allow(clippy::missing_safety_doc)]
@@ -58,6 +68,10 @@ unsafe extern "C" fn spi_echo_transfer(_dev: *mut SSIPeripheral, val: u32) -> u3
 }
 
 unsafe extern "C" fn spi_echo_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+    let dc = device_class!(klass);
+    unsafe {
+        (*dc).user_creatable = true;
+    }
     let ssc = klass as *mut SSIPeripheralClass;
     (*ssc).realize = Some(spi_echo_realize);
     (*ssc).transfer = Some(spi_echo_transfer);
@@ -128,7 +142,10 @@ define_properties!(UART_ECHO_PROPS, [define_prop_chr!(c"chardev".as_ptr(), UARTE
 
 unsafe extern "C" fn uart_echo_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
-    (*dc).realize = Some(uart_echo_realize);
+    unsafe {
+        (*dc).realize = Some(uart_echo_realize);
+        (*dc).user_creatable = true;
+    }
     virtmcu_qom::device_class_set_props!(dc, UART_ECHO_PROPS);
 }
 
@@ -211,8 +228,11 @@ static TEST_PROPERTIES: [virtmcu_qom::qom::Property; 1] =
 
 unsafe extern "C" fn test_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
-    (*dc).realize = Some(test_rust_realize);
-    virtmcu_qom::qdev::device_class_set_props_n(dc, TEST_PROPERTIES.as_ptr(), 1);
+    unsafe {
+        (*dc).realize = Some(test_rust_realize);
+        (*dc).user_creatable = true;
+    }
+    virtmcu_qom::device_class_set_props!(dc, TEST_PROPERTIES);
 }
 
 #[used]

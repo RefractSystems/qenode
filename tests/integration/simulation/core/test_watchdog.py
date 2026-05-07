@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_fires_on_vtime_stall(simulation: Simulation, guest_app_factory: Any) -> None:  # noqa: ANN401
-    from tools.testing.utils import get_time_multiplier
+async def test_watchdog_fires_on_vtime_stall(simulation: Simulation, guest_app_factory: Any) -> None:
+    from tools.testing.parameters import TestParams
 
     app_dir = guest_app_factory("boot_arm")
     dtb_path = app_dir / "minimal.dtb"
@@ -28,7 +28,7 @@ async def test_watchdog_fires_on_vtime_stall(simulation: Simulation, guest_app_f
     # We want a very short stall-timeout to trigger it quickly, but it must be
     # scaled by the environment multiplier.
     base_stall = 2000
-    scaled_stall = int(base_stall * get_time_multiplier())
+    scaled_stall = TestParams.get_stall_timeout_ms(base_stall)
     extra_args = [
         "-device",
         f"virtmcu-clock,mode=slaved-suspend,stall-timeout={scaled_stall}",
@@ -39,4 +39,4 @@ async def test_watchdog_fires_on_vtime_stall(simulation: Simulation, guest_app_f
         assert sim.bridge is not None
         await sim.bridge.pause_emulation()
         with pytest.raises(RuntimeError, match="reported CLOCK STALL"):
-            await sim.vta.step(1_000_000, timeout=10.0)  # LINT_EXCEPTION: vta_step_loop
+            await sim.vta.step(1_000_000, timeout=10.0)  # virtmcu-allow: lint reasoning="vta_step_loop"

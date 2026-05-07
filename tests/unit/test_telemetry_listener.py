@@ -27,7 +27,7 @@ def test_on_sample_cpu_state(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+    with patch("generated.virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
         mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
@@ -48,7 +48,7 @@ def test_on_sample_irq(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+    with patch("generated.virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
         mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
@@ -69,7 +69,7 @@ def test_on_sample_peripheral(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+    with patch("generated.virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
         mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
@@ -90,7 +90,7 @@ def test_on_sample_unknown(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"dummy_payload"
 
-    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+    with patch("generated.virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_ev = MagicMock()
         mock_trace_event.GetRootAs.return_value = mock_ev
         mock_ev.DeviceName.return_value = None
@@ -111,7 +111,7 @@ def test_on_sample_exception(caplog: pytest.LogCaptureFixture) -> None:
     mock_sample = MagicMock()
     mock_sample.payload.to_bytes.return_value = b"\x01\x02"
 
-    with patch("Virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
+    with patch("generated.virtmcu.Telemetry.TraceEvent.TraceEvent") as mock_trace_event:
         mock_trace_event.GetRootAs.side_effect = ValueError("Parse error")
 
         on_sample(mock_sample)

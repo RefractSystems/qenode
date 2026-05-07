@@ -42,8 +42,8 @@ def main() -> None:
     logger.info("[TimeAuthority] Advancing clock on sim/clock/advance/0...")
 
     # Advance 2 seconds in 10ms quanta
-    QUANTA_NS = 10_000_000  # noqa: N806
-    TOTAL_NS = 2_000_000_000  # noqa: N806
+    QUANTA_NS = 10_000_000
+    TOTAL_NS = 2_000_000_000
 
     current_vtime = 0
     q_num = 0
@@ -53,8 +53,6 @@ def main() -> None:
             if reply.ok:
                 current_vtime, _, _, _ = unpack_clock_ready(reply.ok.payload.to_bytes())
         q_num += 1
-        # logger.info(f"[TimeAuthority] vtime: {current_vtime} ns")
-        # No sleep here, we want to advance as fast as QEMU allows
 
     logger.info("[TimeAuthority] Reached target virtual time.")
     typing.cast(typing.Any, session).close()

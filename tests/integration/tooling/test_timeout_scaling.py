@@ -16,28 +16,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 
 if TYPE_CHECKING:
     pass
 
 
-def test_get_time_multiplier_scaling() -> None:
+def test_testparams_multiplier_scaling() -> None:
     # Test local / unscaled
     with patch.dict(os.environ, {}, clear=True):
-        assert get_time_multiplier() == 1.0
+        assert TestParams.multiplier() == 1.0
 
     # Test CI
     with patch.dict(os.environ, {"CI": "true"}, clear=True):
-        assert get_time_multiplier() == 2.0
+        assert TestParams.multiplier() == 2.0
 
     # Test ASan
     with patch.dict(os.environ, {"VIRTMCU_USE_ASAN": "1"}, clear=True):
-        assert get_time_multiplier() == 5.0
+        assert TestParams.multiplier() == 5.0
 
     # Test TSan
     with patch.dict(os.environ, {"VIRTMCU_USE_TSAN": "1"}, clear=True):
-        assert get_time_multiplier() == 10.0
+        assert TestParams.multiplier() == 10.0
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_wait_for_line_scales_timeout() -> None:
     from tools.testing.virtmcu_test_suite.qmp_bridge import QmpBridge
 
     with (
-        patch("tools.testing.virtmcu_test_suite.qmp_bridge.get_time_multiplier", return_value=5.0),
+        patch("tools.testing.parameters.TestParams.multiplier", return_value=5.0),
         patch("asyncio.get_running_loop") as mock_get_loop,
     ):
         # We want to simulate a timeout.

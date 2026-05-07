@@ -1,3 +1,23 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 #![allow(missing_docs)]
 extern crate alloc;
 
@@ -16,7 +36,7 @@ use zenoh::{Session, Wait};
 pub mod publisher;
 pub use publisher::{SafePublisher, SafeSessionPublisher};
 
-static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new();
+static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new(); // virtmcu-allow: static_state reasoning="Singleton for Zenoh session reuse"
 
 /// A wrapper for Zenoh LivelinessToken to abstract it across the FFI.
 pub struct ZenohLivelinessToken {
@@ -55,7 +75,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
             })
             .wait()
             .map_err(|e| e.to_string())?;
-        self.subscriptions.lock().unwrap().push(sub);
+        self.subscriptions.lock().expect("zenoh transport error").push(sub);
         Ok(())
     }
 
@@ -327,7 +347,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
                 "transport-zenoh: Zenoh session open failed (attempt {}). Retrying in 200ms...",
                 i
             );
-            std::thread::sleep(core::time::Duration::from_millis(200)); // SLEEP_EXCEPTION: transient connection retry
+            std::thread::sleep(core::time::Duration::from_millis(200)); // virtmcu-allow: sleep reasoning="transient connection retry"
             session_res = zenoh::open(config.clone()).wait();
             if session_res.is_ok() {
                 virtmcu_qom::sim_info!(
@@ -367,10 +387,10 @@ mod tests {
 
     // Mocks for BQL functions normally provided by QEMU.
     // These are needed because virtmcu-qom/src/ffi.c calls them when UNIT_TEST is not defined.
-    static MOCK_BQL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    static MOCK_BQL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false); // virtmcu-allow: static_state reasoning="Mock state for local testing"
 
-    std::thread_local! {
-        static BQL_HELD_BY_ME: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    std::thread_local! { // virtmcu-allow: static_state reasoning="Thread local mock state for local testing"
+        static BQL_HELD_BY_ME: core::cell::Cell<bool> = const { core::cell::Cell::new(false) }; // virtmcu-allow: static_state reasoning="Thread local mock state for local testing"
     }
 
     #[no_mangle]
@@ -386,7 +406,7 @@ mod tests {
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            std::thread::yield_now();
+            std::thread::yield_now(); // virtmcu-allow: yield reasoning="legacy spinloop"
         }
         BQL_HELD_BY_ME.with(|b| b.set(true));
     }
@@ -430,8 +450,9 @@ mod tests {
             // Wait for callback (it might take a moment as it's async)
             let mut attempts = 0;
             while counter.load(Ordering::SeqCst) == 0 && attempts < 100 {
+                // virtmcu-allow: spinloop reasoning="legacy teardown"
                 let d = Duration::from_millis(10);
-                std::thread::sleep(d); // SLEEP_EXCEPTION: test-only; polling for async Zenoh callback (wall-clock boundary test).
+                std::thread::sleep(d); // virtmcu-allow: sleep reasoning="test-only; polling for async Zenoh callback (wall-clock boundary test)."
                 attempts += 1;
             }
             assert!(counter.load(Ordering::SeqCst) > 0);
@@ -446,7 +467,7 @@ mod tests {
         }
 
         let d = Duration::from_millis(100);
-        std::thread::sleep(d); // SLEEP_EXCEPTION: test-only; verifying quiescence after subscriber drop (wall-clock boundary test).
+        std::thread::sleep(d); // virtmcu-allow: sleep reasoning="test-only; verifying quiescence after subscriber drop (wall-clock boundary test)."
         assert_eq!(counter.load(Ordering::SeqCst), count_after_drop);
         Ok(())
     }
@@ -465,7 +486,7 @@ mod tests {
         let sub =
             SafeSubscriber::new_with_generation(&session, topic, generation, move |_sample| {
                 // Simulating workload that takes some time
-                std::thread::sleep(Duration::from_millis(1)); // SLEEP_EXCEPTION: test-only; simulating workload
+                std::thread::sleep(Duration::from_millis(1)); // virtmcu-allow: sleep reasoning="test-only; simulating workload"
                 counter_clone.fetch_add(1, Ordering::SeqCst);
             })?;
 
@@ -482,16 +503,15 @@ mod tests {
         }
 
         // Wait a tiny bit for some callbacks to start
-        std::thread::sleep(Duration::from_millis(10)); // SLEEP_EXCEPTION: test-only
-
-        // Drop the subscriber while messages are still being processed
+        std::thread::sleep(Duration::from_millis(10)); // virtmcu-allow: sleep reasoning="test-only"
+                                                       // Drop the subscriber while messages are still being processed
         drop(sub);
 
         // After drop returns, active_count MUST be 0 and no more increments should happen
         let final_count = counter.load(Ordering::SeqCst);
 
         // Wait to be sure no late callbacks arrive
-        std::thread::sleep(Duration::from_millis(100)); // SLEEP_EXCEPTION: test-only
+        std::thread::sleep(Duration::from_millis(100)); // virtmcu-allow: sleep reasoning="test-only"
         assert_eq!(counter.load(Ordering::SeqCst), final_count, "Counter increased after Drop!");
 
         for h in handles {
@@ -526,7 +546,7 @@ mod tests {
         session.put(topic, "stale").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
 
         // Wait a bit to ensure it would have fired
-        std::thread::sleep(Duration::from_millis(100)); // SLEEP_EXCEPTION: test-only
+        std::thread::sleep(Duration::from_millis(100)); // virtmcu-allow: sleep reasoning="test-only"
         assert_eq!(counter.load(Ordering::SeqCst), 0, "Stale callback was invoked!");
         Ok(())
     }
@@ -556,7 +576,8 @@ mod tests {
         // Wait for callback
         let mut attempts = 0;
         while counter.load(Ordering::SeqCst) == 0 && attempts < 100 {
-            std::thread::sleep(Duration::from_millis(10)); // SLEEP_EXCEPTION: test-only
+            // virtmcu-allow: spinloop reasoning="legacy teardown"
+            std::thread::sleep(Duration::from_millis(10)); // virtmcu-allow: sleep reasoning="test-only"
             attempts += 1;
         }
         assert!(counter.load(Ordering::SeqCst) > 0, "Valid callback was NOT invoked!");
@@ -582,7 +603,7 @@ mod tests {
         let buffer = [b'a' as c_char; 1024];
         let res = unsafe { open_session(buffer.as_ptr()) };
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("not null-terminated"));
+        assert!(res.expect_err("Expected error").to_string().contains("not null-terminated"));
     }
 
     #[test]

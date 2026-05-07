@@ -339,7 +339,7 @@ def test_emitter_unmapped_device_warning(caplog: pytest.LogCaptureFixture) -> No
     emitter.generate_dts()
 
     caplog.set_level(logging.WARNING)
-    assert "Warning: no QEMU mapping for Renode type 'Unknown.Device'" in caplog.text
+    assert "No QEMU mapping for Renode type 'Unknown.Device'" in caplog.text
 
 
 def test_emitter_mem_int_size() -> None:
@@ -407,7 +407,6 @@ def test_emitter_ranged_address() -> None:
     )
     emitter = FdtEmitter(plat)
     dts = emitter.generate_dts()
-    # base=0x40011000
     assert "uart@40011000 {" in dts
 
 

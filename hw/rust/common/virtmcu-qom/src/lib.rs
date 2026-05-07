@@ -1,3 +1,17 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
+#![cfg_attr(
+    test,
+    allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)
+)]
 #![deny(missing_docs)]
 #![doc = "VirtMCU QEMU Object Model (QOM) and System Emulation bindings."]
 
@@ -48,7 +62,7 @@ pub mod telemetry;
 
 use core::ffi::c_char;
 
-#[cfg(not(any(test, miri, feature = "standalone")))]
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 extern "C" {
     /// Logs a message to the QEMU/VirtMCU console.
     pub fn virtmcu_log(fmt: *const c_char);
@@ -71,47 +85,56 @@ extern "C" {
     pub fn virtmcu_sizeof_char_backend() -> usize;
 }
 
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Stub for virtmcu_log in tests and standalone mode.
-pub unsafe fn virtmcu_log(_fmt: *const c_char) {}
-#[cfg(any(test, miri, feature = "standalone"))]
+pub unsafe extern "C" fn virtmcu_log(_fmt: *const c_char) {}
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for DeviceState in tests.
-pub fn virtmcu_sizeof_device_state() -> usize {
+pub extern "C" fn virtmcu_sizeof_device_state() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for SysBusDevice in tests.
-pub fn virtmcu_sizeof_sys_bus_device() -> usize {
+pub extern "C" fn virtmcu_sizeof_sys_bus_device() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for DeviceClass in tests.
-pub fn virtmcu_sizeof_device_class() -> usize {
+pub extern "C" fn virtmcu_sizeof_device_class() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for SSIPeripheral in tests.
-pub fn virtmcu_sizeof_ssi_peripheral() -> usize {
+pub extern "C" fn virtmcu_sizeof_ssi_peripheral() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for SSIPeripheralClass in tests.
-pub fn virtmcu_sizeof_ssi_peripheral_class() -> usize {
+pub extern "C" fn virtmcu_sizeof_ssi_peripheral_class() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for Chardev in tests.
-pub fn virtmcu_sizeof_chardev() -> usize {
+pub extern "C" fn virtmcu_sizeof_chardev() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for ChardevClass in tests.
-pub fn virtmcu_sizeof_chardev_class() -> usize {
+pub extern "C" fn virtmcu_sizeof_chardev_class() -> usize {
     1024
 }
-#[cfg(any(test, miri, feature = "standalone"))]
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
 /// Returns a stub size for CharBackend in tests.
-pub fn virtmcu_sizeof_char_backend() -> usize {
+pub extern "C" fn virtmcu_sizeof_char_backend() -> usize {
     1024
 }
 
@@ -160,8 +183,12 @@ impl core::fmt::Write for BufCursor<'_> {
         }
 
         if len > 0 {
-            self.buf[self.pos..self.pos + len].copy_from_slice(&bytes[..len]);
-            self.pos += len;
+            if let (Some(dest), Some(src)) =
+                (self.buf.get_mut(self.pos..self.pos + len), bytes.get(..len))
+            {
+                dest.copy_from_slice(src);
+                self.pos += len;
+            }
         }
 
         if truncated {

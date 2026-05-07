@@ -20,7 +20,10 @@ impl UnixDataRouter {
             match stream {
                 Ok(stream) => {
                     let clients_clone = Arc::clone(&self.clients);
-                    clients_clone.lock().unwrap().push(stream.try_clone().unwrap());
+                    clients_clone
+                        .lock()
+                        .expect("unix socket operation failed")
+                        .push(stream.try_clone().expect("unix socket operation failed"));
 
                     let mut read_stream = stream;
                     thread::spawn(move || loop {
@@ -56,7 +59,8 @@ impl UnixDataRouter {
                         buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                         buf.extend_from_slice(&payload);
 
-                        let mut clients = clients_clone.lock().unwrap();
+                        let mut clients =
+                            clients_clone.lock().expect("unix socket operation failed");
                         clients.retain_mut(|client| client.write_all(&buf).is_ok());
                     });
                 }
@@ -79,11 +83,11 @@ mod tests {
     #[test]
     #[cfg(not(miri))]
     fn test_unix_data_router_broadcast() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("unix socket operation failed");
         let sock_path = dir.path().join("router.sock");
-        let sock_str = sock_path.to_str().unwrap().to_string();
+        let sock_str = sock_path.to_str().expect("unix socket operation failed").to_string();
 
-        let router = UnixDataRouter::new(&sock_str).unwrap();
+        let router = UnixDataRouter::new(&sock_str).expect("unix socket operation failed");
         let clients_ref = Arc::clone(&router.clients);
 
         thread::spawn(move || {
@@ -91,17 +95,17 @@ mod tests {
         });
 
         // listener.bind happens synchronously in new(), so connect is immediately safe.
-        let mut client1 = UnixStream::connect(&sock_str).unwrap();
-        let mut client2 = UnixStream::connect(&sock_str).unwrap();
-        let mut client3 = UnixStream::connect(&sock_str).unwrap();
+        let mut client1 = UnixStream::connect(&sock_str).expect("unix socket operation failed");
+        let mut client2 = UnixStream::connect(&sock_str).expect("unix socket operation failed");
+        let mut client3 = UnixStream::connect(&sock_str).expect("unix socket operation failed");
 
         // Deterministic Synchronization: Wait for the router thread to accept all 3 clients
         let start = Instant::now();
-        while clients_ref.lock().unwrap().len() < 3 {
+        while clients_ref.lock().expect("unix socket operation failed").len() < 3 {
             if start.elapsed() > Duration::from_secs(5) {
                 panic!("Timeout waiting for router to accept clients");
             }
-            std::thread::yield_now();
+            std::thread::yield_now(); // virtmcu-allow: yield reasoning="legacy spinloop"
         }
 
         let topic = b"test/topic";
@@ -113,25 +117,31 @@ mod tests {
         msg.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         msg.extend_from_slice(payload);
 
-        client1.write_all(&msg).unwrap();
+        client1.write_all(&msg).expect("unix socket operation failed");
 
         // Set read timeouts so tests don't hang
-        client2.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        client3.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client2
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("unix socket operation failed");
+        client3
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("unix socket operation failed");
 
         let mut read_buf = vec![0u8; msg.len()];
-        client2.read_exact(&mut read_buf).unwrap();
+        client2.read_exact(&mut read_buf).expect("unix socket operation failed");
         assert_eq!(read_buf, msg);
 
         let mut read_buf = vec![0u8; msg.len()];
-        client3.read_exact(&mut read_buf).unwrap();
+        client3.read_exact(&mut read_buf).expect("unix socket operation failed");
         assert_eq!(read_buf, msg);
 
         // Also note that client1 receives its own broadcast in this naive implementation.
         // That is acceptable for DataRouter for now, as subscribers filter by topic anyway.
-        client1.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client1
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("unix socket operation failed");
         let mut read_buf = vec![0u8; msg.len()];
-        client1.read_exact(&mut read_buf).unwrap();
+        client1.read_exact(&mut read_buf).expect("unix socket operation failed");
         assert_eq!(read_buf, msg);
     }
 }

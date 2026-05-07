@@ -8,8 +8,9 @@ GDB has deep Python integration, allowing you to script complex breakpoints, ins
 
 ### Usage
 
-1.  Launch QEMU under GDB:
+1.  Launch QEMU under GDB (you can use `QEMU_BIN` to find the correct binary):
     ```bash
+    # e.g., using the resolved binary path directly:
     gdb --args ./third_party/qemu/build-virtmcu/qemu-system-arm -M arm-generic-fdt ...
     ```
 

@@ -46,10 +46,6 @@ def main() -> int:
         # Find all .name = "..." entries
         valid_names = set(re.findall(r'\.name\s*=\s*"([^"]+)"', content))
 
-        # Also find all .objs = ... entries (the QOM types)
-        # We don't strictly need them for finding stale .so files, but it helps for diagnostics
-        # valid_objs = set(re.findall(r'"([^"]+)",\s*NULL', content))
-
         # Check in the installation directories
         lib_dirs = [
             build_dir / "install" / "lib" / "aarch64-linux-gnu" / "qemu",
@@ -64,7 +60,7 @@ def main() -> int:
             for so_file in install_lib.glob("hw-virtmcu-*.so"):
                 name = so_file.stem
                 if name not in valid_names:
-                    logger.warning(f"Found stale plugin: {so_file}")
+                    logger.error(f"Found stale plugin: {so_file}")
                     stale_found = True
                     if args.delete:
                         try:
@@ -73,7 +69,7 @@ def main() -> int:
                         except OSError as e:
                             logger.error(f"  -> Failed to delete {so_file.name}: {e}")
                     else:
-                        logger.warning("  -> Run with --delete to remove, or 'make build' to refresh.")
+                        logger.error("  -> Run with --delete to remove, or 'make build' to refresh.")
 
     if stale_found and not args.delete:
         return 1

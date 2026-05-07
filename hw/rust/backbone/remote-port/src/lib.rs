@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! # Remote Port Bridge
 //!
 //! Lock ordering: BQL -> SharedState Mutex -> (Condvar releases Mutex temporarily).
@@ -263,12 +273,8 @@ mod tests {
         // Write at offset 1 to force misalignment
         let hdr_ptr = &hdr as *const RpPktHdr as *const u8;
         unsafe {
-            ptr::copy_nonoverlapping(
-                // COPY_EXCEPTION: testing unaligned access in test /* COPY_EXCEPTION: testing unaligned access in test */
-                hdr_ptr,
-                buf.as_mut_ptr().add(1),
-                core::mem::size_of::<RpPktHdr>(),
-            );
+            let n = core::mem::size_of::<RpPktHdr>();
+            ptr::copy_nonoverlapping(hdr_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktHdr;
@@ -311,13 +317,8 @@ mod tests {
 
         let pkt_ptr = &pkt as *const RpPktBusaccess as *const u8;
         unsafe {
-            ptr::copy_nonoverlapping(
-                // COPY_EXCEPTION: testing unaligned access in test
-                // COPY_EXCEPTION: testing unaligned access in test
-                pkt_ptr,
-                buf.as_mut_ptr().add(1),
-                core::mem::size_of::<RpPktBusaccess>(),
-            );
+            let n = core::mem::size_of::<RpPktBusaccess>();
+            ptr::copy_nonoverlapping(pkt_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktBusaccess;
@@ -352,13 +353,8 @@ mod tests {
 
         let pkt_ptr = &pkt as *const RpPktInterrupt as *const u8;
         unsafe {
-            ptr::copy_nonoverlapping(
-                // COPY_EXCEPTION: testing unaligned access in test
-                // COPY_EXCEPTION: testing unaligned access in test
-                pkt_ptr,
-                buf.as_mut_ptr().add(1),
-                core::mem::size_of::<RpPktInterrupt>(),
-            );
+            let n = core::mem::size_of::<RpPktInterrupt>();
+            ptr::copy_nonoverlapping(pkt_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktInterrupt;
@@ -431,102 +427,6 @@ mod tests {
         assert_eq!(b[40], 1u8);
         assert_eq!(b.len(), 41);
     }
-
-    // Stubs for linker when running tests
-    #[no_mangle]
-    pub extern "C" fn qemu_set_irq(_irq: QemuIrq, _level: i32) {}
-    #[no_mangle]
-    pub extern "C" fn memory_region_init_io(
-        _mr: *mut MemoryRegion,
-        _owner: *mut Object,
-        _ops: *const MemoryRegionOps,
-        _opaque: *mut c_void,
-        _name: *const c_char,
-        _size: u64,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn sysbus_init_mmio(_sbd: *mut SysBusDevice, _mr: *mut MemoryRegion) {}
-    #[no_mangle]
-    pub extern "C" fn sysbus_mmio_map(_sbd: *mut SysBusDevice, _n: i32, _addr: u64) {}
-    #[no_mangle]
-    pub extern "C" fn sysbus_init_irq(_sbd: *mut SysBusDevice, _irq: *mut QemuIrq) {}
-    #[no_mangle]
-    pub extern "C" fn object_class_dynamic_cast_assert(
-        _klass: *mut ObjectClass,
-        _typename: *const c_char,
-        _file: *const c_char,
-        _line: i32,
-        _func: *const c_char,
-    ) -> *mut c_void {
-        _klass as *mut c_void
-    }
-    #[no_mangle]
-    pub extern "C" fn device_class_set_props_n(
-        _dc: *mut c_void,
-        _props: *const Property,
-        _n: usize,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn register_dso_module_init(_init: extern "C" fn(), _type: i32) {}
-    #[no_mangle]
-    pub extern "C" fn type_register_static(_info: *const TypeInfo) {}
-    #[no_mangle]
-    pub extern "C" fn virtmcu_is_bql_locked() -> bool {
-        true
-    }
-    #[no_mangle]
-    pub extern "C" fn virtmcu_safe_bql_force_lock() {}
-    #[no_mangle]
-    pub extern "C" fn virtmcu_safe_bql_lock() {}
-    #[no_mangle]
-    pub extern "C" fn virtmcu_safe_bql_unlock() {}
-    #[no_mangle]
-    pub extern "C" fn qemu_mutex_lock_func(_m: *mut c_void, _f: *const c_char, _l: i32) {}
-    #[no_mangle]
-    pub extern "C" fn qemu_mutex_unlock_impl(_m: *mut c_void, _f: *const c_char, _l: i32) {}
-    #[no_mangle]
-    pub extern "C" fn g_malloc0_n(_n: usize, _s: usize) -> *mut c_void {
-        core::ptr::null_mut()
-    }
-    #[no_mangle]
-    pub extern "C" fn qemu_mutex_init(_m: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn qemu_mutex_destroy(_m: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn g_free(_p: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn qemu_cond_timedwait_func(
-        _c: *mut c_void,
-        _m: *mut c_void,
-        _t: i32,
-        _f: *const c_char,
-        _l: i32,
-    ) -> i32 {
-        1
-    }
-    #[no_mangle]
-    pub extern "C" fn qemu_cond_broadcast(_c: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn qemu_cond_init(_c: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn qemu_cond_destroy(_c: *mut c_void) {}
-    #[no_mangle]
-    pub extern "C" fn error_setg_internal(
-        _errp: *mut *mut c_void,
-        _src: *const c_char,
-        _line: i32,
-        _func: *const c_char,
-        _fmt: *const c_char,
-    ) {
-    }
-    #[no_mangle]
-    pub extern "C" fn qdev_prop_string() {}
-    #[no_mangle]
-    pub extern "C" fn qdev_prop_uint32() {}
-    #[no_mangle]
-    pub extern "C" fn qdev_prop_uint64() {}
 }
 
 // --- QOM Device Implementation ---
@@ -549,16 +449,17 @@ pub struct RemotePortBridgeQEMU {
     pub mapped: bool,
 }
 
+// virtmcu-allow: static_state reasoning="Singleton state workaround for adapter registration"
 static MAPPED_IDS: std::sync::Mutex<Option<std::collections::HashMap<String, bool>>> =
     std::sync::Mutex::new(None);
 
 fn is_id_mapped(id: &str) -> bool {
-    let mut lock = MAPPED_IDS.lock().unwrap();
+    let mut lock = MAPPED_IDS.lock().expect("remote port error");
     *lock.get_or_insert_with(std::collections::HashMap::new).get(id).unwrap_or(&false)
 }
 
 fn set_id_mapped(id: &str, mapped: bool) {
-    let mut lock = MAPPED_IDS.lock().unwrap();
+    let mut lock = MAPPED_IDS.lock().expect("remote port error");
     lock.get_or_insert_with(std::collections::HashMap::new).insert(id.to_owned(), mapped);
 }
 
@@ -605,7 +506,7 @@ impl CoSimTransport for RpTransport {
                 Ok(s) => s,
                 Err(_e) => {
                     if self.reconnect_ms > 0 {
-                        std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(self.reconnect_ms as u64));
+                        ctx.sleep_interruptible(Duration::from_millis(self.reconnect_ms as u64));
                         continue;
                     } else {
                         virtmcu_qom::sim_err!(
@@ -645,7 +546,7 @@ impl CoSimTransport for RpTransport {
             };
 
             {
-                let mut lock = self.stream.lock().unwrap();
+                let mut lock = self.stream.lock().expect("remote port error");
                 *lock = Some(stream);
                 virtmcu_qom::sim_info!("connected to {}", self.socket_path);
             }
@@ -677,7 +578,7 @@ impl CoSimTransport for RpTransport {
             }
 
             {
-                let mut lock = self.stream.lock().unwrap();
+                let mut lock = self.stream.lock().expect("remote port error");
                 *lock = None;
                 virtmcu_qom::sim_info!("remote disconnected");
             }
@@ -686,12 +587,12 @@ impl CoSimTransport for RpTransport {
             if self.reconnect_ms == 0 {
                 break;
             }
-            std::thread::sleep /* SLEEP_EXCEPTION: Reconnect delay in background thread */(Duration::from_millis(self.reconnect_ms as u64));
+            ctx.sleep_interruptible(Duration::from_millis(self.reconnect_ms as u64));
         }
     }
 
     fn send_request(&self, req: Self::Request) -> bool {
-        let mut lock = self.stream.lock().unwrap();
+        let mut lock = self.stream.lock().expect("remote port error");
         if let Some(s) = lock.as_mut() {
             let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let bus_hdr_len =
@@ -729,7 +630,7 @@ impl CoSimTransport for RpTransport {
     }
 
     fn interrupt_rx(&self) {
-        let mut lock = self.stream.lock().unwrap();
+        let mut lock = self.stream.lock().expect("remote port error");
         if let Some(s) = lock.as_mut() {
             let _ = s.shutdown(std::net::Shutdown::Both);
         }

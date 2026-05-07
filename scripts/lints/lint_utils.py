@@ -1,8 +1,11 @@
 """
 Common utilities and constants for VirtMCU linting scripts.
+
+Designed for reuse: Provides location-agnostic path resolution for parent repositories.
 """
 
 import logging
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -15,12 +18,11 @@ ENTERPRISE_MANDATE = (
 )
 
 DEFAULT_EXCLUDES = [
-    ".venv",
-    ".venv-docker",
     "third_party",
     "build",
     "target",
     ".git",
+    ".github",
     ".claude",
     "__pycache__",
     ".cargo-cache",
@@ -32,10 +34,19 @@ def setup_lint_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
+def is_suppressed(line: str, rule_name: str) -> bool:
+    """
+    Checks if a lint rule is suppressed on a given line.
+    Enforces the SOTA 'virtmcu-allow: <rule_name> reasoning="<reason>"' pattern.
+    """
+    pattern = rf'virtmcu-allow:\s*{rule_name}\s+reasoning="[^"]+"'
+    return bool(re.search(pattern, line))
+
+
 def iter_target_files(targets: list[Path], excludes: list[str], pattern: str) -> Iterable[Path]:
     """
     Yields all files matching `pattern` in `targets` that do not contain
-    any of the `excludes` in their path parts.
+    any of the `excludes` in their path parts relative to the target.
     """
     for target in targets:
         if not target.exists():
@@ -44,12 +55,19 @@ def iter_target_files(targets: list[Path], excludes: list[str], pattern: str) ->
 
         # If target is a file, yield it directly if it matches the extension
         if target.is_file():
-            if target.match(pattern) and not any(p in target.parts for p in excludes):
+            if target.match(pattern):
                 yield target
             continue
 
         # If target is a directory, walk it
         for path in target.rglob(pattern):
-            if any(p in path.parts for p in excludes):
+            # Check exclusions relative to the target to allow linting submodules
+            # that might be located in an 'excluded' directory (e.g. third_party/virtmcu)
+            try:
+                relative_path = path.relative_to(target)
+                if any(p in relative_path.parts for p in excludes):
+                    continue
+            except ValueError:
+                # If path is not relative to target (should not happen with rglob), skip it
                 continue
             yield path

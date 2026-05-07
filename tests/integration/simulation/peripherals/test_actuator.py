@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 async def test_actuator_zenoh_publish(
     simulation: Simulation,
     tmp_path: Path,
-    guest_app_factory: Any,  # noqa: ANN401
+    guest_app_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
@@ -91,7 +91,7 @@ async def test_actuator_zenoh_publish(
 
         # Advance until we get messages
         for _ in range(50):
-            await sim.vta.step(10_000_000)  # LINT_EXCEPTION: vta_step_loop
+            await sim.vta.step(10_000_000)  # virtmcu-allow: vta_step_loop reasoning="Legacy exception"
             for msg in received_msgs:
                 if msg["topic"] == "firmware/control/0/42" and abs(msg["vals"][0] - 3.14) < 0.001:
                     success_1 = True

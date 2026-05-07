@@ -48,7 +48,7 @@ async def main() -> None:
         proc.stdin.write(data.encode())  # type: ignore[union-attr]
         await proc.stdin.drain()  # type: ignore[union-attr]
 
-    async def recv_json() -> typing.Any:  # noqa: ANN401
+    async def recv_json() -> typing.Any:
         line = await proc.stdout.readline()  # type: ignore[union-attr]
         if not line:
             return None
@@ -135,10 +135,9 @@ async def main() -> None:
                     break
             except (KeyError, IndexError, TypeError) as e:
                 logger.debug(f"Failed to parse state: {e} | Res: {res}")
-            await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: RPC polling backoff
+            await asyncio.sleep(0.1)  # virtmcu-allow: sleep reasoning="RPC polling backoff"
         else:
-            logger.warning("Warning: CPU state could not be read in time.")
-
+            logger.error("Error: CPU state could not be read in time.")
         logger.info(f"Iteration {i + 1}: Stopping...")
         await send_json(
             {

@@ -14,12 +14,12 @@ from dataclasses import dataclass
 
 import flatbuffers
 
-from tools.virtmcu.core.ClockAdvanceReq import ClockAdvanceReq as FBClockAdvanceReq
-from tools.virtmcu.core.ClockAdvanceReq import CreateClockAdvanceReq
-from tools.virtmcu.core.ClockReadyResp import ClockReadyResp as FBClockReadyResp
-from tools.virtmcu.core.ClockReadyResp import CreateClockReadyResp
-from tools.virtmcu.core.CoordDoneReq import CoordDoneReq as FBCoordDoneReq
-from tools.virtmcu.core.CoordDoneReq import (
+from generated.virtmcu.core.ClockAdvanceReq import ClockAdvanceReq as FBClockAdvanceReq
+from generated.virtmcu.core.ClockAdvanceReq import CreateClockAdvanceReq
+from generated.virtmcu.core.ClockReadyResp import ClockReadyResp as FBClockReadyResp
+from generated.virtmcu.core.ClockReadyResp import CreateClockReadyResp
+from generated.virtmcu.core.CoordDoneReq import CoordDoneReq as FBCoordDoneReq
+from generated.virtmcu.core.CoordDoneReq import (
     CoordDoneReqAddMessages,
     CoordDoneReqAddQuantum,
     CoordDoneReqAddVtimeLimit,
@@ -27,8 +27,8 @@ from tools.virtmcu.core.CoordDoneReq import (
     CoordDoneReqStart,
     CoordDoneReqStartMessagesVector,
 )
-from tools.virtmcu.core.CoordMessage import CoordMessage as FBCoordMessage
-from tools.virtmcu.core.CoordMessage import (
+from generated.virtmcu.core.CoordMessage import CoordMessage as FBCoordMessage
+from generated.virtmcu.core.CoordMessage import (
     CoordMessageAddDeliveryVtimeNs,
     CoordMessageAddDstNodeId,
     CoordMessageAddPayload,
@@ -38,18 +38,18 @@ from tools.virtmcu.core.CoordMessage import (
     CoordMessageEnd,
     CoordMessageStart,
 )
-from tools.virtmcu.core.MmioReq import CreateMmioReq
-from tools.virtmcu.core.MmioReq import MmioReq as FBMmioReq
-from tools.virtmcu.core.SyscMsg import CreateSyscMsg
-from tools.virtmcu.core.SyscMsg import SyscMsg as FBSyscMsg
-from tools.virtmcu.core.VirtmcuHandshake import CreateVirtmcuHandshake
-from tools.virtmcu.core.VirtmcuHandshake import VirtmcuHandshake as FBHandshake
-from tools.virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
-from tools.virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
-from tools.virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
-from tools.virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
-from tools.virtmcu.rf802154.Rf802154Header import Rf802154Header as FBRf802154Header
-from tools.virtmcu.rf802154.Rf802154Header import (
+from generated.virtmcu.core.MmioReq import CreateMmioReq
+from generated.virtmcu.core.MmioReq import MmioReq as FBMmioReq
+from generated.virtmcu.core.SyscMsg import CreateSyscMsg
+from generated.virtmcu.core.SyscMsg import SyscMsg as FBSyscMsg
+from generated.virtmcu.core.VirtmcuHandshake import CreateVirtmcuHandshake
+from generated.virtmcu.core.VirtmcuHandshake import VirtmcuHandshake as FBHandshake
+from generated.virtmcu.core.ZenohFrameHeader import CreateZenohFrameHeader
+from generated.virtmcu.core.ZenohFrameHeader import ZenohFrameHeader as FBZenohFrameHeader
+from generated.virtmcu.core.ZenohSPIHeader import CreateZenohSpiheader
+from generated.virtmcu.core.ZenohSPIHeader import ZenohSPIHeader as FBZenohSPIHeader
+from generated.virtmcu.rf802154.Rf802154Header import Rf802154Header as FBRf802154Header
+from generated.virtmcu.rf802154.Rf802154Header import (
     Rf802154HeaderAddDeliveryVtimeNs,
     Rf802154HeaderAddLqi,
     Rf802154HeaderAddRssi,
@@ -153,7 +153,7 @@ class ClockAdvanceReq:
             raise ValueError(f"Expected {SIZE_CLOCK_ADVANCE_REQ} bytes")
         fb = FBClockAdvanceReq()
         fb.Init(data, 0)
-        return cls(fb.DeltaNs(), fb.AbsoluteVtimeNs(), fb.QuantumNumber())  # type: ignore[attr-defined]
+        return cls(fb.DeltaNs(), fb.AbsoluteVtimeNs(), fb.QuantumNumber())
 
     def pack(self) -> bytes:
         b = flatbuffers.Builder(32)
@@ -237,7 +237,7 @@ class Rf802154Header:
         # Tables in VirtMCU are size-prefixed (4 bytes)
         if len(data) < 4:
             raise ValueError("Data too short for size prefix")
-        fb = FBRf802154Header.GetRootAs(data, 4)  # type: ignore[no-untyped-call]
+        fb = FBRf802154Header.GetRootAs(data, 4)
         return cls(
             fb.DeliveryVtimeNs(),
             fb.SequenceNumber(),
@@ -248,13 +248,13 @@ class Rf802154Header:
 
     def pack(self) -> bytes:
         b = flatbuffers.Builder(64)
-        Rf802154HeaderStart(b)  # type: ignore[no-untyped-call]
-        Rf802154HeaderAddDeliveryVtimeNs(b, self.delivery_vtime_ns)  # type: ignore[no-untyped-call]
-        Rf802154HeaderAddSequenceNumber(b, self.sequence_number)  # type: ignore[no-untyped-call]
-        Rf802154HeaderAddSize(b, self.size)  # type: ignore[no-untyped-call]
-        Rf802154HeaderAddRssi(b, self.rssi)  # type: ignore[no-untyped-call]
-        Rf802154HeaderAddLqi(b, self.lqi)  # type: ignore[no-untyped-call]
-        res = Rf802154HeaderEnd(b)  # type: ignore[no-untyped-call]
+        Rf802154HeaderStart(b)
+        Rf802154HeaderAddDeliveryVtimeNs(b, self.delivery_vtime_ns)
+        Rf802154HeaderAddSequenceNumber(b, self.sequence_number)
+        Rf802154HeaderAddSize(b, self.size)
+        Rf802154HeaderAddRssi(b, self.rssi)
+        Rf802154HeaderAddLqi(b, self.lqi)
+        res = Rf802154HeaderEnd(b)
         b.FinishSizePrefixed(res)
         return bytes(b.Output())
 
@@ -270,8 +270,8 @@ class CoordMessage:
 
     @classmethod
     def unpack(cls, data: bytes) -> CoordMessage:
-        fb = FBCoordMessage.GetRootAs(data, 0)  # type: ignore[no-untyped-call]
-        payload = bytes(fb.Payload(i) for i in range(fb.PayloadLength()))
+        fb = FBCoordMessage.GetRootAs(data, 0)
+        payload = bytes(fb.Payload(i) for i in range(fb.PayloadLength()))  # type: ignore[misc]
         return cls(
             fb.SrcNodeId(),
             fb.DstNodeId(),
@@ -283,14 +283,14 @@ class CoordMessage:
 
     def _pack_to_builder(self, b: flatbuffers.Builder) -> int:
         payload_offset = b.CreateByteVector(self.payload)
-        CoordMessageStart(b)  # type: ignore[no-untyped-call]
-        CoordMessageAddSrcNodeId(b, self.src_node_id)  # type: ignore[no-untyped-call]
-        CoordMessageAddDstNodeId(b, self.dst_node_id)  # type: ignore[no-untyped-call]
-        CoordMessageAddDeliveryVtimeNs(b, self.delivery_vtime_ns)  # type: ignore[no-untyped-call]
-        CoordMessageAddSequenceNumber(b, self.sequence_number)  # type: ignore[no-untyped-call]
-        CoordMessageAddProtocol(b, self.protocol)  # type: ignore[no-untyped-call]
-        CoordMessageAddPayload(b, payload_offset)  # type: ignore[no-untyped-call]
-        return CoordMessageEnd(b)  # type: ignore[no-untyped-call, no-any-return]
+        CoordMessageStart(b)
+        CoordMessageAddSrcNodeId(b, self.src_node_id)
+        CoordMessageAddDstNodeId(b, self.dst_node_id)
+        CoordMessageAddDeliveryVtimeNs(b, self.delivery_vtime_ns)
+        CoordMessageAddSequenceNumber(b, self.sequence_number)
+        CoordMessageAddProtocol(b, self.protocol)
+        CoordMessageAddPayload(b, payload_offset)
+        return int(CoordMessageEnd(b))
 
     def pack(self) -> bytes:
         b = flatbuffers.Builder(1024)
@@ -307,21 +307,22 @@ class CoordDoneReq:
 
     @classmethod
     def unpack(cls, data: bytes) -> CoordDoneReq:
-        fb = FBCoordDoneReq.GetRootAs(data, 0)  # type: ignore[no-untyped-call]
+        fb = FBCoordDoneReq.GetRootAs(data, 0)
         msgs = []
         for i in range(fb.MessagesLength()):
             m_fb = fb.Messages(i)
-            payload = bytes(m_fb.Payload(j) for j in range(m_fb.PayloadLength()))
-            msgs.append(
-                CoordMessage(
-                    m_fb.SrcNodeId(),
-                    m_fb.DstNodeId(),
-                    m_fb.DeliveryVtimeNs(),
-                    m_fb.SequenceNumber(),
-                    m_fb.Protocol(),
-                    payload,
+            if m_fb is not None:
+                payload = bytes(m_fb.Payload(j) for j in range(m_fb.PayloadLength()))
+                msgs.append(
+                    CoordMessage(
+                        m_fb.SrcNodeId(),
+                        m_fb.DstNodeId(),
+                        m_fb.DeliveryVtimeNs(),
+                        m_fb.SequenceNumber(),
+                        m_fb.Protocol(),
+                        payload,
+                    )
                 )
-            )
         return cls(fb.Quantum(), fb.VtimeLimit(), msgs)
 
     def pack(self) -> bytes:
@@ -330,15 +331,15 @@ class CoordDoneReq:
         for m in reversed(self.messages):
             msg_offsets.insert(0, m._pack_to_builder(b))
 
-        CoordDoneReqStartMessagesVector(b, len(msg_offsets))  # type: ignore[no-untyped-call]
+        CoordDoneReqStartMessagesVector(b, len(msg_offsets))
         for offset in reversed(msg_offsets):
             b.PrependUOffsetTRelative(offset)
         messages_vector = b.EndVector()
 
-        CoordDoneReqStart(b)  # type: ignore[no-untyped-call]
-        CoordDoneReqAddQuantum(b, self.quantum)  # type: ignore[no-untyped-call]
-        CoordDoneReqAddVtimeLimit(b, self.vtime_limit)  # type: ignore[no-untyped-call]
-        CoordDoneReqAddMessages(b, messages_vector)  # type: ignore[no-untyped-call]
-        res = CoordDoneReqEnd(b)  # type: ignore[no-untyped-call]
+        CoordDoneReqStart(b)
+        CoordDoneReqAddQuantum(b, self.quantum)
+        CoordDoneReqAddVtimeLimit(b, self.vtime_limit)
+        CoordDoneReqAddMessages(b, messages_vector)
+        res = CoordDoneReqEnd(b)
         b.Finish(res)
-        return b.Output()  # type: ignore[no-any-return]
+        return bytes(b.Output())

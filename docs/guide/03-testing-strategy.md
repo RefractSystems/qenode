@@ -29,8 +29,7 @@ Tests located in `tests/integration/simulation/` test the **firmware** and **per
 * **BANNED**: Directly importing or orchestrating Zenoh (`import zenoh`, `zenoh_session`).
 * **REQUIRED**: All tests must use the `SimulationTransport` abstraction (`sim.transport.publish()`).
 
-Tests in `tests/integration/infrastructure/` explicitly test the Zenoh routing or PDES barrier mechanisms. They are permitted to bypass the transport layer, but **must** declare their intent at the top of the file using the `# ZENOH_HACK_EXCEPTION: <reason>` annotation.
-
+Tests in `tests/integration/infrastructure/` explicitly test the Zenoh routing or PDES barrier mechanisms. They are permitted to bypass the transport layer, but **must** declare their intent at the top of the file using the `# virtmcu-allow: zenoh_hack reasoning="<reason>` annotation."
 ---
 
 ## 1. The Testing Pyramid
@@ -96,7 +95,7 @@ await sim_transport.step_clock(10_000_000)
 
 ## 4. Timeout Scaling
 
-VirtMCU tests are "ASan-Aware." When running under AddressSanitizer, the host CPU can be 5–10x slower. The test harness automatically scales logical timeouts via `get_time_multiplier()`. Developers should always write timeouts based on "real-time" expectations; the infrastructure handles the scaling.
+VirtMCU tests are "ASan-Aware." When running under AddressSanitizer, the host CPU can be 5–10x slower. The test harness automatically scales logical timeouts via `TestParams.multiplier()`. Developers should always write timeouts based on "real-time" expectations; the infrastructure handles the scaling.
 
 ## 5. Local Stress Testing
 
@@ -247,10 +246,10 @@ class InfrastructureTester:
         return q
 
     async def wait_for_frame(self, topic: str, timeout: float = 5.0) -> bytes:
-        from tools.testing.utils import get_time_multiplier
+        from tools.testing.parameters import TestParams
         q = self.rx_queues[topic]
         # Automatically scales timeout for slow CI environments (e.g. ASan)
-        return await asyncio.wait_for(q.get(), timeout=timeout * get_time_multiplier())
+        return await asyncio.wait_for(q.get(), timeout=timeout * TestParams.multiplier())
 
     def close(self) -> None:
         for sub in self.subscribers:

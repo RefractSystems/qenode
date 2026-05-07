@@ -13,18 +13,21 @@ import re
 import sys
 
 from tools.testing.env import WORKSPACE_DIR
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    qemu_bin = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/install/bin/qemu-system-arm"
-    if not qemu_bin.exists():
-        logger.error(f"QEMU binary not found at {qemu_bin}. Run 'make build' first.")
-        # sys.exit(1) # Don't fail if QEMU isn't built yet, just skip layout check
+    try:
+        qemu_bin = resolve_qemu_binary(arch="arm")
+        probe_layouts = qemu_bin.exists()
+    except Exception:
         probe_layouts = False
-    else:
-        probe_layouts = True
+        qemu_bin = None
+
+    if not probe_layouts:
+        logger.error("QEMU binary not found. Skipping layout-specific checks. Run 'make build' first.")
 
     overall_success = True
 

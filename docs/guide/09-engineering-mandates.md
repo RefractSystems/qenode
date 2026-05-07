@@ -47,8 +47,7 @@ This chapter serves as the immutable law for all developers—human or agent—c
 ### No Polling / Sleep Avoidance
 - **BANNED**: `std::thread::sleep`, `time.sleep()`, or `asyncio.sleep()` in hot paths, MMIO, or tests.
 - **Deterministic Sync**: Use `vta.step()`, QMP events, or Zenoh `recv_async()`. 
-- **Exception**: `# SLEEP_EXCEPTION: <reason>` is required for the few unavoidable cases.
-
+- **Exception**: `# virtmcu-allow: sleep reasoning="<reason>` is required for the few unavoidable cases."
 ---
 
 ## 3. The "Beyoncé Rule" of Verification

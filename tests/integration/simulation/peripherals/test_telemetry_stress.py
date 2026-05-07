@@ -24,7 +24,7 @@ async def test_telemetry_stress_queue(
     simulation: Simulation,
     zenoh_router: str,
     tmp_path: Path,
-    guest_app_factory: Any,  # noqa: ANN401
+    guest_app_factory: Any,
 ) -> None:
     from tools.testing.virtmcu_test_suite.factory import compile_yaml
 

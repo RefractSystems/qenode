@@ -18,6 +18,8 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
     steps:
       - uses: actions/checkout@v6
+      - name: Setup VirtMCU Environment
+        uses: ./.github/actions/setup-virtmcu-env
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -33,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Setup VirtMCU Environment
+        uses: ./.github/actions/setup-virtmcu-env
 
       - name: Cache Rust nightly toolchain
         uses: actions/cache@v4
@@ -52,6 +56,4 @@ jobs:
 
       - name: Run cargo miri test
         run: |
-          cd hw/rust
-          cargo miri setup
-          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
+          bash scripts/testing/run-unit-miri.sh

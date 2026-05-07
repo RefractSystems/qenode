@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_repl2qemu(simulation: Simulation, tmp_path: Path, guest_app_factory: Any) -> None:  # noqa: ANN401
+async def test_repl2qemu(simulation: Simulation, tmp_path: Path, guest_app_factory: Any) -> None:
     from tools.testing.virtmcu_test_suite.factory import compile_repl
 
     app_dir_yaml = guest_app_factory("yaml_boot")
@@ -36,6 +36,6 @@ async def test_repl2qemu(simulation: Simulation, tmp_path: Path, guest_app_facto
     # 2. Boot and check UART using Simulation
     simulation.add_node(node_id=0, dtb=out_dtb, kernel=kernel)
     async with simulation as sim:
-        await sim.vta.step(100_000_000)  # LINT_EXCEPTION: vta_step_loop
+        await sim.vta.step(100_000_000)  # virtmcu-allow: lint reasoning="vta_step_loop"
         assert sim.bridge is not None
         assert await sim.bridge.wait_for_line_on_uart("HI")

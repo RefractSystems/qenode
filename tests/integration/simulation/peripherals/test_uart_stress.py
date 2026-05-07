@@ -130,7 +130,7 @@ def test_clock_ready_unpacking() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(900)
-async def test_uart_stress_integration(simulation: Simulation, guest_app_factory: Any) -> None:  # noqa: ANN401
+async def test_uart_stress_integration(simulation: Simulation, guest_app_factory: Any) -> None:
     """
     Modernized integration test: Uses the simulation fixture to launch QEMU
     and entirely orchestrates the stress test via the SimulationTransport.
@@ -226,7 +226,7 @@ async def test_uart_stress_integration(simulation: Simulation, guest_app_factory
                 # SOTA Flakiness Prevention: Yield the event loop periodically
                 # to allow the Zenoh router to flush TCP buffers under high CI load.
                 if j % 128 == 0:
-                    await yield_now()  # SLEEP_EXCEPTION: yield event loop
+                    await yield_now()  # virtmcu-allow: sleep reasoning="yield event loop"
 
             # Wait for this chunk to be echoed back by advancing the clock
             def chunk_received(target: int = chunk_end) -> bool:

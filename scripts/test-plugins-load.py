@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 from tools.testing.env import WORKSPACE_DIR
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,15 +30,30 @@ def get_free_port() -> int:
 
 
 def main() -> int:
-    qemu_bin = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/install/bin/qemu-system-arm"
-    module_dir = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/install/lib/aarch64-linux-gnu/qemu"
+    try:
+        qemu_bin = resolve_qemu_binary(arch="arm")
+    except Exception as e:
+        logger.error(f"QEMU binary not found: {e}")
+        return 1
+
+    # Find module directory relative to QEMU_BIN
+    # Standard install path: install/bin/qemu-system-arm -> install/lib/qemu or similar
+    module_dir = None
+    if qemu_bin.parent.name == "bin" and qemu_bin.parent.parent.name == "install":
+        base = qemu_bin.parent.parent
+        for libdir in ["lib", "lib64", "lib/aarch64-linux-gnu", "lib/x86_64-linux-gnu"]:
+            p = base / libdir / "qemu"
+            if p.exists():
+                module_dir = p
+                break
+
+    if not module_dir:
+        # Fallback to searching in third_party
+        build_suffix = "-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else ""
+        module_dir = WORKSPACE_DIR / f"third_party/qemu/build-virtmcu{build_suffix}/install/lib/qemu"
 
     if not qemu_bin.exists():
-        logger.error("Local QEMU build not found.")
-        sys.exit(1)
-
-    if not qemu_bin.exists():
-        logger.error("QEMU binary not found. Run 'make build' first.")
+        logger.error(f"QEMU binary not found at {qemu_bin}. Run 'make build' first.")
         return 1
 
     meson_build = WORKSPACE_DIR / "hw/meson.build"
@@ -181,7 +197,7 @@ def main() -> int:
         logger.info("✅ All expected VirtMCU plugins loaded and registered successfully.")
         return 0
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"Unexpected error during smoke test: {e}")
         return 1
     finally:
@@ -189,7 +205,7 @@ def main() -> int:
             try:
                 qmp_file.write('{"execute": "quit"}\n')
                 qmp_file.flush()
-            except Exception:  # noqa: BLE001, S110
+            except Exception:
                 pass
 
         try:

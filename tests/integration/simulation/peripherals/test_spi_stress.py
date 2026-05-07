@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: SPI mock requires declare_queryable which is not in SimulationTransport
+# virtmcu-allow: zenoh_hack reasoning="SPI mock requires declare_queryable which is not in SimulationTransport"
 """
 SOTA Test Module: test_spi_stress
 

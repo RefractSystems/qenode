@@ -69,7 +69,14 @@ async def test_halt_hook_multiplexing(simulation: Simulation, wfi_artifacts: tup
         # Advance virtual time.
         # If the clock plugin didn't get its hook, vta.step() will hang/timeout.
         # If the telemetry plugin didn't get its hook, captured will remain empty.
-        await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=10_000_000, timeout=10.0)
+        # Use a generous timeout for ASan environments
+        timeout = 10.0
+
+        try:
+            await sim.run_until(lambda: len(captured) > 0, timeout_ns=100_000_000, step_ns=10_000_000, timeout=timeout)
+        except TimeoutError:
+            logger.error(f"Multiplexing test timed out! Captured: {len(captured)} events.")
+            raise
 
         assert len(captured) > 0, "Telemetry plugin did not receive CPU halt events!"
 

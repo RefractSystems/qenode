@@ -8,17 +8,17 @@ VirtMCU is a bifurcated system combining a C-based emulator (QEMU) with modular,
 
 ## 1. Build Domains
 
-The codebase is divided into three primary build domains, each with its own toolchain and lifecycle.
+The codebase is divided into three primary build domains, each with its own toolchain and lifecycle. For a quick initialization of all domains, run `make setup-dev`.
 
 ### A. Dependencies (C/C++)
 *   **Components**: `zenoh-c` (for native plugin communication) and `flatcc` (for telemetry serialization).
-*   **Lifecycle**: Built once during `make setup-initial` or pre-compiled into the project's Docker base image.
+*   **Lifecycle**: Built once during `make install-deps-initial` or pre-compiled into the project's Docker base image.
 *   **Location**: Land in `third_party/zenoh-c` and `third_party/flatcc`.
 
 ### B. QEMU Core & Rust Plugins
 *   **Components**: The patched `qemu-system-arm/riscv` binaries and the dynamic peripheral models (`hw-virtmcu-*.so`).
 *   **Lifecycle**: 
-    *   The **Core** is built initially via `make setup-initial` and rarely changes.
+    *   The **Core** is built initially via `make install-deps-initial` and rarely changes.
     *   **Plugins** are rebuilt frequently via `make build` whenever `hw/rust/` code is modified.
 *   **Mechanism**: The project's `hw/` directory is **symlinked** into QEMU's source tree (`third_party/qemu/hw/virtmcu`). Incremental builds delegate to QEMU's Meson system, which in turn invokes `cargo` to compile the Rust components.
 
@@ -43,7 +43,20 @@ To prevent cache thrashing when switching between standard development and Addre
 
 ---
 
-## 3. Runtime Linking: The Plugin Lifecycle
+## 3. QEMU Path Resolution
+
+VirtMCU provides a deterministic way to locate the compiled QEMU binary, supporting complex CI scenarios and custom development setups. This is implemented via `resolve_qemu_binary` (Python) and `run.sh` (Shell).
+
+The path resolution prioritizes variables in the following order:
+1.  **Architecture-Specific Override**: `QEMU_ARM_BIN`, `QEMU_RISCV64_BIN`, `QEMU_RISCV32_BIN`. Best for multi-node tests executing different architectures simultaneously.
+2.  **Global Override**: `QEMU_BIN`. Applies to all architectures if set.
+3.  **CI Prebuilt Image Check**: If `VIRTMCU_USE_PREBUILT_QEMU=1`, searches `/build/qemu/...`. It will fallback gracefully to non-ASan builds if an ASan build is requested but missing.
+4.  **Local Workspace Search**: Locates binaries automatically inside `third_party/qemu/build-virtmcu[-asan]`.
+5.  **System PATH**: Falls back to the global environment path as a last resort.
+
+---
+
+## 4. Runtime Linking: The Plugin Lifecycle
 
 Because VirtMCU relies on QEMU's dynamic module system, **Rust plugins do not link against QEMU at compile time; QEMU links against them at runtime.**
 
@@ -53,7 +66,7 @@ Because VirtMCU relies on QEMU's dynamic module system, **Rust plugins do not li
 
 ---
 
-## 4. Build System Invariants
+## 5. Build System Invariants
 
 1.  **Strict Endianness**: All cross-language serialization must use explicit Little-Endian (`.to_le_bytes()`) to ensure the build is portable across host architectures.
 2.  **Schema-First**: Any change to simulation wire protocols MUST start with a modification to `core.fbs`. The build system enforces that all components are compiled against the same FlatBuffers schema.

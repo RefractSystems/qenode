@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: TID251
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lint_utils import DEFAULT_EXCLUDES, iter_target_files, setup_lint_logging
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def check_shellcheck(targets: list[Path], excludes: list[str]) -> list[str]:
     """Run shellcheck on all bash scripts."""
     try:
-        subprocess.run(["shellcheck", "--version"], capture_output=True, check=True)  # noqa: S607
+        subprocess.run(["shellcheck", "--version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         logger.error("❌ Error: shellcheck is not installed. Install with: sudo apt-get install shellcheck")
         return ["shellcheck not installed"]
@@ -34,7 +34,7 @@ def check_shellcheck(targets: list[Path], excludes: list[str]) -> list[str]:
 
     violations = []
     # Use -x to follow source statements
-    result = subprocess.run(["shellcheck", "--severity=warning"] + scripts, capture_output=True, text=True)  # noqa: S603, S607
+    result = subprocess.run(["shellcheck", "--severity=warning", *scripts], capture_output=True, text=True)
     if result.returncode != 0:
         violations.append(f"shellcheck violations found:\n{result.stdout}")
 
@@ -80,7 +80,8 @@ def run_lint(targets: list[Path], excludes: list[str]) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lint Shell scripts for safety flags and shellcheck violations.")
-    parser.add_argument("targets", type=Path, nargs="*", default=[Path(".")], help="Target directories or files")
+    parser.add_argument("targets", type=Path, nargs="*", default=[Path()], help="Target directories or files")
+
     parser.add_argument("--exclude", nargs="*", default=DEFAULT_EXCLUDES, help="Directories to exclude")
     args = parser.parse_args()
 

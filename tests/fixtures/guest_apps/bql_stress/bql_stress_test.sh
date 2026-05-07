@@ -20,7 +20,7 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     echo "ERROR: Could not find scripts/common.sh" >&2
     exit 1
 fi
-TMPDIR_LOCAL="$(mktemp -d /tmp/bql_stress_XXXXXX)"
+TMPDIR_LOCAL="$(mktemp -d -t bql_stress_XXXXXX)"
 QEMU_PID=""
 ROUTER_PID=""
 
@@ -61,15 +61,22 @@ fi
 
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" "$ENDPOINT" &
 ROUTER_PID=$!
-sleep 1
+
+# Scale sleeps for ASan/TSan
+SLEEP_MULT=1
+if [[ "${VIRTMCU_USE_ASAN:-0}" == "1" ]]; then SLEEP_MULT=5; fi
+if [[ "${VIRTMCU_USE_TSAN:-0}" == "1" ]]; then SLEEP_MULT=10; fi
+
+sleep "$(( 1 * SLEEP_MULT ))"
 
 "$SCRIPTS_DIR/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" \
-    -chardev zenoh,id=uart0,node=0,router=$ENDPOINT \
-    -device ui,node=0,router=$ENDPOINT \
+    -device virtmcu-transport-hub,id=hub0,node=0,router=$ENDPOINT \
+    -chardev virtmcu,id=uart0,node=0,router=$ENDPOINT \
+    -device ui,node=0,transport=hub0 \
     -nographic -monitor none > "$TMPDIR_LOCAL/qemu.log" 2>&1 &
 QEMU_PID=$!
 
-sleep 1
+sleep "$(( 1 * SLEEP_MULT ))"
 
 python3 "$WORKSPACE_DIR/tests/fixtures/guest_apps/bql_stress/bql_stress_test.py" "$ENDPOINT"
 

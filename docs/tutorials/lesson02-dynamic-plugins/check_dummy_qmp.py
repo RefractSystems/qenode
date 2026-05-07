@@ -29,7 +29,7 @@ def check_dummy() -> None:
             s.connect("qmp.sock")
             break
         except OSError:
-            mock_execution_delay(0.5)  # SLEEP_EXCEPTION: waiting for infrastructure
+            mock_execution_delay(0.5)  # virtmcu-allow: sleep reasoning="waiting for infrastructure"
     else:
         logger.error("FAILED: Could not connect to QEMU QMP socket")
         sys.exit(1)

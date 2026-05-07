@@ -59,7 +59,7 @@ fn stress_barrier_quantum_transitions() {
     }
 
     for h in handles {
-        h.join().unwrap();
+        h.join().expect("test should succeed");
     }
 }
 
@@ -82,7 +82,7 @@ fn stress_barrier_fast_node_overlap() {
                 }
                 b_node0
                     .submit_done("0".to_owned(), q as u64, current, vec![])
-                    .unwrap();
+                    .expect("test should succeed");
                 break;
             }
         }
@@ -91,7 +91,7 @@ fn stress_barrier_fast_node_overlap() {
     let h1 = thread::spawn(move || {
         for q in 1..=n_quanta {
             let current = b_node1.current_quantum();
-            let _ = b_node1.submit_nowait("1".to_owned(), q as u64, current, vec![]);
+            b_node1.submit_nowait("1".to_owned(), q as u64, current, vec![]);
 
             // Artificial delay to induce overlap
             if q % 10 == 0 {
@@ -100,8 +100,8 @@ fn stress_barrier_fast_node_overlap() {
         }
     });
 
-    h0.join().unwrap();
-    h1.join().unwrap();
+    h0.join().expect("test should succeed");
+    h1.join().expect("test should succeed");
 }
 
 trait QuantumBarrierExt {

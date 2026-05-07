@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 unsafe extern "C" fn allow_set_link(
     _obj: *mut virtmcu_qom::qom::Object,
     _name: *const core::ffi::c_char,
@@ -57,9 +67,9 @@ pub struct VirtmcuTelemetryQOM {
 const _: () = assert!(core::mem::offset_of!(VirtmcuTelemetryQOM, parent_obj) == 0);
 
 struct IrqSlot {
-    #[allow(dead_code)] // ALLOW_EXCEPTION: Reserved for future GPIO support
+    #[allow(dead_code)] // virtmcu-allow: allow reasoning="Reserved for future GPIO support"
     opaque: *mut c_void,
-    #[allow(dead_code)] // ALLOW_EXCEPTION: Reserved for future GPIO support
+    #[allow(dead_code)] // virtmcu-allow: allow reasoning="Reserved for future GPIO support"
     slot: u16,
     path: *mut c_char,
 }
@@ -89,7 +99,7 @@ unsafe impl Send for VirtmcuTelemetryBackend {}
 // SAFETY: VirtmcuTelemetryBackend's fields are internally synchronized (Atomic, Sender, BqlGuarded).
 unsafe impl Sync for VirtmcuTelemetryBackend {}
 
-static GLOBAL_TELEMETRY: AtomicPtr<VirtmcuTelemetryQOM> = AtomicPtr::new(ptr::null_mut());
+static GLOBAL_TELEMETRY: AtomicPtr<VirtmcuTelemetryQOM> = AtomicPtr::new(ptr::null_mut()); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 
 extern "C" fn telemetry_cpu_halt_cb(cpu: *mut CPUState, halted: bool) {
     let s_ptr = GLOBAL_TELEMETRY.load(Ordering::Acquire);
@@ -145,7 +155,12 @@ fn telemetry_trace_cpu_internal(backend: &VirtmcuTelemetryBackend, cpu_index: c_
     }
 
     // Only trace if state actually changed
-    let prev = backend.last_halted[cpu_index as usize].swap(halted, Ordering::SeqCst);
+    let cpu_idx = usize::try_from(cpu_index).expect("invalid cpu index");
+    let prev = backend
+        .last_halted
+        .get(cpu_idx)
+        .expect("CPU index out of range")
+        .swap(halted, Ordering::SeqCst);
     if prev == halted {
         return;
     }
@@ -153,9 +168,9 @@ fn telemetry_trace_cpu_internal(backend: &VirtmcuTelemetryBackend, cpu_index: c_
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
 
     let _ = backend.sender.try_send(Some(TraceEvent {
-        timestamp_ns: vtime as u64,
+        timestamp_ns: vtime.try_into().expect("vtime is negative"),
         event_type: 0,
-        id: cpu_index as u32,
+        id: cpu_index.try_into().expect("cpu_index is negative"),
         value: u32::from(halted),
         device_name: None,
         power_uw: 0,
@@ -323,7 +338,7 @@ unsafe extern "C" fn telemetry_gpio_discover_cb(obj: *mut Object, opaque: *mut c
     let path_ptr = object_get_canonical_path(obj);
     let path = if path_ptr.is_null() { ptr::null_mut() } else { path_ptr };
 
-    let slot = backend.len() as u16;
+    let slot = u16::try_from(backend.len()).expect("too many IRQ slots");
 
     // FIXME: num_gpio_out is missing from DeviceState in the current virtmcu-qom bindings.
     // For now, we skip individual GPIO interception until the bindings are updated.

@@ -11,10 +11,13 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
 
-RESERVATION_DIR = os.environ.get(
-    "VIRTMCU_PORT_RESERVATION_DIR",
-    f"/tmp/virtmcu_port_reservations_{os.getuid()}",  # noqa: S108
+RESERVATION_DIR = Path(
+    os.environ.get(
+        "VIRTMCU_PORT_RESERVATION_DIR",
+        f"/tmp/virtmcu_port_reservations_{os.getuid()}", # virtmcu-allow: absolute_path reasoning="Legacy script"
+    )
 )
 
 
@@ -25,7 +28,7 @@ def get_free_port() -> int:
     Avoids the OS ephemeral port range (typically 32768+) to prevent TOCTOU
     conflicts where the OS assigns the released port to an outgoing connection.
     """
-    os.makedirs(RESERVATION_DIR, exist_ok=True)
+    RESERVATION_DIR.mkdir(parents=True, exist_ok=True)
     import secrets
 
     # Try to find and reserve a port outside the ephemeral range
@@ -37,18 +40,18 @@ def get_free_port() -> int:
             except OSError:
                 continue
 
-        res_path = os.path.join(RESERVATION_DIR, str(port))
+        res_path = RESERVATION_DIR / str(port)
         try:
             # Atomic creation of a reservation file
-            fd = os.open(res_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
+            res_path.touch(exist_ok=False)
             return port
         except FileExistsError:
             # Port was recently reserved. Check if it's stale (older than 60s)
             try:
-                if time.time() - os.path.getmtime(res_path) > 60:
+                stale_timeout_sec = 60
+                if time.time() - res_path.stat().st_mtime > stale_timeout_sec:
                     try:
-                        os.remove(res_path)
+                        res_path.unlink(missing_ok=True)
                     except OSError:
                         pass  # Someone else cleaned it up
             except OSError:

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_parsing(tmp_path: Path, guest_app_factory: Any) -> None:  # noqa: ANN401
+def test_parsing(tmp_path: Path, guest_app_factory: Any) -> None:
     from tools.testing.virtmcu_test_suite.factory import compile_yaml, inspect_dtb
 
     app_dir = guest_app_factory("complex_board")

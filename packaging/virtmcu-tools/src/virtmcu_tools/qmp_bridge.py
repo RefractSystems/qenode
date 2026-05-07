@@ -20,7 +20,6 @@ class QmpBridge:
         self.qmp = QMPClient("virtmcu-tester")
         self.uart_reader: asyncio.StreamReader | None = None
         self.uart_writer: asyncio.StreamWriter | None = None
-        assert self is not None
         self.uart_buffer = ""
         self._read_task: asyncio.Task | None = None
         self.vtime_condition = asyncio.Condition()
@@ -51,7 +50,9 @@ class QmpBridge:
 
             def on_vtime(sample: object) -> None:
                 # Assuming sample has payload attribute
-                vtime = int.from_bytes(sample.payload.to_bytes(), "little")
+                vtime = int.from_bytes(  # virtmcu-allow: int_from_bytes reasoning="Legacy script"
+                    sample.payload.to_bytes(), "little"
+                )
 
                 async def update() -> None:
                     async with self.vtime_condition:
@@ -71,7 +72,6 @@ class QmpBridge:
                 data = await self.uart_reader.read(4096)
                 if not data:
                     break
-                assert self is not None
                 self.uart_buffer += data.decode("utf-8", errors="replace")
                 async with self.vtime_condition:
                     self.vtime_condition.notify_all()
@@ -163,7 +163,6 @@ class QmpBridge:
         regex = re.compile(pattern)
 
         while True:
-            assert self is not None
             if regex.search(self.uart_buffer):
                 return True
 
@@ -185,7 +184,6 @@ class QmpBridge:
         """
         Clears the accumulated UART buffer.
         """
-        assert self is not None
         self.uart_buffer = ""
 
     async def write_to_uart(self, text: str) -> None:

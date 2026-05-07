@@ -16,7 +16,7 @@
 hw_virtmcu_modules = {}
 
 # ── dummy ─────────────────────────────────────────────────────────────────────
-# Minimal QOM SysBusDevice.  Always included — it is the smoke-test for the
+# Minimal QOM SysBusDevice.  Always included — it is the integration test for the
 # dynamic loading pipeline and the template for all new devices.
 dummy_ss = ss.source_set()
 dummy_ss.add(files('dummy/dummy.c'))

@@ -12,28 +12,19 @@ compiler. This serves as the backend for the FFI validation suite.
 
 import argparse
 import logging
-import os
 import subprocess
 import sys
-from pathlib import Path
+
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
 
 logger = logging.getLogger(__name__)
 
 
 def get_qemu_bin() -> str | None:
-    # Priority:
-    # 1. Environment variable
-    # 2. Local build directory
-
-    build_dir = "build-virtmcu-asan" if os.environ.get("VIRTMCU_USE_ASAN") == "1" else "build-virtmcu"
-    local_bin = Path("third_party/qemu") / build_dir / "qemu-system-arm"
-    if local_bin.exists():
-        return str(local_bin)
-
-    local_bin_install = Path("third_party/qemu") / build_dir / "install/bin/qemu-system-arm"
-    if local_bin_install.exists():
-        return str(local_bin_install)
-    return None
+    try:
+        return str(resolve_qemu_binary(arch="arm"))
+    except Exception:
+        return None
 
 
 def probe_struct(qemu_bin: str, struct_name: str) -> str:

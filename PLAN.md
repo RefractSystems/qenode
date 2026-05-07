@@ -24,12 +24,12 @@ For every completed milestone, an automated integration test MUST be added to `t
 - **Environment Agnosticism**: No hardcoded paths. Use `tmp_path` for artifacts.
 - **Explicit Constants**: No magic numbers. Use descriptive `const` variables.
 - **The Beyonce Rule**: Prove bugs with a failing test before fixing.
-- **Lint Gate**: `make lint` must pass before every commit (ruff, version checks, cargo clippy -D warnings).
+- **Lint Gate**: `make dev-lint` must pass before every commit (ruff, version checks, cargo clippy -D warnings).
 
 ## 2. Open Items — Ordered by Priority
 
 > **Last updated**: 2026-04-29 (audit of `close_P0s` branch, commit `f45f676`).
-> **Mandatory before every commit**: `make lint && make test-unit` must both pass.
+> **Mandatory before every commit**: `make dev-check` must both pass.
 > Completed P0 history is in `docs/guide/05-project-history.md`.
 
 ---
@@ -161,7 +161,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 **Goal**: Formalize the separation between **Wall-Clock Timeouts** (fail-fast boundaries) and **Simulation Pacing** (controlling guest execution speed relative to reality). VirtMCU must run FTRT in CI, but support interactive real-time (1.0x) or slow-motion (e.g., 10.0x) for human-in-the-loop UI and GDB sessions.
 **What needs to be improved**: Tests and runtime environments currently assume "as fast as possible." When connecting a frontend UI or Wireshark, the simulation runs too fast for human observation. Conversely, we must mathematically prove that CI runs FTRT without artificial framework bottlenecks.
 **How it's tested**: 
-1. **Host Timeout Scale**: Implement `HOST_TIMEOUT_MULTIPLIER` in `conftest_core.py` to transparently stretch/shrink wait boundaries based on ASan/CI runners.
+1. **Host Timeout Scale**: Implemented `TestParams` in `tools/testing/parameters.py` to transparently stretch/shrink wait boundaries based on ASan/CI runners.
 2. **Coordinator Pacing**: Add `--pacing <float>` to `deterministic_coordinator`. `0.0` = FTRT (default), `1.0` = Real-time, `10.0` = Slow motion.
 3. **Runtime UI Control**: Expose a QMP/Zenoh endpoint allowing a connected Frontend UI to dynamically adjust the pacing multiplier at runtime.
 4. **FTRT Proof Test**: Create a CI test that simulates 60 seconds of virtual stress-load, asserting that it completes in `< 5 seconds` of Wall-Clock time.
@@ -193,7 +193,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 >
 > **Audience**: AI coding agents and junior engineers. Follow steps exactly. Do not infer.
 >
-> **Prerequisite**: `make lint && make test-unit` MUST pass before starting any task.
+> **Prerequisite**: `make dev-check` MUST pass before starting any task.
 
 ---
 
@@ -214,7 +214,7 @@ engineers can choose the right transport for their scenario.
 **Definition of Done**:
 - [ ] Benchmark script exists and is runnable in CI.
 - [ ] Results table added to ARCHITECTURE.md §9.
-- [ ] `make lint` (ruff) passes on the benchmark script.
+- [ ] `make dev-lint` (ruff) passes on the benchmark script.
 
 ---
 
@@ -236,7 +236,7 @@ independently on each vCPU thread. Both vCPUs must halt at the quantum boundary 
 - [ ] `n-vcpus` property added to `clock` device.
 - [ ] With `n-vcpus=2` and `-smp 2`, both vCPUs halt before reply is sent.
 - [ ] Both unit tests pass.
-- [ ] `make lint` passes.
+- [ ] `make dev-lint` passes.
 
 ---
 
@@ -254,7 +254,7 @@ node ID, allowing multiple independent clock devices per QEMU process.
 - [ ] `GLOBAL_CLOCK: AtomicPtr` removed.
 - [ ] `CLOCK_REGISTRY: Mutex<HashMap<u32, Arc<ZenohClock>>>` introduced.
 - [ ] `test_two_clock_instances_independent` passes.
-- [ ] `make lint` passes.
+- [ ] `make dev-lint` passes.
 
 ---
 

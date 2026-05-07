@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 use virtmcu_api::FlatBufferStructExt;
 use zenoh::Wait;
 extern crate alloc;
@@ -144,7 +154,7 @@ pub unsafe extern "C" fn spi_realize(dev: *mut SSIPeripheral, errp: *mut *mut c_
 
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
         let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", s.node_id)
+            format!("/tmp/virtmcu-coord-{}.sock", s.node_id) // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };

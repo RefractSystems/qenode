@@ -193,7 +193,7 @@ def test_parser_missing_using(caplog: LogCaptureFixture) -> None:
     repl = 'using "non_existent.repl"\n'
     parse_repl(repl)
     caplog.set_level(logging.INFO)
-    assert "Warning: Included file not found" in caplog.text
+    assert "Included file not found" in caplog.text
 
 
 def test_parser_sysbus_registration() -> None:

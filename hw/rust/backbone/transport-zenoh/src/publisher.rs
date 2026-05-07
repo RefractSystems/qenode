@@ -152,47 +152,37 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_safe_publisher_sends_payload() -> Result<(), zenoh::Error> {
+    fn test_safe_publisher_sends_payload() {
         let config = crate::test_config();
-        let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/payload";
 
-        let pub_ = session
-            .declare_publisher(topic)
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let pub_ = session.declare_publisher(topic).wait().expect("test should succeed");
 
         let safe_pub = SafePublisher::new(pub_);
 
-        let sub = session
-            .declare_subscriber(topic)
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let sub = session.declare_subscriber(topic).wait().expect("test should succeed");
 
         safe_pub.send(b"hello".to_vec());
 
         // Let background thread process and Zenoh router route.
         let msg = sub
             .recv_timeout(TEST_RECV_TIMEOUT)
-            .map_err(|e| zenoh::Error::from(e.to_string()))?
+            .expect("test should succeed")
             .expect("No message received");
         assert_eq!(msg.payload().to_bytes().as_ref(), b"hello");
 
         drop(safe_pub);
-        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_safe_publisher_non_blocking_under_load() -> Result<(), zenoh::Error> {
+    fn test_safe_publisher_non_blocking_under_load() {
         let config = crate::test_config();
-        let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/load";
 
-        let pub_ = session
-            .declare_publisher(topic)
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let pub_ = session.declare_publisher(topic).wait().expect("test should succeed");
 
         let safe_pub = SafePublisher::new(pub_);
 
@@ -206,20 +196,16 @@ mod tests {
         assert!(elapsed < TEST_LOAD_THRESHOLD, "send() blocked too long: {elapsed:?}");
 
         drop(safe_pub);
-        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_safe_publisher_drop_joins_thread() -> Result<(), zenoh::Error> {
+    fn test_safe_publisher_drop_joins_thread() {
         let config = crate::test_config();
-        let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/drop";
 
-        let pub_ = session
-            .declare_publisher(topic)
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let pub_ = session.declare_publisher(topic).wait().expect("test should succeed");
 
         let safe_pub = SafePublisher::new(pub_);
         safe_pub.send(b"hello".to_vec());
@@ -230,20 +216,16 @@ mod tests {
 
         // Assert drop completes within 500ms
         assert!(elapsed < TEST_DROP_JOIN_TIMEOUT, "drop() took too long: {elapsed:?}");
-        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_safe_publisher_drops_when_full() -> Result<(), zenoh::Error> {
+    fn test_safe_publisher_drops_when_full() {
         let config = crate::test_config();
-        let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/overflow";
 
-        let pub_ = session
-            .declare_publisher(topic)
-            .wait()
-            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        let pub_ = session.declare_publisher(topic).wait().expect("test should succeed");
 
         let safe_pub = SafePublisher::new(pub_);
 
@@ -260,6 +242,5 @@ mod tests {
 
         // The background thread continues processing. Ensure drop also handles it cleanly.
         drop(safe_pub);
-        Ok(())
     }
 }

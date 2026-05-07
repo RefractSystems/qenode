@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 // std is required: zenoh/tokio bring std
 //! Virtmcu 802.15.4 radio with pluggable transport.
 use zenoh::Wait;
@@ -18,7 +28,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
+use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
@@ -66,8 +76,7 @@ pub struct Virtmcu802154State {
     irq: QemuIrq,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     topic_tx: String,
-    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: SafeSubscription ensures thread safety for Zenoh callbacks
-
+    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="SafeSubscription ensures thread safety for Zenoh callbacks"
     rx_timer: Option<QomTimer>,
     backoff_timer: Option<QomTimer>,
     ack_timer: Option<QomTimer>,
@@ -305,7 +314,7 @@ fn ieee802154_init_internal(
 ) -> *mut Virtmcu802154State {
     let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
         let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node })
+            format!("/tmp/virtmcu-coord-{}.sock", { node }) // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
         };
@@ -379,7 +388,7 @@ fn ieee802154_init_internal(
 
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
     state_box.subscription =
-        virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) // BQL_EXCEPTION: Safe Zenoh integration
+        virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) // virtmcu-allow: bql reasoning="Safe Zenoh integration"
             .ok();
 
     state_box.rx_timer =

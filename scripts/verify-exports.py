@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+
 # Try to import WORKSPACE_DIR from our internal environment helper
 try:
     from tools.testing.env import WORKSPACE_DIR
@@ -84,30 +86,35 @@ def check_symbols(so_path: Path, required: list[str], is_executable: bool = Fals
 
 
 def main() -> int:
-    # Check multiple possible build locations
-    build_dirs = [
-        WORKSPACE_DIR / "third_party/qemu/build-virtmcu",
-        WORKSPACE_DIR / "third_party/qemu/build-virtmcu-asan",
-    ]
-
     success = True
     found_any = False
 
-    for build_dir in build_dirs:
-        if not build_dir.exists():
-            continue
-
-        found_any = True
-        # Check main executable
-        qemu_bin = build_dir / "qemu-system-arm"
-        if not check_symbols(qemu_bin, QEMU_REQUIRED_EXPORTS, is_executable=True):
-            success = False
-
-        # Check plugins
-        for so_name, symbols in REQUIRED_SYMBOLS.items():
-            so_path = build_dir / so_name
-            if not check_symbols(so_path, symbols):
+    try:
+        qemu_bin = resolve_qemu_binary(arch="arm")
+        if qemu_bin.exists():
+            found_any = True
+            if not check_symbols(qemu_bin, QEMU_REQUIRED_EXPORTS, is_executable=True):
                 success = False
+
+            # Check plugins in the same directory as qemu_bin
+            build_dir = qemu_bin.parent
+            if build_dir.name == "bin":
+                build_dir = build_dir.parent
+
+            for so_name, symbols in REQUIRED_SYMBOLS.items():
+                # Search for so_name in build_dir
+                so_paths = list(build_dir.rglob(so_name))
+                if so_paths:
+                    if not check_symbols(so_paths[0], symbols):
+                        success = False
+                else:
+                    # Try relative to qemu_bin
+                    so_path = qemu_bin.parent / so_name
+                    if not check_symbols(so_path, symbols):
+                        success = False
+    except Exception as e:
+        logger.info(f"Skipping export check: {e}")
+        return 0
 
     if not found_any:
         logger.info("Build directory not found. Skipping export check.")

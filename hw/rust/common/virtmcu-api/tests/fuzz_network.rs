@@ -1,4 +1,3 @@
-#![allow(clippy::undocumented_unsafe_blocks)]
 use core::mem::size_of;
 use proptest::prelude::*;
 use virtmcu_api::ZenohFrameHeader;
@@ -9,13 +8,7 @@ proptest! {
     fn test_fuzz_netdev_header_parsing(data in prop::collection::vec(any::<u8>(), 0..1024)) {
         if data.len() >= size_of::<ZenohFrameHeader>() {
             let mut header = ZenohFrameHeader::default();
-            unsafe {
-                core::ptr::copy_nonoverlapping( // COPY_EXCEPTION: fuzzing binary data into struct // COPY_EXCEPTION: fuzzing binary data into struct
-                    data.as_ptr(),
-                    core::ptr::from_mut(&mut header).cast::<u8>(),
-                    size_of::<ZenohFrameHeader>(),
-                );
-            }
+            header.0.copy_from_slice(&data[..size_of::<ZenohFrameHeader>()]);
             // Ensure no panic
             let _ = &data[size_of::<ZenohFrameHeader>()..];
             let _ = header.delivery_vtime_ns();

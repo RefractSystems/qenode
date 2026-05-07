@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 unsafe extern "C" fn allow_set_link(
     _obj: *mut virtmcu_qom::qom::Object,
     _name: *const core::ffi::c_char,
@@ -134,7 +144,7 @@ use core::sync::atomic::AtomicBool;
 use virtmcu_qom::sync::BqlGuarded;
 
 unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    virtmcu_qom::sim_err!("flexray_realize starting");
+    virtmcu_qom::sim_debug!("flexray_realize starting");
     let s = &mut *(dev as *mut FlexRay);
 
     let _router = if s.router.is_null() {
@@ -492,7 +502,7 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*s.rust_state };
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-    virtmcu_qom::sim_err!("flexray_rx_timer_cb fired at {}", now);
+    virtmcu_qom::sim_debug!("flexray_rx_timer_cb fired at {}", now);
 
     loop {
         let mut pending = state.pending_packet.get_mut();
@@ -509,17 +519,19 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
             // Find matching slot
             for i in 0..128 {
                 if s.msg_ram_headers[i].frame_id == packet.frame_id {
-                    virtmcu_qom::sim_err!(
+                    virtmcu_qom::sim_debug!(
                         "FlexRay RX: Matched frame_id={} in slot {}",
                         packet.frame_id,
                         i
                     );
                     let data_word = if packet.data.len() >= 4 {
-                        u32::from_le_bytes(packet.data[0..4].try_into().unwrap())
+                        u32::from_le_bytes(
+                            packet.data[0..4].try_into().expect("flexray logic assumption failed"),
+                        )
                     } else {
                         0
                     };
-                    virtmcu_qom::sim_err!("FlexRay RX: Updating wrhs3 and wrds[0]");
+                    virtmcu_qom::sim_debug!("FlexRay RX: Updating wrhs3 and wrds[0]");
                     s.wrhs3 |= 1;
                     s.wrds[0] = data_word;
                 }
@@ -569,9 +581,10 @@ pub fn flexray_init_internal(
         let tx = tx.clone();
         let rx_timer_clone = Arc::clone(&rx_timer_clone);
         move |payload: &[u8]| {
-            virtmcu_qom::sim_err!("FlexRay RX: received {} bytes", payload.len());
-            let frame = flatbuffers::root::<FlexRayFrame>(payload).unwrap();
-            virtmcu_qom::sim_err!(
+            virtmcu_qom::sim_debug!("FlexRay RX: received {} bytes", payload.len());
+            let frame = flatbuffers::root::<FlexRayFrame>(payload)
+                .expect("flexray logic assumption failed");
+            virtmcu_qom::sim_debug!(
                 "FlexRay RX: frame_id={} vtime={}",
                 frame.frame_id(),
                 frame.delivery_vtime_ns()
@@ -612,7 +625,7 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = unsafe { &*s.rust_state };
 
     let cycle = state.current_cycle.fetch_add(1, AtomicOrdering::SeqCst);
-    virtmcu_qom::sim_err!("flexray_cycle_timer_cb fired: cycle={}", cycle);
+    virtmcu_qom::sim_debug!("flexray_cycle_timer_cb fired: cycle={}", cycle);
 
     // Send TX frames for configured slots
     let mut sent_count = 0;
@@ -623,7 +636,7 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
             sent_count += 1;
         }
     }
-    virtmcu_qom::sim_err!("flexray_cycle_timer_cb sent {} frames", sent_count);
+    virtmcu_qom::sim_debug!("flexray_cycle_timer_cb sent {} frames", sent_count);
 
     // Schedule next cycle
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };

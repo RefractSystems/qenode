@@ -1,7 +1,7 @@
 import json
-import os
 import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from tools.svd2virtmcu.svd2header import generate_header, get_base_type
 from tools.svd2virtmcu.svd2schema import generate_schema
@@ -62,64 +62,63 @@ def test_svd2header_base_type() -> None:
 
 def test_svd2header_generation_happy_path() -> None:
     with tempfile.TemporaryDirectory() as d:
-        svd_path = os.path.join(d, "mock.svd")
-        out_path = os.path.join(d, "out.h")
-        template_path = os.path.join("tools", "svd2virtmcu", "templates", "c_header.j2")
+        base_dir = Path(d)
+        svd_path = base_dir / "mock.svd"
+        out_path = base_dir / "out.h"
+        template_path = Path("tools") / "svd2virtmcu" / "templates" / "c_header.j2"
 
-        create_mock_svd(svd_path, include_address_block=True)
-        generate_header(svd_path, template_path, out_path)
+        create_mock_svd(str(svd_path), include_address_block=True)
+        generate_header(str(svd_path), str(template_path), str(out_path))
 
-        assert os.path.exists(out_path)
-        with open(out_path) as f:
-            content = f.read()
+        assert out_path.exists()
+        content = out_path.read_text()
 
-            # Assert Enterprise SOTA checks are present
-            assert "_Static_assert(sizeof(float) == 4" in content
+        # Assert Enterprise SOTA checks are present
+        assert "_Static_assert(sizeof(float) == 4" in content
 
-            # Assert Register offsets and pointers are generated
-            assert "#define REG_QPOS0_OFFSET 0x0010" in content
-            assert "#define REG_QPOS0_PTR ((volatile float*)(MOCK_IO_BASE + REG_QPOS0_OFFSET))" in content
+        # Assert Register offsets and pointers are generated
+        assert "#define REG_QPOS0_OFFSET 0x0010" in content
+        assert "#define REG_QPOS0_PTR ((volatile float*)(MOCK_IO_BASE + REG_QPOS0_OFFSET))" in content
 
-            # Verify size extraction worked
-            assert "#define MOCK_IO_SIZE 0x2000" in content
+        # Verify size extraction worked
+        assert "#define MOCK_IO_SIZE 0x2000" in content
 
 
 def test_svd2header_generation_no_address_block() -> None:
     with tempfile.TemporaryDirectory() as d:
-        svd_path = os.path.join(d, "mock.svd")
-        out_path = os.path.join(d, "out.h")
-        template_path = os.path.join("tools", "svd2virtmcu", "templates", "c_header.j2")
+        base_dir = Path(d)
+        svd_path = base_dir / "mock.svd"
+        out_path = base_dir / "out.h"
+        template_path = Path("tools") / "svd2virtmcu" / "templates" / "c_header.j2"
 
         # Create SVD with missing addressBlock to test fallback logic
-        create_mock_svd(svd_path, include_address_block=False)
-        generate_header(svd_path, template_path, out_path)
+        create_mock_svd(str(svd_path), include_address_block=False)
+        generate_header(str(svd_path), str(template_path), str(out_path))
 
-        with open(out_path) as f:
-            content = f.read()
-            # Default fallback size should be 0x1000
-            assert "#define MOCK_IO_SIZE 0x1000" in content
+        content = out_path.read_text()
+        # Default fallback size should be 0x1000
+        assert "#define MOCK_IO_SIZE 0x1000" in content
 
 
 def test_svd2schema_generation() -> None:
     with tempfile.TemporaryDirectory() as d:
-        svd_path = os.path.join(d, "mock.svd")
-        out_path = os.path.join(d, "schema.json")
-        template_path = os.path.join("tools", "svd2virtmcu", "templates", "ui_schema.json.j2")
+        base_dir = Path(d)
+        svd_path = base_dir / "mock.svd"
+        out_path = base_dir / "schema.json"
+        template_path = Path("tools") / "svd2virtmcu" / "templates" / "ui_schema.json.j2"
 
-        create_mock_svd(svd_path)
-        generate_schema(svd_path, template_path, out_path, world_id="test_world")
+        create_mock_svd(str(svd_path))
+        generate_schema(str(svd_path), str(template_path), str(out_path), world_id="test_world")
 
-        assert os.path.exists(out_path)
-        with open(out_path) as f:
-            data = json.load(f)
-            assert data["world_id"] == "test_world"
-            node = data["nodes"]["cyber-arm-ctrl"]  # LINT_EXCEPTION: test fixture
+        assert out_path.exists()
+        data = json.loads(out_path.read_text())
+        assert data["world_id"] == "test_world"
+        node = data["nodes"]["cyber-arm-ctrl"]  # virtmcu-allow: raw_yaml_key reasoning="test fixture"
+        # We expect TARGET0 to map to Shoulder Target
+        assert len(node["controls"]) == 1
+        assert node["controls"][0]["id"] == "shoulder_target"
+        assert node["controls"][0]["offset"] == 0x100
 
-            # We expect TARGET0 to map to Shoulder Target
-            assert len(node["controls"]) == 1
-            assert node["controls"][0]["id"] == "shoulder_target"
-            assert node["controls"][0]["offset"] == 0x100
-
-            # We expect QPOS0 to map to Shoulder Angle telemetry
-            assert len(node["telemetry"]) == 1
-            assert node["telemetry"][0]["id"] == "shoulder_angle"
+        # We expect QPOS0 to map to Shoulder Angle telemetry
+        assert len(node["telemetry"]) == 1
+        assert node["telemetry"][0]["id"] == "shoulder_angle"

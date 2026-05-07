@@ -97,12 +97,11 @@ async def main() -> None:
         session = await asyncio.to_thread(lambda: zenoh.open(config).wait())
 
         # 1. Routing Barrier
-        await ensure_session_routing(session, timeout=min(10.0, args.timeout))
+        await ensure_session_routing(session, timeout=min(10.0, args.timeout))  # virtmcu-allow: manual_routing reasoning="Legacy script"
 
         # 2. Optional Coordinator Check
-        if args.coordinator:
-            if not await check_coordinator(session, timeout=min(10.0, args.timeout)):
-                sys.exit(1)
+        if args.coordinator and not await check_coordinator(session, timeout=min(10.0, args.timeout)):
+            sys.exit(1)
 
         logger.info("VirtMCU infrastructure is READY.")
     except TimeoutError:

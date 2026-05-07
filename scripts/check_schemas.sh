@@ -18,6 +18,8 @@ cp pyproject.toml "$TEMP_DIR/"
 cp Cargo.toml "$TEMP_DIR/"
 mkdir -p "$TEMP_DIR/hw/rust/common/virtmcu-api"
 cp -r hw/rust/common/virtmcu-api/src "$TEMP_DIR/hw/rust/common/virtmcu-api/"
+mkdir -p "$TEMP_DIR/hw/misc"
+cp hw/misc/*.fbs "$TEMP_DIR/hw/misc/"
 cp -r hw/rust/rustfmt.toml "$TEMP_DIR/hw/rust/" 2>/dev/null || true
 
 # Run generation in temp

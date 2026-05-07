@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Tests zenoh_coordinator natively by mocking QEMU nodes
+# virtmcu-allow: zenoh_hack reasoning="Tests zenoh_coordinator natively by mocking QEMU nodes"
 """
 SOTA Test Module: test_coordinator_sync
 
@@ -23,7 +23,7 @@ import pytest
 import yaml
 import zenoh
 
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 from tools.testing.virtmcu_test_suite.artifact_resolver import get_rust_binary_path
 from tools.testing.virtmcu_test_suite.conftest_core import coordinator_subprocess
 from tools.testing.virtmcu_test_suite.constants import VirtmcuBinary
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 _base_stall_timeout_ms = int(os.environ.get("VIRTMCU_STALL_TIMEOUT_MS", "5000"))
-_STALL_TIMEOUT_MS = int(_base_stall_timeout_ms * get_time_multiplier())
+_STALL_TIMEOUT_MS = TestParams.get_stall_timeout_ms(_base_stall_timeout_ms)
 # VTA timeout must exceed the QEMU stall timeout so QEMU can reply before Python gives up.
 _VTA_TIMEOUT_S: float = max(30.0, _STALL_TIMEOUT_MS / 1000.0 + 10.0)
 
@@ -63,7 +63,7 @@ async def test_coordinator_sync(
     app_dir = guest_app_factory("uart_echo")
     firmware_path = app_dir / "echo.elf"
 
-    from tools.testing.virtmcu_test_suite.generated import (
+    from generated.world_schema import (
         Address,
         Cpu,
         Machine,
@@ -180,8 +180,10 @@ async def test_coordinator_sync(
             )
 
             # Simulate coordinator message delivery latency (what tests).
-            await asyncio.sleep(_COORDINATOR_DELIVERY_DELAY_S)  # SLEEP_EXCEPTION: simulate coordinator delivery latency
+            await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
 
+                _COORDINATOR_DELIVERY_DELAY_S
+            )  # virtmcu-allow: sleep reasoning="simulate coordinator delivery latency"
             # Deliver cross-node UART messages.
             for src_nid, payload in list(uart_backlog):
                 dst_nid = 2 if src_nid == 1 else 1
@@ -260,7 +262,9 @@ async def test_coordinator_fast_node_race(zenoh_router: str, zenoh_session: zeno
         nonlocal quanta_completed
         # INSTANTLY reply 'done' with the same quantum
         # If the coordinator reset race exists, it drops this because it hasn't reset yet!
-        q = int.from_bytes(sample.payload.to_bytes(), "little")  # LINT_EXCEPTION: int_from_bytes
+        q = int.from_bytes(  # virtmcu-allow: int_from_bytes reasoning="Legacy exception"
+            sample.payload.to_bytes(), "little"
+        )
         s.put(done_topic, vproto.CoordDoneReq(quantum=q, vtime_limit=0xFFFFFFFFFFFFFFFF, messages=[]).pack())
         quanta_completed += 1
         loop.call_soon_threadsafe(start_event.set)

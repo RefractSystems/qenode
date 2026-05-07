@@ -86,14 +86,14 @@ Now that the basic UART is complete, you can map the emulated UART directly to t
 2. **Start Node 1 (in a new terminal):**
    ```bash
    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
-       -chardev zenoh,id=chr0,node=node1 \
+       -chardev virtmcu,id=chr0,node=node1 \
        -serial chardev:chr0
    ```
 
 3. **Start Node 2 (in a new terminal):**
    ```bash
    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
-       -chardev zenoh,id=chr0,node=node2 \
+       -chardev virtmcu,id=chr0,node=node2 \
        -serial chardev:chr0
    ```
 

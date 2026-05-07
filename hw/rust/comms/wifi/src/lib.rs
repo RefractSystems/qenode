@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 // std is required: virtmcu-qom dependency brings in std
 #![allow(missing_docs)]
 #![allow(clippy::missing_safety_doc)]

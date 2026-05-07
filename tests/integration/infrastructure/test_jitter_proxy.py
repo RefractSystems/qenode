@@ -1,4 +1,4 @@
-# ZENOH_HACK_EXCEPTION: Uses peer-mode session and queryables for jitter proxy testing
+# virtmcu-allow: zenoh_hack reasoning="Uses peer-mode session and queryables for jitter proxy testing"
 """
 SOTA Test Module: test_jitter_proxy
 
@@ -21,7 +21,7 @@ import pytest
 import zenoh
 
 from tools.testing.env import WORKSPACE_DIR
-from tools.testing.utils import get_time_multiplier
+from tools.testing.parameters import TestParams
 from tools.testing.virtmcu_test_suite.conftest_core import (
     ManagedSubprocess,
     get_free_port,
@@ -38,7 +38,10 @@ def mock_upstream_router() -> Generator[tuple[zenoh.Session, str]]:
     cfg = zenoh.Config()
     cfg.insert_json5("listen/endpoints", f'["{endpoint}"]')
     cfg.insert_json5("scouting/multicast/enabled", "false")
-    router = zenoh.open(cfg)  # ZENOH_OPEN_EXCEPTION: peer/router-mode session for an isolated test router
+    router = zenoh.open(  # virtmcu-allow: zenoh_open reasoning="test-only router setup"
+
+        cfg
+    )  # virtmcu-allow: zenoh_open reasoning="peer/router-mode session for an isolated test router"
     yield router, endpoint
     router.close()  # type: ignore[no-untyped-call]
 
@@ -53,7 +56,8 @@ async def _wait_for_queryable_async(session: zenoh.Session, topic: str, timeout:
                 return True
         except zenoh.ZError:
             pass
-        await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
+        await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
+0.1)  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
     return False
 
 
@@ -82,8 +86,10 @@ async def test_jitter_proxy_routing(mock_upstream_router: tuple[zenoh.Session, s
     async with ManagedSubprocess("jitter_proxy", cmd) as proc:
         try:
             assert await proc.wait_for_line("listen=tcp/")
-            await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
+            await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
 
+                TestParams.scale_timeout(0.5)
+            )  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
             ta_session = open_client_session(connect=upstream_url)
             await wait_for_zenoh_discovery(ta_session, SimTopic.plugin_liveliness("jitter_proxy", 0))
 
@@ -123,8 +129,10 @@ async def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Sessi
 
     async with ManagedSubprocess("jitter_proxy", cmd) as proc:
         assert await proc.wait_for_line("listen=tcp/")
-        await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
+        await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
 
+            TestParams.scale_timeout(0.5)
+        )  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
         ta_session = open_client_session(connect=upstream_url)
         try:
             await wait_for_zenoh_discovery(ta_session, SimTopic.plugin_liveliness("jitter_proxy", 0))
@@ -135,8 +143,8 @@ async def test_jitter_proxy_qemu_offline(mock_upstream_router: tuple[zenoh.Sessi
                 replies = list(ta_session.get(SimTopic.clock_advance(0), payload=b"ta_request", timeout=1.0))
                 if replies:
                     break
-                await asyncio.sleep(0.1)  # SLEEP_EXCEPTION: Intentional delay for proxy test
-
+                await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
+0.1)  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
             assert len(replies) == 1
             assert hasattr(replies[0], "err")
             assert replies[0].err is not None
@@ -160,8 +168,10 @@ async def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[
     with ThreadPoolExecutor(max_workers=50) as executor:
         async with ManagedSubprocess("jitter_proxy", cmd) as proc:
             assert await proc.wait_for_line("listen=tcp/")
-            await asyncio.sleep(0.5 * get_time_multiplier())  # SLEEP_EXCEPTION: Intentional delay for proxy test
+            await asyncio.sleep(  # virtmcu-allow: sleep reasoning="test-only timing check"
 
+                TestParams.scale_timeout(0.5)
+            )  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
             ta_session = open_client_session(connect=upstream_url)
             backend_session = open_client_session(connect=proxy_endpoint)
 
@@ -169,7 +179,7 @@ async def test_jitter_proxy_routing_storm_detection(mock_upstream_router: tuple[
                 import threading
 
                 def delayed_reply() -> None:
-                    time.sleep(2.0)  # SLEEP_EXCEPTION: Intentional delay for proxy test
+                    time.sleep(2.0)  # virtmcu-allow: sleep reasoning="Intentional delay for proxy test"
                     query.reply(query.key_expr, b"slow_reply")
 
                 threading.Thread(target=delayed_reply, daemon=True).start()

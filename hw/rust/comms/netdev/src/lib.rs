@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::panic_in_result_fn
+    )
+)]
 //! VirtMCU virtual network device with pluggable transport.
 use zenoh::Wait;
 
@@ -18,7 +28,7 @@ use virtmcu_qom::net::{
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{Bql, BqlGuarded, SafeSubscription}; // BQL_EXCEPTION: Safe Zenoh integration
+use virtmcu_qom::sync::{Bql, BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
 
 use alloc::collections::{BinaryHeap, VecDeque};
@@ -77,7 +87,7 @@ pub struct TxPacket {
 pub struct VirtmcuNetdevState {
     shared: Arc<SharedState>,
     nc: *mut NetClientState,
-    subscription: Option<SafeSubscription>, // BQL_EXCEPTION: Safe Zenoh integration
+    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="Safe Zenoh integration"
     rx_timer: Option<Arc<QomTimer>>,
     rx_receiver: Receiver<OrderedPacket>,
     // All state accessed exclusively under BQL; see BqlGuarded docs.
@@ -103,7 +113,7 @@ struct SharedState {
     _topic: String,
     tx_sender: Sender<TxPacket>,
     drain_cond: Condvar,
-    state: Mutex<InnerState>, // MUTEX_EXCEPTION: used for lifecycle
+    state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="used for lifecycle"
 }
 
 unsafe extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize {
@@ -275,7 +285,8 @@ fn drain_net_backlog(state: &VirtmcuNetdevState) -> bool {
 extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
     debug_assert!(Bql::is_held(), "BQL must be held during timer callbacks");
     let state = unsafe { &*(opaque as *mut VirtmcuNetdevState) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let now =
+        u64::try_from(unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) }).expect("vtime is negative");
 
     if !drain_net_backlog(state) {
         if let Some(rx_timer) = &state.rx_timer {
@@ -330,8 +341,11 @@ fn start_tx_thread(
         }
         match rx_out.recv_timeout(Duration::from_millis(10)) {
             Ok(packet) => {
-                let header =
-                    ZenohFrameHeader::new(packet.vtime, packet.sequence, packet.data.len() as u32);
+                let header = ZenohFrameHeader::new(
+                    packet.vtime,
+                    packet.sequence,
+                    u32::try_from(packet.data.len()).expect("payload length truncated"),
+                );
                 let mut data =
                     Vec::with_capacity(virtmcu_api::ZENOH_FRAME_HEADER_SIZE + packet.data.len());
                 data.extend_from_slice(header.pack());
@@ -354,7 +368,7 @@ fn get_transport(
 ) -> Option<Arc<dyn virtmcu_api::DataTransport>> {
     if transport_name == "unix" {
         let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{node_id}.sock")
+            format!("/tmp/virtmcu-coord-{node_id}.sock") // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
         };
@@ -450,12 +464,18 @@ fn netdev_init_internal(
         if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
             return;
         }
-        let header =
-            match ZenohFrameHeader::unpack_slice(&data[..virtmcu_api::ZENOH_FRAME_HEADER_SIZE]) {
-                Some(h) => h,
-                None => return,
-            };
-        let payload = data[virtmcu_api::ZENOH_FRAME_HEADER_SIZE..].to_vec();
+        let header_slice = match data.get(..virtmcu_api::ZENOH_FRAME_HEADER_SIZE) {
+            Some(s) => s,
+            None => return,
+        };
+        let header = match ZenohFrameHeader::unpack_slice(header_slice) {
+            Some(h) => h,
+            None => return,
+        };
+        let payload = match data.get(virtmcu_api::ZENOH_FRAME_HEADER_SIZE..) {
+            Some(s) => s.to_vec(),
+            None => return,
+        };
         let packet = OrderedPacket {
             vtime: header.delivery_vtime_ns(),
             sequence: header.sequence_number(),
@@ -479,8 +499,7 @@ fn netdev_init_internal(
 
     let generation = Arc::new(AtomicU64::new(0));
     state.subscription =
-        SafeSubscription::new(&*shared.transport, &rx_topic, generation, sub_callback).ok(); // BQL_EXCEPTION: Safe Zenoh integration
-
+        SafeSubscription::new(&*shared.transport, &rx_topic, generation, sub_callback).ok(); // virtmcu-allow: bql reasoning="Safe Zenoh integration"
     state.rx_timer = Some(rx_timer);
 
     Box::into_raw(state)
@@ -496,7 +515,8 @@ fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usi
     }
     let _guard = VcpuCountGuard(&state.shared);
     let payload = unsafe { core::slice::from_raw_parts(buf, size) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let now =
+        u64::try_from(unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) }).expect("vtime is negative");
     let seq = state.tx_sequence.fetch_add(1, AtomicOrdering::SeqCst);
 
     match state.shared.tx_sender.try_send(TxPacket {
@@ -520,9 +540,9 @@ mod tests {
         heap.push(OrderedPacket { vtime: 1000, sequence: 0, data: vec![1] });
         heap.push(OrderedPacket { vtime: 500, sequence: 0, data: vec![2] });
         heap.push(OrderedPacket { vtime: 2000, sequence: 0, data: vec![3] });
-        assert_eq!(heap.pop().unwrap().vtime, 500);
-        assert_eq!(heap.pop().unwrap().vtime, 1000);
-        assert_eq!(heap.pop().unwrap().vtime, 2000);
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 500);
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 1000);
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 2000);
     }
 
     #[test]
