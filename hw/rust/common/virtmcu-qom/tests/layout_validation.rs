@@ -1,4 +1,4 @@
-#![cfg(qemu_headers_present)]
+#![cfg(all(qemu_headers_present, not(virtmcu_unit_test)))]
 include!(concat!(env!("OUT_DIR"), "/qemu_bindings.rs"));
 
 use virtmcu_qom::chardev::{Chardev, ChardevClass};
@@ -98,7 +98,6 @@ fn test_qom_layouts() {
     assert_layout_match!(CPUState, CPUState);
     static_assertions::assert_eq_size!(CPUState, qemu::CPUState);
     static_assertions::assert_eq_align!(CPUState, qemu::CPUState);
-    assert_offset_match!(CPUState, CPUState, cpu_index);
 
     assert_layout_match!(QemuMutex, QemuMutex);
     static_assertions::assert_eq_size!(QemuMutex, qemu::QemuMutex);

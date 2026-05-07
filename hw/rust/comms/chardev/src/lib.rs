@@ -477,7 +477,7 @@ extern "C" fn virtmcu_chr_rx_timer_cb(opaque: *mut c_void) {
     // to avoid hogging the BQL for too long in a single timer callback.
     let mut count = 0;
     let mut more_work = true;
-    while count < 10 && more_work {
+    while count < 1000 && more_work {
         more_work = drain_backlog(state);
         count += 1;
     }
@@ -492,7 +492,7 @@ extern "C" fn virtmcu_chr_rx_timer_cb(opaque: *mut c_void) {
         let now = unsafe {
             virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
         } as u64;
-        next_vtime = now + 1_000_000; // 1ms virtual time
+        next_vtime = now + 100_000; // 100us virtual time
     } else {
         // No more work ready NOW, check if there are future packets in the heap
         let heap = state.local_heap.get();

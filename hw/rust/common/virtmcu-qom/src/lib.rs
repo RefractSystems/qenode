@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-#[cfg(any(test, miri))]
+#[cfg(any(test, miri, feature = "standalone", not(target_os = "none")))]
 extern crate std;
 
 /// Character device (Chardev) bindings.
@@ -48,6 +48,7 @@ pub mod telemetry;
 
 use core::ffi::c_char;
 
+#[cfg(not(any(test, miri, feature = "standalone")))]
 extern "C" {
     /// Logs a message to the QEMU/VirtMCU console.
     pub fn virtmcu_log(fmt: *const c_char);
@@ -68,6 +69,50 @@ extern "C" {
     pub fn virtmcu_sizeof_chardev_class() -> usize;
     /// Returns the size of the QEMU `CharBackend` struct.
     pub fn virtmcu_sizeof_char_backend() -> usize;
+}
+
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Stub for virtmcu_log in tests and standalone mode.
+pub unsafe fn virtmcu_log(_fmt: *const c_char) {}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for DeviceState in tests.
+pub fn virtmcu_sizeof_device_state() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for SysBusDevice in tests.
+pub fn virtmcu_sizeof_sys_bus_device() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for DeviceClass in tests.
+pub fn virtmcu_sizeof_device_class() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for SSIPeripheral in tests.
+pub fn virtmcu_sizeof_ssi_peripheral() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for SSIPeripheralClass in tests.
+pub fn virtmcu_sizeof_ssi_peripheral_class() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for Chardev in tests.
+pub fn virtmcu_sizeof_chardev() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for ChardevClass in tests.
+pub fn virtmcu_sizeof_chardev_class() -> usize {
+    1024
+}
+#[cfg(any(test, miri, feature = "standalone"))]
+/// Returns a stub size for CharBackend in tests.
+pub fn virtmcu_sizeof_char_backend() -> usize {
+    1024
 }
 
 #[macro_export]

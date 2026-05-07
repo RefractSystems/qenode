@@ -129,12 +129,12 @@ virtmcu/
 │   └── ...                     # Extensive coverage tests (boot_arm, spi_bridge, etc.)
 │
 ├── patches/
-│   ├── arm-generic-fdt-v3.mbx  # 33-patch series (applied by setup-qemu.sh)
+│   ├── arm-generic-fdt-v3.mbx  # 33-patch series (applied by install-deps.sh)
 │   ├── apply_zenoh_hook.py     # Injects virtmcu_tcg_quantum_hook into cpu-exec.c
 │   └── ...
 │
 ├── scripts/
-│   ├── setup-qemu.sh           # Clone QEMU, apply patches, symlink hw/, build
+│   ├── install-deps.sh           # Clone QEMU, apply patches, symlink hw/, build
 │   └── run.sh                  # Launch wrapper: sets QEMU_MODULE_DIR, detects arch
 │
 ├── docker/
@@ -209,7 +209,7 @@ sudo apt install build-essential libglib2.0-dev ninja-build \
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # All platforms
-make setup-initial # clones QEMU, applies patches, and builds (~10 min first run)
+make install-deps-initial # clones QEMU, applies patches, and builds (~10 min first run)
 make venv          # synchronize Python environment with uv
 source .venv/bin/activate
 make run           # smoke-test

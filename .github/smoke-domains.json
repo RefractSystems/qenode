@@ -9,6 +9,7 @@
   {"domain": "mac_parsing",        "category": "Simulation", "name": "MAC Address Parsing"},
   {"domain": "lin_bridge",         "category": "Simulation", "name": "LIN Bus Support"},
   {"domain": "telemetry_wfi",      "category": "Simulation", "name": "Advanced Telemetry"},
+  {"domain": "plugin_multiplexing","category": "Simulation", "name": "DSO Hook Multiplexing"},
   {"domain": "irq_stress",         "category": "Simulation", "name": "IRQ Stress (SystemC)"},
   {"domain": "riscv_interrupts",   "category": "Simulation", "name": "RISC-V IRQ (SystemC)"},
   {"domain": "coordinator_stress", "category": "Infrastructure", "name": "Zenoh Multi-Node"},

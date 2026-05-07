@@ -104,6 +104,9 @@ run_domain() {
         telemetry_wfi)
             pytest tests/integration/simulation/peripherals/test_telemetry.py -v --tb=short
             ;;
+        plugin_multiplexing)
+            pytest tests/integration/simulation/core/test_plugin_multiplexing.py -v --tb=short
+            ;;
         priority_routing)
             pytest tests/integration/infrastructure/test_clock_priority.py -v --tb=short
             ;;
@@ -146,7 +149,7 @@ run_domain() {
 if [ "$DOMAIN" = "all" ]; then
     # The authoritative list of domains that MUST pass
     # (Matches the matrix in .github/smoke-domains.json)
-    for d in boot_arm yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi priority_routing complex_board coverage_gap perf_bench bql_stress flexray_bridge spi_bridge mac_parsing lin_bridge qmp; do
+    for d in boot_arm yaml_boot yaml_boot_advanced qmp_failures irq_stress coordinator_stress clock_suspend ftrt_timing cyber_bridge riscv_complex riscv_interrupts telemetry_wfi plugin_multiplexing priority_routing complex_board coverage_gap perf_bench bql_stress flexray_bridge spi_bridge mac_parsing lin_bridge qmp; do
         run_domain "$d"
     done
 else

@@ -440,7 +440,7 @@ class Simulation:
                 elif is_virtmcu_plugin_type(val):
                     if "router=" not in val:
                         val = f"{val},router={router}"
-                    if "node=" not in val:
+                    if "node=" not in val and not val.startswith("virtmcu-transport-hub"):
                         val = f"{val},node={node_id}"
                 processed.extend([arg, val])
                 i += 2
@@ -468,7 +468,7 @@ class Simulation:
             elif is_virtmcu_plugin_type(arg) and arg not in ["-device", "-chardev", "-global"]:
                 if "router=" not in arg:
                     arg = f"{arg},router={router}"
-                if "node=" not in arg:
+                if "node=" not in arg and not arg.startswith("virtmcu-transport-hub"):
                     arg = f"{arg},node={node_id}"
                 prefix = "-chardev" if "id=" in arg else "-device"
                 processed.extend([prefix, arg])

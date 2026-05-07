@@ -8,6 +8,10 @@ authors.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+standalone = []
+
 [dependencies]
 virtmcu-api.workspace = true
 crossbeam-channel = { workspace = true }

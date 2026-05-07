@@ -2,6 +2,7 @@
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)"); // PRINT_EXCEPTION: cargo build script protocol
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)"); // PRINT_EXCEPTION: cargo build script protocol
+    println!("cargo:rustc-check-cfg=cfg(virtmcu_unit_test)"); // PRINT_EXCEPTION: cargo build script protocol
 
     // Skip everything if running under Miri as it cannot handle FFI/C
     if std::env::var("CARGO_CFG_MIRI").is_ok() || std::env::var("MIRI_SYSROOT").is_ok() {
@@ -52,8 +53,11 @@ fn main() {
     let mut builder = cc::Build::new();
     builder.define("_GNU_SOURCE", None);
 
-    if std::env::var("VIRTMCU_UNIT_TEST").is_ok() {
+    if std::env::var("VIRTMCU_UNIT_TEST").is_ok()
+        || std::env::var("CARGO_FEATURE_STANDALONE").is_ok()
+    {
         builder.define("UNIT_TEST", None);
+        println!("cargo:rustc-cfg=virtmcu_unit_test"); // PRINT_EXCEPTION: cargo build script protocol
     }
 
     builder

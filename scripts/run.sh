@@ -163,24 +163,18 @@ fi
 # Prioritize the build directory for developers, unless skipped
 BUILD_DIR_NAME="build-virtmcu$( [ "${VIRTMCU_USE_ASAN:-0}" = "1" ] && echo "-asan" || echo "" )$( [ "${VIRTMCU_USE_TSAN:-0}" = "1" ] && echo "-tsan" || echo "" )"
 
-if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" == "1" ]]; then
-    # Strictly use installed path when skipping build dir
-    QEMU_BIN="/opt/virtmcu/bin/qemu-system-$QEMU_ARCH_NAME"
-    if [ ! -f "$QEMU_BIN" ]; then
-        QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || true)
-    fi
-elif [ -f "$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
+if [ -f "$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME" ]; then
     QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/install/bin/qemu-system-$QEMU_ARCH_NAME"
 elif [ -f "$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME" ]; then
     QEMU_BIN="$QEMU_DIR/$BUILD_DIR_NAME/qemu-system-$QEMU_ARCH_NAME"
     chmod +x "$QEMU_BIN"
 else
-    QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || echo "/opt/virtmcu/bin/qemu-system-$QEMU_ARCH_NAME")
+    QEMU_BIN=$(command -v "qemu-system-$QEMU_ARCH_NAME" || true)
 fi
 
 # Ensure QEMU has been built
 if [ ! -f "$QEMU_BIN" ]; then
-    echo "QEMU binary for $ARCH not found at $QEMU_BIN. Please run setup-qemu.sh first."
+    echo "QEMU binary for $ARCH not found at $QEMU_BIN. Please run install-deps.sh first."
     exit 1
 fi
 
@@ -204,7 +198,7 @@ fi
 QEMU_MODULE_DIR=""
 
 # 1. Check for a fresh .so in the build tree (recursive search)
-if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]] && [ -d "$QEMU_DIR/$BUILD_DIR_NAME" ]; then
+if [ -d "$QEMU_DIR/$BUILD_DIR_NAME" ]; then
     # Find freshest plugin, avoiding the 'qemu-bundle' artifacts
     FRESH_SO=$(find "$QEMU_DIR/$BUILD_DIR_NAME" -name "hw-virtmcu-*.so*" -not -path "*/qemu-bundle/*" \( -type f -o -type l \) -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " || true)
     if [ -n "$FRESH_SO" ]; then
@@ -215,17 +209,10 @@ fi
 # 2. If not found, check standard paths in priority order
 if [ -z "$QEMU_MODULE_DIR" ]; then
     POSSIBLE_PATHS=()
-    if [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]]; then
-        POSSIBLE_PATHS+=(
+    POSSIBLE_PATHS+=(
             "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/aarch64-linux-gnu/qemu"
             "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/x86_64-linux-gnu/qemu"
             "$QEMU_DIR/$BUILD_DIR_NAME/install/lib/qemu"
-        )
-    fi
-    POSSIBLE_PATHS+=(
-        "/opt/virtmcu/lib/aarch64-linux-gnu/qemu"
-        "/opt/virtmcu/lib/x86_64-linux-gnu/qemu"
-        "/opt/virtmcu/lib/qemu"
     )
 
     for p in "${POSSIBLE_PATHS[@]}"; do
@@ -237,7 +224,7 @@ if [ -z "$QEMU_MODULE_DIR" ]; then
 fi
 
 # 3. Final fallback: use the build dir path even if missing (let QEMU fail with a better error)
-if [ -z "$QEMU_MODULE_DIR" ] && [[ "${VIRTMCU_SKIP_BUILD_DIR:-0}" != "1" ]]; then
+if [ -z "$QEMU_MODULE_DIR" ]; then
     QEMU_MODULE_DIR="$QEMU_DIR/$BUILD_DIR_NAME/install/lib/qemu"
     mkdir -p "$QEMU_MODULE_DIR"
 fi
@@ -314,9 +301,6 @@ if [ -d "/build/zenoh-c/lib" ]; then
 fi
 
 # Installed virtmcu path
-if [ -d "/opt/virtmcu/lib" ]; then
-    export LD_LIBRARY_PATH="/opt/virtmcu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
 
 # If a DTB is provided, handle it based on machine
 if [ -n "$DTB" ]; then

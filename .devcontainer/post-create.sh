@@ -65,12 +65,11 @@ echo "==> Fixing Docker volume permissions..."
 sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
 
 echo "==> Synchronizing Python Environment..."
-uv sync
+uv pip install --system -r pyproject.toml
 
 echo "==> Configuring shell environment..."
 for RC_FILE in ~/.zshrc ~/.bashrc; do
     if [ -f "$RC_FILE" ]; then
-        grep -q "VIRTUAL_ENV/bin/activate" "$RC_FILE" || echo '[ -f /workspace/.venv/bin/activate ] && source /workspace/.venv/bin/activate' >> "$RC_FILE"
         grep -q "source /workspace/.env" "$RC_FILE" || echo 'set -a; [ -f /workspace/.env ] && source /workspace/.env; set +a' >> "$RC_FILE"
         grep -q "alias gemini=" "$RC_FILE" || echo "alias gemini='gemini --yolo'" >> "$RC_FILE"
         grep -q "export PATH.*.local/bin" "$RC_FILE" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC_FILE"
@@ -81,47 +80,15 @@ done
 echo "==> Installing Git Hooks..."
 make install-hooks
 
-echo "==> Installing mdbook..."
-if ! command -v mdbook &> /dev/null; then
-    MDBOOK_ARCH=$(uname -m)
-    curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v0.4.52/mdbook-v0.4.52-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-    sudo mv /tmp/mdbook /usr/local/bin/mdbook
-    echo "✓ mdbook installed."
-fi
-
-echo "==> Installing mdbook-mermaid..."
-if ! command -v mdbook-mermaid &> /dev/null; then
-    MDBOOK_ARCH=$(uname -m)
-    curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-    sudo mv /tmp/mdbook-mermaid /usr/local/bin/mdbook-mermaid
-    echo "✓ mdbook-mermaid installed."
-fi
-
-echo "==> Installing mdbook-pdf..."
-if ! command -v mdbook-pdf &> /dev/null; then
-    MDBOOK_ARCH=$(uname -m)
-    PDF_ARCH="$MDBOOK_ARCH"
-    if [ "$MDBOOK_ARCH" = "arm64" ]; then PDF_ARCH="aarch64"; fi
-    curl -sSL "https://github.com/HollowMan6/mdbook-pdf/releases/download/v0.1.10/mdbook-pdf-v0.1.10-${PDF_ARCH}-unknown-linux-gnu" -o /tmp/mdbook-pdf
-    chmod +x /tmp/mdbook-pdf
-    sudo mv /tmp/mdbook-pdf /usr/local/bin/mdbook-pdf
-    echo "✓ mdbook-pdf installed."
-fi
-
 echo "==> Initializing Workspace Dependencies..."
 # Ensure /workspace is a safe directory (idempotent)
 git config --global --replace-all safe.directory /workspace
-# This is fast if QEMU is pre-installed in the container.
-# In transition periods, an old container image may carry a stale QEMU version.
-# We allow setup to proceed with a warning so downstream init steps (git hooks,
-# Python env, etc.) are never blocked by a version mismatch.
-if ! make setup-initial; then
-    REQUIRED_VER=$(grep '^QEMU_VERSION=' BUILD_DEPS 2>/dev/null | cut -d= -f2 || echo "unknown")
+# Since we use devenv-base, make install-deps is explicitly required for the first run.
+# We do not block container startup, but we warn the developer if it fails.
+if ! make install-deps-initial; then
     echo ""
-    echo "⚠️  WARNING: QEMU setup did not fully complete."
-    echo "    The container image may pre-date the QEMU ${REQUIRED_VER} upgrade."
-    echo "    Simulation features may be limited with the installed version."
-    echo "    To rebuild QEMU from source: ./scripts/setup-qemu.sh --force"
+    echo "⚠️  WARNING: Initial setup (make install-deps-initial) failed or was interrupted."
+    echo "    You MUST run 'make install-deps' manually before running tests or simulations."
     echo ""
 fi
 

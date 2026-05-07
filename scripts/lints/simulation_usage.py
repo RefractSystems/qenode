@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
 """
 AST-based lint for enforcing VirtMCU simulation framework usage.
-Banned: manual ensure_session_routing, manual qemu_launcher,
-and manual -S in extra_args.
+Ensures that tests and orchestration code use the correct simulation fixtures
+and avoid manual QEMU execution, raw subprocesses, and polling.
+Enforces Enterprise-Grade SOTA software quality by strictly forbidding comment escapes.
+
+Designed for reuse: Can be run as a CLI tool or imported as a module by parent repositories.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
+import logging
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: TID251
+from lint_utils import DEFAULT_EXCLUDES, ENTERPRISE_MANDATE, iter_target_files, setup_lint_logging
+
+logger = logging.getLogger(__name__)
+
 
 def lint_file(path: Path) -> list[str]:
-    with path.open("r") as f:
-        tree = ast.parse(f.read(), filename=str(path))
+    try:
+        with path.open("r") as f:
+            tree = ast.parse(f.read(), filename=str(path))
+    except (SyntaxError, ValueError) as e:
+        return [f"{path}: Failed to parse AST: {e}"]
 
     violations = []
     for node in ast.walk(tree):
@@ -93,8 +106,7 @@ def lint_file(path: Path) -> list[str]:
                 if node.lineno <= len(lines) and "LINT_EXCEPTION: int_from_bytes" not in lines[node.lineno - 1]:
                     violations.append(
                         f"{path}:{node.lineno}: Banned manual protocol deserialization via int.from_bytes. "
-                        "Use vproto.py FlatBuffer wrappers. "
-                        "If you are parsing non-protocol raw integers, append '# LINT_EXCEPTION: int_from_bytes'."
+                        f"Use vproto.py FlatBuffer wrappers. {ENTERPRISE_MANDATE} '# LINT_EXCEPTION: int_from_bytes'."
                     )
             elif (
                 node.func.attr in ("pack", "unpack", "unpack_from")
@@ -142,7 +154,7 @@ def lint_file(path: Path) -> list[str]:
                             violations.append(
                                 f"{path}:{subnode.lineno}: Banned vta.step() inside a loop. "
                                 "This is polling. Use sim.run_until() or node.wait_for_uart() instead. "
-                                "If this is a deterministic iteration over quanta, add '# LINT_EXCEPTION: vta_step_loop'."
+                                f"{ENTERPRISE_MANDATE} '# LINT_EXCEPTION: vta_step_loop'."
                             )
                 elif (
                     isinstance(subnode, ast.Call)
@@ -155,33 +167,46 @@ def lint_file(path: Path) -> list[str]:
                         if subnode.lineno <= len(lines) and "SLEEP_EXCEPTION" not in lines[subnode.lineno - 1]:
                             violations.append(
                                 f"{path}:{subnode.lineno}: Banned sleep() without SLEEP_EXCEPTION. "
-                                "Sleeping is banned. Use deterministic barriers."
+                                f"Sleeping is banned. Use deterministic barriers. {ENTERPRISE_MANDATE} '# SLEEP_EXCEPTION: <reason>'."
                             )
 
     return violations
 
 
-def main() -> None:
-    # Use the directory where the script is located to find the project root
-    script_dir = Path(__file__).resolve().parent
-    root = script_dir.parent
-    tests_dir = root / "tests"
-    tools_testing_dir = root / "tools/testing"
-
+def run_lint(targets: list[Path], excludes: list[str]) -> bool:
+    """Executes the linting process. Returns True if passed, False if violations found."""
     all_violations = []
 
-    for path in sorted(list(tests_dir.rglob("*.py")) + list(tools_testing_dir.rglob("*.py"))):
+    for path in iter_target_files(targets, excludes, "*.py"):
         if "fixtures" in path.parts or "__pycache__" in path.parts:
             continue
+
         all_violations.extend(lint_file(path))
 
     if all_violations:
         for v in all_violations:
-            sys.stdout.write(f"{v}\n")
-        sys.exit(1)
-    else:
-        sys.stdout.write("Simulation usage lint passed.\n")
-        sys.exit(0)
+            logger.error(v)
+        return False
+
+    logger.info("✓ Simulation usage lint passed.")
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Lint Simulation Framework Usage via AST.")
+    parser.add_argument(
+        "targets",
+        type=Path,
+        nargs="*",
+        default=[Path("tests"), Path("tools/testing")],
+        help="Target directories or files",
+    )
+    parser.add_argument("--exclude", nargs="*", default=DEFAULT_EXCLUDES, help="Directories to exclude")
+    args = parser.parse_args()
+
+    setup_lint_logging()
+    success = run_lint(args.targets, args.exclude)
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

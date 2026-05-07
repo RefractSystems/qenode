@@ -43,7 +43,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         return;
     }
 
-    virtmcu_qom::sim_err!(
+    virtmcu_qom::sim_info!(
         "hub_realize started for node={}, router={:?}",
         s.node_id,
         if s.router.is_null() { "null" } else { "non-null" }
@@ -56,14 +56,17 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     } else {
         match transport_zenoh::open_session(router_str) {
             Ok(sess) => Some(Arc::new(sess)),
-            Err(_) => {
-                let err_msg =
-                    alloc::ffi::CString::new("Failed to open transport session for hub").unwrap();
-                virtmcu_qom::error::virtmcu_error_setg(
-                    _errp as *mut *mut virtmcu_qom::error::Error,
-                    err_msg.as_ptr(),
+            Err(e) => {
+                // Non-fatal: log and degrade gracefully. Peripherals that require
+                // a transport will detect transport_ptr == 0 and fail at realize time.
+                // This allows implicit hubs (created by -global injection) to not crash
+                // QEMU when the router is unreachable (e.g., under ASan or in non-networked tests).
+                virtmcu_qom::sim_warn!(
+                    "hub_realize: failed to open Zenoh session (node={}): {:?}",
+                    s.node_id,
+                    e
                 );
-                return;
+                None
             }
         }
     };
@@ -86,7 +89,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     }
 
     s.rust_state = alloc::boxed::Box::into_raw(state);
-    virtmcu_qom::sim_err!("hub_realize finished. transport_ptr={}", s.transport_ptr);
+    virtmcu_qom::sim_info!("hub_realize finished. transport_ptr={}", s.transport_ptr);
 }
 
 unsafe extern "C" fn hub_instance_init(obj: *mut Object) {

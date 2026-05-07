@@ -40,8 +40,8 @@ FetchContent_MakeAvailable(systemc systemctlm_soc)
 add_executable(adapter main.cpp)
 add_executable(rp_adapter remote_port_adapter.cpp)
 
-find_path(ZENOH_INCLUDE_DIR zenoh.h PATHS /build/zenoh-c/include /opt/virtmcu/include ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/include)
-find_library(ZENOH_LIBRARY zenohc PATHS /build/zenoh-c/lib /opt/virtmcu/lib ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/lib)
+find_path(ZENOH_INCLUDE_DIR zenoh.h PATHS /build/zenoh-c/include ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/include)
+find_library(ZENOH_LIBRARY zenohc PATHS /build/zenoh-c/lib ${CMAKE_SOURCE_DIR}/../../third_party/zenoh-c/lib)
 
 target_include_directories(adapter PRIVATE ${ZENOH_INCLUDE_DIR})
 target_link_libraries(adapter PRIVATE SystemC::systemc ${ZENOH_LIBRARY})

@@ -18,7 +18,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 use virtmcu_api::{
     ClockAdvanceReq, ClockReadyResp, ClockSyncResponder, ClockSyncTransport, FlatBufferStructExt,
-    CLOCK_ERROR_OK, CLOCK_ERROR_STALL,
+    BOOT_QUANTUM_TIMEOUT, CLOCK_ERROR_OK, CLOCK_ERROR_STALL, NORMAL_QUANTUM_TIMEOUT,
 };
 use virtmcu_qom::cpu::CPUState;
 use virtmcu_qom::qdev::SysBusDevice;
@@ -493,8 +493,6 @@ fn clock_quantum_wait_internal(
     backend.delta_ns.load(Ordering::SeqCst)
 }
 
-const BOOT_QUANTUM_TIMEOUT: Duration = Duration::from_mins(10);
-
 fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
     virtmcu_qom::sim_info!("Worker thread for node {} started.", backend.node_id);
 
@@ -674,7 +672,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 
     let mut stall_ms = s.stall_timeout;
     if stall_ms == 0 {
-        stall_ms = 5000;
+        stall_ms = NORMAL_QUANTUM_TIMEOUT.as_millis() as u32;
     }
 
     let is_coordinated = s.coordinated;

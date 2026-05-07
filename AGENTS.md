@@ -99,10 +99,10 @@ In `slaved-suspend`, virtual time advances during WFI. Quantum boundaries still 
 
 ## Development Efficiency
 
-- **`make setup`**: initial setup or QEMU dependency changes only — triggers massive rebuilds.
-- **`make build`**: standard incremental builds for `hw/` peripherals.
+- **`make install-deps`**: **MANDATORY for first-time use.** Clones and builds QEMU, Zenoh-C, and flatcc from source into `third_party/`. Ensures absolute environment parity.
+- **`make build`**: standard incremental builds for `hw/` peripherals and core tools.
 - **Targeted ninja**: `ninja -C third_party/qemu/build-virtmcu$( [ "$VIRTMCU_USE_ASAN" = "1" ] && echo "-asan" ) hw-virtmcu-<name>.so`
-- **Pre-installed QEMU**: available at `/opt/virtmcu`; rebuild only when modifying the emulator or plugins.
+- **Environment Parity**: The devcontainer uses `devenv-base`, which omits pre-built binaries to ensure 1:1 parity with CI. Everything executed is built from your local source tree.
 
 ---
 
@@ -293,6 +293,8 @@ Mandatory shutdown sequence:
 
 ### 18. Lessons Learned (Anti-Patterns — Do Not Repeat)
 
+- **DSO Boundary Isolation Trap**: Never use Rust `static` or `static mut` (like `lazy_static!`, `Mutex`, `Atomic`) for state or registries that must be shared *across* different hardware peripherals if those peripherals might be compiled into separate `.so` files (e.g. multiplexing arrays). Each DSO gets its own distinct copy of Rust static data. Shared state must live in the QEMU main binary and be exported via `VIRTMCU_EXPORT`.
+- **Single-Slot Global Callbacks**: Avoid single-slot function pointers (e.g., `void (*hook)(...)`) for event subscription. They lead to silent overwrites when multiple modules register. Always use chained arrays (e.g., `hook[8]`) or explicitly passed Dependency Injection (DI) properties.
 - **SafeSubscription Teardown**: never bound a drain loop. Use `Condvar::notify_all()` in callback + unconditional `Condvar::wait()` in Drop (see §12). `SafeSubscription` encapsulates this logic.
 - **PDES Tie-Breaking**: direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator` for canonical ordering.
 - **DSO TLS Trap**: never call QEMU TLS macros (e.g., `bql_locked()`) from a plugin DSO — use `virtmcu_is_bql_locked()` from the main-binary header.
@@ -317,7 +319,7 @@ Mandatory shutdown sequence:
 - **Interactive debugging**: run without `-monitor none`/`-serial file:...`, use `-nographic`. Exit: `Ctrl+A X`.
 - **SysBus mapping**: `-device`-only → not in guest memory. Declare in YAML. QOM path has no `@<address>` suffix; verify with `qom-list /`.
 - **MMIO offsets**: bridge delivers region-relative offsets, not absolute addresses. ARM is Little Endian (`0xDEADC0DE` on wire: `DE C0 AD DE`).
-- **Local vs. CI drift**: hand-edits to `third_party/qemu` don't survive CI clone. Run `git status` after debugging; fix must be reproducible from `git clone` + `make setup`.
+- **Local vs. CI drift**: hand-edits to `third_party/qemu` don't survive CI clone. Run `git status` after debugging; fix must be reproducible from `git clone` + `make install-deps`.
 
 ---
 
