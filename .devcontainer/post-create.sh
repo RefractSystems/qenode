@@ -29,6 +29,35 @@ if [ -f ~/.docker/config.json ]; then
     fi
 fi
 
+echo "==> Seeding Claude configuration..."
+HOST_CLAUDE_JSON="$HOME/.claude.json.host"
+DEST_CLAUDE_JSON="$HOME/.claude.json"
+if [ -f "$HOST_CLAUDE_JSON" ] && python3 -c "import json; json.load(open('$HOST_CLAUDE_JSON'))" 2>/dev/null; then
+    cp "$HOST_CLAUDE_JSON" "$DEST_CLAUDE_JSON"
+    echo "    Copied valid .claude.json from host."
+else
+    echo "    Host .claude.json missing or invalid JSON — starting with empty config."
+    echo '{}' > "$DEST_CLAUDE_JSON"
+fi
+
+echo "==> Ensuring AI developer tools are installed early..."
+if [ -f /workspace/BUILD_DEPS ]; then
+    source /workspace/BUILD_DEPS
+fi
+
+if ! command -v claude &>/dev/null; then
+    echo "    Installing Claude Code..."
+    curl -fsSL https://claude.ai/install.sh | bash
+fi
+
+if ! command -v gemini &>/dev/null; then
+    NPM_TARGET_VER=${NPM_VERSION:-11.14.1}
+    echo "    Ensuring npm is up to date (${NPM_TARGET_VER})..."
+    sudo npm install -g "npm@${NPM_TARGET_VER}"
+    echo "    Installing Gemini CLI..."
+    sudo npm install -g @google/gemini-cli@latest
+fi
+
 echo "==> Fixing Docker volume permissions..."
 # Docker creates volumes as root by default. Fix permissions for Cargo caches.
 sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
