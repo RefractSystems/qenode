@@ -12,23 +12,7 @@ else
     echo '{}' > "$DEST_CLAUDE_JSON"
 fi
 
-echo "==> Ensuring AI developer tools are installed..."
-
-if ! command -v claude &>/dev/null; then
-    echo "    Installing Claude Code..."
-    curl -fsSL https://claude.ai/install.sh | bash
-else
-    echo "    Claude Code already installed: $(claude --version 2>/dev/null || echo 'unknown version')"
-fi
-
-if ! command -v gemini &>/dev/null; then
-    echo "    Installing Gemini CLI..."
-    sudo npm install -g @google/gemini-cli@latest
-else
-    echo "    Gemini CLI already installed."
-fi
-
-echo "✓ Container start complete."
+echo "✓ AI configuration seeded."
 
 # Self-healing: Fix stale Docker credsStore/credHelpers re-injected by VS Code on startup
 if [ -f ~/.docker/config.json ]; then
@@ -40,3 +24,5 @@ if [ -f ~/.docker/config.json ]; then
         fi
     fi
 fi
+
+echo "✓ Container start complete."

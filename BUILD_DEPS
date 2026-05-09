@@ -36,6 +36,7 @@ DEBIAN_CODENAME=trixie
 
 # Node.js major version for devtools
 NODE_VERSION=24
+NPM_VERSION=11.14.1
 
 # Python version — pinned via uv, independent of OS default
 PYTHON_VERSION=3.13
