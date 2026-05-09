@@ -43,7 +43,7 @@ fail()    { echo "  ✗ $*" >&2; exit 1; }
 
 # ── Derived versions ───────────────────────────────────────────────────────────
 PATCHES_HASH=$( (cat BUILD_DEPS; find patches -type f | sort | xargs cat) | sha256sum | head -c 12 )
-export QEMU_CACHE_TAG="${QEMU_VERSION}-${PATCHES_HASH}"
+export THIRD_PARTY_CACHE_TAG="${QEMU_VERSION}-${PATCHES_HASH}"
 
 image_for() { 
     local ARCH
@@ -57,11 +57,11 @@ image_for() {
     if [[ "$package" == "ci-asan" ]]; then
         package="ci"
         tag="${IMAGE_TAG}-asan"
-    elif [[ "$package" == "qemu-base-asan" ]]; then
-        package="qemu-base"
-        tag="${QEMU_CACHE_TAG}-asan"
-    elif [[ "$package" == qemu-base* ]]; then
-        tag="${QEMU_CACHE_TAG}"
+    elif [[ "$package" == "third-party-base-asan" ]]; then
+        package="third-party-base"
+        tag="${THIRD_PARTY_CACHE_TAG}-asan"
+    elif [[ "$package" == third-party-base* ]]; then
+        tag="${THIRD_PARTY_CACHE_TAG}"
     fi
     
     echo "ghcr.io/refractsystems/virtmcu/${package}:${tag}-${ARCH}" 
@@ -88,7 +88,8 @@ build_stage() {
     # Use Docker Bake for consistent builds (reads docker-bake.hcl)
     # --load: loads the built image into the local Docker daemon
     ARCH="${ARCH}" IMAGE_TAG="${IMAGE_TAG}" USE_CCACHE="${USE_CCACHE}" \
-    VIRTMCU_USE_ASAN="${VIRTMCU_USE_ASAN:-0}" QEMU_CACHE_TAG="${QEMU_CACHE_TAG}" \
+    VIRTMCU_USE_ASAN="${VIRTMCU_USE_ASAN:-0}" THIRD_PARTY_CACHE_TAG="${THIRD_PARTY_CACHE_TAG}" \
+    VIRTMCU_IMAGE_REGISTRY="${VIRTMCU_IMAGE_REGISTRY}" VIRTMCU_DEVENV_IMAGE="${VIRTMCU_DEVENV_IMAGE}" VIRTMCU_CI_IMAGE="${VIRTMCU_CI_IMAGE}" \
     docker buildx bake "${stage}" --load
     
     ok "Built ${img}"
@@ -236,11 +237,11 @@ case "${TARGET}" in
     ci-asan)
         build_stage ci-asan
         ;;
-    qemu-builder)
+    third-party-builder)
         if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
-            build_stage qemu-base-asan
+            build_stage third-party-base-asan
         else
-            build_stage qemu-base
+            build_stage third-party-base
         fi
         ;;
     runtime)
@@ -286,7 +287,7 @@ case "${TARGET}" in
         ;;
     *)
         echo "error: unknown target '${TARGET}'" >&2
-        echo "usage: $0 [dev|all|base|toolchain|devenv|qemu-builder|ci|ci-asan|runtime]" >&2
+        echo "usage: $0 [dev|all|base|toolchain|devenv|third-party-builder|ci|ci-asan|runtime]" >&2
         exit 1
         ;;
 esac

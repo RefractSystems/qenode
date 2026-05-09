@@ -43,7 +43,7 @@ Open the repo in VS Code and accept **"Reopen in Container"** when prompted.
 The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
-3. Runs `make install-deps-initial` — patches and builds QEMU (~10 min, runs once)
+3. Runs `make bootstrap` — patches and builds QEMU (~10 min, runs once)
 4. Synchronizes the system-wide Python environment using `uv pip`
 5. Configures Git to use `gh auth git-credential` for push/pull.
 

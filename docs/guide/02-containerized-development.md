@@ -21,7 +21,7 @@ To set up a local development environment with zero manual configuration:
 ### The "Escape Hatch"
 If you need to modify the QEMU core or C-level dependencies:
 ```bash
-make install-deps-initial --force
+make bootstrap --force
 ```
 This downloads and compiles everything into `/workspace/third_party/`. The VirtMCU run scripts are hardcoded to prioritize `third_party/` whenever local builds are present.
 

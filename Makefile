@@ -1,8 +1,13 @@
+# Load registry and version configuration
+VIRTMCU_IMAGE_REGISTRY ?= $(shell grep '^VIRTMCU_IMAGE_REGISTRY=' BUILD_DEPS | cut -d'=' -f2)
+VIRTMCU_DEVENV_IMAGE   ?= $(shell grep '^VIRTMCU_DEVENV_IMAGE=' BUILD_DEPS | cut -d'=' -f2)
+VIRTMCU_CI_IMAGE       ?= $(shell grep '^VIRTMCU_CI_IMAGE=' BUILD_DEPS | cut -d'=' -f2)
+
 ARCH ?= $(shell uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
-IMAGE_TAG ?= dev
-DEVENV_IMG ?= ghcr.io/refractsystems/virtmcu/devenv:$(IMAGE_TAG)-$(ARCH)
-CI_IMG ?= ghcr.io/refractsystems/virtmcu/ci:$(IMAGE_TAG)-$(ARCH)
-CI_ASAN_IMG ?= ghcr.io/refractsystems/virtmcu/ci:$(IMAGE_TAG)-asan-$(ARCH)
+IMAGE_TAG ?= latest
+VIRTMCU_DEVENV_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_DEVENV_IMAGE):$(IMAGE_TAG)-$(ARCH)
+VIRTMCU_CI_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-$(ARCH)
+VIRTMCU_CI_ASAN_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-asan-$(ARCH)
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
 
@@ -42,7 +47,7 @@ QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
 
 # Helper macros for running commands in Docker
-DOCKER_RUN_DEVENV_IMG = docker run --rm \
+VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
 	-e HOST_UID=$$(id -u) \
 	-e HOST_GID=$$(id -g) \
 	-e HOME=/home/vscode \
@@ -55,9 +60,9 @@ DOCKER_RUN_DEVENV_IMG = docker run --rm \
 	-v ci-cargo-registry:/usr/local/cargo/registry \
 	-w /workspace
 
-DOCKER_RUN_DEVENV = $(DOCKER_RUN_DEVENV_IMG) $(DEVENV_IMG)
+VIRTMCU_DOCKER_RUN_DEVENV = $(VIRTMCU_DOCKER_RUN_DEVENV_IMG) $(VIRTMCU_DEVENV_IMG)
 
-DOCKER_RUN_CI_IMG = docker run --rm \
+VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 	-v "$(CURDIR):/workspace" -w /workspace \
 	-e HOST_UID=$$(id -u) \
 	-e HOST_GID=$$(id -g) \
@@ -66,11 +71,11 @@ DOCKER_RUN_CI_IMG = docker run --rm \
 	-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
 	-e VIRTMCU_USE_PREBUILT_QEMU=1
 
-DOCKER_RUN_CI = $(DOCKER_RUN_CI_IMG) $(CI_IMG)
-DOCKER_RUN_CI_ASAN = $(DOCKER_RUN_CI_IMG) $(CI_ASAN_IMG)
+VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
+VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
 .PHONY: all build run clean clean-sim clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag
-.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-full ci-build-qemu ci-build-qemu-asan
+.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-full ci-build-third-party ci-build-third-party-asan
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
@@ -108,15 +113,39 @@ check-versions:
 
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 # WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
-install-deps-initial:
-	@bash scripts/install-deps.sh
+bootstrap:
+	@bash scripts/install-third-party.sh
 
-# Incremental rebuild: useful when you only modify files in the `hw/` directory.
-build:
+ifeq ($(VIRTMCU_USE_ASAN),1)
+  ZENOHC_BUILD_DIR := third_party/zenoh-c-src/build-asan
+else
+  ZENOHC_BUILD_DIR := third_party/zenoh-c-src/build-release
+endif
+FLATCC_BUILD_DIR := third_party/flatcc-src/build
+
+# Incremental build for QEMU and VirtMCU plugins
+build-qemu:
 	@echo "==> Rebuilding QEMU (jobs=$(JOBS))..."
 	@$(MAKE) -C $(QEMU_BUILD) -j$(JOBS)
 	@$(MAKE) -C $(QEMU_BUILD) install
 	@echo "✓ Done."
+
+# Incremental build for Zenoh-C
+build-zenoh-c:
+	@echo "==> Checking Zenoh-C build..."
+	@cmake --build $(ZENOHC_BUILD_DIR) -j$(JOBS)
+	@cmake --install $(ZENOHC_BUILD_DIR)
+
+# Incremental build for FlatCC
+build-flatcc:
+	@echo "==> Checking FlatCC build..."
+	@cmake --build $(FLATCC_BUILD_DIR) -j$(JOBS) --target install
+
+# Check all third-party dependencies for updates
+build-third-party: build-zenoh-c build-flatcc build-qemu
+
+# Alias for backward compatibility
+build: build-qemu
 
 # Builds all test artifacts across all domains
 build-test-artifacts:
@@ -184,25 +213,19 @@ setup-python:
 
 ci-lint:
 	@bash scripts/docker-build.sh devenv
-	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-lint.sh
+	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-lint.sh
 
 ci-unit:
 	@bash scripts/docker-build.sh devenv
-	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit.sh
+	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit.sh
 
 ci-unit-coverage:
 	@bash scripts/docker-build.sh devenv
-	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-coverage.sh
 
-# Run Miri tests to detect Undefined Behavior inside devenv
 ci-unit-miri:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Miri — Docker: devenv"
-	@echo "════════════════════════════════════════════════════"
 	@bash scripts/docker-build.sh devenv
-	@$(DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-miri.sh
-	@echo ""
-	@echo "✓ ci-unit-miri passed."
+	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-miri.sh
 
 ci-integration:
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -211,39 +234,30 @@ ci-integration:
 		exit 1; \
 	fi
 	@bash scripts/docker-build.sh ci
-	@$(DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
 
 ci-integration-coverage:
 	@bash scripts/docker-build.sh ci
-	@$(DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
 
 ci-integration-asan:
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI ASan — Docker: ci-asan"
 	@echo "════════════════════════════════════════════════════"
 	@bash scripts/docker-build.sh ci-asan
-	@$(DOCKER_RUN_CI_ASAN) bash scripts/testing/run-integration-asan.sh
+	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) bash scripts/testing/run-integration-asan.sh
 	@echo ""
 	@echo "✓ ci-integration-asan passed."
 
 ci-peripheral-coverage:
 	@bash scripts/docker-build.sh ci
-	@$(DOCKER_RUN_CI) bash scripts/testing/run-peripheral-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-peripheral-coverage.sh
 
-# Helper for local reproduction of QEMU container builds
-ci-build-qemu:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI QEMU Build — Docker: qemu-builder"
-	@echo "════════════════════════════════════════════════════"
-	@$(MAKE) docker-qemu-builder
-	@echo "✓ ci-build-qemu complete."
+ci-build-third-party:
+	@$(MAKE) third-party-builder
 
-ci-build-qemu-asan:
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI QEMU ASan Build — Docker: qemu-builder (ASan)"
-	@echo "════════════════════════════════════════════════════"
-	@VIRTMCU_USE_ASAN=1 $(MAKE) docker-qemu-builder
-	@echo "✓ ci-build-qemu-asan complete."
+ci-build-third-party-asan:
+	@VIRTMCU_USE_ASAN=1 $(MAKE) third-party-builder
 
 # Run the full pipeline: ci-lint + ci-unit + ci-integration-asan + ci-unit-miri + all integration domains
 ci-full: ci-lint ci-unit ci-integration-asan ci-unit-miri
@@ -258,7 +272,7 @@ ci-full: ci-lint ci-unit ci-integration-asan ci-unit-miri
 	@echo "  CI Full — Integration smoke tests matrix (inside ci)"
 	@echo "════════════════════════════════════════════════════"
 	@mkdir -p coverage-data
-	@$(DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(CI_IMG) bash scripts/testing/run-integration.sh all
+	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) bash scripts/testing/run-integration.sh all
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
@@ -274,10 +288,10 @@ ci-full: ci-lint ci-unit ci-integration-asan ci-unit-miri
 # --- General ---
 
 # Setup developer environment: dependencies, version sync, and full build.
-setup-dev: install-deps-initial sync-versions build
+setup-dev: bootstrap sync-versions build-qemu
 
 # Run the full development pipeline: build QEMU, build guest artifacts, lint, unit tests, integration tests, and peripheral coverage.
-dev-all: build build-test-artifacts dev-check dev-integration dev-peripheral-coverage
+dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-peripheral-coverage
 
 # --- Linting ---
 # Unified developer check: Lint + Unit Tests (Tier 1 parity)
@@ -377,7 +391,7 @@ docker-devenv:
 	@bash scripts/docker-build.sh devenv
 
 # Build only the docker qemu-builder stage
-docker-qemu-builder:
+third-party-builder:
 	@bash scripts/docker-build.sh qemu-builder
 
 # Build only the docker ci stage
@@ -468,12 +482,12 @@ clean:
 	@echo "✓ Clean complete (QEMU sources remain)."
 
 # Deep clean: completely remove downloaded sources and all artifacts.
-# You will need to run 'make install-deps-initial' again after this.
+# You will need to run 'make bootstrap' again after this.
 distclean: clean
 	rm -rf third_party
 	rm -rf test-results
 	rm -rf .ci-target*
-	@echo "✓ Deep clean complete. Run 'make install-deps-initial' to rebuild the environment."
+	@echo "✓ Deep clean complete. Run 'make bootstrap' to rebuild the environment."
 # ------------------------------------------------------------------------------
 # Documentation
 # ------------------------------------------------------------------------------
