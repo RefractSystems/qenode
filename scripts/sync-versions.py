@@ -143,6 +143,7 @@ def sync() -> None:
             ".github/workflows/ci-main.yml",
             ".github/workflows/ci-pr.yml",
             ".github/workflows/ci-asan.yml",
+            ".github/workflows/pr-cleanup.yml",
         ]:
             if Path(ci_path).exists():
                 with Path(ci_path).open() as f:
@@ -159,6 +160,12 @@ def sync() -> None:
                         reg_host, reg_path = reg_parts
                         new_ci = re.sub(r'(REGISTRY:\s*)[^\s\n]+', rf"\g<1>{reg_host}", new_ci)
                         new_ci = re.sub(r'(IMAGE_NAME_LOWER:\s*)[^\s\n]+', rf"\g<1>{reg_path}", new_ci)
+                        
+                    # Also replace hardcoded combinations in inline commands
+                    new_ci = new_ci.replace(
+                        "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}",
+                        "${{ env.VIRTMCU_IMAGE_REGISTRY }}"
+                    )
 
                 if devenv_img:
                     new_ci = re.sub(r'(VIRTMCU_DEVENV_IMAGE:\s*)[^\s\n]+', rf"\g<1>{devenv_img}", new_ci)
