@@ -18,8 +18,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  VIRTMCU_DEVENV_IMAGE: virtmcu-devenv
-  VIRTMCU_CI_IMAGE: virtmcu-ci
   PYTHON_VERSION: "3.13"
   VIRTMCU_STALL_TIMEOUT_MS: "120000"
   CI: "true"

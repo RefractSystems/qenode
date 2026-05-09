@@ -8,16 +8,16 @@ on:
   pull_request:
     types: [closed]
 
-env:
-  VIRTMCU_CI_IMAGE: virtmcu-ci
-
 jobs:
   delete-pr-ci-image:
-    name: Delete ${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64
+    name: Delete ephemeral CI image
     runs-on: ubuntu-latest
     permissions:
       packages: write
     steps:
+      - uses: actions/checkout@v6
+      - name: Setup VirtMCU Environment
+        uses: ./.github/actions/setup-virtmcu-env
       - name: Delete PR ci image from GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
