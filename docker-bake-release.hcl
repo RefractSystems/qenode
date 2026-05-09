@@ -7,16 +7,12 @@
 # the 'tags' array is REPLACED, not merged. Therefore, we must explicitly
 # include both the release version tag and the SHA-based tag (used by
 # the manifest merge jobs) in this file.
-#   devenv:v1.2.3-amd64      (lets users pull a specific arch+version directly)
-#   devenv:sha-<sha>-amd64   (required by merge-devenv to assemble the manifest)
+#   ${VIRTMCU_DEVENV_IMAGE}:v1.2.3-amd64      (lets users pull a specific arch+version directly)
+#   ${VIRTMCU_DEVENV_IMAGE}:sha-<sha>-amd64   (required by merge-devenv to assemble the manifest)
 
-variable "REGISTRY" {
-  default = "ghcr.io"
-}
-
-variable "IMAGE_NAME_LOWER" {
-  default = "refractsystems/virtmcu"
-}
+variable "VIRTMCU_IMAGE_REGISTRY" {}
+variable "VIRTMCU_DEVENV_IMAGE" {}
+variable "VIRTMCU_CI_IMAGE" {}
 
 variable "RELEASE_TAG" {
   default = ""
@@ -32,29 +28,29 @@ variable "ARCH" {
 
 target "base" {
   tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/base:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/base:${IMAGE_TAG}-${ARCH}"
+    "${VIRTMCU_IMAGE_REGISTRY}/base:${RELEASE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/base:${IMAGE_TAG}-${ARCH}"
   ]
 }
 
 target "toolchain" {
   tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/toolchain:${IMAGE_TAG}-${ARCH}"
+    "${VIRTMCU_IMAGE_REGISTRY}/toolchain:${RELEASE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/toolchain:${IMAGE_TAG}-${ARCH}"
   ]
 }
 
 target "devenv" {
   tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/devenv:${IMAGE_TAG}-${ARCH}"
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${RELEASE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}-${ARCH}"
   ]
 }
 
 target "ci" {
   tags = [
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/ci:${RELEASE_TAG}-${ARCH}",
-    "${REGISTRY}/${IMAGE_NAME_LOWER}/ci:${IMAGE_TAG}-${ARCH}"
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${RELEASE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-${ARCH}"
   ]
 }
 

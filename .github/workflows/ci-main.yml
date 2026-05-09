@@ -5,8 +5,8 @@ name: CI (Main)
 #
 # Jobs are structured in six tiers:
 #   1. lint + unit-tests       — fast, no QEMU
-#   2. build-qemu              — build the Docker ci image (both amd64 + arm64)
-#   3. publish-devenv     — after tier1, before build-qemu
+#   2. build-third-party              — build the Docker ci image (both amd64 + arm64)
+#   3. publish-devenv     — after tier1, before build-third-party
 #   4. smoke tests + coverage  — full matrix against the ci image
 #
 # The expensive QEMU build is cached via GitHub Actions Docker layer cache.
@@ -25,7 +25,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  CI_IMAGE: virtmcu-ci
   PYTHON_VERSION: "3.13"
   VIRTMCU_STALL_TIMEOUT_MS: "120000"
   CI: "true"
@@ -143,7 +142,8 @@ jobs:
       - name: Pull devenv image
         run: |
           for i in {1..5}; do
-            if docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64; then
+            if docker pull ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64; then
+              docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }}"
               break
             fi
             sleep 15
@@ -178,7 +178,9 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
+            -e VIRTMCU_CI_IMAGE \
+            -e VIRTMCU_DEVENV_IMAGE \
+            ${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }} \
             bash -c '
               set -e
               echo "::group::Static Analysis (Lint)"
@@ -205,7 +207,9 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
+            -e VIRTMCU_CI_IMAGE \
+            -e VIRTMCU_DEVENV_IMAGE \
+            ${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }} \
             make dev-unit-coverage
 
       - name: Upload Unit Coverage
@@ -278,7 +282,7 @@ jobs:
         id: meta-devenv
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -296,8 +300,8 @@ jobs:
           done <<< "${{ steps.meta-devenv.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-arm64
 
   merge-rust-builder:
     name: Merge Rust Builder Manifest
@@ -326,7 +330,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -337,8 +341,8 @@ jobs:
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-arm64
 
   merge-flatcc-builder:
     name: Merge FlatCC Builder Manifest
@@ -367,7 +371,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -378,10 +382,10 @@ jobs:
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-arm64
 
-  build-qemu:
+  build-third-party:
     name: Build QEMU — ${{ matrix.arch }} (${{ matrix.sanitizer }})
     needs: [changes, setup, build-devenv]
     if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
@@ -424,7 +428,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # qemu-base is built and pushed here on every main merge.
+      # third-party-base is built and pushed here on every main merge.
       # Its content-addressed tag (QEMU_VERSION + patches hash) means
       # Docker skips the 40-minute compile when nothing changed.
       - name: Build and push ci stage
@@ -435,10 +439,10 @@ jobs:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           PUSH_CACHE: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          QEMU_CACHE_TAG: ${{ env.QEMU_CACHE_TAG }}
+          THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
         with:
           targets: |
-            ${{ matrix.sanitizer == 'standard' && 'qemu-base' || 'qemu-base-asan' }}
+            ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
             ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
           push: true
           files: |
@@ -449,15 +453,15 @@ jobs:
       - name: Verify QEMU binary
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}"
           else
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
           fi
           docker run --rm $IMAGE qemu-system-arm --version
 
   merge-ci:
     name: Merge CI Manifest
-    needs: [build-qemu]
+    needs: [build-third-party]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -482,7 +486,7 @@ jobs:
         id: meta-ci
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -500,12 +504,12 @@ jobs:
           done <<< "${{ steps.meta-ci.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-arm64
 
   merge-ci-asan:
     name: Merge CI ASan Manifest
-    needs: [build-qemu]
+    needs: [build-third-party]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -530,7 +534,7 @@ jobs:
         id: meta-ci-asan
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}
           flavor: |
             suffix=-asan
           tags: |
@@ -550,12 +554,12 @@ jobs:
           done <<< "${{ steps.meta-ci-asan.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-arm64
 
   merge-base:
     name: Merge Base Manifest
-    needs: [build-qemu]
+    needs: [build-third-party]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -580,7 +584,7 @@ jobs:
         id: meta-base
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -598,12 +602,12 @@ jobs:
           done <<< "${{ steps.meta-base.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base:sha-${{ github.sha }}-arm64
 
   merge-toolchain:
     name: Merge Toolchain Manifest
-    needs: [build-qemu]
+    needs: [build-third-party]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -628,7 +632,7 @@ jobs:
         id: meta-toolchain
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -646,14 +650,14 @@ jobs:
           done <<< "${{ steps.meta-toolchain.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain:sha-${{ github.sha }}-arm64
 
 # ── Tier 3: Publish Environment Images (Parallel Path) ───────────────────────
 
   integration:
     name: ${{ matrix.category }} — ${{ matrix.name }} (${{ matrix.arch }}, ${{ matrix.sanitizer }})
-    needs: [changes, build-qemu, tier-checks, generate-matrix]
+    needs: [changes, build-third-party, tier-checks, generate-matrix]
     if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
@@ -676,9 +680,9 @@ jobs:
       - name: Pull ci image
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}"
           else
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
           fi
           for i in {1..5}; do
             if docker pull "$IMAGE"; then
@@ -687,7 +691,7 @@ jobs:
             sleep 15
             if [ "$i" -eq 5 ]; then exit 1; fi
           done
-          docker tag "$IMAGE" "${{ env.CI_IMAGE }}:${{ github.sha }}"
+          docker tag "$IMAGE" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
       - name: Run ${{ matrix.name }}
         run: |
@@ -703,7 +707,7 @@ jobs:
             -e VIRTMCU_STALL_TIMEOUT_MS="${{ matrix.sanitizer == 'asan' && '300000' || env.VIRTMCU_STALL_TIMEOUT_MS }}" \
             -e GCOV_PREFIX=/workspace/coverage-data \
             -e GCOV_PREFIX_STRIP=3 \
-            ${{ env.CI_IMAGE }}:${{ github.sha }} \
+            ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
             bash scripts/testing/run-integration.sh ${{ matrix.domain }}
 
       - name: Upload results and coverage
@@ -738,13 +742,13 @@ jobs:
       - name: Pull ci image
         run: |
           for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64"; then
+            if docker pull "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64"; then
               break
             fi
             sleep 15
             if [ "$i" -eq 5 ]; then exit 1; fi
           done
-          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64" "${{ env.CI_IMAGE }}:${{ github.sha }}"
+          docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
       - name: Download all coverage artifacts
         uses: actions/download-artifact@v4
@@ -762,7 +766,7 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
-            ${{ env.CI_IMAGE }}:${{ github.sha }} \
+            ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
             bash scripts/testing/run-peripheral-coverage.sh
 
       - name: Upload peripheral coverage results
@@ -774,7 +778,7 @@ jobs:
 
   firmware-coverage:
     name: Guest Firmware Coverage
-    needs: [changes, build-qemu, tier-checks]
+    needs: [changes, build-third-party, tier-checks]
     if: needs.changes.outputs.expensive == 'true' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -793,13 +797,13 @@ jobs:
       - name: Pull ci image
         run: |
           for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64"; then
+            if docker pull "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64"; then
               break
             fi
             sleep 15
             if [ "$i" -eq 5 ]; then exit 1; fi
           done
-          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64" "${{ env.CI_IMAGE }}:${{ github.sha }}"
+          docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
       - name: Run coverage analysis
         run: |
@@ -812,7 +816,7 @@ jobs:
             -e PYTHONPATH=/workspace:/workspace/generated \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
-            ${{ env.CI_IMAGE }}:${{ github.sha }} \
+            ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
             bash scripts/testing/run-integration-coverage.sh
 
 # ── Tier 6: Publish Runtime (after validation) ──────────────────────────────

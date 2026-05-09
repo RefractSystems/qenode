@@ -12,13 +12,13 @@ The codebase is divided into three primary build domains, each with its own tool
 
 ### A. Dependencies (C/C++)
 *   **Components**: `zenoh-c` (for native plugin communication) and `flatcc` (for telemetry serialization).
-*   **Lifecycle**: Built once during `make install-deps-initial` or pre-compiled into the project's Docker base image.
+*   **Lifecycle**: Built once during `make bootstrap` or pre-compiled into the project's Docker base image.
 *   **Location**: Land in `third_party/zenoh-c` and `third_party/flatcc`.
 
 ### B. QEMU Core & Rust Plugins
 *   **Components**: The patched `qemu-system-arm/riscv` binaries and the dynamic peripheral models (`hw-virtmcu-*.so`).
 *   **Lifecycle**: 
-    *   The **Core** is built initially via `make install-deps-initial` and rarely changes.
+    *   The **Core** is built initially via `make bootstrap` and rarely changes.
     *   **Plugins** are rebuilt frequently via `make build` whenever `hw/rust/` code is modified.
 *   **Mechanism**: The project's `hw/` directory is **symlinked** into QEMU's source tree (`third_party/qemu/hw/virtmcu`). Incremental builds delegate to QEMU's Meson system, which in turn invokes `cargo` to compile the Rust components.
 

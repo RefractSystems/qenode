@@ -132,20 +132,49 @@ def sync() -> None:
             with Path(dockerfile_path).open("w") as f:
                 f.write(new_content)
 
-    # 4b. Propagate PYTHON_VERSION into ci workflows hardcoded env block
+    # 4b. Propagate variables into ci workflows hardcoded env block
     py_ver = versions.get("PYTHON_VERSION")
-    if py_ver:
+    image_reg = versions.get("VIRTMCU_IMAGE_REGISTRY")
+    devenv_img = versions.get("VIRTMCU_DEVENV_IMAGE")
+    ci_img = versions.get("VIRTMCU_CI_IMAGE")
+
+    if py_ver or image_reg or devenv_img or ci_img:
         for ci_path in [
             ".github/workflows/ci-main.yml",
             ".github/workflows/ci-pr.yml",
             ".github/workflows/ci-asan.yml",
+            ".github/workflows/pr-cleanup.yml",
         ]:
             if Path(ci_path).exists():
                 with Path(ci_path).open() as f:
                     ci_content = f.read()
-                new_ci = re.sub(r'(PYTHON_VERSION:\s*")[^"]+(")', rf"\g<1>{py_ver}\g<2>", ci_content)
+                
+                new_ci = ci_content
+                if py_ver:
+                    new_ci = re.sub(r'(PYTHON_VERSION:\s*")[^"]+(")', rf"\g<1>{py_ver}\g<2>", new_ci)
+                
+                if image_reg:
+                    # Registry is usually the first part, image name lower is the rest
+                    reg_parts = image_reg.split("/", 1)
+                    if len(reg_parts) == 2:
+                        reg_host, reg_path = reg_parts
+                        new_ci = re.sub(r'(REGISTRY:\s*)[^\s\n]+', rf"\g<1>{reg_host}", new_ci)
+                        new_ci = re.sub(r'(IMAGE_NAME_LOWER:\s*)[^\s\n]+', rf"\g<1>{reg_path}", new_ci)
+                        
+                    # Also replace hardcoded combinations in inline commands
+                    new_ci = new_ci.replace(
+                        "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}",
+                        "${{ env.VIRTMCU_IMAGE_REGISTRY }}"
+                    )
+
+                if devenv_img:
+                    new_ci = re.sub(r'(VIRTMCU_DEVENV_IMAGE:\s*)[^\s\n]+', rf"\g<1>{devenv_img}", new_ci)
+                
+                if ci_img:
+                    new_ci = re.sub(r'(VIRTMCU_CI_IMAGE:\s*)[^\s\n]+(?=\n)', rf"\g<1>{ci_img}", new_ci)
+
                 if ci_content != new_ci:
-                    logger.info(f"Updating {ci_path} to PYTHON_VERSION {py_ver}")
+                    logger.info(f"Updating {ci_path} env variables")
                     with Path(ci_path).open("w") as f:
                         f.write(new_ci)
 
@@ -262,6 +291,26 @@ def sync() -> None:
                 f"Updating {post_create_path} to mdbook v{mdbook_ver}, mdbook-mermaid v{mdbook_mermaid_ver}, and mdbook-pdf v{mdbook_pdf_ver}"
             )
             with Path(post_create_path).open("w") as f:
+                f.write(new_content)
+
+    # 8. Update devcontainer.json image registry
+    devcontainer_json_path = ".devcontainer/devcontainer.json"
+    image_reg = versions.get("VIRTMCU_IMAGE_REGISTRY")
+    devenv_img = versions.get("VIRTMCU_DEVENV_IMAGE")
+    
+    if image_reg and devenv_img and Path(devcontainer_json_path).exists():
+        with Path(devcontainer_json_path).open() as f:
+            content = f.read()
+        
+        # Matches "image": "..."
+        new_content = re.sub(
+            r'("image":\s*")[^"]+(")',
+            rf"\g<1>{image_reg}/{devenv_img}:latest\g<2>",
+            content
+        )
+        if content != new_content:
+            logger.info(f"Updating {devcontainer_json_path} image to {image_reg}/{devenv_img}:latest")
+            with Path(devcontainer_json_path).open("w") as f:
                 f.write(new_content)
 
 

@@ -41,7 +41,7 @@ These scripts are written to be **multi-agent safe** and **location-agnostic**. 
 
 *   `scripts/cleanup-sim.sh`: 
     Safely kills orphaned QEMU and Zenoh processes. It checks `/proc/<pid>/cwd` to ensure it **only** touches simulations originating from the current workspace, preventing interference with parallel simulations (e.g., in MuJoCo).
-*   `scripts/install-deps.sh`: 
+*   `scripts/install-third-party.sh`: 
     The unified setup script. It clones, patches, configures, and builds our custom deterministic QEMU fork.
 *   `scripts/check-versions.py` & `scripts/sync-versions.py`: 
     Use the `--root` flag to ensure your parent repository's Python (`pyproject.toml`) and Rust (`Cargo.toml`) dependencies perfectly match VirtMCU's `BUILD_DEPS` pinning.

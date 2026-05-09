@@ -27,6 +27,11 @@ if [ -f "$WORKSPACE_DIR/BUILD_DEPS" ]; then
     source "$WORKSPACE_DIR/BUILD_DEPS"
 fi
 
+# Fail hard if essential dependency versions are missing
+: "${QEMU_VERSION:?ERROR: QEMU_VERSION is not set. Ensure BUILD_DEPS is loaded.}"
+: "${ZENOH_VERSION:?ERROR: ZENOH_VERSION is not set. Ensure BUILD_DEPS is loaded.}"
+: "${FLATCC_VERSION:?ERROR: FLATCC_VERSION is not set. Ensure BUILD_DEPS is loaded.}"
+
 # Inherit optional env vars with safe defaults for -u compatibility
 CI="${CI:-}"
 VIRTMCU_USE_CCACHE="${VIRTMCU_USE_CCACHE:-}"
@@ -35,7 +40,7 @@ VIRTMCU_USE_TSAN="${VIRTMCU_USE_TSAN:-}"
 
     # Clone QEMU if not already present
     QEMU_REPO="${QEMU_REPO:-https://gitlab.com/qemu-project/qemu.git}"
-    QEMU_REF="${QEMU_REF:-v${QEMU_VERSION:-11.0.0}}"
+    QEMU_REF="${QEMU_REF:-v${QEMU_VERSION}}"
 
     if [ ! -d "$QEMU_DIR/.git" ]; then
         echo "==> Cloning QEMU ${QEMU_REF} from ${QEMU_REPO} ..."
@@ -47,8 +52,8 @@ VIRTMCU_USE_TSAN="${VIRTMCU_USE_TSAN:-}"
 
     # Ensure we are on the expected QEMU version
     VERSION=$(cat VERSION || echo "")
-    if [[ "$VERSION" != "${QEMU_VERSION:-11.0.0}" ]]; then
-        echo "Unexpected QEMU version: $VERSION (expected ${QEMU_VERSION:-11.0.0})"
+    if [[ "$VERSION" != "${QEMU_VERSION}" ]]; then
+        echo "Unexpected QEMU version: $VERSION (expected ${QEMU_VERSION})"
         exit 1
     fi
 
@@ -56,13 +61,22 @@ VIRTMCU_USE_TSAN="${VIRTMCU_USE_TSAN:-}"
 bash "$SCRIPTS_DIR/apply-qemu-patches.sh" "$QEMU_DIR"
 
 # Compile Zenoh-C from source for native QOM plugins (guarantees parity with CI)
-ZENOHC_VER="${ZENOH_VERSION:-1.9.0}"
+ZENOHC_VER="${ZENOH_VERSION}"
+ZENOHC_SRC_DIR="$WORKSPACE_DIR/third_party/zenoh-c-src"
+
+if [ ! -d "$ZENOHC_SRC_DIR/.git" ]; then
+    echo "==> Cloning Zenoh-C $ZENOHC_VER from source into $ZENOHC_SRC_DIR..."
+    git clone --depth=1 --branch "$ZENOHC_VER" https://github.com/eclipse-zenoh/zenoh-c.git "$ZENOHC_SRC_DIR"
+fi
+
 if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
     ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c-asan"
+    ZENOHC_BUILD_DIR="$ZENOHC_SRC_DIR/build-asan"
     export RUSTC_BOOTSTRAP=1
     # Fix for proc-macro compilation with ASan: force separate host/target builds
     TRIPLE="$(rustc -vV | grep 'host:' | awk '{print $2}')"
     export CARGO_BUILD_TARGET="${TRIPLE}"
+    export CARGO_TARGET_DIR="$ZENOHC_SRC_DIR/target-asan"
     TRIPLE_UPPER="$(echo "${TRIPLE}" | tr '[:lower:]-' '[:upper:]_')"
     export "CARGO_TARGET_${TRIPLE_UPPER}_RUSTFLAGS=-Zsanitizer=address"
     export "CFLAGS_${TRIPLE}=-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
@@ -74,49 +88,41 @@ if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
     echo "==> Configuring Zenoh-C for ASan build..."
 else
     ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
+    ZENOHC_BUILD_DIR="$ZENOHC_SRC_DIR/build-release"
+    export CARGO_TARGET_DIR="$ZENOHC_SRC_DIR/target-release"
 fi
 
 if [ ! -d "$ZENOHC_DIR/include" ]; then
-    echo "==> Compiling Zenoh-C $ZENOHC_VER from source into $ZENOHC_DIR..."
-    rm -rf "$ZENOHC_DIR" "/tmp/zenoh-c-src" "/tmp/zenoh-c-build" # virtmcu-allow: absolute_path reasoning="Legacy script"
-    git clone --depth=1 --branch "$ZENOHC_VER" \
-        https://github.com/eclipse-zenoh/zenoh-c.git /tmp/zenoh-c-src # virtmcu-allow: absolute_path reasoning="Legacy script"
-    
-    cmake -S /tmp/zenoh-c-src -B /tmp/zenoh-c-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ZENOHC_DIR" -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF # virtmcu-allow: absolute_path reasoning="Legacy script"
-       
-    cmake --build /tmp/zenoh-c-build -j"$(nproc)" # virtmcu-allow: absolute_path reasoning="Legacy script"
-    cmake --install /tmp/zenoh-c-build # virtmcu-allow: absolute_path reasoning="Legacy script"
-    
-    rm -rf "/tmp/zenoh-c-src" "/tmp/zenoh-c-build" # virtmcu-allow: absolute_path reasoning="Legacy script"
+    echo "==> Building Zenoh-C $ZENOHC_VER into $ZENOHC_DIR..."
+    cmake -S "$ZENOHC_SRC_DIR" -B "$ZENOHC_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ZENOHC_DIR" -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF
+    cmake --build "$ZENOHC_BUILD_DIR" -j"$(nproc)"
+    cmake --install "$ZENOHC_BUILD_DIR"
 fi
 
 # Compile flatcc from source for Telemetry (guarantees parity with CI)
-FLATCC_VER="${FLATCC_VERSION:-0.6.1}"
+FLATCC_VER="${FLATCC_VERSION}"
+FLATCC_SRC_DIR="$WORKSPACE_DIR/third_party/flatcc-src"
 FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
 
+if [ ! -d "$FLATCC_SRC_DIR/.git" ]; then
+    echo "==> Cloning flatcc v$FLATCC_VER from source into $FLATCC_SRC_DIR..."
+    git clone --depth=1 --branch "v$FLATCC_VER" https://github.com/dvidelabs/flatcc.git "$FLATCC_SRC_DIR"
+fi
+
 if [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
-    echo "==> Compiling flatcc v$FLATCC_VER from source..."
-    rm -rf "$FLATCC_DIR"
-    git clone --depth=1 --branch "v$FLATCC_VER" https://github.com/dvidelabs/flatcc.git "$FLATCC_DIR"
+    echo "==> Building flatcc v$FLATCC_VER..."
+    FLATCC_BUILD_DIR="$FLATCC_SRC_DIR/build"
     
-    cd "$FLATCC_DIR"
-    cmake -B build -G Ninja -Wno-dev \
+    cmake -S "$FLATCC_SRC_DIR" -B "$FLATCC_BUILD_DIR" -G Ninja -Wno-dev \
        -DCMAKE_BUILD_TYPE=Release \
        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DFLATCC_TEST=OFF \
        -DFLATCC_CXX_TEST=OFF \
        -DFLATCC_INSTALL=ON \
-       -DCMAKE_INSTALL_PREFIX="$FLATCC_DIR/install" \
+       -DCMAKE_INSTALL_PREFIX="$FLATCC_DIR" \
        -DCMAKE_C_FLAGS="-w"
     
-    cmake --build build --target install
-    
-    # Expose binary and libraries at expected workspace locations
-    mkdir -p bin include lib
-    cp install/bin/flatcc bin/
-    cp -r install/include/flatcc include/
-    cp -r install/lib/libflatcc* lib/
-    cd "$WORKSPACE_DIR"
+    cmake --build "$FLATCC_BUILD_DIR" --target install
 fi
 
 # Symlink our custom hw/ directory into QEMU's hw/virtmcu directory
