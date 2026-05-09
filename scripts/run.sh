@@ -225,7 +225,7 @@ if [ -z "${QEMU_BIN:-}" ]; then
     echo "❌ ERROR: QEMU binary for $ARCH not found."
     echo "    virtmcu mandates using the locally built QEMU from third_party/qemu"
     echo "    or the prebuilt one in /build/qemu (CI)."
-    echo "    Please run 'make install-deps-initial' or 'make build' first."
+    echo "    Please run 'make bootstrap' first."
     exit 1
 fi
 

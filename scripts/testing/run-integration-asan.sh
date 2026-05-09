@@ -28,7 +28,7 @@ if [ "${VIRTMCU_USE_PREBUILT_QEMU:-0}" = "1" ]; then
     echo "==> Using pre-built QEMU (skipping build)..."
 elif [ "$INSIDE_DOCKER" = "false" ] || [ ! -x "$(which qemu-system-arm 2>/dev/null || echo "$WORKSPACE_DIR/third_party/qemu/build-virtmcu-asan/install/bin/qemu-system-arm")" ]; then
     echo "==> Building QEMU with ASan/UBSan enabled..."
-    VIRTMCU_USE_ASAN=1 bash scripts/install-deps.sh --force
+    VIRTMCU_USE_ASAN=1 bash scripts/install-third-party.sh --force
 fi
 
 DOMAIN=${1:-all}

@@ -9,7 +9,11 @@ touch ~/.claude.json
 
 # 2. Fetch and print the cache image digest to the devcontainer logs
 echo -e "\n\n====== PULLING DEVENV CACHE ======"
-IMAGE="ghcr.io/refractsystems/virtmcu/devenv:latest"
+
+# Load image registry from BUILD_DEPS
+# shellcheck source=../BUILD_DEPS
+source "$(dirname "$0")/../BUILD_DEPS"
+IMAGE="${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest"
 
 if command -v docker >/dev/null 2>&1; then
     echo "Fetching $IMAGE (this may take a minute)..."

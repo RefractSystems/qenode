@@ -1,6 +1,11 @@
 # virtmcu Project Dependency Versions
 # Centralized version definitions for build scripts, Docker, and documentation.
 
+# Docker Registry Configuration
+VIRTMCU_IMAGE_REGISTRY=ghcr.io/refractsystems/virtmcu
+VIRTMCU_DEVENV_IMAGE=virtmcu-devenv
+VIRTMCU_CI_IMAGE=virtmcu-ci
+
 # QEMU emulator base
 # Tag v11.0.0 in https://gitlab.com/qemu-project/qemu.git
 QEMU_VERSION=11.0.0
