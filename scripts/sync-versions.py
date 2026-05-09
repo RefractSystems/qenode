@@ -171,7 +171,7 @@ def sync() -> None:
                     new_ci = re.sub(r'(VIRTMCU_DEVENV_IMAGE:\s*)[^\s\n]+', rf"\g<1>{devenv_img}", new_ci)
                 
                 if ci_img:
-                    new_ci = re.sub(r'(VIRTMCU_CI_IMAGE:\s*)[^\s\n]+', rf"\g<1>{ci_img}", new_ci)
+                    new_ci = re.sub(r'(VIRTMCU_CI_IMAGE:\s*)[^\s\n]+(?=\n)', rf"\g<1>{ci_img}", new_ci)
 
                 if ci_content != new_ci:
                     logger.info(f"Updating {ci_path} env variables")
