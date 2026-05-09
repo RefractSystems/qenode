@@ -76,7 +76,7 @@ DOCKER_RUN_CI_ASAN = $(DOCKER_RUN_CI_IMG) $(CI_ASAN_IMG)
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
 # By default, perform an incremental build
-all: build
+all: dev-all
 
 # ------------------------------------------------------------------------------
 # FFI Layout Verification
@@ -245,16 +245,8 @@ ci-build-qemu-asan:
 	@VIRTMCU_USE_ASAN=1 $(MAKE) docker-qemu-builder
 	@echo "✓ ci-build-qemu-asan complete."
 
-# Helper for persistent container builds
-prepare-ci-target:
-	@mkdir -p .ci-target$(BUILD_SUFFIX)
-
-ci-local: prepare-ci-target
-	@bash scripts/docker-build.sh devenv
-	@$(DOCKER_RUN_DEVENV) bash -c "make dev-lint && ./scripts/check_schemas.sh && make build-tools && make dev-unit"
-
-# Run the full pipeline: ci-local + ci-integration-asan + ci-unit-miri + all integration domains
-ci-full: ci-local ci-integration-asan ci-unit-miri
+# Run the full pipeline: ci-lint + ci-unit + ci-integration-asan + ci-unit-miri + all integration domains
+ci-full: ci-lint ci-unit ci-integration-asan ci-unit-miri
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Docker: ci + runtime"
