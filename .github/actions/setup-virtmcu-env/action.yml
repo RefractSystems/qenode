@@ -16,7 +16,7 @@ runs:
             sha256sum BUILD_DEPS 2>/dev/null
           } | sha256sum | cut -c1-12
         )
-        echo "QEMU_CACHE_TAG=${QEMU_VERSION}-${PATCHES_HASH}" >> "$GITHUB_ENV"
+        echo "THIRD_PARTY_CACHE_TAG=${QEMU_VERSION}-${PATCHES_HASH}" >> "$GITHUB_ENV"
 
     - name: Determine Image Name for GHCR
       shell: bash

@@ -84,13 +84,13 @@ echo "==> Initializing Workspace Dependencies..."
 # We use --system to avoid modifying the (potentially read-only) global .gitconfig
 # and to keep container-specific paths out of the host's configuration.
 sudo git config --system --replace-all safe.directory /workspace
-# Since we use devenv, make install-deps is explicitly required for the first run.
+# Since we use devenv, make bootstrap is explicitly required for the first run.
 # We do not block container startup, but we warn the developer if it fails.
-if ! make install-deps-initial; then
-    echo ""
-    echo "⚠️  WARNING: Initial setup (make install-deps-initial) failed or was interrupted."
-    echo "    You MUST run 'make install-deps' manually before running tests or simulations."
+if ! make bootstrap; then
+    echo "⚠️  WARNING: Initial setup (make bootstrap) failed or was interrupted."
+    echo "    You MUST run 'make bootstrap' manually before running tests or simulations."
     echo ""
 fi
+
 
 echo "✓ DevContainer initialization complete."

@@ -6,8 +6,8 @@
 #   toolchain       — FROM base + build deps, ARM toolchain, Python pin, CMake, FlatBuffers
 #   devenv     — FROM toolchain + Rust (uv, rustc, cargo tools from rust-builder)
 #   flatcc-builder  — FROM base: standalone flatcc compiler build
-#   qemu-builder    — FROM devenv: clones/patches QEMU, compiles Zenoh-C & flatcc (static), builds QEMU
-#   ci              — FROM qemu-builder: compiles all Rust QOM plugins & dynamic models
+#   third-party-builder    — FROM devenv: clones/patches QEMU, compiles Zenoh-C & flatcc (static), builds QEMU
+#   ci              — FROM third-party-builder: compiles all Rust QOM plugins & dynamic models
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0
@@ -23,8 +23,8 @@ ARG FLATCC_VERSION=0.6.1
 ARG HADOLINT_VERSION=2.14.0
 ARG ACTIONLINT_VERSION=1.7.12
 ARG MDBOOK_VERSION=0.4.52
-ARG MDBOOK_MERMAID_VERSION=0.14.0
-ARG MDBOOK_PDF_VERSION=0.1.10
+ARG MDBOOK_MERMAID_VERSION=0.17.0
+ARG MDBOOK_PDF_VERSION=0.1.13
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
@@ -262,8 +262,8 @@ RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs
     -DCMAKE_C_FLAGS="-w" \
     && cmake --build build --target install
 
-# ── Stage 5: qemu-builder ─────────────────────────────────────────────────────
-FROM devenv AS qemu-builder
+# ── Stage 5: third-party-builder ─────────────────────────────────────────────────────
+FROM devenv AS third-party-builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -356,7 +356,7 @@ RUN QEMU_CONF_FLAGS=( \
 RUN --mount=type=cache,target=/var/cache/ccache \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
 # ── Stage 6: ci ──────────────────────────────────────────────────────────────
-FROM qemu-builder AS ci
+FROM third-party-builder AS ci
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

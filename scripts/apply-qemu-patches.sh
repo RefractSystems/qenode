@@ -3,7 +3,7 @@
 # apply-qemu-patches.sh
 #
 # Centralized script to apply all virtmcu patches to a QEMU source tree.
-# Used by both the Dockerfile (for CI/Containers) and install-deps.sh (for bare-metal dev).
+# Used by both the Dockerfile (for CI/Containers) and install-third-party.sh (for bare-metal dev).
 #
 # Usage:
 #   scripts/apply-qemu-patches.sh <path_to_qemu_src>
