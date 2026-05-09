@@ -1,6 +1,5 @@
 # docker-bake.hcl — Single Source of Truth for virtmcu Docker Builds
 
-}
 
 variable "IMAGE_TAG" {
   default = "dev"

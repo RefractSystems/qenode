@@ -118,7 +118,7 @@ jobs:
           load: true
 
       - name: Tag local devenv image
-        run: docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }}"
+        run: docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }}"
 
       - name: Cache Cargo registry and target
         uses: actions/cache@v4
@@ -246,9 +246,9 @@ jobs:
       - name: Check for pre-built third-party-base image
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-amd64"
+            TAG="${{ env.VIRTMCU_IMAGE_REGISTRY }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-amd64"
           else
-            TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-asan-amd64"
+            TAG="${{ env.VIRTMCU_IMAGE_REGISTRY }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-asan-amd64"
           fi
           if docker manifest inspect "$TAG" >/dev/null 2>&1; then
             echo "QEMU_BASE_CACHE=hit" >> "$GITHUB_ENV"
@@ -283,9 +283,9 @@ jobs:
       - name: Verify QEMU binary
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64"
           else
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-amd64"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-amd64"
           fi
           docker run --rm $IMAGE qemu-system-arm --version
 
@@ -333,9 +333,9 @@ jobs:
       - name: Tag ci image locally
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            SOURCE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}"
+            SOURCE_IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}"
           else
-            SOURCE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
+            SOURCE_IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
           fi
           docker tag "$SOURCE_IMAGE" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
@@ -423,7 +423,7 @@ jobs:
             -e USER=vscode \
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
             bash scripts/testing/run-peripheral-coverage.sh
 
       - name: Upload peripheral coverage results
@@ -479,5 +479,5 @@ jobs:
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
             bash scripts/testing/run-integration-coverage.sh

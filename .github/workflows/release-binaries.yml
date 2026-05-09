@@ -74,7 +74,7 @@ jobs:
 
       - name: Extract binaries from container
         run: |
-          docker create --name extract ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}
+          docker create --name extract ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
           docker cp extract:/build/qemu/build-virtmcu/install ./virtmcu-dist
           docker rm extract
 

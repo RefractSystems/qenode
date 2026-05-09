@@ -144,8 +144,8 @@ jobs:
       - name: Pull devenv image
         run: |
           for i in {1..5}; do
-            if docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64; then
-              docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }}"
+            if docker pull ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64; then
+              docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }}"
               break
             fi
             sleep 15
@@ -280,7 +280,7 @@ jobs:
         id: meta-devenv
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -298,8 +298,8 @@ jobs:
           done <<< "${{ steps.meta-devenv.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/devenv:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_DEVENV_IMAGE }}:sha-${{ github.sha }}-arm64
 
   merge-rust-builder:
     name: Merge Rust Builder Manifest
@@ -328,7 +328,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -339,8 +339,8 @@ jobs:
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/rust-builder:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-arm64
 
   merge-flatcc-builder:
     name: Merge FlatCC Builder Manifest
@@ -369,7 +369,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -380,8 +380,8 @@ jobs:
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/flatcc-builder:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-arm64
 
   build-third-party:
     name: Build QEMU — ${{ matrix.arch }} (${{ matrix.sanitizer }})
@@ -451,9 +451,9 @@ jobs:
       - name: Verify QEMU binary
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}"
           else
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
           fi
           docker run --rm $IMAGE qemu-system-arm --version
 
@@ -484,7 +484,7 @@ jobs:
         id: meta-ci
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -502,8 +502,8 @@ jobs:
           done <<< "${{ steps.meta-ci.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-arm64
 
   merge-ci-asan:
     name: Merge CI ASan Manifest
@@ -532,7 +532,7 @@ jobs:
         id: meta-ci-asan
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}
           flavor: |
             suffix=-asan
           tags: |
@@ -552,8 +552,8 @@ jobs:
           done <<< "${{ steps.meta-ci-asan.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-arm64
 
   merge-base:
     name: Merge Base Manifest
@@ -582,7 +582,7 @@ jobs:
         id: meta-base
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -600,8 +600,8 @@ jobs:
           done <<< "${{ steps.meta-base.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/base:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/base:sha-${{ github.sha }}-arm64
 
   merge-toolchain:
     name: Merge Toolchain Manifest
@@ -630,7 +630,7 @@ jobs:
         id: meta-toolchain
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain
+          images: ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -648,8 +648,8 @@ jobs:
           done <<< "${{ steps.meta-toolchain.outputs.labels }}"
           # shellcheck disable=SC2086
           docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain:sha-${{ github.sha }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/toolchain:sha-${{ github.sha }}-arm64
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain:sha-${{ github.sha }}-amd64 \
+            ${{ env.VIRTMCU_IMAGE_REGISTRY }}/toolchain:sha-${{ github.sha }}-arm64
 
 # ── Tier 3: Publish Environment Images (Parallel Path) ───────────────────────
 
@@ -678,9 +678,9 @@ jobs:
       - name: Pull ci image
         run: |
           if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}"
           else
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
+            IMAGE="${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-asan-${{ matrix.arch }}"
           fi
           for i in {1..5}; do
             if docker pull "$IMAGE"; then
@@ -740,13 +740,13 @@ jobs:
       - name: Pull ci image
         run: |
           for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64"; then
+            if docker pull "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64"; then
               break
             fi
             sleep 15
             if [ "$i" -eq 5 ]; then exit 1; fi
           done
-          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
+          docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
       - name: Download all coverage artifacts
         uses: actions/download-artifact@v4
@@ -795,13 +795,13 @@ jobs:
       - name: Pull ci image
         run: |
           for i in {1..5}; do
-            if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64"; then
+            if docker pull "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64"; then
               break
             fi
             sleep 15
             if [ "$i" -eq 5 ]; then exit 1; fi
           done
-          docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}/ci:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
+          docker tag "${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64" "${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }}"
 
       - name: Run coverage analysis
         run: |
