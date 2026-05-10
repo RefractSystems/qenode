@@ -16,7 +16,7 @@ from pathlib import Path
 RESERVATION_DIR = Path(
     os.environ.get(
         "VIRTMCU_PORT_RESERVATION_DIR",
-        f"/tmp/virtmcu_port_reservations_{os.getuid()}", # virtmcu-allow: absolute_path reasoning="Legacy script"
+        f"/tmp/virtmcu_port_reservations_{os.getuid()}",  # virtmcu-allow: absolute_path reasoning="Legacy script"
     )
 )
 

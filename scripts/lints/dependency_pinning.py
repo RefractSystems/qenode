@@ -11,6 +11,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+# Add the workspace root to sys.path to allow absolute imports from scripts
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 from scripts.lints.lint_utils import ENTERPRISE_MANDATE, setup_lint_logging
 
 logger = logging.getLogger(__name__)

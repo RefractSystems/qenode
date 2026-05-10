@@ -1,5 +1,10 @@
 #[allow(clippy::too_many_lines, clippy::std_instead_of_core)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=VIRTMCU_UNIT_TEST"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=VIRTMCU_USE_ASAN"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=QEMU_SRC_DIR"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=QEMU_BUILD_DIR"); // virtmcu-allow: print reasoning="cargo build script protocol"
+
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)"); // virtmcu-allow: print reasoning="cargo build script protocol"
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)"); // virtmcu-allow: print reasoning="cargo build script protocol"
     println!("cargo:rustc-check-cfg=cfg(virtmcu_unit_test)"); // virtmcu-allow: print reasoning="cargo build script protocol"

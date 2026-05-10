@@ -2,7 +2,7 @@
 # ==============================================================================
 # smoke_test.sh (yaml_boot)
 #
-# This script tests the repl2qemu toolchain. It parses a Renode .repl file,
+# This script tests the yaml2qemu toolchain. It parses a virtmcu .yaml file,
 # generates a QEMU Device Tree Blob (.dtb), and verifies that QEMU can boot
 # the arm-generic-fdt machine using the generated DTB.
 # ==============================================================================
@@ -25,12 +25,12 @@ if [[ -z "${WORKSPACE_DIR:-}" ]]; then
     exit 1
 fi
 
-REPL_FILE="$SCRIPT_DIR/src/test_board.repl"
+YAML_FILE="$SCRIPT_DIR/src/test_board.yaml"
 OUT_DTB="$SCRIPT_DIR/test_board_out.dtb"
 KERNEL="$WORKSPACE_DIR/tests/fixtures/guest_apps/boot_arm/hello.elf"
 
-if [ ! -f "$REPL_FILE" ]; then
-    echo "FAILED: Test .repl file not found at $REPL_FILE"
+if [ ! -f "$YAML_FILE" ]; then
+    echo "FAILED: Test .yaml file not found at $YAML_FILE"
     exit 1
 fi
 
@@ -39,14 +39,14 @@ if [ ! -f "$KERNEL" ]; then
     make -C "$WORKSPACE_DIR/tests/fixtures/guest_apps/boot_arm"
 fi
 
-echo "Running Lesson 3 smoke test (repl2qemu parser)..."
+echo "Running Lesson 3 smoke test (yaml2qemu parser)..."
 
 # Ensure clean state
 rm -f "$OUT_DTB" qemu_lesson3.log
 
-# 1. Run the repl2qemu parser using the Python module invocation
-echo "1. Parsing $REPL_FILE -> $OUT_DTB"
-python3 -m tools.repl2qemu "$REPL_FILE" --out-dtb "$OUT_DTB"
+# 1. Run the yaml2qemu parser using the Python module invocation
+echo "1. Parsing $YAML_FILE -> $OUT_DTB"
+python3 -m tools.yaml2qemu "$YAML_FILE" --out-dtb "$OUT_DTB"
 
 if [ ! -f "$OUT_DTB" ]; then
     echo "FAILED: Parser did not generate $OUT_DTB"
@@ -71,7 +71,7 @@ timeout "$TIMEOUT" "$RUN_SH" --dtb "$OUT_DTB" \
     -serial file:qemu_lesson3.log || true
 
 # 3. Verification
-# If the repl was translated correctly to a DTB, the kernel will successfully boot and print "HI"
+# If the YAML was translated correctly to a DTB, the kernel will successfully boot and print "HI"
 if grep -q "HI" qemu_lesson3.log; then
     echo "Lesson 3 smoke test: PASSED"
     rm -f "$OUT_DTB" qemu_lesson3.log "${OUT_DTB}.dts"

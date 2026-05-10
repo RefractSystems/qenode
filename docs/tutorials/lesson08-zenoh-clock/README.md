@@ -135,7 +135,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
 # ...
 
 # Start QEMU in suspend mode
-scripts/run.sh \
+target/release/virtmcu-run \
     --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
     -kernel /tmp/spin.elf \
     -device virtmcu-clock,mode=suspend,node=0 \

@@ -331,12 +331,24 @@ def create_mcp_server() -> Server:
     async def handle_read_resource(uri: str) -> str:
         uri = str(uri)
         if uri == "virtmcu://simulation/status":
-            status = {"status": "running", "nodes": []}
+            from dataclasses import asdict, dataclass
+            @dataclass
+            class NodeStatus:
+                id: str
+                status: str
+            
+            @dataclass
+            class SimulationStatus:
+                status: str
+                nodes: list[NodeStatus]
+            
+            sim_status = SimulationStatus(status="running", nodes=[])
             for node_id, node in server.node_manager.nodes.items():
                 node_status = "running" if (node.process and node.process.returncode is None) else "stopped"
-                status["nodes"].append({"id": node_id, "status": node_status})  # virtmcu-allow: raw_yaml_key reasoning="Legacy script"
-
-            return json.dumps(status)
+                sim_status.nodes.append(NodeStatus(id=node_id, status=node_status))
+            
+            import json
+            return json.dumps(asdict(sim_status))
 
         if uri.startswith("virtmcu://nodes/") and uri.endswith("/console"):
             parts = uri.split("/")

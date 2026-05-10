@@ -10,9 +10,6 @@ In this volume, we move from the "How" and "What" to the "Why." We explore the A
 
 ## Volume Contents
 
-### [The VirtMCU Story: A Project History](../guide/05-project-history.md)
-From inception to SOTA. An exploration of the challenges, pivots, and breakthroughs that shaped the VirtMCU ecosystem.
-
 ### [Architectural Decision Records (ADR)](adr/index.md)
 The permanent record of engineering intent. We analyze the high-impact decisions that govern binary fidelity, language selection, and temporal synchronization.
 

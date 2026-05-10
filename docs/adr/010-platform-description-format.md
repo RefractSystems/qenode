@@ -54,4 +54,4 @@ peripherals:
 ## Action Plan
 1.  Create `tools/repl2yaml.py`: Converts Renode `.repl` files to this new schema.
 2.  Create `tools/yaml2qemu.py`: Parses the YAML and drives the existing `FdtEmitter`.
-3.  Update `scripts/run.sh`: Add `--yaml` support.
+3.  Update `target/release/virtmcu-run`: Add `--yaml` support.

@@ -82,14 +82,12 @@ fi
 
 if [ -f hw/riscv/virt.c ]; then
     echo "  -> Enabling dynamic sysbus devices (RISC-V)..."
-    sed -i 's/MACHINE_CLASS(mc)->has_dynamic_sysbus = false;/MACHINE_CLASS(mc)->has_dynamic_sysbus = true;/' hw/riscv/virt.c
-    # virtmcu: allow specific virtmcu devices
-    if ! grep -q "virtmcu-clock" hw/riscv/virt.c; then
-        sed -i '/machine_class_allow_dynamic_sysbus_dev(mc, TYPE_UEFI_VARS_SYSBUS);/a \    machine_class_allow_dynamic_sysbus_dev(mc, "virtmcu-clock");\n    machine_class_allow_dynamic_sysbus_dev(mc, "mmio-socket-bridge");' hw/riscv/virt.c
+    if ! grep -q "virtmcu-transport-hub" hw/riscv/virt.c; then
+        sed -i 's/machine_class_allow_dynamic_sysbus_dev(mc, "mmio-socket-bridge");/machine_class_allow_dynamic_sysbus_dev(mc, "mmio-socket-bridge");\n    machine_class_allow_dynamic_sysbus_dev(mc, "virtmcu-transport-hub");/' hw/riscv/virt.c
     fi
     # virtmcu: add devices to sysbus-fdt bindings so they bypass the FDT generation check
-    if ! grep -q "virtmcu-clock" hw/core/sysbus-fdt.c; then
-        sed -i '/TYPE_BINDING(TYPE_UEFI_VARS_SYSBUS, add_uefi_vars_node),/a \    TYPE_BINDING("virtmcu-clock", no_fdt_node),\n    TYPE_BINDING("mmio-socket-bridge", no_fdt_node),' hw/core/sysbus-fdt.c
+    if ! grep -q "virtmcu-transport-hub" hw/core/sysbus-fdt.c; then
+        sed -i 's/TYPE_BINDING("mmio-socket-bridge", no_fdt_node),/TYPE_BINDING("mmio-socket-bridge", no_fdt_node),\n    TYPE_BINDING("virtmcu-transport-hub", no_fdt_node),/' hw/core/sysbus-fdt.c
     fi
     # virtmcu: NOTE: We do NOT allow "sys-bus-device" globally on RISC-V because it causes
     # double-mapping of board-default devices (like UART) to the platform bus,

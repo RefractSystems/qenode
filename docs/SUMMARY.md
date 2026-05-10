@@ -65,7 +65,6 @@
   - [Lint Catalogue](guide/06-lint-catalogue.md)
 
 - [Architectural Decision Records (ADRs)](adr/README.md)
-  - [The VirtMCU Story: A Project History](guide/05-project-history.md)
   - [ADR 006: Binary Fidelity](adr/006-binary-fidelity.md)
   - [ADR 010: Platform Description](adr/010-platform-description-format.md)
   - [ADR 011: Zenoh Federation](adr/011-zenoh-federation-bus.md)

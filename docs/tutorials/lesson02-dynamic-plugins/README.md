@@ -37,12 +37,12 @@ Behind the scenes, QEMU's `meson` build system sees `hw/dummy/dummy.c` (via the 
 
 ## Part 2: Loading the Plugin dynamically
 
-Let's test our new peripheral. We will use the `run.sh` script, which automatically sets the `QEMU_MODULE_DIR` environment variable to ensure QEMU searches our local build folder for `.so` files.
+Let's test our new peripheral. We will use the `virtmcu-run` script, which automatically sets the `QEMU_MODULE_DIR` environment variable to ensure QEMU searches our local build folder for `.so` files.
 
 We will boot the empty `arm-generic-fdt` machine and plug our device into it via the command line:
 
 ```bash
-../../scripts/run.sh --dtb ../../tests/fixtures/guest_apps/boot_arm/minimal.dtb -device dummy-device -nographic
+../../target/release/virtmcu-run --dtb ../../tests/fixtures/guest_apps/boot_arm/minimal.dtb -device dummy-device -nographic
 ```
 
 *Note: Since we are not passing a kernel, the CPU will likely fault immediately after boot because there is no code to execute, but the emulator will successfully load the module!*
@@ -105,7 +105,7 @@ The `priv_state` parameter is the key to stateful devices.  See the doc-comments
 ### Testing the Rust Plugin
 
 ```bash
-../../scripts/run.sh --dtb ../../tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+../../target/release/virtmcu-run --dtb ../../tests/fixtures/guest_apps/boot_arm/minimal.dtb \
     -device rust-dummy,base-addr=0x60000000 \
     -nographic
 ```

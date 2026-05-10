@@ -25,6 +25,15 @@ members = [
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
+    "tools/virtmcu-test-runner",
+    "tools/virtmcu-run",
+    "tools/benchmarks/clock_rtt_bench",
+    "tests/native_integration",
+]
+exclude = [
+    "third_party",
+    "third_party/zenoh-c-src/build-asan/release",
+    "third_party/zenoh-c-src/build-release/release",
 ]
 resolver = "2"
 
@@ -37,7 +46,6 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 zenoh = "1.9.0"
-libc = "0.2"
 flatbuffers = "25.12.19"
 crossbeam-channel = "0.5"
 byteorder = "1.5"

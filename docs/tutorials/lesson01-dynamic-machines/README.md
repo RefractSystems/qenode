@@ -60,7 +60,7 @@ This produces `minimal.dtb` and `hello.elf`.
 Now, let's run it using the `virtmcu` runner script!
 
 ```bash
-../../scripts/run.sh --machine arm-generic-fdt --dtb minimal.dtb --kernel hello.elf -nographic
+../../target/release/virtmcu-run --machine arm-generic-fdt --dtb minimal.dtb --kernel hello.elf -nographic
 ```
 
 You should see it print `HI` to your terminal, and then hang (because we put the CPU to sleep with the `wfi` instruction).
@@ -73,7 +73,7 @@ As a graduate student/researcher, you will inevitably write code that crashes or
 We can tell QEMU to pause at startup and listen for a debugger. Run this command:
 
 ```bash
-../../scripts/run.sh --machine arm-generic-fdt --dtb minimal.dtb --kernel hello.elf -nographic -s -S
+../../target/release/virtmcu-run --machine arm-generic-fdt --dtb minimal.dtb --kernel hello.elf -nographic -s -S
 ```
 *(The `-s` flag opens a GDB server on port 1234. The `-S` flag tells the CPU not to start executing until instructed).*
 

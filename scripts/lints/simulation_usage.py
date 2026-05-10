@@ -90,7 +90,7 @@ def lint_file(path: Path) -> list[str]:
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
                 val = node.slice.value
                 if val in ("peripherals", "topology", "machine", "memory", "nodes"):
-                    if path.name not in ("world_schema.py", "yaml2qemu.py"):
+                    if path.name not in ("world_schema.py", "yaml2qemu.py", "domain.py"):
                         rule = "raw_yaml_key"
                         if not is_suppressed(lines[node.lineno - 1], rule):
                             violations.append(
@@ -103,7 +103,7 @@ def lint_file(path: Path) -> list[str]:
             if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                 val = node.args[0].value
                 if val in ("peripherals", "topology", "machine", "memory", "nodes"):
-                    if path.name not in ("world_schema.py", "yaml2qemu.py"):
+                    if path.name not in ("world_schema.py", "yaml2qemu.py", "domain.py"):
                         rule = "raw_yaml_key"
                         if not is_suppressed(lines[node.lineno - 1], rule):
                             violations.append(

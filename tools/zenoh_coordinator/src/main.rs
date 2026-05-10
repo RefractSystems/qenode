@@ -43,6 +43,8 @@ struct Args {
     nodes: Option<usize>,
     #[arg(long, default_value_t = false)]
     pdes: bool,
+    #[arg(long)]
+    listen: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -700,9 +702,18 @@ async fn main() {
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", c))
             .expect("Failed to configure Zenoh");
     }
-    config
-        .insert_json5("mode", "\"client\"")
-        .expect("Failed to configure Zenoh");
+    if let Some(ref l) = args.listen {
+        config
+            .insert_json5("listen/endpoints", &format!("[\"{}\"]", l))
+            .expect("Failed to configure Zenoh");
+        config
+            .insert_json5("mode", "\"router\"")
+            .expect("Failed to configure Zenoh");
+    } else {
+        config
+            .insert_json5("mode", "\"client\"")
+            .expect("Failed to configure Zenoh");
+    }
     let session = zenoh::open(config)
         .await
         .expect("Failed to open Zenoh session");

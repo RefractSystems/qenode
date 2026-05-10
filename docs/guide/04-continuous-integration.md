@@ -21,10 +21,6 @@ Every level of our pipeline is reproducible locally. We do not rely on "magic" G
 *   **Purpose**: The "Fast Path" developer check.
 *   **Mechanism**: Runs `dev-lint` and `dev-unit` natively in your current environment. Use this frequently during iteration.
 
-### Level 2: `make ci-local`
-*   **Purpose**: The "Safe Path" before pushing.
-*   **Mechanism**: Executed inside the **isolated `devenv` Docker container**. This guarantees 1:1 parity with GitHub's Tier 1 checks. It mounts a persistent `.ci-target/` directory to ensure Rust builds remain fast across runs.
-
 ### Level 3: `make ci-full`
 *   **Purpose**: Authoritative parity with the cloud.
 *   **Mechanism**: Executes the full suite, including `ci-asan`/`ci-miri` passes and execution of all smoke test domains inside the isolated CI images.
@@ -37,7 +33,7 @@ To ensure seamless transitions between local development and CI troubleshooting,
 
 | Domain | Local (`dev-`) | Container (`ci-`) | GitHub CI Equivalent |
 | :--- | :--- | :--- | :--- |
-| **All-in-one** | `make dev-check` | `make ci-local` | `tier-checks` |
+| **All-in-one** | `make dev-check` | `make ci-check` | `tier-checks` |
 | **Linting** | `make dev-lint` | `make ci-lint` | `tier-checks` (lint) |
 | **Unit Tests** | `make dev-unit` | `make ci-unit` | `tier-checks` (unit) |
 | **Miri (UB)** | `make dev-unit-miri` | `make ci-unit-miri` | `unit-miri` |

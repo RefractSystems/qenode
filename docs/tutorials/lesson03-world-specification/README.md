@@ -25,24 +25,24 @@ python3 -m tools.yaml2qemu tutorial/lesson03-world-specification/src/test_board.
 
 ## Part 2: Polymorphic Launching
 
-The `run.sh` script is "polymorphic"—it detects the file type you pass and compiles it if necessary.
+The `virtmcu-run` script is "polymorphic"—it detects the file type you pass and compiles it if necessary.
 
 ### 1. Booting via YAML (The Standard)
-Pass the `.yaml` file directly, and `run.sh` will invoke `yaml2qemu` for you:
+Pass the `.yaml` file directly, and `virtmcu-run` will invoke `yaml2qemu` for you:
 ```bash
-./scripts/run.sh --yaml tutorial/lesson03-world-specification/src/test_board.yaml --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+./target/release/virtmcu-run --yaml tutorial/lesson03-world-specification/src/test_board.yaml --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
 ### 2. Booting via Native Device Tree (DTS)
-If you prefer raw standard Linux Device Tree source, `run.sh` will call the `dtc` compiler automatically:
+If you prefer raw standard Linux Device Tree source, `virtmcu-run` will call the `dtc` compiler automatically:
 ```bash
-./scripts/run.sh --dts tests/fixtures/guest_apps/boot_arm/minimal.dts --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+./target/release/virtmcu-run --dts tests/fixtures/guest_apps/boot_arm/minimal.dts --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
 ### 3. Booting via Binary Blob (DTB)
 Finally, if you have a pre-compiled blob, it can be loaded directly with no translation overhead:
 ```bash
-./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
 ## Part 3: Migrating Legacy `.repl` files

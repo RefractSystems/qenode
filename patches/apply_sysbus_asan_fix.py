@@ -74,7 +74,7 @@ else:
     if "SysBusDevice *sbd =" in text:
         logger.info("sysbus_parse_reg ASan fix already applied.")
     else:
-        logger.warning("WARNING: Could not find sysbus_parse_reg to patch!")  
+        logger.warning("WARNING: Could not find sysbus_parse_reg to patch!")
 
 with Path(filepath).open("w") as f:
     f.write(text)

@@ -4,12 +4,12 @@
 # Usage:
 #   scripts/docker-build.sh [TARGET] [IMAGE_TAG]
 #
-#   TARGET    dev (default) | all | base | toolchain | devenv | ci | ci-asan | runtime
+#   TARGET    dev (default) | all | base | toolchain | devenv | ci | ci-asan
 #   IMAGE_TAG local tag suffix, default: dev
 #
 # Examples:
 #   scripts/docker-build.sh             # build base → toolchain → devenv each
-#   scripts/docker-build.sh all         # same + ci (slow: ~40 min) + runtime
+#   scripts/docker-build.sh all         # same + ci (slow: ~40 min)
 #   scripts/docker-build.sh toolchain   # build a single stage only, no integration test
 #   IMAGE_TAG=ci scripts/docker-build.sh dev
 #
@@ -21,7 +21,19 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 TARGET="${1:-dev}"
-IMAGE_TAG="${IMAGE_TAG:-dev}"
+
+# Dynamic IMAGE_TAG logic matching Makefile:
+if [ -z "${IMAGE_TAG:-}" ]; then
+    GIT_EXACT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
+    if [ -n "$GIT_EXACT_TAG" ]; then
+        IMAGE_TAG=$(echo "$GIT_EXACT_TAG" | sed 's/^v//')
+    elif [ "${CI:-false}" = "true" ]; then
+        IMAGE_TAG="sha-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+    else
+        IMAGE_TAG="latest"
+    fi
+fi
+export IMAGE_TAG
 
 # ── Load versions ──────────────────────────────────────────────────────────────
 if [[ ! -f BUILD_DEPS ]]; then
@@ -50,21 +62,37 @@ image_for() {
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
     
-    local package="${1}"
+    local stage="${1}"
     local tag="${IMAGE_TAG}"
+    local package=""
     
-    # ASAN builds are flavors of the main packages
-    if [[ "$package" == "ci-asan" ]]; then
-        package="ci"
-        tag="${IMAGE_TAG}-asan"
-    elif [[ "$package" == "third-party-base-asan" ]]; then
-        package="third-party-base"
-        tag="${THIRD_PARTY_CACHE_TAG}-asan"
-    elif [[ "$package" == third-party-base* ]]; then
-        tag="${THIRD_PARTY_CACHE_TAG}"
-    fi
+    # Map internal stages to public image names from BUILD_DEPS
+    case "${stage}" in
+        devenv)
+            package="${VIRTMCU_DEVENV_IMAGE}"
+            ;;
+        ci)
+            package="${VIRTMCU_CI_IMAGE}"
+            ;;
+        ci-asan)
+            package="${VIRTMCU_CI_IMAGE}"
+            tag="${IMAGE_TAG}-asan"
+            ;;
+        third-party-base-asan)
+            package="third-party-base"
+            tag="${THIRD_PARTY_CACHE_TAG}-asan"
+            ;;
+        third-party-base)
+            package="third-party-base"
+            tag="${THIRD_PARTY_CACHE_TAG}"
+            ;;
+        *)
+            # For base, toolchain, flatcc-builder, etc.
+            package="${stage}"
+            ;;
+    esac
     
-    echo "ghcr.io/refractsystems/virtmcu/${package}:${tag}-${ARCH}" 
+    echo "${VIRTMCU_IMAGE_REGISTRY}/${package}:${tag}-${ARCH}" 
 }
 
 build_stage() {
@@ -108,7 +136,7 @@ smoke_base() {
         sudo -n true
         echo '  --- shell ---'
         zsh --version
-        test -d /home/vscode/.oh-my-zsh || (echo 'oh-my-zsh missing' && exit 1) # virtmcu-allow: absolute_path reasoning="Legacy script"
+        test -d /home/vscode/.oh-my-zsh || (echo 'oh-my-zsh missing' && exit 1) # virtmcu-allow: absolute_path reasoning='Legacy script'
         echo '  --- locale ---'
         locale | grep 'LANG=en_US.UTF-8'
         echo '  --- uv ---'
@@ -199,22 +227,6 @@ smoke_ci_asan() {
     ok "ci-asan smoke test passed"
 }
 
-smoke_runtime() {
-    local img; img="$(image_for runtime)"
-    section "Smoke test: runtime"
-    docker run --rm "${img}" bash -c "
-        set -e
-        echo '  --- QEMU binary ---'
-        qemu-system-arm --version
-        echo '  --- Python tooling ---'
-        python3 -c 'import zenoh, sys; sys.stdout.write(\"zenoh: \" + zenoh.__version__ + \"\\n\")'
-        python3 -c 'import flatbuffers, sys; sys.stdout.write(\"flatbuffers: \" + flatbuffers.__version__ + \"\\n\")'
-        echo '  --- tools ---'
-        ls /app/tools/
-    "
-    ok "runtime smoke test passed"
-}
-
 # ── Dispatch ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -243,9 +255,6 @@ case "${TARGET}" in
         else
             build_stage third-party-base
         fi
-        ;;
-    runtime)
-        build_stage runtime
         ;;
     dev)
         # One-stop for local development: base → toolchain → devenv with smoke tests
@@ -278,16 +287,14 @@ case "${TARGET}" in
         smoke_ci
         build_stage ci-asan
         smoke_ci_asan
-        build_stage runtime
-        smoke_runtime
         section "All stages built and verified"
-        for s in base toolchain devenv ci ci-asan runtime; do
+        for s in base toolchain devenv ci ci-asan; do
             echo "    $(image_for "${s}")"
         done
         ;;
     *)
         echo "error: unknown target '${TARGET}'" >&2
-        echo "usage: $0 [dev|all|base|toolchain|devenv|third-party-builder|ci|ci-asan|runtime]" >&2
+        echo "usage: $0 [dev|all|base|toolchain|devenv|third-party-builder|ci|ci-asan]" >&2
         exit 1
         ;;
 esac

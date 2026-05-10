@@ -365,6 +365,9 @@ ENV PATH="/build/qemu/build-virtmcu/install/bin:${PATH}"
 COPY Cargo.toml Cargo.lock /build/virtmcu/
 COPY hw/ /build/virtmcu/hw/
 COPY tools/ /build/virtmcu/tools/
+COPY tests/ /build/virtmcu/tests/
+COPY schema/ /build/virtmcu/schema/
+COPY generated/ /build/virtmcu/generated/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
     && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \

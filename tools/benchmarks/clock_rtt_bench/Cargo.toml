@@ -1,0 +1,13 @@
+[package]
+name = "clock_rtt_bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+clap = { version = "4.4.18", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+zenoh.workspace = true
+virtmcu-api = { path = "../../../hw/rust/common/virtmcu-api" }
+tokio = { version = "1.37.0", features = ["full"] }

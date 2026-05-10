@@ -50,7 +50,9 @@ async def wait_for_file_creation(path: str | os.PathLike, timeout: float = 10.0)
         if path.exists():
             return
         await asyncio.wait_for(
-            event.wait(), timeout=timeout * get_time_multiplier()  # virtmcu-allow: time_multiplier reasoning="legacy script compatibility"
+            event.wait(),
+            timeout=timeout
+            * get_time_multiplier(),  # virtmcu-allow: time_multiplier reasoning="legacy script compatibility"
         )  # virtmcu-allow: time_multiplier reasoning="external package API)"
     finally:
         observer.stop()

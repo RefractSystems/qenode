@@ -1,8 +1,11 @@
+"""Factory method to create strongly-typed devices based on type_name."""
+
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +22,107 @@ class ReplDevice:
     name: str
     type_name: str
     address_str: str | None = None
-    properties: dict[str, Any] = field(default_factory=dict)
+    parent: str | None = None
+    properties: dict[str, object] = field(default_factory=dict)
     interrupts: list[ReplInterrupt] = field(default_factory=list)
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        type_name: str,
+        address_str: str | None = None,
+        parent: str | None = None,
+        properties: dict[str, object] | None = None,
+        interrupts: list[ReplInterrupt] | None = None,
+    ) -> ReplDevice:
+
+        props = properties if properties is not None else {}
+        irqs = interrupts if interrupts is not None else []
+
+        if type_name in ("IRQControllers.GIC", "IRQControllers.ARM_GenericInterruptController"):
+            return GicDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
+
+        if type_name == "IRQControllers.NVIC":
+            return NvicDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
+
+        if type_name == "Memory.MappedMemory":
+            return MemoryDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
+
+        if type_name == "mmio-socket-bridge":
+            return MmioBridgeDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
+
+        if type_name in ("ieee802154", "telemetry"):
+            return WirelessDevice(
+                name=name,
+                type_name=type_name,
+                address_str=address_str,
+                parent=parent,
+                properties=props,
+                interrupts=irqs,
+            )
+
+        return ReplDevice(
+            name=name,
+            type_name=type_name,
+            address_str=address_str,
+            parent=parent,
+            properties=props,
+            interrupts=irqs,
+        )
+
+
+@dataclass
+class GicDevice(ReplDevice):
+    interrupt_cells: int = 3
+
+
+@dataclass
+class NvicDevice(ReplDevice):
+    interrupt_cells: int = 1
+
+
+@dataclass
+class MemoryDevice(ReplDevice):
+    pass  # we'll migrate size parsing here
+
+
+@dataclass
+class MmioBridgeDevice(ReplDevice):
+    pass
+
+
+@dataclass
+class WirelessDevice(ReplDevice):
+    pass
 
 
 @dataclass
@@ -63,7 +165,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
             full_path = Path(base_dir) / included_file
             if Path(full_path).exists():
                 with Path(full_path).open() as f:
-                    included_platform = parse_repl(f.read(), Path(full_path).parent)
+                    included_platform = parse_repl(f.read(), str(Path(full_path).parent))
                     platform.devices.extend(included_platform.devices)
             else:
                 logger.error(f"Included file not found: {full_path}")
@@ -82,7 +184,7 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
                     if addr.lower() == "sysbus":
                         addr = None
 
-                current_device = ReplDevice(name, type_name, addr)
+                current_device = ReplDevice.create(name, type_name, addr)
                 platform.devices.append(current_device)
             else:
                 # Could be a generic sysbus block or tag block, ignore
@@ -142,9 +244,9 @@ def parse_repl(content: str, base_dir: str = ".") -> ReplPlatform:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     import sys
 
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     filename = sys.argv[1] if len(sys.argv) > 1 else "third_party/renode/platforms/boards/cortex_a53_virtio.repl"
     with Path(filename).open() as f:
         plat = parse_repl(f.read())

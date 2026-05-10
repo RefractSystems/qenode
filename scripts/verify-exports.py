@@ -5,13 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
-
-# Try to import WORKSPACE_DIR from our internal environment helper
-try:
-    from tools.testing.env import WORKSPACE_DIR
-except ImportError:
-    WORKSPACE_DIR = Path(__file__).resolve().parent.parent
+WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _get_nm_tool() -> str:
@@ -90,7 +84,7 @@ def main() -> int:
     found_any = False
 
     try:
-        qemu_bin = resolve_qemu_binary(arch="arm")
+        qemu_bin = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/qemu-system-arm"
         if qemu_bin.exists():
             found_any = True
             if not check_symbols(qemu_bin, QEMU_REQUIRED_EXPORTS, is_executable=True):

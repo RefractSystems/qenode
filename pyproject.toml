@@ -139,6 +139,7 @@ module = [
     "yaml.*",
     "psutil.*",
     "numpy.*",
+    "firmware_provenance",
 ]
 ignore_missing_imports = true
 
