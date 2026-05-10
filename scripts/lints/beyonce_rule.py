@@ -51,6 +51,31 @@ def get_changed_files() -> list[str]:
 
     git = get_git_executable()
 
+    if base_ref:
+        # Verify the base_ref exists. In CI, it might need 'origin/' prefix.
+        try:
+            subprocess.run(
+                [git, "rev-parse", "--verify", base_ref],
+                capture_output=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            # If not found, try origin/ prefix (common in CI)
+            if not base_ref.startswith("origin/"):
+                candidate = f"origin/{base_ref}"
+                try:
+                    subprocess.run(
+                        [git, "rev-parse", "--verify", candidate],
+                        capture_output=True,
+                        check=True,
+                    )
+                    base_ref = candidate
+                except subprocess.CalledProcessError:
+                    # If still not found, we'll hit the 'not base_ref' block below
+                    base_ref = None
+            else:
+                base_ref = None
+
     if not base_ref:
         # Locally, we try to compare against origin/main or main
         for candidate in ["origin/main", "main"]:
@@ -116,8 +141,11 @@ def get_changed_files() -> list[str]:
 def main() -> None:
     """Main execution point for the Beyoncé Rule check."""
     import argparse
+
     parser = argparse.ArgumentParser(description="Verify the Beyoncé Rule (code changes require test changes).")
-    parser.add_argument("--watch", nargs="+", default=["hw/rust/", "tools/"], help="Directories to watch for code changes")
+    parser.add_argument(
+        "--watch", nargs="+", default=["hw/rust/", "tools/"], help="Directories to watch for code changes"
+    )
     parser.add_argument("--test-dir", default="tests/", help="Directory where tests should be added/updated")
     args = parser.parse_args()
 
@@ -131,7 +159,9 @@ def main() -> None:
 
     # Filter for relevant changes in watch directories
     code_changes = [
-        f for f in changed_files if any(f.startswith(w) for w in args.watch) 
+        f
+        for f in changed_files
+        if any(f.startswith(w) for w in args.watch)
         and not f.startswith("tools/testing/")
         and not f.startswith("tools/debug/")
         and not is_exempt(f)

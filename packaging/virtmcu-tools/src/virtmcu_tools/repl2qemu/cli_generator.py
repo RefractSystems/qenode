@@ -1,11 +1,15 @@
+"""
+Generates the QEMU CLI arguments based on the parsed platform.
+Returns (args_list, arch_string).
+"""
+
+from __future__ import annotations
+
 from .parser import ReplPlatform
 
 
 def generate_cli(platform: ReplPlatform, dtb_path: str) -> tuple[list[str], str]:
-    """
-    Generates the QEMU CLI arguments based on the parsed platform.
-    Returns (args_list, arch_string).
-    """
+
     arch = "arm"
     cpu_type_m = False
     for dev in platform.devices:

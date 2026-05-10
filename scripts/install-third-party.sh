@@ -68,41 +68,66 @@ if [ ! -d "$ZENOHC_SRC_DIR/.git" ]; then
     echo "==> Cloning Zenoh-C $ZENOHC_VER from source into $ZENOHC_SRC_DIR..."
     git clone --depth=1 --branch "$ZENOHC_VER" https://github.com/eclipse-zenoh/zenoh-c.git "$ZENOHC_SRC_DIR"
 fi
-
 if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+    export RUSTUP_TOOLCHAIN=nightly
     ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c-asan"
     ZENOHC_BUILD_DIR="$ZENOHC_SRC_DIR/build-asan"
     export RUSTC_BOOTSTRAP=1
     # Fix for proc-macro compilation with ASan: force separate host/target builds
     TRIPLE="$(rustc -vV | grep 'host:' | awk '{print $2}')"
     export CARGO_BUILD_TARGET="${TRIPLE}"
-    export CARGO_TARGET_DIR="$ZENOHC_SRC_DIR/target-asan"
+    # Remove CARGO_TARGET_DIR export so CMake can find the output where it expects
     TRIPLE_UPPER="$(echo "${TRIPLE}" | tr '[:lower:]-' '[:upper:]_')"
-    export "CARGO_TARGET_${TRIPLE_UPPER}_RUSTFLAGS=-Zsanitizer=address"
-    export "CFLAGS_${TRIPLE}=-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
-    export "CXXFLAGS_${TRIPLE}=-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
-    export LDFLAGS="-fsanitize=address -fsanitize=undefined"
     export HOST_CFLAGS=""
+    export HOST_LDFLAGS=""
     export HOST_CXXFLAGS=""
     export CARGO_HOST_RUSTFLAGS=""
+
     echo "==> Configuring Zenoh-C for ASan build..."
+
 else
     ZENOHC_DIR="$WORKSPACE_DIR/third_party/zenoh-c"
     ZENOHC_BUILD_DIR="$ZENOHC_SRC_DIR/build-release"
     export CARGO_TARGET_DIR="$ZENOHC_SRC_DIR/target-release"
+    TRIPLE="$(rustc -vV | grep 'host:' | awk '{print $2}')"
+    export CARGO_BUILD_TARGET="${TRIPLE}"
 fi
 
 if [ ! -d "$ZENOHC_DIR/include" ]; then
     echo "==> Building Zenoh-C $ZENOHC_VER into $ZENOHC_DIR..."
+    
+    if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+        export RUSTUP_TOOLCHAIN=nightly
+        export "CARGO_TARGET_${TRIPLE_UPPER}_RUSTFLAGS=-Zsanitizer=address"
+        export RUSTFLAGS="-Zsanitizer=address"
+    fi
+
     cmake -S "$ZENOHC_SRC_DIR" -B "$ZENOHC_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ZENOHC_DIR" -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF
     cmake --build "$ZENOHC_BUILD_DIR" -j"$(nproc)"
+    
+    if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+        unset RUSTUP_TOOLCHAIN
+        unset "CARGO_TARGET_${TRIPLE_UPPER}_RUSTFLAGS"
+        unset RUSTFLAGS
+    fi
+
+    # Fix CMake install path assumption when using custom CARGO_TARGET_DIR
+
+    if [ "${VIRTMCU_USE_ASAN:-0}" = "1" ]; then
+        mkdir -p "$ZENOHC_BUILD_DIR/release/target/${TRIPLE}/release"
+        cp "$ZENOHC_SRC_DIR/target-asan/${TRIPLE}/release/libzenohc.so" "$ZENOHC_BUILD_DIR/release/target/${TRIPLE}/release/" || true
+        cp "$ZENOHC_SRC_DIR/target-asan/${TRIPLE}/release/libzenohc.a" "$ZENOHC_BUILD_DIR/release/target/${TRIPLE}/release/" || true
+    fi
+
     cmake --install "$ZENOHC_BUILD_DIR"
 fi
 
 # Compile flatcc from source for Telemetry (guarantees parity with CI)
+unset RUSTFLAGS
 FLATCC_VER="${FLATCC_VERSION}"
 FLATCC_SRC_DIR="$WORKSPACE_DIR/third_party/flatcc-src"
 FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
+
 
 if [ ! -d "$FLATCC_SRC_DIR/.git" ]; then
     echo "==> Cloning flatcc v$FLATCC_VER from source into $FLATCC_SRC_DIR..."
@@ -162,21 +187,17 @@ if [ "$VIRTMCU_USE_CCACHE" = "1" ]; then
 fi
 
 if [ "$VIRTMCU_USE_ASAN" = "1" ]; then
-    echo "ASAN/UBSAN enabled: adding --enable-asan --enable-ubsan -Db_sanitize=address,undefined to QEMU build"
-    CONFIGURE_ARGS+=(--enable-asan --enable-ubsan "-Db_sanitize=address,undefined")
+    echo "ASAN/UBSAN enabled: adding --enable-asan --enable-ubsan to QEMU build"
+    CONFIGURE_ARGS+=(--enable-asan --enable-ubsan)
     export VIRTMCU_USE_ASAN
-    # Ensure all Rust targets (including QEMU's own and our plugins) link with sanitizers
     export RUSTC_BOOTSTRAP=1
-    export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address"
     export HOST_CFLAGS=""
     export HOST_CXXFLAGS=""
 elif [ "$VIRTMCU_USE_TSAN" = "1" ]; then
-    echo "TSAN enabled: adding --enable-tsan -Db_sanitize=thread to QEMU build"
-    CONFIGURE_ARGS+=(--enable-tsan -Db_sanitize=thread)
+    echo "TSAN enabled: adding --enable-tsan to QEMU build"
+    CONFIGURE_ARGS+=(--enable-tsan)
     export VIRTMCU_USE_TSAN
-    # ThreadSanitizer in Rust requires nightly or RUSTC_BOOTSTRAP=1 with unstable flags
     export RUSTC_BOOTSTRAP=1
-    export RUSTFLAGS="${RUSTFLAGS:-} -Z sanitizer=thread"
 fi
 
 if [ "$(uname)" = "Darwin" ]; then

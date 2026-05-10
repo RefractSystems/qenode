@@ -157,7 +157,7 @@ class NodeManager:
 
         cmd = [
             "bash",
-            "scripts/run.sh",
+            "target/release/virtmcu-run",
             f"--{node.yaml_path.split('.')[-1]}",
             node.yaml_path,
         ]

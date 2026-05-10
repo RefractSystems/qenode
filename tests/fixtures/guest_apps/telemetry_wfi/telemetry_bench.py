@@ -16,7 +16,6 @@ import typing
 
 import numpy as np
 import zenoh
-
 from tools.testing.virtmcu_test_suite.conftest_core import open_client_session
 
 logger = logging.getLogger(__name__)

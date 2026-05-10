@@ -201,9 +201,75 @@ If a bug can be caught at lint time, **write a linter**. Do not rely on a runtim
 
 ---
 
-## 9. Infrastructure Orchestration: The Golden Template
+## 10. Rust Test Orchestration (`virtmcu-test-runner`)
 
-When testing VirtMCU's out-of-band infrastructure components (like `deterministic_coordinator` or `zenoh_router`), we must strictly avoid "shadow orchestration" (manually spinning up threads or using banned subprocess APIs).
+As part of our commitment to SOTA engineering and strict determinism, VirtMCU has migrated away from fragile bash orchestration scripts. For tests that require full lifecycle management of QEMU, the Deterministic Coordinator, and external mock adapters, we use the Rust-based `virtmcu-test-runner`.
+
+### Why Rust for Test Orchestration?
+1. **Asynchronous Reliability:** Built on `tokio`, the runner can accurately manage multiple subprocesses without race conditions, avoiding the brittle `sleep X` and `kill -0` patterns found in bash.
+2. **RAII Resource Management:** Temporary directories and UNIX sockets are automatically cleaned up when the runner exits (or panics), ensuring no zombie processes or orphaned files pollute the CI environment.
+3. **YAML Test Specification:** Complex multi-step tests are defined in a clean, declarative YAML format.
+
+### Anatomy of a Rust Integration Test
+Integration tests for the Rust runner are defined in `tests/rust_integration/*.yaml`. A typical spec looks like this:
+
+```yaml
+name: "My Complex Test"
+firmware:
+  asm: |
+    .global _start
+    _start: loop: nop; b loop
+dtb:
+  dts: |
+    /dts-v1/;
+    / {
+        model = "virtmcu-test"; compatible = "arm,generic-fdt"; #address-cells = <2>; #size-cells = <2>;
+        qemu_sysmem: qemu_sysmem { compatible = "qemu:system-memory"; phandle = <0x01>; };
+        chosen {};
+        memory@40000000 { compatible = "qemu-memory-region"; qemu,ram = <0x01>; container = <0x01>; reg = <0x0 0x40000000 0x0 0x10000000>; };
+        cpus { #address-cells = <1>; #size-cells = <0>; cpu@0 { device_type = "cpu"; compatible = "cortex-a15-arm-cpu"; reg = <0>; memory = <0x01>; }; };
+        uart0@9000000 { compatible = "pl011"; reg = <0x0 0x09000000 0x0 0x1000>; chardev = <0x00>; };
+    };
+qemu_args:
+  - "--dtb"
+  - "{DTB_PATH}"
+  - "-kernel"
+  - "{ELF_PATH}"
+  - "-nographic"
+  - "-monitor"
+  - "none"
+  - "-device"
+  - "virtmcu-transport-hub,id=hub0,node=0,router={ROUTER_ENDPOINT}"
+  - "-chardev"
+  - "virtmcu,id=uart0,node=0,transport=hub0,topic=sim/uart/0"
+  - "-serial"
+  - "chardev:uart0"
+qemu_ready_pattern: "Worker thread for node 0 started"
+pre_run:
+  - command: "python3"
+    args: ["-u", "{WORKSPACE_DIR}/tests/zenoh_router_persistent.py", "{ROUTER_ENDPOINT}"]
+    background: true
+test_script:
+  command: "python3"
+  args: ["{WORKSPACE_DIR}/tests/fixtures/guest_apps/my_test/my_test.py", "{ROUTER_ENDPOINT}"]
+timeout_secs: 60
+```
+
+### Key Features of the YAML Spec
+* **`firmware` & `dtb`:** The runner can compile minimal `.S` assembly and `.dts` definitions on the fly, storing them in a secure temporary directory (`{TMP_DIR}`). You can also provide paths to pre-compiled artifacts.
+* **Variables:** The runner automatically substitutes `{WORKSPACE_DIR}`, `{TMP_DIR}`, and `{ROUTER_ENDPOINT}`. `{ROUTER_ENDPOINT}` is automatically populated by finding a free TCP port, guaranteeing zero cross-talk between parallel CI jobs.
+* **`pre_run`:** A list of commands to execute before launching QEMU. If `background: true` is set, the process is spawned and managed by the runner's async runtime.
+* **Synchronization:** 
+  * `wait_for_socket: "{TMP_DIR}/my.sock"` (in a `pre_run` step or `test_script`): Instructs the runner to pause until a specific UNIX socket is created.
+  * `qemu_ready_pattern`: The test script will NOT execute until QEMU outputs this exact string to `stdout` or `stderr`. This completely eliminates timing vulnerabilities.
+* **`test_script`:** The primary validation logic. This is usually a Python script that connects to Zenoh, injects stimuli, and verifies output.
+
+### When to use `virtmcu-test-runner` vs. `virtmcu_test_suite` (Pytest)
+* **Use `virtmcu-test-runner`** when you need to test the lowest levels of infrastructure (e.g., QOM initialization stress, BQL deadlocks, raw IRQ injection rates) where you want absolute control over the exact QEMU command line and need to orchestrate external non-Python binaries (like Rust adapters).
+* **Use `virtmcu_test_suite` (Pytest)** when you are testing complex multi-node simulation logic, peripheral modeling, or anything that requires the standard freeze/sync/cont lifecycle provided by the `Simulation` fixture.
+
+
+## 11. Infrastructure Orchestration: The Golden Template
 
 To maintain SOTA (State of the Art) test stability, deterministic timing, and interleaved logging, all infrastructure tests **must** use the `ManagedSubprocess` + `asyncio.Queue` pattern.
 

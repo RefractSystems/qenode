@@ -1,44 +1,28 @@
 # virtmcu Active Implementation Plan
 
-**Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine instantiation, and deterministic multi-node simulation. The software MUST be at the highest Enteprise Quality following the SOTA of software development.
+**Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine instantiation, and deterministic multi-node simulation.
+  The software MUST be at the highest Enteprise Quality following the SOTA of software development.
 **Primary Focus**: Binary Fidelity — unmodified firmware ELFs must run in VirtMCU as they would on real hardware.
-
-## 1. General Guidelines & Mandates
-
-### Milestone Lifecycle
-Once a Milestone is completed and verified, it MUST be moved from `PLAN.md` to the `/docs/guide/05-project-history.md` file to maintain a clean roadmap and a clear historical record.
-
-### Educational Content (Tutorials)
-For every completed milestone, a corresponding tutorial lesson MUST be added in `/tutorial`.
-- **Target**: CS graduate students and engineers.
-- **Style**: Explain terminology, provide reproducible code, and teach practical debugging skills.
-
-### Regression Testing
-For every completed milestone, an automated integration test MUST be added to `tests/` or `tests/fixtures/guest_apps/`.
-- **Bifurcated Testing**:
-  - **White-Box (Rust)**: Use `cargo test` for internal state, memory layouts, and protocol parsing.
-  - **Black-Box (Python)**: Use `pytest` for multi-process orchestration (QEMU + Zenoh + TimeAuthority).
-  - **Thin CI Wrappers (Bash)**: Bash scripts should only be 2-3 lines calling `pytest` or `cargo test`.
-
-### Production Engineering Mandates
-- **Environment Agnosticism**: No hardcoded paths. Use `tmp_path` for artifacts.
-- **Explicit Constants**: No magic numbers. Use descriptive `const` variables.
-- **The Beyonce Rule**: Prove bugs with a failing test before fixing.
-- **Lint Gate**: `make dev-lint` must pass before every commit (ruff, version checks, cargo clippy -D warnings).
-
-## 2. Open Items — Ordered by Priority
-
-> **Last updated**: 2026-04-29 (audit of `close_P0s` branch, commit `f45f676`).
-> **Mandatory before every commit**: `make dev-check` must both pass.
-> Completed P0 history is in `docs/guide/05-project-history.md`.
 
 ---
 
+## Language Selection Rules (Enterprise SOTA Mandate)
+To maintain performance, type-safety, and long-term maintainability, the following language rules apply:
 
+1. **Write in Rust if**:
+   * It touches a virtual clock, routes a packet, or handles a bit-for-bit hardware register.
+   * It is a complex generator or validation tool (e.g., parsing topologies to emit QEMU CLI args) where schema adherence is critical.
+   * It is a high-performance adapter or bridge interfacing with external simulators (e.g., SystemC).
+2. **Write in Python if**:
+   * It interacts with AI agents (e.g., MCP servers).
+   * It generates human-readable reports (e.g., coverage analysis).
+   * It provides a high-level UI gateway or simple test orchestration framework.
+3. **Avoid Bash for Orchestration**:
+   * Bash is strictly for simple aliases, CI glue, or single-command wrappers.
+   * Complex test setups involving background PIDs, inter-process communication, or fragile timing dependencies MUST be written in Rust (via `tokio`) or Python.
 
-**Determinism migration (new — highest correctness priority):**
-1. **Phase X: Active Codebase Migration to TypeSpec Schema** (See details below)
-2. [x] **DET-9** — Wireshark extcap plugin (Completed).
+---
+
 
 **Hardware / infrastructure (existing, continue in parallel with DET work):**
 3. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
@@ -51,48 +35,38 @@ For every completed milestone, an automated integration test MUST be added to `t
 
 ---
 
-### Phase X: Active Codebase Migration to TypeSpec Schema 🚧
-**Status**: 🟡 Open. *Depends on the successfully implemented and tested TypeSpec generation pipeline (Completed).*
-
-**Goal**: Now that the TypeSpec SSoT (Single Source of Truth) is generating 100% tested Pydantic and Serde models, the active codebase must be migrated to actually *use* these generated files, replacing all manually maintained schema definitions.
+### Phase X: The Native Rust Singularity (Testing Framework Migration) ✅
+**Status**: ✅ Completed.
+**Goal**: Eradicate `pytest`, Python-based orchestration, and fragile bash wrappers, shifting 100% of the integration testing logic into native `#[tokio::test]` leveraging the RAII-safe `virtmcu-test-runner` library.
 
 **Tasks**:
-- [ ] **X.1** Migrate Python Tooling: Replace all manual Pydantic definitions in `tools/testing/virtmcu_test_suite/world_schema.py` with imports from the newly generated `tools/testing/virtmcu_test_suite/generated.py`. Update downstream consumers like `yaml2qemu.py` and `runner.py` to match the exact attribute shapes (e.g. unwrapping `.root` values on generated alias types like `Address` and `NodeID`).
-- [ ] **X.2** Migrate Rust Coordinator: Replace the manual `serde` definitions inside `tools/deterministic_coordinator/src/topology.rs` with the generated `deterministic_coordinator::generated::topology::WorldSchema`. Update the `TopologyGraph` construction logic to unwrap the generated `Result<Option<T>>` Typify types safely.
-- [ ] **X.3** Clean Up: Delete the obsolete, manually maintained `world_schema.py` file.
+- [x] **X.1 Core Tooling Migration**: Port QMP edge case and failure injection tests to `tests/native_integration/tests/qmp.rs`.
+- [x] **X.2 Generic Peripheral Monitors**: Build Flatbuffer-aware type-safe Zenoh clients (`monitors.rs`) for Telemetry, SPI, LIN, FlexRay, UART, and Actuators.
+- [x] **X.3 Python Purge - Peripherals**: Rewrite `test_spi.py`, `test_telemetry.py`, `test_canfd.py`, `test_lin.py`, `test_flexray.py`, `test_uart_echo.py`, and `test_actuator.py` into native Rust and delete the Python implementations.
+- [x] **X.4 Python Purge - Infrastructure**: Migrate the core Determinism logic: `test_clock_suspend.py`, `test_ftrt_timing.py`, `test_coordinator.py`, `test_topology_integrity.py`.
+- [x] **X.5 CLI Tool Subsumption**: Integrate `--coverage`, `--miri`, and `--asan` flags natively into the `virtmcu-test-runner` CLI, subsuming `scripts/testing/*.sh` wrappers.
+- [x] **X.6 The Final Strike**: Delete `tools/testing/virtmcu_test_suite/`, remove `pytest` from all environment files, delete all YAML specs in `tests/specs/`, and purge Python scripts embedded within `docs/tutorials/`. Migrated `yaml2qemu` to `packaging/virtmcu-tools` as a self-contained package.
 
-**Testing Requirements**:
-- [ ] Ensure all existing Python unit and integration tests (especially `tests/unit/test_yaml2qemu.py` and `tests/integration/system/`) pass without modification using the new generated models.
-- [ ] Ensure `cargo test` passes cleanly inside the coordinator.
-- [ ] Run the full `make ci-local` pipeline to ensure no hidden dependencies or test fixtures relied on legacy schema quirks.
-
-**Exit Criteria**:
-- `tools/testing/virtmcu_test_suite/world_schema.py` is completely removed.
-- `tools/deterministic_coordinator/src/topology.rs` contains zero manual data structures, relying entirely on the `generated::topology` module.
-- `make ci-local` completes 100% successfully.
 
 ---
 
 ### [Hardware] Milestone 24 — CAN-FD (Bosch M_CAN) 🚧
-*Depends on: Milestone 19 (Rust QOM) ✅*
 - [ ] **24.1** Implement missing Bosch M_CAN register logic.
 - [ ] **24.2** Enable and verify CAN-FD frame payload delivery over Zenoh.
 - [ ] **24.3** Pass Vendor SDK loopback/echo tests (Link to Milestone 32.1).
 
 ### [Hardware] Milestone 27 — FlexRay (Automotive) 🚧
-*Depends on: Milestone 5 (Bridge) ✅, Milestone 19 (Rust QOM) ✅*
 - [ ] **27.1.1** Add FlexRay Interrupts (IRQ lines).
 - [ ] **27.1.2** Implement Bosch E-Ray Message RAM Partitioning.
 - [ ] **27.2.1** Fix SystemC build regression (CMake 4.3.1 compatibility).
 
 ### [Hardware] Milestone 21 — WiFi (802.11) 🚧
-*Depends on: Milestone 20.5 (SPI)*
 - [ ] **21.7.1** Harden `arm-generic-fdt` Bus Assignment (Child node auto-discovery).
 - [ ] **21.7.2** Formalize `wifi` Rust QOM Proxy.
 - [ ] **21.2** Implement SPI/UART WiFi Co-Processor (e.g., ATWINC1500).
 
 ### [Hardware] Milestone 22 — Thread Protocol 🚧
-*Depends on: Milestone 20.5 (SPI), Milestone 21 (WiFi)*
+*Depends on: Milestone 21 (WiFi)*
 - [ ] **22.1** Deterministic Multi-Node UART Bus Bridge.
 - [ ] **22.2** SPI 802.15.4 Co-Processor (e.g., AT86RF233).
 
@@ -118,7 +92,10 @@ For every completed milestone, an automated integration test MUST be added to `t
 *Ongoing*
 - [ ] **30.8** Comprehensive Firmware Coverage (drcov integration).
 - [x] **30.9.1** Implement Rust `stress-adapter` tool.
+- [ ] **30.9.2** Implement Rust `systemc-adapter` tool (C++ to Rust migration).
 - [ ] **30.10** Unified Coverage Reporting (Host + Guest).
+- [ ] **30.11** Migrate `yaml2qemu.py` validation logic to Rust. This ensures strict, compile-time adherence to the TypeSpec schema via the Rust Domain Models.
+- [ ] **30.12** Migrate fragile Bash test orchestration scripts (e.g., in `tests/fixtures/guest_apps/irq_stress/`) to a robust Rust test runner.
 
 
 ### [Hardware] Milestone 32 — Vendor Firmware Validation (Binary Fidelity) 🚧
@@ -142,7 +119,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 - [ ] **32.2** **Ethernet (MAC)**:
   - *Target*: Identify a specific vendor MCU/Board with an Ethernet MAC supported by QEMU (e.g., SMSC LAN9118 on Cortex-A15, or NXP ENET on i.MX).
   - *Action*: Download the official vendor SDK lwIP/ping example. Compile unmodified and test against `virtmcu-netdev` to verify bidirectional packet flow.
-- [ ] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
+- [x] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
 
 ### [Infrastructure] Milestone 33 — Deprecation of `repl2qemu` and `.repl` format 🚧
 **Status**: 🟡 Open.
@@ -150,10 +127,9 @@ For every completed milestone, an automated integration test MUST be added to `t
 **Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). This eliminates the structural drift inherent in "all-in-one" `.repl` definitions.
 
 **Tasks**:
-- [ ] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format using the `repl2yaml.py` utility.
+- [x] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format using the `repl2yaml.py` utility.
 - [ ] **33.2**: Refactor `yaml2qemu.py` to remove its dependency on `repl2qemu/fdt_emitter.py`. Integrate the required FDT emission logic directly into `yaml2qemu` or a new modern library.
-- [ ] **33.3**: Completely remove the `tools/repl2qemu` package and its associated CLI commands.
-- [ ] **33.4**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow as defined in Architecture Chapter 11.
+- [ ] **33.3**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow as defined in Architecture Chapter 11.
 
 
 ### [Infrastructure] INFRA-9 — Execution Pacing & Faster-Than-Real-Time (FTRT) Support
@@ -171,7 +147,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 **Goal**: Implement a visually rich, interactive dashboard to visualize the simulation topology, link states, and live packet movement.
 
 **Design Mandates**:
-1.  **Simulation Gateway Pattern**: Use a **FastAPI** backend as an "Intelligence Gateway" to aggregate raw simulation data and serve it to both humans (WebSockets) and AI Agents (REST).
+1.  **Simulation Gateway Pattern**: Use a **Rust/Axum** backend as an "Intelligence Gateway" to aggregate raw simulation data and serve it to both humans (WebSockets) and AI Agents (REST). This ensures performance (FTRT traffic teeing) adheres to the project's language selection rules.
 2.  **Transport Agnostic Observer**:
     *   **Zenoh**: Passive subscriber to `sim/**` topics.
     *   **Unix Sockets**: Implement an "Observer Port" in the `deterministic_coordinator` that "tees" all routed traffic to a local Unix stream.
@@ -182,20 +158,7 @@ For every completed milestone, an automated integration test MUST be added to `t
 - [ ] **Milestone 23**: Bluetooth (nRF52840 RADIO emulation).
 - [ ] **Milestone 26**: Automotive Ethernet (100BASE-T1).
 - [ ] **Milestone 28**: Full Digital Twin (Multi-Medium Coordination).
-- [x] **DET-9**: Wireshark extcap plugin (Completed).
 
-## 3. Architectural Hardening — Concurrency, Correctness & Scale
-
-> **Purpose**: Close known concurrency bugs, wire-protocol gaps, and design debt identified
-> in the April 2026 deep-architecture review. Tasks are ordered by severity. Each is
-> self-contained with exact file paths, step-by-step implementation, tests, and a binary
-> definition of done.
->
-> **Audience**: AI coding agents and junior engineers. Follow steps exactly. Do not infer.
->
-> **Prerequisite**: `make dev-check` MUST pass before starting any task.
-
----
 
 ### **[ARCH-14] Document and Measure Simulation Frequency Ceiling** — Observability
 
@@ -266,9 +229,5 @@ Items here have no immediate action — they are structural constraints or futur
 |---|---|---|
 | R1 | `arm-generic-fdt` patch drift | Ongoing. QEMU version is pinned; all patches go through `scripts/apply-qemu-patches.sh`. Track upstream `accel/tcg` changes on each QEMU bump. |
 | R7 | `icount` performance | Design guideline: use `slaved-icount` only when sub-quantum timing precision is required. `slaved-suspend` is the default. |
-| R11 | Zenoh session deadlocks in teardown | Mitigated: `SafeSubscriber` (Milestone 1) and BQL-yielding (Milestone 18.7). |
 | R18 | No firmware coverage gate | Binary fidelity is the #1 invariant but there is no `drcov`/coverage CI gate. Tracked as Milestone 30.8. |
 
-## 5. Permanently Rejected / Won't Do
-- Generic "virtmcu-only" hardware interfaces (Violates ADR-006 Binary Fidelity).
-- [x] Fixed Miri tests across the workspace

@@ -11,16 +11,16 @@ It also verifies QOM TypeInfo metadata (e.g. class_size).
 import logging
 import re
 import sys
+from pathlib import Path
 
-from tools.testing.env import WORKSPACE_DIR
-from tools.testing.virtmcu_test_suite.artifact_resolver import resolve_qemu_binary
+WORKSPACE_DIR = Path(__file__).parent.parent
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
     try:
-        qemu_bin = resolve_qemu_binary(arch="arm")
+        qemu_bin = WORKSPACE_DIR / "third_party/qemu/build-virtmcu/qemu-system-arm"
         probe_layouts = qemu_bin.exists()
     except Exception:
         probe_layouts = False

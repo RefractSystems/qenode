@@ -35,8 +35,8 @@
         compatible = "s32k144-lpuart";
         reg = <0x0 0x4006a000 0x0 0x1000>;
         node = <0>;
-        topic = "sim/lin";
-        router = "ZENOH_ROUTER_ENDPOINT";
+        topic = "{LIN_TOPIC}";
+        router = "{ROUTER_ENDPOINT}";
         container = <0x01>;
     };
 };

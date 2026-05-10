@@ -55,9 +55,9 @@ def parse_drcov(filename: str | Path) -> list[tuple[int, int]]:
         entry = data[i * entry_size : (i + 1) * entry_size]
         if len(entry) < entry_size:
             break
-        start = int.from_bytes(entry[0:4], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy script"
-        size = int.from_bytes(entry[4:6], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy script"
-        _mod_id = int.from_bytes(entry[6:8], "little")  # virtmcu-allow: int_from_bytes reasoning="Legacy script"
+        start = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24)
+        size = entry[4] | (entry[5] << 8)
+        _mod_id = entry[6] | (entry[7] << 8)
         bbs.append((start, start + size))
 
     return bbs

@@ -457,6 +457,7 @@ virtmcu_qom::define_properties!(
 unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = klass as *mut virtmcu_qom::qdev::DeviceClass;
     (*dc).realize = Some(flexray_realize);
+    (*dc).user_creatable = true;
     virtmcu_qom::device_class_set_props!(dc, FLEXRAY_PROPS);
 
     virtmcu_qom::qom::object_class_property_add_link(

@@ -26,6 +26,7 @@ DEFAULT_EXCLUDES = [
     ".claude",
     "__pycache__",
     ".cargo-cache",
+    ".venv",
 ]
 
 
@@ -38,8 +39,9 @@ def is_suppressed(line: str, rule_name: str) -> bool:
     """
     Checks if a lint rule is suppressed on a given line.
     Enforces the SOTA 'virtmcu-allow: <rule_name> reasoning="<reason>"' pattern.
+    Supports both single (') and double (") quotes for the reasoning field.
     """
-    pattern = rf'virtmcu-allow:\s*{rule_name}\s+reasoning="[^"]+"'
+    pattern = rf"virtmcu-allow:\s*{rule_name}\s+reasoning=(['\"])[^'\"]+\1"
     return bool(re.search(pattern, line))
 
 

@@ -49,10 +49,8 @@ class QmpBridge:
             loop = asyncio.get_running_loop()
 
             def on_vtime(sample: object) -> None:
-                # Assuming sample has payload attribute
-                vtime = int.from_bytes(  # virtmcu-allow: int_from_bytes reasoning="Legacy script"
-                    sample.payload.to_bytes(), "little"
-                )
+                b = sample.payload.to_bytes()[:8]
+                vtime = b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24) | (b[4] << 32) | (b[5] << 40) | (b[6] << 48) | (b[7] << 56)
 
                 async def update() -> None:
                     async with self.vtime_condition:

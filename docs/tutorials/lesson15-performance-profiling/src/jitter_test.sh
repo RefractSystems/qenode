@@ -114,7 +114,7 @@ def reader(proc):
         if "EXIT" in line:
             exit_event.set()
 
-RUN_SH = os.environ.get("RUN_SH") or os.path.join(WORKSPACE, "scripts", "run.sh")
+RUN_SH = os.environ.get("RUN_SH") or os.path.join(WORKSPACE, "scripts", "virtmcu-run")
 cmd = [RUN_SH, "--dtb", dtb, "--kernel", kernel,
        "-nographic", "-serial", "stdio", "-monitor", "none",
        "-icount", "shift=0,align=off,sleep=off",

@@ -83,7 +83,7 @@ make setup
 ```
 
 After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/` (or `build-virtmcu-asan/install/` if `VIRTMCU_USE_ASAN=1` is used).
-`scripts/run.sh` is a wrapper that sets the module dir and launches
+`target/release/virtmcu-run` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 
 ---
@@ -105,7 +105,7 @@ the right QEMU binary.
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
                     -device <your-device-name> -nographic
    ```
 6. Verify the type appears in `-device help` output.
@@ -145,11 +145,11 @@ This command runs `scripts/cleanup-sim.sh`, which safely terminates all running 
 
 ```bash
 # In DevContainer (system-wide):
-python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+python3 -m tools.yaml2qemu path/to/board.yaml --out-dtb board.dtb --print-cmd
 pytest tests/ -v
 
 # Native Linux:
-uv run python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
+uv run python3 -m tools.yaml2qemu path/to/board.yaml --out-dtb board.dtb --print-cmd
 uv run pytest tests/ -v
 ```
 
@@ -157,7 +157,7 @@ uv run pytest tests/ -v
 
 Before opening a PR or pushing code to `main`, you should run our local CI validation suite to catch linting, versioning, and compilation errors. Our CI pipeline is highly optimized using GHCR caching.
 
-*   **Fast Pre-Push Check (~2 mins):** Run `make ci-local` to run all static analysis, version checks, and unit tests.
+*   **Fast Pre-Push Check (~2 mins):** Run `make ci-check` to run all static analysis, version checks, and unit tests.
 *   **Static Analyzers & Memory Sanitizers:** Run `make ci-miri` (for Rust Undefined Behavior) and `make ci-asan` (for Memory Sanitizers).
 *   **Full Pipeline Validation (~40 mins cold, fast if cached):** Run `make ci-full` to execute the complete matrix of smoke tests exactly as they run on GitHub Actions inside the isolated ci container. This also includes the Miri and ASan checks. Passing this guarantees GitHub CI will pass.
 
@@ -208,7 +208,7 @@ docker run --rm \
 *   **Inspect the Logs:** Many tests capture QEMU output to a log file (e.g., `smoke_test_output.log` in the test directory). Always read this file if the test fails.
 *   **Run Interactively:** If a smoke test times out or fails, run the QEMU command interactively without the `-monitor none` or `-serial file:...` flags so you can see what QEMU prints to the terminal.
     ```bash
-    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+    ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
     ```
     *(To exit an interactive QEMU session, press `Ctrl+A` followed by `X`)*
 *   **Add Debug Flags:** You can append `-d exec,cpu_reset` or `-trace "zenoh_*"` to the `run.sh` command to trace execution blocks and see exactly where the firmware or QEMU is hanging.

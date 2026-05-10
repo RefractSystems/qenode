@@ -4,10 +4,30 @@ VIRTMCU_DEVENV_IMAGE   ?= $(shell grep '^VIRTMCU_DEVENV_IMAGE=' BUILD_DEPS | cut
 VIRTMCU_CI_IMAGE       ?= $(shell grep '^VIRTMCU_CI_IMAGE=' BUILD_DEPS | cut -d'=' -f2)
 
 ARCH ?= $(shell uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
-IMAGE_TAG ?= latest
-VIRTMCU_DEVENV_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_DEVENV_IMAGE):$(IMAGE_TAG)-$(ARCH)
-VIRTMCU_CI_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-$(ARCH)
-VIRTMCU_CI_ASAN_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-asan-$(ARCH)
+
+# Dynamic IMAGE_TAG logic:
+# 1. If explicitly provided via env/make args, use it.
+# 2. If exactly on a git tag (e.g. v1.2.3), use the tag name (without the 'v').
+# 3. If CI=true, use sha-<short_hash>.
+# 4. Fallback to 'latest' to use the pre-built registry images.
+ifndef IMAGE_TAG
+  GIT_EXACT_TAG := $(shell git describe --tags --exact-match 2>/dev/null)
+  ifneq ($(GIT_EXACT_TAG),)
+    IMAGE_TAG := $(shell echo $(GIT_EXACT_TAG) | sed 's/^v//')
+  else ifeq ($(CI),true)
+    IMAGE_TAG := sha-$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  else
+    IMAGE_TAG := latest
+  endif
+endif
+
+export IMAGE_TAG
+
+# GitHub CI publishes multi-arch manifests, so we don't append -$(ARCH) for pulled images.
+# Local builds via docker-build.sh will still tag with -$(ARCH) but we pull without it.
+VIRTMCU_DEVENV_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_DEVENV_IMAGE):$(IMAGE_TAG)
+VIRTMCU_CI_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)
+VIRTMCU_CI_ASAN_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-asan
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
 
@@ -74,8 +94,8 @@ VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
-.PHONY: all build run clean clean-sim clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag
-.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-full ci-build-third-party ci-build-third-party-asan
+.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
+.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
@@ -155,16 +175,20 @@ build-test-artifacts:
 	@$(MAKE) -C tests/fixtures/guest_apps/actuator -j$(JOBS)
 	@$(MAKE) -C tests/fixtures/guest_apps/boot_riscv -j$(JOBS)
 	@$(MAKE) -C tests/fixtures/guest_apps/flexray_bridge -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/spi_bridge -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/lin_bridge -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/complex_board -j$(JOBS)
+	@$(MAKE) -C tests/fixtures/guest_apps/perf_bench -j$(JOBS)
 	@if [ "$$CI" = "true" ] && command -v deterministic_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
-		echo "==> Building test tools (deterministic_coordinator, cyber_bridge)..."; \
+		echo "==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)..."; \
 		ASAN_FLAG=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] && echo "-Zsanitizer=address" || echo ""); \
 		TSAN_FLAG=$$([ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "-Zsanitizer=thread" || echo ""); \
 		BOOTSTRAP=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] || [ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "1" || echo "0"); \
 		RUSTFLAGS="$$ASAN_FLAG $$TSAN_FLAG"; \
 		TRIPLE=$$(rustc -vV | grep "host:" | awk "{print \$$2}"); \
-		RUSTC_BOOTSTRAP=$$BOOTSTRAP HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo build --release -j$(JOBS) -p deterministic_coordinator -p cyber_bridge --target "$$TRIPLE"; \
+		RUSTC_BOOTSTRAP=$$BOOTSTRAP HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo build --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
 	fi
 
 # Build Python host orchestration tools
@@ -180,7 +204,7 @@ build-tools:
 
 # Launch the emulator using the test DTB and default arguments.
 run:
-	@bash scripts/run.sh \
+	@bash target/release/virtmcu-run \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
 	  -nographic \
@@ -211,47 +235,53 @@ setup-python:
 # Continuous Integration Targets (Docker/CI)
 # ------------------------------------------------------------------------------
 
-ci-lint:
-	@bash scripts/docker-build.sh devenv
-	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-lint.sh
+ensure-ci-image:
+	@docker image inspect $(VIRTMCU_CI_IMG) >/dev/null 2>&1 || \
+		(echo "==> Image $(VIRTMCU_CI_IMG) not found locally. Pulling..." && docker pull $(VIRTMCU_CI_IMG)) || \
+		(echo "==> Pull failed. Building locally..." && bash scripts/docker-build.sh ci)
 
-ci-unit:
-	@bash scripts/docker-build.sh devenv
-	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit.sh
+ensure-ci-asan-image:
+	@docker image inspect $(VIRTMCU_CI_ASAN_IMG) >/dev/null 2>&1 || \
+		(echo "==> Image $(VIRTMCU_CI_ASAN_IMG) not found locally. Pulling..." && docker pull $(VIRTMCU_CI_ASAN_IMG)) || \
+		(echo "==> Pull failed. Building locally..." && bash scripts/docker-build.sh ci-asan)
 
-ci-unit-coverage:
-	@bash scripts/docker-build.sh devenv
-	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-coverage.sh
+ci-check: ensure-ci-image
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-check
 
-ci-unit-miri:
-	@bash scripts/docker-build.sh devenv
-	@$(VIRTMCU_DOCKER_RUN_DEVENV) bash scripts/testing/run-unit-miri.sh
+ci-lint: ensure-ci-image
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-lint.sh
 
-ci-integration:
+ci-unit: ensure-ci-image
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit.sh
+
+ci-unit-coverage: ensure-ci-image
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-coverage.sh
+
+ci-unit-miri: ensure-ci-image
+	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-miri.sh
+
+ci-integration: ensure-ci-image
 	@if [ -z "$(DOMAIN)" ]; then \
 		echo "❌ Error: DOMAIN is required for ci-integration."; \
 		echo "==> Example: make ci-integration DOMAIN=boot_arm"; \
 		exit 1; \
 	fi
-	@bash scripts/docker-build.sh ci
 	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
 
-ci-integration-coverage:
-	@bash scripts/docker-build.sh ci
+ci-integration-coverage: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
 
-ci-integration-asan:
+ci-integration-asan: ensure-ci-asan-image
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI ASan — Docker: ci-asan"
 	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh ci-asan
 	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) bash scripts/testing/run-integration-asan.sh
 	@echo ""
 	@echo "✓ ci-integration-asan passed."
 
-ci-peripheral-coverage:
-	@bash scripts/docker-build.sh ci
+ci-peripheral-coverage: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-peripheral-coverage.sh
+
 
 ci-build-third-party:
 	@$(MAKE) third-party-builder
@@ -260,19 +290,22 @@ ci-build-third-party-asan:
 	@VIRTMCU_USE_ASAN=1 $(MAKE) third-party-builder
 
 # Run the full pipeline: ci-lint + ci-unit + ci-integration-asan + ci-unit-miri + all integration domains
-ci-full: ci-lint ci-unit ci-integration-asan ci-unit-miri
+ci-full: ensure-ci-image
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Docker: ci + runtime"
+	@echo "  CI Full — Docker: ci"
 	@echo "════════════════════════════════════════════════════"
-	@bash scripts/docker-build.sh ci
-	@bash scripts/docker-build.sh runtime
+	@echo ""
+	@$(MAKE) ci-lint
+	@$(MAKE) ci-unit
+	@$(MAKE) ci-integration-asan
+	@$(MAKE) ci-unit-miri
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Integration smoke tests matrix (inside ci)"
 	@echo "════════════════════════════════════════════════════"
 	@mkdir -p coverage-data
-	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) bash scripts/testing/run-integration.sh all
+	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) $(MAKE) dev-integration DOMAIN=all
 	@echo ""
 	@echo "════════════════════════════════════════════════════"
 	@echo "  CI Full — Coverage Checks"
@@ -295,14 +328,14 @@ dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-periphera
 
 # --- Linting ---
 # Unified developer check: Lint + Unit Tests (Tier 1 parity)
-dev-check: dev-lint dev-unit
+dev-check: dev-lint dev-unit dev-unit-coverage
 
 dev-lint: setup-python
 	@bash scripts/testing/run-lint.sh
 
 # --- Unit Tests ---
 dev-unit: setup-python
-	@bash scripts/testing/run-unit.sh
+	@cargo run -p virtmcu-test-runner --release -- run --tier unit
 
 dev-unit-coverage: setup-python
 	@bash scripts/testing/run-unit-coverage.sh
@@ -313,7 +346,7 @@ dev-unit-miri: setup-python
 # --- Integration Tests ---
 dev-integration: setup-python
 	@uv run $(UV_RUN_OPTS) $(MAKE) build-test-artifacts
-	@bash scripts/testing/run-integration.sh $(DOMAIN)
+	cargo test -p native-integration
 
 dev-integration-coverage: setup-python
 	@bash scripts/testing/run-integration-coverage.sh
@@ -367,14 +400,14 @@ fmt-yaml:
 # Pass IMAGE_TAG=<tag> to override the local tag (default: dev).
 #
 #   make docker-dev    — base → toolchain → devenv with smoke tests (fast path)
-#   make docker-all    — full pipeline including ci (~40 min) and runtime
+#   make docker-all    — full pipeline including ci (~40 min)
 #   make docker-base   — build a single stage (no smoke test, for debugging)
 
 # Build docker base -> toolchain -> devenv with smoke tests
 docker-dev:
 	@bash scripts/docker-build.sh dev
 
-# Build all docker stages including ci and runtime
+# Build all docker stages including ci
 docker-all:
 	@bash scripts/docker-build.sh all
 
@@ -402,16 +435,12 @@ docker-ci:
 docker-ci-asan:
 	@bash scripts/docker-build.sh ci-asan
 
-# Build only the docker runtime stage
-docker-runtime:
-	@bash scripts/docker-build.sh runtime
-
 # ------------------------------------------------------------------------------
 # Release
 # ------------------------------------------------------------------------------
 # Create an annotated git tag, record the version in VERSION, and push both
 # the commit and the tag.  GitHub CI then publishes versioned container images
-# (devenv:vMAJOR.MINOR.PATCH, runtime:vMAJOR.MINOR.PATCH, per-arch variants)
+# (virtmcu-devenv:vMAJOR.MINOR.PATCH, virtmcu-ci:vMAJOR.MINOR.PATCH, per-arch variants)
 # and creates a GitHub Release with QEMU tarballs and the Python wheel.
 #
 # Usage:
@@ -444,6 +473,11 @@ tag:
 # Kill all simulation-related processes and clean up temporary test files.
 clean-sim:
 	@bash scripts/cleanup-sim.sh
+
+# Remove backup and profile raw files.
+delete-profraw:
+	@echo "==> Deleting backup and profile raw files..."
+	find . -type f \( -name "*~" -o -name "*profraw" \) -delete
 
 # Alias for comprehensive cleanup of generated debugging and test artifacts.
 clean-debug: clean
@@ -510,4 +544,3 @@ book-serve: book
 	@echo "==> Serving mdBook..."
 	@echo "    Click this link to open: http://localhost:8080"
 	@python3 -m http.server -d target/book 8080
-

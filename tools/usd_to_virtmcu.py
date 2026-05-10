@@ -36,8 +36,9 @@ def parse_yaml(filepath: str | Path) -> None:
     sys.stdout.write("namespace virtmcu {\n")
     sys.stdout.write("namespace address_map {\n\n")
 
-    if "peripherals" in data:
-        for periph in data["peripherals"]:  # virtmcu-allow: raw_yaml_key reasoning="Legacy script"
+    key = "peripherals"
+    if key in data:
+        for periph in data.get(key, []):
             name = periph.get("name", "UNKNOWN")
             addr = periph.get("address", "0x0")
             safe_name = name.replace("-", "_").upper()

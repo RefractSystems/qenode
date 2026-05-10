@@ -59,7 +59,7 @@ For deterministic CI/CD regression testing without a physics engine:
 
 ```bash
 # Terminal 1: QEMU in suspend mode
-scripts/run.sh --dtb board.dtb -kernel firmware.elf \
+target/release/virtmcu-run --dtb board.dtb -kernel firmware.elf \
     -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
 # Terminal 2: Play the RESD trace (acts as TimeAuthority)
@@ -77,7 +77,7 @@ For closed-loop control validation with real physics:
 
 ```bash
 # Terminal 1: QEMU in suspend mode
-scripts/run.sh --dtb board.dtb -kernel firmware.elf \
+target/release/virtmcu-run --dtb board.dtb -kernel firmware.elf \
     -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
 # Terminal 2: MuJoCo bridge (node_id=0, nu=2 actuators, nsensordata=6, 1ms quanta)

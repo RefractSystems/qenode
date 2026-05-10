@@ -14,7 +14,6 @@ This directory contains a suite of utilities for hardware description, protocol 
 *   **`vproto.py`**: Provides Pythonic, high-level wrappers around the core FlatBuffers-generated protocols. **Note: Manual use of `struct pack/unpack` is discouraged in favor of this utility.**
 *   **`virtmcu/core/`**: Auto-generated Python bindings for the core VirtMCU FlatBuffers schemas.
 *   **`telemetry_fbs/`, `flexray_fbs/`, `lin_fbs/`**: Auto-generated Python bindings for domain-specific FlatBuffers protocols (Telemetry, FlexRay, LIN).
-*   **`proto_gen.py`**: (*Legacy*) An older utility for generating Python bindings from C headers. Now largely superseded by FlatBuffers and `vproto.py`.
 
 ## Simulation & Co-simulation
 

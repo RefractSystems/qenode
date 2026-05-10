@@ -21,7 +21,7 @@ You can boot this firmware and interact with it directly in your terminal using 
 make -C tests/fixtures/guest_apps/uart_echo
 
 # Run virtmcu with stdio mapped to the primary serial port
-./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic
+./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic
 ```
 
 Once booted, you will see:
@@ -85,14 +85,14 @@ Now that the basic UART is complete, you can map the emulated UART directly to t
 
 2. **Start Node 1 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
        -chardev virtmcu,id=chr0,node=node1 \
        -serial chardev:chr0
    ```
 
 3. **Start Node 2 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
        -chardev virtmcu,id=chr0,node=node2 \
        -serial chardev:chr0
    ```

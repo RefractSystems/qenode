@@ -32,6 +32,8 @@ jobs:
       expensive: ${{ steps.filter.outputs.expensive }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
       - uses: dorny/paths-filter@v4
@@ -57,6 +59,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
 
@@ -94,6 +98,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
 
@@ -144,6 +150,7 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e GITHUB_BASE_REF=${{ github.base_ref }} \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
             -e VIRTMCU_CI_IMAGE \
             -e VIRTMCU_DEVENV_IMAGE \
@@ -174,6 +181,7 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -e GITHUB_BASE_REF=${{ github.base_ref }} \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
             -e VIRTMCU_CI_IMAGE \
             -e VIRTMCU_DEVENV_IMAGE \
@@ -196,6 +204,8 @@ jobs:
       matrix: ${{ steps.gen.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
       - name: Build matrix from smoke-domains.json
@@ -304,6 +314,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
 
@@ -380,6 +392,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
 
@@ -442,6 +456,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup VirtMCU Environment
         uses: ./.github/actions/setup-virtmcu-env
 

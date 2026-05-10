@@ -42,7 +42,7 @@ PYTHON_LINTS = [
         "Banned struct usage detected.",
         "Use vproto.py or FlatBuffers wrappers for protocol serialization.",
         ["tests", "tools", "docs/tutorials", "scripts"],
-        ["proto_gen.py", "vproto.py", "tools/README.md"],
+        ["vproto.py", "tools/README.md"],
     ),
     (
         "sys_path_hack",

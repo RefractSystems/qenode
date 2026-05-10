@@ -92,8 +92,9 @@ See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-over
   and Remote Port sockets. The architecture extends this to shared physical media (CAN, SPI) with
   asynchronous IRQ support.
 
-- **Platform Description Tools**: `repl2qemu` compiles legacy Renode `.repl` files or
-  OpenUSD-aligned `.yaml` board descriptions into Device Tree blobs and QEMU CLI strings.
+- **Platform Description Tools**: `yaml2qemu` (Primary) is part of the `virtmcu-tools` package. It compiles modern VirtMCU YAML 
+  and SVD files to Device Trees. `repl2qemu` (Legacy) is maintained for backwards
+  compatibility with Renode `.repl` platforms.
 
 - **Unified Test Automation**: pytest + `qemu.qmp` for primary test suites; a Robot
   Framework compatibility layer for Renode `.robot` suite migration. Tests run in parallel
@@ -119,15 +120,15 @@ virtmcu/
 │   └── meson.build             # Integrates hw/ into QEMU's module build
 │
 ├── tools/                      # Assorted offline utilities and debugging helpers
-│   ├── yaml2qemu.py            # .yaml → Device Tree + QEMU CLI transpiler
 │   ├── cyber_bridge/           # C++ SAL/AAL telemetry and MuJoCo shm synchronization
 │   ├── debug/                  # Python GDB helpers for interactive debugging
 │   └── deterministic_coordinator/ # Rust daemon for strictly ordering multi-node frames
 │
-├── tests/                      # pytest / Robot test suites
-│   ├── conftest.py             # pytest fixtures for Zenoh and QEMU orchestration
-│   ├── test_qmp_keywords.robot # Robot Framework integration
-│   └── ...                     # Extensive coverage tests (boot_arm, spi_bridge, etc.)
+├── packaging/
+│   └── virtmcu-tools/          # Python tools (yaml2qemu, repl2qemu, qmp_bridge)
+│
+├── tests/                      # Native Rust integration tests (tests/native_integration)
+│   └── fixtures/guest_apps/    # End-to-end integration and smoke tests per subsystem
 │
 ├── patches/
 │   ├── arm-generic-fdt-v3.mbx  # 33-patch series (applied by install-third-party.sh)
@@ -163,22 +164,22 @@ covers the timing design and BQL constraints. Section 6 covers prior art (qbox, 
 **Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
-./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
+./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
 ```
 
 **Run the repl2qemu tool**:
 ```bash
-./scripts/run.sh --repl tests/fixtures/guest_apps/yaml_boot/test_board.repl --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+./target/release/virtmcu-run --yaml tests/fixtures/guest_apps/yaml_boot/test_board.yaml --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
 **Run with FirmwareStudio** (external time master):
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
-./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
+./target/release/virtmcu-run --dtb board.dtb --kernel firmware.elf \
     -device clock,node=0,transport=zenoh,router=tcp/localhost:7447
 
 # slaved-icount (exact ns — only for sub-quantum hardware timer firmware)
-./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
+./target/release/virtmcu-run --dtb board.dtb --kernel firmware.elf \
     -device clock,node=0,transport=zenoh,router=tcp/localhost:7447,mode=icount \
     -icount shift=0,align=off,sleep=off
 ```

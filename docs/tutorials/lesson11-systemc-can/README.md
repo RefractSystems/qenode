@@ -148,7 +148,7 @@ tools/systemc_adapter/build/adapter /tmp/test.sock
 **Terminal 2 — Start QEMU once the socket appears:**
 ```bash
 # Wait for socket, then:
-scripts/run.sh --dtb /tmp/test.dtb --kernel /tmp/reg_irq.elf \
+target/release/virtmcu-run --dtb /tmp/test.dtb --kernel /tmp/reg_irq.elf \
     -nographic -monitor none \
     -icount shift=0,align=off,sleep=off
 ```

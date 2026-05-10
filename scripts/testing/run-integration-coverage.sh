@@ -31,10 +31,11 @@ fi
 echo "==> Using drcov plugin: $DRCOV_SO"
 
 mkdir -p coverage-data
+cargo build --release -p virtmcu-run
 
 # Run with drcov plugin and kill with SIGINT after 2s to flush data
 (
-    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+    ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
         -kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic -m 128M -display none \
         -plugin "$DRCOV_SO",filename=coverage-data/hello.drcov \
         -d plugin > qemu.log 2>&1 &

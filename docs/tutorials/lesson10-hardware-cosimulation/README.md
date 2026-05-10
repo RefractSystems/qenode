@@ -158,7 +158,7 @@ tools/systemc_adapter/build/adapter /tmp/sc.sock
 
 # 3. In terminal B — start QEMU with a test firmware
 #    (see tests/integration/infrastructure/test_architecture_stress.py for a complete example)
-scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
     --kernel /tmp/irq_stress_fw.elf \
     -device mmio-socket-bridge,socket-path=/tmp/sc.sock,region-size=4096,base-addr=0x50000000 \
     -nographic

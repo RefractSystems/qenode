@@ -23,8 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-from tools.testing.env import WORKSPACE_DIR
-
+WORKSPACE_DIR = Path(__file__).parent.parent
 ROOT = WORKSPACE_DIR
 RUST_PLUGIN_ROOTS = [
     ROOT / "hw/rust/comms",

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 #
 # Usage examples:
 #   # Start QEMU with a QMP socket first:
-#   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -qmp unix:qmp.sock,server,nowait
+#   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -qmp unix:qmp.sock,server,nowait
 #
 #   # Then in another terminal:
 #   python3 tools/qmp_probe.py tree             # Visualize the entire object hierarchy

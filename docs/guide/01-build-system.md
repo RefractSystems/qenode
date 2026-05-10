@@ -45,7 +45,7 @@ To prevent cache thrashing when switching between standard development and Addre
 
 ## 3. QEMU Path Resolution
 
-VirtMCU provides a deterministic way to locate the compiled QEMU binary, supporting complex CI scenarios and custom development setups. This is implemented via `resolve_qemu_binary` (Python) and `run.sh` (Shell).
+VirtMCU provides a deterministic way to locate the compiled QEMU binary, supporting complex CI scenarios and custom development setups. This is implemented via `resolve_qemu_binary` (Python) and `virtmcu-run` (Shell).
 
 The path resolution prioritizes variables in the following order:
 1.  **Architecture-Specific Override**: `QEMU_ARM_BIN`, `QEMU_RISCV64_BIN`, `QEMU_RISCV32_BIN`. Best for multi-node tests executing different architectures simultaneously.
@@ -60,7 +60,7 @@ The path resolution prioritizes variables in the following order:
 
 Because VirtMCU relies on QEMU's dynamic module system, **Rust plugins do not link against QEMU at compile time; QEMU links against them at runtime.**
 
-1.  **Discovery**: The `scripts/run.sh` script searches for the most recently modified `.so` plugins in the active build directory.
+1.  **Discovery**: The `target/release/virtmcu-run` script searches for the most recently modified `.so` plugins in the active build directory.
 2.  **Environment Injection**: The script sets `QEMU_MODULE_DIR` to the directory containing the plugins and configures `LD_LIBRARY_PATH` for dependency resolution.
 3.  **Loading (`dlopen`)**: When the guest Device Tree (DTB) requests a VirtMCU device, QEMU uses `dlopen()` to load the corresponding `.so` plugin, registers the QOM types, and instantiates the peripheral.
 
