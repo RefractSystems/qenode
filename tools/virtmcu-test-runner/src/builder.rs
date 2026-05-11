@@ -210,8 +210,6 @@ impl TopologyBuilder {
             };
 
             let mut yaml_cli_args = Vec::new();
-            yaml_cli_args.push("-device".to_string());
-            yaml_cli_args.push(format!("virtmcu-transport-hub,id=hub0,router={}", endpoint));
 
             let dtb_path = if let Some(dts) = &node.dts {
                 let sub_dts = ctx.substitute(dts);

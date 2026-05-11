@@ -3728,7 +3728,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "shellexpand",
- "shlex",
  "tempfile",
  "tokio",
  "tracing",
