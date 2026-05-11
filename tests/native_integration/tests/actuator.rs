@@ -9,12 +9,12 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
     // because `actuator` device is now bound to the `virtmcu-transport-hub` instead of its own session.
     let yaml_path = "tests/fixtures/guest_apps/actuator/board.yaml";
 
-    let env = VirtmcuTestEnv::builder()
+    let mut env = VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/actuator/actuator.elf")
                 .with_yaml_path(yaml_path)
-                .orchestrated(false),
+                .orchestrated(true),
         )
         .with_timeout(10)
         .build()
@@ -24,6 +24,8 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
         Box::pin(async move {
             let topics = vec!["firmware/control/0/42", "firmware/control/0/99"];
             let monitor = ActuatorMonitor::new(&env.session(), &topics).await?;
+
+            env.step_clock(500_000_000, 10_000_000).await?;
 
             // The actuator guest app performs multiple math operations and writes them
             let found = monitor

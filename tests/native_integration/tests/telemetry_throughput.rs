@@ -12,10 +12,8 @@ async fn test_telemetry_throughput() -> Result<()> {
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/telemetry_wfi/test_irq_storm.elf")
-                .with_dtb_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.dtb")
-                .add_qemu_arg("-device")
-                .add_qemu_arg("telemetry,transport=hub0")
-                .orchestrated(false),
+                .with_yaml_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.yaml")
+                .orchestrated(true),
         )
         .with_timeout(20)
         .build()
