@@ -75,24 +75,46 @@ fn emit_device(
 
     if p_type == "chardev" {
         let node = if let Some(props) = &p.properties {
-            if let Some(serde_yaml::Value::String(n)) = props.get("node") { n.as_str() } else { "0" }
-        } else { "0" };
+            if let Some(serde_yaml::Value::String(n)) = props.get("node") {
+                n.as_str()
+            } else {
+                "0"
+            }
+        } else {
+            "0"
+        };
 
         let topic = if let Some(props) = &p.properties {
-            if let Some(serde_yaml::Value::String(t)) = props.get("topic") { format!(",topic={}", t) } else { "".to_string() }
-        } else { "".to_string() };
+            if let Some(serde_yaml::Value::String(t)) = props.get("topic") {
+                format!(",topic={}", t)
+            } else {
+                "".to_string()
+            }
+        } else {
+            "".to_string()
+        };
 
-        let router_arg = if let Some(ep) = endpoint { format!(",router={}", ep) } else { "".to_string() };
+        let router_arg =
+            if let Some(ep) = endpoint { format!(",router={}", ep) } else { "".to_string() };
 
         cli_args.push("-chardev".to_string());
-        cli_args.push(format!("virtmcu,id=chr_{},node={},transport=zenoh{}{}", p.name, node, router_arg, topic));
+        cli_args.push(format!(
+            "virtmcu,id=chr_{},node={},transport=zenoh{}{}",
+            p.name, node, router_arg, topic
+        ));
         return; // chardevs don't emit DT nodes
     }
 
     if p_type == "Memory.MappedMemory" {
         let size = if let Some(props) = &p.properties {
-            if let Some(s) = props.get("size") { parse_addr(s) } else { 0x1000 }
-        } else { 0x1000 };
+            if let Some(s) = props.get("size") {
+                parse_addr(s)
+            } else {
+                0x1000
+            }
+        } else {
+            0x1000
+        };
 
         dts.push_str(&format!("{}memory@{:x} {{\n", indent, addr));
         dts.push_str(&format!("{}    compatible = \"qemu-memory-region\";\n", indent));
@@ -104,7 +126,10 @@ fn emit_device(
         let size_hi = size >> 32;
         let size_lo = size & 0xFFFFFFFF;
 
-        dts.push_str(&format!("{}    reg = <0x{:x} 0x{:x} 0x{:x} 0x{:x}>;\n", indent, addr_hi, addr_lo, size_hi, size_lo));
+        dts.push_str(&format!(
+            "{}    reg = <0x{:x} 0x{:x} 0x{:x} 0x{:x}>;\n",
+            indent, addr_hi, addr_lo, size_hi, size_lo
+        ));
         dts.push_str(&format!("{}}};\n", indent));
         return;
     }
@@ -139,7 +164,10 @@ fn emit_device(
         }
         let size_hi = size >> 32;
         let size_lo = size & 0xFFFFFFFF;
-        dts.push_str(&format!("{}    reg = <0x{:x} 0x{:x} 0x{:x} 0x{:x}>;\n", indent, addr_hi, addr_lo, size_hi, size_lo));
+        dts.push_str(&format!(
+            "{}    reg = <0x{:x} 0x{:x} 0x{:x} 0x{:x}>;\n",
+            indent, addr_hi, addr_lo, size_hi, size_lo
+        ));
     } else {
         dts.push_str(&format!("{}    reg = <{}>;\n", indent, addr));
     }
@@ -184,7 +212,22 @@ fn emit_device(
         }
     }
 
-    let is_native = ["telemetry", "ieee802154", "zenoh-wifi", "wifi", "spi", "spi-echo", "canfd", "flexray", "lin", "clock", "ui", "actuator", "s32k144-lpuart"].contains(&p_type);
+    let is_native = [
+        "telemetry",
+        "ieee802154",
+        "zenoh-wifi",
+        "wifi",
+        "spi",
+        "spi-echo",
+        "canfd",
+        "flexray",
+        "lin",
+        "clock",
+        "ui",
+        "actuator",
+        "s32k144-lpuart",
+    ]
+    .contains(&p_type);
     if is_native {
         dts.push_str(&format!("{}    transport = <2>;\n", indent)); // phandle 2 is hub0
     }
@@ -192,7 +235,16 @@ fn emit_device(
     if let Some(props) = &p.properties {
         for (k, v) in props {
             let k_lower = k.to_lowercase();
-            if k == "size" || k == "region-size" || k == "cpuType" || k == "isa" || k == "mmu-type" || k == "chardev" || k == "socket-path" || k == "base-addr" || k == "transport" {
+            if k == "size"
+                || k == "region-size"
+                || k == "cpuType"
+                || k == "isa"
+                || k == "mmu-type"
+                || k == "chardev"
+                || k == "socket-path"
+                || k == "base-addr"
+                || k == "transport"
+            {
                 continue;
             }
             match v {
@@ -204,11 +256,16 @@ fn emit_device(
                     } else {
                         k.as_str()
                     };
-                    
+
                     if k_qemu == "macaddr" {
                         dts.push_str(&format!("{}    {} = \"{}\";\n", indent, k_qemu, s));
                     } else if phandles.contains_key(s) {
-                        dts.push_str(&format!("{}    {} = <{}>;\n", indent, k_qemu, phandles.get(s).unwrap()));
+                        dts.push_str(&format!(
+                            "{}    {} = <{}>;\n",
+                            indent,
+                            k_qemu,
+                            phandles.get(s).unwrap()
+                        ));
                     } else {
                         dts.push_str(&format!("{}    {} = \"{}\";\n", indent, k_qemu, s));
                     }
@@ -218,10 +275,8 @@ fn emit_device(
                         dts.push_str(&format!("{}    {} = <0x{:x}>;\n", indent, k, num));
                     }
                 }
-                serde_yaml::Value::Bool(b) => {
-                    if *b {
-                        dts.push_str(&format!("{}    {};\n", indent, k));
-                    }
+                serde_yaml::Value::Bool(b) if *b => {
+                    dts.push_str(&format!("{}    {};\n", indent, k));
                 }
                 _ => {}
             }
@@ -231,27 +286,54 @@ fn emit_device(
     if compat == "mmio-socket-bridge" {
         cli_args.push("-device".to_string());
         let region_size = if let Some(props) = &p.properties {
-            if let Some(s) = props.get("region-size") { parse_addr(s) } else { 0x1000 }
-        } else { 0x1000 };
+            if let Some(s) = props.get("region-size") {
+                parse_addr(s)
+            } else {
+                0x1000
+            }
+        } else {
+            0x1000
+        };
 
         let sock = if let Some(props) = &p.properties {
-            if let Some(serde_yaml::Value::String(s)) = props.get("socket-path") { s.clone() } else { "".to_string() }
-        } else { "".to_string() };
+            if let Some(serde_yaml::Value::String(s)) = props.get("socket-path") {
+                s.clone()
+            } else {
+                "".to_string()
+            }
+        } else {
+            "".to_string()
+        };
 
-        cli_args.push(format!("mmio-socket-bridge,id={},base-addr={},region-size={},socket-path={}", p.name, addr, region_size, sock));
+        cli_args.push(format!(
+            "mmio-socket-bridge,id={},base-addr={},region-size={},socket-path={}",
+            p.name, addr, region_size, sock
+        ));
     }
 
     if let Some(children) = children_by_parent.get(&p.name) {
         let child_indent = format!("{}    ", indent);
         for child in children {
-            emit_device(child, children_by_parent, phandles, &child_indent, dts, cli_args, endpoint);
+            emit_device(
+                child,
+                children_by_parent,
+                phandles,
+                &child_indent,
+                dts,
+                cli_args,
+                endpoint,
+            );
         }
     }
 
     dts.push_str(&format!("{}}};\n", indent));
 }
 
-pub fn parse_yaml(yaml_content: &str, endpoint: Option<&str>, node_id: u32) -> Result<YamlPlatform> {
+pub fn parse_yaml(
+    yaml_content: &str,
+    endpoint: Option<&str>,
+    node_id: u32,
+) -> Result<YamlPlatform> {
     let world: World = serde_yaml::from_str(yaml_content)?;
 
     let mut dts = String::new();
@@ -320,15 +402,19 @@ pub fn parse_yaml(yaml_content: &str, endpoint: Option<&str>, node_id: u32) -> R
     // Pass 2: Emit root peripherals
     for p in &world.peripherals {
         if p.parent.is_none() {
-            emit_device(p, &children_by_parent, &phandles, "    ", &mut dts, &mut cli_args, endpoint);
+            emit_device(
+                p,
+                &children_by_parent,
+                &phandles,
+                "    ",
+                &mut dts,
+                &mut cli_args,
+                endpoint,
+            );
         }
     }
 
     dts.push_str("};\n");
 
-    Ok(YamlPlatform {
-        dts_content: dts,
-        cli_args,
-        has_clock,
-    })
+    Ok(YamlPlatform { dts_content: dts, cli_args, has_clock })
 }

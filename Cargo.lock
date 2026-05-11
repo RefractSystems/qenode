@@ -3687,6 +3687,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtmcu-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "clap",
+ "flatbuffers",
+ "futures",
+ "libc",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "virtmcu-api",
+ "virtmcu-test-runner",
+ "zenoh",
+]
+
+[[package]]
 name = "virtmcu-qom"
 version = "0.1.0"
 dependencies = [

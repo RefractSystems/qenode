@@ -27,6 +27,7 @@ members = [
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
     "tools/virtmcu-test-runner",
     "tools/virtmcu-run",
+    "tools/virtmcu-cli",
     "tools/benchmarks/clock_rtt_bench",
     "tests/native_integration",
 ]
