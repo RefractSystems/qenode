@@ -39,11 +39,14 @@ use std::sync::{Condvar, Mutex};
 use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
+const DRAIN_TIMEOUT_SECS: u64 = 30;
+const NETDEV_INFO_OPAQUE_SIZE: usize = 208 - 56;
+const RECV_TIMEOUT_MS: u64 = 10;
+const TX_QUEUE_SIZE: usize = 65536;
+
 #[repr(C)]
 pub struct VirtmcuNetdevQEMU {
     pub parent_obj: SysBusDevice,
-    pub nc: NetClientState,
-    pub rust_state: *mut VirtmcuNetdevState,
 }
 
 #[repr(C)]
@@ -154,7 +157,7 @@ unsafe extern "C" fn netdev_cleanup(nc: *mut NetClientState) {
                 let (new_lock, timed_out) = state
                     .shared
                     .drain_cond
-                    .wait_timeout(lock, Duration::from_secs(30))
+                    .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 lock = new_lock;
                 drop(bql_unlock);
@@ -193,7 +196,7 @@ static NET_VIRTMCU_INFO: NetClientInfo = NetClientInfo {
     receive_iov: None,
     cleanup: Some(netdev_cleanup),
     can_receive: Some(netdev_can_receive),
-    _opaque: [0; 208 - 56],
+    _opaque: [0; NETDEV_INFO_OPAQUE_SIZE],
 };
 
 unsafe extern "C" fn netdev_hook(
@@ -339,7 +342,7 @@ fn start_tx_thread(
                 break;
             }
         }
-        match rx_out.recv_timeout(Duration::from_millis(10)) {
+        match rx_out.recv_timeout(Duration::from_millis(RECV_TIMEOUT_MS)) {
             Ok(packet) => {
                 let header = ZenohFrameHeader::new(
                     packet.vtime,
@@ -413,8 +416,8 @@ fn netdev_init_internal(
         None => return ptr::null_mut(),
     };
 
-    let (tx, rx) = bounded(65536);
-    let (tx_out, rx_out) = bounded(65536);
+    let (tx, rx) = bounded(TX_QUEUE_SIZE);
+    let (tx_out, rx_out) = bounded(TX_QUEUE_SIZE);
     let local_heap = BqlGuarded::new(BinaryHeap::new());
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
 
@@ -530,19 +533,26 @@ fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usi
 }
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
     use alloc::collections::BinaryHeap;
 
     #[test]
     fn test_ordered_packet_ord() {
+        const VTIME_1000: u64 = 1000;
+        const VTIME_500: u64 = 500;
+        const VTIME_2000: u64 = 2000;
+        const DATA_1: u8 = 1;
+        const DATA_2: u8 = 2;
+        const DATA_3: u8 = 3;
         let mut heap = BinaryHeap::new();
-        heap.push(OrderedPacket { vtime: 1000, sequence: 0, data: vec![1] });
-        heap.push(OrderedPacket { vtime: 500, sequence: 0, data: vec![2] });
-        heap.push(OrderedPacket { vtime: 2000, sequence: 0, data: vec![3] });
-        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 500);
-        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 1000);
-        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, 2000);
+        heap.push(OrderedPacket { vtime: VTIME_1000, sequence: 0, data: vec![DATA_1] });
+        heap.push(OrderedPacket { vtime: VTIME_500, sequence: 0, data: vec![DATA_2] });
+        heap.push(OrderedPacket { vtime: VTIME_2000, sequence: 0, data: vec![DATA_3] });
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, VTIME_500);
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, VTIME_1000);
+        assert_eq!(heap.pop().expect("netdev logic assumption failed").vtime, VTIME_2000);
     }
 
     #[test]

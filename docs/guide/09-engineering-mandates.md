@@ -29,7 +29,7 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Environment Agnosticism
 - **No absolute paths**: All paths must be relative to the project root.
-- **Cross-platform path handling**: Use `os.path.join` (Python), `PathBuf` (Rust), or `std::filesystem` (C++).
+- **Cross-platform path handling**: Use `PathBuf` (Rust) or `std::filesystem` (C++).
 - **Devcontainer-first**: `localhost` is the container. Never assume host toolchain access.
 
 ### Explicit Constants
@@ -37,15 +37,14 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Logging Strictness
 - **No `print()` / `println!`**: BANNED in production code. 
-- **Structured Logging**: Use `logger.debug/info` (Python) and `sim_info!/sim_err!` (Rust).
-- **CI Enforcement**: Ruff rule `T201` enforces this in Python.
+- **Structured Logging**: Use `sim_info!/sim_err!` (Rust) and `tracing::info/error` (Rust tools).
 
 ### Protocol Serialization
-- **No Manual Struct Packing**: BANNED: manual `struct.pack()` or `struct.unpack()`.
-- **Schema-First**: REQUIRED: Use `vproto.py` (FlatBuffers) for all core simulation protocols.
+- **No Manual Struct Packing**: BANNED: manual packing/unpacking of bytes.
+- **Schema-First**: REQUIRED: Use `virtmcu-api` (FlatBuffers) for all core simulation protocols.
 
 ### No Polling / Sleep Avoidance
-- **BANNED**: `std::thread::sleep`, `time.sleep()`, or `asyncio.sleep()` in hot paths, MMIO, or tests.
+- **BANNED**: `std::thread::sleep`, `tokio::time::sleep`, or `time.sleep()` in hot paths, MMIO, or tests.
 - **Deterministic Sync**: Use `vta.step()`, QMP events, or Zenoh `recv_async()`. 
 - **Exception**: `# virtmcu-allow: sleep reasoning="<reason>` is required for the few unavoidable cases."
 ---
@@ -54,7 +53,7 @@ This chapter serves as the immutable law for all developers—human or agent—c
 > "If you liked it, then you shoulda put a test on it."
 
 - **Empirical Reproduction**: You must write a failing test reproducing a bug **before** applying the fix.
-- **Coverage**: Every feature must be backed by unit (Rust) or integration (Python) tests.
+- **Coverage**: Every feature must be backed by unit or integration tests (Rust).
 - **Stress Testing**: New features must survive 10,000+ iterations (`cargo test --release`) or 100+ integration runs.
 
 ---
@@ -80,17 +79,12 @@ This chapter serves as the immutable law for all developers—human or agent—c
 - **Endianness**: Use `to_le_bytes()`. `to_ne_bytes()` is BANNED for wire data.
 - **Unsafe Scope**: One FFI call per `unsafe` block.
 
-### Python: The Orchestration SOTA
-- **Infrastructure Golden Template**: Use `ManagedSubprocess` + `asyncio.Queue` for spawning background tools.
-- **No Path Bootstrapping**: BANNED: `sys.path.insert()`. Rely on `uv run` and the `pyproject.toml` boundary.
-- **AST over Regex**: BANNED: using regex to parse `.dtb`, JSON, or YAML. Use native parsers.
-
 ---
 
 ## 6. Common Anti-Patterns (The "Wall of Shame")
 
-1.  **Hardcoded Ports**: Never use `7447` or `7450`. Use `get-free-port.py`.
-2.  **Hardcoded Paths**: Never use `/tmp/out.dtb`. Use `pytest` `tmp_path`.
-3.  **Manual Process Management**: Never spawn daemons in test bodies. Use `pytest` fixtures.
+1.  **Hardcoded Ports**: Never use `7447` or `7450`. Use dynamic port generation.
+2.  **Hardcoded Paths**: Never use `/tmp/out.dtb`. Use `virtmcu-test-runner` `tmp_path`.
+3.  **Manual Process Management**: Never spawn daemons in test bodies. Use `virtmcu-test-runner` fixtures.
 4.  **Stale Processes**: Always run `make clean-sim` if a test fails; orphaned QEMUs hold ports.
 5.  **DSO TLS Trap**: Never call QEMU TLS macros (like `bql_locked()`) from a plugin DSO. Use the `virtmcu_is_bql_locked()` export from the main binary.

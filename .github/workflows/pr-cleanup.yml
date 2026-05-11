@@ -26,7 +26,7 @@ jobs:
           REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           # Nested GHCR packages use URL-encoded slashes in the API path.
           PACKAGE_NAME="${REPO#*/}/${{ env.VIRTMCU_CI_IMAGE }}"
-          PACKAGE_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${PACKAGE_NAME}")
+          PACKAGE_ENCODED=$(echo -n "${PACKAGE_NAME}" | jq -sRr @uri)
           TAG="sha-${{ github.sha }}-amd64"
 
           # Determine API namespace (org vs. personal account).

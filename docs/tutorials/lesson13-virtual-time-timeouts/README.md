@@ -85,7 +85,7 @@ integration (slaved-icount, ~15–20% speed) without any changes.
 Run the unit tests that exercise the timeout logic without a live QEMU:
 
 ```bash
-python3 -m pytest tests/test_qmp_bridge.py -v
+python3 -m virtmcu-test-runner tests/test_qmp_bridge.py -v
 ```
 
 You should see tests such as:

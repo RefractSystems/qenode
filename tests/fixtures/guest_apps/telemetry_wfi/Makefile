@@ -16,7 +16,7 @@ test_irq_storm.elf: test_irq_storm.S linker.ld
 WORKSPACE_DIR ?= $(abspath ../../../..)
 
 test_telemetry.dtb: test_telemetry.yaml
-	PYTHONPATH=$(WORKSPACE_DIR)/packaging/virtmcu-tools/src python3 -m virtmcu_tools.yaml2qemu test_telemetry.yaml --out-dtb test_telemetry.dtb
+	$(VIRTMCU_CLI) platform generate test_telemetry.yaml --out-dtb test_telemetry.dtb
 
 clean:
 	rm -f *.elf *.dtb *.cli *.arch *.log

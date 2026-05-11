@@ -1,9 +1,12 @@
-# Load registry and version configuration
-VIRTMCU_IMAGE_REGISTRY ?= $(shell grep '^VIRTMCU_IMAGE_REGISTRY=' BUILD_DEPS | cut -d'=' -f2)
-VIRTMCU_DEVENV_IMAGE   ?= $(shell grep '^VIRTMCU_DEVENV_IMAGE=' BUILD_DEPS | cut -d'=' -f2)
-VIRTMCU_CI_IMAGE       ?= $(shell grep '^VIRTMCU_CI_IMAGE=' BUILD_DEPS | cut -d'=' -f2)
+# Load and export all variables from BUILD_DEPS
+# This ensures that docker-bake.hcl has access to all version pins.
+$(foreach var,$(shell grep -v '^#' BUILD_DEPS | grep -v '^[[:space:]]*$$'),$(eval export $(var)))
 
 ARCH ?= $(shell uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/")
+
+# Calculate content-addressed tag for third-party images (QEMU + patches)
+PATCHES_HASH := $(shell (cat BUILD_DEPS; find patches -type f | sort | xargs cat) | sha256sum | head -c 12)
+export THIRD_PARTY_CACHE_TAG := $(QEMU_VERSION)-$(PATCHES_HASH)
 
 # Dynamic IMAGE_TAG logic:
 # 1. If explicitly provided via env/make args, use it.
@@ -31,28 +34,12 @@ VIRTMCU_CI_ASAN_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
 
-# Prevent host-leaked VIRTUAL_ENV from breaking container builds.
-# When opening this project in a Devcontainer via VS Code, the host OS's absolute
-# VIRTUAL_ENV path (e.g., /Users/name/.../.venv) can leak into the container's
-# environment. `uv sync --active` will try to write to this non-existent path
-# and fail with "Permission denied". This defensively unsets invalid paths.
-ifneq ($(VIRTUAL_ENV),)
-ifeq ($(wildcard $(VIRTUAL_ENV)),)
-$(warning Warning: VIRTUAL_ENV=$(VIRTUAL_ENV) does not exist (likely leaked from host). Unsetting it.)
-unexport VIRTUAL_ENV
-endif
-endif
-
-# Detection for container environment (system-wide Python mandate)
+# Detection for container environment
 IN_CONTAINER := $(shell [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ "$$USER" = "vscode" ] && echo 1 || echo 0)
-ifeq ($(IN_CONTAINER),1)
-  UV_RUN_OPTS := --no-project
-else
-  # On bare metal, we still use uv but avoid workspace-local .venv if the mandate is "venv must go".
-  # However, for local dev, --active is usually safer to avoid messing with system python.
-  # If the user really wants it gone, they might be using a global uv environment.
-  UV_RUN_OPTS := --active
-endif
+
+# Enable unstable cargo features for artifact dependencies (bindeps)
+export CARGO_UNSTABLE_BINDEPS := true
+export RUSTC_BOOTSTRAP := 1
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   BUILD_SUFFIX := -asan
@@ -65,6 +52,10 @@ endif
 # Environment configuration defaults
 QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
+
+# Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
+# We use 'cargo run' for development to ensure it is always up to date.
+export VIRTMCU_CLI := cargo run --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
 
 # Helper macros for running commands in Docker
 VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
@@ -86,7 +77,6 @@ VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 	-v "$(CURDIR):/workspace" -w /workspace \
 	-e HOST_UID=$$(id -u) \
 	-e HOST_GID=$$(id -g) \
-	-e PYTHONPATH=/workspace:/workspace/generated \
 	-e CI=true \
 	-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
 	-e VIRTMCU_USE_PREBUILT_QEMU=1
@@ -94,7 +84,7 @@ VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
-.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
+.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag ensure-ci-image ensure-ci-asan-image
 .PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
 
 # Automatically determine the number of parallel jobs for make
@@ -104,28 +94,14 @@ JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo
 all: dev-all
 
 # ------------------------------------------------------------------------------
-# FFI Layout Verification
-# ------------------------------------------------------------------------------
-
-# Verify that Rust struct layouts match the QEMU binary ground truth.
-check-ffi:
-	@echo "==> Verifying FFI layouts..."
-	@uv run $(UV_RUN_OPTS) python3 scripts/check-ffi.py
-
-# ------------------------------------------------------------------------------
 # Version Management
 # ------------------------------------------------------------------------------
 
 # Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
-	@uv run $(UV_RUN_OPTS) python3 scripts/sync-versions.py
+	@cargo run -p virtmcu-cli -- setup sync-versions
 	@echo "✓ Versions synchronized."
-
-# Verify that all versions are in sync across the codebase.
-check-versions:
-	@echo "==> Checking version synchronization..."
-	@uv run $(UV_RUN_OPTS) python3 scripts/check-versions.py
 
 # ------------------------------------------------------------------------------
 # Build Targets
@@ -134,7 +110,7 @@ check-versions:
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 # WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
 bootstrap:
-	@bash scripts/install-third-party.sh
+	@cargo run -p virtmcu-cli -- setup bootstrap
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   ZENOHC_BUILD_DIR := third_party/zenoh-c-src/build-asan
@@ -191,17 +167,6 @@ build-test-artifacts:
 		RUSTC_BOOTSTRAP=$$BOOTSTRAP HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo build --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
 	fi
 
-# Build Python host orchestration tools
-build-tools:
-	@echo "==> Building virtmcu-tools package..."
-	@cd packaging/virtmcu-tools && uv build >/dev/null && \
-		WHEEL_FILE=$$(ls dist/*.whl | head -n 1) && \
-		unzip -l "$$WHEEL_FILE" | grep "virtmcu_tools/repl2qemu/" >/dev/null && \
-		unzip -l "$$WHEEL_FILE" | grep "virtmcu_tools/yaml2qemu.py" >/dev/null && \
-		unzip -l "$$WHEEL_FILE" | grep "virtmcu_tools/mcp_server/" >/dev/null && \
-		unzip -l "$$WHEEL_FILE" | grep "virtmcu_tools/qmp_bridge.py" >/dev/null && \
-		echo "✓ virtmcu-tools package build passed."
-
 # Launch the emulator using the test DTB and default arguments.
 run:
 	@bash target/release/virtmcu-run \
@@ -213,52 +178,33 @@ run:
 
 
 # ------------------------------------------------------------------------------
-# Python & Testing Targets (Unified dev/ci pairs)
-# ------------------------------------------------------------------------------
-
-# Configure Python environment using uv.
-# In a container, this target is effectively a no-op that verifies the system install.
-setup-python:
-	@if [ "$(IN_CONTAINER)" = "1" ]; then \
-		echo "==> Running in container: using system-wide Python environment."; \
-		sudo uv pip install --system -r pyproject.toml -r requirements.txt --break-system-packages; \
-	else \
-		echo "==> Bare-metal detected: venv is BANNED in this project."; \
-		echo "    Please use the provided DevContainer or manage your own system-wide dependencies."; \
-		if ! command -v uv >/dev/null 2>&1; then \
-			echo "    (uv is still recommended for tool execution)"; \
-		fi; \
-	fi
-
-
-# ------------------------------------------------------------------------------
 # Continuous Integration Targets (Docker/CI)
 # ------------------------------------------------------------------------------
 
 ensure-ci-image:
 	@docker image inspect $(VIRTMCU_CI_IMG) >/dev/null 2>&1 || \
 		(echo "==> Image $(VIRTMCU_CI_IMG) not found locally. Pulling..." && docker pull $(VIRTMCU_CI_IMG)) || \
-		(echo "==> Pull failed. Building locally..." && bash scripts/docker-build.sh ci)
+		(echo "==> Pull failed. Building locally..." && docker buildx bake ci --load)
 
 ensure-ci-asan-image:
 	@docker image inspect $(VIRTMCU_CI_ASAN_IMG) >/dev/null 2>&1 || \
 		(echo "==> Image $(VIRTMCU_CI_ASAN_IMG) not found locally. Pulling..." && docker pull $(VIRTMCU_CI_ASAN_IMG)) || \
-		(echo "==> Pull failed. Building locally..." && bash scripts/docker-build.sh ci-asan)
+		(echo "==> Pull failed. Building locally..." && docker buildx bake ci-asan --load)
 
 ci-check: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-check
 
 ci-lint: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-lint.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-lint
 
 ci-unit: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit
 
 ci-unit-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-coverage
 
 ci-unit-miri: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-miri.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-miri
 
 ci-integration: ensure-ci-image
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -266,21 +212,16 @@ ci-integration: ensure-ci-image
 		echo "==> Example: make ci-integration DOMAIN=boot_arm"; \
 		exit 1; \
 	fi
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration DOMAIN=$(DOMAIN)
 
 ci-integration-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration-coverage
 
 ci-integration-asan: ensure-ci-asan-image
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI ASan — Docker: ci-asan"
-	@echo "════════════════════════════════════════════════════"
-	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) bash scripts/testing/run-integration-asan.sh
-	@echo ""
-	@echo "✓ ci-integration-asan passed."
+	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) $(MAKE) dev-integration-asan
 
 ci-peripheral-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-peripheral-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-peripheral-coverage
 
 
 ci-build-third-party:
@@ -291,29 +232,15 @@ ci-build-third-party-asan:
 
 # Run the full pipeline: ci-lint + ci-unit + ci-integration-asan + ci-unit-miri + all integration domains
 ci-full: ensure-ci-image
-	@echo ""
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Docker: ci"
-	@echo "════════════════════════════════════════════════════"
-	@echo ""
 	@$(MAKE) ci-lint
 	@$(MAKE) ci-unit
 	@$(MAKE) ci-integration-asan
 	@$(MAKE) ci-unit-miri
-	@echo ""
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Integration smoke tests matrix (inside ci)"
-	@echo "════════════════════════════════════════════════════"
 	@mkdir -p coverage-data
 	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) $(MAKE) dev-integration DOMAIN=all
-	@echo ""
-	@echo "════════════════════════════════════════════════════"
-	@echo "  CI Full — Coverage Checks"
-	@echo "════════════════════════════════════════════════════"
 	@$(MAKE) ci-integration-coverage
 	@$(MAKE) ci-peripheral-coverage
-	@echo ""
-	@echo "✓ ci-full passed."
+
 # ------------------------------------------------------------------------------
 # Development Targets (Local)
 # ------------------------------------------------------------------------------
@@ -330,33 +257,32 @@ dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-periphera
 # Unified developer check: Lint + Unit Tests (Tier 1 parity)
 dev-check: dev-lint dev-unit dev-unit-coverage
 
-dev-lint: setup-python
-	@bash scripts/testing/run-lint.sh
+dev-lint:
+	@cargo run -p virtmcu-test-runner --release -- lint
 
 # --- Unit Tests ---
-dev-unit: setup-python
+dev-unit:
 	@cargo run -p virtmcu-test-runner --release -- run --tier unit
 
-dev-unit-coverage: setup-python
-	@bash scripts/testing/run-unit-coverage.sh
+dev-unit-coverage:
+	@cargo run -p virtmcu-test-runner --release -- coverage
 
-dev-unit-miri: setup-python
-	@bash scripts/testing/run-unit-miri.sh
+dev-unit-miri:
+	@cargo run -p virtmcu-test-runner --release -- miri
 
 # --- Integration Tests ---
-dev-integration: setup-python
-	@uv run $(UV_RUN_OPTS) $(MAKE) build-test-artifacts
-	cargo test -p native-integration
+dev-integration: build-test-artifacts
+	@cargo +nightly run -Z bindeps -p virtmcu-test-runner --release -- run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
 
-dev-integration-coverage: setup-python
-	@bash scripts/testing/run-integration-coverage.sh
+dev-integration-coverage: build-test-artifacts
+	@cargo run -p virtmcu-test-runner --release -- coverage --integration
 
-dev-integration-asan: setup-python
-	@bash scripts/testing/run-integration-asan.sh
+dev-integration-asan: build-test-artifacts
+	@cargo run -p virtmcu-test-runner --release -- run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
 
 # Run host-side C coverage for peripheral plugins (inside ci)
 dev-peripheral-coverage:
-	@bash scripts/testing/run-peripheral-coverage.sh
+	@cargo run -p virtmcu-test-runner --release -- coverage --peripheral
 
 # --- Git Hooks ---
 install-git-hooks:
@@ -368,14 +294,9 @@ install-git-hooks:
 	@echo "✓ Git hooks installed: pre-commit (lint) and pre-push (unit)."
 
 # Aliases for backward compatibility
-fmt-all: fmt-python fmt-rust fmt-meson fmt-c fmt-yaml
+fmt-all: fmt-rust fmt-meson fmt-c fmt-yaml
 
 # Individual format targets
-fmt-python: setup-python
-	@echo "==> ruff format + fix..."
-	@uv run $(UV_RUN_OPTS) ruff format .
-	@uv run $(UV_RUN_OPTS) ruff check . --fix
-
 fmt-rust:
 	@echo "==> cargo fmt..."
 	@cargo fmt --all
@@ -396,44 +317,65 @@ fmt-yaml:
 # ------------------------------------------------------------------------------
 # Docker Image Targets
 # ------------------------------------------------------------------------------
-# All versions are read from the BUILD_DEPS file by scripts/docker-build.sh.
-# Pass IMAGE_TAG=<tag> to override the local tag (default: dev).
+# All versions are read from the BUILD_DEPS file.
+# Pass IMAGE_TAG=<tag> to override the local tag (default: latest).
 #
 #   make docker-dev    — base → toolchain → devenv with smoke tests (fast path)
 #   make docker-all    — full pipeline including ci (~40 min)
 #   make docker-base   — build a single stage (no smoke test, for debugging)
 
+BAKE := docker buildx bake --load
+
 # Build docker base -> toolchain -> devenv with smoke tests
 docker-dev:
-	@bash scripts/docker-build.sh dev
+	@$(BAKE) base
+	@cargo run --manifest-path xtask/Cargo.toml -- smoke-base
+	@$(BAKE) toolchain
+	@cargo run --manifest-path xtask/Cargo.toml -- smoke-toolchain
+	@$(BAKE) devenv
+	@cargo run --manifest-path xtask/Cargo.toml -- smoke-devenv
+	@echo "✓ All dev-base stages built and verified."
 
 # Build all docker stages including ci
-docker-all:
-	@bash scripts/docker-build.sh all
+docker-all: docker-dev
+	@$(BAKE) third-party-base
+	@$(BAKE) ci
+	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci
+	@$(BAKE) ci-asan
+	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci-asan
+	@$(BAKE) runtime
 
 # Build only the docker base stage
 docker-base:
-	@bash scripts/docker-build.sh base
+	@$(BAKE) base
 
 # Build only the docker toolchain stage
 docker-toolchain:
-	@bash scripts/docker-build.sh toolchain
+	@$(BAKE) toolchain
 
 # Build only the docker devenv stage
 docker-devenv:
-	@bash scripts/docker-build.sh devenv
+	@$(BAKE) devenv
 
-# Build only the docker qemu-builder stage
+# Build only the docker qemu-builder stage (third-party-base in bake)
 third-party-builder:
-	@bash scripts/docker-build.sh qemu-builder
+	@if [ "$(VIRTMCU_USE_ASAN)" = "1" ]; then \
+		$(BAKE) third-party-base-asan; \
+	else \
+		$(BAKE) third-party-base; \
+	fi
 
 # Build only the docker ci stage
 docker-ci:
-	@bash scripts/docker-build.sh ci
+	@$(BAKE) ci
 
 # Build only the docker ci-asan stage
 docker-ci-asan:
-	@bash scripts/docker-build.sh ci-asan
+	@$(BAKE) ci-asan
+
+# Build only the docker runtime stage
+docker-runtime:
+	@$(BAKE) runtime
 
 # ------------------------------------------------------------------------------
 # Release
@@ -472,7 +414,7 @@ tag:
 
 # Kill all simulation-related processes and clean up temporary test files.
 clean-sim:
-	@bash scripts/cleanup-sim.sh
+	@cargo run -p virtmcu-cli -- setup cleanup-sim
 
 # Remove backup and profile raw files.
 delete-profraw:
@@ -482,12 +424,10 @@ delete-profraw:
 # Alias for comprehensive cleanup of generated debugging and test artifacts.
 clean-debug: clean
 
-# Clean up Python artifacts, test binaries, and local tool builds.
+# Clean up test binaries, and local tool builds.
 # Note: This does NOT clean the QEMU build tree or remove downloaded sources.
 clean:
 	@echo "==> Cleaning generated files and test artifacts..."
-	find . -name "*.pyc" -delete
-	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.profraw" -delete
 	find . -name "*.log" -delete
 	find . -name "*.dtb" -not -path "./third_party/*" -delete
@@ -500,8 +440,6 @@ clean:
 	find . -name "*.gcno" -not -path "./third_party/*" -delete
 	find . -name "virtmcu-timeout-*" -delete
 	find . -name "qmp-timeout-*" -delete
-	rm -f .coverage
-	rm -rf .pytest_cache .ruff_cache .hypothesis
 	rm -rf test-results/
 	rm -rf tests/fixtures/guest_apps/*/results/
 	rm -rf install/
@@ -539,8 +477,11 @@ book:
 	@echo "✓ mdBook built in target/book (HTML and PDF)."
 	@mv target/book/pdf/output.pdf target/book/pdf/virtmcu_book.pdf
 
-# Serve the mdBook documentation locally (uses Python to avoid WebSocket/DevContainer port forwarding issues)
-book-serve: book
+# Serve the mdBook documentation locally
+book-serve:
 	@echo "==> Serving mdBook..."
-	@echo "    Click this link to open: http://localhost:8080"
-	@python3 -m http.server -d target/book 8080
+	@if command -v mdbook >/dev/null 2>&1; then \
+		mdbook serve --port 8080; \
+	else \
+		echo "❌ mdbook not installed."; exit 1; \
+	fi

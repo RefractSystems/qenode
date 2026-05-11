@@ -48,18 +48,20 @@ The `clock` device communicates with the `TimeAuthority` via the **Control Plane
 
 ### Request: TimeAuthority → Node
 **Topic**: `sim/clock/advance/{node_id}`
-**Payload** (16-byte FlatBuffer struct):
+**Payload** (24-byte FlatBuffer struct):
 - `delta_ns` (uint64): The size of the quantum to execute in virtual nanoseconds.
 - `absolute_vtime_ns` (uint64): The current absolute time in the physics world.
+- `quantum_number` (uint64): Global sequence number for the current quantum.
 
 ### Reply: Node → TimeAuthority
-**Payload** (16-byte FlatBuffer struct):
+**Payload** (24-byte FlatBuffer struct):
 - `current_vtime_ns` (uint64): The actual virtual time reached by QEMU.
 - `n_frames` (uint32): Count of pending Ethernet frames (informational).
 - `error_code` (uint32):
     - **`0 (OK)`**: Success. Quantum completed.
     - **`1 (STALL)`**: STALL DETECTED. QEMU failed to reach the TB boundary within the wall-clock timeout. QEMU stays alive for debugging.
     - **`2 (ZENOH_ERROR)`**: Transport layer or protocol failure.
+- `quantum_number` (uint64): The sequence number of the quantum being acknowledged.
 
 ### The Stall-Timeout Contract
 To prevent deadlocks in CI, every quantum has a wall-clock `stall-timeout`. 

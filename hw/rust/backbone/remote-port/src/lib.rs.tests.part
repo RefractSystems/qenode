@@ -1,0 +1,245 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::ptr;
+
+    #[test]
+    fn test_unaligned_hdr_read() {
+        const TEST_CMD: u32 = 0x11223344;
+        const TEST_LEN: u32 = 0x55667788;
+        const TEST_ID: u32 = 0x99AABBCC;
+        const TEST_FLAGS: u32 = 0xDDEEFF00;
+        const TEST_DEV: u32 = 0x12345678;
+
+        const _: () = (); #[repr(C, align(8))]
+        struct AlignedBuf([u8; 32]);
+        let mut buf_wrapper = AlignedBuf([0u8; 32]);
+        let buf = &mut buf_wrapper.0;
+        let hdr = RpPktHdr {
+            cmd: TEST_CMD,
+            len: TEST_LEN,
+            id: TEST_ID,
+            flags: TEST_FLAGS,
+            dev: TEST_DEV,
+        }
+        .to_be();
+
+        // Write at offset 1 to force misalignment
+        let hdr_ptr = &hdr as *const RpPktHdr as *const u8;
+        unsafe {
+            let n = core::mem::size_of::<RpPktHdr>();
+            ptr::copy_nonoverlapping(hdr_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
+        }
+
+        let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktHdr;
+        const ALIGN_4: usize = 4;
+        assert!(!(misaligned_ptr as usize).is_multiple_of(ALIGN_4), "Buffer was accidentally aligned!");
+
+        let hdr_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
+        let hdr_final = hdr_read.from_be();
+
+        // Copy fields to local variables to avoid taking references to packed fields
+        let cmd = hdr_final.cmd;
+        let len = hdr_final.len;
+        let id = hdr_final.id;
+        let flags = hdr_final.flags;
+        let dev = hdr_final.dev;
+
+        assert_eq!(cmd, TEST_CMD);
+        assert_eq!(len, TEST_LEN);
+        assert_eq!(id, TEST_ID);
+        assert_eq!(flags, TEST_FLAGS);
+        assert_eq!(dev, TEST_DEV);
+    }
+
+    #[test]
+    fn test_unaligned_busaccess_read() {
+        const TEST_TS: u64 = 0x1122334455667788;
+        const TEST_ATTR: u64 = 0x99AABBCCDDEEFF00;
+        const TEST_ADDR: u64 = 0xAAAABBBBCCCCDDDD;
+        const TEST_LEN: u32 = 4;
+        const TEST_WIDTH: u32 = 2;
+        const TEST_MASTER: u16 = 0x1234;
+
+        const _: () = (); #[repr(C, align(8))]
+        struct AlignedBuf([u8; 128]);
+        let mut buf_wrapper = AlignedBuf([0u8; 128]);
+        let buf = &mut buf_wrapper.0;
+        let pkt = RpPktBusaccess {
+            hdr: RpPktHdr { cmd: RpCmd::Read as u32, len: 0, id: 1, flags: 0, dev: 0 },
+            timestamp: TEST_TS,
+            attributes: TEST_ATTR,
+            addr: TEST_ADDR,
+            len: TEST_LEN,
+            width: TEST_WIDTH,
+            stream_width: 1,
+            master_id: TEST_MASTER,
+        }
+        .to_be();
+
+        let pkt_ptr = &pkt as *const RpPktBusaccess as *const u8;
+        unsafe {
+            let n = core::mem::size_of::<RpPktBusaccess>();
+            ptr::copy_nonoverlapping(pkt_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
+        }
+
+        let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktBusaccess;
+        const ALIGN_4: usize = 4;
+        assert!(!(misaligned_ptr as usize).is_multiple_of(ALIGN_4), "Buffer was accidentally aligned!");
+
+        let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
+        let pkt_final = pkt_read.from_be();
+
+        let timestamp = pkt_final.timestamp;
+        let addr = pkt_final.addr;
+        let master_id = pkt_final.master_id;
+
+        assert_eq!(timestamp, TEST_TS);
+        assert_eq!(addr, TEST_ADDR);
+        assert_eq!(master_id, TEST_MASTER);
+    }
+
+    #[test]
+    fn test_unaligned_interrupt_read() {
+        const TEST_TS_INT: u64 = 0x1122334455667788;
+        const TEST_VEC_INT: u64 = 0x99AABBCCDDEEFF00;
+        const TEST_LINE_7: u32 = 7;
+        const TEST_VAL_1: u32 = 1;
+        const _: () = (); #[repr(C, align(8))]
+        struct AlignedBuf([u8; 64]);
+        let mut buf_wrapper = AlignedBuf([0u8; 64]);
+        let buf = &mut buf_wrapper.0;
+        let pkt = RpPktInterrupt {
+            hdr: RpPktHdr { cmd: RpCmd::Interrupt as u32, len: 0, id: 1, flags: 0, dev: 0 },
+            timestamp: TEST_TS_INT,
+            vector: TEST_VEC_INT,
+            line: TEST_LINE_7,
+            val: TEST_VAL_1,
+        }
+        .to_be();
+
+        let pkt_ptr = &pkt as *const RpPktInterrupt as *const u8;
+        unsafe {
+            // Fix: ensure we use the correct header pointer
+            let hdr_ptr = &pkt as *const RpPktInterrupt as *const u8;
+            let n = core::mem::size_of::<RpPktInterrupt>();
+            ptr::copy_nonoverlapping(hdr_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
+        }
+
+        let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktInterrupt;
+        const ALIGN_4: usize = 4;
+        assert!(!(misaligned_ptr as usize).is_multiple_of(ALIGN_4), "Buffer was accidentally aligned!");
+
+        let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
+        let pkt_final = pkt_read.from_be();
+
+        let timestamp = pkt_final.timestamp;
+        let line = pkt_final.line;
+        let val = pkt_final.val;
+
+        assert_eq!(timestamp, TEST_TS_INT);
+        assert_eq!(line, TEST_LINE_7);
+        assert_eq!(val, TEST_VAL_1);
+    }
+
+    #[test]
+    fn test_pack_be_busaccess_byte_exact() {
+        const TEST_CMD_3: u32 = 3;
+        const TEST_LEN_38: u32 = 38;
+        const TEST_ID_7: u32 = 7;
+        const TEST_TS_PACK: u64 = 0x0102030405060708;
+        const TEST_ATTR_PACK: u64 = 0x090A0B0C0D0E0F10;
+        const TEST_ADDR_PACK: u64 = 0x1112131415161718;
+        const TEST_SIZE_4: u32 = 4;
+        const TEST_MASTER_0XABCD: u16 = 0xABCD;
+        const EXPECTED_LEN: usize = 58;
+
+        let pkt = RpPktBusaccess {
+            hdr: RpPktHdr { cmd: TEST_CMD_3, len: TEST_LEN_38, id: TEST_ID_7, flags: 0, dev: 0 },
+            timestamp: TEST_TS_PACK,
+            attributes: TEST_ATTR_PACK,
+            addr: TEST_ADDR_PACK,
+            len: TEST_SIZE_4,
+            width: TEST_SIZE_4,
+            stream_width: TEST_SIZE_4,
+            master_id: TEST_MASTER_0XABCD,
+        };
+        let b = pkt.pack_be();
+        // hdr (20 bytes, big-endian)
+        const RANGE_0: usize = 0;
+        const RANGE_4: usize = 4;
+        const RANGE_8: usize = 8;
+        const RANGE_12: usize = 12;
+        const RANGE_16: usize = 16;
+        const RANGE_20: usize = 20;
+        const RANGE_28: usize = 28;
+        const RANGE_36: usize = 36;
+        const RANGE_44: usize = 44;
+        const RANGE_48: usize = 48;
+        const RANGE_52: usize = 52;
+        const RANGE_56: usize = 56;
+        const RANGE_58: usize = 58;
+
+        assert_eq!(&b[RANGE_0..RANGE_4], &TEST_CMD_3.to_be_bytes());
+        assert_eq!(&b[RANGE_4..RANGE_8], &TEST_LEN_38.to_be_bytes());
+        assert_eq!(&b[RANGE_8..RANGE_12], &TEST_ID_7.to_be_bytes());
+        assert_eq!(&b[RANGE_12..RANGE_16], &0u32.to_be_bytes());
+        assert_eq!(&b[RANGE_16..RANGE_20], &0u32.to_be_bytes());
+        // timestamp
+        assert_eq!(&b[RANGE_20..RANGE_28], &TEST_TS_PACK.to_be_bytes());
+        // attributes
+        assert_eq!(&b[RANGE_28..RANGE_36], &TEST_ATTR_PACK.to_be_bytes());
+        // addr
+        assert_eq!(&b[RANGE_36..RANGE_44], &TEST_ADDR_PACK.to_be_bytes());
+        // len, width, stream_width
+        assert_eq!(&b[RANGE_44..RANGE_48], &TEST_SIZE_4.to_be_bytes());
+        assert_eq!(&b[RANGE_48..RANGE_52], &TEST_SIZE_4.to_be_bytes());
+        assert_eq!(&b[RANGE_52..RANGE_56], &TEST_SIZE_4.to_be_bytes());
+        // master_id
+        assert_eq!(&b[RANGE_56..RANGE_58], &TEST_MASTER_0XABCD.to_be_bytes());
+        assert_eq!(b.len(), EXPECTED_LEN);
+    }
+
+    #[test]
+    fn test_pack_be_interrupt_byte_exact() {
+        const TEST_CMD_5: u32 = 5;
+        const TEST_LEN_21: u32 = 21;
+        const TEST_ID_99: u32 = 99;
+        const TEST_FLAGS_2: u32 = 2;
+        const TEST_TS_INT_PACK: u64 = 0xDEADBEEFCAFEBABE;
+        const TEST_VEC_1: u64 = 1;
+        const TEST_LINE_7_INT: u32 = 7;
+        const TEST_VAL_1_INT: u8 = 1;
+        const EXPECTED_LEN_INT: usize = 41;
+
+        let pkt = RpPktInterrupt {
+            hdr: RpPktHdr { cmd: TEST_CMD_5, len: TEST_LEN_21, id: TEST_ID_99, flags: TEST_FLAGS_2, dev: 1 },
+            timestamp: TEST_TS_INT_PACK,
+            vector: TEST_VEC_1,
+            line: TEST_LINE_7_INT,
+            val: TEST_VAL_1_INT,
+        };
+        let b = pkt.pack_be();
+        const IRQ_RANGE_0: usize = 0;
+        const IRQ_RANGE_4: usize = 4;
+        const IRQ_RANGE_8: usize = 8;
+        const IRQ_RANGE_12: usize = 12;
+        const IRQ_RANGE_16: usize = 16;
+        const IRQ_RANGE_20: usize = 20;
+        const IRQ_RANGE_28: usize = 28;
+        const IRQ_RANGE_36: usize = 36;
+        const IRQ_RANGE_40: usize = 40;
+        const IRQ_RANGE_41: usize = 41;
+
+        assert_eq!(&b[IRQ_RANGE_0..IRQ_RANGE_4], &TEST_CMD_5.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_4..IRQ_RANGE_8], &TEST_LEN_21.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_8..IRQ_RANGE_12], &TEST_ID_99.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_12..IRQ_RANGE_16], &TEST_FLAGS_2.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_16..IRQ_RANGE_20], &1u32.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_20..IRQ_RANGE_28], &TEST_TS_INT_PACK.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_28..IRQ_RANGE_36], &1u64.to_be_bytes());
+        assert_eq!(&b[IRQ_RANGE_36..IRQ_RANGE_40], &TEST_LINE_7_INT.to_be_bytes());
+        assert_eq!(b[IRQ_RANGE_40], TEST_VAL_1_INT);
+        assert_eq!(b.len(), EXPECTED_LEN_INT);
+    }
+}

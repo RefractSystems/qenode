@@ -14,12 +14,11 @@ This is achieved through a schema-first approach. The interface is mathematicall
 
 ```flatbuffers
 // Example: The VirtMCU Clock Sync Request Schema
-table ClockAdvanceReq {
+struct ClockAdvanceReq {
     delta_ns: uint64;
     absolute_vtime_ns: uint64;
-    quantum_id: uint32;
+    quantum_number: uint64;
 }
-root_type ClockAdvanceReq;
 ```
 
 The FlatBuffers compiler (`flatc`) generates strongly-typed accessor classes for Rust, C++, and Python. The schema becomes the absolute, immutable source of truth for the protocol layer.

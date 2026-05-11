@@ -17,7 +17,7 @@ To gain empirical confidence, we employ fuzzing. Fuzzing involves feeding random
 We use `hypothesis` to fuzz our YAML and REPL configuration parsers.
 Run the tests:
 ```bash
-pytest tests/test_parser_fuzzing.py
+virtmcu-test-runner tests/test_parser_fuzzing.py
 ```
 
 ### Rust Packet Parsers

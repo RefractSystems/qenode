@@ -40,6 +40,14 @@ use virtmcu_qom::{
 
 /* ── QOM Object ───────────────────────────────────────────────────────────── */
 
+const MAX_CPUS: usize = 32;
+const TRACE_EVENT_QUEUE_SIZE: usize = 10000;
+const IRQ_ID_SLOT_SHIFT: u32 = 16;
+
+const EVENT_TYPE_CPU_STATE: u8 = 0;
+const EVENT_TYPE_IRQ: u8 = 1;
+const EVENT_TYPE_POWER_STATE: u8 = 3;
+
 /// Virtmcu telemetry device.
 #[repr(C)]
 pub struct VirtmcuTelemetryQOM {
@@ -89,7 +97,7 @@ pub struct VirtmcuTelemetryBackend {
     _transport: Arc<dyn virtmcu_api::DataTransport>,
     sender: Sender<Option<TraceEvent>>,
     _node_id: u32,
-    last_halted: Arc<[AtomicBool; 32]>,
+    last_halted: Arc<[AtomicBool; MAX_CPUS]>,
     irq_slots: virtmcu_qom::sync::BqlGuarded<Vec<IrqSlot>>,
     _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
@@ -150,7 +158,7 @@ extern "C" fn telemetry_irq_cb(opaque: *mut c_void, n: c_int, level: c_int) {
 */
 
 fn telemetry_trace_cpu_internal(backend: &VirtmcuTelemetryBackend, cpu_index: c_int, halted: bool) {
-    if !(0..32).contains(&cpu_index) {
+    if !(0..MAX_CPUS as c_int).contains(&cpu_index) {
         return;
     }
 
@@ -169,7 +177,7 @@ fn telemetry_trace_cpu_internal(backend: &VirtmcuTelemetryBackend, cpu_index: c_
 
     let _ = backend.sender.try_send(Some(TraceEvent {
         timestamp_ns: vtime.try_into().expect("vtime is negative"),
-        event_type: 0,
+        event_type: EVENT_TYPE_CPU_STATE,
         id: cpu_index.try_into().expect("cpu_index is negative"),
         value: u32::from(halted),
         device_name: None,
@@ -185,7 +193,7 @@ fn telemetry_trace_irq_internal(
     level: i32,
     name_ptr: *const c_char,
 ) {
-    let id = (u32::from(slot) << 16) | u32::from(pin);
+    let id = (u32::from(slot) << IRQ_ID_SLOT_SHIFT) | u32::from(pin);
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     let device_name = if name_ptr.is_null() {
         None
@@ -195,7 +203,7 @@ fn telemetry_trace_irq_internal(
 
     let _ = backend.sender.try_send(Some(TraceEvent {
         timestamp_ns: vtime as u64,
-        event_type: 1,
+        event_type: EVENT_TYPE_IRQ,
         id,
         value: level as u32,
         device_name,
@@ -223,9 +231,9 @@ fn telemetry_worker(
         let args = TraceEventArgs {
             timestamp_ns: ev.timestamp_ns,
             type_: match ev.event_type {
-                0 => TraceEventType::CPU_STATE,
-                1 => TraceEventType::IRQ,
-                3 => TraceEventType::POWER_STATE,
+                EVENT_TYPE_CPU_STATE => TraceEventType::CPU_STATE,
+                EVENT_TYPE_IRQ => TraceEventType::IRQ,
+                EVENT_TYPE_POWER_STATE => TraceEventType::POWER_STATE,
                 _ => TraceEventType::PERIPHERAL,
             },
             id: ev.id,
@@ -296,7 +304,7 @@ unsafe extern "C" fn telemetry_realize(dev_state: *mut c_void, _errp: *mut *mut 
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport = alloc::sync::Arc::clone(transport_ref);
 
-    let (tx, rx) = bounded(10000);
+    let (tx, rx) = bounded(TRACE_EVENT_QUEUE_SIZE);
     let node_id = s.node_id;
     let topic = format!("sim/telemetry/trace/{node_id}");
 

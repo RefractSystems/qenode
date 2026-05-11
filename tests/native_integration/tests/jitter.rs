@@ -57,7 +57,7 @@ _start:
     };
 };"#;
 
-    let mut env = VirtmcuTestEnv::builder()
+    VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_asm(asm)
@@ -65,22 +65,22 @@ _start:
                 .orchestrated(true), // Crucial for PDES
         )
         .with_timeout(10)
-        .build()
-        .await?;
+        .run_test(|env| {
+            Box::pin(async move {
+                // Step clock with intentional random-like sleeps to simulate jitter
+                for _ in 0..10 {
+                    env.step_clock(100_000, 100_000).await?;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
 
-    // Step clock with intentional random-like sleeps to simulate jitter
-    for _ in 0..10 {
-        env.step_clock(100_000, 100_000).await?;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+                let success = env.wait_for_output_passive(0, "OK").await;
+                assert!(
+                    success.is_ok(),
+                    "Test timed out without receiving OK under jitter"
+                );
 
-    let success = env.wait_for_output_passive(0, "OK").await;
-    env.teardown().await;
-
-    assert!(
-        success.is_ok(),
-        "Test timed out without receiving OK under jitter"
-    );
-
-    Ok(())
+                Ok(())
+            })
+        })
+        .await
 }

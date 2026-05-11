@@ -48,6 +48,10 @@ use virtmcu_qom::{
     error_setg,
 };
 
+const MMIO_MAX_IRQS: usize = 32;
+const MMIO_MAX_DATA_SIZE: u32 = 8;
+const MMIO_COSIM_TIMEOUT_MS: u32 = 5000;
+
 static MAPPED_IDS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None); // virtmcu-allow: static_state reasoning="Singleton state workaround for adapter registration"
 
 fn is_id_mapped(id: &str) -> bool {
@@ -73,7 +77,7 @@ pub struct MmioSocketBridgeQEMU {
     pub reconnect_ms: u32,
     pub debug: bool,
 
-    pub irqs: [QemuIrq; 32],
+    pub irqs: [QemuIrq; MMIO_MAX_IRQS],
 
     pub rust_state: *mut MmioSocketBridgeState,
     pub mapped: bool,
@@ -153,7 +157,7 @@ impl CoSimTransport for MmioTransport {
                     if msg.type_() == SYSC_MSG_RESP {
                         ctx.dispatch_response(msg);
                     } else if (msg.type_() == SYSC_MSG_IRQ_SET || msg.type_() == SYSC_MSG_IRQ_CLEAR)
-                        && msg.irq_num() < 32
+                        && msg.irq_num() < MMIO_MAX_IRQS as u32
                     {
                         let bql = Bql::lock();
                         // SAFETY: irqs pointer is valid
@@ -217,9 +221,9 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
     );
 
     // We attempt to wait if unconnected to preserve behavior
-    state.bridge.wait_connected(5000);
+    state.bridge.wait_connected(MMIO_COSIM_TIMEOUT_MS);
 
-    if let Some(resp) = state.bridge.send_and_wait(req, 5000) {
+    if let Some(resp) = state.bridge.send_and_wait(req, MMIO_COSIM_TIMEOUT_MS) {
         resp.data()
     } else {
         0
@@ -242,8 +246,8 @@ unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size
         val,
     );
 
-    state.bridge.wait_connected(5000);
-    state.bridge.send_and_wait(req, 5000);
+    state.bridge.wait_connected(MMIO_COSIM_TIMEOUT_MS);
+    state.bridge.send_and_wait(req, MMIO_COSIM_TIMEOUT_MS);
 }
 
 static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -262,7 +266,7 @@ static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: MMIO_MAX_DATA_SIZE,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -281,7 +285,7 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         return;
     }
 
-    for i in 0..32 {
+    for i in 0..MMIO_MAX_IRQS {
         if let Some(irq) = qemu.irqs.get_mut(i) {
             sysbus_init_irq(dev as *mut SysBusDevice, &raw mut *irq);
         }
@@ -346,12 +350,26 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static BRIDGE_PROPERTIES: [Property; 6] = [
+const BRIDGE_DEFAULT_REGION_SIZE: u32 = 0x1000;
+const BRIDGE_DEFAULT_RECONNECT_MS: u32 = 1000;
+const BRIDGE_PROP_COUNT: usize = 6;
+
+static BRIDGE_PROPERTIES: [Property; BRIDGE_PROP_COUNT] = [
     define_prop_string!(c"id".as_ptr(), MmioSocketBridgeQEMU, id),
     define_prop_string!(c"socket-path".as_ptr(), MmioSocketBridgeQEMU, socket_path),
-    define_prop_uint32!(c"region-size".as_ptr(), MmioSocketBridgeQEMU, region_size, 0x1000),
+    define_prop_uint32!(
+        c"region-size".as_ptr(),
+        MmioSocketBridgeQEMU,
+        region_size,
+        BRIDGE_DEFAULT_REGION_SIZE
+    ),
     define_prop_uint64!(c"base-addr".as_ptr(), MmioSocketBridgeQEMU, base_addr, u64::MAX),
-    define_prop_uint32!(c"reconnect-ms".as_ptr(), MmioSocketBridgeQEMU, reconnect_ms, 1000),
+    define_prop_uint32!(
+        c"reconnect-ms".as_ptr(),
+        MmioSocketBridgeQEMU,
+        reconnect_ms,
+        BRIDGE_DEFAULT_RECONNECT_MS
+    ),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), MmioSocketBridgeQEMU, debug, false),
 ];
 
@@ -360,7 +378,7 @@ unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_
     (*dc).realize = Some(bridge_realize);
     (*dc).unrealize = Some(bridge_unrealize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 6);
+    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), BRIDGE_PROP_COUNT);
 }
 
 #[used]

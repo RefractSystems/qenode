@@ -54,11 +54,11 @@ To ensure seamless transitions between local development and CI troubleshooting,
 VirtMCU uses a multi-stage Docker strategy to optimize build times and minimize production image size.
 
 1.  **`base`**: Debian slim + standard utilities.
-2.  **`toolchain`**: Adds ARM/RISC-V compilers, Python, and CMake.
+2.  **`toolchain`**: Adds ARM/RISC-V compilers and CMake.
 3.  **`devenv`**: Adds Rust, Node.js, and protocol schemas. Used for checks.
 4.  **`builder`**: Compiles the patched QEMU core and all `.so` plugins. 
 5.  **`devenv`**: The developer image (Base + pre-built QEMU from Builder).
-6.  **`runtime`**: A lean production image containing only QEMU and Python orchestration tools.
+6.  **`runtime`**: A lean production image containing only QEMU and native Rust orchestration tools.
 
 ---
 
@@ -74,11 +74,11 @@ To avoid the 40-minute QEMU compilation on every run, we use a three-layer cache
 
 ## 4. Version Management
 
-All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a single source of truth: the **`BUILD_DEPS`** file at the repository root.
+All dependency versions (QEMU, Zenoh, compilers) are centralized in a single source of truth: the **`BUILD_DEPS`** file at the repository root.
 
 **To bump a version**:
 1.  Edit `BUILD_DEPS`.
-2.  Run `make sync-versions` to propagate the change to Dockerfiles, `pyproject.toml`, and GitHub workflows.
+2.  Run `make sync-versions` to propagate the change to Dockerfiles and GitHub workflows.
 3.  Run `make check-versions` (enforced in CI lint) to verify consistency.
 
 ---
@@ -88,7 +88,7 @@ All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a si
 | Symptom | Cause | Action |
 |---|---|---|
 | `CLOCK STALL` | ASan overhead or deadlock | Check QEMU stderr; system scales to 300s timeout under ASan. |
-| `FFI Layout Mismatch` | C/Rust struct drift | Run `scripts/check-ffi.py --fix` and commit the updated offsets. |
+| `FFI Layout Mismatch` | C/Rust struct drift | Run `cargo run -p virtmcu-test-runner -- lint --fix` and commit the updated offsets. |
 | `can't find crate` | Cargo cache corruption | Run `docker volume rm ci-cargo-registry`. |
 | `SIGSEGV` in plugin | Unmangled symbols | Ensure FFI hooks are wrapped in `VirtMCU_export!`. |
 

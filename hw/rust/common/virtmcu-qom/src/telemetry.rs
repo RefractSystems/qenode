@@ -17,6 +17,10 @@ pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static
 /// Number of logs dropped due to queue overflow.
 pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Global metric accumulator"
 
+const LOG_QUEUE_SIZE: usize = 4096;
+const VTIME_WIDTH: usize = 10;
+const VTIME_PRECISION: usize = 2;
+
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 static LOG_CHANNEL: OnceLock<Sender<LogEntry>> = OnceLock::new(); // virtmcu-allow: static_state reasoning="Safely exported channel"
 
@@ -117,7 +121,7 @@ pub fn update_global_node_id(node_id: u32) {
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 fn init_logger_thread() -> Sender<LogEntry> {
-    let (tx, rx) = bounded::<LogEntry>(4096);
+    let (tx, rx) = bounded::<LogEntry>(LOG_QUEUE_SIZE);
     thread::Builder::new()
         .name("virtmcu-logger".into())
         .spawn(move || {
@@ -136,12 +140,14 @@ fn init_logger_thread() -> Sender<LogEntry> {
                 let vtime_ms = entry.vtime as f64 / 1_000_000.0;
 
                 let formatted = format!(
-                    "[VTime: {:>10.2} ms] [Node: {}] [{}] [{}] {}\n\0",
+                    "[VTime: {:>width$.prec$} ms] [Node: {}] [{}] [{}] {}\n\0",
                     vtime_ms,
                     entry.node_id,
                     entry.level.as_str(),
                     entry.module,
-                    msg_str
+                    msg_str,
+                    width = VTIME_WIDTH,
+                    prec = VTIME_PRECISION
                 );
 
                 // SAFETY: formatted is null-terminated and valid for the duration of the call.

@@ -15,7 +15,7 @@ In this series, we focus on the **Atomic Node**. You will learn how to construct
 *   **[Lesson 3: The World Specification](./lesson03-world-specification/README.md)**: Bridging ecosystem formats by authoring VirtMCU YAML Device Trees via `yaml2qemu`.
 *   **[Lesson 4: The MMIO Lifecycle](./lesson04-mmio-lifecycle/README.md)**: Forensic analysis of the "story of a byte"—following an instruction from the CPU into a custom register.
 *   **[Lesson 5: Rust FFI and the BQL](./lesson05-rust-ffi-and-bql/README.md)**: The SOTA standard for memory-safe peripheral modeling and RAII-based Big QEMU Lock (BQL) management.
-*   **[Lesson 6: Emulation Test Automation](./lesson06-test-automation/README.md)**: Implementing rigorous verification using QMP and the `pytest` framework.
+*   **[Lesson 6: Emulation Test Automation](./lesson06-test-automation/README.md)**: Implementing rigorous verification using QMP and the `virtmcu-test-runner` framework.
 
 ---
 

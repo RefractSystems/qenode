@@ -13,13 +13,11 @@ To maintain performance, type-safety, and long-term maintainability, the followi
    * It touches a virtual clock, routes a packet, or handles a bit-for-bit hardware register.
    * It is a complex generator or validation tool (e.g., parsing topologies to emit QEMU CLI args) where schema adherence is critical.
    * It is a high-performance adapter or bridge interfacing with external simulators (e.g., SystemC).
-2. **Write in Python if**:
-   * It interacts with AI agents (e.g., MCP servers).
-   * It generates human-readable reports (e.g., coverage analysis).
-   * It provides a high-level UI gateway or simple test orchestration framework.
-3. **Avoid Bash for Orchestration**:
+   * It handles test orchestration, monitoring, or CI verification.
+
+2. **Avoid Bash for Orchestration**:
    * Bash is strictly for simple aliases, CI glue, or single-command wrappers.
-   * Complex test setups involving background PIDs, inter-process communication, or fragile timing dependencies MUST be written in Rust (via `tokio`) or Python.
+   * Complex test setups involving background PIDs, inter-process communication, or fragile timing dependencies MUST be written in Rust (via `tokio`).
 
 ---
 
@@ -37,7 +35,7 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 
 ### Phase X: The Native Rust Singularity (Testing Framework Migration) ✅
 **Status**: ✅ Completed.
-**Goal**: Eradicate `pytest`, Python-based orchestration, and fragile bash wrappers, shifting 100% of the integration testing logic into native `#[tokio::test]` leveraging the RAII-safe `virtmcu-test-runner` library.
+**Goal**: Eradicate `virtmcu-test-runner`, Python-based orchestration, and fragile bash wrappers, shifting 100% of the integration testing logic into native `#[tokio::test]` leveraging the RAII-safe `virtmcu-test-runner` library.
 
 **Tasks**:
 - [x] **X.1 Core Tooling Migration**: Port QMP edge case and failure injection tests to `tests/native_integration/tests/qmp.rs`.
@@ -45,7 +43,7 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 - [x] **X.3 Python Purge - Peripherals**: Rewrite `test_spi.py`, `test_telemetry.py`, `test_canfd.py`, `test_lin.py`, `test_flexray.py`, `test_uart_echo.py`, and `test_actuator.py` into native Rust and delete the Python implementations.
 - [x] **X.4 Python Purge - Infrastructure**: Migrate the core Determinism logic: `test_clock_suspend.py`, `test_ftrt_timing.py`, `test_coordinator.py`, `test_topology_integrity.py`.
 - [x] **X.5 CLI Tool Subsumption**: Integrate `--coverage`, `--miri`, and `--asan` flags natively into the `virtmcu-test-runner` CLI, subsuming `scripts/testing/*.sh` wrappers.
-- [x] **X.6 The Final Strike**: Delete `tools/testing/virtmcu_test_suite/`, remove `pytest` from all environment files, delete all YAML specs in `tests/specs/`, and purge Python scripts embedded within `docs/tutorials/`. Migrated `yaml2qemu` to `packaging/virtmcu-tools` as a self-contained package.
+- [x] **X.6 The Final Strike**: Delete `tools/testing/virtmcu_test_suite/`, remove `virtmcu-test-runner` from all environment files, delete all YAML specs in `tests/specs/`, and purge Python scripts embedded within `docs/tutorials/`. Migrated `yaml2qemu` to `packaging/virtmcu-tools` as a self-contained package.
 
 
 ---
@@ -94,9 +92,8 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 - [x] **30.9.1** Implement Rust `stress-adapter` tool.
 - [ ] **30.9.2** Implement Rust `systemc-adapter` tool (C++ to Rust migration).
 - [ ] **30.10** Unified Coverage Reporting (Host + Guest).
-- [ ] **30.11** Migrate `yaml2qemu.py` validation logic to Rust. This ensures strict, compile-time adherence to the TypeSpec schema via the Rust Domain Models.
+- [x] **30.11** Migrate `yaml2qemu.py` validation logic to Rust. This ensures strict, compile-time adherence to the TypeSpec schema via the Rust Domain Models. (Completed as part of `virtmcu-cli platform generate` port).
 - [ ] **30.12** Migrate fragile Bash test orchestration scripts (e.g., in `tests/fixtures/guest_apps/irq_stress/`) to a robust Rust test runner.
-
 
 ### [Hardware] Milestone 32 — Vendor Firmware Validation (Binary Fidelity) 🚧
 **Status**: 🟡 Open.
@@ -122,14 +119,14 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 - [x] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
 
 ### [Infrastructure] Milestone 33 — Deprecation of `repl2qemu` and `.repl` format 🚧
-**Status**: 🟡 Open.
+**Status**: 🚧 Completed (Legacy files purged).
 
-**Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). This eliminates the structural drift inherent in "all-in-one" `.repl` definitions.
+**Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). 
 
 **Tasks**:
-- [x] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format using the `repl2yaml.py` utility.
-- [ ] **33.2**: Refactor `yaml2qemu.py` to remove its dependency on `repl2qemu/fdt_emitter.py`. Integrate the required FDT emission logic directly into `yaml2qemu` or a new modern library.
-- [ ] **33.3**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow as defined in Architecture Chapter 11.
+- [x] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format.
+- [x] **33.2**: Purge legacy `repl2qemu` Python scripts and dependencies.
+- [ ] **33.3**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow.
 
 
 ### [Infrastructure] INFRA-9 — Execution Pacing & Faster-Than-Real-Time (FTRT) Support
@@ -137,7 +134,7 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 **Goal**: Formalize the separation between **Wall-Clock Timeouts** (fail-fast boundaries) and **Simulation Pacing** (controlling guest execution speed relative to reality). VirtMCU must run FTRT in CI, but support interactive real-time (1.0x) or slow-motion (e.g., 10.0x) for human-in-the-loop UI and GDB sessions.
 **What needs to be improved**: Tests and runtime environments currently assume "as fast as possible." When connecting a frontend UI or Wireshark, the simulation runs too fast for human observation. Conversely, we must mathematically prove that CI runs FTRT without artificial framework bottlenecks.
 **How it's tested**: 
-1. **Host Timeout Scale**: Implemented `TestParams` in `tools/testing/parameters.py` to transparently stretch/shrink wait boundaries based on ASan/CI runners.
+1. **Host Timeout Scale**: Implemented logic to transparently stretch/shrink wait boundaries based on ASan/CI runners.
 2. **Coordinator Pacing**: Add `--pacing <float>` to `deterministic_coordinator`. `0.0` = FTRT (default), `1.0` = Real-time, `10.0` = Slow motion.
 3. **Runtime UI Control**: Expose a QMP/Zenoh endpoint allowing a connected Frontend UI to dynamically adjust the pacing multiplier at runtime.
 4. **FTRT Proof Test**: Create a CI test that simulates 60 seconds of virtual stress-load, asserting that it completes in `< 5 seconds` of Wall-Clock time.
@@ -169,15 +166,14 @@ Add a benchmark script. Add the measured results as a table in ARCHITECTURE.md s
 engineers can choose the right transport for their scenario.
 
 **Files to create**:
-- `tools/benchmarks/clock_rtt_bench.py` — measures median clock RTT across 10 000 quanta
+- `tools/benchmarks/src/clock_rtt_bench.rs` — measures median clock RTT across 10 000 quanta
 
 **Files to modify**:
 - `docs/architecture/01-system-overview.md` — add "Simulation Frequency Ceiling" table
 
 **Definition of Done**:
-- [ ] Benchmark script exists and is runnable in CI.
+- [ ] Benchmark tool exists and is runnable in CI.
 - [ ] Results table added to ARCHITECTURE.md §9.
-- [ ] `make dev-lint` (ruff) passes on the benchmark script.
 
 ---
 
@@ -227,7 +223,20 @@ Items here have no immediate action — they are structural constraints or futur
 
 | ID | Risk | Status / Mitigation |
 |---|---|---|
-| R1 | `arm-generic-fdt` patch drift | Ongoing. QEMU version is pinned; all patches go through `scripts/apply-qemu-patches.sh`. Track upstream `accel/tcg` changes on each QEMU bump. |
+| R1 | `arm-generic-fdt` patch drift | Ongoing. QEMU version is pinned; all patches go through `cargo run -p virtmcu-cli -- setup patch-qemu`. Track upstream `accel/tcg` changes on each QEMU bump. |
 | R7 | `icount` performance | Design guideline: use `slaved-icount` only when sub-quantum timing precision is required. `slaved-suspend` is the default. |
 | R18 | No firmware coverage gate | Binary fidelity is the #1 invariant but there is no `drcov`/coverage CI gate. Tracked as Milestone 30.8. |
+
+---
+
+### Phase 1: Build System Oxidation (Makefile -> xtask) ✅
+**Status**: ✅ Completed.
+**Goal**: Centralize and strongly-type the complex Bash/Make build logic into a Rust `xtask` crate to improve maintainability and cross-platform reliability.
+
+**Tasks**:
+- [x] Create the `xtask` workspace member.
+- [x] Port `BUILD_DEPS` parsing, version sync, and image tagging logic to Rust.
+- [x] Implement subcommands for Docker builds, QEMU compilation, and test execution.
+- [x] Refactor the root `Makefile` into a thin wrapper delegating to `cargo xtask`.
+- [x] Update documentation (`01-build-system.md`).
 

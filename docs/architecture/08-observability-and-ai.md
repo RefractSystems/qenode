@@ -20,13 +20,13 @@ These streams can be ingested by visual timeline tools or analyzed by the test h
 
 ---
 
-## 2. The MCP Co-pilot Interface
+## 2. AI Co-pilot & MCP
 
-To support LLM-driven debugging and lifecycle management, VirtMCU includes a standalone **Model Context Protocol (MCP)** server (`tools/mcp_server/`). This interface allows AI agents to act as "peer programmers" in the simulation environment.
+To support LLM-driven debugging and lifecycle management, VirtMCU is designed to interface with the **Model Context Protocol (MCP)**. This allows AI agents to act as "peer programmers" in the simulation environment by providing semantic access to the simulation state.
 
 ### Capabilities for AI Agents:
-- **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause).
-- **Introspection**: Agents can inspect raw memory, read CPU registers, and disassemble guest code dynamically via the `tools/testing/virtmcu_test_suite/qmp_bridge.py` wrapper.
+- **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause) via `virtmcu-run`.
+- **Introspection**: Agents can inspect raw memory, read CPU registers, and disassemble guest code dynamically via the `virtmcu-cli qmp` tool or the `QmpClient` integrated into `virtmcu-test-runner`.
 - **Interactive Debugging**: Agents can interact with UART consoles, monitor network traffic, and inject faults to verify firmware resilience.
 
 ---
@@ -53,4 +53,4 @@ VirtMCU exports binary network and telemetry traces using the **DLT_USER0 (147)*
 To bring this data to life, VirtMCU now provides deep integration with Wireshark. This allows engineers to analyze distributed, multi-node communication in "virtual real-time."
 - **Extcap Plugin**: The `tools/wireshark/virtmcu_extcap.py` plugin enables Wireshark to natively capture live traffic streaming over the VirtMCU Zenoh bus. 
 - **Lua Dissector**: The `tools/wireshark/virtmcu_dissector.lua` script provides high-level protocol decoding (e.g., UART payloads, CAN-FD frames) within the Wireshark UI, perfectly aligning the capture timestamps with the simulation's deterministic `delivery_vtime_ns`.
-- **Offline Analysis**: Alternatively, traffic can be recorded headlessly using the `tools/zenoh_pcap_dumper.py` utility for later analysis.
+- **Offline Analysis**: Alternatively, traffic can be recorded headlessly using the `virtmcu-cli debug pcap-dump` utility for later analysis.

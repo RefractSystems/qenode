@@ -1,4 +1,4 @@
-# Lesson 10 — The Cyber-Physical Bridge (SAL/AAL)
+# Lesson 12 — The Cyber-Physical Bridge (SAL/AAL)
 
 This lesson explains how virtmcu creates a causal, deterministic link between
 firmware running in QEMU and an external physics engine or prerecorded data stream.
@@ -37,7 +37,7 @@ firmware MMIO write
 ## Clock Suspend → Cyber Bridge Timing Link
 
 Task 7.7 added `VirtmcuQuantumTiming` to `include/virtmcu/hooks.h` and wired it
-into `clock.c`. The `ClockAdvancePayload.absolute_vtime_ns` field carries the
+into `clock.c`. The `ClockAdvanceReq.absolute_vtime_ns` field carries the
 physics-engine simulation time to QEMU, where `virtmcu-clock` stores it in
 `s->absolute_vtime_ns`. QEMU-internal SAL models can then call:
 
@@ -184,7 +184,7 @@ Generate a C++ header from your board YAML so the SAL/AAL C++ code always uses
 the same base addresses as the firmware Device Tree:
 
 ```bash
-tools/usd_to_virtmcu.py boards/my_robot.yaml > include/board_addresses.hpp
+cargo run -p virtmcu-cli -- platform generate-header boards/my_robot.yaml > include/board_addresses.hpp
 ```
 
 Output:
@@ -202,7 +202,7 @@ the SAL model reads from the same address the firmware writes to.
 ## Running the Smoke Test
 
 ```bash
-pytest tests/integration/tooling/test_cyber_bridge.py -v
+virtmcu-test-runner tests/integration/tooling/test_cyber_bridge.py -v
 ```
 
 Expected output:

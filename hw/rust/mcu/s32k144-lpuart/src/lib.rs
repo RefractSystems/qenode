@@ -125,6 +125,10 @@ pub struct LpuartState {
     pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
+const REG_VERID: u64 = 0x00;
+const REG_PARAM: u64 = 0x04;
+const REG_GLOBAL: u64 = 0x08;
+const REG_PINCFG: u64 = 0x0C;
 const REG_BAUD: u64 = 0x10;
 const REG_STAT: u64 = 0x14;
 const REG_CTRL: u64 = 0x18;
@@ -133,6 +137,14 @@ const REG_MATCH: u64 = 0x20;
 const REG_MODIR: u64 = 0x24;
 const REG_FIFO: u64 = 0x28;
 const REG_WATER: u64 = 0x2C;
+
+const LPUART_RESET_BAUD: u32 = 0x0F000004;
+const LPUART_RESET_STAT: u32 = 0xC0000000;
+const LPUART_RESET_FIFO: u32 = 0x00C00011;
+
+const LPUART_DATA_MASK: u32 = 0xFF;
+const LPUART_MAX_ACCESS_SIZE: u64 = 4;
+const LPUART_MEM_REGION_SIZE: u64 = 0x100;
 
 const STAT_LBKDIF: u32 = 1 << 31;
 const STAT_TDRE: u32 = 1 << 23;
@@ -155,6 +167,17 @@ const CTRL_SBK: u32 = 1 << 0;
 const BAUD_LBKDIE: u32 = 1 << 31;
 const BAUD_LBKDE: u32 = 1 << 24;
 
+const LPUART_VERID: u64 = 0x04010001;
+const LPUART_PARAM: u64 = 0x00020202;
+const LPUART_TX_FIFO_CAP: usize = 4096;
+const LPUART_SBR_MASK: u32 = 0x1FFF;
+const LPUART_OSR_MASK: u32 = 0x1F;
+const LPUART_OSR_SHIFT: u32 = 24;
+const LPUART_DEFAULT_CLOCK_HZ: u32 = 48_000_000;
+const LPUART_DEFAULT_BAUD_DELAY_NS: i64 = 86800;
+const LPUART_BITS_PER_CHAR: i64 = 10;
+const LPUART_NS_PER_SEC: i64 = 1_000_000_000;
+
 /// # Safety
 /// This function is called by QEMU on MMIO read. `opaque` must be a valid `S32K144LpuartQemu` pointer.
 #[no_mangle]
@@ -165,9 +188,9 @@ pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_
     }
     let state = unsafe { &mut *s.rust_state };
     match offset {
-        0x00 => 0x04010001, // VERID
-        0x04 => 0x00020202, // PARAM
-        0x08 | 0x0C => 0,   // GLOBAL, PINCFG
+        REG_VERID => LPUART_VERID,    // VERID
+        REG_PARAM => LPUART_PARAM,    // PARAM
+        REG_GLOBAL | REG_PINCFG => 0, // GLOBAL, PINCFG
         REG_BAUD => u64::from(state.baud),
         REG_STAT => u64::from(state.stat),
         REG_CTRL => u64::from(state.ctrl),
@@ -222,9 +245,9 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
             update_irqs(state);
         }
         REG_DATA if state.ctrl & CTRL_TE != 0 => {
-            let byte = u8::try_from(val & 0xFF).expect("byte truncated");
+            let byte = u8::try_from(val & LPUART_DATA_MASK).expect("byte truncated");
             let was_empty = state.tx_fifo.is_empty();
-            if state.tx_fifo.len() < 4096 {
+            if state.tx_fifo.len() < LPUART_TX_FIFO_CAP {
                 state.tx_fifo.push_back(byte);
             }
 
@@ -292,16 +315,16 @@ fn update_irqs(s: &mut LpuartState) {
 }
 
 fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
-    let sbr = baud_reg & 0x1FFF;
+    let sbr = baud_reg & LPUART_SBR_MASK;
     if sbr == 0 {
-        return 86800;
+        return LPUART_DEFAULT_BAUD_DELAY_NS;
     }
-    let osr = ((baud_reg >> 24) & 0x1F) + 1;
-    let baud_rate = 48_000_000 / (osr * sbr);
+    let osr = ((baud_reg >> LPUART_OSR_SHIFT) & LPUART_OSR_MASK) + 1;
+    let baud_rate = LPUART_DEFAULT_CLOCK_HZ / (osr * sbr);
     if baud_rate == 0 {
-        return 86800;
+        return LPUART_DEFAULT_BAUD_DELAY_NS;
     }
-    i64::from((1_000_000_000 / baud_rate) * 10)
+    i64::from((LPUART_NS_PER_SEC / i64::from(baud_rate)) * LPUART_BITS_PER_CHAR)
 }
 
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut c_void) {
@@ -384,7 +407,7 @@ static LPUART_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 4,
+        max_access_size: LPUART_MAX_ACCESS_SIZE as u32,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
@@ -471,7 +494,7 @@ pub unsafe extern "C" fn lpuart_instance_init(obj: *mut virtmcu_qom::qom::Object
             &raw const LPUART_OPS,
             obj as *mut c_void,
             c"s32k144-lpuart".as_ptr(),
-            0x100,
+            LPUART_MEM_REGION_SIZE,
         );
         sysbus_init_mmio(obj as *mut SysBusDevice, &raw mut s.iomem);
         sysbus_init_irq(obj as *mut SysBusDevice, &raw mut s.irq);
@@ -498,12 +521,12 @@ unsafe extern "C" fn lpuart_reset(dev: *mut c_void) {
     }
     let state = unsafe { &mut *s.rust_state };
 
-    state.baud = 0x0F000004;
-    state.stat = 0xC0000000;
+    state.baud = LPUART_RESET_BAUD;
+    state.stat = LPUART_RESET_STAT;
     state.ctrl = 0;
     state.match_ = 0;
     state.modir = 0;
-    state.fifo = 0x00C00011;
+    state.fifo = LPUART_RESET_FIFO;
     state.water = 0;
 
     state.rx_buffer.clear();
@@ -672,7 +695,7 @@ fn lpuart_init_internal(
         irq,
         transport,
         subscription,
-        baud: 0x0F000004,
+        baud: LPUART_RESET_BAUD,
         stat: STAT_TDRE | STAT_TC,
         ctrl: 0,
         _data: 0,
@@ -697,6 +720,7 @@ fn lpuart_init_internal(
 }
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
 mod tests {
     use super::*;
 

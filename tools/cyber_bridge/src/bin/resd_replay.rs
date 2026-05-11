@@ -91,7 +91,7 @@ async fn main() {
 
         if !got_reply {
             eprintln!(
-                "[RESD Replay] Node {node_id}: Did not receive ClockReadyPayload for vtime {current_vtime_ns}"
+                "[RESD Replay] Node {node_id}: Did not receive ClockReadyResp for vtime {current_vtime_ns}"
             );
             std::process::exit(1);
         }

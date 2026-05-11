@@ -1,4 +1,5 @@
-#[repr(C, align(8))]
+const _: () = ();
+#[repr(C, align(8))] // virtmcu-allow: align requirements
 /// A struct
 pub struct QemuMutex {
     _opaque: [u8; 64],
@@ -8,7 +9,8 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 
-#[repr(C, align(8))]
+const _: () = ();
+#[repr(C, align(8))] // virtmcu-allow: align requirements
 /// A struct
 pub struct QemuCond {
     _opaque: [u8; 56],
@@ -1223,19 +1225,23 @@ mod tests {
 
     // ── BqlGuarded tests ────────────────────────────────────────────────
 
+    const TEST_VAL: u32 = 42;
+
     #[test]
     fn test_bql_guarded_get_returns_value() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        assert_eq!(*guarded.get(), 42);
+        assert_eq!(*guarded.get(), TEST_VAL);
     }
+
+    const UPDATE_VAL: u64 = 99;
 
     #[test]
     fn test_bql_guarded_get_mut_mutates_value() {
         let guarded = BqlGuarded::new(0u64);
         let _bql = Bql::lock();
-        *guarded.get_mut() = 99;
-        assert_eq!(*guarded.get(), 99);
+        *guarded.get_mut() = UPDATE_VAL;
+        assert_eq!(*guarded.get(), UPDATE_VAL);
     }
 
     #[test]
@@ -1267,7 +1273,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already mutably borrowed")]
     fn test_bql_guarded_read_after_write() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
         let _write = guarded.get_mut();
         let _read = guarded.get(); // Panics dynamically
@@ -1276,7 +1282,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_bql_guarded_write_after_read() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
         let _read = guarded.get();
         let _write = guarded.get_mut(); // Panics dynamically
@@ -1291,7 +1297,8 @@ mod tests {
         assert_eq!(*drain.count.lock(), 1);
 
         let guard2 = drain.acquire();
-        assert_eq!(*drain.count.lock(), 2);
+        const TEST_COUNT: usize = 2;
+        assert_eq!(*drain.count.lock(), TEST_COUNT);
 
         drop(guard1);
         assert_eq!(*drain.count.lock(), 1);
@@ -1308,9 +1315,10 @@ mod tests {
         let _bql = Bql::lock();
         let start = std::time::Instant::now();
         // This should timeout since we hold the guard
-        drain.wait_for_drain(10);
+        const DRAIN_TIMEOUT_MS: u32 = 10;
+        drain.wait_for_drain(DRAIN_TIMEOUT_MS);
         let elapsed = start.elapsed();
 
-        assert!(elapsed.as_millis() >= 10);
+        assert!(elapsed.as_millis() >= DRAIN_TIMEOUT_MS as u128);
     }
 }

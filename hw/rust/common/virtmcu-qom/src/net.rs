@@ -11,12 +11,15 @@ pub const QEMU_NETDEV_SIZE: usize = 240;
 /// Size of NetdevUnion in QEMU (verified via check-ffi.py / pahole)
 pub const QEMU_NETDEV_UNION_SIZE: usize = 224;
 
+const POINTER_SIZE: usize = 8;
+const NET_CLIENT_INFO_LAST_OFFSET: usize = 56;
+
 #[repr(C)]
 /// A struct
 pub struct NetClientState {
     /// A struct field
     pub info: *const NetClientInfo,
-    _opaque: [u8; QEMU_NET_CLIENT_STATE_SIZE - 8], // Pad to QEMU_NET_CLIENT_STATE_SIZE bytes
+    _opaque: [u8; QEMU_NET_CLIENT_STATE_SIZE - POINTER_SIZE], // Pad to QEMU_NET_CLIENT_STATE_SIZE bytes
 }
 
 /// A type alias
@@ -47,7 +50,7 @@ pub struct NetClientInfo {
     /// A struct field
     pub cleanup: NetClientCleanup,
     /// A struct field
-    pub _opaque: [u8; QEMU_NET_CLIENT_INFO_SIZE - 56], // Pad to QEMU_NET_CLIENT_INFO_SIZE bytes
+    pub _opaque: [u8; QEMU_NET_CLIENT_INFO_SIZE - NET_CLIENT_INFO_LAST_OFFSET], // Pad to QEMU_NET_CLIENT_INFO_SIZE bytes
 }
 
 #[repr(C)]
@@ -92,7 +95,8 @@ pub struct NetdevVirtmcuOptions {
 /// A constant
 pub const NET_CLIENT_DRIVER_VIRTMCU: i32 = 14;
 
-#[repr(C, align(8))]
+const _: () = ();
+#[repr(C, align(8))] // virtmcu-allow: align requirements
 #[derive(Copy, Clone, Debug)]
 /// A struct
 pub struct QemuCanFrame {
@@ -255,6 +259,7 @@ mod stubs {
 
     /// Stub
     #[no_mangle]
+    // virtmcu-allow: static_state reasoning="QEMU netdev hook for FFI linkage in tests"
     pub static mut virtmcu_netdev_hook: Option<
         // virtmcu-allow: callback reasoning="QEMU FFI"
         unsafe extern "C" fn(
@@ -283,9 +288,21 @@ extern "C" {
     >;
 }
 
+const NETDEV_TYPE_OFFSET: usize = 8;
+const NETDEV_U_OFFSET: usize = 16;
+
+const OPTIONS_TRANSPORT_OFFSET: usize = 8;
+const OPTIONS_ROUTER_OFFSET: usize = 16;
+const OPTIONS_TOPIC_OFFSET: usize = 24;
+const OPTIONS_HAS_MAX_BACKLOG_OFFSET: usize = 32;
+const OPTIONS_MAX_BACKLOG_OFFSET: usize = 40;
+const OPTIONS_SIZE: usize = 48;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NET_CLIENT_INFO_RECEIVE_OFFSET: usize = 16;
 
     #[test]
     fn test_net_client_layout() {
@@ -296,27 +313,32 @@ mod tests {
     #[test]
     fn test_net_client_info_layout() {
         assert!(core::mem::offset_of!(NetClientInfo, type_id) == 0);
-        assert!(core::mem::offset_of!(NetClientInfo, size) == 8);
-        assert!(core::mem::offset_of!(NetClientInfo, receive) == 16);
+        assert!(core::mem::offset_of!(NetClientInfo, size) == POINTER_SIZE);
+        assert!(core::mem::offset_of!(NetClientInfo, receive) == NET_CLIENT_INFO_RECEIVE_OFFSET);
         assert!(core::mem::size_of::<NetClientInfo>() == QEMU_NET_CLIENT_INFO_SIZE);
     }
 
     #[test]
     fn test_netdev_layout() {
         assert!(core::mem::offset_of!(Netdev, id) == 0);
-        assert!(core::mem::offset_of!(Netdev, type_) == 8);
-        assert!(core::mem::offset_of!(Netdev, u) == 16);
+        assert!(core::mem::offset_of!(Netdev, type_) == NETDEV_TYPE_OFFSET);
+        assert!(core::mem::offset_of!(Netdev, u) == NETDEV_U_OFFSET);
         assert!(core::mem::size_of::<Netdev>() == QEMU_NETDEV_SIZE);
     }
 
     #[test]
     fn test_netdev_virtmcu_options_layout() {
         assert!(core::mem::offset_of!(NetdevVirtmcuOptions, node) == 0);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, transport) == 8);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, router) == 16);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, topic) == 24);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, has_max_backlog) == 32);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, max_backlog) == 40);
-        assert!(core::mem::size_of::<NetdevVirtmcuOptions>() == 48);
+        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, transport) == OPTIONS_TRANSPORT_OFFSET);
+        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, router) == OPTIONS_ROUTER_OFFSET);
+        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, topic) == OPTIONS_TOPIC_OFFSET);
+        assert!(
+            core::mem::offset_of!(NetdevVirtmcuOptions, has_max_backlog)
+                == OPTIONS_HAS_MAX_BACKLOG_OFFSET
+        );
+        assert!(
+            core::mem::offset_of!(NetdevVirtmcuOptions, max_backlog) == OPTIONS_MAX_BACKLOG_OFFSET
+        );
+        assert!(core::mem::size_of::<NetdevVirtmcuOptions>() == OPTIONS_SIZE);
     }
 }

@@ -1,4 +1,4 @@
-# Lesson 5: Hardware Co-Simulation — Connecting SystemC Models to QEMU
+# Lesson 10: Hardware Co-Simulation — Connecting SystemC Models to QEMU
 
 In this lesson you will learn how QEMU's MMIO subsystem can be extended to
 communicate with an external hardware model — specifically a **SystemC TLM-2.0**
@@ -177,7 +177,7 @@ target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb 
 2. Write firmware that writes to register 1, then reads it back and branches to
    a "pass" or "fail" label depending on whether the read value equals the
    write value.
-3. Verify with `get_pc()` in pytest that the firmware ends up in the expected
+3. Verify with `get_pc()` in virtmcu-test-runner that the firmware ends up in the expected
    branch.
 
 ## What's next

@@ -13,7 +13,6 @@ variable "MDBOOK_MERMAID_VERSION" {}
 variable "MDBOOK_PDF_VERSION" {}
 variable "DEBIAN_CODENAME" {}
 variable "NODE_VERSION" {}
-variable "PYTHON_VERSION" {}
 variable "ARM_TOOLCHAIN_VERSION" {}
 variable "QEMU_VERSION" {}
 variable "ZENOH_VERSION" {}
@@ -21,7 +20,6 @@ variable "CMAKE_VERSION" {}
 variable "RUST_VERSION" {}
 variable "FLATBUFFERS_VERSION" {}
 variable "FLATCC_VERSION" {}
-variable "UV_VERSION" {}
 variable "CARGO_BINSTALL_VERSION" {}
 
 # Architecture handling
@@ -81,7 +79,6 @@ target "_common" {
     MDBOOK_PDF_VERSION     = MDBOOK_PDF_VERSION
     DEBIAN_CODENAME       = DEBIAN_CODENAME
     NODE_VERSION          = NODE_VERSION
-    PYTHON_VERSION        = PYTHON_VERSION
     ARM_TOOLCHAIN_VERSION = ARM_TOOLCHAIN_VERSION
     QEMU_REF              = "v${QEMU_VERSION}"
     ZENOH_C_REF           = ZENOH_VERSION
@@ -89,7 +86,6 @@ target "_common" {
     RUST_VERSION          = RUST_VERSION
     FLATBUFFERS_VERSION   = FLATBUFFERS_VERSION
     FLATCC_VERSION        = FLATCC_VERSION
-    UV_VERSION            = UV_VERSION
     CARGO_BINSTALL_VERSION= CARGO_BINSTALL_VERSION
     USE_CCACHE            = USE_CCACHE
     VIRTMCU_USE_ASAN      = "${VIRTMCU_USE_ASAN}"

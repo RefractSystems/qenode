@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "hw/rust/common/rust-dummy",
+    "hw/rust/observability/tcg-tracer",
     "hw/rust/backbone/transport-zenoh",
     "hw/rust/backbone/transport-unix",
     "hw/rust/backbone/transport_hub",
@@ -27,10 +28,13 @@ members = [
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
     "tools/virtmcu-test-runner",
     "tools/virtmcu-run",
+    "tools/virtmcu-cli",
+    "tools/virtmcu-coverage",
     "tools/benchmarks/clock_rtt_bench",
     "tests/native_integration",
 ]
 exclude = [
+    "xtask",
     "third_party",
     "third_party/zenoh-c-src/build-asan/release",
     "third_party/zenoh-c-src/build-release/release",

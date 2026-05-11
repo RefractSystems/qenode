@@ -28,8 +28,6 @@
         "rust-analyzer.check.command": "clippy"
       },
       "extensions": [
-        "ms-python.python",
-        "charliermarsh.ruff",
         "ms-vscode.cpptools-extension-pack",
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",

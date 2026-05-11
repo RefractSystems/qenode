@@ -62,7 +62,7 @@ The diagram below illustrates how the abstract CPS concepts map to our concrete 
 │  The Digital Twin World                                                     │
 │                                                                             │
 │  ┌──────────────────┐  physics_step() ┌───────────────────────────────────┐ │
-│  │  Physical Node   │ ──────────────► │  TimeAuthority (Python)           │ │
+│  │  Physical Node   │ ──────────────► │  TimeAuthority (Rust)             │ │
 │  │  [MuJoCo/Omniverse]                │  - steps all Cyber Node clocks    │ │
 │  │                  │ ◄────────────── │  - pushes topology updates        │ │
 │  └──────────────────┘  sensor data    └───────┬───────────────────────────┘ │

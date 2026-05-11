@@ -5,7 +5,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{timeout, Duration};
-use tracing::{error, info};
+use tracing::{debug, error, info, trace, warn};
 
 pub struct NodeConfig {
     pub id: u32,
@@ -114,6 +114,16 @@ impl TopologyBuilder {
         }
     }
 
+    /// SOTA Async Teardown: Builds the environment and executes a test closure,
+    /// guaranteeing graceful teardown even on panic.
+    pub async fn run_test<F>(self, test_func: F) -> Result<()>
+    where
+        F: for<'a> FnOnce(&'a mut VirtmcuTestEnv) -> futures::future::BoxFuture<'a, Result<()>>,
+    {
+        let env = self.build().await?;
+        env.run_test(test_func).await
+    }
+
     pub fn with_variable(mut self, key: &str, value: &str) -> Self {
         self.variables.insert(key.to_string(), value.to_string());
         self
@@ -210,8 +220,6 @@ impl TopologyBuilder {
             };
 
             let mut yaml_cli_args = Vec::new();
-            yaml_cli_args.push("-device".to_string());
-            yaml_cli_args.push(format!("virtmcu-transport-hub,id=hub0,router={}", endpoint));
 
             let dtb_path = if let Some(dts) = &node.dts {
                 let sub_dts = ctx.substitute(dts);
@@ -233,7 +241,8 @@ impl TopologyBuilder {
                 let yaml_content = yaml_content.replace("ZENOH_ROUTER_ENDPOINT", &endpoint);
                 let yaml_content = ctx.substitute(&yaml_content);
 
-                let platform = yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
+                let (platform, world) =
+                    yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
 
                 let has_manual_clock = node
                     .qemu_args
@@ -248,7 +257,9 @@ impl TopologyBuilder {
 
                 yaml_cli_args.clear();
                 yaml_cli_args = platform.cli_args;
-                artifacts.get_dtb_dts(&platform.dts_content).await?
+                let dtb = artifacts.get_dtb_dts(&platform.dts_content).await?;
+                yaml2qemu::validate_dtb(&dtb, &world)?;
+                dtb
             } else {
                 return Err(anyhow!(
                     "Device Tree DTS, DTB path, or YAML path is required"
@@ -359,7 +370,23 @@ impl TopologyBuilder {
             let mut stderr_lines = BufReader::new(stderr).lines();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = stderr_lines.next_line().await {
-                    error!("QEMU STDERR: {}", line);
+                    if line.contains("[ERROR]")
+                        || line.contains("error:")
+                        || line.contains("fatal:")
+                        || line.contains("panic")
+                    {
+                        error!("[QEMU] {}", line);
+                    } else if line.contains("[WARN ]") || line.contains("warning:") {
+                        warn!("[QEMU] {}", line);
+                    } else if line.contains("[DEBUG]") {
+                        debug!("[QEMU] {}", line);
+                    } else if line.contains("[TRACE]") {
+                        trace!("[QEMU] {}", line);
+                    } else if line.contains("[INFO ]") || line.contains("info:") {
+                        info!("[QEMU] {}", line);
+                    } else {
+                        info!("[QEMU] {}", line);
+                    }
                 }
             });
 
@@ -455,24 +482,11 @@ impl TopologyBuilder {
         if !coordinated_nodes.is_empty() {
             info!("Liveliness barrier passed. Executing 0-ns VTA sync...");
 
-            let advance_topic = "sim/clock/advance/0";
-            let payload: [u8; 24] = [0; 24]; // 3 x 64-bit integers of zeros
-            let replies = session
-                .get(advance_topic)
-                .payload(payload)
+            let coordinator = ZenohClockCoordinator::new(session.clone());
+            coordinator
+                .step_clock(0, 0, 0, 0)
                 .await
-                .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
-            let mut got_reply = false;
-            while let Ok(reply) = replies.recv_async().await {
-                if reply.result().is_ok() {
-                    got_reply = true;
-                    break;
-                }
-            }
-
-            if !got_reply {
-                return Err(anyhow!("Failed to receive VTA 0-ns sync reply from QEMU"));
-            }
+                .map_err(|e| anyhow!("Failed to receive VTA 0-ns sync reply from QEMU: {}", e))?;
 
             info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
         }
@@ -598,8 +612,21 @@ impl VirtmcuTestEnv {
         &mut self.qmp_clients[node_id]
     }
 
+    /// Registers an external child process to be killed during environment teardown.
+    pub fn register_child(&mut self, child: Child) {
+        self.qemu_children.push(child);
+    }
+
     pub fn session(&self) -> zenoh::Session {
         self._session.clone()
+    }
+
+    pub fn tmp_path(&self, name: &str) -> PathBuf {
+        self.ctx.tmp_path(name)
+    }
+
+    pub fn find_binary(&self, name: &str) -> Result<PathBuf> {
+        self.ctx.find_binary(name)
     }
 
     /// Advances the virtual clock for all coordinated nodes by the specified duration.
@@ -625,33 +652,9 @@ impl VirtmcuTestEnv {
                     continue;
                 }
 
-                let advance_topic = format!("sim/clock/advance/{}", node_id);
-                let mut payload = Vec::with_capacity(24);
-                payload.extend_from_slice(&advance.to_le_bytes());
-                payload.extend_from_slice(&current_vtime.to_le_bytes()); // target
-                payload.extend_from_slice(&0u64.to_le_bytes()); // quantum ignored by clock plugin
-
-                let replies = self
-                    ._session
-                    .get(&advance_topic)
-                    .payload(payload)
-                    .await
-                    .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
-
-                let mut got_reply = false;
-                while let Ok(reply) = replies.recv_async().await {
-                    if reply.result().is_ok() {
-                        got_reply = true;
-                        break;
-                    }
-                }
-
-                if !got_reply {
-                    return Err(anyhow!(
-                        "Failed to receive clock step reply for node {}",
-                        node_id
-                    ));
-                }
+                self.clock_coordinator
+                    .step_clock(node_id, advance, current_vtime, 0)
+                    .await?;
             }
             // Small yield to allow async tasks (like monitors) to process
             tokio::task::yield_now().await;
@@ -809,7 +812,7 @@ impl VirtmcuTestEnv {
     }
 
     /// SOTA Async Teardown: Executes a test closure and guarantees graceful teardown even on panic.
-    pub async fn run_test<F>(mut self, test_func: F)
+    pub async fn run_test<F>(mut self, test_func: F) -> Result<()>
     where
         F: for<'a> FnOnce(&'a mut Self) -> futures::future::BoxFuture<'a, Result<()>>,
     {
@@ -822,8 +825,8 @@ impl VirtmcuTestEnv {
         self.teardown().await;
 
         match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => panic!("Test failed: {:?}", e),
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
             Err(payload) => std::panic::resume_unwind(payload),
         }
     }
