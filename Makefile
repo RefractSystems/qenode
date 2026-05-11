@@ -94,7 +94,7 @@ VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
-.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
+.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-python fmt-rust fmt-c fmt-meson fmt-yaml lint check-ffi build-test-artifacts build-tools install-git-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag ensure-ci-image ensure-ci-asan-image
 .PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
 
 # Automatically determine the number of parallel jobs for make
@@ -434,6 +434,10 @@ docker-ci:
 # Build only the docker ci-asan stage
 docker-ci-asan:
 	@bash scripts/docker-build.sh ci-asan
+
+# Build only the docker runtime stage
+docker-runtime:
+	@bash scripts/docker-build.sh runtime
 
 # ------------------------------------------------------------------------------
 # Release

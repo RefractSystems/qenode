@@ -78,6 +78,9 @@ image_for() {
             package="${VIRTMCU_CI_IMAGE}"
             tag="${IMAGE_TAG}-asan"
             ;;
+        runtime)
+            package="runtime"
+            ;;
         third-party-base-asan)
             package="third-party-base"
             tag="${THIRD_PARTY_CACHE_TAG}-asan"
@@ -287,14 +290,18 @@ case "${TARGET}" in
         smoke_ci
         build_stage ci-asan
         smoke_ci_asan
+        build_stage runtime
         section "All stages built and verified"
-        for s in base toolchain devenv ci ci-asan; do
+        for s in base toolchain devenv ci ci-asan runtime; do
             echo "    $(image_for "${s}")"
         done
         ;;
+    runtime)
+        build_stage runtime
+        ;;
     *)
         echo "error: unknown target '${TARGET}'" >&2
-        echo "usage: $0 [dev|all|base|toolchain|devenv|third-party-builder|ci|ci-asan]" >&2
+        echo "usage: $0 [dev|all|base|toolchain|devenv|third-party-builder|ci|ci-asan|runtime]" >&2
         exit 1
         ;;
 esac
