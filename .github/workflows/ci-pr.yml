@@ -369,7 +369,7 @@ jobs:
             -e GCOV_PREFIX=/workspace/coverage-data \
             -e GCOV_PREFIX_STRIP=3 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-integration.sh ${{ matrix.domain }}
+            make dev-integration DOMAIN=${{ matrix.domain }}
 
       - name: Upload results and coverage
         uses: actions/upload-artifact@v4

@@ -38,6 +38,6 @@ VIRTMCU_USE_ASAN=1 \
 VIRTMCU_STALL_TIMEOUT_MS=300000 \
 ASAN_OPTIONS=detect_leaks=0,halt_on_error=1,detect_stack_use_after_return=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-bash scripts/testing/run-integration.sh "$DOMAIN"
+make dev-integration DOMAIN="$DOMAIN"
 
 echo "✓ All ASan integration tests passed."

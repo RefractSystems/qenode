@@ -266,7 +266,7 @@ ci-integration: ensure-ci-image
 		echo "==> Example: make ci-integration DOMAIN=boot_arm"; \
 		exit 1; \
 	fi
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration.sh $(DOMAIN)
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration DOMAIN=$(DOMAIN)
 
 ci-integration-coverage: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-integration-coverage.sh
