@@ -160,6 +160,7 @@ pub struct VirtmcuClock {
     pub coordinated: bool,
     pub session_watchdog_ms: u32,
     pub debug: bool,
+    pub n_vcpus: u32,
 
     /* Internal State */
     /// Virtual time (ns) of the next quantum boundary.
@@ -202,6 +203,7 @@ pub struct VirtmcuClockBackend {
     pub transport: Box<dyn ClockSyncTransport>,
     /// Unique node ID.
     pub node_id: u32,
+    pub n_vcpus: u32,
     /// Stall timeout in milliseconds.
     pub stall_timeout_ms: u32,
     /// Whether coordination is enabled for this node.
@@ -218,6 +220,7 @@ pub struct VirtmcuClockBackend {
 
     /// Explicit state machine for quantum synchronization.
     pub state: core::sync::atomic::AtomicU8,
+    pub vcpu_halt_count: core::sync::atomic::AtomicU32,
     /// Number of nanoseconds to advance in the current/next quantum.
     pub delta_ns: AtomicU64,
     /// Current virtual time in nanoseconds as known by the backend.
@@ -439,21 +442,37 @@ fn clock_quantum_wait_internal(
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
 
     if !is_yielding {
-        // Transition: Initial -> Waiting
-        let current_state = QuantumState::from(backend.state.load(Ordering::Acquire));
-        if current_state != QuantumState::Waiting {
-            let _ = backend.state.compare_exchange(
-                current_state as u8,
-                QuantumState::Waiting as u8,
-                Ordering::SeqCst,
-                Ordering::Relaxed,
-            );
-        }
+        let count = backend.vcpu_halt_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if count == backend.n_vcpus {
+            // All vCPUs have arrived at the barrier.
+            // Transition: Executing -> Waiting
+            backend.state.store(QuantumState::Waiting as u8, Ordering::SeqCst);
 
-        // Notify TA that we finished previous quantum
-        {
-            let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            backend.cond.notify_all();
+            // Notify TA that we finished previous quantum
+            {
+                let _guard =
+                    backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                backend.cond.notify_all();
+            }
+        }
+    }
+
+    // Stage 1: Barrier. Wait until ALL vCPUs have arrived and state transitioned to Waiting.
+    // If state is still Executing, it means other vCPUs are still running.
+    {
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) == QuantumState::Executing as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return 0;
+            }
+            if unsafe { virtmcu_vcpu_should_yield() } {
+                return QUANTUM_WAIT_YIELD_SENTINEL;
+            }
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(10))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
         }
     }
 
@@ -465,21 +484,8 @@ fn clock_quantum_wait_internal(
         Duration::from_millis(u64::from(backend.stall_timeout_ms))
     };
 
-    // Spin briefly to avoid context switch latency
-    while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
-        if backend.shutdown.load(Ordering::Acquire) {
-            return 0;
-        }
-        if unsafe { virtmcu_vcpu_should_yield() } {
-            return QUANTUM_WAIT_YIELD_SENTINEL;
-        }
-        if start.elapsed() > Duration::from_millis(1) {
-            break;
-        }
-        core::hint::spin_loop();
-    }
-
-    if backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
+    // Stage 2: Wait for TA to grant the next quantum (transition to Executing).
+    {
         let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
             if backend.shutdown.load(Ordering::Acquire) {
@@ -522,6 +528,14 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         let (req, responder) = match backend.transport.recv_advance(timeout) {
             Some(r) => {
                 backend.consecutive_timeouts.store(0, Ordering::Relaxed);
+                if backend.is_coordinated {
+                    virtmcu_qom::sim_info!(
+                        "Received advance for quantum {} (delta={}ns, abs={}ns)",
+                        r.0.quantum_number(),
+                        r.0.delta_ns(),
+                        r.0.absolute_vtime_ns()
+                    );
+                }
                 r
             }
             None => {
@@ -555,6 +569,15 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         let current_vtime = backend.vtime_ns.load(Ordering::SeqCst);
         backend.transport.send_vtime_heartbeat(current_vtime);
 
+        if backend.is_coordinated {
+            virtmcu_qom::sim_info!(
+                "Sending ready for quantum {} (vtime={}ns, error={})",
+                req.quantum_number(),
+                current_vtime,
+                error_code
+            );
+        }
+
         let resp = ClockReadyResp::new(current_vtime, 0, error_code, req.quantum_number());
 
         if let Err(e) = responder.send_ready(resp) {
@@ -571,29 +594,30 @@ fn wait_for_ready_and_execute(
     backend: &Arc<VirtmcuClockBackend>,
     delta: u64,
     timeout: Duration,
-    is_first: bool,
+    _is_first: bool,
 ) -> u32 {
     let start = Instant::now();
 
-    loop {
-        if backend.shutdown.load(Ordering::Acquire) {
-            return CLOCK_ERROR_OK;
-        }
-        let current_state = backend.state.load(Ordering::SeqCst);
-        if current_state == QuantumState::Waiting as u8 {
-            break;
-        }
+    {
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Waiting as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return CLOCK_ERROR_OK;
+            }
+            if start.elapsed() > timeout {
+                return CLOCK_ERROR_STALL;
+            }
 
-        if start.elapsed() > timeout {
-            return CLOCK_ERROR_STALL;
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(10))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
         }
-
-        let guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (mut _new_guard, _) = backend
-            .cond
-            .wait_timeout(guard, Duration::from_millis(10))
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
     }
+
+    // Reset barrier for the next quantum
+    backend.vcpu_halt_count.store(0, Ordering::SeqCst);
 
     if backend
         .state
@@ -605,7 +629,8 @@ fn wait_for_ready_and_execute(
         )
         .is_err()
     {
-        virtmcu_qom::sim_err!("Invalid state transition");
+        // This can happen if another vCPU thread changed it?
+        // In single core it shouldn't happen.
     }
 
     {
@@ -615,27 +640,24 @@ fn wait_for_ready_and_execute(
 
     if delta > 0 {
         let exec_start = Instant::now();
-        loop {
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Waiting as u8 {
             if backend.shutdown.load(Ordering::Acquire) {
                 return CLOCK_ERROR_OK;
             }
-            let current_state = backend.state.load(Ordering::SeqCst);
-            if current_state == QuantumState::Waiting as u8 {
-                break;
-            }
-
             if exec_start.elapsed() > timeout {
                 return CLOCK_ERROR_STALL;
             }
 
-            let guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (mut _new_guard, _) = backend
+            let (new_guard, _) = backend
                 .cond
                 .wait_timeout(guard, Duration::from_millis(10))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
         }
     }
 
+    let is_first = backend.is_first_quantum.load(Ordering::Relaxed);
     if is_first {
         backend.is_first_quantum.store(false, Ordering::Relaxed);
     }
@@ -690,6 +712,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     }
 
     let is_coordinated = s.coordinated;
+    let n_vcpus = s.n_vcpus;
 
     if is_unix {
         if router_str.is_null() {
@@ -702,6 +725,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             if s.session_watchdog_ms > 0 { s.session_watchdog_ms } else { stall_ms * 3 };
         s.rust_state = clock_init_with_transport(
             s.node_id,
+            n_vcpus,
             Box::new(transport),
             None,
             stall_ms,
@@ -711,8 +735,14 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     } else {
         let watchdog_ms =
             if s.session_watchdog_ms > 0 { s.session_watchdog_ms } else { stall_ms * 3 };
-        s.rust_state =
-            clock_init_internal(s.node_id, router_str, stall_ms, is_coordinated, watchdog_ms);
+        s.rust_state = clock_init_internal(
+            s.node_id,
+            n_vcpus,
+            router_str,
+            stall_ms,
+            is_coordinated,
+            watchdog_ms,
+        );
     }
 
     if s.rust_state.is_null() {
@@ -767,12 +797,14 @@ unsafe extern "C" fn clock_instance_init(obj: *mut Object) {
     s.rust_state = ptr::null_mut();
     s.quantum_timer = ptr::null_mut();
     s.node_id = u32::MAX;
+    s.n_vcpus = 1;
 }
 
 define_properties!(
     VIRT_CLOCK_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuClock, node_id, 0xFFFF_FFFF),
+        define_prop_uint32!(c"n-vcpus".as_ptr(), VirtmcuClock, n_vcpus, 1),
         define_prop_string!(c"mode".as_ptr(), VirtmcuClock, mode),
         define_prop_string!(c"router".as_ptr(), VirtmcuClock, router),
         define_prop_uint32!(c"stall-timeout".as_ptr(), VirtmcuClock, stall_timeout, 0),
@@ -812,6 +844,7 @@ declare_device_type!(VIRT_CLOCK_TYPE_INIT, VIRT_CLOCK_TYPE_INFO);
 
 fn clock_init_with_transport(
     node_id: u32,
+    n_vcpus: u32,
     transport: Box<dyn ClockSyncTransport>,
     session: Option<Arc<Session>>,
     stall_timeout_ms: u32,
@@ -828,6 +861,7 @@ fn clock_init_with_transport(
         session,
         transport,
         node_id,
+        n_vcpus,
         stall_timeout_ms,
         is_coordinated,
         watchdog_threshold,
@@ -836,6 +870,7 @@ fn clock_init_with_transport(
         mutex: Mutex::new(()),
         cond: Condvar::new(),
         state: core::sync::atomic::AtomicU8::new(QuantumState::Waiting as u8),
+        vcpu_halt_count: core::sync::atomic::AtomicU32::new(0),
         delta_ns: AtomicU64::new(0),
         vtime_ns: AtomicU64::new(0),
         absolute_vtime_ns: AtomicU64::new(0),
@@ -859,6 +894,7 @@ fn clock_init_with_transport(
 
 fn clock_init_internal(
     node_id: u32,
+    n_vcpus: u32,
     router: *const c_char,
     stall_timeout_ms: u32,
     is_coordinated: bool,
@@ -930,6 +966,7 @@ fn clock_init_internal(
     });
     clock_init_with_transport(
         node_id,
+        n_vcpus,
         transport,
         Some(session),
         stall_timeout_ms,

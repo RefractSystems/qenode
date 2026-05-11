@@ -14,15 +14,11 @@ peripherals:
 
   - name: telemetry
     type: telemetry
-    address: 0
+    address: 0x100
 
   - name: clock
     type: clock
-    address: 0
-
-  - name: clock
-    type: clock
-    address: 0
+    address: 0x200
 
 topology:
   links: []

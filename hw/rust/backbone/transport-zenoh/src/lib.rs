@@ -376,6 +376,7 @@ pub(crate) fn test_config() -> Config {
     let mut config = virtmcu_zenoh_config::client_config();
     // Use peer mode for unit tests to allow standalone operation without a router.
     let _ = config.insert_json5("mode", "\"peer\"");
+    let _ = config.insert_json5("scouting/multicast/enabled", "true");
     config
 }
 

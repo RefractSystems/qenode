@@ -28,7 +28,6 @@ use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
 use core::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -76,60 +75,27 @@ pub struct VirtmcuActuatorState {
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
-pub struct InnerState {
-    running: bool,
-    active_vcpu_count: usize,
-}
-
 struct SharedState {
     transport: Arc<dyn virtmcu_api::DataTransport>,
     node_id: u32,
     topic_prefix: String,
 
     tx_sender: Sender<ActuatorPacket>,
-    drain_cond: Condvar,
-    state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="used with Condvar for teardown"
+    running: core::sync::atomic::AtomicBool,
+    drain: virtmcu_qom::sync::VcpuDrain,
 }
 
 impl Drop for VirtmcuActuatorState {
     fn drop(&mut self) {
-        {
-            let mut lock =
-                self.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock.running = false;
-        }
+        self.shared.running.store(false, core::sync::atomic::Ordering::Release);
 
-        // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock)
-        let mut lock = self.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        while lock.active_vcpu_count > 0 {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, timed_out) = self
-                .shared
-                .drain_cond
-                .wait_timeout(lock, Duration::from_secs(30))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if timed_out.timed_out() {
-                break;
-            }
-        }
+        // Wait for all vCPU threads to drain (panic-safe blocking call)
+        self.shared.drain.wait_for_drain(30000);
 
         if let Some(handle) = self.bg_thread.take() {
             let bql_unlock = Bql::temporary_unlock();
             let _ = handle.join();
             drop(bql_unlock);
-        }
-    }
-}
-
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
         }
     }
 }
@@ -373,11 +339,8 @@ declare_device_type!(VIRTMCU_ACTUATOR_TYPE_INIT, VIRTMCU_ACTUATOR_TYPE_INFO);
 
 fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> JoinHandle<()> {
     std::thread::spawn(move || loop {
-        {
-            let lock = shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !lock.running && rx.is_empty() {
-                break;
-            }
+        if !shared.running.load(core::sync::atomic::Ordering::Acquire) && rx.is_empty() {
+            break;
         }
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(packet) => {
@@ -400,8 +363,8 @@ fn actuator_init_internal(
         node_id,
         topic_prefix,
         tx_sender: tx,
-        drain_cond: Condvar::new(),
-        state: Mutex::new(InnerState { running: true, active_vcpu_count: 0 }),
+        running: core::sync::atomic::AtomicBool::new(true),
+        drain: virtmcu_qom::sync::VcpuDrain::new(),
     });
 
     let bg_thread = start_tx_thread(Arc::clone(&shared), rx);
@@ -422,14 +385,10 @@ fn actuator_publish(
     data_size: u32,
     data: &[f64; 8],
 ) {
-    {
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !lock.running {
-            return;
-        }
-        lock.active_vcpu_count += 1;
+    if !state.shared.running.load(core::sync::atomic::Ordering::Acquire) {
+        return;
     }
-    let _guard = VcpuCountGuard(&state.shared);
+    let _guard = state.shared.drain.acquire();
 
     let vtime_ns = u64::try_from(unsafe {
         virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)

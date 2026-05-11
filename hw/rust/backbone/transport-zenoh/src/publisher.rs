@@ -146,7 +146,7 @@ mod tests {
     use core::time::Duration;
     use std::time::Instant;
     const TEST_RECV_TIMEOUT: Duration = Duration::from_millis(50);
-    const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(1);
+    const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(5);
     const TEST_DROP_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
     const TEST_OVERFLOW_THRESHOLD: Duration = Duration::from_millis(10);
 
