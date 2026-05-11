@@ -54,7 +54,7 @@ SystemC handles the *bus*, while QEMU handles the *CPU*. Because all communicati
 ### Prerequisites
 
 - QEMU built with the `arm-generic-fdt` patches and `mmio-socket-bridge` module.
-  Run `scripts/install-third-party.sh` if not already done.
+  Run `cargo run -p virtmcu-cli -- setup bootstrap` if not already done.
 - CMake ≥ 3.14, a C++17 compiler, `zenoh-c` built in `third_party/zenoh-c/`.
 - `arm-none-eabi-gcc`, `dtc`, and `python3` on `PATH`.
 - `eclipse-zenoh` Python package: `uv sync` or `uv pip install eclipse-zenoh`
@@ -169,7 +169,7 @@ REG-OK
 The FTRT timing smoke test exercises both scenarios (RegisterFile IRQ and CAN Zenoh RX):
 
 ```bash
-pytest tests/integration/infrastructure/test_ftrt_timing.py -v
+virtmcu-test-runner tests/integration/infrastructure/test_ftrt_timing.py -v
 ```
 
 Expected output:

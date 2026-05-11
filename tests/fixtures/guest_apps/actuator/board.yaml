@@ -23,5 +23,9 @@ peripherals:
     topic-prefix: "firmware/control"
     router: "ZENOH_ROUTER_ENDPOINT"
 
+- name: clock
+  type: clock
+  address: 0
+
 topology:
   links: []

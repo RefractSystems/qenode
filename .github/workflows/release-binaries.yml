@@ -137,24 +137,12 @@ jobs:
           tar -czf "$TARBALL_NAME" -C ./virtmcu-dist .
           echo "TARBALL_PATH=$TARBALL_NAME" >> "$GITHUB_ENV"
 
-      - name: Build virtmcu-tools
-        if: matrix.arch == 'amd64'
-        run: |
-          # Build only once (on amd64 runner) since it's a pure python package
-          cd packaging/virtmcu-tools
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="$HOME/.local/bin:$PATH"
-          uv build
-          cp dist/* ../../
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: virtmcu-release-assets-${{ matrix.arch }}
           path: |
             ${{ env.TARBALL_PATH }}
-            *.whl
-            *.tar.gz
 
   create-release:
     name: Create Release
@@ -181,7 +169,5 @@ jobs:
         run: |
           gh release create ${{ github.ref_name }} \
             artifacts/virtmcu-qemu-*.tar.gz \
-            artifacts/*.whl \
-            artifacts/virtmcu_tools-*.tar.gz \
             --title "Release ${{ github.ref_name }}" \
             --generate-notes

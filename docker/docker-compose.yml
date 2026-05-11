@@ -54,6 +54,20 @@ services:
     command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "clock,mode=suspend,node=0"]
     tty: true
 
+  # ── 3. Deterministic Coordinator ──────────────────────────────────────────
+  deterministic-coordinator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    networks:
+      - virtmcu-net
+    environment:
+      ZENOH_CONNECT: tcp/zenoh-router:7447
+    command: ["/app/target/release/deterministic_coordinator", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]
+    depends_on:
+      zenoh-router:
+        condition: service_healthy
+
 networks:
   virtmcu-net:
     driver: bridge

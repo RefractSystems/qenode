@@ -1,7 +1,7 @@
 # virtmcu hardware peripheral modules.
 #
 # This file lives at hw/meson.build inside the virtmcu repo.
-# scripts/install-third-party.sh creates a symlink:
+# cargo run -p virtmcu-cli -- setup bootstrap creates a symlink:
 #   <qemu-src>/hw/virtmcu  →  <virtmcu-repo>/hw
 # and appends `subdir('virtmcu')` to <qemu-src>/hw/meson.build.
 #

@@ -10,7 +10,8 @@ async fn test_complex_board_wireless() -> Result<()> {
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/complex_board/radio_test.elf")
-                .with_yaml_path("tests/fixtures/guest_apps/complex_board/board.yaml"),
+                .with_yaml_path("tests/fixtures/guest_apps/complex_board/board.yaml")
+                .orchestrated(false),
         )
         .with_timeout(60)
         .build()

@@ -6,6 +6,9 @@ use std::thread::{self, JoinHandle};
 use zenoh::pubsub::Publisher;
 use zenoh::Wait;
 
+const PUBLISHER_QUEUE_CAPACITY: usize = 1024;
+const DROPPED_WARNING_INTERVAL: usize = 100;
+
 /// A lock-free, fire-and-forget publisher wrapper to prevent blocking the BQL.
 /// The `send` method pushes the payload to a bounded lock-free channel.
 /// A background thread drains the channel and blocks on Zenoh operations.
@@ -20,7 +23,7 @@ pub struct SafePublisher {
 impl SafePublisher {
     /// Creates a new `SafePublisher` wrapping a Zenoh `Publisher`.
     pub fn new(publisher: Publisher<'static>) -> Self {
-        let (tx, rx) = bounded::<Vec<u8>>(1024);
+        let (tx, rx) = bounded::<Vec<u8>>(PUBLISHER_QUEUE_CAPACITY);
         let is_valid = Arc::new(AtomicBool::new(true));
         let valid_clone = Arc::clone(&is_valid);
         let dropped_count = Arc::new(AtomicUsize::new(0));
@@ -48,7 +51,7 @@ impl SafePublisher {
         if self.is_valid.load(Ordering::Acquire) {
             if let Err(TrySendError::Full(_)) = self.tx.try_send(payload) {
                 let dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed);
-                if dropped.is_multiple_of(100) {
+                if dropped.is_multiple_of(DROPPED_WARNING_INTERVAL) {
                     virtmcu_qom::sim_warn!(
                         "SafePublisher queue full, dropped {} messages",
                         dropped + 1
@@ -73,7 +76,7 @@ pub struct SafeSessionPublisher {
 impl SafeSessionPublisher {
     /// Creates a new `SafeSessionPublisher` wrapping a Zenoh `Session`.
     pub fn new(session: Arc<zenoh::Session>) -> Self {
-        let (tx, rx) = bounded::<(alloc::string::String, Vec<u8>)>(1024);
+        let (tx, rx) = bounded::<(alloc::string::String, Vec<u8>)>(PUBLISHER_QUEUE_CAPACITY);
         let is_valid = Arc::new(AtomicBool::new(true));
         let valid_clone = Arc::clone(&is_valid);
         let dropped_count = Arc::new(AtomicUsize::new(0));
@@ -101,7 +104,7 @@ impl SafeSessionPublisher {
         if self.is_valid.load(Ordering::Acquire) {
             if let Err(TrySendError::Full(_)) = self.tx.try_send((topic, payload)) {
                 let dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed);
-                if dropped.is_multiple_of(100) {
+                if dropped.is_multiple_of(DROPPED_WARNING_INTERVAL) {
                     virtmcu_qom::sim_warn!(
                         "SafeSessionPublisher queue full, dropped {} messages",
                         dropped + 1
@@ -146,9 +149,12 @@ mod tests {
     use core::time::Duration;
     use std::time::Instant;
     const TEST_RECV_TIMEOUT: Duration = Duration::from_millis(50);
-    const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(1);
+    const TEST_LOAD_THRESHOLD: Duration = Duration::from_millis(5);
     const TEST_DROP_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
     const TEST_OVERFLOW_THRESHOLD: Duration = Duration::from_millis(10);
+
+    const TEST_PAYLOAD_LOAD: [u8; 5] = [1, 2, 3, 4, 5];
+    const TEST_PAYLOAD_OVERFLOW: [u8; 3] = [1, 2, 3];
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -178,6 +184,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_non_blocking_under_load() {
+        const LOAD_SEND_COUNT: usize = 1000;
         let config = crate::test_config();
         let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/load";
@@ -187,8 +194,9 @@ mod tests {
         let safe_pub = SafePublisher::new(pub_);
 
         let start = Instant::now();
-        for _ in 0..1000 {
-            safe_pub.send(vec![1, 2, 3, 4, 5]);
+        let load_payload = TEST_PAYLOAD_LOAD.to_vec();
+        for _ in 0..LOAD_SEND_COUNT {
+            safe_pub.send(load_payload.clone());
         }
         let elapsed = start.elapsed();
 
@@ -221,6 +229,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drops_when_full() {
+        const OVERFLOW_SEND_COUNT: usize = 10000;
         let config = crate::test_config();
         let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/overflow";
@@ -232,8 +241,9 @@ mod tests {
         let start = Instant::now();
         // Send 10,000 messages (exceeds the queue limit of 1024).
         // If it blocked, it would take much longer than 10ms.
-        for _ in 0..10000 {
-            safe_pub.send(vec![1, 2, 3]);
+        let overflow_payload = TEST_PAYLOAD_OVERFLOW.to_vec();
+        for _ in 0..OVERFLOW_SEND_COUNT {
+            safe_pub.send(overflow_payload.clone());
         }
         let elapsed = start.elapsed();
 

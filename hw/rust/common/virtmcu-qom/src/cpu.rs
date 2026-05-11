@@ -1,15 +1,22 @@
 use core::ffi::c_int;
 
-#[repr(C, align(16))]
+const QEMU_CPU_STATE_SIZE: usize = 16624;
+const CPU_INDEX_OFFSET: usize = 816;
+const OBJECT_SIZE: usize = 40;
+
+const CPU_INDEX_SIZE: usize = 4;
+
+const _: () = ();
+#[repr(C, align(16))] // virtmcu-allow: align requirements
 /// A struct
 pub struct CPUState {
     /// A struct field
     pub parent_obj: crate::qom::Object,
-    _padding1: [u8; 816 - 40], // Pad to cpu_index
+    _padding1: [u8; CPU_INDEX_OFFSET - OBJECT_SIZE], // Pad to cpu_index
     /// A struct field
     pub cpu_index: c_int,
     /// A struct field
-    pub _opaque: [u8; 16624 - 816 - 4], // Pad to 16624
+    pub _opaque: [u8; QEMU_CPU_STATE_SIZE - CPU_INDEX_OFFSET - CPU_INDEX_SIZE], // Pad to 16624
 }
 
 #[repr(C)]
@@ -45,4 +52,4 @@ extern "C" {
     pub fn virtmcu_cpu_get_index(cpu: *mut CPUState) -> core::ffi::c_int;
 }
 
-const _: () = assert!(core::mem::size_of::<CPUState>() == 16624);
+const _: () = assert!(core::mem::size_of::<CPUState>() == QEMU_CPU_STATE_SIZE);

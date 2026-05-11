@@ -36,6 +36,12 @@ const MAX_BACKLOG: u64 = 256;
 const SEND_BUF_CAPACITY: usize = 8192;
 const FLUSH_THRESHOLD: usize = 4096;
 const FLUSH_INTERVAL_MS: u64 = 20;
+const DEFAULT_BAUD_DELAY_NS: u64 = 86800;
+const SERIAL_BITS_PER_CHAR: u64 = 10;
+const RX_DRAIN_LIMIT: usize = 1000;
+const ACCEPT_INPUT_DRAIN_LIMIT: usize = 10;
+const RECV_TIMEOUT_MS: u64 = 10;
+const DRAIN_TIMEOUT_SECS: u64 = 30;
 
 pub struct OrderedPacket {
     pub vtime: u64,
@@ -275,10 +281,11 @@ pub unsafe extern "C" fn virtmcu_chr_parse(
 
         if baud_rate_ns_str.is_null() {
             (*p).has_baud_rate_ns = false;
-            (*p).baud_rate_ns = 86800; // Default 115200 bps
+            (*p).baud_rate_ns = DEFAULT_BAUD_DELAY_NS; // Default 115200 bps
         } else {
             (*p).has_baud_rate_ns = true;
-            (*p).baud_rate_ns = qemu_opt_get_number(opts, c"baud-rate-ns".as_ptr(), 86800);
+            (*p).baud_rate_ns =
+                qemu_opt_get_number(opts, c"baud-rate-ns".as_ptr(), DEFAULT_BAUD_DELAY_NS);
         }
         p
     };
@@ -360,7 +367,7 @@ pub unsafe extern "C" fn virtmcu_chr_ioctl(
             // SAFETY: Provided by QEMU
             let ssp = unsafe { &*(arg as *mut QEMUSerialSetParams) };
             if ssp.speed > 0 {
-                let delay = (1_000_000_000_u64 / (ssp.speed as u64)) * 10;
+                let delay = (1_000_000_000_u64 / (ssp.speed as u64)) * SERIAL_BITS_PER_CHAR;
                 *state.baud_delay_ns.get_mut() = delay;
                 virtmcu_qom::sim_info!("{} bps (delay: {} ns)", ssp.speed, delay);
             }
@@ -487,7 +494,7 @@ extern "C" fn virtmcu_chr_rx_timer_cb(opaque: *mut c_void) {
     // to avoid hogging the BQL for too long in a single timer callback.
     let mut count = 0;
     let mut more_work = true;
-    while count < 1000 && more_work {
+    while count < RX_DRAIN_LIMIT && more_work {
         more_work = drain_backlog(state);
         count += 1;
     }
@@ -545,7 +552,7 @@ pub unsafe extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     // Guest is ready for more data. Try to drain ready work.
     let mut count = 0;
     let mut more_work = true;
-    while count < 10 && more_work {
+    while count < ACCEPT_INPUT_DRAIN_LIMIT && more_work {
         more_work = drain_backlog(state);
         count += 1;
     }
@@ -610,7 +617,7 @@ fn start_tx_thread(
                     break;
                 }
             }
-            match rx_out.recv_timeout(core::time::Duration::from_millis(10)) {
+            match rx_out.recv_timeout(core::time::Duration::from_millis(RECV_TIMEOUT_MS)) {
                 Ok(packet) => {
                     if buffer.is_empty() {
                         first_vtime = packet.vtime;
@@ -706,7 +713,7 @@ unsafe fn parse_chardev_options(
     let baud_delay_ns = if (*opts).has_baud_rate_ns {
         (*opts).baud_rate_ns
     } else {
-        86800 /* Default 115200 bps */
+        DEFAULT_BAUD_DELAY_NS // Default 115200 bps
     };
 
     (node, transport, router_ptr, base_topic, max_backlog, baud_delay_ns)
@@ -986,13 +993,14 @@ pub unsafe extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
                 let (new_lock, timed_out) = state
                     .shared
                     .drain_cond
-                    .wait_timeout(lock, Duration::from_secs(30))
+                    .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 lock = new_lock;
                 drop(bql_unlock);
                 if timed_out.timed_out() {
                     virtmcu_qom::sim_info!(
-                        "drain timeout after 30 s ({} vCPU threads still active); proceeding with teardown",
+                        "drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
+                        DRAIN_TIMEOUT_SECS,
                         lock.active_vcpu_count
                     );
                     break;
@@ -1044,18 +1052,32 @@ static CHAR_VIRTMCU_TYPE_INFO: TypeInfo = TypeInfo {
 declare_device_type!(VIRTMCU_CHARDEV_VIRTMCU_TYPE_INIT, CHAR_VIRTMCU_TYPE_INFO);
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
 
     #[test]
     fn test_chardev_virtmcu_layout() {
+        const NODE_OFFSET: usize = 16;
+        const HAS_MAX_BACKLOG_OFFSET: usize = 48;
+        const HAS_BAUD_RATE_NS_OFFSET: usize = 49;
+        const MAX_BACKLOG_OFFSET: usize = 56;
+        const BAUD_RATE_NS_OFFSET: usize = 64;
+        const OPTS_SIZE: usize = 72;
+        const CHARDEV_SIZE: usize = 160;
+
         assert!(core::mem::offset_of!(ChardevVirtmcuOptions, logfile) == 0);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, node) == 16);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, has_max_backlog) == 48);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, has_baud_rate_ns) == 49);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, max_backlog) == 56);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, baud_rate_ns) == 64);
-        assert!(core::mem::size_of::<ChardevVirtmcuOptions>() == 72);
-        assert!(core::mem::size_of::<Chardev>() == 160);
+        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, node) == NODE_OFFSET);
+        assert!(
+            core::mem::offset_of!(ChardevVirtmcuOptions, has_max_backlog) == HAS_MAX_BACKLOG_OFFSET
+        );
+        assert!(
+            core::mem::offset_of!(ChardevVirtmcuOptions, has_baud_rate_ns)
+                == HAS_BAUD_RATE_NS_OFFSET
+        );
+        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, max_backlog) == MAX_BACKLOG_OFFSET);
+        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, baud_rate_ns) == BAUD_RATE_NS_OFFSET);
+        assert!(core::mem::size_of::<ChardevVirtmcuOptions>() == OPTS_SIZE);
+        assert!(core::mem::size_of::<Chardev>() == CHARDEV_SIZE);
     }
 }

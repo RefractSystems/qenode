@@ -1,20 +1,21 @@
-# Lesson 13: AI-Augmented Debugging
+# Lesson 18: AI-Augmented Debugging
 
 ## Introduction
 
-Welcome to Lesson 13! As simulations become more complex—especially in multi-node, cyber-physical environments—debugging firmware crashes like stack overflows or race conditions using traditional CLI tools (like GDB and QMP) becomes unwieldy.
+Welcome to Lesson 18! As simulations become more complex—especially in multi-node, cyber-physical environments—debugging firmware crashes like stack overflows or race conditions using traditional CLI tools (like GDB and QMP) becomes unwieldy.
 
-In this lesson, you will learn how to use the Model Context Protocol (MCP) server provided by virtmcu. The MCP server allows AI assistants (like Claude Desktop or Gemini CLI) to semantically interact with your simulation environment.
+In this lesson, you will learn how to use the Model Context Protocol (MCP) to allow AI assistants (like Claude Desktop or Gemini CLI) to semantically interact with your simulation environment.
 
 ## What is MCP?
 
-The Model Context Protocol (MCP) is an open standard that allows AI models to securely access external data sources and tools. By implementing an MCP server, virtmcu exposes its low-level QEMU and Zenoh capabilities as high-level "Tools" and "Resources" that an AI can understand and invoke.
+The Model Context Protocol (MCP) is an open standard that allows AI models to securely access external data sources and tools. By implementing an MCP server, VirtMCU exposes its low-level QEMU and Zenoh capabilities as high-level "Tools" and "Resources" that an AI can understand and invoke.
 
 ## Starting the MCP Server
 
-The virtmcu MCP server is written in Python and is located in `tools/mcp_server`. To use it with an AI client, you configure the client to launch the server as a subprocess.
+The VirtMCU MCP server is provided as part of the `virtmcu-tools` package. To use it with an AI client, you configure the client to launch the server as a subprocess.
 
 ```bash
+# Example command (actual path may vary based on installation)
 python3 -m virtmcu.mcp_server
 ```
 

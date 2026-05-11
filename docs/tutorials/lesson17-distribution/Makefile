@@ -5,9 +5,8 @@
 all: board.dtb
 
 board.dtb: src/board.yaml
-	@echo "==> Generating DTB using yaml2qemu..."
-	# This assumes you have installed the virtmcu-tools package
-	yaml2qemu src/board.yaml --out-dtb board.dtb
+	@echo "==> Generating DTB using virtmcu-cli..."
+	$(VIRTMCU_CLI) platform generate src/board.yaml --out-dtb board.dtb
 	@echo "✓ board.dtb generated."
 
 clean:

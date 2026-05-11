@@ -405,9 +405,14 @@ fn main() -> Result<()> {
                 let cli_file = NamedTempFile::new()?;
                 let arch_file = NamedTempFile::new()?;
 
-                let status = Command::new("python3")
-                    .arg("-m")
-                    .arg("tools.yaml2qemu")
+                let status = Command::new("cargo")
+                    .arg("run")
+                    .arg("-p")
+                    .arg("virtmcu-cli")
+                    .arg("--release")
+                    .arg("--")
+                    .arg("platform")
+                    .arg("generate")
                     .arg(file)
                     .arg("--out-dtb")
                     .arg(dtb.path())
@@ -417,7 +422,7 @@ fn main() -> Result<()> {
                     .arg(arch_file.path())
                     .status()?;
                 if !status.success() {
-                    return Err(anyhow!("tools.yaml2qemu failed"));
+                    return Err(anyhow!("virtmcu-cli platform generate failed"));
                 }
 
                 let mut arch_content = String::new();

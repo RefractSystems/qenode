@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 pub mod artifacts;
 pub mod builder;
 pub mod launcher;
+pub mod lints;
 pub mod monitors;
 pub mod qmp;
 pub use builder::{NodeConfig, TopologyBuilder, VirtmcuTestEnv};
@@ -21,7 +22,7 @@ pub use qmp::QmpClient;
 pub struct TestSpec {
     pub name: String,
     #[serde(default)]
-    pub kind: Option<String>, // "qemu", "pytest", "command", "make_and_pytest"
+    pub kind: Option<String>, // "qemu", "command"
     #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
@@ -75,6 +76,7 @@ pub struct TestContext {
     pub tmp_dir: tempfile::TempDir,
     pub workspace_root: PathBuf,
     pub variables: HashMap<String, String>,
+    pub use_asan: bool,
 }
 
 impl TestContext {
@@ -124,22 +126,7 @@ impl TestContext {
         );
         variables.insert("TMP_DIR".to_string(), tmp_dir.path().display().to_string());
 
-        // Find a free port for Zenoh
-        let get_port_sh = workspace_root.join("scripts/get-free-port.py");
-        let output = std::process::Command::new("python3")
-            .arg(get_port_sh)
-            .arg("--endpoint")
-            .arg("--proto")
-            .arg("tcp/")
-            .output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to get free port: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let endpoint = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let endpoint = Self::get_free_port_endpoint()?;
         info!("Selected router endpoint: {}", endpoint);
         variables.insert("ROUTER_ENDPOINT".to_string(), endpoint);
 
@@ -147,7 +134,45 @@ impl TestContext {
             tmp_dir,
             workspace_root,
             variables,
+            use_asan: std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1",
         })
+    }
+
+    fn get_free_port_endpoint() -> Result<String> {
+        if let Ok(ip) = std::env::var("TEST_IP") {
+            return Ok(format!("tcp/{}:{}", ip, Self::get_free_port()?));
+        }
+        Ok(format!("tcp/127.0.0.1:{}", Self::get_free_port()?))
+    }
+
+    fn get_free_port() -> Result<u16> {
+        let uid = unsafe { libc::getuid() };
+        let dir = PathBuf::from(
+            std::env::var("VIRTMCU_PORT_RESERVATION_DIR")
+                .unwrap_or_else(|_| format!("/tmp/virtmcu_port_reservations_{}", uid)),
+        );
+        std::fs::create_dir_all(&dir)?;
+
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..1000 {
+            let port: u16 = rng.gen_range(10000..32000);
+            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                let res_path = dir.join(port.to_string());
+                if std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&res_path)
+                    .is_ok()
+                {
+                    return Ok(port);
+                }
+            }
+        }
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+        Ok(listener.local_addr()?.port())
     }
 
     pub fn find_binary(&self, name: &str) -> Result<PathBuf> {
@@ -245,23 +270,15 @@ impl TestContext {
         res
     }
 
-    pub fn setup_cmd(&self, cmd: &mut Command) {
-        let pythonpath = format!(
-            "{}:{}:{}",
-            self.workspace_root.display(),
-            self.workspace_root.join("tools").display(),
-            self.workspace_root
-                .join("packaging/virtmcu-tools/src")
-                .display()
-        );
-        cmd.env("PYTHONPATH", pythonpath);
+    pub fn setup_cmd(&self, _cmd: &mut Command) {
         // Ensure ASAN options if enabled
-        if std::env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1" {
-            cmd.env(
+        if self.use_asan {
+            _cmd.env("VIRTMCU_USE_ASAN", "1");
+            _cmd.env(
                 "ASAN_OPTIONS",
                 "detect_leaks=0,halt_on_error=1,detect_stack_use_after_return=1",
             );
-            cmd.env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1");
+            _cmd.env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1");
         }
     }
 }
@@ -311,12 +328,13 @@ pub async fn compile_dtb(ctx: &TestContext, dts_content: &str, dtb_path: &Path) 
     run_command(ctx, &mut cmd, "dtc").await
 }
 
-pub async fn run_spec(spec_path: &Path) -> Result<()> {
+pub async fn run_spec(spec_path: &Path, use_asan: bool) -> Result<()> {
     let content = std::fs::read_to_string(spec_path)?;
     let spec: TestSpec = serde_yaml::from_str(&content)?;
     info!("Running test spec: {}", spec.name);
 
     let mut ctx = TestContext::new()?;
+    ctx.use_asan = use_asan;
     run_spec_with_context(&spec, &mut ctx).await
 }
 
@@ -385,8 +403,8 @@ pub async fn run_spec_with_context(spec: &TestSpec, ctx: &mut TestContext) -> Re
 
     let kind = spec.kind.as_deref().unwrap_or("qemu");
 
-    if kind == "pytest" || kind == "command" || kind == "make_and_pytest" {
-        let cmd_name = spec.command.clone().unwrap_or_else(|| "pytest".to_string());
+    if kind == "command" {
+        let cmd_name = spec.command.clone().unwrap_or_else(|| "cargo".to_string());
         let mut test_cmd = Command::new(ctx.substitute(&cmd_name));
         for arg in &spec.args {
             test_cmd.arg(ctx.substitute(arg));
@@ -487,23 +505,33 @@ pub async fn run_spec_with_context(spec: &TestSpec, ctx: &mut TestContext) -> Re
 
     if let Some(node_id) = spec.wait_for_zenoh_status {
         let endpoint = ctx.variables.get("ROUTER_ENDPOINT").unwrap();
-        let cmd_str = format!(
-            "import zenoh, sys; c = zenoh.Config(); c.insert_json5('connect/endpoints', '[\"{}\"]'); c.insert_json5('scouting/multicast/enabled', 'false'); c.insert_json5('mode', '\"client\"'); s = zenoh.open(c); res = any(s.get('virtmcu/{}/clock/status')); s.close(); sys.exit(0 if res else 1)",
-            endpoint, node_id
+
+        info!(
+            "Waiting for Zenoh status on node {} via {}...",
+            node_id, endpoint
         );
+        let mut config = zenoh::Config::default();
+        let _ = config.insert_json5("connect/endpoints", &format!("[\"{}\"]", endpoint));
+        let _ = config.insert_json5("scouting/multicast/enabled", "false");
+        let _ = config.insert_json5("mode", "\"client\"");
+
+        let session = zenoh::open(config)
+            .await
+            .map_err(|e| anyhow!("Zenoh open: {}", e))?;
+        let key = format!("virtmcu/{}/clock/status", node_id);
+
         let mut found = false;
         for _ in 0..50 {
-            if std::process::Command::new("python3")
-                .arg("-c")
-                .arg(&cmd_str)
-                .status()?
-                .success()
-            {
-                found = true;
-                break;
+            if let Ok(replies) = session.get(&key).await {
+                if replies.recv_async().await.is_ok() {
+                    found = true;
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+        let _ = session.close().await;
+
         if !found {
             return Err(anyhow!("Timeout waiting for Zenoh status"));
         }
@@ -553,12 +581,41 @@ impl LinterEngine {
         std::env::set_current_dir(&self.target_dir)?;
 
         let mut tasks = Vec::new();
-        let scripts_dir = self.workspace_root.join("scripts");
 
         // 1. Rust Linters
         // We run Rust tasks sequentially first to avoid Cargo registry lock collisions and "File exists" errors
         // during concurrent crate downloads.
         if self.target_dir.join("Cargo.toml").exists() {
+            // Run native rust lints inside the test runner first
+            let mut rust_native_failed = false;
+            let native_lints: Vec<Box<dyn crate::lints::Lint>> = vec![
+                Box::new(crate::lints::StaticStateLint),
+                Box::new(crate::lints::RustBannedPatternsLint),
+                Box::new(crate::lints::RustSafeSerializationLint),
+                Box::new(crate::lints::RustMagicNumbersLint),
+                Box::new(crate::lints::QomTypeInfoLint),
+                Box::new(crate::lints::ExportLint),
+            ];
+
+            for lint in native_lints {
+                let name = lint.name();
+                match lint.check(&self.target_dir) {
+                    Ok(true) => info!("[PASS] {}_native", name),
+                    Ok(false) => {
+                        error!("[FAIL] {}_native", name);
+                        rust_native_failed = true;
+                    }
+                    Err(e) => {
+                        error!("[FAIL] {}_native: {}", name, e);
+                        rust_native_failed = true;
+                    }
+                }
+            }
+
+            if rust_native_failed {
+                return Err(anyhow!("One or more Rust native lints failed"));
+            }
+
             let mut rust_failed = false;
             let rust_lints = vec![
                 ("cargo fmt", "cargo", vec!["fmt", "--all", "--check"]),
@@ -612,85 +669,7 @@ impl LinterEngine {
             }
         }
 
-        // 2. Python Linters (Concurrent)
-        tasks.push(self.spawn_lint("ruff", "ruff", vec!["check", "."]));
-
-        let python_dirs = ["tools", "patches"];
-        let mut mypy_dirs = Vec::new();
-        for d in python_dirs {
-            if self.target_dir.join(d).exists() {
-                mypy_dirs.push(d);
-            }
-        }
-        if !mypy_dirs.is_empty() {
-            let mut args = vec!["-m", "mypy"];
-            args.extend(mypy_dirs.iter().copied());
-            tasks.push(self.spawn_lint("mypy", "python3", args));
-        }
-
-        // 3. Custom Python Scripts (The "Beyonce Rules")
-        let custom_scripts = [
-            ("check-versions", "check-versions.py", vec!["--root", "."]),
-            ("check-ffi", "check-ffi.py", vec![]),
-            ("verify-exports", "verify-exports.py", vec![]),
-            (
-                "firmware_provenance",
-                "lints/firmware_provenance.py",
-                vec![],
-            ),
-            (
-                "dependency_pinning",
-                "lints/dependency_pinning.py",
-                vec!["."],
-            ),
-            ("beyonce_rule", "lints/beyonce_rule.py", vec![]),
-            (
-                "third_party_modifications",
-                "lints/third_party_modifications.py",
-                vec![],
-            ),
-            (
-                "python_banned_patterns",
-                "lints/python_banned_patterns.py",
-                vec!["."],
-            ),
-            ("simulation_usage", "lints/simulation_usage.py", vec!["."]),
-            (
-                "rust_banned_patterns",
-                "lints/rust_banned_patterns.py",
-                vec!["."],
-            ),
-            ("rust_static_state", "lints/rust_static_state.py", vec!["."]),
-            (
-                "rust_safe_serialization",
-                "lints/rust_safe_serialization.py",
-                vec!["."],
-            ),
-            ("check-stale-so", "check-stale-so.py", vec![]),
-            ("check-qom-alignment", "check-qom-alignment.py", vec![]),
-            (
-                "check-cargo-meson-lib-alignment",
-                "check-cargo-meson-lib-alignment.py",
-                vec![],
-            ),
-            ("audit_topology_yamls", "audit_topology_yamls.py", vec![]),
-            ("shell_lints", "lints/shell_lints.py", vec!["."]),
-        ];
-
-        for (name, script, args) in custom_scripts {
-            let script_path = scripts_dir.join(script);
-            if script_path.exists() {
-                let mut full_args = vec![script_path.to_str().unwrap().to_string()];
-                full_args.extend(args.iter().map(|s| s.to_string()));
-                tasks.push(self.spawn_lint_owned(
-                    name.to_string(),
-                    "python3".to_string(),
-                    full_args,
-                ));
-            }
-        }
-
-        // 4. Other Tooling
+        // 2. Other Tooling
         let mut yaml_files = Vec::new();
         let yaml_patterns = ["**/*.yml", "**/*.yaml"];
         for pattern in yaml_patterns {
@@ -729,7 +708,7 @@ impl LinterEngine {
             "codespell",
             vec![
                 "--skip",
-                "./third_party/*,**/build/*,**/target/*,**/target-*/*,./.git/*,./.claude/*,Cargo.lock,uv.lock,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js",
+                "./third_party/*,**/build/*,**/target/*,**/target-*/*,./.git/*,./.claude/*,Cargo.lock,Cargo.toml,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js",
                 "--ignore-words-list",
                 "virtmcu,zenoh,qemu,qmp,riscv,TE",
                 ".",
@@ -750,7 +729,7 @@ impl LinterEngine {
             ));
         }
 
-        // 5. C/C++ Linters
+        // 3. C/C++ Linters
         if self.target_dir.join("hw/misc").exists() {
             tasks.push(self.spawn_lint(
                 "cppcheck",
@@ -846,11 +825,24 @@ impl LinterEngine {
                     if out.status.success() {
                         (name, Ok(()))
                     } else {
+                        let stdout = strip_ansi_codes(&String::from_utf8_lossy(&out.stdout));
+                        let stderr = strip_ansi_codes(&String::from_utf8_lossy(&out.stderr));
+                        let all_lines: Vec<&str> = stdout
+                            .lines()
+                            .chain(stderr.lines())
+                            .map(str::trim)
+                            .filter(|l| !l.is_empty())
+                            .collect();
+                        let summary = all_lines
+                            .iter()
+                            .find(|l| l.starts_with("error") || l.starts_with("Diff in"))
+                            .or_else(|| all_lines.first())
+                            .copied()
+                            .unwrap_or("(no output)");
                         let err_msg = format!(
-                            "Exit status: {}\nSTDOUT:\n{}\nSTDERR:\n{}",
-                            out.status,
-                            String::from_utf8_lossy(&out.stdout),
-                            String::from_utf8_lossy(&out.stderr)
+                            "exit status: {} — {}",
+                            out.status.code().unwrap_or(-1),
+                            summary
                         );
                         (name, Err(anyhow!(err_msg)))
                     }
@@ -858,5 +850,50 @@ impl LinterEngine {
                 Err(e) => (name, Err(anyhow!("Failed to execute command: {}", e))),
             }
         })
+    }
+}
+
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.next() {
+                Some('[') => {
+                    for ch in chars.by_ref() {
+                        if ch.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                Some('(') => {
+                    chars.next();
+                }
+                _ => {}
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_free_port() {
+        let port = TestContext::get_free_port().expect("Failed to get free port");
+        assert!(port > 0);
+    }
+
+    #[test]
+    fn test_context_substitution() {
+        let ctx = TestContext::new().unwrap();
+
+        let sub = ctx.substitute("This is a ${WORKSPACE_DIR} test for ${ROUTER_ENDPOINT}");
+        assert!(sub.contains(&ctx.workspace_root.display().to_string()));
+        assert!(sub.contains(&ctx.variables["ROUTER_ENDPOINT"]));
     }
 }

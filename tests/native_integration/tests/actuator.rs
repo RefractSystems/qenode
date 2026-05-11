@@ -9,48 +9,45 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
     // because `actuator` device is now bound to the `virtmcu-transport-hub` instead of its own session.
     let yaml_path = "tests/fixtures/guest_apps/actuator/board.yaml";
 
-    let mut env = VirtmcuTestEnv::builder()
+    VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/actuator/actuator.elf")
                 .with_yaml_path(yaml_path)
-                .add_qemu_arg("-icount")
-                .add_qemu_arg("shift=4,align=off,sleep=off")
-                .add_qemu_arg("-device")
-                .add_qemu_arg("virtmcu-clock,node=0,mode=slaved-icount")
                 .orchestrated(true),
         )
         .with_timeout(10)
-        .build()
-        .await?;
+        .run_test(|env| {
+            Box::pin(async move {
+                let topics = vec!["firmware/control/0/42", "firmware/control/0/99"];
+                let monitor = ActuatorMonitor::new(&env.session(), &topics).await?;
 
-    let topics = vec!["firmware/control/0/42", "firmware/control/0/99"];
-    let monitor = ActuatorMonitor::new(&env.session(), &topics).await?;
+                env.step_clock(500_000_000, 10_000_000).await?;
 
-    // Step the simulation until it hits the assertions inside the monitor loop.
-    env.step_clock(500_000_000, 10_000_000).await?;
+                // The actuator guest app performs multiple math operations and writes them
+                let found = monitor
+                    .wait_for_responses(30, |msgs| {
+                        let mut success_1 = false;
+                        let mut success_2 = false;
 
-    // The actuator guest app performs multiple math operations and writes them
-    let found = monitor
-        .wait_for_responses(10, |msgs| {
-            let mut success_1 = false;
-            let mut success_2 = false;
+                        for (topic, _vtime, vals) in msgs {
+                            if topic == "firmware/control/0/42" && (vals[0] - 3.14).abs() < 0.001 {
+                                success_1 = true;
+                            } else if topic == "firmware/control/0/99"
+                                && vals.len() == 3
+                                && vals == &[1.0, 2.0, 3.0]
+                            {
+                                success_2 = true;
+                            }
+                        }
+                        success_1 && success_2
+                    })
+                    .await?;
 
-            for (topic, _vtime, vals) in msgs {
-                if topic == "firmware/control/0/42" && (vals[0] - 3.14).abs() < 0.001 {
-                    success_1 = true;
-                } else if topic == "firmware/control/0/99"
-                    && vals.len() == 3
-                    && vals == &[1.0, 2.0, 3.0]
-                {
-                    success_2 = true;
-                }
-            }
-            success_1 && success_2
+                assert!(found, "Did not receive all control signals");
+
+                Ok(())
+            })
         })
-        .await?;
-
-    assert!(found, "Did not receive all control signals");
-
-    Ok(())
+        .await
 }

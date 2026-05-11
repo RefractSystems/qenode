@@ -51,6 +51,9 @@ pub struct VirtmcuSPIBackend {
     pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
+const SPI_WORD_SIZE: usize = 4;
+const SPI_WORD_SIZE_U32: u32 = 4;
+
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
 /// # Safety
@@ -73,9 +76,10 @@ pub unsafe extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 
     // SAFETY: Calling qemu_clock_get_ns is safe under BQL.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     // SAFETY: dev points to a valid SSIPeripheral.
-    let header = unsafe { ZenohSPIHeader::new(now, 0, 4, (*dev).cs, (*dev).cs_index, 0) };
+    let header =
+        unsafe { ZenohSPIHeader::new(now, 0, SPI_WORD_SIZE_U32, (*dev).cs, (*dev).cs_index, 0) };
 
-    let mut data = Vec::with_capacity(virtmcu_api::ZENOH_SPI_HEADER_SIZE + 4);
+    let mut data = Vec::with_capacity(virtmcu_api::ZENOH_SPI_HEADER_SIZE + SPI_WORD_SIZE);
     data.extend_from_slice(header.pack());
     data.extend_from_slice(&val.to_le_bytes());
 
@@ -87,8 +91,8 @@ pub unsafe extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 
 
     match backend.transport.query(&topic, &data) {
         Ok(payload) => {
-            if payload.len() >= 4 {
-                u32::from_le_bytes(payload[..4].try_into().unwrap_or_default())
+            if payload.len() >= SPI_WORD_SIZE {
+                u32::from_le_bytes(payload[..SPI_WORD_SIZE].try_into().unwrap_or_default())
             } else {
                 0
             }
