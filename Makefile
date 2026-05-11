@@ -249,16 +249,16 @@ ci-check: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-check
 
 ci-lint: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-lint.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-lint
 
 ci-unit: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit
 
 ci-unit-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-coverage.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-coverage
 
 ci-unit-miri: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) bash scripts/testing/run-unit-miri.sh
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-miri
 
 ci-integration: ensure-ci-image
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -331,7 +331,7 @@ dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-periphera
 dev-check: dev-lint dev-unit dev-unit-coverage
 
 dev-lint: setup-python
-	@bash scripts/testing/run-lint.sh
+	@cargo run -p virtmcu-test-runner --release -- lint
 
 # --- Unit Tests ---
 dev-unit:
@@ -341,7 +341,7 @@ dev-unit-coverage:
 	@cargo run -p virtmcu-test-runner --release -- coverage
 
 dev-unit-miri:
-	@bash scripts/testing/run-unit-miri.sh
+	@cargo run -p virtmcu-test-runner --release -- miri
 
 # --- Integration Tests ---
 dev-integration: setup-python
