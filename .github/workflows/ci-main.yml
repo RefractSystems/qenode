@@ -767,7 +767,7 @@ jobs:
             -e USER=vscode \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-peripheral-coverage.sh
+            make dev-peripheral-coverage
 
       - name: Upload peripheral coverage results
         uses: actions/upload-artifact@v4
@@ -817,6 +817,6 @@ jobs:
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-integration-coverage.sh
+            make dev-integration-coverage
 
 # ── Tier 6: Publish Runtime (after validation) ──────────────────────────────

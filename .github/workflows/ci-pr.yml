@@ -440,7 +440,7 @@ jobs:
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
-            bash scripts/testing/run-peripheral-coverage.sh
+            make dev-peripheral-coverage
 
       - name: Upload peripheral coverage results
         uses: actions/upload-artifact@v4
@@ -498,4 +498,4 @@ jobs:
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
-            bash scripts/testing/run-integration-coverage.sh
+            make dev-integration-coverage
