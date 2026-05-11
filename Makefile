@@ -334,13 +334,13 @@ dev-lint: setup-python
 	@bash scripts/testing/run-lint.sh
 
 # --- Unit Tests ---
-dev-unit: setup-python
+dev-unit:
 	@cargo run -p virtmcu-test-runner --release -- run --tier unit
 
-dev-unit-coverage: setup-python
-	@bash scripts/testing/run-unit-coverage.sh
+dev-unit-coverage:
+	@cargo run -p virtmcu-test-runner --release -- coverage
 
-dev-unit-miri: setup-python
+dev-unit-miri:
 	@bash scripts/testing/run-unit-miri.sh
 
 # --- Integration Tests ---
