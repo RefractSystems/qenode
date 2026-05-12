@@ -88,7 +88,7 @@ VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
 .PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
-.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
+.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan build-test-runner
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
@@ -112,6 +112,7 @@ export CARGO_BUILD_TARGET := $(TRIPLE)
 
 # Canonical paths for built artifacts
 TARGET_BIN_DIR := $(CARGO_TARGET_DIR)/$(TRIPLE)/release
+RUNNER_BIN     := $(TARGET_BIN_DIR)/virtmcu-test-runner
 
 # Canonical Cargo command with unified flags
 CARGO_CMD := cargo +nightly
@@ -272,32 +273,35 @@ dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-periphera
 # Unified developer check: Lint + Unit Tests (Tier 1 parity)
 dev-check: dev-lint dev-unit dev-unit-coverage
 
-dev-lint:
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- lint
+build-test-runner:
+	@$(CARGO_CMD) build $(CARGO_OPTS) -p virtmcu-test-runner --release
+
+dev-lint: build-test-runner
+	@$(RUNNER_BIN) lint
 
 # --- Unit Tests ---
-dev-unit:
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- run --tier unit
+dev-unit: build-test-runner
+	@$(RUNNER_BIN) run --tier unit
 
-dev-unit-coverage:
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage
+dev-unit-coverage: build-test-runner
+	@$(RUNNER_BIN) coverage
 
-dev-unit-miri:
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- miri
+dev-unit-miri: build-test-runner
+	@$(RUNNER_BIN) miri
 
 # --- Integration Tests ---
-dev-integration: build-test-artifacts
-	@$(CARGO_CMD) run $(CARGO_OPTS) -Z bindeps -p virtmcu-test-runner --release -- run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
+dev-integration: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
 
-dev-integration-coverage: build-test-artifacts
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage --integration
+dev-integration-coverage: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) coverage --integration
 
-dev-integration-asan: build-test-artifacts
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
+dev-integration-asan: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
 
 # Run host-side C coverage for peripheral plugins (inside ci)
-dev-peripheral-coverage:
-	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage --peripheral
+dev-peripheral-coverage: build-test-runner
+	@$(RUNNER_BIN) coverage --peripheral
 
 # --- Git Hooks ---
 install-git-hooks:

@@ -159,7 +159,7 @@ async fn test_multi_node_uart() -> Result<()> {
                 Ok(())
             })
         })
-        .await;
+        .await?;
 
     Ok(())
 }
