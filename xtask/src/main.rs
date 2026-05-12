@@ -452,8 +452,6 @@ fn main() -> Result<()> {
             cmd!(sh, "{xtask} dev-unit-coverage").run()?;
         }
         Commands::DevLint => {
-            let xtask = env::current_exe()?;
-            
             cmd!(sh, "cargo run -p virtmcu-test-runner --release -- lint").run()?;
         }
         Commands::DevUnit => {
@@ -536,8 +534,6 @@ fn main() -> Result<()> {
             cmd!(sh, "{xtask} fmt-yaml").run()?;
         }
         Commands::FmtPython => {
-            let xtask = env::current_exe()?;
-            
             println!("==> ruff format + fix...");
             cmd!(sh, "uv run")
                 .args(&uv_run_opts)
@@ -639,16 +635,16 @@ fn main() -> Result<()> {
         }
         Commands::SmokeDevenv => {
             println!("==> Smoke test: devenv");
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'node --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook-pdf --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'node --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'which mdbook-pdf'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
             println!("✓ devenv smoke test passed");
         }
         Commands::SmokeCi => {
