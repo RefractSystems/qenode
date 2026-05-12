@@ -20,7 +20,7 @@ services:
     networks:
       - virtmcu-net
     healthcheck:
-      test: ["CMD", "sh", "-c", "echo > /dev/tcp/localhost/7447"]
+      test: ["CMD", "nc", "-z", "localhost", "7447"]
       interval: 2s
       timeout: 3s
       retries: 10
@@ -37,12 +37,15 @@ services:
     environment:
       ZENOH_ROUTER: tcp/zenoh-router:7447
       NODE_ID: "0"
+      VIRTMCU_USE_PREBUILT_QEMU: "1"
+      RUST_LOG: info
     volumes:
       # Mount firmware from outside if needed:
       # - ../firmware:/app/firmware:ro
       # Mount tools for live development:
       - ../tools:/app/tools:ro
-      - ../test:/app/test:ro
+      - ../tests:/app/tests:ro
+      - ../target:/app/target:ro
       - ../scripts:/app/scripts:ro
     depends_on:
       zenoh-router:
@@ -51,7 +54,7 @@ services:
     # has no meaningful firmware; the clock hook fires at the first TB
     # boundary and blocks the vCPU waiting for a clock advance. Overlays (like
     # pendulum.yml) should override this command to supply a -kernel.
-    command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "clock,mode=suspend,node=0"]
+    command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "virtmcu-clock,mode=suspend,node=0,router=tcp/zenoh-router:7447"]
     tty: true
 
   # ── 3. Deterministic Coordinator ──────────────────────────────────────────
@@ -63,6 +66,9 @@ services:
       - virtmcu-net
     environment:
       ZENOH_CONNECT: tcp/zenoh-router:7447
+      RUST_LOG: info
+    volumes:
+      - ../target:/app/target:ro
     command: ["/app/target/release/deterministic_coordinator", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]
     depends_on:
       zenoh-router:

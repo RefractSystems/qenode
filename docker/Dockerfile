@@ -254,20 +254,50 @@ RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs
     -DCMAKE_C_FLAGS="-w" \
     && cmake --build build --target install
 
-# ── Stage 5: third-party-builder ─────────────────────────────────────────────────────
+# ── Stage 5: cli-builder ─────────────────────────────────────────────────────
+# This stage builds the virtmcu-cli utility used for patching QEMU.
+# It uses a dedicated cache mount for the Cargo target directory to ensure
+# that workspace changes only trigger fast incremental builds.
+FROM devenv AS cli-builder
+ARG TARGETARCH
+WORKDIR /workspace
+
+# Copy only the files needed for virtmcu-cli to avoid invalidating this stage on unrelated changes.
+COPY Cargo.toml Cargo.lock ./
+COPY tools/virtmcu-cli/ tools/virtmcu-cli/
+COPY tools/virtmcu-observability/ tools/virtmcu-observability/
+COPY tools/virtmcu-test-runner/ tools/virtmcu-test-runner/
+COPY hw/rust/common/ hw/rust/common/
+COPY hw/rust/yaml2qemu/ hw/rust/yaml2qemu/
+
+RUN sed -i '/^members = \[/,/^\]/d' Cargo.toml && \
+    sed -i '/^\[workspace\]/a members = [\n\
+    "tools/virtmcu-cli",\n\
+    "tools/virtmcu-observability",\n\
+    "tools/virtmcu-test-runner",\n\
+    "hw/rust/yaml2qemu",\n\
+    "hw/rust/common/rust-dummy",\n\
+    "hw/rust/common/virtmcu-api",\n\
+    "hw/rust/common/virtmcu-qom",\n\
+    "hw/rust/common/test-qom-device",\n\
+    "hw/rust/common/virtmcu-test-devices",\n\
+    "hw/rust/common/virtmcu-zenoh-config",\n\
+]' Cargo.toml
+
+RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-target-cli-${TARGETARCH},target=/workspace/target \
+    CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
+    && cp target/release/virtmcu-cli /usr/local/bin/virtmcu-cli
+
+# ── Stage 6: third-party-builder ─────────────────────────────────────────────────────
 FROM devenv AS third-party-builder
 
-# Build and install the virtmcu-cli utility first (replaces all legacy bash/python scripts)
-# This provides the 'virtmcu-cli setup patch-qemu' command used below.
-WORKDIR /workspace
-COPY . .
-RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
-    CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
-    && cp target/release/virtmcu-cli /usr/local/bin/virtmcu-cli \
-    && rm -rf target/
+ARG TARGETARCH
+ENV ARCH=arm
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# 1. External dependencies (highly cached, independent of workspace changes)
 COPY --from=flatcc-builder /usr/local/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /usr/local/include/flatcc /usr/local/include/flatcc
 COPY --from=flatcc-builder /usr/local/lib/libflatcc* /usr/local/lib/
@@ -304,17 +334,15 @@ fi; \
 
 ARG QEMU_REPO
 ARG QEMU_REF
-ARG TARGETARCH
-ARG VIRTMCU_USE_ASAN=0
-
-ENV ARCH=arm
 WORKDIR /build
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
+# 2. Project-specific tools and patches (The invalidation point for subsequent layers)
+COPY --from=cli-builder /usr/local/bin/virtmcu-cli /usr/local/bin/virtmcu-cli
 COPY patches/ /build/patches/
 COPY BUILD_DEPS /build/
 
-# Apply all patches using the native Rust-powered CLI
+# 3. Patch and build QEMU
 RUN virtmcu-cli setup patch-qemu /build/qemu
 
 # Pre-configure with a dummy virtmcu directory to cache the core build.
@@ -354,7 +382,8 @@ RUN QEMU_CONF_FLAGS=( \
     fi
 RUN --mount=type=cache,target=/var/cache/ccache \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
-# ── Stage 6: ci ──────────────────────────────────────────────────────────────
+
+# ── Stage 7: ci ──────────────────────────────────────────────────────────────
 FROM third-party-builder AS ci
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -368,8 +397,7 @@ COPY tests/ /build/virtmcu/tests/
 COPY schema/ /build/virtmcu/schema/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
-    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
-    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
 WORKDIR /build/qemu/build-virtmcu
 ARG VIRTMCU_USE_ASAN=0
 ARG TARGETARCH

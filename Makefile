@@ -53,10 +53,6 @@ endif
 QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
 
-# Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
-# We use 'cargo run' for development to ensure it is always up to date.
-export VIRTMCU_CLI := cargo run --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
-
 # Helper macros for running commands in Docker
 VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
 	-e HOST_UID=$$(id -u) \
@@ -88,13 +84,42 @@ VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
 .PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
-.PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
+.PHONY: test-unit ci-unit test-integration ci-integration test-integration-asan ci-integration-asan test-unit-miri ci-unit-miri test-unit-coverage ci-unit-coverage test-integration-coverage ci-integration-coverage test-peripheral-coverage ci-peripheral-coverage test-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan build-test-runner
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+TRIPLE := $(shell rustc -vV | grep "host:" | awk '{print $$2}')
+
+# Set Cargo environment variables for consistency across all targets
+ifeq ($(VIRTMCU_USE_ASAN),1)
+  export BUILD_SUFFIX := -asan
+  export RUSTFLAGS := -Zsanitizer=address
+else ifeq ($(VIRTMCU_USE_TSAN),1)
+  export BUILD_SUFFIX := -tsan
+  export RUSTFLAGS := -Zsanitizer=thread
+else
+  export BUILD_SUFFIX :=
+  export RUSTFLAGS :=
+endif
+
+export CARGO_TARGET_DIR := $(CURDIR)/target$(BUILD_SUFFIX)
+export CARGO_BUILD_JOBS := $(JOBS)
+export CARGO_BUILD_TARGET := $(TRIPLE)
+
+# Canonical paths for built artifacts
+TARGET_BIN_DIR := $(CARGO_TARGET_DIR)/$(TRIPLE)/release
+RUNNER_BIN     := $(TARGET_BIN_DIR)/virtmcu-test-runner
+
+# Canonical Cargo command with unified flags
+override CARGO_CMD := cargo +nightly
+override CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
+
+# Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
+# We use 'cargo run' for development to ensure it is always up to date.
+export VIRTMCU_CLI := $(CARGO_CMD) run $(CARGO_OPTS) --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
 
 # By default, perform an incremental build
-all: dev-all
+all: test-all  
 
 # ------------------------------------------------------------------------------
 # Version Management
@@ -103,7 +128,7 @@ all: dev-all
 # Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
-	@cargo run -p virtmcu-cli -- setup sync-versions
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup sync-versions
 	@echo "✓ Versions synchronized."
 
 # ------------------------------------------------------------------------------
@@ -113,7 +138,8 @@ sync-versions:
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 # WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
 bootstrap:
-	@cargo run -p virtmcu-cli -- setup bootstrap
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup bootstrap
+
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   ZENOHC_BUILD_DIR := third_party/zenoh-c-src/build-asan
@@ -147,32 +173,24 @@ build-third-party: build-zenoh-c build-flatcc build-qemu
 build: build-qemu
 
 # Builds all test artifacts across all domains
-build-test-artifacts:
-	@$(MAKE) -C tests/fixtures/guest_apps/boot_arm -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/uart_echo -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/telemetry_wfi -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/actuator -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/boot_riscv -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/flexray_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/spi_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/lin_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/complex_board -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/perf_bench -j$(JOBS)
+GUEST_APP_DIRS := $(wildcard tests/fixtures/guest_apps/*)
+GUEST_APP_TARGETS := $(foreach dir,$(GUEST_APP_DIRS),$(if $(wildcard $(dir)/Makefile),$(dir)))
+
+.PHONY: $(GUEST_APP_TARGETS)
+$(GUEST_APP_TARGETS):
+	@$(MAKE) -C $@ -j$(JOBS)
+
+build-test-artifacts: $(GUEST_APP_TARGETS)
 	@if [ "$$CI" = "true" ] && command -v deterministic_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
 		echo "==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)..."; \
-		ASAN_FLAG=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] && echo "-Zsanitizer=address" || echo ""); \
-		TSAN_FLAG=$$([ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "-Zsanitizer=thread" || echo ""); \
-		BOOTSTRAP=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] || [ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "1" || echo "0"); \
-		RUSTFLAGS="$$ASAN_FLAG $$TSAN_FLAG"; \
-		TRIPLE=$$(rustc -vV | grep "host:" | awk "{print \$$2}"); \
-		HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo +nightly build -Z bindeps --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
+		$(CARGO_CMD) build -Z bindeps --release $(CARGO_OPTS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.
 run:
-	@bash target/release/virtmcu-run \
+	@$(TARGET_BIN_DIR)/virtmcu-run \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
 	  -nographic \
@@ -195,31 +213,31 @@ ensure-ci-asan-image:
 		(echo "==> Pull failed. Building locally..." && docker buildx bake ci-asan --load)
 
 ci-check: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-check
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-check
 
 ci-lint: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-lint
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-lint
 
 ci-unit: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-unit
 
 ci-unit-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-coverage
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-unit-coverage
 
 ci-unit-miri: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-miri
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-unit-miri
 
 ci-integration: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration DOMAIN=$(DOMAIN)
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-integration DOMAIN=$(DOMAIN)
 
 ci-integration-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration-coverage
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-integration-coverage
 
 ci-integration-asan: ensure-ci-asan-image
-	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) $(MAKE) dev-integration-asan DOMAIN=$(DOMAIN)
+	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) $(MAKE) test-integration-asan DOMAIN=$(DOMAIN)
 
 ci-peripheral-coverage: ensure-ci-image
-	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-peripheral-coverage
+	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) test-peripheral-coverage
 
 
 ci-build-third-party:
@@ -235,7 +253,7 @@ ci-full: ensure-ci-image
 	@$(MAKE) ci-integration-asan
 	@$(MAKE) ci-unit-miri
 	@mkdir -p coverage-data
-	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) $(MAKE) dev-integration DOMAIN=all
+	@$(VIRTMCU_DOCKER_RUN_CI_IMG) -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 $(VIRTMCU_CI_IMG) $(MAKE) test-integration DOMAIN=all
 	@$(MAKE) ci-integration-coverage
 	@$(MAKE) ci-peripheral-coverage
 
@@ -249,45 +267,56 @@ ci-full: ensure-ci-image
 setup-dev: bootstrap sync-versions build-qemu
 
 # Run the full development pipeline: build QEMU, build guest artifacts, lint, unit tests, integration tests, and peripheral coverage.
-dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-peripheral-coverage
+test-all  : build-qemu build-test-artifacts test-check test-integration test-peripheral-coverage
 
 # --- Linting ---
 # Unified developer check: Lint + Unit Tests (Tier 1 parity)
-dev-check: dev-lint dev-unit dev-unit-coverage
+test-check: test-lint test-unit test-unit-coverage
 
-dev-lint:
-	@cargo run -p virtmcu-test-runner --release -- lint
+build-test-runner:
+	@$(CARGO_CMD) build $(CARGO_OPTS) -p virtmcu-test-runner --release
+
+test-lint: build-test-runner
+	@$(RUNNER_BIN) lint
 
 # --- Unit Tests ---
-dev-unit:
-	@cargo run -p virtmcu-test-runner --release -- run --tier unit
+test-unit: build-test-runner
+	@$(RUNNER_BIN) run --tier unit
 
-dev-unit-coverage:
-	@cargo run -p virtmcu-test-runner --release -- coverage
+test-unit-coverage: build-test-runner
+	@$(RUNNER_BIN) coverage
 
-dev-unit-miri:
-	@cargo run -p virtmcu-test-runner --release -- miri
+test-unit-miri: build-test-runner
+	@$(RUNNER_BIN) miri
 
 # --- Integration Tests ---
-dev-integration: build-test-artifacts
-	@cargo +nightly run -Z bindeps -p virtmcu-test-runner --release -- run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
+test-integration: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
 
-dev-integration-coverage: build-test-artifacts
-	@cargo run -p virtmcu-test-runner --release -- coverage --integration
+test-integration-coverage: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) coverage --integration
 
-dev-integration-asan: build-test-artifacts
-	@cargo run -p virtmcu-test-runner --release -- run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
+# --- End-to-End Tests ---
+test-e2e  :
+	@echo "==> Running E2E tests..."
+	@for script in tests/e2e/*.sh; do \
+		echo "==> Running $$script"; \
+		bash "$$script" || exit 1; \
+	done
+
+test-integration-asan: build-test-artifacts build-test-runner
+	@$(RUNNER_BIN) run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
 
 # Run host-side C coverage for peripheral plugins (inside ci)
-dev-peripheral-coverage:
-	@cargo run -p virtmcu-test-runner --release -- coverage --peripheral
+test-peripheral-coverage: build-test-runner
+	@$(RUNNER_BIN) coverage --peripheral
 
 # --- Git Hooks ---
 install-git-hooks:
 	@echo "==> Installing Git hooks..."
 	@mkdir -p .git/hooks
-	@printf '#!/bin/sh\nset -e\nmake dev-lint\n' > .git/hooks/pre-commit
-	@printf '#!/bin/sh\nset -e\nmake dev-unit\n' > .git/hooks/pre-push
+	@printf '#!/bin/sh\nset -e\nmake test-lint\n' > .git/hooks/pre-commit
+	@printf '#!/bin/sh\nset -e\nmake test-unit\n' > .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push .git/hooks/pre-commit
 	@echo "✓ Git hooks installed: pre-commit (lint) and pre-push (unit)."
 
@@ -327,20 +356,20 @@ BAKE := docker buildx bake --load
 # Build docker base -> toolchain -> devenv with smoke tests
 docker-dev:
 	@$(BAKE) base
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-base
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-base
 	@$(BAKE) toolchain
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-toolchain
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-toolchain
 	@$(BAKE) devenv
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-devenv
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-devenv
 	@echo "✓ All dev-base stages built and verified."
 
 # Build all docker stages including ci
 docker-all: docker-dev
 	@$(BAKE) third-party-base
 	@$(BAKE) ci
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-ci
 	@$(BAKE) ci-asan
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci-asan
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-ci-asan
 
 # Build only the docker base stage
 docker-base:
@@ -408,7 +437,7 @@ tag:
 
 # Kill all simulation-related processes and clean up temporary test files.
 clean-sim:
-	@cargo run -p virtmcu-cli -- setup cleanup-sim
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup cleanup-sim
 
 # Remove backup and profile raw files.
 delete-profraw:

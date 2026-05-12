@@ -362,50 +362,50 @@ fn main() -> Result<()> {
         }
         Commands::CiCheck => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-check", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-check", &virtmcu_ci_img)?;
         }
         Commands::CiLint => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-lint", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-lint", &virtmcu_ci_img)?;
         }
         Commands::CiUnit => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-unit", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-unit", &virtmcu_ci_img)?;
         }
         Commands::CiUnitCoverage => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-unit-coverage", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-unit-coverage", &virtmcu_ci_img)?;
         }
         Commands::CiUnitMiri => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-unit-miri", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-unit-miri", &virtmcu_ci_img)?;
         }
         Commands::CiIntegration { domain } => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
             let domain_val = domain.unwrap_or_else(|| "all".to_string());
             run_ci(
                 &sh,
-                &format!("make dev-integration DOMAIN={}", domain_val),
+                &format!("make test-integration DOMAIN={}", domain_val),
                 &virtmcu_ci_img,
             )?;
         }
         Commands::CiIntegrationCoverage => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-integration-coverage", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-integration-coverage", &virtmcu_ci_img)?;
         }
         Commands::CiIntegrationAsan { domain } => {
             ensure_image(&sh, &virtmcu_ci_asan_img, "ci-asan")?;
             let domain_val = domain.unwrap_or_else(|| "all".to_string());
             run_ci(
                 &sh,
-                &format!("make dev-integration-asan DOMAIN={}", domain_val),
+                &format!("make test-integration-asan DOMAIN={}", domain_val),
                 &virtmcu_ci_asan_img,
             )?;
             println!("\n✓ ci-integration-asan passed.");
         }
         Commands::CiPeripheralCoverage => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            run_ci(&sh, "make dev-peripheral-coverage", &virtmcu_ci_img)?;
+            run_ci(&sh, "make test-peripheral-coverage", &virtmcu_ci_img)?;
         }
         Commands::CiBuildThirdParty => {
             cmd!(sh, "cargo xtask third-party-builder").run()?;
@@ -425,7 +425,7 @@ fn main() -> Result<()> {
 
             fs::create_dir_all("coverage-data")?;
             let curdir_str = curdir.display().to_string();
-            cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make dev-integration DOMAIN=all").run()?;
+            cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make test-integration DOMAIN=all").run()?;
 
             cmd!(sh, "{xtask} ci-integration-coverage").run()?;
             cmd!(sh, "{xtask} ci-peripheral-coverage").run()?;
@@ -441,19 +441,17 @@ fn main() -> Result<()> {
             let xtask = env::current_exe()?;
             cmd!(sh, "{xtask} build-qemu").run()?;
             cmd!(sh, "{xtask} build-test-artifacts").run()?;
-            cmd!(sh, "{xtask} dev-check").run()?;
-            cmd!(sh, "{xtask} dev-integration").run()?;
-            cmd!(sh, "{xtask} dev-peripheral-coverage").run()?;
+            cmd!(sh, "{xtask} test-check").run()?;
+            cmd!(sh, "{xtask} test-integration").run()?;
+            cmd!(sh, "{xtask} test-peripheral-coverage").run()?;
         }
         Commands::DevCheck => {
             let xtask = env::current_exe()?;
-            cmd!(sh, "{xtask} dev-lint").run()?;
-            cmd!(sh, "{xtask} dev-unit").run()?;
-            cmd!(sh, "{xtask} dev-unit-coverage").run()?;
+            cmd!(sh, "{xtask} test-lint").run()?;
+            cmd!(sh, "{xtask} test-unit").run()?;
+            cmd!(sh, "{xtask} test-unit-coverage").run()?;
         }
         Commands::DevLint => {
-            let xtask = env::current_exe()?;
-            
             cmd!(sh, "cargo run -p virtmcu-test-runner --release -- lint").run()?;
         }
         Commands::DevUnit => {
@@ -518,11 +516,11 @@ fn main() -> Result<()> {
             fs::create_dir_all(".git/hooks")?;
             fs::write(
                 ".git/hooks/pre-commit",
-                "#!/bin/sh\nset -e\ncargo xtask dev-lint\n",
+                "#!/bin/sh\nset -e\ncargo xtask test-lint\n",
             )?;
             fs::write(
                 ".git/hooks/pre-push",
-                "#!/bin/sh\nset -e\ncargo xtask dev-unit\n",
+                "#!/bin/sh\nset -e\ncargo xtask test-unit\n",
             )?;
             cmd!(sh, "chmod +x .git/hooks/pre-push .git/hooks/pre-commit").run()?;
             println!("✓ Git hooks installed: pre-commit (lint) and pre-push (unit).");
@@ -536,8 +534,6 @@ fn main() -> Result<()> {
             cmd!(sh, "{xtask} fmt-yaml").run()?;
         }
         Commands::FmtPython => {
-            let xtask = env::current_exe()?;
-            
             println!("==> ruff format + fix...");
             cmd!(sh, "uv run")
                 .args(&uv_run_opts)
@@ -639,16 +635,16 @@ fn main() -> Result<()> {
         }
         Commands::SmokeDevenv => {
             println!("==> Smoke test: devenv");
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'node --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'mdbook-pdf --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm --user vscode {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'node --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'which mdbook-pdf'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
             println!("✓ devenv smoke test passed");
         }
         Commands::SmokeCi => {

@@ -2,6 +2,9 @@
 
 .PHONY: all clean test
 
+WORKSPACE_DIR ?= $(abspath ../../..)
+VIRTMCU_CLI ?= cargo +nightly run --manifest-path $(WORKSPACE_DIR)/Cargo.toml -p virtmcu-cli --release --
+
 all: board.dtb
 
 board.dtb: src/board.yaml

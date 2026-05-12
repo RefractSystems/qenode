@@ -17,7 +17,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use virtmcu_api::rf802154_header;
 use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 
 use zenoh::Wait;
@@ -558,23 +557,22 @@ async fn handle_rf_msg(
     };
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
-    let (vt, seq, sz, _, lqi, off) = if has_hdr {
-        match rf802154_header::size_prefixed_root_as_rf_802154_header(&p) {
-            Ok(hdr) => {
-                let fbl = if p.len() >= 4 {
-                    4 + u32::from_le_bytes([p[0], p[1], p[2], p[3]]) as usize
-                } else {
-                    return out;
-                };
-                (
-                    hdr.delivery_vtime_ns(),
-                    hdr.sequence_number(),
-                    hdr.size(),
-                    0,
-                    hdr.lqi(),
-                    fbl,
-                )
-            }
+    let (vt, seq, payload, lqi, mhr) = if has_hdr {
+        match virtmcu_api::rf802154::size_prefixed_root_as_rf_802154_frame(&p) {
+            Ok(f) => (
+                f.delivery_vtime_ns(),
+                f.sequence_number(),
+                f.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
+                f.lqi(),
+                virtmcu_api::Rf802154Mhr {
+                    fcf: f.fcf(),
+                    seq_num: f.mhr_seq_num(),
+                    dest_pan: f.dest_pan(),
+                    dest_addr: f.dest_addr(),
+                    src_pan: f.src_pan(),
+                    src_addr: f.src_addr(),
+                },
+            ),
             Err(_) => return out,
         }
     } else {
@@ -584,12 +582,26 @@ async fn handle_rf_msg(
         let mut c = Cursor::new(&p);
         let vt = c.read_u64::<LittleEndian>().unwrap_or(0);
         let sz = c.read_u32::<LittleEndian>().unwrap_or(0);
-        (vt, 0, sz, 0i8, 255u8, 12)
+        let mut data = vec![0u8; sz as usize];
+        if p.len() >= 12 + sz as usize {
+            data.copy_from_slice(&p[12..12 + sz as usize]);
+        }
+        (
+            vt,
+            0,
+            data,
+            255u8,
+            virtmcu_api::Rf802154Mhr {
+                fcf: 0,
+                seq_num: 0,
+                dest_pan: 0xFFFF,
+                dest_addr: 0xFFFFFFFFFFFFFFFF,
+                src_pan: 0xFFFF,
+                src_addr: 0xFFFFFFFFFFFFFFFF,
+            },
+        )
     };
-    if p.len() < off + sz as usize {
-        return out;
-    }
-    let data = &p[off..off + sz as usize];
+
     let mut cands = if let Some(s) = positions.get(&(px.clone(), src.clone())) {
         SpatialGrid::build(positions, &px).candidates(s.x, s.y, s.z, &src)
     } else {
@@ -630,12 +642,19 @@ async fn handle_rf_msg(
         }
         let vt2 = vt.saturating_add(d);
         let p2 = if has_hdr {
-            virtmcu_api::encode_rf802154_frame(vt2, seq, data, rssi.clamp(-128.0, 127.0) as i8, lqi)
+            virtmcu_api::encode_rf802154_frame(
+                vt2,
+                seq,
+                &payload,
+                rssi.clamp(-128.0, 127.0) as i8,
+                lqi,
+                mhr,
+            )
         } else {
-            let mut b = Vec::with_capacity(12 + data.len());
+            let mut b = Vec::with_capacity(12 + payload.len());
             let _ = b.write_u64::<LittleEndian>(vt2);
-            let _ = b.write_u32::<LittleEndian>(sz);
-            b.extend_from_slice(data);
+            let _ = b.write_u32::<LittleEndian>(payload.len() as u32);
+            b.extend_from_slice(&payload);
             b
         };
         out.push(CoordMessage {

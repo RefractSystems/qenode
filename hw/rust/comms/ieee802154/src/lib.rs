@@ -18,10 +18,10 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use byteorder::{ByteOrder, LittleEndian};
 use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
-use virtmcu_api::rf802154_header;
+use virtmcu_api::rf802154;
+use virtmcu_api::Rf802154Mhr;
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -77,12 +77,8 @@ const IEEE_ADDR_MODE_SHIFT: u32 = 10;
 const IEEE_ADDR_MODE_MASK: u16 = 0x03;
 
 // Frame and Timing
-const IEEE_MIN_FRAME_LEN: usize = 3;
-const IEEE_SHORT_ADDR_FRAME_MIN_LEN: usize = 7;
-const IEEE_EXT_ADDR_FRAME_MIN_LEN: usize = 13;
 const IEEE_NS_PER_BYTE: u64 = 32_000;
 const IEEE_OVERHEAD_BYTES: u64 = 6;
-const IEEE_FDT_HEADER_SIZE: usize = 4;
 const IEEE_ACK_REQUEST_BIT: u16 = 1 << 5;
 const IEEE_ACK_FRAME_TYPE: u8 = 0x02;
 const IEEE_DEFAULT_LQI: u8 = 255;
@@ -107,17 +103,6 @@ const HASH_BYTES_LEN: usize = 20;
 
 // ACK frame
 const ACK_RESERVED_BYTE: u8 = 0x00;
-
-// Addressing field offsets (relative to frame start)
-const FCF_SIZE: usize = 2;
-const SEQ_NUM_OFFSET: usize = 2;
-const ADDR_FIELDS_START: usize = 3;
-const PAN_ID_SIZE: usize = 2;
-const SHORT_ADDR_SIZE: usize = 2;
-const EXT_ADDR_SIZE: usize = 8;
-
-// FlatBuffers
-const FLATBUFFERS_SIZE_PREFIX_LEN: usize = 4;
 
 // Radio States
 const RADIO_STATE_OFF: u64 = 0;
@@ -656,13 +641,9 @@ fn tx_real(
     let vtime = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let seq = inner.tx_sequence;
     inner.tx_sequence += 1;
-    let msg = virtmcu_api::encode_rf802154_frame(
-        vtime,
-        seq,
-        &inner.tx_fifo[..inner.tx_len as usize],
-        0,
-        IEEE_DEFAULT_LQI,
-    );
+    let payload = &inner.tx_fifo[..inner.tx_len as usize];
+    let mhr = Rf802154Mhr::parse(payload);
+    let msg = virtmcu_api::encode_rf802154_frame(vtime, seq, payload, 0, IEEE_DEFAULT_LQI, mhr);
 
     let _ = transport.publish(topic, &msg);
     let air_time_ns = (IEEE_OVERHEAD_BYTES + inner.tx_len as u64) * IEEE_NS_PER_BYTE;
@@ -720,7 +701,8 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let seq = inner.tx_sequence;
     inner.tx_sequence += 1;
     let ack_payload = [IEEE_ACK_FRAME_TYPE, ACK_RESERVED_BYTE, inner.ack_seq];
-    let msg = virtmcu_api::encode_rf802154_frame(now, seq, &ack_payload, 0, IEEE_DEFAULT_LQI);
+    let mhr = Rf802154Mhr::parse(&ack_payload);
+    let msg = virtmcu_api::encode_rf802154_frame(now, seq, &ack_payload, 0, IEEE_DEFAULT_LQI, mhr);
 
     let _ = s.transport.publish(&s.topic_tx, &msg);
     inner.ack_pending = false;
@@ -732,47 +714,43 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
         return;
     }
 
-    if data.len() < IEEE_FDT_HEADER_SIZE {
-        return;
-    }
-
-    let header = match rf802154_header::size_prefixed_root_as_rf_802154_header(data) {
-        Ok(h) => h,
+    let frame = match rf802154::size_prefixed_root_as_rf_802154_frame(data) {
+        Ok(f) => f,
         Err(_) => return,
     };
 
-    let vtime = header.delivery_vtime_ns();
-    let sequence = header.sequence_number();
-    let raw_size = header.size();
-    let rssi = header.rssi();
+    let vtime = frame.delivery_vtime_ns();
+    let sequence = frame.sequence_number();
+    let rssi = frame.rssi();
 
-    let size = raw_size as usize;
+    let mhr = Rf802154Mhr {
+        fcf: frame.fcf(),
+        seq_num: frame.mhr_seq_num(),
+        dest_pan: frame.dest_pan(),
+        dest_addr: frame.dest_addr(),
+        src_pan: frame.src_pan(),
+        src_addr: frame.src_addr(),
+    };
 
-    let hdr_len = IEEE_FDT_HEADER_SIZE
-        + u32::from_le_bytes(
-            data[0..FLATBUFFERS_SIZE_PREFIX_LEN]
-                .try_into()
-                .unwrap_or([0; FLATBUFFERS_SIZE_PREFIX_LEN]),
-        ) as usize;
+    let frame_data = match frame.data() {
+        Some(d) => d.bytes(),
+        None => return,
+    };
 
-    if size > IEEE_FIFO_SIZE || data.len() < hdr_len + size {
+    let size = frame_data.len();
+    if size > IEEE_FIFO_SIZE {
         return;
     }
 
-    let frame_data = &data[hdr_len..hdr_len + size];
-
-    if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, frame_data) {
+    if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, &mhr) {
         return;
     }
 
-    if frame_data.len() >= IEEE_MIN_FRAME_LEN {
-        let fcf = LittleEndian::read_u16(&frame_data[0..FCF_SIZE]);
-        if (fcf & IEEE_ACK_REQUEST_BIT) != 0 {
-            inner.ack_pending = true;
-            inner.ack_seq = frame_data[SEQ_NUM_OFFSET];
-            if let Some(ack_timer) = &state.ack_timer {
-                ack_timer.mod_ns((vtime + SIFS_NS) as i64);
-            }
+    if (mhr.fcf & IEEE_ACK_REQUEST_BIT) != 0 {
+        inner.ack_pending = true;
+        inner.ack_seq = mhr.seq_num;
+        if let Some(ack_timer) = &state.ack_timer {
+            ack_timer.mod_ns((vtime + SIFS_NS) as i64);
         }
     }
 
@@ -798,38 +776,20 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
     }
 }
 
-fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u8]) -> bool {
-    if frame.len() < IEEE_MIN_FRAME_LEN {
-        return false;
-    }
-
-    let fcf = LittleEndian::read_u16(&frame[0..FCF_SIZE]);
-    let dest_addr_mode = (fcf >> IEEE_ADDR_MODE_SHIFT) & IEEE_ADDR_MODE_MASK;
+fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf802154Mhr) -> bool {
+    let dest_addr_mode = (mhr.fcf >> IEEE_ADDR_MODE_SHIFT) & IEEE_ADDR_MODE_MASK;
 
     match dest_addr_mode {
         IEEE_ADDR_MODE_NONE => true,
         IEEE_ADDR_MODE_SHORT => {
-            if frame.len() < IEEE_SHORT_ADDR_FRAME_MIN_LEN {
-                return false;
-            }
-            let dest_pan =
-                LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
-            let dest_addr =
-                LittleEndian::read_u16(&frame[SHORT_ADDR_SIZE..SHORT_ADDR_SIZE + SHORT_ADDR_SIZE]);
-            let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
-            let addr_matches = dest_addr == IEEE_BROADCAST_ADDR || dest_addr == short_addr;
+            let pan_matches = mhr.dest_pan == IEEE_BROADCAST_PAN || mhr.dest_pan == pan_id;
+            let addr_matches =
+                mhr.dest_addr as u16 == IEEE_BROADCAST_ADDR || mhr.dest_addr as u16 == short_addr;
             pan_matches && addr_matches
         }
         IEEE_ADDR_MODE_EXT => {
-            if frame.len() < IEEE_EXT_ADDR_FRAME_MIN_LEN {
-                return false;
-            }
-            let dest_pan =
-                LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
-            let dest_addr =
-                LittleEndian::read_u64(&frame[EXT_ADDR_SIZE..EXT_ADDR_SIZE + EXT_ADDR_SIZE]);
-            let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
-            let addr_matches = dest_addr == ext_addr;
+            let pan_matches = mhr.dest_pan == IEEE_BROADCAST_PAN || mhr.dest_pan == pan_id;
+            let addr_matches = mhr.dest_addr == ext_addr;
             pan_matches && addr_matches
         }
         _ => false,

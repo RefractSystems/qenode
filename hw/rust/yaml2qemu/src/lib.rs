@@ -254,6 +254,7 @@ fn emit_device(
         "clock",
         "ui",
         "actuator",
+        "sensor",
         "s32k144-lpuart",
     ]
     .contains(&p_type);

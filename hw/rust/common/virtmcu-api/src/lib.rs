@@ -60,7 +60,16 @@ pub mod flexray_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod lin_generated;
-pub use rf802154_generated::virtmcu::rf_802154 as rf802154_header;
+pub use rf802154_generated::virtmcu::rf_802154 as rf802154;
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all,
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    clippy::extra_unused_lifetimes
+)]
+pub mod physics_generated;
 #[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
     clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
@@ -70,6 +79,121 @@ pub use rf802154_generated::virtmcu::rf_802154 as rf802154_header;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf802154_generated;
+pub use physics_generated::virtmcu::physics as physics_proto;
+
+/// Decoded IEEE 802.15.4 MAC Header (MHR) fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rf802154Mhr {
+    /// Frame Control Field
+    pub fcf: u16,
+    /// Sequence Number
+    pub seq_num: u8,
+    /// Destination PAN ID
+    pub dest_pan: u16,
+    /// Destination Address (Short or Extended)
+    pub dest_addr: u64,
+    /// Source PAN ID
+    pub src_pan: u16,
+    /// Source Address (Short or Extended)
+    pub src_addr: u64,
+}
+
+impl Rf802154Mhr {
+    /// Parse a raw IEEE 802.15.4 frame into MHR fields.
+    /// This is a best-effort parser for common frame types.
+    pub fn parse(frame: &[u8]) -> Self {
+        use byteorder::{ByteOrder, LittleEndian};
+
+        const BROADCAST_PAN: u16 = 0xFFFF;
+        const NO_ADDR: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+        const MIN_FRAME_LEN: usize = 3;
+        const FCF_LEN: usize = 2;
+        const ADDR_MODE_SHORT: u16 = 0x02;
+        const ADDR_MODE_EXT: u16 = 0x03;
+        const ADDR_MODE_MASK: u16 = 0x03;
+        const DEST_ADDR_MODE_SHIFT: u32 = 10;
+        const SRC_ADDR_MODE_SHIFT: u32 = 14;
+        const PAN_ID_COMP_BIT: u16 = 1 << 6;
+        const PAN_ID_LEN: usize = 2;
+        const SHORT_ADDR_LEN: usize = 2;
+        const EXT_ADDR_LEN: usize = 8;
+
+        let mut mhr = Rf802154Mhr {
+            fcf: 0,
+            seq_num: 0,
+            dest_pan: BROADCAST_PAN,
+            dest_addr: NO_ADDR,
+            src_pan: BROADCAST_PAN,
+            src_addr: NO_ADDR,
+        };
+
+        if frame.len() < MIN_FRAME_LEN {
+            return mhr;
+        }
+
+        mhr.fcf = LittleEndian::read_u16(&frame[0..FCF_LEN]);
+        mhr.seq_num = frame[FCF_LEN];
+        let dest_addr_mode = (mhr.fcf >> DEST_ADDR_MODE_SHIFT) & ADDR_MODE_MASK;
+        let src_addr_mode = (mhr.fcf >> SRC_ADDR_MODE_SHIFT) & ADDR_MODE_MASK;
+        let pan_id_comp = (mhr.fcf & PAN_ID_COMP_BIT) != 0;
+
+        let mut offset = FCF_LEN + 1; // Skip FCF (2) and SeqNum (1)
+
+        // Destination Addressing
+        match dest_addr_mode {
+            ADDR_MODE_SHORT if frame.len() >= offset + PAN_ID_LEN + SHORT_ADDR_LEN => {
+                mhr.dest_pan = LittleEndian::read_u16(&frame[offset..offset + PAN_ID_LEN]);
+                mhr.dest_addr = u64::from(LittleEndian::read_u16(
+                    &frame[offset + PAN_ID_LEN..offset + PAN_ID_LEN + SHORT_ADDR_LEN],
+                ));
+                offset += PAN_ID_LEN + SHORT_ADDR_LEN;
+            }
+            ADDR_MODE_EXT if frame.len() >= offset + PAN_ID_LEN + EXT_ADDR_LEN => {
+                mhr.dest_pan = LittleEndian::read_u16(&frame[offset..offset + PAN_ID_LEN]);
+                mhr.dest_addr = LittleEndian::read_u64(
+                    &frame[offset + PAN_ID_LEN..offset + PAN_ID_LEN + EXT_ADDR_LEN],
+                );
+                offset += PAN_ID_LEN + EXT_ADDR_LEN;
+            }
+            _ => {}
+        }
+
+        // Source Addressing
+        match src_addr_mode {
+            ADDR_MODE_SHORT => {
+                if !pan_id_comp {
+                    if frame.len() >= offset + PAN_ID_LEN {
+                        mhr.src_pan = LittleEndian::read_u16(&frame[offset..offset + PAN_ID_LEN]);
+                        offset += PAN_ID_LEN;
+                    }
+                } else {
+                    mhr.src_pan = mhr.dest_pan;
+                }
+                if frame.len() >= offset + SHORT_ADDR_LEN {
+                    mhr.src_addr =
+                        u64::from(LittleEndian::read_u16(&frame[offset..offset + SHORT_ADDR_LEN]));
+                }
+            }
+            ADDR_MODE_EXT => {
+                if !pan_id_comp {
+                    if frame.len() >= offset + PAN_ID_LEN {
+                        mhr.src_pan = LittleEndian::read_u16(&frame[offset..offset + PAN_ID_LEN]);
+                        offset += PAN_ID_LEN;
+                    }
+                } else {
+                    mhr.src_pan = mhr.dest_pan;
+                }
+                if frame.len() >= offset + EXT_ADDR_LEN {
+                    mhr.src_addr = LittleEndian::read_u64(&frame[offset..offset + EXT_ADDR_LEN]);
+                }
+            }
+            _ => {}
+        }
+
+        mhr
+    }
+}
+
 #[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
     clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
@@ -274,6 +398,35 @@ pub trait TimeAuthorityTransport: Send + Sync {
         req: ClockAdvanceReq,
         timeout: core::time::Duration,
     ) -> Option<ClockReadyResp>;
+}
+
+/// Abstract transport for the Time Authority ↔ Physics Gateway handshake.
+///
+/// The Time Authority sends a trigger containing all actuator data for the
+/// completed quantum and blocks until the gateway responds with a done signal.
+/// Implementations: ZenohPhysicsTransport, UnixSocketPhysicsTransport.
+pub trait PhysicsGatewayTransport: Send + Sync {
+    /// Send the complete actuator bundle for one quantum to the gateway and
+    /// block until the gateway signals that the physics step is complete.
+    ///
+    /// Returns `Err` on transport failure, timeout, or a non-OK status in the
+    /// `PhysicsDone` response.  Callers must treat any `Err` as fatal.
+    fn trigger_and_wait(
+        &self,
+        trigger_bytes: &[u8],
+        timeout: core::time::Duration,
+    ) -> Result<(), alloc::string::String>;
+}
+
+/// Server-side counterpart: implemented by the Physics Gateway to receive
+/// triggers and send done signals.
+pub trait PhysicsGatewayServer: Send + Sync {
+    /// Block until a trigger arrives.  Returns the raw FlatBuffers bytes of
+    /// the `PhysicsTrigger` table, or `None` on shutdown/transport close.
+    fn recv_trigger(&self, timeout: core::time::Duration) -> Option<alloc::vec::Vec<u8>>;
+
+    /// Send the done signal back to the Time Authority.
+    fn send_done(&self, done: physics_proto::PhysicsDone) -> Result<(), alloc::string::String>;
 }
 
 /// Unix socket-based clock synchronization transport.
@@ -486,30 +639,36 @@ pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]
     out
 }
 
-/// Encode an `Rf802154Header` + payload into a byte vector (little-endian, size-prefixed).
+/// Encode an `Rf802154Frame` (including payload) into a byte vector (little-endian, size-prefixed).
 pub fn encode_rf802154_frame(
     delivery_vtime_ns: u64,
     sequence_number: u64,
     payload: &[u8],
     rssi: i8,
     lqi: u8,
+    mhr: Rf802154Mhr,
 ) -> Vec<u8> {
-    const INITIAL_CAPACITY: usize = 64;
+    const INITIAL_CAPACITY: usize = 128;
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(INITIAL_CAPACITY);
-    let mut args = rf802154_header::Rf802154HeaderBuilder::new(&mut builder);
-    args.add_delivery_vtime_ns(delivery_vtime_ns);
-    args.add_sequence_number(sequence_number);
-    args.add_size(payload.len() as u32);
-    args.add_rssi(rssi);
-    args.add_lqi(lqi);
-    let hdr = args.finish();
-    builder.finish_size_prefixed(hdr, None);
-    let hdr_data = builder.finished_data();
+    let data = builder.create_vector(payload);
 
-    let mut out = Vec::with_capacity(hdr_data.len() + payload.len());
-    out.extend_from_slice(hdr_data);
-    out.extend_from_slice(payload);
-    out
+    let args = rf802154::Rf802154FrameArgs {
+        delivery_vtime_ns,
+        sequence_number,
+        rssi,
+        lqi,
+        fcf: mhr.fcf,
+        mhr_seq_num: mhr.seq_num,
+        dest_pan: mhr.dest_pan,
+        dest_addr: mhr.dest_addr,
+        src_pan: mhr.src_pan,
+        src_addr: mhr.src_addr,
+        data: Some(data),
+    };
+
+    let frame = rf802154::Rf802154Frame::create(&mut builder, &args);
+    builder.finish_size_prefixed(frame, None);
+    builder.finished_data().to_vec()
 }
 
 /// Decode a `ZenohFrameHeader` from the first 20 bytes of `data`.

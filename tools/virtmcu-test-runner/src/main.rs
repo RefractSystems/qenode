@@ -89,6 +89,10 @@ async fn main() -> Result<()> {
                             .arg("--exclude")
                             .arg("native-integration");
 
+                        if !cfg!(debug_assertions) {
+                            cmd.arg("--release");
+                        }
+
                         // Inject VIRTMCU_UNIT_TEST to enable stubs in virtmcu-qom
                         cmd.env("VIRTMCU_UNIT_TEST", "1");
 
@@ -133,6 +137,11 @@ async fn main() -> Result<()> {
                             .arg("bindeps")
                             .arg("-p")
                             .arg("native-integration");
+
+                        if !cfg!(debug_assertions) {
+                            cmd.arg("--release");
+                        }
+
                         if let Some(domain_name) = domain {
                             if domain_name != "all" {
                                 cmd.arg("--test").arg(domain_name);
@@ -297,8 +306,11 @@ fn run_integration_coverage() -> Result<()> {
         ])
         .status()?;
 
+    let ctx = virtmcu_test_runner::TestContext::new()?;
+    let run_bin = ctx.find_binary("virtmcu-run")?;
+
     // Run with drcov plugin
-    let mut qemu = std::process::Command::new("./target/release/virtmcu-run")
+    let mut qemu = std::process::Command::new(run_bin)
         .args([
             "--dtb",
             "tests/fixtures/guest_apps/boot_arm/minimal.dtb",
@@ -332,7 +344,8 @@ fn run_integration_coverage() -> Result<()> {
         return Err(anyhow!("hello.drcov was not created"));
     }
 
-    let analyze_status = std::process::Command::new("./target/release/virtmcu-coverage")
+    let coverage_bin = ctx.find_binary("virtmcu-coverage")?;
+    let analyze_status = std::process::Command::new(coverage_bin)
         .args([
             "coverage-data/hello.drcov",
             "tests/fixtures/guest_apps/boot_arm/hello.elf",

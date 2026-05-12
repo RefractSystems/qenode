@@ -18,9 +18,5 @@ peripherals:
     properties:
       node: 0
 
-  - name: clock
-    type: clock
-    address: 0x200
-
 topology:
   links: []

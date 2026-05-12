@@ -121,12 +121,11 @@ unsafe extern "C" fn virtmcu_can_receive_frames(
         let mut builder = flatbuffers::FlatBufferBuilder::new();
         let data_vec =
             builder.create_vector(frame.data.get(..frame.can_dlc as usize).unwrap_or(&[]));
-        let seq = unsafe { (*state).tx_sequence.fetch_add(1, AtomicOrdering::SeqCst) };
+        let _seq = unsafe { (*state).tx_sequence.fetch_add(1, AtomicOrdering::SeqCst) };
         let fbs_frame = CanFdFrame::create(
             &mut builder,
             &CanFdFrameArgs {
                 delivery_vtime_ns: vtime_ns as u64,
-                sequence_number: seq,
                 can_id: frame.can_id,
                 flags: u32::from(frame.flags),
                 data: Some(data_vec),
@@ -238,7 +237,8 @@ fn create_can_sub_callback(
             };
 
             let vtime = fbs.delivery_vtime_ns();
-            let sequence = fbs.sequence_number();
+            // CanFdFrame schema does not have a sequence_number field, so we use 0 or sequence_number if it exists in another layer.
+            let sequence = 0;
             let packet = OrderedCanFrame { vtime, sequence, frame };
 
             if tx_clone.send(packet).is_ok() {

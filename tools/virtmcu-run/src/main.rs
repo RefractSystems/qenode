@@ -405,13 +405,23 @@ fn main() -> Result<()> {
                 let cli_file = NamedTempFile::new()?;
                 let arch_file = NamedTempFile::new()?;
 
-                let status = Command::new("cargo")
-                    .arg("run")
-                    .arg("-p")
-                    .arg("virtmcu-cli")
-                    .arg("--release")
-                    .arg("--")
-                    .arg("platform")
+                let mut cmd = if std::process::Command::new("virtmcu-cli")
+                    .arg("--version")
+                    .output()
+                    .is_ok()
+                {
+                    std::process::Command::new("virtmcu-cli")
+                } else {
+                    let mut c = std::process::Command::new("cargo");
+                    c.arg("run")
+                        .arg("-p")
+                        .arg("virtmcu-cli")
+                        .arg("--release")
+                        .arg("--");
+                    c
+                };
+
+                cmd.arg("platform")
                     .arg("generate")
                     .arg(file)
                     .arg("--out-dtb")
@@ -419,8 +429,13 @@ fn main() -> Result<()> {
                     .arg("--out-cli")
                     .arg(cli_file.path())
                     .arg("--out-arch")
-                    .arg(arch_file.path())
-                    .status()?;
+                    .arg(arch_file.path());
+
+                if let Ok(router) = env::var("ZENOH_ROUTER") {
+                    cmd.arg("--router").arg(router);
+                }
+
+                let status = cmd.status()?;
                 if !status.success() {
                     return Err(anyhow!("virtmcu-cli platform generate failed"));
                 }

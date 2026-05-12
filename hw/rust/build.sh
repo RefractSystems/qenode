@@ -61,6 +61,8 @@ unset MAKEFLAGS
 
 # Allow Cargo to utilize all available logical cores explicitly
 NUM_JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+export CARGO_UNSTABLE_BINDEPS=true
+export RUSTC_BOOTSTRAP=1
 cargo build --release --workspace --target-dir "$TARGET_DIR" --jobs "$NUM_JOBS" ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"}
 
 for pair in "$@"; do

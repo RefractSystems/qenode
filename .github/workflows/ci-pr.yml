@@ -157,11 +157,11 @@ jobs:
             bash -c '
               set -e
               echo "::group::Static Analysis (Lint)"
-              make dev-lint
+              make test-lint
               echo "::endgroup::"
 
               echo "::group::Unit Tests"
-              make dev-unit
+              make test-unit
               echo "::endgroup::"
             '
 
@@ -181,7 +181,7 @@ jobs:
             -e VIRTMCU_CI_IMAGE \
             -e VIRTMCU_DEVENV_IMAGE \
             ${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }} \
-            make dev-unit-coverage
+            make test-unit-coverage
 
       - name: Upload Unit Coverage
         uses: actions/upload-artifact@v4
@@ -271,6 +271,23 @@ jobs:
       # third-party-base is intentionally excluded from PR builds — only ci-main.yml
       # writes to the QEMU cache so experimental patch branches never warm the
       # shared cache. The ci target reads third-party-base via its cache-from list.
+      - name: Set Bake Targets
+        id: targets
+        shell: bash
+        run: |
+          if [ "${{ matrix.sanitizer }}" == "standard" ]; then
+            CI_TARGET="ci"
+            BASE_TARGET="third-party-base"
+          else
+            CI_TARGET="ci-asan"
+            BASE_TARGET="third-party-base-asan"
+          fi
+          if [ "${{ env.QEMU_BASE_CACHE }}" == "miss" ]; then
+            echo "targets=$BASE_TARGET,$CI_TARGET" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=$CI_TARGET" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push ci stage
         uses: docker/bake-action@v7
         env:
@@ -281,9 +298,7 @@ jobs:
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          targets: |
-            ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
-            ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
+          targets: ${{ steps.targets.outputs.targets }}
           load: true
           files: docker-bake.hcl
 
@@ -364,7 +379,7 @@ jobs:
             -e GCOV_PREFIX=/workspace/coverage-data \
             -e GCOV_PREFIX_STRIP=3 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            make dev-integration DOMAIN=${{ matrix.domain }}
+            make test-integration DOMAIN=${{ matrix.domain }}
 
       - name: Upload results and coverage
         uses: actions/upload-artifact@v4
@@ -435,7 +450,7 @@ jobs:
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
-            make dev-peripheral-coverage
+            make test-peripheral-coverage
 
       - name: Upload peripheral coverage results
         uses: actions/upload-artifact@v4
@@ -492,4 +507,4 @@ jobs:
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/${{ env.VIRTMCU_CI_IMAGE }}:sha-${{ github.sha }}-amd64 \
-            make dev-integration-coverage
+            make test-integration-coverage

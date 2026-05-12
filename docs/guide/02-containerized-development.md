@@ -12,7 +12,7 @@ To set up a local development environment with zero manual configuration:
 1.  **Clone**: `git clone https://github.com/RefractSystems/VirtMCU.git`
 2.  **Open**: Launch the folder in VS Code.
 3.  **Reopen**: Click **"Reopen in Container"** when prompted.
-4.  **Verify**: Run `make dev-check` in the integrated terminal.
+4.  **Verify**: Run `make test-check` in the integrated terminal.
 
 ---
 

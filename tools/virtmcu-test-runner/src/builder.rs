@@ -335,15 +335,14 @@ impl TopologyBuilder {
                         .arg("-global")
                         .arg(format!("{}.transport=hub0", dev_type));
                 }
-                let has_clock_in_yaml = yaml_cli_args
+                let has_clock_in_yaml_args = yaml_cli_args
                     .iter()
                     .any(|arg| arg.contains("virtmcu-clock"));
-                if !has_manual_clock && !has_clock_in_yaml {
+                if !has_manual_clock && !has_clock_in_yaml_args {
                     qemu_cmd.arg("-device").arg(format!(
-                        "virtmcu-clock,mode=slaved-icount,router={},node={}",
+                        "virtmcu-clock,mode=slaved-suspend,router={},node={}",
                         endpoint, node.id
                     ));
-                    qemu_cmd.arg("-icount").arg("shift=0,align=off,sleep=off");
                 }
                 qemu_cmd.arg("-S");
             }
@@ -368,6 +367,7 @@ impl TopologyBuilder {
             ctx.setup_cmd(&mut qemu_cmd);
             qemu_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+            info!("Spawning QEMU with command: {:?}", qemu_cmd);
             let mut qemu = qemu_cmd
                 .spawn()
                 .context("Failed to spawn virtmcu-run (QEMU)")?;

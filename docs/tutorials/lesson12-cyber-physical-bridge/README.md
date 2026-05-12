@@ -132,7 +132,7 @@ while True:
 ## Running the Smoke Test
 
 ```bash
-make dev-unit
+make test-unit
 ```
 
 This runs the native unit tests for the cyber bridge and the sensor/actuator components.

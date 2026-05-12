@@ -202,7 +202,7 @@ sudo apt install build-essential libglib2.0-dev ninja-build \
 
 # All platforms
 make bootstrap # clones QEMU, applies patches, and builds (~10 min first run)
-make run                  # dev-integration
+make run                  # test-integration
 ```
 
 > **macOS note**: Native builds work for basic tests. Advanced tests require Docker — a

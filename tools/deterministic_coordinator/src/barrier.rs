@@ -93,6 +93,11 @@ impl QuantumBarrier {
         let mut state = self.state.lock().expect("barrier mutex poisoned");
         let current = self.current_quantum.load(AtomicOrdering::SeqCst);
 
+        tracing::info!(
+            "submit_done: node_id={}, quantum={}, current={}, expected={}, done_count={}, n_nodes={}",
+            node_id, quantum, current, expected_quantum, state.done_count, self.n_nodes
+        );
+
         // If the main loop's current_quantum differs from ours, we might need to sync.
         // But usually they should match.
         if expected_quantum != current {
