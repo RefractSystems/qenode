@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "hw/rust/common/rust-dummy",
+    "hw/rust/observability/tcg-tracer",
     "hw/rust/backbone/transport-zenoh",
     "hw/rust/backbone/transport-unix",
     "hw/rust/backbone/transport_hub",
@@ -11,6 +12,7 @@ members = [
     "hw/rust/comms/chardev",
     "hw/rust/observability/telemetry",
     "hw/rust/observability/actuator",
+    "hw/rust/observability/sensor",
     "hw/rust/comms/ieee802154",
     "hw/rust/observability/ui",
     "hw/rust/comms/flexray",
@@ -25,6 +27,19 @@ members = [
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
+    "tools/virtmcu-test-runner",
+    "tools/virtmcu-run",
+    "tools/virtmcu-cli",
+    "tools/virtmcu-coverage",
+    "tools/virtmcu-observability",
+    "tools/benchmarks/clock_rtt_bench",
+    "tests/native_integration",
+]
+exclude = [
+    "xtask",
+    "third_party",
+    "third_party/zenoh-c-src/build-asan/release",
+    "third_party/zenoh-c-src/build-release/release",
 ]
 resolver = "2"
 
@@ -37,15 +52,22 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 zenoh = "1.9.0"
-libc = "0.2"
 flatbuffers = "25.12.19"
 crossbeam-channel = "0.5"
 byteorder = "1.5"
 virtmcu-api = { path = "hw/rust/common/virtmcu-api" }
 virtmcu-zenoh-config = { path = "hw/rust/common/virtmcu-zenoh-config" }
 virtmcu-qom = { path = "hw/rust/common/virtmcu-qom" }
+virtmcu-observability = { path = "tools/virtmcu-observability" }
 transport-zenoh = { path = "hw/rust/backbone/transport-zenoh" }
 transport-unix = { path = "hw/rust/backbone/transport-unix" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry            = { version = "0.27", features = ["trace", "logs"] }
+opentelemetry-otlp       = { version = "0.27", features = ["trace", "logs", "grpc-tonic"] }
+opentelemetry_sdk        = { version = "0.27", features = ["trace", "logs", "rt-tokio"] }
+opentelemetry-appender-tracing = "0.27"
+tracing-opentelemetry    = "0.28"
 
 [profile.release]
 panic = "abort"

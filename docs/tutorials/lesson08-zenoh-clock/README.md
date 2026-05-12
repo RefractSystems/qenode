@@ -19,14 +19,15 @@ The `virtmcu-clock` plugin implements this contract without any Python in the si
 loop.  It links `zenoh-c` directly into QEMU and hooks into the TCG execution loop.
 
 ---
-
 ## Architecture
 
 ```
-TimeAuthority (Python, MuJoCo container)
+TimeAuthority (Rust, MuJoCo container)
       │  Zenoh: sim/clock/advance/0  (query with delta_ns payload)
       ▼
 hw/rust/clock  ──  on_query()
+```
+
       │  wakes vCPU, waits for quantum completion
       ▼
 zclock_quantum_hook()  (called at every TCG translation-block boundary)
@@ -85,7 +86,7 @@ not acquire BQL in the suspend path.
 
 ## Wire Protocol
 
-### Query payload (`ClockAdvancePayload`, 24 bytes, little-endian)
+### Query payload (`ClockAdvanceReq`, 24 bytes, little-endian)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
@@ -93,7 +94,7 @@ not acquire BQL in the suspend path.
 | 8 | 8 | `absolute_vtime_ns` | MuJoCo wall time (informational) |
 | 16 | 8 | `quantum_number` | Monotonically increasing quantum ID |
 
-### Reply payload (`ClockReadyPayload`, 24 bytes, little-endian)
+### Reply payload (`ClockReadyResp`, 24 bytes, little-endian)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
@@ -108,7 +109,7 @@ not acquire BQL in the suspend path.
 
 ### Prerequisites
 
-- QEMU built with the clock module (see `scripts/install-third-party.sh`).
+- QEMU built with the clock module (see `cargo run -p virtmcu-cli -- setup bootstrap`).
 - `zenoh-c` library in `third_party/zenoh-c/`.
 - `eclipse-zenoh` Python package (`uv sync` or `uv pip install eclipse-zenoh`).
 - `arm-none-eabi-gcc` and `dtc` on PATH.
@@ -116,7 +117,7 @@ not acquire BQL in the suspend path.
 ### Quick test (both modes)
 
 ```bash
-pytest tests/integration/infrastructure/test_clock_suspend.py -v
+virtmcu-test-runner tests/integration/infrastructure/test_clock_suspend.py -v
 ```
 
 ### Manual walkthrough
@@ -135,7 +136,7 @@ arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib \
 # ...
 
 # Start QEMU in suspend mode
-scripts/run.sh \
+target/release/virtmcu-run \
     --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
     -kernel /tmp/spin.elf \
     -device virtmcu-clock,mode=suspend,node=0 \
@@ -208,7 +209,7 @@ vCPU starts ──► hook() [needs_quantum=true]
 ## Relationship to FirmwareStudio
 
 `clock` is the QEMU-side half of the FirmwareStudio time synchronization
-protocol.  The other half is the `TimeAuthority` in `cyber/src/time_authority.py`
+protocol.  The other half is the `TimeAuthority` in `tools/cyber_bridge`
 (MuJoCo container).  Together they guarantee that firmware never runs ahead of the
 physics simulation, giving causally consistent sensor readings and actuator responses.
 

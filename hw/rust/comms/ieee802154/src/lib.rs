@@ -37,6 +37,94 @@ use virtmcu_qom::{
 
 use core::cmp::Ordering;
 
+const IEEE_MMIO_SIZE: u64 = 0x100;
+const IEEE_MAX_ACCESS: u32 = 8;
+const IEEE_FIFO_SIZE: usize = 128;
+const IEEE_RX_QUEUE_SIZE: usize = 16;
+const IEEE_DEFAULT_BE: u8 = 3;
+
+// Register Offsets
+const REG_TX_DATA: u64 = 0x00;
+const REG_TX_LEN: u64 = 0x04;
+const REG_TX_GO: u64 = 0x08;
+const REG_RX_DATA: u64 = 0x0C;
+const REG_RX_LEN: u64 = 0x10;
+const REG_STATUS: u64 = 0x14;
+const REG_RSSI: u64 = 0x18;
+const REG_STATE: u64 = 0x1C;
+const REG_PAN_ID: u64 = 0x20;
+const REG_SHORT_ADDR: u64 = 0x24;
+const REG_EXT_ADDR_LO: u64 = 0x28;
+const REG_EXT_ADDR_HI: u64 = 0x2C;
+
+// Status bits
+const STATUS_RX_PENDING: u32 = 0x01;
+const STATUS_TX_DONE: u32 = 0x02;
+
+// Masks and Shifts
+const TX_LEN_MASK: u64 = 0x7F;
+const STATE_SHIFT: u32 = 8;
+const ADDR_32_MASK: u64 = 0xFFFFFFFF;
+const ADDR_32_SHIFT: u32 = 32;
+
+// Addressing
+const IEEE_BROADCAST_PAN: u16 = 0xFFFF;
+const IEEE_BROADCAST_ADDR: u16 = 0xFFFF;
+const IEEE_ADDR_MODE_NONE: u16 = 0x00;
+const IEEE_ADDR_MODE_SHORT: u16 = 0x02;
+const IEEE_ADDR_MODE_EXT: u16 = 0x03;
+const IEEE_ADDR_MODE_SHIFT: u32 = 10;
+const IEEE_ADDR_MODE_MASK: u16 = 0x03;
+
+// Frame and Timing
+const IEEE_MIN_FRAME_LEN: usize = 3;
+const IEEE_SHORT_ADDR_FRAME_MIN_LEN: usize = 7;
+const IEEE_EXT_ADDR_FRAME_MIN_LEN: usize = 13;
+const IEEE_NS_PER_BYTE: u64 = 32_000;
+const IEEE_OVERHEAD_BYTES: u64 = 6;
+const IEEE_FDT_HEADER_SIZE: usize = 4;
+const IEEE_ACK_REQUEST_BIT: u16 = 1 << 5;
+const IEEE_ACK_FRAME_TYPE: u8 = 0x02;
+const IEEE_DEFAULT_LQI: u8 = 255;
+
+// FNV-1a constants for deterministic random
+const FNV_OFFSET_BASIS: u32 = 0x811c9dc5;
+const FNV_PRIME: u32 = 0x01000193;
+
+// Backoff and Timing
+const MAC_MIN_BE: u8 = 3;
+const UNIT_BACKOFF_PERIOD_NS: u64 = 320_000; // 20 symbols * 16 us/symbol
+const SIFS_NS: u64 = 192_000; // 12 symbols * 16 us/symbol
+
+// Byte slicing for deterministic_random
+const NODE_ID_OFFSET: usize = 0;
+const NODE_ID_SIZE: usize = 4;
+const VTIME_OFFSET: usize = 4;
+const VTIME_SIZE: usize = 8;
+const EXTRA_OFFSET: usize = 12;
+const EXTRA_SIZE: usize = 8;
+const HASH_BYTES_LEN: usize = 20;
+
+// ACK frame
+const ACK_RESERVED_BYTE: u8 = 0x00;
+
+// Addressing field offsets (relative to frame start)
+const FCF_SIZE: usize = 2;
+const SEQ_NUM_OFFSET: usize = 2;
+const ADDR_FIELDS_START: usize = 3;
+const PAN_ID_SIZE: usize = 2;
+const SHORT_ADDR_SIZE: usize = 2;
+const EXT_ADDR_SIZE: usize = 8;
+
+// FlatBuffers
+const FLATBUFFERS_SIZE_PREFIX_LEN: usize = 4;
+
+// Radio States
+const RADIO_STATE_OFF: u64 = 0;
+const RADIO_STATE_IDLE: u64 = 1;
+const RADIO_STATE_RX: u64 = 2;
+const RADIO_STATE_TX: u64 = 3;
+
 #[repr(C)]
 pub struct Virtmcu802154QEMU {
     pub parent_obj: SysBusDevice,
@@ -141,7 +229,7 @@ static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: IEEE_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
@@ -213,7 +301,7 @@ extern "C" fn ieee802154_instance_init(obj: *mut Object) {
             &raw const VIRTM_802154_OPS,
             obj as *mut c_void,
             c"ieee802154".as_ptr(),
-            0x100,
+            IEEE_MMIO_SIZE,
         );
     }
     unsafe {
@@ -358,20 +446,20 @@ fn ieee802154_init_internal(
         tx_timer: None,
         inner: BqlGuarded::new(Virtmcu802154Inner {
             node_id,
-            tx_fifo: [0; 128],
+            tx_fifo: [0; IEEE_FIFO_SIZE],
             tx_len: 0,
-            rx_fifo: [0; 128],
+            rx_fifo: [0; IEEE_FIFO_SIZE],
             rx_len: 0,
             rx_read_pos: 0,
             rx_rssi: 0,
             status: 0,
             state: RadioState::Idle,
-            pan_id: 0xFFFF,
-            short_addr: 0xFFFF,
+            pan_id: IEEE_BROADCAST_PAN,
+            short_addr: IEEE_BROADCAST_ADDR,
             ext_addr: 0,
-            rx_queue: Vec::with_capacity(16),
+            rx_queue: Vec::with_capacity(IEEE_RX_QUEUE_SIZE),
             nb: 0,
-            be: 3,
+            be: IEEE_DEFAULT_BE,
             ack_pending: false,
             ack_seq: 0,
             tx_sequence: 0,
@@ -381,7 +469,7 @@ fn ieee802154_init_internal(
     let state_ptr = core::ptr::from_mut(&mut *state_box);
     let state_ptr_usize = state_ptr as usize;
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
         let state = unsafe { &mut *(state_ptr_usize as *mut Virtmcu802154State) };
         on_rx_frame(state, data);
     });
@@ -421,20 +509,22 @@ fn ieee802154_init_internal(
 fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
     let mut inner = s.inner.get_mut();
     match offset {
-        0x04 => u64::from(inner.tx_len),
-        0x0C if (inner.status & 0x01 != 0) && (inner.rx_read_pos < inner.rx_len) => {
+        REG_TX_LEN => u64::from(inner.tx_len),
+        REG_RX_DATA
+            if (inner.status & STATUS_RX_PENDING != 0) && (inner.rx_read_pos < inner.rx_len) =>
+        {
             let val = u64::from(inner.rx_fifo[inner.rx_read_pos as usize]);
             inner.rx_read_pos += 1;
             val
         }
-        0x10 => u64::from(inner.rx_len),
-        0x14 => u64::from(inner.status | ((inner.state as u32) << 8)),
-        0x18 => u64::from(inner.rx_rssi as u8),
-        0x1C => inner.state as u64,
-        0x20 => u64::from(inner.pan_id),
-        0x24 => u64::from(inner.short_addr),
-        0x28 => inner.ext_addr & 0xFFFFFFFF,
-        0x2C => inner.ext_addr >> 32,
+        REG_RX_LEN => u64::from(inner.rx_len),
+        REG_STATUS => u64::from(inner.status | ((inner.state as u32) << STATE_SHIFT)),
+        REG_RSSI => u64::from(inner.rx_rssi as u8),
+        REG_STATE => inner.state as u64,
+        REG_PAN_ID => u64::from(inner.pan_id),
+        REG_SHORT_ADDR => u64::from(inner.short_addr),
+        REG_EXT_ADDR_LO => inner.ext_addr & ADDR_32_MASK,
+        REG_EXT_ADDR_HI => inner.ext_addr >> ADDR_32_SHIFT,
         _ => {
             let parent = unsafe { &*s.parent_ptr };
             if parent.debug {
@@ -448,30 +538,30 @@ fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
 fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64) {
     let mut inner = s.inner.get_mut();
     match offset {
-        0x00 if inner.tx_len < 128 => {
+        REG_TX_DATA if inner.tx_len < IEEE_FIFO_SIZE as u32 => {
             let tx_pos = inner.tx_len as usize;
             inner.tx_fifo[tx_pos] = value as u8;
             inner.tx_len += 1;
         }
-        0x04 => {
-            inner.tx_len = (value & 0x7F) as u32;
+        REG_TX_LEN => {
+            inner.tx_len = (value & TX_LEN_MASK) as u32;
         }
-        0x08 => {
+        REG_TX_GO => {
             tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
         }
-        0x14 => {
+        REG_STATUS => {
             inner.status &= !(value as u32);
-            if inner.status & 0x01 == 0 {
+            if inner.status & STATUS_RX_PENDING == 0 {
                 unsafe { qemu_set_irq(s.irq, 0) };
                 check_rx_queue(s.irq, s.rx_timer.as_ref(), &mut inner);
             }
         }
-        0x1C => {
+        REG_STATE => {
             let next_state = match value {
-                0 => RadioState::Off,
-                1 => RadioState::Idle,
-                2 => RadioState::Rx,
-                3 => RadioState::Tx,
+                RADIO_STATE_OFF => RadioState::Off,
+                RADIO_STATE_IDLE => RadioState::Idle,
+                RADIO_STATE_RX => RadioState::Rx,
+                RADIO_STATE_TX => RadioState::Tx,
                 _ => inner.state,
             };
             if next_state == RadioState::Tx {
@@ -480,17 +570,19 @@ fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64
                 inner.state = next_state;
             }
         }
-        0x20 => {
+        REG_PAN_ID => {
             inner.pan_id = value as u16;
         }
-        0x24 => {
+        REG_SHORT_ADDR => {
             inner.short_addr = value as u16;
         }
-        0x28 => {
-            inner.ext_addr = (inner.ext_addr & 0xFFFFFFFF00000000) | (value & 0xFFFFFFFF);
+        REG_EXT_ADDR_LO => {
+            inner.ext_addr =
+                (inner.ext_addr & (ADDR_32_MASK << ADDR_32_SHIFT)) | (value & ADDR_32_MASK);
         }
-        0x2C => {
-            inner.ext_addr = (inner.ext_addr & 0x00000000FFFFFFFF) | ((value & 0xFFFFFFFF) << 32);
+        REG_EXT_ADDR_HI => {
+            inner.ext_addr =
+                (inner.ext_addr & ADDR_32_MASK) | ((value & ADDR_32_MASK) << ADDR_32_SHIFT);
         }
         _ => {
             let parent = unsafe { &*s.parent_ptr };
@@ -517,9 +609,6 @@ fn ieee802154_cleanup_internal(state: *mut Virtmcu802154State) {
     s.tx_timer.take();
 }
 
-const UNIT_BACKOFF_PERIOD_NS: u64 = 320_000;
-const SIFS_NS: u64 = 192_000;
-const MAC_MIN_BE: u8 = 3;
 const MAC_MAX_BE: u8 = 5;
 const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
 
@@ -534,14 +623,14 @@ fn tx_go(_irq: QemuIrq, backoff_timer: Option<&QomTimer>, inner: &mut Virtmcu802
 }
 
 fn deterministic_random(node_id: u32, vtime_ns: u64, extra: u64) -> u32 {
-    let mut hash = 0x811c9dc5u32;
-    let mut bytes = [0u8; 20];
-    bytes[0..4].copy_from_slice(&node_id.to_le_bytes());
-    bytes[4..12].copy_from_slice(&vtime_ns.to_le_bytes());
-    bytes[12..20].copy_from_slice(&extra.to_le_bytes());
+    let mut hash = FNV_OFFSET_BASIS;
+    let mut bytes = [0u8; HASH_BYTES_LEN];
+    bytes[NODE_ID_OFFSET..NODE_ID_OFFSET + NODE_ID_SIZE].copy_from_slice(&node_id.to_le_bytes());
+    bytes[VTIME_OFFSET..VTIME_OFFSET + VTIME_SIZE].copy_from_slice(&vtime_ns.to_le_bytes());
+    bytes[EXTRA_OFFSET..EXTRA_OFFSET + EXTRA_SIZE].copy_from_slice(&extra.to_le_bytes());
     for byte in bytes {
         hash ^= byte as u32;
-        hash = hash.wrapping_mul(0x01000193);
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
 }
@@ -572,11 +661,11 @@ fn tx_real(
         seq,
         &inner.tx_fifo[..inner.tx_len as usize],
         0,
-        255,
+        IEEE_DEFAULT_LQI,
     );
 
     let _ = transport.publish(topic, &msg);
-    let air_time_ns = (6 + inner.tx_len as u64) * 32_000;
+    let air_time_ns = (IEEE_OVERHEAD_BYTES + inner.tx_len as u64) * IEEE_NS_PER_BYTE;
 
     if let Some(timer) = tx_timer {
         timer.mod_ns((vtime + air_time_ns) as i64);
@@ -588,7 +677,7 @@ extern "C" fn tx_timer_cb(opaque: *mut c_void) {
     let mut inner = s.inner.get_mut();
 
     inner.tx_len = 0;
-    inner.status |= 0x02;
+    inner.status |= STATUS_TX_DONE;
     inner.state = RadioState::Idle;
     unsafe {
         qemu_set_irq(s.irq, 1);
@@ -606,7 +695,7 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
         if inner.nb > MAC_MAX_CSMA_BACKOFFS {
             inner.tx_len = 0;
             inner.state = RadioState::Idle;
-            inner.status |= 0x02;
+            inner.status |= STATUS_TX_DONE;
             unsafe {
                 qemu_set_irq(s.irq, 1);
             }
@@ -630,8 +719,8 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     let seq = inner.tx_sequence;
     inner.tx_sequence += 1;
-    let ack_payload = [0x02, 0x00, inner.ack_seq];
-    let msg = virtmcu_api::encode_rf802154_frame(now, seq, &ack_payload, 0, 255);
+    let ack_payload = [IEEE_ACK_FRAME_TYPE, ACK_RESERVED_BYTE, inner.ack_seq];
+    let msg = virtmcu_api::encode_rf802154_frame(now, seq, &ack_payload, 0, IEEE_DEFAULT_LQI);
 
     let _ = s.transport.publish(&s.topic_tx, &msg);
     inner.ack_pending = false;
@@ -643,7 +732,7 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
         return;
     }
 
-    if data.len() < 4 {
+    if data.len() < IEEE_FDT_HEADER_SIZE {
         return;
     }
 
@@ -659,9 +748,14 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
 
     let size = raw_size as usize;
 
-    let hdr_len = 4 + u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let hdr_len = IEEE_FDT_HEADER_SIZE
+        + u32::from_le_bytes(
+            data[0..FLATBUFFERS_SIZE_PREFIX_LEN]
+                .try_into()
+                .unwrap_or([0; FLATBUFFERS_SIZE_PREFIX_LEN]),
+        ) as usize;
 
-    if size > 128 || data.len() < hdr_len + size {
+    if size > IEEE_FIFO_SIZE || data.len() < hdr_len + size {
         return;
     }
 
@@ -671,21 +765,21 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
         return;
     }
 
-    if frame_data.len() >= 3 {
-        let fcf = LittleEndian::read_u16(&frame_data[0..2]);
-        if (fcf & (1 << 5)) != 0 {
+    if frame_data.len() >= IEEE_MIN_FRAME_LEN {
+        let fcf = LittleEndian::read_u16(&frame_data[0..FCF_SIZE]);
+        if (fcf & IEEE_ACK_REQUEST_BIT) != 0 {
             inner.ack_pending = true;
-            inner.ack_seq = frame_data[2];
+            inner.ack_seq = frame_data[SEQ_NUM_OFFSET];
             if let Some(ack_timer) = &state.ack_timer {
                 ack_timer.mod_ns((vtime + SIFS_NS) as i64);
             }
         }
     }
 
-    let mut stored_data = [0u8; 128];
+    let mut stored_data = [0u8; IEEE_FIFO_SIZE];
     stored_data[..size].copy_from_slice(frame_data);
 
-    if inner.rx_queue.len() < 16 {
+    if inner.rx_queue.len() < IEEE_RX_QUEUE_SIZE {
         let pos = inner
             .rx_queue
             .binary_search_by(|probe| match probe.delivery_vtime.cmp(&vtime) {
@@ -705,32 +799,36 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
 }
 
 fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u8]) -> bool {
-    if frame.len() < 3 {
+    if frame.len() < IEEE_MIN_FRAME_LEN {
         return false;
     }
 
-    let fcf = LittleEndian::read_u16(&frame[0..2]);
-    let dest_addr_mode = (fcf >> 10) & 0x03;
+    let fcf = LittleEndian::read_u16(&frame[0..FCF_SIZE]);
+    let dest_addr_mode = (fcf >> IEEE_ADDR_MODE_SHIFT) & IEEE_ADDR_MODE_MASK;
 
     match dest_addr_mode {
-        0x00 => true,
-        0x02 => {
-            if frame.len() < 7 {
+        IEEE_ADDR_MODE_NONE => true,
+        IEEE_ADDR_MODE_SHORT => {
+            if frame.len() < IEEE_SHORT_ADDR_FRAME_MIN_LEN {
                 return false;
             }
-            let dest_pan = LittleEndian::read_u16(&frame[3..5]);
-            let dest_addr = LittleEndian::read_u16(&frame[5..7]);
-            let pan_matches = dest_pan == 0xFFFF || dest_pan == pan_id;
-            let addr_matches = dest_addr == 0xFFFF || dest_addr == short_addr;
+            let dest_pan =
+                LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
+            let dest_addr =
+                LittleEndian::read_u16(&frame[SHORT_ADDR_SIZE..SHORT_ADDR_SIZE + SHORT_ADDR_SIZE]);
+            let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
+            let addr_matches = dest_addr == IEEE_BROADCAST_ADDR || dest_addr == short_addr;
             pan_matches && addr_matches
         }
-        0x03 => {
-            if frame.len() < 13 {
+        IEEE_ADDR_MODE_EXT => {
+            if frame.len() < IEEE_EXT_ADDR_FRAME_MIN_LEN {
                 return false;
             }
-            let dest_pan = LittleEndian::read_u16(&frame[3..5]);
-            let dest_addr = LittleEndian::read_u64(&frame[5..13]);
-            let pan_matches = dest_pan == 0xFFFF || dest_pan == pan_id;
+            let dest_pan =
+                LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
+            let dest_addr =
+                LittleEndian::read_u64(&frame[EXT_ADDR_SIZE..EXT_ADDR_SIZE + EXT_ADDR_SIZE]);
+            let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
             let addr_matches = dest_addr == ext_addr;
             pan_matches && addr_matches
         }
@@ -742,13 +840,13 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     if !inner.rx_queue.is_empty() {
         if inner.rx_queue[0].delivery_vtime <= now {
-            if inner.status & 0x01 == 0 {
+            if inner.status & STATUS_RX_PENDING == 0 {
                 let frame = inner.rx_queue.remove(0);
                 inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
                 inner.rx_len = frame.size as u32;
                 inner.rx_rssi = frame.rssi;
                 inner.rx_read_pos = 0;
-                inner.status |= 0x01;
+                inner.status |= STATUS_RX_PENDING;
                 unsafe { qemu_set_irq(irq, 1) };
 
                 if !inner.rx_queue.is_empty() {

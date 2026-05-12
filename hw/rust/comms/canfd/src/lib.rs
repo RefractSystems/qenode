@@ -217,11 +217,12 @@ fn create_can_sub_callback(
     earliest_vtime: Arc<AtomicU64>,
     rx_timer_clone: Arc<QomTimer>,
 ) -> virtmcu_api::DataCallback {
-    Box::new(move |data| {
+    const CAN_FD_MAX_PAYLOAD: usize = 64;
+    Box::new(move |_topic: &str, data: &[u8]| {
         if let Ok(fbs) = root::<CanFdFrame>(data) {
-            let mut data_arr = [0u8; 64];
+            let mut data_arr = [0u8; CAN_FD_MAX_PAYLOAD];
             let dlc = if let Some(d) = fbs.data() {
-                let len = core::cmp::min(d.len(), 64);
+                let len = core::cmp::min(d.len(), CAN_FD_MAX_PAYLOAD);
                 data_arr[..len].copy_from_slice(&d.bytes()[..len]);
                 len as u8
             } else {

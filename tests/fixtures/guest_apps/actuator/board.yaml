@@ -21,7 +21,15 @@ peripherals:
     node: 0
     region-size: 256
     topic-prefix: "firmware/control"
-    router: "ZENOH_ROUTER_ENDPOINT"
+    transport: "hub0"
+
+- name: sensor
+  type: sensor
+  address: '0x51000000'
+  properties:
+    node: 0
+    region-size: 256
+    topic-prefix: "sim/sensor"
 
 topology:
   links: []

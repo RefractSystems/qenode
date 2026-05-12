@@ -52,7 +52,7 @@ To ensure enterprise-grade reliability and binary fidelity, every peripheral mus
 ### 1. The FFI Gate (Layout Verification)
 QEMU is written in C; VirtMCU peripherals are written in Rust. The boundary between them is a set of shared `struct` layouts. If these layouts drift (e.g., after a QEMU version bump), the result is a catastrophic segfault.
 - **Mandatory Asserts**: All core QOM structs in Rust MUST contain `assert!` checks for `size_of` and `offset_of` within their `TypeInit`.
-- **The Gate**: Before any build is promoted, `./scripts/check-ffi.py` must be executed to verify ground truth against the QEMU binary. Use `--fix` to auto-sync Rust layouts to C.
+- **The Gate**: Before any build is promoted, `./cargo run -p virtmcu-test-runner -- lint` must be executed to verify ground truth against the QEMU binary. Use `--fix` to auto-sync Rust layouts to C.
 
 ### 2. MMIO Relative Offsets
 The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute guest addresses. 

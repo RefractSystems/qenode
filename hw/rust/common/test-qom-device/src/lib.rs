@@ -24,23 +24,26 @@ use virtmcu_qom::{declare_device_type, define_prop_chr, define_properties, devic
 
 /* ── Common MMIO Helpers ─────────────────────────────────────────────────── */
 
+const MAX_ACCESS_SIZE: u32 = 8;
+const MMIO_SIZE: u64 = 0x1000;
+
 static DUMMY_OPS: MemoryRegionOps = MemoryRegionOps {
     read: Some(dummy_read),
     write: Some(dummy_write),
     read_with_attrs: core::ptr::null(),
     write_with_attrs: core::ptr::null(),
-    endianness: 2, // DEVICE_LITTLE_ENDIAN
+    endianness: virtmcu_qom::memory::DEVICE_LITTLE_ENDIAN,
     _padding1: [0; 4],
     valid: MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: MAX_ACCESS_SIZE,
         unaligned: false,
         _padding: [0; 7],
         accepts: core::ptr::null(),
     },
     impl_: MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: MAX_ACCESS_SIZE,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -122,7 +125,7 @@ unsafe extern "C" fn uart_echo_realize(dev: *mut c_void, _errp: *mut *mut c_void
         &raw const DUMMY_OPS,
         dev as *mut _,
         c"uart-echo-mmio".as_ptr(),
-        0x1000,
+        MMIO_SIZE,
     );
     virtmcu_qom::qdev::sysbus_init_mmio(dev as *mut _, &raw mut s.mr);
 
@@ -218,7 +221,7 @@ unsafe extern "C" fn test_rust_realize(dev: *mut c_void, _errp: *mut *mut c_void
         &raw const DUMMY_OPS,
         dev as *mut _,
         c"test-rust-mmio".as_ptr(),
-        0x1000,
+        MMIO_SIZE,
     );
     virtmcu_qom::qdev::sysbus_init_mmio(dev as *mut _, &raw mut s.mr);
 }

@@ -49,6 +49,9 @@ virtmcu-timeout-*
 qmp-timeout*
 *.profraw
 *.gcov
+*.tmp
+patch.diff
+*.out
 
 # IDEs and Tools
 .vscode/

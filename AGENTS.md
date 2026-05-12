@@ -7,7 +7,7 @@
 Before writing or modifying *any* code, you MUST output a brief plan that explicitly answers:
 1. **Architectural Alignment:** Does this change rely on Dependency Injection (DI) and RAII?
 2. **Fail Loudly:** If an invariant is violated in this new logic, does it `panic!`/`assert!` rather than warn?
-3. **Verification Gate:** Which specific `make` or `pytest` command will I run to empirically prove this works without breaking the deterministic simulation?
+3. **Verification Gate:** Which specific `make` or `virtmcu-test-runner` command will I run to empirically prove this works without breaking the deterministic simulation?
 
 ---
 
@@ -30,7 +30,6 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 **Same topology YAML + same firmware ELFs + same `global_seed` → bit-identical output on every run.**
 
 - **Topology declared, not discovered**: full network graph in world YAML, loaded by `DeterministicCoordinator` at startup. Runtime Zenoh peer-mode scouting is BANNED.
-- **Zenoh Session Isolation**: All Zenoh sessions in Python tests MUST use `make_client_config()` or the `zenoh_session` fixture. Raw `zenoh.open()` is BANNED to prevent parallel test cross-talk (scouting=false, mode=client).
 - **Canonical tie-breaking**: same-vtime messages delivered in order `(delivery_vtime_ns, source_node_id, sequence_number)` by the coordinator — never by OS scheduling.
 - **Per-quantum barrier**: coordinator withholds quantum-Q messages until ALL nodes signal "quantum Q complete" (PDES barrier pattern).
 - **Automated Synchronization (SOTA)**: The framework implicitly injects the `-S` flag to launch QEMU frozen, handles routing synchronization internally (`ensure_session_routing`), and issues `cont` via QMP. Do not manually call `ensure_session_routing` in tests.
@@ -59,7 +58,6 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 ## Language Selection Policy
 
 - We use Rust as the primarily programming language.
-- Do not use Python in the critical paths (MMIO/Clock/Netdev). Python may be only used for high-level test orchestration
 
 ---
 
@@ -103,7 +101,7 @@ Mandatory shutdown sequence:
 - **Atomic State Transitions**: Use a single `AtomicU8` enum + `compare_exchange`. Multiple boolean flags allow illegal states.
 - **Zenoh Executor Deadlocks**: Never block a Zenoh async thread. Offload to a background thread via `crossbeam_channel`.
 - **UART FIFO Backpressure**: PL011 FIFO is 32 bytes. Check `qemu_chr_be_can_write`, buffer overflow in backlog, drain via `chr_accept_input`.
-- **QEMU Patch Automation**: Never hand-edit `third_party/qemu`. All changes via `scripts/apply-qemu-patches.sh` or `apply_zenoh_hook.py`. This is enforced by a CI lint that rejects any modifications to `third_party` submodules unless corresponding changes exist in the `patches/` directory.
+- **QEMU Patch Automation**: Never hand-edit `third_party/qemu`. All changes via `cargo run -p virtmcu-cli -- setup patch-qemu` or `apply_zenoh_hook.py`. This is enforced by a CI lint that rejects any modifications to `third_party` submodules unless corresponding changes exist in the `patches/` directory.
 
 ### 6. The "Fail Loudly" Principle (Crash-Only Design)
 - **No Silent Failures**: Never catch an exception or `Result` just to log a warning and continue. If an internal invariant is violated, crash immediately.
@@ -121,11 +119,10 @@ Mandatory shutdown sequence:
 
 ```bash
 make dev-check    # Fast-path: dev-lint + dev-unit (runs natively)
-make ci-local     # Safe-path: dev-check inside isolated CI container
 ```
 
 `[workspace.lints.clippy] all = "deny"` — every clippy warning is a build failure. `#[allow(clippy::...)]`, `#[allow(static_mut_refs)]`, and `#[allow(clippy::too_many_lines)]` are all BANNED in production code.
 
 **Git hooks** (`pre-commit` + `pre-push`): run `make dev-lint` (pre-commit) and `make dev-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. Skip (WIP only): `git commit --no-verify` / `git push --no-verify`.
 
-**Full CI parity before PR:** `make ci-local`. Complete pre-merge validation: `make ci-full`.
+**Full CI parity before PR:** `make ci-check`. Complete pre-merge validation: `make ci-full`.

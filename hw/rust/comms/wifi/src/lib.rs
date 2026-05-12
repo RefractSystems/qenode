@@ -52,6 +52,10 @@ unsafe extern "C" fn wifi_write(
     }
 }
 
+const WIFI_MAX_ACCESS: u32 = 8;
+const WIFI_MMIO_SIZE: u64 = 0x1000;
+const WIFI_PROPERTIES_COUNT: usize = 5;
+
 static WIFI_OPS: MemoryRegionOps = MemoryRegionOps {
     read: Some(wifi_read),
     write: Some(wifi_write),
@@ -61,14 +65,14 @@ static WIFI_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: WIFI_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
         accepts: core::ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: WIFI_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -92,12 +96,12 @@ unsafe extern "C" fn wifi_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         &raw const WIFI_OPS,
         core::ptr::from_mut(s) as *mut c_void,
         c"wifi-mmio".as_ptr(),
-        0x1000,
+        WIFI_MMIO_SIZE,
     );
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
 }
 
-static WIFI_PROPERTIES: [Property; 5] = [
+static WIFI_PROPERTIES: [Property; WIFI_PROPERTIES_COUNT] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
     define_prop_string!(c"node".as_ptr(), VirtmcuWifiQEMU, node_id),
     define_prop_string!(c"transport".as_ptr(), VirtmcuWifiQEMU, transport),
@@ -109,7 +113,11 @@ unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_vo
     let dc = device_class!(klass);
     (*dc).realize = Some(wifi_realize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, WIFI_PROPERTIES.as_ptr(), 5);
+    virtmcu_qom::qdev::device_class_set_props_n(
+        dc,
+        WIFI_PROPERTIES.as_ptr(),
+        WIFI_PROPERTIES_COUNT,
+    );
 }
 
 #[used]

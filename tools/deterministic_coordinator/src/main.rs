@@ -174,9 +174,17 @@ fn parse_legacy_topic(topic: &str) -> Option<(Protocol, u32, String)> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .init();
+    #[derive(Debug)]
+    struct DummyVTimeProvider;
+    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+        fn current_vtime_ns(&self) -> u64 {
+            0
+        }
+    }
+    let _telemetry = virtmcu_observability::init_telemetry(
+        "virtmcu-deterministic-coordinator",
+        std::sync::Arc::new(DummyVTimeProvider),
+    );
     tracing::info!("DeterministicCoordinator starting...");
 
     let args = Args::parse();

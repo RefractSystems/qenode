@@ -129,7 +129,9 @@ pub unsafe extern "C" fn ui_write(opaque: *mut c_void, addr: u64, val: u64, _siz
     }
 }
 
-static ZENOH_UI_OPS: MemoryRegionOps = MemoryRegionOps {
+const UI_MEMORY_ACCESS_SIZE: u32 = 4;
+
+static UI_OPS: MemoryRegionOps = MemoryRegionOps {
     read: Some(ui_read),
     write: Some(ui_write),
     read_with_attrs: ptr::null(),
@@ -137,8 +139,8 @@ static ZENOH_UI_OPS: MemoryRegionOps = MemoryRegionOps {
     endianness: DEVICE_LITTLE_ENDIAN,
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 4,
-        max_access_size: 4,
+        min_access_size: UI_MEMORY_ACCESS_SIZE,
+        max_access_size: UI_MEMORY_ACCESS_SIZE,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
@@ -155,18 +157,19 @@ static ZENOH_UI_OPS: MemoryRegionOps = MemoryRegionOps {
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to ZenohUiQEMU.
 #[no_mangle]
 pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    const UI_MMIO_SIZE: u64 = 0x100;
     // SAFETY: dev is a valid pointer to ZenohUiQEMU provided by QEMU.
     let s = unsafe { &mut *(dev as *mut ZenohUiQEMU) };
 
-    // SAFETY: s->mmio is initialized by QEMU MemoryRegion API.
+    // SAFETY: s.mmio is a valid MemoryRegion, dev is a valid object.
     unsafe {
         memory_region_init_io(
             &raw mut s.mmio,
             dev as *mut Object,
-            &raw const ZENOH_UI_OPS,
+            &raw const UI_OPS,
             dev,
             c"ui".as_ptr(),
-            0x100,
+            UI_MMIO_SIZE,
         );
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
@@ -303,7 +306,7 @@ fn ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
     let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
     let irq_ptr = irq as usize;
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |payload| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, payload: &[u8]| {
         if payload.is_empty() {
             return;
         }

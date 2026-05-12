@@ -1,0 +1,26 @@
+machine:
+  name: test_board
+  type: arm-generic-fdt
+  cpus:
+  - name: cpu
+    type: cortex-a15
+    memory: sysmem
+peripherals:
+- name: memory
+  renode_type: Memory.MappedMemory
+  address: '0x40000000'
+  properties:
+    size: '0x08000000'
+  container: sysmem
+- name: uart0
+  renode_type: UART.PL011
+  address: '0x09000000'
+  interrupts:
+  - gic@1
+  container: sysmem
+- name: gic
+  renode_type: IRQControllers.ARM_GenericInterruptController
+  address: '0x08000000'
+  properties:
+    architectureVersion: .GICv2
+  container: sysmem

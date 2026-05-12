@@ -65,7 +65,7 @@ impl UnixDataTransport {
             let subs = subscriptions_clone.lock().expect("unix transport error");
             for (sub_topic, callback) in subs.iter() {
                 if sub_topic == &topic || topic.starts_with(sub_topic) {
-                    callback(&payload);
+                    callback(&topic, &payload);
                 }
             }
         });

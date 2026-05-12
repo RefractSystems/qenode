@@ -4,12 +4,25 @@ publish = false
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "virtmcu-time-authority"
+path = "src/bin/time_authority.rs"
+
+[[bin]]
+name = "virtmcu-resd-replay"
+path = "src/bin/resd_replay.rs"
+
 [dependencies]
 zenoh = "1.9.0"
 virtmcu-zenoh-config.workspace = true
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 byteorder = "1.5"
 virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+anyhow = "1.0"
+memmap2 = "0.9"
+clap = { version = "4.4", features = ["derive"] }
+tracing.workspace = true
+virtmcu-observability.workspace = true
 
 
 [lints.clippy]

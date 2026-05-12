@@ -3,8 +3,14 @@
 | Field        | Value |
 |---|---|
 | Status       | `virtmcu-baseline` — silicon validation pending |
-| ELF source   | `tests/fixtures/guest_apps/uart_echo/echo.S` |
+| Real-world MCU | Generic Cortex-A15 (Reference Design) |
+| Peripheral | ARM PrimeCell UART (PL011) |
+| Vendor SDK | N/A (Hand-written Assembly) |
+| ELF source | `tests/fixtures/guest_apps/uart_echo/echo.S` |
 | Build command | `arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T echo.ld echo.S -o echo.elf` |
+| License | Apache-2.0 (Part of VirtMCU) |
+| Download Date | 2024-01-01 (Initial project commit) |
+| Source URL | Local source in `tests/fixtures/guest_apps/uart_echo/` |
 | Target CPU   | ARM Cortex-A15, soft-float ABI |
 | Entry point  | `0x40000000` |
 | UART         | PL011 at `0x09000000` (matches `tests/fixtures/guest_apps/boot_arm/minimal.dtb`) |

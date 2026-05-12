@@ -45,8 +45,8 @@ use alloc::vec::Vec;
 use std::sync::Mutex;
 
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+// virtmcu-allow: static_state reasoning="Mock state for local testing"
 static IRQ_HOOKS: Mutex<
-    // virtmcu-allow: static_state reasoning="Mock state for local testing"
     Vec<
         extern "C" fn(opaque: *mut core::ffi::c_void, n: core::ffi::c_int, level: core::ffi::c_int),
     >,

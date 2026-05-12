@@ -5,7 +5,7 @@ set -euo pipefail
 
 # 1. Ensure host directories and files exist for bind mounts
 mkdir -p ~/.claude ~/.gemini ~/.config/gh
-touch ~/.claude.json
+touch ~/.claude.json ~/.gitconfig
 
 # 2. Fetch and print the cache image digest to the devcontainer logs
 echo -e "\n\n====== PULLING DEVENV CACHE ======"

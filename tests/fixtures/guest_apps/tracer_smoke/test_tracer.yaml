@@ -1,0 +1,9 @@
+# Minimal topology for tracer tests
+# We just need a basic arm node.
+topology:
+  nodes:
+    - id: 0
+      machine: arm-generic-fdt
+      cpu: cortex-m4
+      memory_kb: 256
+      clock_mode: slaved-suspend

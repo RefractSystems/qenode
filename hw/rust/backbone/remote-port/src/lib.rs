@@ -41,8 +41,57 @@ use std::sync::Mutex;
 
 // --- Remote Port Protocol Definitions ---
 
+const RP_MAX_DATA_SIZE: usize = 8;
+const RP_RX_BUF_SIZE: usize = 4096;
+const RP_TEMP_BUF_SIZE: usize = 1024;
+const RP_COSIM_TIMEOUT_MS: u32 = 5000;
+const RP_MAX_IRQS: usize = 32;
+const RP_BUSACCESS_PKT_SIZE: usize = 58;
+const RP_INTERRUPT_PKT_SIZE: usize = 41;
+
 pub const RP_VERSION_MAJOR: u16 = 4;
 pub const RP_VERSION_MINOR: u16 = 3;
+
+pub const RP_PKT_HDR_SIZE: usize = 20;
+pub const RP_VERSION_SIZE: usize = 4;
+pub const RP_CAPS_SIZE: usize = 8;
+pub const RP_PKT_HELLO_SIZE: usize = 32;
+
+// Field sizes
+const RP_U64_SIZE: usize = 8;
+const RP_U32_SIZE: usize = 4;
+const RP_U16_SIZE: usize = 2;
+
+// RpPktHdr field offsets
+const RP_HDR_OFF_CMD: usize = 0;
+const RP_HDR_OFF_LEN: usize = 4;
+const RP_HDR_OFF_ID: usize = 8;
+const RP_HDR_OFF_FLAGS: usize = 12;
+const RP_HDR_OFF_DEV: usize = 16;
+
+// RpVersion field offsets
+const RP_VERSION_OFF_MAJOR: usize = 0;
+const RP_VERSION_OFF_MINOR: usize = 2;
+
+// RpCapabilities field offsets
+const RP_CAPS_OFF_OFFSET: usize = 0;
+const RP_CAPS_OFF_LEN: usize = 4;
+const RP_CAPS_OFF_RESERVED: usize = 6;
+
+// RpPktBusaccess field offsets
+const RP_BUSACCESS_OFF_TIMESTAMP: usize = 20;
+const RP_BUSACCESS_OFF_ATTRIBUTES: usize = 28;
+const RP_BUSACCESS_OFF_ADDR: usize = 36;
+const RP_BUSACCESS_OFF_LEN: usize = 44;
+const RP_BUSACCESS_OFF_WIDTH: usize = 48;
+const RP_BUSACCESS_OFF_STREAM_WIDTH: usize = 52;
+const RP_BUSACCESS_OFF_MASTER_ID: usize = 56;
+
+// RpPktInterrupt field offsets
+const RP_INTERRUPT_OFF_TIMESTAMP: usize = 20;
+const RP_INTERRUPT_OFF_VECTOR: usize = 28;
+const RP_INTERRUPT_OFF_LINE: usize = 36;
+const RP_INTERRUPT_OFF_VAL: usize = 40;
 
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -73,13 +122,14 @@ pub struct RpPktHdr {
 
 impl RpPktHdr {
     /// Serialize to big-endian wire bytes without raw memory cast.
-    pub fn pack_be(&self) -> [u8; 20] {
-        let mut b = [0u8; 20];
-        b[0..4].copy_from_slice(&self.cmd.to_be_bytes());
-        b[4..8].copy_from_slice(&self.len.to_be_bytes());
-        b[8..12].copy_from_slice(&self.id.to_be_bytes());
-        b[12..16].copy_from_slice(&self.flags.to_be_bytes());
-        b[16..20].copy_from_slice(&self.dev.to_be_bytes());
+    pub fn pack_be(&self) -> [u8; RP_PKT_HDR_SIZE] {
+        let mut b = [0u8; RP_PKT_HDR_SIZE];
+        b[RP_HDR_OFF_CMD..RP_HDR_OFF_CMD + RP_U32_SIZE].copy_from_slice(&self.cmd.to_be_bytes());
+        b[RP_HDR_OFF_LEN..RP_HDR_OFF_LEN + RP_U32_SIZE].copy_from_slice(&self.len.to_be_bytes());
+        b[RP_HDR_OFF_ID..RP_HDR_OFF_ID + RP_U32_SIZE].copy_from_slice(&self.id.to_be_bytes());
+        b[RP_HDR_OFF_FLAGS..RP_HDR_OFF_FLAGS + RP_U32_SIZE]
+            .copy_from_slice(&self.flags.to_be_bytes());
+        b[RP_HDR_OFF_DEV..RP_HDR_OFF_DEV + RP_U32_SIZE].copy_from_slice(&self.dev.to_be_bytes());
         b
     }
 
@@ -112,10 +162,12 @@ pub struct RpVersion {
 }
 
 impl RpVersion {
-    pub fn pack_be(&self) -> [u8; 4] {
-        let mut b = [0u8; 4];
-        b[0..2].copy_from_slice(&self.major.to_be_bytes());
-        b[2..4].copy_from_slice(&self.minor.to_be_bytes());
+    pub fn pack_be(&self) -> [u8; RP_VERSION_SIZE] {
+        let mut b = [0u8; RP_VERSION_SIZE];
+        b[RP_VERSION_OFF_MAJOR..RP_VERSION_OFF_MAJOR + RP_U16_SIZE]
+            .copy_from_slice(&self.major.to_be_bytes());
+        b[RP_VERSION_OFF_MINOR..RP_VERSION_OFF_MINOR + RP_U16_SIZE]
+            .copy_from_slice(&self.minor.to_be_bytes());
         b
     }
 }
@@ -129,11 +181,13 @@ pub struct RpCapabilities {
 }
 
 impl RpCapabilities {
-    pub fn pack_be(&self) -> [u8; 8] {
-        let mut b = [0u8; 8];
-        b[0..4].copy_from_slice(&self.offset.to_be_bytes());
-        b[4..6].copy_from_slice(&self.len.to_be_bytes());
-        b[6..8].copy_from_slice(&self.reserved0.to_be_bytes());
+    pub fn pack_be(&self) -> [u8; RP_CAPS_SIZE] {
+        let mut b = [0u8; RP_CAPS_SIZE];
+        b[RP_CAPS_OFF_OFFSET..RP_CAPS_OFF_OFFSET + RP_U32_SIZE]
+            .copy_from_slice(&self.offset.to_be_bytes());
+        b[RP_CAPS_OFF_LEN..RP_CAPS_OFF_LEN + RP_U16_SIZE].copy_from_slice(&self.len.to_be_bytes());
+        b[RP_CAPS_OFF_RESERVED..RP_CAPS_OFF_RESERVED + RP_U16_SIZE]
+            .copy_from_slice(&self.reserved0.to_be_bytes());
         b
     }
 }
@@ -147,11 +201,13 @@ pub struct RpPktHello {
 }
 
 impl RpPktHello {
-    pub fn pack_be(&self) -> [u8; 32] {
-        let mut b = [0u8; 32];
-        b[0..20].copy_from_slice(&self.hdr.pack_be());
-        b[20..24].copy_from_slice(&self.version.pack_be());
-        b[24..32].copy_from_slice(&self.caps.pack_be());
+    pub fn pack_be(&self) -> [u8; RP_PKT_HELLO_SIZE] {
+        let mut b = [0u8; RP_PKT_HELLO_SIZE];
+        b[0..RP_PKT_HDR_SIZE].copy_from_slice(&self.hdr.pack_be());
+        b[RP_PKT_HDR_SIZE..RP_PKT_HDR_SIZE + RP_VERSION_SIZE]
+            .copy_from_slice(&self.version.pack_be());
+        b[RP_PKT_HDR_SIZE + RP_VERSION_SIZE..RP_PKT_HELLO_SIZE]
+            .copy_from_slice(&self.caps.pack_be());
         b
     }
 }
@@ -170,16 +226,23 @@ pub struct RpPktBusaccess {
 }
 
 impl RpPktBusaccess {
-    pub fn pack_be(&self) -> [u8; 58] {
-        let mut b = [0u8; 58];
-        b[0..20].copy_from_slice(&self.hdr.pack_be());
-        b[20..28].copy_from_slice(&self.timestamp.to_be_bytes());
-        b[28..36].copy_from_slice(&self.attributes.to_be_bytes());
-        b[36..44].copy_from_slice(&self.addr.to_be_bytes());
-        b[44..48].copy_from_slice(&self.len.to_be_bytes());
-        b[48..52].copy_from_slice(&self.width.to_be_bytes());
-        b[52..56].copy_from_slice(&self.stream_width.to_be_bytes());
-        b[56..58].copy_from_slice(&self.master_id.to_be_bytes());
+    pub fn pack_be(&self) -> [u8; RP_BUSACCESS_PKT_SIZE] {
+        let mut b = [0u8; RP_BUSACCESS_PKT_SIZE];
+        b[0..RP_PKT_HDR_SIZE].copy_from_slice(&self.hdr.pack_be());
+        b[RP_BUSACCESS_OFF_TIMESTAMP..RP_BUSACCESS_OFF_TIMESTAMP + RP_U64_SIZE]
+            .copy_from_slice(&self.timestamp.to_be_bytes());
+        b[RP_BUSACCESS_OFF_ATTRIBUTES..RP_BUSACCESS_OFF_ATTRIBUTES + RP_U64_SIZE]
+            .copy_from_slice(&self.attributes.to_be_bytes());
+        b[RP_BUSACCESS_OFF_ADDR..RP_BUSACCESS_OFF_ADDR + RP_U64_SIZE]
+            .copy_from_slice(&self.addr.to_be_bytes());
+        b[RP_BUSACCESS_OFF_LEN..RP_BUSACCESS_OFF_LEN + RP_U32_SIZE]
+            .copy_from_slice(&self.len.to_be_bytes());
+        b[RP_BUSACCESS_OFF_WIDTH..RP_BUSACCESS_OFF_WIDTH + RP_U32_SIZE]
+            .copy_from_slice(&self.width.to_be_bytes());
+        b[RP_BUSACCESS_OFF_STREAM_WIDTH..RP_BUSACCESS_OFF_STREAM_WIDTH + RP_U32_SIZE]
+            .copy_from_slice(&self.stream_width.to_be_bytes());
+        b[RP_BUSACCESS_OFF_MASTER_ID..RP_BUSACCESS_OFF_MASTER_ID + RP_U16_SIZE]
+            .copy_from_slice(&self.master_id.to_be_bytes());
         b
     }
     pub fn to_be(&self) -> Self {
@@ -220,13 +283,16 @@ pub struct RpPktInterrupt {
 }
 
 impl RpPktInterrupt {
-    pub fn pack_be(&self) -> [u8; 41] {
-        let mut b = [0u8; 41];
-        b[0..20].copy_from_slice(&self.hdr.pack_be());
-        b[20..28].copy_from_slice(&self.timestamp.to_be_bytes());
-        b[28..36].copy_from_slice(&self.vector.to_be_bytes());
-        b[36..40].copy_from_slice(&self.line.to_be_bytes());
-        b[40] = self.val;
+    pub fn pack_be(&self) -> [u8; RP_INTERRUPT_PKT_SIZE] {
+        let mut b = [0u8; RP_INTERRUPT_PKT_SIZE];
+        b[0..RP_PKT_HDR_SIZE].copy_from_slice(&self.hdr.pack_be());
+        b[RP_INTERRUPT_OFF_TIMESTAMP..RP_INTERRUPT_OFF_TIMESTAMP + RP_U64_SIZE]
+            .copy_from_slice(&self.timestamp.to_be_bytes());
+        b[RP_INTERRUPT_OFF_VECTOR..RP_INTERRUPT_OFF_VECTOR + RP_U64_SIZE]
+            .copy_from_slice(&self.vector.to_be_bytes());
+        b[RP_INTERRUPT_OFF_LINE..RP_INTERRUPT_OFF_LINE + RP_U32_SIZE]
+            .copy_from_slice(&self.line.to_be_bytes());
+        b[RP_INTERRUPT_OFF_VAL] = self.val;
         b
     }
     pub fn to_be(&self) -> Self {
@@ -251,22 +317,30 @@ impl RpPktInterrupt {
 }
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
     use core::ptr;
 
     #[test]
     fn test_unaligned_hdr_read() {
-        #[repr(C, align(8))]
+        const TEST_CMD: u32 = 0x11223344;
+        const TEST_LEN: u32 = 0x55667788;
+        const TEST_ID: u32 = 0x99AABBCC;
+        const TEST_FLAGS: u32 = 0xDDEEFF00;
+        const TEST_DEV: u32 = 0x12345678;
+
+        const _: () = ();
+        #[repr(C, align(8))] // virtmcu-allow: align requirements
         struct AlignedBuf([u8; 32]);
         let mut buf_wrapper = AlignedBuf([0u8; 32]);
         let buf = &mut buf_wrapper.0;
         let hdr = RpPktHdr {
-            cmd: 0x11223344,
-            len: 0x55667788,
-            id: 0x99AABBCC,
-            flags: 0xDDEEFF00,
-            dev: 0x12345678,
+            cmd: TEST_CMD,
+            len: TEST_LEN,
+            id: TEST_ID,
+            flags: TEST_FLAGS,
+            dev: TEST_DEV,
         }
         .to_be();
 
@@ -278,7 +352,11 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktHdr;
-        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
+        const ALIGN_4: usize = 4;
+        assert!(
+            !(misaligned_ptr as usize).is_multiple_of(ALIGN_4),
+            "Buffer was accidentally aligned!"
+        );
 
         let hdr_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
         let hdr_final = hdr_read.from_be();
@@ -290,28 +368,36 @@ mod tests {
         let flags = hdr_final.flags;
         let dev = hdr_final.dev;
 
-        assert_eq!(cmd, 0x11223344);
-        assert_eq!(len, 0x55667788);
-        assert_eq!(id, 0x99AABBCC);
-        assert_eq!(flags, 0xDDEEFF00);
-        assert_eq!(dev, 0x12345678);
+        assert_eq!(cmd, TEST_CMD);
+        assert_eq!(len, TEST_LEN);
+        assert_eq!(id, TEST_ID);
+        assert_eq!(flags, TEST_FLAGS);
+        assert_eq!(dev, TEST_DEV);
     }
 
     #[test]
     fn test_unaligned_busaccess_read() {
-        #[repr(C, align(8))]
+        const TEST_TS: u64 = 0x1122334455667788;
+        const TEST_ATTR: u64 = 0x99AABBCCDDEEFF00;
+        const TEST_ADDR: u64 = 0xAAAABBBBCCCCDDDD;
+        const TEST_LEN: u32 = 4;
+        const TEST_WIDTH: u32 = 2;
+        const TEST_MASTER: u16 = 0x1234;
+
+        const _: () = ();
+        #[repr(C, align(8))] // virtmcu-allow: align requirements
         struct AlignedBuf([u8; 128]);
         let mut buf_wrapper = AlignedBuf([0u8; 128]);
         let buf = &mut buf_wrapper.0;
         let pkt = RpPktBusaccess {
             hdr: RpPktHdr { cmd: RpCmd::Read as u32, len: 0, id: 1, flags: 0, dev: 0 },
-            timestamp: 0x1122334455667788,
-            attributes: 0x99AABBCCDDEEFF00,
-            addr: 0xAAAABBBBCCCCDDDD,
-            len: 4,
-            width: 2,
+            timestamp: TEST_TS,
+            attributes: TEST_ATTR,
+            addr: TEST_ADDR,
+            len: TEST_LEN,
+            width: TEST_WIDTH,
             stream_width: 1,
-            master_id: 0x1234,
+            master_id: TEST_MASTER,
         }
         .to_be();
 
@@ -322,7 +408,11 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktBusaccess;
-        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
+        const ALIGN_4: usize = 4;
+        assert!(
+            !(misaligned_ptr as usize).is_multiple_of(ALIGN_4),
+            "Buffer was accidentally aligned!"
+        );
 
         let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
         let pkt_final = pkt_read.from_be();
@@ -331,23 +421,28 @@ mod tests {
         let addr = pkt_final.addr;
         let master_id = pkt_final.master_id;
 
-        assert_eq!(timestamp, 0x1122334455667788);
-        assert_eq!(addr, 0xAAAABBBBCCCCDDDD);
-        assert_eq!(master_id, 0x1234);
+        assert_eq!(timestamp, TEST_TS);
+        assert_eq!(addr, TEST_ADDR);
+        assert_eq!(master_id, TEST_MASTER);
     }
 
     #[test]
     fn test_unaligned_interrupt_read() {
-        #[repr(C, align(8))]
+        const TEST_TS_INT: u64 = 0x1122334455667788;
+        const TEST_VEC_INT: u64 = 0x99AABBCCDDEEFF00;
+        const TEST_LINE_7: u32 = 7;
+        const TEST_VAL_1: u32 = 1;
+        const _: () = ();
+        #[repr(C, align(8))] // virtmcu-allow: align requirements
         struct AlignedBuf([u8; 64]);
         let mut buf_wrapper = AlignedBuf([0u8; 64]);
         let buf = &mut buf_wrapper.0;
         let pkt = RpPktInterrupt {
             hdr: RpPktHdr { cmd: RpCmd::Interrupt as u32, len: 0, id: 1, flags: 0, dev: 0 },
-            timestamp: 0x1122334455667788,
-            vector: 0x99AABBCCDDEEFF00,
-            line: 7,
-            val: 1,
+            timestamp: TEST_TS_INT,
+            vector: TEST_VEC_INT,
+            line: TEST_LINE_7,
+            val: u8::try_from(TEST_VAL_1).unwrap(),
         }
         .to_be();
 
@@ -358,74 +453,137 @@ mod tests {
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktInterrupt;
-        assert!(!(misaligned_ptr as usize).is_multiple_of(4), "Buffer was accidentally aligned!");
+        const ALIGN_4: usize = 4;
+        assert!(
+            !(misaligned_ptr as usize).is_multiple_of(ALIGN_4),
+            "Buffer was accidentally aligned!"
+        );
 
-        let pkt_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
-        let pkt_final = pkt_read.from_be();
+        let hdr_read = unsafe { ptr::read_unaligned(misaligned_ptr) };
+        let hdr_final = hdr_read.from_be();
 
-        let timestamp = pkt_final.timestamp;
-        let line = pkt_final.line;
-        let val = pkt_final.val;
+        let timestamp = hdr_final.timestamp;
+        let line = hdr_final.line;
+        let val = hdr_final.val;
 
-        assert_eq!(timestamp, 0x1122334455667788);
-        assert_eq!(line, 7);
-        assert_eq!(val, 1);
+        assert_eq!(timestamp, TEST_TS_INT);
+        assert_eq!(line, TEST_LINE_7);
+        assert_eq!(u32::from(val), TEST_VAL_1);
     }
 
     #[test]
     fn test_pack_be_busaccess_byte_exact() {
+        const TEST_CMD_3: u32 = 3;
+        const TEST_LEN_38: u32 = 38;
+        const TEST_ID_7: u32 = 7;
+        const TEST_TS_PACK: u64 = 0x0102030405060708;
+        const TEST_ATTR_PACK: u64 = 0x090A0B0C0D0E0F10;
+        const TEST_ADDR_PACK: u64 = 0x1112131415161718;
+        const TEST_SIZE_4: u32 = 4;
+        const TEST_MASTER_0XABCD: u16 = 0xABCD;
+        const EXPECTED_LEN: usize = 58;
+
         let pkt = RpPktBusaccess {
-            hdr: RpPktHdr { cmd: 3, len: 38, id: 7, flags: 0, dev: 0 },
-            timestamp: 0x0102030405060708,
-            attributes: 0x090A0B0C0D0E0F10,
-            addr: 0x1112131415161718,
-            len: 4,
-            width: 4,
-            stream_width: 4,
-            master_id: 0xABCD,
+            hdr: RpPktHdr { cmd: TEST_CMD_3, len: TEST_LEN_38, id: TEST_ID_7, flags: 0, dev: 0 },
+            timestamp: TEST_TS_PACK,
+            attributes: TEST_ATTR_PACK,
+            addr: TEST_ADDR_PACK,
+            len: TEST_SIZE_4,
+            width: TEST_SIZE_4,
+            stream_width: TEST_SIZE_4,
+            master_id: TEST_MASTER_0XABCD,
         };
         let b = pkt.pack_be();
         // hdr (20 bytes, big-endian)
-        assert_eq!(&b[0..4], &3u32.to_be_bytes());
-        assert_eq!(&b[4..8], &38u32.to_be_bytes());
-        assert_eq!(&b[8..12], &7u32.to_be_bytes());
-        assert_eq!(&b[12..16], &0u32.to_be_bytes());
-        assert_eq!(&b[16..20], &0u32.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_CMD..RP_HDR_OFF_CMD + RP_U32_SIZE], &TEST_CMD_3.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_LEN..RP_HDR_OFF_LEN + RP_U32_SIZE], &TEST_LEN_38.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_ID..RP_HDR_OFF_ID + RP_U32_SIZE], &TEST_ID_7.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_FLAGS..RP_HDR_OFF_FLAGS + RP_U32_SIZE], &0u32.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_DEV..RP_HDR_OFF_DEV + RP_U32_SIZE], &0u32.to_be_bytes());
         // timestamp
-        assert_eq!(&b[20..28], &0x0102030405060708u64.to_be_bytes());
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_TIMESTAMP..RP_BUSACCESS_OFF_TIMESTAMP + RP_U64_SIZE],
+            &TEST_TS_PACK.to_be_bytes()
+        );
         // attributes
-        assert_eq!(&b[28..36], &0x090A0B0C0D0E0F10u64.to_be_bytes());
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_ATTRIBUTES..RP_BUSACCESS_OFF_ATTRIBUTES + RP_U64_SIZE],
+            &TEST_ATTR_PACK.to_be_bytes()
+        );
         // addr
-        assert_eq!(&b[36..44], &0x1112131415161718u64.to_be_bytes());
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_ADDR..RP_BUSACCESS_OFF_ADDR + RP_U64_SIZE],
+            &TEST_ADDR_PACK.to_be_bytes()
+        );
         // len, width, stream_width
-        assert_eq!(&b[44..48], &4u32.to_be_bytes());
-        assert_eq!(&b[48..52], &4u32.to_be_bytes());
-        assert_eq!(&b[52..56], &4u32.to_be_bytes());
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_LEN..RP_BUSACCESS_OFF_LEN + RP_U32_SIZE],
+            &TEST_SIZE_4.to_be_bytes()
+        );
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_WIDTH..RP_BUSACCESS_OFF_WIDTH + RP_U32_SIZE],
+            &TEST_SIZE_4.to_be_bytes()
+        );
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_STREAM_WIDTH..RP_BUSACCESS_OFF_STREAM_WIDTH + RP_U32_SIZE],
+            &TEST_SIZE_4.to_be_bytes()
+        );
         // master_id
-        assert_eq!(&b[56..58], &0xABCDu16.to_be_bytes());
-        assert_eq!(b.len(), 58);
+        assert_eq!(
+            &b[RP_BUSACCESS_OFF_MASTER_ID..RP_BUSACCESS_OFF_MASTER_ID + RP_U16_SIZE],
+            &TEST_MASTER_0XABCD.to_be_bytes()
+        );
+        assert_eq!(b.len(), EXPECTED_LEN);
     }
 
     #[test]
     fn test_pack_be_interrupt_byte_exact() {
+        const TEST_CMD_5: u32 = 5;
+        const TEST_LEN_21: u32 = 21;
+        const TEST_ID_99: u32 = 99;
+        const TEST_FLAGS_2: u32 = 2;
+        const TEST_TS_INT_PACK: u64 = 0xDEADBEEFCAFEBABE;
+        const TEST_VEC_1: u64 = 1;
+        const TEST_LINE_7_INT: u32 = 7;
+        const TEST_VAL_1_INT: u8 = 1;
+        const EXPECTED_LEN_INT: usize = 41;
+
         let pkt = RpPktInterrupt {
-            hdr: RpPktHdr { cmd: 5, len: 21, id: 99, flags: 2, dev: 1 },
-            timestamp: 0xDEADBEEFCAFEBABE,
-            vector: 0x0000000000000001,
-            line: 7,
-            val: 1,
+            hdr: RpPktHdr {
+                cmd: TEST_CMD_5,
+                len: TEST_LEN_21,
+                id: TEST_ID_99,
+                flags: TEST_FLAGS_2,
+                dev: 1,
+            },
+            timestamp: TEST_TS_INT_PACK,
+            vector: TEST_VEC_1,
+            line: TEST_LINE_7_INT,
+            val: TEST_VAL_1_INT,
         };
         let b = pkt.pack_be();
-        assert_eq!(&b[0..4], &5u32.to_be_bytes());
-        assert_eq!(&b[4..8], &21u32.to_be_bytes());
-        assert_eq!(&b[8..12], &99u32.to_be_bytes());
-        assert_eq!(&b[12..16], &2u32.to_be_bytes());
-        assert_eq!(&b[16..20], &1u32.to_be_bytes());
-        assert_eq!(&b[20..28], &0xDEADBEEFCAFEBABEu64.to_be_bytes());
-        assert_eq!(&b[28..36], &1u64.to_be_bytes());
-        assert_eq!(&b[36..40], &7u32.to_be_bytes());
-        assert_eq!(b[40], 1u8);
-        assert_eq!(b.len(), 41);
+        assert_eq!(&b[RP_HDR_OFF_CMD..RP_HDR_OFF_CMD + RP_U32_SIZE], &TEST_CMD_5.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_LEN..RP_HDR_OFF_LEN + RP_U32_SIZE], &TEST_LEN_21.to_be_bytes());
+        assert_eq!(&b[RP_HDR_OFF_ID..RP_HDR_OFF_ID + RP_U32_SIZE], &TEST_ID_99.to_be_bytes());
+        assert_eq!(
+            &b[RP_HDR_OFF_FLAGS..RP_HDR_OFF_FLAGS + RP_U32_SIZE],
+            &TEST_FLAGS_2.to_be_bytes()
+        );
+        assert_eq!(&b[RP_HDR_OFF_DEV..RP_HDR_OFF_DEV + RP_U32_SIZE], &1u32.to_be_bytes());
+        assert_eq!(
+            &b[RP_INTERRUPT_OFF_TIMESTAMP..RP_INTERRUPT_OFF_TIMESTAMP + RP_U64_SIZE],
+            &TEST_TS_INT_PACK.to_be_bytes()
+        );
+        assert_eq!(
+            &b[RP_INTERRUPT_OFF_VECTOR..RP_INTERRUPT_OFF_VECTOR + RP_U64_SIZE],
+            &TEST_VEC_1.to_be_bytes()
+        );
+        assert_eq!(
+            &b[RP_INTERRUPT_OFF_LINE..RP_INTERRUPT_OFF_LINE + RP_U32_SIZE],
+            &TEST_LINE_7_INT.to_be_bytes()
+        );
+        assert_eq!(b[RP_INTERRUPT_OFF_VAL], TEST_VAL_1_INT);
+        assert_eq!(b.len(), EXPECTED_LEN_INT);
     }
 }
 
@@ -443,7 +601,7 @@ pub struct RemotePortBridgeQEMU {
     pub reconnect_ms: u32,
     pub debug: bool,
 
-    pub irqs: [QemuIrq; 32],
+    pub irqs: [QemuIrq; RP_MAX_IRQS],
 
     pub rust_state: *mut RemotePortBridgeState,
     pub mapped: bool,
@@ -473,13 +631,13 @@ pub struct RpRequest {
     pub cmd: RpCmd,
     pub addr: u64,
     pub size: u32,
-    pub data: Option<[u8; 8]>,
+    pub data: Option<[u8; RP_MAX_DATA_SIZE]>,
     pub data_len: u32,
 }
 
 pub struct RpResponse {
     pub pkt: RpPktBusaccess,
-    pub data: [u8; 8],
+    pub data: [u8; RP_MAX_DATA_SIZE],
 }
 
 struct RpTransport {
@@ -495,7 +653,7 @@ impl CoSimTransport for RpTransport {
     type Response = RpResponse;
 
     fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
-        let mut rx_buf = Vec::with_capacity(4096);
+        let mut rx_buf = Vec::with_capacity(RP_RX_BUF_SIZE);
         loop {
             if !ctx.is_running() {
                 break;
@@ -553,7 +711,8 @@ impl CoSimTransport for RpTransport {
             ctx.notify_connected();
 
             // Read loop
-            let mut temp_buf = [0u8; 1024];
+            let mut temp_buf = [0u8; RP_TEMP_BUF_SIZE];
+
             loop {
                 match read_stream.read(&mut temp_buf) {
                     Ok(0) => break, // EOF
@@ -643,7 +802,7 @@ impl RpTransport {
             if data.len() >= core::mem::size_of::<RpPktInterrupt>() {
                 let pkt_be = unsafe { ptr::read_unaligned(data.as_ptr() as *const RpPktInterrupt) };
                 let pkt = pkt_be.from_be();
-                if pkt.line < 32 {
+                if pkt.line < RP_MAX_IRQS as u32 {
                     let bql = Bql::lock();
                     unsafe {
                         qemu_set_irq(
@@ -663,8 +822,8 @@ impl RpTransport {
             let bus_hdr_len =
                 core::mem::size_of::<RpPktBusaccess>() - core::mem::size_of::<RpPktHdr>();
             let payload_len = hdr.len as usize - bus_hdr_len;
-            let mut resp_data = [0u8; 8];
-            if payload_len > 0 && payload_len <= 8 {
+            let mut resp_data = [0u8; RP_MAX_DATA_SIZE];
+            if payload_len > 0 && payload_len <= RP_MAX_DATA_SIZE {
                 resp_data[..payload_len].copy_from_slice(
                     &data[core::mem::size_of::<RpPktBusaccess>()
                         ..core::mem::size_of::<RpPktBusaccess>() + payload_len],
@@ -687,11 +846,11 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
     let state = &*qemu.rust_state;
     let req = RpRequest { cmd: RpCmd::Read, addr, size, data: None, data_len: 0 };
 
-    state.bridge.wait_connected(5000);
+    state.bridge.wait_connected(RP_COSIM_TIMEOUT_MS);
 
-    if let Some(resp) = state.bridge.send_and_wait(req, 5000) {
-        if size <= 8 {
-            let mut buf = [0u8; 8];
+    if let Some(resp) = state.bridge.send_and_wait(req, RP_COSIM_TIMEOUT_MS) {
+        if size <= RP_MAX_DATA_SIZE as u32 {
+            let mut buf = [0u8; RP_MAX_DATA_SIZE];
             buf[..size as usize].copy_from_slice(&resp.data[..size as usize]);
             u64::from_le_bytes(buf)
         } else {
@@ -716,8 +875,8 @@ unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size
     let val_bytes = val.to_le_bytes();
     let req = RpRequest { cmd: RpCmd::Write, addr, size, data: Some(val_bytes), data_len: size };
 
-    state.bridge.wait_connected(5000);
-    state.bridge.send_and_wait(req, 5000);
+    state.bridge.wait_connected(RP_COSIM_TIMEOUT_MS);
+    state.bridge.send_and_wait(req, RP_COSIM_TIMEOUT_MS);
 }
 
 static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
@@ -736,7 +895,7 @@ static BRIDGE_MMIO_OPS: MemoryRegionOps = MemoryRegionOps {
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: RP_MAX_DATA_SIZE as u32,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -755,7 +914,7 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         return;
     }
 
-    for i in 0..32 {
+    for i in 0..RP_MAX_IRQS {
         sysbus_init_irq(dev as *mut SysBusDevice, &raw mut qemu.irqs[i]);
     }
 
@@ -819,12 +978,26 @@ unsafe extern "C" fn bridge_instance_finalize(obj: *mut Object) {
 
 unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
-static BRIDGE_PROPERTIES: [Property; 6] = [
+const DEFAULT_REGION_SIZE: u32 = 0x1000;
+const DEFAULT_RECONNECT_MS: u32 = 1000;
+const BRIDGE_PROPERTIES_COUNT: usize = 6;
+
+static BRIDGE_PROPERTIES: [Property; BRIDGE_PROPERTIES_COUNT] = [
     define_prop_string!(c"id".as_ptr(), RemotePortBridgeQEMU, id),
     define_prop_string!(c"socket-path".as_ptr(), RemotePortBridgeQEMU, socket_path),
-    define_prop_uint32!(c"region-size".as_ptr(), RemotePortBridgeQEMU, region_size, 0x1000),
+    define_prop_uint32!(
+        c"region-size".as_ptr(),
+        RemotePortBridgeQEMU,
+        region_size,
+        DEFAULT_REGION_SIZE
+    ),
     define_prop_uint64!(c"base-addr".as_ptr(), RemotePortBridgeQEMU, base_addr, u64::MAX),
-    define_prop_uint32!(c"reconnect-ms".as_ptr(), RemotePortBridgeQEMU, reconnect_ms, 1000),
+    define_prop_uint32!(
+        c"reconnect-ms".as_ptr(),
+        RemotePortBridgeQEMU,
+        reconnect_ms,
+        DEFAULT_RECONNECT_MS
+    ),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), RemotePortBridgeQEMU, debug, false),
 ];
 
@@ -833,7 +1006,11 @@ unsafe extern "C" fn bridge_class_init(klass: *mut ObjectClass, _data: *const c_
     (*dc).realize = Some(bridge_realize);
     (*dc).unrealize = Some(bridge_unrealize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, BRIDGE_PROPERTIES.as_ptr(), 6);
+    virtmcu_qom::qdev::device_class_set_props_n(
+        dc,
+        BRIDGE_PROPERTIES.as_ptr(),
+        BRIDGE_PROPERTIES_COUNT,
+    );
 }
 
 #[used]

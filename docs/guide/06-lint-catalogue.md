@@ -6,12 +6,11 @@ VirtMCU employs a strict "fail loudly" philosophy. We use fifteen distinct linte
 
 | Name | What it checks | Why | How to fix |
 | :--- | :--- | :--- | :--- |
-| `check-ffi.py` | Struct layouts and sizes. | Prevents ABI mismatches between Rust and C. | Run `./scripts/check-ffi.py --fix`. |
-| `check-qom-alignment.py` | Name equality across 4 layers. | Prevents silent device skip (Bug 2). | Ensure `TypeInfo.name` == `compatible` == Meson `obj` == pytest prefix. |
-| `check-cargo-meson-lib-alignment.py` | Cargo name vs Meson `lib`. | Prevents stale `.a` linking. | Align `package.name` in `Cargo.toml` with `lib` in `meson.build`. |
+| `ffi_layout` | Struct layouts and sizes. | Prevents ABI mismatches between Rust and C. | Run `cargo run -p virtmcu-test-runner -- lint --fix`. |
+| `qom_type_info` | Name equality across 4 layers. | Prevents silent device skip. | Ensure `TypeInfo.name` == `compatible` == Meson `obj`. |
+| `verify_exports` | Exported symbols in `.so`. | Ensures QOM can find the plugin. | Check your `module_obj` macro usage. |
+| `banned_patterns` | Use of non-deterministic functions. | Maintains simulation determinism. | Remove the pattern or add an exception tag. |
 | `clippy` | Rust idiomatic quality. | Prevents common Rust pitfalls. | Follow the suggestions in the `cargo clippy` output. |
-| `ruff` | Python code quality. | Ensures consistent Python style. | Run `ruff check --fix .`. |
-| `verify-exports.py` | Exported symbols in `.so`. | Ensures QOM can find the plugin. | Check your `module_obj` macro usage. |
 
 ## Negative Greps (Banned Patterns)
 

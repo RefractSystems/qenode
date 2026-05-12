@@ -28,7 +28,6 @@ use core::ffi::{c_char, c_uint, c_void, CStr};
 use core::ptr;
 use core::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
@@ -76,60 +75,31 @@ pub struct VirtmcuActuatorState {
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
-pub struct InnerState {
-    running: bool,
-    active_vcpu_count: usize,
-}
-
 struct SharedState {
     transport: Arc<dyn virtmcu_api::DataTransport>,
     node_id: u32,
     topic_prefix: String,
 
     tx_sender: Sender<ActuatorPacket>,
-    drain_cond: Condvar,
-    state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="used with Condvar for teardown"
+    running: core::sync::atomic::AtomicBool,
+    drain: virtmcu_qom::sync::VcpuDrain,
 }
+
+const DRAIN_TIMEOUT_MS: u32 = 30000;
+const MAX_DATA_ELEMENTS: usize = 8;
+const F64_SIZE_BYTES: u64 = core::mem::size_of::<f64>() as u64;
 
 impl Drop for VirtmcuActuatorState {
     fn drop(&mut self) {
-        {
-            let mut lock =
-                self.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock.running = false;
-        }
+        self.shared.running.store(false, core::sync::atomic::Ordering::Release);
 
-        // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock)
-        let mut lock = self.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        while lock.active_vcpu_count > 0 {
-            let bql_unlock = Bql::temporary_unlock();
-            let (new_lock, timed_out) = self
-                .shared
-                .drain_cond
-                .wait_timeout(lock, Duration::from_secs(30))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            lock = new_lock;
-            drop(bql_unlock);
-            if timed_out.timed_out() {
-                break;
-            }
-        }
+        // Wait for all vCPU threads to drain (panic-safe blocking call)
+        self.shared.drain.wait_for_drain(DRAIN_TIMEOUT_MS);
 
         if let Some(handle) = self.bg_thread.take() {
             let bql_unlock = Bql::temporary_unlock();
             let _ = handle.join();
             drop(bql_unlock);
-        }
-    }
-}
-
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
         }
     }
 }
@@ -149,13 +119,15 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
         u64::from(s.actuator_id)
     } else if addr == REG_DATA_SIZE {
         u64::from(s.data_size)
-    } else if (REG_DATA_START..REG_DATA_START + 8 * 8).contains(&addr) {
-        let idx = ((addr - REG_DATA_START) / 8) as usize;
-        let offset = ((addr - REG_DATA_START) % 8) as usize;
+    } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+        .contains(&addr)
+    {
+        let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
+        let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
         let mut ret: u64 = 0;
-        if offset + (size as usize) <= 8 {
+        if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
             let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
-            let mut ret_bytes = [0u8; 8];
+            let mut ret_bytes = [0u8; core::mem::size_of::<f64>()];
             if let (Some(dest), Some(src)) =
                 (ret_bytes.get_mut(..size as usize), bytes.get(offset..offset + size as usize))
             {
@@ -182,18 +154,20 @@ pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64
         s.actuator_id = u32::try_from(val).expect("actuator_id truncated");
     } else if addr == REG_DATA_SIZE {
         s.data_size = u32::try_from(val).expect("data_size truncated");
-        if s.data_size > 8 {
-            s.data_size = 8;
+        if s.data_size > (MAX_DATA_ELEMENTS as u32) {
+            s.data_size = MAX_DATA_ELEMENTS as u32;
         }
     } else if addr == REG_GO {
         if val == 1 && !s.rust_state.is_null() {
             let rs = unsafe { &*s.rust_state };
             actuator_publish(rs, s.actuator_id, s.data_size, &s.data);
         }
-    } else if (REG_DATA_START..REG_DATA_START + 8 * 8).contains(&addr) {
-        let idx = ((addr - REG_DATA_START) / 8) as usize;
-        let offset = ((addr - REG_DATA_START) % 8) as usize;
-        if offset + (size as usize) <= 8 {
+    } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+        .contains(&addr)
+    {
+        let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
+        let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
+        if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
             let val_bytes = val.to_le_bytes();
             let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
             if let (Some(dest), Some(src)) =
@@ -216,15 +190,15 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
     endianness: DEVICE_LITTLE_ENDIAN,
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 4,
-        max_access_size: 8,
+        min_access_size: 1,
+        max_access_size: F64_SIZE_BYTES as u32,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: F64_SIZE_BYTES as u32,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -234,6 +208,7 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to VirtmcuActuatorQEMU.
 #[no_mangle]
 pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    const ACTUATOR_MMIO_SIZE: u64 = 0x1000;
     let s = unsafe { &mut *(dev as *mut VirtmcuActuatorQEMU) };
 
     if !s.rust_state.is_null() {
@@ -247,7 +222,7 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
             &raw const VIRTMCU_ACTUATOR_OPS,
             dev,
             c"actuator".as_ptr(),
-            0x100,
+            ACTUATOR_MMIO_SIZE,
         );
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
@@ -371,15 +346,14 @@ declare_device_type!(VIRTMCU_ACTUATOR_TYPE_INIT, VIRTMCU_ACTUATOR_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
+const TX_THREAD_RECV_TIMEOUT_MS: u64 = 10;
+
 fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> JoinHandle<()> {
     std::thread::spawn(move || loop {
-        {
-            let lock = shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !lock.running && rx.is_empty() {
-                break;
-            }
+        if !shared.running.load(core::sync::atomic::Ordering::Acquire) && rx.is_empty() {
+            break;
         }
-        match rx.recv_timeout(Duration::from_millis(10)) {
+        match rx.recv_timeout(Duration::from_millis(TX_THREAD_RECV_TIMEOUT_MS)) {
             Ok(packet) => {
                 let _ = shared.transport.publish(&packet.topic, &packet.payload);
             }
@@ -400,8 +374,8 @@ fn actuator_init_internal(
         node_id,
         topic_prefix,
         tx_sender: tx,
-        drain_cond: Condvar::new(),
-        state: Mutex::new(InnerState { running: true, active_vcpu_count: 0 }),
+        running: core::sync::atomic::AtomicBool::new(true),
+        drain: virtmcu_qom::sync::VcpuDrain::new(),
     });
 
     let bg_thread = start_tx_thread(Arc::clone(&shared), rx);
@@ -422,14 +396,10 @@ fn actuator_publish(
     data_size: u32,
     data: &[f64; 8],
 ) {
-    {
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !lock.running {
-            return;
-        }
-        lock.active_vcpu_count += 1;
+    if !state.shared.running.load(core::sync::atomic::Ordering::Acquire) {
+        return;
     }
-    let _guard = VcpuCountGuard(&state.shared);
+    let _guard = state.shared.drain.acquire();
 
     let vtime_ns = u64::try_from(unsafe {
         virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
@@ -437,7 +407,7 @@ fn actuator_publish(
     .expect("vtime is negative");
 
     let topic = format!("{}/{}/{}", state.shared.topic_prefix, state.shared.node_id, actuator_id);
-    let mut data_payload = Vec::with_capacity((data_size as usize) * 8);
+    let mut data_payload = Vec::with_capacity((data_size as usize) * (F64_SIZE_BYTES as usize));
     for val in data.iter().take(data_size as usize) {
         data_payload.extend_from_slice(&val.to_le_bytes());
     }
@@ -449,6 +419,7 @@ fn actuator_publish(
 }
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
 
@@ -463,53 +434,88 @@ mod tests {
 
     #[test]
     fn test_actuator_mmio_access() {
+        const TEST_ACTUATOR_ID: u32 = 0x1234;
+        const TEST_NODE_ID: u32 = 1;
+        const TEST_DATA_SIZE: u32 = 5;
+        const TEST_VAL_F64: f64 = 1.23456789;
+        const TEST_VAL_U32_DEADBEEF: u32 = 0xDEADBEEF;
+        const TEST_VAL_U32_11223344: u32 = 0x11223344;
+        const SIZE_4: c_uint = 4;
+        const SIZE_8: c_uint = 8;
+        const OFFSET_1: u64 = 1;
+        const OFFSET_4: u64 = 4;
+        const IDX_1: usize = 1;
+        const IDX_2: usize = 2;
+        const IDX_3: usize = 3;
+        const IDX_4: usize = 4;
+        const IDX_5: usize = 5;
+        const IDX_6: usize = 6;
+        const IDX_7: usize = 7;
+
         let mut device = VirtmcuActuatorQEMU {
             parent_obj: unsafe { core::mem::zeroed() },
             mmio: unsafe { core::mem::zeroed() },
-            node_id: 1,
+            node_id: TEST_NODE_ID,
             transport: ptr::null_mut(),
             router: ptr::null_mut(),
             topic_prefix: ptr::null_mut(),
             debug: false,
             transport_hub: ptr::null_mut(),
-            actuator_id: 0x1234,
+            actuator_id: TEST_ACTUATOR_ID,
             data_size: 0,
-            data: [0.0; 8],
+            data: [0.0; MAX_DATA_ELEMENTS],
             rust_state: ptr::null_mut(),
         };
         let opaque = &mut device as *mut _ as *mut c_void;
 
         // Test reading fixed registers
-        assert_eq!(unsafe { actuator_read(opaque, REG_ACTUATOR_ID, 4) }, 0x1234);
-        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_SIZE, 4) }, 0);
+        assert_eq!(
+            unsafe { actuator_read(opaque, REG_ACTUATOR_ID, SIZE_4) },
+            TEST_ACTUATOR_ID as u64
+        );
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_SIZE, SIZE_4) }, 0);
 
         // Test writing fixed registers
-        unsafe { actuator_write(opaque, REG_DATA_SIZE, 5, 4) };
-        assert_eq!(device.data_size, 5);
+        unsafe { actuator_write(opaque, REG_DATA_SIZE, TEST_DATA_SIZE as u64, SIZE_4) };
+        assert_eq!(device.data_size, TEST_DATA_SIZE);
 
         // Test data array access (full u64/f64)
-        let val: f64 = 1.23456789;
+        let val: f64 = TEST_VAL_F64;
         let val_u64 = u64::from_le_bytes(val.to_le_bytes());
-        unsafe { actuator_write(opaque, REG_DATA_START, val_u64, 8) };
+        unsafe { actuator_write(opaque, REG_DATA_START, val_u64, SIZE_8) };
         assert_eq!(device.data[0], val);
-        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START, 8) }, val_u64);
+        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START, SIZE_8) }, val_u64);
 
         // Test partial access (offset 4, size 4)
-        let val2: u32 = 0xDEADBEEF;
-        unsafe { actuator_write(opaque, REG_DATA_START + 4, val2 as u64, 4) };
+        let val2: u32 = TEST_VAL_U32_DEADBEEF;
+        unsafe { actuator_write(opaque, REG_DATA_START + OFFSET_4, val2 as u64, SIZE_4) };
         let data_bytes = device.data[0].to_le_bytes();
-        let high_bytes =
-            u32::from_le_bytes([data_bytes[4], data_bytes[5], data_bytes[6], data_bytes[7]]);
+        let high_bytes = u32::from_le_bytes([
+            data_bytes[IDX_4],
+            data_bytes[IDX_5],
+            data_bytes[IDX_6],
+            data_bytes[IDX_7],
+        ]);
         assert_eq!(high_bytes, val2);
-        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START + 4, 4) }, val2 as u64);
+        assert_eq!(
+            unsafe { actuator_read(opaque, REG_DATA_START + OFFSET_4, SIZE_4) },
+            val2 as u64
+        );
 
         // Test unaligned/partial access (offset 1, size 4)
-        let val3: u32 = 0x11223344;
-        unsafe { actuator_write(opaque, REG_DATA_START + 1, val3 as u64, 4) };
+        let val3: u32 = TEST_VAL_U32_11223344;
+        unsafe { actuator_write(opaque, REG_DATA_START + OFFSET_1, val3 as u64, SIZE_4) };
         let data_bytes = device.data[0].to_le_bytes();
-        let partial_bytes =
-            u32::from_le_bytes([data_bytes[1], data_bytes[2], data_bytes[3], data_bytes[4]]);
+        let partial_bytes = u32::from_le_bytes([
+            data_bytes[IDX_1],
+            data_bytes[IDX_2],
+            data_bytes[IDX_3],
+            data_bytes[IDX_4],
+        ]);
         assert_eq!(partial_bytes, val3);
-        assert_eq!(unsafe { actuator_read(opaque, REG_DATA_START + 1, 4) }, val3 as u64);
+        assert_eq!(
+            unsafe { actuator_read(opaque, REG_DATA_START + OFFSET_1, SIZE_4) },
+            val3 as u64
+        );
     }
 }

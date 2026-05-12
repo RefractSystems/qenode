@@ -21,7 +21,7 @@ You can boot this firmware and interact with it directly in your terminal using 
 make -C tests/fixtures/guest_apps/uart_echo
 
 # Run virtmcu with stdio mapped to the primary serial port
-./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic
+./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic
 ```
 
 Once booted, you will see:
@@ -35,7 +35,7 @@ Any keys you press will be echoed back immediately by the emulated Cortex-A15 pr
 
 ## 2. Automated Testing of Interactive Firmware
 
-To prevent regressions, interactive firmware must be tested using an automated harness. The virtmcu project provides a Python `Simulation` fixture in `pytest` to achieve this.
+To prevent regressions, interactive firmware must be tested using an automated harness. The virtmcu project provides a Python `Simulation` fixture in `virtmcu-test-runner` to achieve this.
 
 ### The `simulation` fixture and `sim.transport`
 
@@ -44,7 +44,7 @@ In the UART echo tests, we utilize the `simulation` fixture. This allows the tes
 Here is an example test concept from `tests/integration/simulation/peripherals/test_uart_echo.py`:
 
 ```python
-@pytest.mark.asyncio
+@virtmcu-test-runner.mark.asyncio
 async def test_interactive_echo(simulation):
     # Setup node with the echo firmware
     simulation.add_node(node_id=0, dtb=dtb_path, kernel=kernel_path, extra_args=[
@@ -85,14 +85,14 @@ Now that the basic UART is complete, you can map the emulated UART directly to t
 
 2. **Start Node 1 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
        -chardev virtmcu,id=chr0,node=node1 \
        -serial chardev:chr0
    ```
 
 3. **Start Node 2 (in a new terminal):**
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/uart_echo/echo.elf -nographic \
        -chardev virtmcu,id=chr0,node=node2 \
        -serial chardev:chr0
    ```

@@ -48,9 +48,7 @@ boundaries to implement cooperative suspend/resume, acts as a deterministic Ethe
 UART backend for multi-node communication, and synchronizes virtual time with the external
 physics engine. A **Sensor/Actuator Abstraction Layer (SAL/AAL)** translates raw MMIO
 registers into physical quantities, with two modes: standalone CI/CD (replay from Renode
-Sensor Data files) and integrated (lock-step with MuJoCo via shared memory). A
-**QMP-backed Robot Framework library** provides test automation parity with Renode's
-keyword suite.
+Sensor Data files) and integrated (lock-step with MuJoCo via shared memory).
 
 See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-overview.md) for the full technical deep-dive and [`docs/guide/01-build-system.md`](docs/guide/01-build-system.md) for build system details.
 
@@ -92,12 +90,11 @@ See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-over
   and Remote Port sockets. The architecture extends this to shared physical media (CAN, SPI) with
   asynchronous IRQ support.
 
-- **Platform Description Tools**: `repl2qemu` compiles legacy Renode `.repl` files or
-  OpenUSD-aligned `.yaml` board descriptions into Device Tree blobs and QEMU CLI strings.
+- **Platform Description Tools**: `virtmcu-cli` (Primary) provides a native Rust-powered
+  platform generation tool. It compiles modern VirtMCU YAML and SVD files to Device Trees.
 
-- **Unified Test Automation**: pytest + `qemu.qmp` for primary test suites; a Robot
-  Framework compatibility layer for Renode `.robot` suite migration. Tests run in parallel
-  by default to ensure rapid feedback.
+- **Unified Test Automation**: `virtmcu-test-runner` provides primary test suites for
+  multi-node orchestration. Tests run in parallel by default to ensure rapid feedback.
 
 ---
 
@@ -119,22 +116,18 @@ virtmcu/
 │   └── meson.build             # Integrates hw/ into QEMU's module build
 │
 ├── tools/                      # Assorted offline utilities and debugging helpers
-│   ├── yaml2qemu.py            # .yaml → Device Tree + QEMU CLI transpiler
 │   ├── cyber_bridge/           # C++ SAL/AAL telemetry and MuJoCo shm synchronization
-│   ├── debug/                  # Python GDB helpers for interactive debugging
+│   ├── virtmcu-cli/            # Native Rust CLI for platform generation and setup
 │   └── deterministic_coordinator/ # Rust daemon for strictly ordering multi-node frames
 │
-├── tests/                      # pytest / Robot test suites
-│   ├── conftest.py             # pytest fixtures for Zenoh and QEMU orchestration
-│   ├── test_qmp_keywords.robot # Robot Framework integration
-│   └── ...                     # Extensive coverage tests (boot_arm, spi_bridge, etc.)
+├── tests/                      # Native Rust integration tests (tests/native_integration)
+│   └── fixtures/guest_apps/    # End-to-end integration and smoke tests per subsystem
 │
 ├── patches/
 │   ├── arm-generic-fdt-v3.mbx  # 33-patch series (applied by install-third-party.sh)
-│   ├── apply_zenoh_hook.py     # Injects virtmcu_tcg_quantum_hook into cpu-exec.c
 │   └── ...
 │
-├── scripts/
+
 │   ├── install-third-party.sh           # Clone QEMU, apply patches, symlink hw/, build
 │   └── run.sh                  # Launch wrapper: sets QEMU_MODULE_DIR, detects arch
 │
@@ -163,22 +156,22 @@ covers the timing design and BQL constraints. Section 6 covers prior art (qbox, 
 **Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
-./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
+./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
 ```
 
-**Run the repl2qemu tool**:
+**Run the simulation**:
 ```bash
-./scripts/run.sh --repl tests/fixtures/guest_apps/yaml_boot/test_board.repl --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+./target/release/virtmcu-run --yaml tests/fixtures/guest_apps/yaml_boot/test_board.yaml --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
 **Run with FirmwareStudio** (external time master):
 ```bash
 # slaved-suspend (default — full TCG speed, ~95% throughput)
-./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
+./target/release/virtmcu-run --dtb board.dtb --kernel firmware.elf \
     -device clock,node=0,transport=zenoh,router=tcp/localhost:7447
 
 # slaved-icount (exact ns — only for sub-quantum hardware timer firmware)
-./scripts/run.sh --dtb board.dtb --kernel firmware.elf \
+./target/release/virtmcu-run --dtb board.dtb --kernel firmware.elf \
     -device clock,node=0,transport=zenoh,router=tcp/localhost:7447,mode=icount \
     -icount shift=0,align=off,sleep=off
 ```
@@ -206,11 +199,9 @@ Open in VS Code and accept **"Reopen in Container"**. Everything runs automatica
 # Linux (Debian/Ubuntu)
 sudo apt install build-essential libglib2.0-dev ninja-build \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config b4
-curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # All platforms
 make bootstrap # clones QEMU, applies patches, and builds (~10 min first run)
-make setup-python         # synchronize Python environment with uv
 make run                  # dev-integration
 ```
 
@@ -230,14 +221,14 @@ The core framework development is complete. All architectural pillars and capabi
 - [x] Deterministic multi-node Ethernet and UART communication via an abstract transport (Zenoh or Unix sockets).
 - [x] Sensor/Actuator Abstraction Layers (SAL/AAL) for MuJoCo and OpenUSD integration.
 - [x] Full TLM-2.0 co-simulation via AMD/Xilinx Remote Port and SystemC.
-- [x] Automated test suite using pytest, QMP, and Robot Framework keywords.
+- [x] Automated test suite using virtmcu-test-runner, QMP, and Robot Framework keywords.
 
 ---
 
 ## Key Design Decisions
 
 - **No Python in the simulation loop.** All peripherals, clock sync, and networking are
-  native C/Rust QOM modules. Python is offline-only (repl2qemu, pytest). See ADR-003.
+  native C/Rust QOM modules. Orchestration and testing are handled by native Rust tools. See ADR-003.
 - **Abstract federation bus.** A pluggable transport layer (`DataTransport`) handles clock quanta, Ethernet
   frames, UART bytes, and sensor data. Default implementations for Zenoh and Unix Domain Sockets.
 - **Three clock modes.** `standalone` (free-run, full speed), `slaved-suspend` (~95%

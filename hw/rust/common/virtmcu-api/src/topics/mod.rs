@@ -89,9 +89,15 @@ pub mod sim_topic {
 }
 
 #[cfg(test)]
+#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
 mod tests {
     use super::sim_topic::*;
     use alloc::format;
+
+    const NODE_ID_2: &str = "2";
+    const NODE_ID_3: &str = "3";
+    const NODE_15: &str = "15";
+    const NODE_255: &str = "255";
 
     #[test]
     fn test_chardev_rx_topic_node0() {
@@ -116,7 +122,7 @@ mod tests {
     #[test]
     fn test_clock_advance_topic() {
         assert_eq!(clock_advance("0"), "sim/clock/advance/0");
-        assert_eq!(clock_advance("3"), "sim/clock/advance/3");
+        assert_eq!(clock_advance(NODE_ID_3), format!("sim/clock/advance/{}", NODE_ID_3));
     }
 
     #[test]
@@ -156,9 +162,9 @@ mod tests {
 
     #[test]
     fn test_coord_per_node_topics() {
-        assert_eq!(coord_tx("2"), "sim/coord/2/tx");
-        assert_eq!(coord_rx("2"), "sim/coord/2/rx");
-        assert_eq!(coord_done("2"), "sim/coord/2/done");
+        assert_eq!(coord_tx(NODE_ID_2), format!("sim/coord/{}/tx", NODE_ID_2));
+        assert_eq!(coord_rx(NODE_ID_2), format!("sim/coord/{}/rx", NODE_ID_2));
+        assert_eq!(coord_done(NODE_ID_2), format!("sim/coord/{}/done", NODE_ID_2));
     }
 
     #[test]
@@ -193,7 +199,8 @@ mod tests {
 
     #[test]
     fn test_node_id_int_or_str_accepted() {
-        for node in ["0", "1", "15", "255"] {
+        let test_nodes = ["0", "1", NODE_15, NODE_255];
+        for node in test_nodes {
             let topic = chardev_rx(node);
             assert!(topic.contains(&format!("/{}/", node)));
         }

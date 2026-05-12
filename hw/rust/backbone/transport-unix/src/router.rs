@@ -101,8 +101,10 @@ mod tests {
 
         // Deterministic Synchronization: Wait for the router thread to accept all 3 clients
         let start = Instant::now();
-        while clients_ref.lock().expect("unix socket operation failed").len() < 3 {
-            if start.elapsed() > Duration::from_secs(5) {
+        const EXPECTED_CLIENTS: usize = 3;
+        const ROUTER_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+        while clients_ref.lock().expect("unix socket operation failed").len() < EXPECTED_CLIENTS {
+            if start.elapsed() > ROUTER_WAIT_TIMEOUT {
                 panic!("Timeout waiting for router to accept clients");
             }
             std::thread::yield_now(); // virtmcu-allow: yield reasoning="legacy spinloop"

@@ -36,6 +36,47 @@ use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 
+// Register Offsets
+const REG_MCR: u64 = 0x00;
+const REG_SUCC1: u64 = 0x04;
+const REG_SUCC2: u64 = 0x08;
+const REG_SUCC3: u64 = 0x0C;
+const REG_GTUC_START: u64 = 0x10;
+const REG_GTUC_END: u64 = 0x38;
+const REG_CCRR: u64 = 0x80;
+const REG_CCSV: u64 = 0x84;
+const REG_WRHS1: u64 = 0x400;
+const REG_WRHS2: u64 = 0x404;
+const REG_WRHS3: u64 = 0x408;
+const REG_WRDS_START: u64 = 0x410;
+const REG_WRDS_END: u64 = 0x4FF;
+const REG_IBCR: u64 = 0x500;
+const REG_ORHS1: u64 = 0x600;
+const REG_ORHS2: u64 = 0x604;
+const REG_ORHS3: u64 = 0x608;
+const REG_ORDS_START: u64 = 0x610;
+const REG_ORDS_END: u64 = 0x6FF;
+const REG_OBCR: u64 = 0x700;
+const REG_STEP_SIZE: u64 = 4;
+const MSG_BUFFER_WORDS: usize = 64;
+const FLEXRAY_MAX_SLOTS: usize = 128;
+const FLEXRAY_MSG_RAM_DATA_SIZE: usize = 8192;
+const FLEXRAY_IBCR_SLOT_MASK: u64 = 0x7F;
+const FLEXRAY_OBCR_SLOT_MASK: u64 = 0x7F;
+const FLEXRAY_WORD_SIZE: usize = 4;
+const CMD_COLDSTART: u32 = 0x01;
+const CCSV_NORMAL_ACTIVE: u32 = 0x2;
+const FLEXRAY_MMIO_SIZE: u64 = 0x1000;
+const FLEXRAY_VRC_INITIAL: u32 = 0x00000001;
+const FLEXRAY_RX_QUEUE_SIZE: usize = 100;
+const FLEXRAY_SLOT_SIZE: usize = 64;
+const OPS_PADDING_4: usize = 4;
+const OPS_PADDING_7: usize = 7;
+
+// Control Bits
+const MCR_ENABLE_BIT: u64 = 0x1;
+const DEFAULT_CYCLE_TIME_NS: i64 = 5_000_000;
+
 #[repr(C)]
 pub struct FlexRay {
     pub parent_obj: SysBusDevice,
@@ -217,56 +258,51 @@ unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 unsafe extern "C" fn flexray_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
     let s = &mut *(opaque as *mut FlexRay);
     match addr {
-        0x00 => u64::from(s.vrc),
-        0x04 => u64::from(s.succ1),
-        0x08 => u64::from(s.succ2),
-        0x0C => u64::from(s.succ3),
-        0x10..=0x38 => {
-            let idx = (addr - 0x10) / 4;
-            match idx {
-                0 => u64::from(s.gtuc1),
-                1 => u64::from(s.gtuc2),
-                2 => u64::from(s.gtuc3),
-                3 => u64::from(s.gtuc4),
-                4 => u64::from(s.gtuc5),
-                5 => u64::from(s.gtuc6),
-                6 => u64::from(s.gtuc7),
-                7 => u64::from(s.gtuc8),
-                8 => u64::from(s.gtuc9),
-                9 => u64::from(s.gtuc10),
-                10 => u64::from(s.gtuc11),
-                _ => 0,
+        REG_MCR => u64::from(s.vrc),
+        REG_SUCC1 => u64::from(s.succ1),
+        REG_SUCC2 => u64::from(s.succ2),
+        REG_SUCC3 => u64::from(s.succ3),
+        REG_GTUC_START..=REG_GTUC_END => {
+            let idx = ((addr - REG_GTUC_START) / REG_STEP_SIZE) as usize;
+            let gtucs = [
+                s.gtuc1, s.gtuc2, s.gtuc3, s.gtuc4, s.gtuc5, s.gtuc6, s.gtuc7, s.gtuc8, s.gtuc9,
+                s.gtuc10, s.gtuc11,
+            ];
+            if idx < gtucs.len() {
+                u64::from(gtucs[idx])
+            } else {
+                0
             }
         }
-        0x80 => u64::from(s.ccrr),
-        0x84 => u64::from(s.ccsv),
+        REG_CCRR => u64::from(s.ccrr),
+        REG_CCSV => u64::from(s.ccsv),
 
-        0x400 => u64::from(s.wrhs1),
-        0x404 => u64::from(s.wrhs2),
-        0x408 => u64::from(s.wrhs3),
-        0x410..=0x4FF => {
-            let idx = ((addr - 0x410) / 4) as usize;
-            if idx < 64 {
+        REG_WRHS1 => u64::from(s.wrhs1),
+        REG_WRHS2 => u64::from(s.wrhs2),
+        REG_WRHS3 => u64::from(s.wrhs3),
+        REG_WRDS_START..=REG_WRDS_END => {
+            let idx = ((addr - REG_WRDS_START) / REG_STEP_SIZE) as usize;
+            if idx < MSG_BUFFER_WORDS {
                 u64::from(s.wrds[idx])
             } else {
                 0
             }
         }
 
-        0x500 => u64::from(s.ibcr),
+        REG_IBCR => u64::from(s.ibcr),
 
-        0x600 => u64::from(s.orhs1),
-        0x604 => u64::from(s.orhs2),
-        0x608 => u64::from(s.orhs3),
-        0x610..=0x6FF => {
-            let idx = ((addr - 0x610) / 4) as usize;
-            if idx < 64 {
+        REG_ORHS1 => u64::from(s.orhs1),
+        REG_ORHS2 => u64::from(s.orhs2),
+        REG_ORHS3 => u64::from(s.orhs3),
+        REG_ORDS_START..=REG_ORDS_END => {
+            let idx = ((addr - REG_ORDS_START) / REG_STEP_SIZE) as usize;
+            if idx < MSG_BUFFER_WORDS {
                 u64::from(s.ords[idx])
             } else {
                 0
             }
         }
-        0x700 => u64::from(s.obcr),
+        REG_OBCR => u64::from(s.obcr),
         _ => {
             if s.debug {
                 virtmcu_qom::sim_warn!("flexray_read: unhandled offset 0x{:x}", addr);
@@ -282,90 +318,91 @@ unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _s
         // MCR (Module Configuration Register): writing bit 0 = enable controller.
         // Per Bosch E-Ray semantics, enabling the module starts the cycle timer
         // so configured TX slots begin transmitting on the simulated bus.
-        0x00 => {
+        REG_MCR => {
             s.vrc = data as u32;
-            if (data & 0x1) != 0 && !s.rust_state.is_null() {
+            if (data & MCR_ENABLE_BIT) != 0 && !s.rust_state.is_null() {
                 let state = unsafe { &*s.rust_state };
                 let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
                 if let Some(cycle_timer) = &state.cycle_timer {
-                    cycle_timer.mod_ns(now + 5_000_000);
+                    cycle_timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
                 }
             }
         }
-        0x04 => s.succ1 = data as u32,
-        0x08 => s.succ2 = data as u32,
-        0x0C => s.succ3 = data as u32,
-        0x10..=0x38 => {
-            let idx = (addr - 0x10) / 4;
-            match idx {
-                0 => s.gtuc1 = data as u32,
-                1 => s.gtuc2 = data as u32,
-                2 => s.gtuc3 = data as u32,
-                3 => s.gtuc4 = data as u32,
-                4 => s.gtuc5 = data as u32,
-                5 => s.gtuc6 = data as u32,
-                6 => s.gtuc7 = data as u32,
-                7 => s.gtuc8 = data as u32,
-                8 => s.gtuc9 = data as u32,
-                9 => s.gtuc10 = data as u32,
-                10 => s.gtuc11 = data as u32,
-                _ => {}
+        REG_SUCC1 => s.succ1 = data as u32,
+        REG_SUCC2 => s.succ2 = data as u32,
+        REG_SUCC3 => s.succ3 = data as u32,
+        REG_GTUC_START..=REG_GTUC_END => {
+            let idx = ((addr - REG_GTUC_START) / REG_STEP_SIZE) as usize;
+            let val = data as u32;
+            let targets = [
+                &raw mut s.gtuc1,
+                &raw mut s.gtuc2,
+                &raw mut s.gtuc3,
+                &raw mut s.gtuc4,
+                &raw mut s.gtuc5,
+                &raw mut s.gtuc6,
+                &raw mut s.gtuc7,
+                &raw mut s.gtuc8,
+                &raw mut s.gtuc9,
+                &raw mut s.gtuc10,
+                &raw mut s.gtuc11,
+            ];
+            if idx < targets.len() {
+                unsafe { *targets[idx] = val };
             }
         }
-        0x80 => {
+        REG_CCRR => {
             s.ccrr = data as u32;
             handle_command(s, data as u32);
         }
 
-        0x400 => s.wrhs1 = data as u32,
-        0x404 => s.wrhs2 = data as u32,
-        0x408 => s.wrhs3 = data as u32,
-        0x410..=0x4FF => {
-            let idx = ((addr - 0x410) / 4) as usize;
-            if idx < 64 {
+        REG_WRHS1 => s.wrhs1 = data as u32,
+        REG_WRHS2 => s.wrhs2 = data as u32,
+        REG_WRHS3 => s.wrhs3 = data as u32,
+        REG_WRDS_START..=REG_WRDS_END => {
+            let idx = ((addr - REG_WRDS_START) / REG_STEP_SIZE) as usize;
+            if idx < MSG_BUFFER_WORDS {
                 s.wrds[idx] = data as u32;
             }
         }
 
-        0x500 => {
+        REG_IBCR => {
             s.ibcr = data as u32;
-            let slot_idx = (data & 0x7F) as usize;
+            let slot_idx = (data & FLEXRAY_IBCR_SLOT_MASK) as usize;
             virtmcu_qom::sim_err!("FlexRay: IBCR write slot={}, wrhs1={}", slot_idx, s.wrhs1);
-            if slot_idx < 128 {
+            if slot_idx < FLEXRAY_MAX_SLOTS {
                 s.msg_ram_headers[slot_idx].frame_id = s.wrhs1 as u16;
                 s.msg_ram_headers[slot_idx].config = s.wrhs2;
                 // Copy WRDS to msg_ram_data
-                let offset = slot_idx * 64;
-                for i in 0..64 {
-                    if offset + i * 4 + 3 < 8192 {
+                let offset = slot_idx * MSG_BUFFER_WORDS;
+                for i in 0..MSG_BUFFER_WORDS {
+                    let word_offset = offset + i * FLEXRAY_WORD_SIZE;
+                    if word_offset + FLEXRAY_WORD_SIZE <= FLEXRAY_MSG_RAM_DATA_SIZE {
                         let word = s.wrds[i];
-                        s.msg_ram_data[offset + i * 4] = (word & 0xFF) as u8;
-                        s.msg_ram_data[offset + i * 4 + 1] = ((word >> 8) & 0xFF) as u8;
-                        s.msg_ram_data[offset + i * 4 + 2] = ((word >> 16) & 0xFF) as u8;
-                        s.msg_ram_data[offset + i * 4 + 3] = ((word >> 24) & 0xFF) as u8;
+                        let bytes = word.to_le_bytes();
+                        s.msg_ram_data[word_offset..word_offset + FLEXRAY_WORD_SIZE]
+                            .copy_from_slice(&bytes);
                     }
                 }
             }
         }
 
-        0x700 => {
+        REG_OBCR => {
             s.obcr = data as u32;
-            let slot_idx = (data & 0x7F) as usize;
-            if slot_idx < 128 {
+            let slot_idx = (data & FLEXRAY_OBCR_SLOT_MASK) as usize;
+            if slot_idx < FLEXRAY_MAX_SLOTS {
                 s.orhs1 = u32::from(s.msg_ram_headers[slot_idx].frame_id);
                 s.orhs2 = s.msg_ram_headers[slot_idx].config;
                 s.orhs3 = 0;
                 // Copy msg_ram_data to ORDS
-                let offset = slot_idx * 64;
-                for i in 0..64 {
-                    if offset + i * 4 + 3 < 8192 {
-                        let word = u32::from_le_bytes([
-                            s.msg_ram_data[offset + i * 4],
-                            s.msg_ram_data[offset + i * 4 + 1],
-                            s.msg_ram_data[offset + i * 4 + 2],
-                            s.msg_ram_data[offset + i * 4 + 3],
-                        ]);
-                        s.ords[i] = word;
+                let offset = slot_idx * MSG_BUFFER_WORDS;
+                for i in 0..MSG_BUFFER_WORDS {
+                    let word_offset = offset + i * FLEXRAY_WORD_SIZE;
+                    if word_offset + FLEXRAY_WORD_SIZE <= FLEXRAY_MSG_RAM_DATA_SIZE {
+                        let bytes = &s.msg_ram_data[word_offset..word_offset + FLEXRAY_WORD_SIZE];
+                        s.ords[i] = u32::from_le_bytes(
+                            bytes.try_into().expect("FlexRay word is always four bytes"),
+                        );
                     }
                 }
             }
@@ -379,9 +416,9 @@ unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _s
 }
 
 fn handle_command(s: &mut FlexRay, cmd: u32) {
-    if cmd == 0x01 {
+    if cmd == CMD_COLDSTART {
         // Coldstart
-        s.ccsv = 0x2; // Normal active
+        s.ccsv = CCSV_NORMAL_ACTIVE; // Normal active
     }
 }
 
@@ -391,19 +428,19 @@ static FLEXRAY_OPS: MemoryRegionOps = MemoryRegionOps {
     read_with_attrs: ptr::null(),
     write_with_attrs: ptr::null(),
     endianness: virtmcu_qom::memory::DEVICE_LITTLE_ENDIAN,
-    _padding1: [0; 4],
+    _padding1: [0; OPS_PADDING_4],
     valid: MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 4,
+        max_access_size: FLEXRAY_WORD_SIZE as u32,
         unaligned: false,
-        _padding: [0; 7],
+        _padding: [0; OPS_PADDING_7],
         accepts: ptr::null(),
     },
     impl_: MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 4,
+        max_access_size: FLEXRAY_WORD_SIZE as u32,
         unaligned: false,
-        _padding: [0; 7],
+        _padding: [0; OPS_PADDING_7],
     },
 };
 
@@ -422,12 +459,12 @@ unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
         (&raw const s.vrc as usize) - base
     );
 
-    s.vrc = 0x00000001;
+    s.vrc = FLEXRAY_VRC_INITIAL;
     s.ccsv = 0x0;
     virtmcu_qom::sim_err!("flexray_instance_init: initializing msg_ram");
     unsafe {
-        ptr::write(&mut s.msg_ram_headers, [FlexRayMsgHeader::default(); 128]);
-        ptr::write_bytes(s.msg_ram_data.as_mut_ptr(), 0, 8192);
+        ptr::write(&mut s.msg_ram_headers, [FlexRayMsgHeader::default(); FLEXRAY_MAX_SLOTS]);
+        ptr::write_bytes(s.msg_ram_data.as_mut_ptr(), 0, FLEXRAY_MSG_RAM_DATA_SIZE);
     }
 
     virtmcu_qom::sim_err!("flexray_instance_init: initializing memory region");
@@ -437,7 +474,7 @@ unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
         &raw const FLEXRAY_OPS as *const _,
         obj as *mut c_void,
         c"flexray".as_ptr(),
-        0x4000,
+        FLEXRAY_MMIO_SIZE,
     );
     virtmcu_qom::sim_err!("flexray_instance_init: initializing mmio");
     virtmcu_qom::qdev::sysbus_init_mmio(&raw mut s.parent_obj, &raw mut s.mmio);
@@ -457,6 +494,7 @@ virtmcu_qom::define_properties!(
 unsafe extern "C" fn flexray_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = klass as *mut virtmcu_qom::qdev::DeviceClass;
     (*dc).realize = Some(flexray_realize);
+    (*dc).user_creatable = true;
     virtmcu_qom::device_class_set_props!(dc, FLEXRAY_PROPS);
 
     virtmcu_qom::qom::object_class_property_add_link(
@@ -524,9 +562,11 @@ extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
                         packet.frame_id,
                         i
                     );
-                    let data_word = if packet.data.len() >= 4 {
+                    let data_word = if packet.data.len() >= FLEXRAY_WORD_SIZE {
                         u32::from_le_bytes(
-                            packet.data[0..4].try_into().expect("flexray logic assumption failed"),
+                            packet.data[0..FLEXRAY_WORD_SIZE]
+                                .try_into()
+                                .expect("flexray logic assumption failed"),
                         )
                     } else {
                         0
@@ -555,7 +595,7 @@ pub fn flexray_init_internal(
     debug: bool,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> Result<*mut FlexRayState, String> {
-    let (tx, rx) = bounded::<OrderedFlexRayPacket>(100);
+    let (tx, rx) = bounded::<OrderedFlexRayPacket>(FLEXRAY_RX_QUEUE_SIZE);
 
     let liveliness = transport.declare_liveliness(&format!("sim/flexray/liveliness/{node_id}"));
     let mut state = Box::new(FlexRayState {
@@ -580,7 +620,7 @@ pub fn flexray_init_internal(
     let sub_callback = {
         let tx = tx.clone();
         let rx_timer_clone = Arc::clone(&rx_timer_clone);
-        move |payload: &[u8]| {
+        move |_topic: &str, payload: &[u8]| {
             virtmcu_qom::sim_debug!("FlexRay RX: received {} bytes", payload.len());
             let frame = flatbuffers::root::<FlexRayFrame>(payload)
                 .expect("flexray logic assumption failed");
@@ -613,7 +653,7 @@ pub fn flexray_init_internal(
 
     let now =
         unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) };
-    cycle_timer.mod_ns(now + 5_000_000);
+    cycle_timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
     state.cycle_timer = Some(cycle_timer);
 
     Ok(Box::into_raw(state))
@@ -641,7 +681,7 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
     // Schedule next cycle
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     if let Some(timer) = &state.cycle_timer {
-        timer.mod_ns(now + 5_000_000);
+        timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
     }
 }
 
@@ -650,8 +690,8 @@ fn flexray_send_frame(s: &mut FlexRay, slot: usize, frame_id: u16) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
 
     let mut builder = FlatBufferBuilder::new();
-    let offset = slot * 64;
-    let data = &s.msg_ram_data[offset..offset + 64];
+    let offset = slot * FLEXRAY_SLOT_SIZE;
+    let data = &s.msg_ram_data[offset..offset + FLEXRAY_SLOT_SIZE];
     let data_off = builder.create_vector(data);
     let args = FlexRayFrameArgs {
         frame_id,

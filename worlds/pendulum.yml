@@ -1,56 +1,37 @@
+---
 # worlds/pendulum.yml
 # Example physics overlay for the standalone virtmcu docker-compose.yml
 # This overrides the cyber-node to run a slaved-clock firmware and adds a physics node.
 services:
   cyber-node:
-    command: ["/app/scripts/run.sh", "--yaml", "/app/tests/fixtures/guest_apps/yaml_boot/test_board.yaml", "-kernel", "/app/tests/fixtures/guest_apps/boot_arm/hello.elf", "-device", "clock,mode=suspend,node=0"]
+    command: [
+      "/app/target/release/virtmcu-run",
+      "--yaml",
+      "/app/tests/fixtures/guest_apps/yaml_boot/test_board.yaml",
+      "-kernel",
+      "/app/tests/fixtures/guest_apps/boot_arm/hello.elf",
+      "-device",
+      "clock,mode=suspend,node=0,coordinated=true"
+    ]
 
-  physics-node:
+  time-authority:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: runtime
     networks:
       - virtmcu-net
     environment:
-      ZENOH_ROUTER: tcp/zenoh-router:7447
-      PHYSICS_STEP_NS: "1000000"
-    volumes:
-      - ../tools:/app/tools:ro
-    command: >
-      python3 -c "
-      import zenoh, time, os, sys;
-      sys.path.append('/app');
-      from tools import vproto;
-      conf = zenoh.Config();
-      s = zenoh.open(conf);
-      # SOTA: Zenoh Routing Barrier (Liveliness probe)
-      probe = f'sim/physics/probe/{os.getpid()}';
-      token = s.liveliness().declare_token(probe);
-      print(f'Waiting for Zenoh routing stability on {probe}...');
-      start = time.time();
-      ready = False;
-      while time.time() - start < 10:
-          if any(x.key_expr == probe for x in s.liveliness().get(probe)):
-              ready = True;
-              break;
-          time.sleep(0.1);
-      if not ready:
-          print('Zenoh routing barrier FAILED');
-          exit(1);
-      token.undeclare();
-      print('Physics engine (TimeAuthority) started. Sending 1ms clock advances...');
-      delta_ns = int(os.environ.get('PHYSICS_STEP_NS', 1000000));
-      q_num = 0;
-      while True:
-          payload = vproto.ClockAdvanceReq(delta_ns, 0, q_num).pack();
-          list(s.get('sim/clock/advance/0', payload=payload, timeout=1.0));
-          q_num += 1;
-          time.sleep(0.01);
-      "
+      ZENOH_CONNECT: tcp/zenoh-router:7447
     depends_on:
       zenoh-router:
         condition: service_healthy
+    command: [
+      "/app/target/release/virtmcu-time-authority",
+      "--transport", "zenoh",
+      "--connect", "tcp/zenoh-router:7447",
+      "--node-id", "0",
+      "--delta-ns", "1000000"
+    ]
 
 networks:
   virtmcu-net: {}

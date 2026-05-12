@@ -18,9 +18,9 @@ The core of the VirtMCU peripheral subsystem is migrating to Rust. You will be w
 You must understand what a process, a thread, and a mutex are. VirtMCU relies heavily on multi-threaded execution and synchronization.
 *   **Canonical Reference:** *Operating Systems: Three Easy Pieces* (OSTEP) by Arpaci-Dusseau. Read §1–§5 (Virtualization and Concurrency).
 
-### Python & Scripting
-Our orchestration, testing, and tooling layers are built in Python.
-*   **Baseline:** Familiarity with `asyncio`, `pytest`, and basic data manipulation.
+### Rust & Orchestration
+Our orchestration, testing, and tooling layers are built in Rust.
+*   **Baseline:** Familiarity with `tokio`, `virtmcu-test-runner` library, and Cargo workspace management.
 
 ### Toolchain & Version Control
 We use `git`, `make`, `meson`, and `ninja`.

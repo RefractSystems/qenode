@@ -1,0 +1,20 @@
+[package]
+name = "tcg-tracer"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+[lints] 
+workspace = true 
+[dependencies]
+virtmcu-api.workspace = true
+transport-zenoh.workspace = true
+transport-unix.workspace = true
+crossbeam-channel.workspace = true
+flatbuffers.workspace = true
+tracing.workspace = true
+virtmcu-observability.workspace = true
+libc = "0.2.186"

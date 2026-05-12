@@ -38,6 +38,7 @@ rust_modules = [
         'extra_inc': '#include "virtmcu/hooks.h"',
     },
     {'pkg': 'actuator', 'lib': 'libactuator.a', 'obj': 'actuator'},
+    {'pkg': 'sensor', 'lib': 'libsensor.a', 'obj': 'sensor'},
     {'pkg': 'ieee802154', 'lib': 'libieee802154.a', 'obj': 'ieee802154'},
     {'pkg': 'ui', 'lib': 'libui.a', 'obj': 'ui'},
     {

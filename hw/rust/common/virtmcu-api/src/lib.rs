@@ -9,16 +9,6 @@
     )
 )]
 // std is required: flatbuffers dependency requires std
-#![cfg_attr(
-    test,
-    allow(
-        clippy::expect_used,
-        clippy::unwrap_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn
-    )
-)]
 #![deny(missing_docs)]
 #![doc = "The crate"]
 
@@ -275,6 +265,17 @@ pub trait ClockSyncResponder: Send + Sync {
     fn send_ready(&self, resp: ClockReadyResp) -> Result<(), alloc::string::String>;
 }
 
+/// Abstract transport for clock synchronization from the TimeAuthority perspective.
+pub trait TimeAuthorityTransport: Send + Sync {
+    /// Send a clock-advance request and block until the node replies.
+    /// Returns the reply, or None on timeout/transport error.
+    fn advance(
+        &self,
+        req: ClockAdvanceReq,
+        timeout: core::time::Duration,
+    ) -> Option<ClockReadyResp>;
+}
+
 /// Unix socket-based clock synchronization transport.
 #[cfg(feature = "std")]
 pub struct UnixSocketClockTransport {
@@ -327,6 +328,80 @@ impl ClockSyncTransport for UnixSocketClockTransport {
         let responder: Box<dyn ClockSyncResponder> =
             Box::new(UnixSocketResponder { stream: stream.try_clone().ok()? });
         Some((req, responder))
+    }
+}
+
+/// Unix socket-based Time Authority transport.
+#[cfg(feature = "std")]
+pub struct UnixSocketTimeAuthorityTransport {
+    listener: std::os::unix::net::UnixListener,
+    stream: std::sync::Mutex<Option<std::os::unix::net::UnixStream>>,
+}
+
+#[cfg(feature = "std")]
+impl UnixSocketTimeAuthorityTransport {
+    /// Creates a new `UnixSocketTimeAuthorityTransport` that listens on the given path.
+    ///
+    /// If the socket file already exists, it will be removed.
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+        let path = path.as_ref();
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        let listener = std::os::unix::net::UnixListener::bind(path)?;
+        Ok(Self { listener, stream: std::sync::Mutex::new(None) })
+    }
+
+    fn ensure_stream(&self) -> Option<std::os::unix::net::UnixStream> {
+        let mut guard = self.stream.lock().ok()?;
+        if let Some(stream) = &*guard {
+            return stream.try_clone().ok();
+        }
+
+        // Accept a new connection (blocks until QEMU connects)
+        let (stream, _) = self.listener.accept().ok()?;
+        *guard = Some(stream.try_clone().ok()?);
+        Some(stream)
+    }
+}
+
+#[cfg(feature = "std")]
+impl TimeAuthorityTransport for UnixSocketTimeAuthorityTransport {
+    fn advance(
+        &self,
+        req: ClockAdvanceReq,
+        timeout: core::time::Duration,
+    ) -> Option<ClockReadyResp> {
+        use std::io::{Read, Write};
+
+        let mut stream = self.ensure_stream()?;
+        let _ = stream.set_write_timeout(Some(timeout));
+        let _ = stream.set_read_timeout(Some(timeout));
+
+        let bytes = req.pack();
+        if stream.write_all(bytes).is_err() {
+            // Broken pipe? Try re-accepting
+            let mut guard = self.stream.lock().ok()?;
+            *guard = None;
+            drop(guard);
+            stream = self.ensure_stream()?;
+            let _ = stream.set_write_timeout(Some(timeout));
+            let _ = stream.set_read_timeout(Some(timeout));
+            if stream.write_all(bytes).is_err() {
+                return None;
+            }
+        }
+
+        let mut buf = [0u8; 24];
+        if stream.read_exact(&mut buf).is_err() {
+            // If read fails, the connection might be dead. Clear it.
+            if let Ok(mut guard) = self.stream.lock() {
+                *guard = None;
+            }
+            return None;
+        }
+
+        ClockReadyResp::unpack_slice(&buf)
     }
 }
 
@@ -419,7 +494,8 @@ pub fn encode_rf802154_frame(
     rssi: i8,
     lqi: u8,
 ) -> Vec<u8> {
-    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64);
+    const INITIAL_CAPACITY: usize = 64;
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(INITIAL_CAPACITY);
     let mut args = rf802154_header::Rf802154HeaderBuilder::new(&mut builder);
     args.add_delivery_vtime_ns(delivery_vtime_ns);
     args.add_sequence_number(sequence_number);
@@ -450,7 +526,7 @@ pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
 }
 
 /// Callback type for data transport subscriptions.
-pub type DataCallback = Box<dyn Fn(&[u8]) + Send + Sync>;
+pub type DataCallback = Box<dyn Fn(&str, &[u8]) + Send + Sync>;
 
 /// Abstract transport for emulated data plane (packets, signals).
 ///
@@ -492,7 +568,7 @@ pub trait DataTransport: Send + Sync {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy exception"
+#[allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
 mod tests {
     use super::*;
 
@@ -503,6 +579,33 @@ mod tests {
 
     use alloc::collections::BinaryHeap;
     use core::cmp::Ordering as CmpOrd;
+
+    const TEST_VTIME_1000: u64 = 1_000;
+    const TEST_VTIME_500: u64 = 500;
+    const TEST_SEQ_2: u64 = 2;
+    const TEST_SEQ_42: u64 = 42;
+    const TEST_VAL_123: u32 = 123;
+    const TEST_VTIME_LONG: u64 = 12345678;
+    const TEST_VTIME_10M: u64 = 10_000_000;
+    const TEST_QUANTUM_99: u64 = 99;
+    const TEST_N_FRAMES_50: u32 = 50;
+    const TEST_ADDR_1000: u64 = 0x1000_0000;
+    const TEST_DATA_DEADBEEF: u64 = 0xDEAD_BEEF;
+    const TEST_VAL_U16_1234: u16 = 0x1234;
+    const TEST_VAL_U32_5678: u32 = 0x56789ABC;
+    const TEST_IRQ_7: u32 = 7;
+    const TEST_PATTERN_U64: u64 = 0x0102030405060708;
+    const TEST_PATTERN_U64_ALT: u64 = 0x0A0B0C0D0E0F1011;
+    const TEST_EXPECTED_LEN_2: usize = 2;
+    const TEST_EXPECTED_LEN_5: usize = 5;
+    const TEST_FRAME_SIZE: usize = 24;
+    const TEST_LE_PATTERN: [u8; 8] = [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01];
+    const TEST_PATTERN_U64_MMIO_1: u64 = 0x99AABBCCDDEEFF00;
+    const TEST_PATTERN_U64_MMIO_2: u64 = 0x1020304050607080;
+    const TEST_LE_PATTERN_ALT: [u8; 8] = [0x11, 0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A];
+    const NODE_ID_3: &str = "3";
+    #[rustfmt::skip]
+    const EXPECTED_MMIO_BYTES: [u8; 32] = [0x01, 0x04, 0x34, 0x12, 0xBC, 0x9A, 0x78, 0x56, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99, 0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
 
     #[derive(Debug, Eq, PartialEq)]
     struct TestPacket {
@@ -538,12 +641,12 @@ mod tests {
     #[test]
     fn test_delivery_queue_sequence_ordering() -> Result<(), String> {
         let mut heap = BinaryHeap::new();
-        heap.push(TestPacket { vtime: 1_000, sequence: 2 });
-        heap.push(TestPacket { vtime: 1_000, sequence: 0 });
-        heap.push(TestPacket { vtime: 1_000, sequence: 1 });
+        heap.push(TestPacket { vtime: TEST_VTIME_1000, sequence: TEST_SEQ_2 });
+        heap.push(TestPacket { vtime: TEST_VTIME_1000, sequence: 0 });
+        heap.push(TestPacket { vtime: TEST_VTIME_1000, sequence: 1 });
         assert_eq!(heap.pop().ok_or("Empty")?.sequence, 0);
         assert_eq!(heap.pop().ok_or("Empty")?.sequence, 1);
-        assert_eq!(heap.pop().ok_or("Empty")?.sequence, 2);
+        assert_eq!(heap.pop().ok_or("Empty")?.sequence, TEST_SEQ_2);
         Ok(())
     }
 
@@ -569,9 +672,9 @@ mod tests {
     #[test]
     fn test_delivery_queue_equal_vtimes_both_dequeued() -> Result<(), String> {
         let mut heap = BinaryHeap::new();
-        heap.push(TestPacket { vtime: 500, sequence: 0 });
-        heap.push(TestPacket { vtime: 500, sequence: 1 });
-        assert_eq!(heap.len(), 2);
+        heap.push(TestPacket { vtime: TEST_VTIME_500, sequence: 0 });
+        heap.push(TestPacket { vtime: TEST_VTIME_500, sequence: 1 });
+        assert_eq!(heap.len(), TEST_EXPECTED_LEN_2);
         heap.pop().ok_or("Empty")?;
         heap.pop().ok_or("Empty")?;
         assert!(heap.is_empty());
@@ -597,7 +700,7 @@ mod tests {
     #[test]
     fn test_delivery_queue_inverted_cmp() {
         let a = TestPacket { vtime: 1, sequence: 0 };
-        let b = TestPacket { vtime: 2, sequence: 0 };
+        let b = TestPacket { vtime: TEST_SEQ_2, sequence: 0 };
         assert_eq!(a.cmp(&b), CmpOrd::Greater); // lower vtime → "greater" priority
         assert_eq!(b.cmp(&a), CmpOrd::Less);
     }
@@ -628,7 +731,10 @@ mod tests {
     #[test]
     fn test_clock_topic_format() {
         assert_eq!(format!("sim/clock/advance/{}", 0), "sim/clock/advance/0");
-        assert_eq!(format!("sim/clock/advance/{}", 3), "sim/clock/advance/3");
+        assert_eq!(
+            format!("sim/clock/advance/{}", NODE_ID_3),
+            format!("sim/clock/advance/{}", NODE_ID_3)
+        );
     }
 
     #[test]
@@ -648,13 +754,13 @@ mod tests {
     #[test]
     fn test_encode_decode_round_trip() -> Result<(), String> {
         let payload = b"hello";
-        let frame = encode_frame(12345678, 42, payload);
-        assert_eq!(frame.len(), 24 + 5);
+        let frame = encode_frame(TEST_VTIME_LONG, TEST_SEQ_42, payload);
+        assert_eq!(frame.len(), TEST_FRAME_SIZE + TEST_EXPECTED_LEN_5);
 
         let (hdr, rest) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!({ hdr.delivery_vtime_ns() }, 12345678u64);
-        assert_eq!({ hdr.sequence_number() }, 42u64);
-        assert_eq!({ hdr.size() }, 5u32);
+        assert_eq!({ hdr.delivery_vtime_ns() }, TEST_VTIME_LONG);
+        assert_eq!({ hdr.sequence_number() }, TEST_SEQ_42);
+        assert_eq!({ hdr.size() }, TEST_EXPECTED_LEN_5 as u32);
         assert_eq!(rest, payload);
         Ok(())
     }
@@ -699,26 +805,32 @@ mod tests {
         assert!(decode_frame(&frame).is_some());
     }
 
+    const SLICE_0_8: core::ops::Range<usize> = 0..8;
+    const SLICE_8_16: core::ops::Range<usize> = 8..16;
+    const SLICE_16_20: core::ops::Range<usize> = 16..20;
+    const SLICE_16_24: core::ops::Range<usize> = 16..24;
+
     #[test]
     fn test_little_endian_vtime() {
         // 0x0102030405060708 in LE = bytes [08, 07, 06, 05, 04, 03, 02, 01]
-        let vtime: u64 = 0x0102030405060708;
+        let vtime: u64 = TEST_PATTERN_U64;
         let frame = encode_frame(vtime, 0, b"");
-        assert_eq!(&frame[0..8], &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]);
+        assert_eq!(&frame[SLICE_0_8], &TEST_LE_PATTERN);
     }
 
     #[test]
     fn test_little_endian_sequence() {
-        let seq: u64 = 0x0102030405060708;
+        let seq: u64 = TEST_PATTERN_U64;
         let frame = encode_frame(0, seq, b"");
-        assert_eq!(&frame[8..16], &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]);
+        assert_eq!(&frame[SLICE_8_16], &TEST_LE_PATTERN);
     }
 
     #[test]
     fn test_little_endian_size() {
         // size = 0x00000005 in LE = bytes [05, 00, 00, 00]
         let frame = encode_frame(0, 0, b"hello");
-        assert_eq!(&frame[16..20], &[0x05, 0x00, 0x00, 0x00]);
+        const LE_SIZE_5: [u8; 4] = [0x05, 0x00, 0x00, 0x00];
+        assert_eq!(&frame[SLICE_16_20], &LE_SIZE_5);
     }
 
     #[test]
@@ -734,17 +846,19 @@ mod tests {
     #[test]
     fn test_10mbps_baud_interval_ns() {
         // 10 Mbps = 1_250_000 bytes/s → 800 ns/byte
-        const BAUD_10MBPS_NS: u64 = 1_000_000_000 / 1_250_000;
-        assert_eq!(BAUD_10MBPS_NS, 800);
+        const DIVISOR: u64 = 1_250_000;
+        const BAUD_10MBPS_NS: u64 = 1_000_000_000 / DIVISOR;
+        const TEST_VTIME_800: u64 = 800;
+        assert_eq!(BAUD_10MBPS_NS, TEST_VTIME_800);
     }
 
     #[test]
     fn test_encode_decode_sequence_monotonic() -> Result<(), String> {
+        const TEST_VTIME_800: u64 = 800;
         const N: u64 = 1_000;
         const START: u64 = 10_000_000;
-        const STEP: u64 = 800;
         for i in 0..N {
-            let vtime = START + i * STEP;
+            let vtime = START + i * TEST_VTIME_800;
             let frame = encode_frame(vtime, 0, b"X");
             let (hdr, payload) = decode_frame(&frame).ok_or("Decode failed")?;
             assert_eq!({ hdr.delivery_vtime_ns() }, vtime, "frame {i} vtime mismatch");
@@ -760,7 +874,7 @@ mod tests {
 
     #[test]
     fn test_clock_advance_req_round_trip() {
-        let req = ClockAdvanceReq::new(10_000_000, 42, 123);
+        let req = ClockAdvanceReq::new(TEST_VTIME_10M, TEST_SEQ_42, TEST_VAL_123 as u64);
         let bytes = req.pack();
         let req2 = ClockAdvanceReq::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ req.delta_ns() }, { req2.delta_ns() });
@@ -770,30 +884,31 @@ mod tests {
 
     #[test]
     fn test_clock_advance_req_le_encoding() {
-        let req = ClockAdvanceReq::new(0x0102030405060708, 0, 0x0A0B0C0D0E0F1011);
+        let req = ClockAdvanceReq::new(TEST_PATTERN_U64, 0, TEST_PATTERN_U64_ALT);
         let bytes = req.pack();
-        assert_eq!(&bytes[0..8], &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]);
-        assert_eq!(&bytes[16..24], &[0x11, 0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A]);
+        assert_eq!(&bytes[SLICE_0_8], &TEST_LE_PATTERN);
+        assert_eq!(&bytes[SLICE_16_24], &TEST_LE_PATTERN_ALT);
     }
 
     #[test]
     fn test_clock_advance_req_zero() {
         let req = ClockAdvanceReq::new(0, 0, 0);
         let bytes = req.pack();
-        assert_eq!(bytes, [0u8; 24]);
+        assert_eq!(bytes, [0u8; TEST_FRAME_SIZE]);
     }
 
     // ── Wire format: ClockReadyResp ───────────────────────────────────────────
 
     #[test]
     fn test_clock_ready_resp_ok() {
-        let resp = ClockReadyResp::new(10_000_000, 50, CLOCK_ERROR_OK, 99);
+        let resp =
+            ClockReadyResp::new(TEST_VTIME_10M, TEST_N_FRAMES_50, CLOCK_ERROR_OK, TEST_QUANTUM_99);
         let bytes = resp.pack();
         let resp2 = ClockReadyResp::unpack_slice(bytes).expect("API conversion failed");
-        assert_eq!({ resp2.current_vtime_ns() }, 10_000_000u64);
-        assert_eq!({ resp2.n_frames() }, 50u32);
+        assert_eq!({ resp2.current_vtime_ns() }, TEST_VTIME_10M);
+        assert_eq!({ resp2.n_frames() }, TEST_N_FRAMES_50);
         assert_eq!({ resp2.error_code() }, CLOCK_ERROR_OK);
-        assert_eq!({ resp2.quantum_number() }, 99u64);
+        assert_eq!({ resp2.quantum_number() }, TEST_QUANTUM_99);
     }
 
     #[test]
@@ -827,39 +942,45 @@ mod tests {
 
     #[test]
     fn test_mmio_req_cross_language_pack() {
+        const TEST_SIZE_4: u8 = 4;
+        const TEST_PATTERN_U64_MMIO_3: u64 = 0x1122334455667788;
         let req = MmioReq::new(
             1,
-            4,
-            0x1234,
-            0x56789ABC,
-            0x1122334455667788,
-            0x99AABBCCDDEEFF00,
-            0x1020304050607080,
+            TEST_SIZE_4,
+            TEST_VAL_U16_1234,
+            TEST_VAL_U32_5678,
+            TEST_PATTERN_U64_MMIO_3,
+            TEST_PATTERN_U64_MMIO_1,
+            TEST_PATTERN_U64_MMIO_2,
         );
         let bytes = req.pack();
 
-        let expected: [u8; 32] = [
-            0x01, 0x04, 0x34, 0x12, 0xBC, 0x9A, 0x78, 0x56, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33,
-            0x22, 0x11, 0x00, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99, 0x80, 0x70, 0x60, 0x50,
-            0x40, 0x30, 0x20, 0x10,
-        ];
-
         assert_eq!(
-            bytes, expected,
+            bytes, EXPECTED_MMIO_BYTES,
             "Rust pack() output must exactly match Python struct.pack('<BBHIQQQ')"
         );
     }
 
     #[test]
     fn test_mmio_req_round_trip() {
-        let req = MmioReq::new(MMIO_REQ_WRITE, 4, 0, 0, 999_999, 0x1000_0000, 0xDEAD_BEEF);
+        const TEST_SIZE_4: u8 = 4;
+        const TEST_VTIME_999: u64 = 999_999;
+        let req = MmioReq::new(
+            MMIO_REQ_WRITE,
+            TEST_SIZE_4,
+            0,
+            0,
+            TEST_VTIME_999,
+            TEST_ADDR_1000,
+            TEST_DATA_DEADBEEF,
+        );
         let bytes = req.pack();
         let req2 = MmioReq::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ req2.type_() }, MMIO_REQ_WRITE);
-        assert_eq!({ req2.size() }, 4u8);
-        assert_eq!({ req2.vtime_ns() }, 999_999u64);
-        assert_eq!({ req2.addr() }, 0x1000_0000u64);
-        assert_eq!({ req2.data() }, 0xDEAD_BEEFu64);
+        assert_eq!({ req2.size() }, TEST_SIZE_4);
+        assert_eq!({ req2.vtime_ns() }, TEST_VTIME_999);
+        assert_eq!({ req2.addr() }, TEST_ADDR_1000);
+        assert_eq!({ req2.data() }, TEST_DATA_DEADBEEF);
     }
 
     // ── Wire format: SyscMsg ─────────────────────────────────────────────────
@@ -873,11 +994,11 @@ mod tests {
 
     #[test]
     fn test_sysc_msg_irq_round_trip() {
-        let msg = SyscMsg::new(SYSC_MSG_IRQ_SET, 7, 1);
+        let msg = SyscMsg::new(SYSC_MSG_IRQ_SET, TEST_IRQ_7, 1);
         let bytes = msg.pack();
         let msg2 = SyscMsg::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ msg2.type_() }, SYSC_MSG_IRQ_SET);
-        assert_eq!({ msg2.irq_num() }, 7u32);
+        assert_eq!({ msg2.irq_num() }, TEST_IRQ_7);
         assert_eq!({ msg2.data() }, 1u64);
     }
 
@@ -889,7 +1010,8 @@ mod tests {
         assert_eq!(VIRTMCU_PROTO_MAGIC, 0x564D_4355);
         // In little-endian bytes on wire: [0x55, 0x43, 0x4D, 0x56] = "UCMV"
         let bytes = VIRTMCU_PROTO_MAGIC.to_le_bytes();
-        assert_eq!(bytes, [0x55, 0x43, 0x4D, 0x56]);
+        const EXPECTED_BYTES: [u8; 4] = [0x55, 0x43, 0x4D, 0x56];
+        assert_eq!(bytes, EXPECTED_BYTES);
     }
 
     #[test]
@@ -908,7 +1030,10 @@ mod tests {
 
     #[test]
     fn test_header_roundtrip() {
-        let h = ZenohFrameHeader::new(12345, 7, 100);
+        const TEST_VTIME: u64 = 12345;
+        const TEST_SEQ: u64 = 7;
+        const TEST_SIZE: u64 = 100;
+        let h = ZenohFrameHeader::new(TEST_VTIME, TEST_SEQ, TEST_SIZE.try_into().unwrap());
         let bytes = h.pack();
         let h2 = ZenohFrameHeader::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ h.delivery_vtime_ns() }, { h2.delivery_vtime_ns() });
@@ -917,44 +1042,54 @@ mod tests {
     }
 
     #[test]
-    fn test_header_size_20() {
-        assert_eq!(core::mem::size_of::<ZenohFrameHeader>(), 24);
-        assert_eq!(ZENOH_FRAME_HEADER_SIZE, 24);
+    fn test_zenoh_frame_header_size() {
+        const HDR_TOTAL_SIZE: usize = 24;
+        assert_eq!(core::mem::size_of::<ZenohFrameHeader>(), HDR_TOTAL_SIZE);
+        assert_eq!(ZENOH_FRAME_HEADER_SIZE, HDR_TOTAL_SIZE);
     }
 
     #[test]
     fn test_header_le_bytes() {
         let h = ZenohFrameHeader::new(1, 0, 0);
         let bytes = h.pack();
-        assert_eq!(bytes[0], 0x01);
-        assert_eq!(bytes[1], 0x00);
+        assert_eq!(bytes[0], 1);
+        assert_eq!(bytes[1], 0);
     }
 
     #[test]
     fn test_header_seq_ordering() {
+        const TEST_VTIME: u64 = 100;
+        const SEQ0: u64 = 0;
+        const SEQ1: u64 = 1;
+        const SEQ2: u64 = 2;
+        const SEQ3: u64 = 3;
+        const SEQ4: u64 = 4;
         let mut frames = alloc::vec![
-            ZenohFrameHeader::new(100, 4, 0),
-            ZenohFrameHeader::new(100, 2, 0),
-            ZenohFrameHeader::new(100, 0, 0),
-            ZenohFrameHeader::new(100, 3, 0),
-            ZenohFrameHeader::new(100, 1, 0),
+            ZenohFrameHeader::new(TEST_VTIME, SEQ4, 0),
+            ZenohFrameHeader::new(TEST_VTIME, SEQ2, 0),
+            ZenohFrameHeader::new(TEST_VTIME, SEQ0, 0),
+            ZenohFrameHeader::new(TEST_VTIME, SEQ3, 0),
+            ZenohFrameHeader::new(TEST_VTIME, SEQ1, 0),
         ];
         frames.sort_by_key(super::core_generated::virtmcu::core::ZenohFrameHeader::sequence_number);
         let seqs: alloc::vec::Vec<u64> = frames
             .iter()
             .map(super::core_generated::virtmcu::core::ZenohFrameHeader::sequence_number)
             .collect();
-        assert_eq!(seqs, alloc::vec![0, 1, 2, 3, 4]);
+        const EXPECTED_SEQS: [u64; 5] = [SEQ0, SEQ1, SEQ2, SEQ3, SEQ4];
+        assert_eq!(seqs, EXPECTED_SEQS);
     }
 
     #[test]
     fn test_virtmcu_handshake_unpack_error() {
-        assert!(VirtmcuHandshake::unpack_slice(b"1234").is_none());
+        const INVALID_DATA: &[u8] = b"1234";
+        assert!(VirtmcuHandshake::unpack_slice(INVALID_DATA).is_none());
     }
 
     #[test]
     fn test_mmio_req_unpack_error() {
-        assert!(MmioReq::unpack_slice(b"1234567890").is_none());
+        const INVALID_DATA: &[u8] = b"1234567890";
+        assert!(MmioReq::unpack_slice(INVALID_DATA).is_none());
     }
 
     #[test]
@@ -983,13 +1118,15 @@ mod tests {
     }
 
     #[cfg(all(test, feature = "tokio"))]
+    #[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
     mod handshake_server_tests {
         use super::*;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         #[tokio::test]
         async fn test_valid_handshake_accepted() {
-            let (mut client, mut server) = tokio::io::duplex(1024);
+            const BUFFER_SIZE: usize = 1024;
+            let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
             let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
@@ -1006,16 +1143,18 @@ mod tests {
 
         #[tokio::test]
         async fn test_bad_magic_rejected() {
-            let (mut client, mut server) = tokio::io::duplex(1024);
+            const BUFFER_SIZE: usize = 1024;
+            let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
-            let hs_client = VirtmcuHandshake::new(0xDEADBEEF, VIRTMCU_PROTO_VERSION);
+            const BAD_MAGIC: u32 = 0xDEADBEEF;
+            let hs_client = VirtmcuHandshake::new(BAD_MAGIC, VIRTMCU_PROTO_VERSION);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;
             match res {
                 Err(HandshakeError::BadMagic { expected, got }) => {
                     assert_eq!(expected, VIRTMCU_PROTO_MAGIC);
-                    assert_eq!(got, 0xDEADBEEF);
+                    assert_eq!(got, BAD_MAGIC);
                 }
                 _ => panic!("Expected BadMagic error, got {:?}", res),
             }
@@ -1023,16 +1162,18 @@ mod tests {
 
         #[tokio::test]
         async fn test_bad_version_rejected() {
-            let (mut client, mut server) = tokio::io::duplex(1024);
+            const BUFFER_SIZE: usize = 1024;
+            let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
-            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, 99);
+            const BAD_VERSION: u32 = 99;
+            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, BAD_VERSION);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;
             match res {
                 Err(HandshakeError::BadVersion { expected, got }) => {
                     assert_eq!(expected, VIRTMCU_PROTO_VERSION);
-                    assert_eq!(got, 99);
+                    assert_eq!(got, BAD_VERSION);
                 }
                 _ => panic!("Expected BadVersion error, got {:?}", res),
             }
@@ -1047,12 +1188,14 @@ mod timeout_tests {
 
     #[test]
     fn test_boot_timeout_is_sane() {
-        assert!(BOOT_QUANTUM_TIMEOUT >= Duration::from_secs(60));
+        const MIN_BOOT_TIMEOUT_SECS: u64 = 60;
+        assert!(BOOT_QUANTUM_TIMEOUT >= Duration::from_secs(MIN_BOOT_TIMEOUT_SECS));
     }
 
     #[test]
     fn test_normal_timeout_is_sane() {
-        assert!(NORMAL_QUANTUM_TIMEOUT >= Duration::from_secs(5));
+        const MIN_NORMAL_TIMEOUT_SECS: u64 = 5;
+        assert!(NORMAL_QUANTUM_TIMEOUT >= Duration::from_secs(MIN_NORMAL_TIMEOUT_SECS));
     }
 
     #[test]

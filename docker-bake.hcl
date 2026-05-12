@@ -13,7 +13,6 @@ variable "MDBOOK_MERMAID_VERSION" {}
 variable "MDBOOK_PDF_VERSION" {}
 variable "DEBIAN_CODENAME" {}
 variable "NODE_VERSION" {}
-variable "PYTHON_VERSION" {}
 variable "ARM_TOOLCHAIN_VERSION" {}
 variable "QEMU_VERSION" {}
 variable "ZENOH_VERSION" {}
@@ -21,7 +20,6 @@ variable "CMAKE_VERSION" {}
 variable "RUST_VERSION" {}
 variable "FLATBUFFERS_VERSION" {}
 variable "FLATCC_VERSION" {}
-variable "UV_VERSION" {}
 variable "CARGO_BINSTALL_VERSION" {}
 
 # Architecture handling
@@ -81,7 +79,6 @@ target "_common" {
     MDBOOK_PDF_VERSION     = MDBOOK_PDF_VERSION
     DEBIAN_CODENAME       = DEBIAN_CODENAME
     NODE_VERSION          = NODE_VERSION
-    PYTHON_VERSION        = PYTHON_VERSION
     ARM_TOOLCHAIN_VERSION = ARM_TOOLCHAIN_VERSION
     QEMU_REF              = "v${QEMU_VERSION}"
     ZENOH_C_REF           = ZENOH_VERSION
@@ -89,7 +86,6 @@ target "_common" {
     RUST_VERSION          = RUST_VERSION
     FLATBUFFERS_VERSION   = FLATBUFFERS_VERSION
     FLATCC_VERSION        = FLATCC_VERSION
-    UV_VERSION            = UV_VERSION
     CARGO_BINSTALL_VERSION= CARGO_BINSTALL_VERSION
     USE_CCACHE            = USE_CCACHE
     VIRTMCU_USE_ASAN      = "${VIRTMCU_USE_ASAN}"
@@ -157,7 +153,10 @@ target "toolchain" {
 target "devenv" {
   inherits = ["_common"]
   target   = "devenv"
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}"
+  ]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
@@ -225,7 +224,10 @@ target "third-party-base" {
 target "ci" {
   inherits = ["_common"]
   target   = "ci"
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}"
+  ]
   cache-from = [
     # Frozen QEMU core — a cache hit here skips the 40-minute QEMU compile.
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-${ARCH}",
@@ -279,7 +281,10 @@ target "ci-asan" {
   args = {
     VIRTMCU_USE_ASAN = "1"
   }
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan"
+  ]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-asan-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_CI_IMAGE}-asan-${ARCH}",

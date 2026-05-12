@@ -22,7 +22,7 @@ The gateway to extensibility. Master the creation of dynamic shared objects (DSO
 Bridging ecosystem formats. Learn how to convert Antmicro Renode (`.repl`) files into the Flattened Device Trees (`.dtb`) used by VirtMCU.
 
 ### [Lesson 4: Emulation Automation](lesson4-emulation-automation/README.md)
-Orchestration at scale. Use Python and `pytest` to automate the execution, monitoring, and verification of your firmware.
+Orchestration at scale. Use Python and `virtmcu-test-runner` to automate the execution, monitoring, and verification of your firmware.
 
 ### [Lesson 18: MMIO Lifecycle](lesson18-mmio-lifecycle/README.md)
 Follow the journey of a single memory access from the guest CPU, through the TCG, and into your custom Rust peripheral model.

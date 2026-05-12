@@ -1,0 +1,19 @@
+[package]
+name = "native-integration"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+virtmcu-test-runner = { path = "../../tools/virtmcu-test-runner" }
+tokio = { version = "1.37.0", features = ["full"] }
+anyhow = "1.0"
+tracing-subscriber = "0.3"
+serde_json = "1.0.149"
+tracing = "0.1.44"
+libc = "0.2.186"
+virtmcu-api = { version = "0.1.0", path = "../../hw/rust/common/virtmcu-api" }
+flatbuffers.workspace = true
+
+[build-dependencies]
+stress_adapter = { path = "../../tools/stress_adapter", artifact = "bin" }

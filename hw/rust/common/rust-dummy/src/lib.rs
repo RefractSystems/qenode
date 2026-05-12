@@ -20,6 +20,13 @@ use virtmcu_qom::qom::Property;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::{declare_device_type, define_prop_uint64, device_class};
 
+const DUMMY_REG_8: u64 = 8;
+const DUMMY_VAL_DEADBEEF: u64 = 0xdead_beef;
+const DUMMY_VAL_FACEBABE: u64 = 0xface_babe;
+const DUMMY_MAX_ACCESS: u32 = 8;
+const DUMMY_MMIO_SIZE: u64 = 0x1000;
+const DUMMY_PROP_COUNT: usize = 2;
+
 /// RustDummy peripheral structure
 #[repr(C)]
 pub struct RustDummyQEMU {
@@ -37,8 +44,8 @@ unsafe extern "C" fn rust_dummy_read(_opaque: *mut c_void, addr: u64, _size: c_u
     let s = &*(_opaque as *mut RustDummyQEMU);
 
     match addr {
-        0 => 0xdead_beef,
-        8 => 0xface_babe,
+        0 => DUMMY_VAL_DEADBEEF,
+        DUMMY_REG_8 => DUMMY_VAL_FACEBABE,
         _ => {
             if s.debug {
                 virtmcu_qom::sim_warn!("rust_dummy_read: unhandled offset 0x{:x}", addr);
@@ -64,14 +71,14 @@ static RUST_DUMMY_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: DUMMY_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
         accepts: core::ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: 8,
+        max_access_size: DUMMY_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -86,12 +93,12 @@ unsafe extern "C" fn rust_dummy_realize(dev: *mut c_void, _errp: *mut *mut c_voi
         &raw const RUST_DUMMY_OPS,
         core::ptr::from_mut(s) as *mut c_void,
         c"rust-dummy".as_ptr(),
-        0x1000,
+        DUMMY_MMIO_SIZE,
     );
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.iomem);
 }
 
-static RUST_DUMMY_PROPERTIES: [Property; 2] = [
+static RUST_DUMMY_PROPERTIES: [Property; DUMMY_PROP_COUNT] = [
     define_prop_uint64!(c"base-addr".as_ptr(), RustDummyQEMU, base_addr, u64::MAX),
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), RustDummyQEMU, debug, false),
 ];
@@ -100,7 +107,11 @@ unsafe extern "C" fn rust_dummy_class_init(klass: *mut ObjectClass, _data: *cons
     let dc = device_class!(klass);
     (*dc).realize = Some(rust_dummy_realize);
     (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(dc, RUST_DUMMY_PROPERTIES.as_ptr(), 2);
+    virtmcu_qom::qdev::device_class_set_props_n(
+        dc,
+        RUST_DUMMY_PROPERTIES.as_ptr(),
+        DUMMY_PROP_COUNT,
+    );
 }
 
 #[used]
