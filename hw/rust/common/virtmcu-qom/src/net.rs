@@ -288,21 +288,20 @@ extern "C" {
     >;
 }
 
-const NETDEV_TYPE_OFFSET: usize = 8;
-const NETDEV_U_OFFSET: usize = 16;
-
-const OPTIONS_TRANSPORT_OFFSET: usize = 8;
-const OPTIONS_ROUTER_OFFSET: usize = 16;
-const OPTIONS_TOPIC_OFFSET: usize = 24;
-const OPTIONS_HAS_MAX_BACKLOG_OFFSET: usize = 32;
-const OPTIONS_MAX_BACKLOG_OFFSET: usize = 40;
-const OPTIONS_SIZE: usize = 48;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const NET_CLIENT_INFO_RECEIVE_OFFSET: usize = 16;
+    const NETDEV_TYPE_OFFSET: usize = 8;
+    const NETDEV_U_OFFSET: usize = 16;
+
+    const OPTIONS_TRANSPORT_OFFSET: usize = 8;
+    const OPTIONS_ROUTER_OFFSET: usize = 16;
+    const OPTIONS_TOPIC_OFFSET: usize = 24;
+    const OPTIONS_HAS_MAX_BACKLOG_OFFSET: usize = 32;
+    const OPTIONS_MAX_BACKLOG_OFFSET: usize = 40;
+    const OPTIONS_SIZE: usize = 48;
 
     #[test]
     fn test_net_client_layout() {

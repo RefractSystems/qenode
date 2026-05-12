@@ -134,9 +134,7 @@ pub struct ZenohClockResponder {
 
 const CLOCK_RESP_PAYLOAD_SIZE: usize = 16;
 const DRAIN_WAIT_TIMEOUT_MS: u64 = 100;
-const CLOCK_BARRIER_TIMEOUT_MS: u64 = 10;
 const CLOCK_EXECUTING_TIMEOUT_MS: u64 = 100;
-const CLOCK_REPORT_INTERVAL_SECS: u64 = 1;
 const CLOCK_DEFAULT_WATCHDOG_THRESHOLD: u64 = 3;
 
 impl ClockSyncResponder for ZenohClockResponder {
@@ -326,16 +324,16 @@ impl Drop for ClockManager {
 static ACTIVE_HOOKS: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 
 extern "C" {
-    fn virtmcu_kick_first_cpu_for_quantum();
     fn virtmcu_vcpu_should_yield() -> bool;
 }
 
 extern "C" fn clock_quantum_timer_cb(_opaque: *mut c_void) {
     // SAFETY: called from a QEMU timer callback; BQL is held by the QEMU main loop.
-    unsafe { virtmcu_kick_first_cpu_for_quantum() };
+    // Kick all CPUs to ensure they exit their TCG loops and reach the boundary sync point.
+    unsafe { virtmcu_qom::cpu::virtmcu_cpu_exit_all() };
 }
 
-extern "C" fn clock_cpu_tcg_hook(_cpu: *mut CPUState) {
+extern "C" fn clock_cpu_tcg_hook(cpu: *mut CPUState) {
     let _guard = ActiveHooksGuard::new();
     let mut clocks = Vec::new();
     {
@@ -351,7 +349,7 @@ extern "C" fn clock_cpu_tcg_hook(_cpu: *mut CPUState) {
         if !s_ptr.is_null() {
             let s = unsafe { &mut *s_ptr };
             if !s.rust_state.is_null() {
-                clock_quantum_timer_cb(s as *mut _ as *mut c_void);
+                clock_cpu_halt_cb_internal(s, cpu, false);
             }
         }
     }
@@ -416,7 +414,7 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     virtmcu_qom::telemetry::update_global_vtime(u64::try_from(now).expect("vtime is negative"));
 
-    if now >= s.next_quantum_ns {
+    if now >= s.next_quantum_ns || halted {
         if s.rust_state.is_null() {
             return;
         }
@@ -689,7 +687,7 @@ fn wait_for_ready_and_execute(
     backend.vcpu_halt_count.store(0, Ordering::SeqCst);
 
     {
-        let mut guard = backend.mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let current = QuantumState::from(backend.state.load(Ordering::Acquire));
         if current == QuantumState::Waiting {
             backend.state.store(QuantumState::Executing as u8, Ordering::SeqCst);
@@ -737,9 +735,9 @@ fn report_contention(backend: &VirtmcuClockBackend, last_report: &mut Instant) {
 
     if iterations > 0 || no_bql > 0 {
         const CONTENTION_PERCENT_SCALE: f64 = 100.0;
+        const CONTENTION_PRECISION: usize = 2;
         let contention =
             (total_wait as f64 / (elapsed * 1_000_000_000.0)) * CONTENTION_PERCENT_SCALE;
-        const CONTENTION_PRECISION: usize = 2;
         virtmcu_qom::sim_info!(
             "{:.*}% (samples: {}, no_bql: {})",
             CONTENTION_PRECISION,
@@ -839,7 +837,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     }
 
     {
-        let mut lock = CLOCK_REGISTRY.lock().unwrap();
+        let mut lock = CLOCK_REGISTRY.lock().expect("Registry lock failed");
         let map = lock.get_or_insert_with(HashMap::new);
         map.insert(s.node_id, ClockPtr(s));
     }
@@ -853,7 +851,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 unsafe extern "C" fn clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut VirtmcuClock);
     {
-        let mut lock = CLOCK_REGISTRY.lock().unwrap();
+        let mut lock = CLOCK_REGISTRY.lock().expect("Registry lock failed");
         if let Some(map) = &mut *lock {
             map.remove(&s.node_id);
         }
@@ -1004,7 +1002,7 @@ fn clock_init_internal(
         start_transport.as_ref(),
         &start_topic,
         Arc::new(AtomicU64::new(0)),
-        Box::new(move |_| {
+        Box::new(move |_topic: &str, _payload: &[u8]| {
             let _ = start_tx.send(());
         }),
     )

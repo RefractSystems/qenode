@@ -67,9 +67,6 @@ const FLEXRAY_WORD_SIZE: usize = 4;
 const CMD_COLDSTART: u32 = 0x01;
 const CCSV_NORMAL_ACTIVE: u32 = 0x2;
 const FLEXRAY_MMIO_SIZE: u64 = 0x1000;
-const MSG_RAM_HEADERS_SIZE: usize = 0x4000;
-const FLEXRAY_POLL_INTERVAL_MS: u64 = 100;
-const FLEXRAY_DEFAULT_NODE_ID: u32 = 0xFFFF_FFFF;
 const FLEXRAY_VRC_INITIAL: u32 = 0x00000001;
 const FLEXRAY_RX_QUEUE_SIZE: usize = 100;
 const FLEXRAY_SLOT_SIZE: usize = 64;
@@ -403,7 +400,9 @@ unsafe extern "C" fn flexray_write(opaque: *mut c_void, addr: u64, data: u64, _s
                     let word_offset = offset + i * FLEXRAY_WORD_SIZE;
                     if word_offset + FLEXRAY_WORD_SIZE <= FLEXRAY_MSG_RAM_DATA_SIZE {
                         let bytes = &s.msg_ram_data[word_offset..word_offset + FLEXRAY_WORD_SIZE];
-                        s.ords[i] = u32::from_le_bytes(bytes.try_into().unwrap());
+                        s.ords[i] = u32::from_le_bytes(
+                            bytes.try_into().expect("FlexRay word is always four bytes"),
+                        );
                     }
                 }
             }
@@ -432,14 +431,14 @@ static FLEXRAY_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; OPS_PADDING_4],
     valid: MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: FLEXRAY_WORD_SIZE as u8,
+        max_access_size: FLEXRAY_WORD_SIZE as u32,
         unaligned: false,
         _padding: [0; OPS_PADDING_7],
         accepts: ptr::null(),
     },
     impl_: MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: FLEXRAY_WORD_SIZE as u8,
+        max_access_size: FLEXRAY_WORD_SIZE as u32,
         unaligned: false,
         _padding: [0; OPS_PADDING_7],
     },
@@ -621,7 +620,7 @@ pub fn flexray_init_internal(
     let sub_callback = {
         let tx = tx.clone();
         let rx_timer_clone = Arc::clone(&rx_timer_clone);
-        move |payload: &[u8]| {
+        move |_topic: &str, payload: &[u8]| {
             virtmcu_qom::sim_debug!("FlexRay RX: received {} bytes", payload.len());
             let frame = flatbuffers::root::<FlexRayFrame>(payload)
                 .expect("flexray logic assumption failed");

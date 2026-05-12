@@ -24,9 +24,9 @@ pub async fn run_sync_versions() -> Result<()> {
     let versions = get_build_deps();
 
     if let Some(zenoh_ver) = versions.get("ZENOH_VERSION") {
+        let re = regex::Regex::new(r#"zenoh = "[^"]+""#).expect("valid regex");
         for cargo_path in ["tools/deterministic_coordinator/Cargo.toml", "Cargo.toml"] {
             if let Ok(content) = std::fs::read_to_string(cargo_path) {
-                let re = regex::Regex::new(r#"zenoh = "[^"]+""#).unwrap();
                 let new_content = re.replace_all(&content, format!(r#"zenoh = "{}""#, zenoh_ver));
                 std::fs::write(cargo_path, new_content.to_string())?;
                 info!("Updated {} to zenoh {}", cargo_path, zenoh_ver);
@@ -113,6 +113,58 @@ pub async fn run_bootstrap() -> Result<()> {
     if qemu_dir.exists() {
         configure_qemu(&qemu_dir).await?;
     }
+
+    let jobs = std::thread::available_parallelism()?.get().to_string();
+
+    // 6. Build Zenoh-C
+    info!("  -> Building Zenoh-C...");
+    let use_asan = std::env::var("VIRTMCU_USE_ASAN").unwrap_or_else(|_| "0".to_string()) == "1";
+    let zenoh_build_dir = if use_asan {
+        zenoh_c_dir.join("build-asan")
+    } else {
+        zenoh_c_dir.join("build-release")
+    };
+    Command::new("cmake")
+        .args(["--build", zenoh_build_dir.to_str().unwrap(), "-j", &jobs])
+        .status()?;
+    Command::new("cmake")
+        .args(["--install", zenoh_build_dir.to_str().unwrap()])
+        .status()?;
+
+    // 7. Build FlatCC
+    info!("  -> Building FlatCC...");
+    let flatcc_build_dir = flatcc_dir.join("build");
+    Command::new("cmake")
+        .args([
+            "--build",
+            flatcc_build_dir.to_str().unwrap(),
+            "-j",
+            &jobs,
+            "--target",
+            "install",
+        ])
+        .status()?;
+
+    // 8. Build QEMU
+    info!("  -> Building QEMU...");
+    let use_tsan = std::env::var("VIRTMCU_USE_TSAN").unwrap_or_else(|_| "0".to_string()) == "1";
+    let build_suffix = if use_asan {
+        "-asan"
+    } else if use_tsan {
+        "-tsan"
+    } else {
+        ""
+    };
+    let qemu_build_dir = qemu_dir.join(format!("build-virtmcu{}", build_suffix));
+
+    Command::new("make")
+        .current_dir(&qemu_build_dir)
+        .args(["-j", &jobs])
+        .status()?;
+    Command::new("make")
+        .current_dir(&qemu_build_dir)
+        .args(["install"])
+        .status()?;
 
     Ok(())
 }
@@ -203,14 +255,7 @@ async fn configure_qemu(qemu_dir: &Path) -> Result<()> {
 
     std::fs::create_dir_all(&build_dir)?;
 
-    let arch = std::env::consts::ARCH;
-    let qemu_host_arch = match arch {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        _ => arch,
-    };
-
-    let target_list = format!("{}-softmmu,riscv32-softmmu,riscv64-softmmu", qemu_host_arch);
+    let target_list = "arm-softmmu,aarch64-softmmu,riscv32-softmmu,riscv64-softmmu";
 
     info!("==> Configuring QEMU in {}...", build_dir.display());
 
@@ -394,6 +439,10 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
             .args(["am", "--abort"])
             .status();
 
+        // Forcefully remove rebase directories if they persist
+        let _ = std::fs::remove_dir_all(qemu_dir.join(".git/rebase-apply"));
+        let _ = std::fs::remove_dir_all(qemu_dir.join(".git/rebase-merge"));
+
         let deps = get_build_deps();
         let qemu_ver = deps
             .get("QEMU_VERSION")
@@ -429,19 +478,55 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
     }
 
     // 2. Apply patch series
-    let mbx = workspace_root.join("patches/arm-generic-fdt-v3.mbx");
-    if mbx.exists() {
-        info!("  -> Applying arm-generic-fdt-v3.mbx...");
-        let status = Command::new("git")
-            .current_dir(qemu_dir)
-            .args(["am", "--3way"])
-            .arg(&mbx)
-            .status()?;
-        if !status.success() {
-            return Err(anyhow!(
-                "Failed to apply arm-generic-fdt-v3.mbx. Manual intervention required in {}.",
-                qemu_dir.display()
-            ));
+    let patches = [
+        "arm-generic-fdt-v3.mbx",
+        "qemu-module-crash-fix.patch",
+        "qemu-multiple-halt-hooks.patch",
+    ];
+
+    for patch_name in patches {
+        let patch_path = workspace_root.join("patches").join(patch_name);
+        if patch_path.exists() {
+            info!("  -> Applying {}...", patch_name);
+            let status = Command::new("git")
+                .current_dir(qemu_dir)
+                .args(["am", "--3way"])
+                .arg(&patch_path)
+                .status()?;
+
+            if !status.success() {
+                warn!("git am failed for {}, attempting git apply...", patch_name);
+                let _ = Command::new("git")
+                    .current_dir(qemu_dir)
+                    .args(["am", "--abort"])
+                    .status();
+
+                let apply_status = Command::new("git")
+                    .current_dir(qemu_dir)
+                    .args(["apply"])
+                    .arg(&patch_path)
+                    .status()?;
+
+                if !apply_status.success() {
+                    return Err(anyhow!(
+                        "Failed to apply patch {}. Manual intervention required in {}.",
+                        patch_name,
+                        qemu_dir.display()
+                    ));
+                }
+
+                // If git apply succeeded, we should commit it to keep the repo clean for the next patch
+                Command::new("git")
+                    .current_dir(qemu_dir)
+                    .args(["add", "."])
+                    .status()?;
+                Command::new("git")
+                    .current_dir(qemu_dir)
+                    .args(["commit", "-m", &format!("Manually applied {}", patch_name)])
+                    .status()?;
+            }
+        } else {
+            warn!("Patch file {} not found in patches/", patch_name);
         }
     }
 
@@ -452,7 +537,26 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
         "mc->minimum_page_bits = 12;\n\n    /* virtmcu: allow all SysBus devices via -device; arm-generic-fdt loads devices from DTB at runtime */\n    machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\");",
     )?;
 
-    // 4. Meson subdir
+    // 4. Link virtmcu hw and Cargo manifest
+    let qemu_hw_virtmcu = qemu_dir.join("hw/virtmcu");
+    if !qemu_hw_virtmcu.exists() {
+        info!("  -> Linking virtmcu/hw to qemu/hw/virtmcu...");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(workspace_root.join("hw"), &qemu_hw_virtmcu)?;
+    }
+
+    let qemu_hw_cargo_toml = qemu_dir.join("hw/Cargo.toml");
+    if !qemu_hw_cargo_toml.exists() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(workspace_root.join("Cargo.toml"), &qemu_hw_cargo_toml)?;
+    }
+    let qemu_hw_cargo_lock = qemu_dir.join("hw/Cargo.lock");
+    if !qemu_hw_cargo_lock.exists() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(workspace_root.join("Cargo.lock"), &qemu_hw_cargo_lock)?;
+    }
+
+    // 5. Meson subdir
     let hw_meson = qemu_dir.join("hw/meson.build");
     let content = std::fs::read_to_string(&hw_meson)?;
     if !content.contains("subdir('virtmcu')") {
@@ -467,6 +571,7 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
 
     // Migrated logic
     apply_zenoh_hooks(qemu_dir)?;
+    apply_virtmcu_hooks_impl(qemu_dir)?;
     apply_zenoh_qapi(qemu_dir)?;
     apply_zenoh_netdev(qemu_dir)?;
     apply_zenoh_chardev(qemu_dir)?;
@@ -495,6 +600,68 @@ fn patch_c_file(path: &Path, marker: &str, replacement: &str) -> Result<()> {
     } else {
         warn!("  marker not found in {}", path.display());
     }
+    Ok(())
+}
+
+fn apply_virtmcu_hooks_impl(qemu: &Path) -> Result<()> {
+    info!("  -> Injecting virtmcu hooks implementation...");
+
+    let hooks_c = qemu.join("system/virtmcu-hooks.c");
+    let hooks_c_content = r#"/* Generated by virtmcu-cli */
+#include "qemu/osdep.h"
+#include "qemu/main-loop.h"
+#include "virtmcu/hooks.h"
+#include "system/cpus.h"
+
+VIRTMCU_EXPORT bool virtmcu_is_bql_locked(void) {
+    return bql_locked();
+}
+
+VIRTMCU_EXPORT void virtmcu_safe_bql_lock(void) {
+    if (!bql_locked()) {
+        bql_lock();
+    }
+}
+
+VIRTMCU_EXPORT void virtmcu_safe_bql_unlock(void) {
+    if (bql_locked()) {
+        bql_unlock();
+    }
+}
+
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_lock(void) {
+    bql_lock();
+}
+
+VIRTMCU_EXPORT void virtmcu_safe_bql_force_unlock(void) {
+    bql_unlock();
+}
+
+VIRTMCU_EXPORT void virtmcu_kick_first_cpu_for_quantum(void) {
+    CPUState *cpu = first_cpu;
+    if (cpu) {
+        cpu_exit(cpu);
+    }
+}
+
+VIRTMCU_EXPORT bool virtmcu_vcpu_should_yield(void) {
+    return false; // Default implementation
+}
+"#;
+    std::fs::write(&hooks_c, hooks_c_content)?;
+
+    let meson_build = qemu.join("system/meson.build");
+    if meson_build.exists() {
+        let content = std::fs::read_to_string(&meson_build)?;
+        if !content.contains("'virtmcu-hooks.c'") {
+            info!("  -> Injecting virtmcu-hooks.c into system/meson.build...");
+            std::fs::write(
+                &meson_build,
+                content.replace("'cpus.c',", "'cpus.c',\n  'virtmcu-hooks.c',"),
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -631,6 +798,18 @@ fn apply_zenoh_qapi(qemu: &Path) -> Result<()> {
 
     // 2. char.json
     if char_json.exists() {
+        patch_c_file(
+            &char_json,
+            "# @ringbuf: memory ring buffer (since 1.6)",
+            "# @ringbuf: memory ring buffer (since 1.6)\n#\n# @virtmcu: Virtual clock chardev backend (since 11.0)",
+        )?;
+
+        patch_c_file(
+            &char_json,
+            "'ringbuf',",
+            "'ringbuf',\n            'virtmcu',",
+        )?;
+
         let chardev_structs = r#"
 ##
 # @ChardevVirtmcuOptions:

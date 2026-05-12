@@ -33,7 +33,7 @@ pub struct QemuInfoSystem {
 }
 
 #[repr(C)]
-// virtmcu-allow: clippy::enum_variant_names reasoning="Plugin C API"
+#[allow(clippy::enum_variant_names, dead_code)] // virtmcu-allow: allow reasoning="Plugin C API, variants constructed by QEMU"
 pub enum QemuPluginCbFlags {
     NoRegs = 0,
     RRegs = 1,
@@ -45,6 +45,9 @@ pub type QemuPluginVcpuUdataCb = unsafe extern "C" fn(vcpu_index: c_uint, userda
 pub type QemuPluginAtexitCb = unsafe extern "C" fn(id: QemuPluginId, userdata: *mut c_void);
 
 extern "C" {
+    /// Write a message through QEMU's own logging subsystem.
+    /// Safe to call from `qemu_plugin_install` before any subscriber is initialized.
+    pub fn qemu_plugin_outs(string: *const c_char);
     pub fn qemu_plugin_register_vcpu_tb_trans_cb(id: QemuPluginId, cb: QemuPluginVcpuTbTransCb);
     pub fn qemu_plugin_register_atexit_cb(
         id: QemuPluginId,

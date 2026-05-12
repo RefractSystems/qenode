@@ -8,17 +8,9 @@
         clippy::panic_in_result_fn
     )
 )]
-#![cfg_attr(
-    test,
-    allow(
-        clippy::expect_used,
-        clippy::unwrap_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn
-    )
-)]
-#![allow(missing_docs)]
+#![deny(missing_docs)]
+#![doc = "Zenoh data transport implementation for virtmcu."]
+
 extern crate alloc;
 
 use alloc::format;
@@ -33,6 +25,7 @@ use zenoh::pubsub::Subscriber;
 use zenoh::Config;
 use zenoh::{Session, Wait};
 
+/// Zenoh publisher abstractions.
 pub mod publisher;
 pub use publisher::{SafePublisher, SafeSessionPublisher};
 
@@ -76,7 +69,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
             .session
             .declare_subscriber(topic)
             .callback(move |sample| {
-                callback(sample.payload().to_bytes().as_ref());
+                callback(sample.key_expr().as_str(), sample.payload().to_bytes().as_ref());
             })
             .wait()
             .map_err(|e| e.to_string())?;

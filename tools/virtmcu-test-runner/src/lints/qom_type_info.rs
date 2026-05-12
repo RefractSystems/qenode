@@ -24,6 +24,11 @@ impl Lint for QomTypeInfoLint {
             .add_custom_ignore_filename(".geminiignore")
             .build();
 
+        let type_info_re =
+            regex::Regex::new(r"(?s)static\s+\w+:\s*TypeInfo\s*=\s*TypeInfo\s*\{(.*?)\};").unwrap();
+        let parent_re = regex::Regex::new(r"parent:\s*([^,]+),").unwrap();
+        let class_size_re = regex::Regex::new(r"class_size:\s*([^,]+),").unwrap();
+
         for result in walker {
             let entry = match result {
                 Ok(e) => e,
@@ -40,18 +45,8 @@ impl Lint for QomTypeInfoLint {
                 Err(_) => continue,
             };
 
-            // Use simple regex for TypeInfo blocks for now, matching the Python logic but in Rust
-            // because full syn parsing of arbitrary initializers can be complex.
-            let type_info_re =
-                regex::Regex::new(r"(?s)static\s+\w+:\s*TypeInfo\s*=\s*TypeInfo\s*\{(.*?)\};")
-                    .unwrap();
-
             for match_ in type_info_re.captures_iter(&content) {
                 let inner_content = &match_[1];
-
-                let parent_re = regex::Regex::new(r"parent:\s*([^,]+),").unwrap();
-                #[allow(clippy::regex_creation_in_loops)]
-                let class_size_re = regex::Regex::new(r"class_size:\\s*([^,]+),").unwrap();
 
                 let parent = parent_re
                     .captures(inner_content)

@@ -53,10 +53,19 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         return;
     }
 
+    let canon_path = unsafe {
+        let path_ptr =
+            virtmcu_qom::qom::object_get_canonical_path(dev as *mut virtmcu_qom::qom::Object);
+        let path = core::ffi::CStr::from_ptr(path_ptr).to_string_lossy().into_owned();
+        virtmcu_qom::qom::g_free(path_ptr as *mut core::ffi::c_void);
+        path
+    };
+
     virtmcu_qom::sim_info!(
-        "hub_realize started for node={}, router={:?}",
+        "hub_realize started for node={}, router={:?}, path={}",
         s.node_id,
-        if s.router.is_null() { "null" } else { "non-null" }
+        if s.router.is_null() { "null" } else { "non-null" },
+        canon_path
     );
 
     let router_str = if s.router.is_null() { ptr::null() } else { s.router as *const c_char };

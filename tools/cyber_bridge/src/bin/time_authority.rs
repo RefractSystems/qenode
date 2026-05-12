@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use cyber_bridge::{
     physics::{NoOpPhysics, PhysicsStep, SharedMemPhysics},
-    ZenohTimeAuthorityTransport,
+    ZenohActuatorSink, ZenohTimeAuthorityTransport,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,6 +43,10 @@ struct Args {
     #[arg(long)]
     connect: Option<String>,
 
+    /// Zenoh endpoint for data (sensors/actuators) when using Unix transport
+    #[arg(long)]
+    data_connect: Option<String>,
+
     /// Physics implementation
     #[arg(long, value_enum, default_value_t = PhysicsType::Noop)]
     physics: PhysicsType,
@@ -58,49 +62,93 @@ struct Args {
     /// Per-quantum timeout in milliseconds
     #[arg(long, default_value_t = 5000)]
     timeout_ms: u64,
+
+    /// Actuator topic prefix to subscribe
+    #[arg(long, default_value = "firmware/control")]
+    topic_prefix: String,
+
+    /// Sensor topic prefix to publish
+    #[arg(long, default_value = "sim/sensor")]
+    sensor_prefix: String,
+}
+
+async fn open_zenoh_session(connect: Option<&String>) -> Result<Arc<zenoh::Session>> {
+    let mut config = virtmcu_zenoh_config::client_config();
+    if let Some(connect) = connect {
+        let json_connect = if connect.starts_with('[') && connect.ends_with(']') {
+            connect.clone()
+        } else {
+            format!("[\"{connect}\"]")
+        };
+        config
+            .insert_json5("connect/endpoints", &json_connect)
+            .map_err(|e| anyhow!("Zenoh config error: {e}"))?;
+    }
+    let session = zenoh::open(config)
+        .wait()
+        .map_err(|e| anyhow!("Zenoh open failed: {e}"))?;
+    Ok(Arc::new(session))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    #[derive(Debug)]
+    struct DummyVTimeProvider;
+    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+        fn current_vtime_ns(&self) -> u64 {
+            0
+        }
+    }
+    let _telemetry = virtmcu_observability::init_telemetry(
+        "virtmcu-time-authority",
+        std::sync::Arc::new(DummyVTimeProvider),
+    );
     let args = Args::parse();
+
+    let mut zenoh_session: Option<Arc<zenoh::Session>> = None;
 
     let transport: Box<dyn TimeAuthorityTransport> = match args.transport {
         TransportType::Zenoh => {
-            let mut config = virtmcu_zenoh_config::client_config();
-            if let Some(connect) = &args.connect {
-                let json_connect = if connect.starts_with('[') && connect.ends_with(']') {
-                    connect.clone()
-                } else {
-                    format!("[\"{connect}\"]")
-                };
-                config
-                    .insert_json5("connect/endpoints", &json_connect)
-                    .map_err(|e| anyhow!("Zenoh config error: {e}"))?;
-            }
-            let session = zenoh::open(config)
-                .wait()
-                .map_err(|e| anyhow!("Zenoh open failed: {e}"))?;
-            Box::new(ZenohTimeAuthorityTransport::new(
-                Arc::new(session),
-                args.node_id,
-            ))
+            let session = open_zenoh_session(args.connect.as_ref()).await?;
+            zenoh_session = Some(Arc::clone(&session));
+            Box::new(ZenohTimeAuthorityTransport::new(session, args.node_id))
         }
         TransportType::Unix => {
             let path = args
                 .connect
+                .as_ref()
                 .ok_or_else(|| anyhow!("--connect (path) required for Unix transport"))?;
             Box::new(UnixSocketTimeAuthorityTransport::new(path)?)
         }
     };
 
+    // If we don't have a zenoh session yet but need one for data
+    if zenoh_session.is_none()
+        && (args.data_connect.is_some() || matches!(args.physics, PhysicsType::Shm))
+    {
+        zenoh_session = Some(open_zenoh_session(args.data_connect.as_ref()).await?);
+    }
+
+    let actuator_sink = if let Some(session) = &zenoh_session {
+        Some(ZenohActuatorSink::new(session, &args.topic_prefix, args.node_id).await?)
+    } else {
+        None
+    };
+
     let mut physics: Box<dyn PhysicsStep> = match args.physics {
         PhysicsType::Noop => Box::new(NoOpPhysics),
-        PhysicsType::Shm => Box::new(SharedMemPhysics::new(
-            args.node_id,
-            args.n_sensors,
-            args.n_actuators,
-        )?),
+        PhysicsType::Shm => {
+            let session = zenoh_session
+                .ok_or_else(|| anyhow!("Zenoh session required for SHM physics (sensors)"))?;
+            Box::new(SharedMemPhysics::new(
+                args.node_id,
+                args.n_sensors,
+                args.n_actuators,
+                session,
+                args.sensor_prefix.clone(),
+                args.timeout_ms,
+            )?)
+        }
     };
 
     let mut quantum_number: u64 = 0;
@@ -128,7 +176,11 @@ async fn main() -> Result<()> {
             ));
         }
 
-        physics.step(args.delta_ns, &resp)?;
+        let actuators = actuator_sink
+            .as_ref()
+            .map(|s| s.drain())
+            .unwrap_or_default();
+        physics.step(args.delta_ns, &actuators, &resp)?;
 
         quantum_number += 1;
         absolute_vtime_ns += args.delta_ns;

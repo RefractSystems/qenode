@@ -442,14 +442,14 @@ mod tests {
             timestamp: TEST_TS_INT,
             vector: TEST_VEC_INT,
             line: TEST_LINE_7,
-            val: TEST_VAL_1,
+            val: u8::try_from(TEST_VAL_1).unwrap(),
         }
         .to_be();
 
         let pkt_ptr = &pkt as *const RpPktInterrupt as *const u8;
         unsafe {
             let n = core::mem::size_of::<RpPktInterrupt>();
-            ptr::copy_nonoverlapping(hdr_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
+            ptr::copy_nonoverlapping(pkt_ptr, buf.as_mut_ptr().add(1), n); // virtmcu-allow: copy reasoning="test"
         }
 
         let misaligned_ptr = unsafe { buf.as_ptr().add(1) } as *const RpPktInterrupt;
@@ -468,7 +468,7 @@ mod tests {
 
         assert_eq!(timestamp, TEST_TS_INT);
         assert_eq!(line, TEST_LINE_7);
-        assert_eq!(val, TEST_VAL_1);
+        assert_eq!(u32::from(val), TEST_VAL_1);
     }
 
     #[test]

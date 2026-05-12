@@ -8,15 +8,24 @@
         clippy::panic_in_result_fn
     )
 )]
+#![allow(clippy::print_stderr)] // virtmcu-allow: print_stderr reasoning="Startup error reporting"
 //! Enterprise Continuous High-Fidelity TCG Instruction Tracer
 
 mod qemu_plugin;
 use qemu_plugin::{
-    qemu_plugin_insn_disas, qemu_plugin_insn_vaddr, qemu_plugin_register_atexit_cb,
-    qemu_plugin_register_vcpu_insn_exec_cb, qemu_plugin_register_vcpu_tb_trans_cb,
-    qemu_plugin_tb_get_insn, qemu_plugin_tb_n_insns, QemuInfo, QemuPluginCbFlags, QemuPluginId,
-    QemuPluginTb,
+    qemu_plugin_insn_disas, qemu_plugin_insn_vaddr, qemu_plugin_outs,
+    qemu_plugin_register_atexit_cb, qemu_plugin_register_vcpu_insn_exec_cb,
+    qemu_plugin_register_vcpu_tb_trans_cb, qemu_plugin_tb_get_insn, qemu_plugin_tb_n_insns,
+    QemuInfo, QemuPluginCbFlags, QemuPluginId, QemuPluginTb,
 };
+
+/// Log through QEMU's own output channel.  Safe before any tracing subscriber exists.
+macro_rules! plugin_log {
+    ($($arg:tt)*) => {{
+        let msg = alloc::format!("{}\0", alloc::format!($($arg)*));
+        unsafe { qemu_plugin_outs(msg.as_ptr().cast()) };
+    }};
+}
 
 extern crate alloc;
 
@@ -49,15 +58,23 @@ struct ExecEvent {
     pc: u64,
 }
 
+// Raw pointer to InsnData allocated on the heap and passed to QEMU as callback userdata.
+// Safety: access is serialized through Mutex; QEMU guarantees the ptr lives until plugin_exit.
+struct InsnPtr(*mut InsnData);
+unsafe impl Send for InsnPtr {}
+unsafe impl Sync for InsnPtr {}
+
 struct TracerState {
     // virtmcu-allow: mutex reasoning="Drop management for clean shutdown"
     tx_master: Mutex<Option<Sender<ExecEvent>>>,
     // virtmcu-allow: mutex reasoning="Plugin cache shared across tb_trans threads"
     disas_cache: Mutex<HashMap<u64, String>>,
-    // virtmcu-allow: mutex reasoning="Heap contexts tracking for memory leak prevention"
-    insn_contexts: Mutex<Vec<Box<InsnData>>>,
+    // virtmcu-allow: mutex reasoning="Raw QEMU callback pointers, freed in plugin_exit"
+    insn_contexts: Mutex<Vec<InsnPtr>>,
     // virtmcu-allow: mutex reasoning="Thread management for clean join on exit"
     worker_handle: Mutex<Option<JoinHandle<()>>>,
+    // virtmcu-allow: mutex reasoning="OTel guard to ensure logs are flushed on plugin exit"
+    _telemetry_guard: Mutex<Option<virtmcu_observability::OTelGuard>>,
 }
 
 struct InsnData {
@@ -84,27 +101,35 @@ impl QemuString {
     }
 }
 
-#[no_mangle]
-pub static qemu_plugin_version: c_int = 2;
+#[derive(Debug)]
+struct DummyVTimeProvider;
+
+impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+    fn current_vtime_ns(&self) -> u64 {
+        // TCG Tracer runs locally without a concept of the global vtime currently
+        // Alternatively, this could fetch the VCPU's icount if that was exposed.
+        0
+    }
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn qemu_plugin_install(
     id: QemuPluginId,
     _info: *const QemuInfo,
-    argc: c_int,
-    argv: *mut *mut c_char,
+    nargs: c_int,
+    params: *mut *mut c_char,
 ) -> c_int {
     let mut node_id = 0;
     let mut transport_cfg = "zenoh".to_owned();
 
-    for i in 0..argc {
-        let arg_ptr = *argv.add(i as usize);
-        if !arg_ptr.is_null() {
-            let arg_str = CStr::from_ptr(arg_ptr).to_string_lossy();
-            if let Some(val) = arg_str.strip_prefix("node_id=") {
+    for i in 0..nargs {
+        let cstr_ptr = *params.add(i as usize);
+        if !cstr_ptr.is_null() {
+            let decoded = CStr::from_ptr(cstr_ptr).to_string_lossy();
+            if let Some(val) = decoded.strip_prefix("node_id=") {
                 node_id = val.parse().unwrap_or(0);
-            } else if let Some(val) = arg_str.strip_prefix("transport=") {
-                transport_cfg = val.to_owned();
+            } else if let Some(val) = decoded.strip_prefix("transport=") {
+                val.clone_into(&mut transport_cfg);
             }
         }
     }
@@ -114,7 +139,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
         match transport_unix::UnixDataTransport::new(path) {
             Ok(t) => Arc::new(t),
             Err(e) => {
-                println!("tcg-tracer: Failed to initialize Unix transport: {:?}", e);
+                plugin_log!("tcg-tracer: Failed to initialize Unix transport: {e:?}");
                 return -1;
             }
         }
@@ -122,7 +147,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
         match transport_zenoh::get_or_init_session(core::ptr::null()) {
             Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
             Err(e) => {
-                println!("tcg-tracer: Failed to initialize Zenoh transport: {:?}", e);
+                plugin_log!("tcg-tracer: Failed to initialize Zenoh transport: {e:?}");
                 return -1;
             }
         }
@@ -133,17 +158,27 @@ pub unsafe extern "C" fn qemu_plugin_install(
         background_stream_worker(rx, transport, node_id);
     });
 
+    let service_name = alloc::format!("virtmcu-qemu-plugin-{node_id}");
+    let service_name_static: &'static str = Box::leak(service_name.into_boxed_str());
+    let guard = virtmcu_observability::init_plugin_telemetry(
+        service_name_static,
+        Arc::new(DummyVTimeProvider),
+    );
+
     let state = Arc::new(TracerState {
         tx_master: Mutex::new(Some(tx)),
         disas_cache: Mutex::new(HashMap::new()),
         insn_contexts: Mutex::new(Vec::new()),
         worker_handle: Mutex::new(Some(handle)),
+        _telemetry_guard: Mutex::new(Some(guard)),
     });
 
     if STATE.set(state).is_err() {
-        println!("tcg-tracer: Failed to set global STATE (already set?)");
+        plugin_log!("tcg-tracer: Failed to set global STATE (already set?)");
         return -1;
     }
+
+    tracing::info!("tcg-tracer: OTel telemetry initialized for node {}", node_id);
 
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
     qemu_plugin_register_atexit_cb(id, plugin_exit, core::ptr::null_mut());
@@ -172,20 +207,19 @@ unsafe extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
     for i in 0..n_insns {
         let insn = qemu_plugin_tb_get_insn(tb, i);
         let pc = qemu_plugin_insn_vaddr(insn);
-        let disas_ptr = qemu_plugin_insn_disas(insn);
+        let raw_disas = qemu_plugin_insn_disas(insn);
 
-        let qstr = QemuString(disas_ptr);
-        let disas_str = qstr.to_string_lossy();
+        let qstr = QemuString(raw_disas);
+        let disas = qstr.to_string_lossy();
 
         if let Ok(mut cache) = state.disas_cache.lock() {
-            cache.insert(pc, disas_str);
+            cache.insert(pc, disas);
         }
 
-        let insn_data = Box::new(InsnData { pc, tx: tx.clone() });
-        let insn_ptr = Box::into_raw(insn_data);
+        let insn_ptr = Box::into_raw(Box::new(InsnData { pc, tx: tx.clone() }));
 
         if let Ok(mut contexts) = state.insn_contexts.lock() {
-            contexts.push(Box::from_raw(insn_ptr));
+            contexts.push(InsnPtr(insn_ptr));
         }
 
         qemu_plugin_register_vcpu_insn_exec_cb(
@@ -215,15 +249,21 @@ unsafe extern "C" fn plugin_exit(_id: QemuPluginId, _userdata: *mut c_void) {
         if let Ok(mut tx_opt) = state.tx_master.lock() {
             tx_opt.take();
         }
-        // Drop all cloned senders from the translation phase
+        // Drop all QEMU callback heap allocations from the translation phase
         if let Ok(mut contexts) = state.insn_contexts.lock() {
-            contexts.clear();
+            for InsnPtr(ptr) in contexts.drain(..) {
+                drop(unsafe { Box::from_raw(ptr) });
+            }
         }
         // Wait for the background worker to flush the queue and cleanly exit
         if let Ok(mut handle_opt) = state.worker_handle.lock() {
             if let Some(handle) = handle_opt.take() {
                 let _ = handle.join();
             }
+        }
+        // Flush and shutdown telemetry pipelines
+        if let Ok(mut guard_opt) = state._telemetry_guard.lock() {
+            let _ = guard_opt.take(); // Drops OTelGuard
         }
     }
 }

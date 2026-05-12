@@ -78,7 +78,6 @@ const IEEE_ADDR_MODE_MASK: u16 = 0x03;
 
 // Frame and Timing
 const IEEE_MIN_FRAME_LEN: usize = 3;
-const IEEE_ACK_FRAME_LEN: usize = 3;
 const IEEE_SHORT_ADDR_FRAME_MIN_LEN: usize = 7;
 const IEEE_EXT_ADDR_FRAME_MIN_LEN: usize = 13;
 const IEEE_NS_PER_BYTE: u64 = 32_000;
@@ -470,7 +469,7 @@ fn ieee802154_init_internal(
     let state_ptr = core::ptr::from_mut(&mut *state_box);
     let state_ptr_usize = state_ptr as usize;
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
         let state = unsafe { &mut *(state_ptr_usize as *mut Virtmcu802154State) };
         on_rx_frame(state, data);
     });
@@ -578,8 +577,8 @@ fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64
             inner.short_addr = value as u16;
         }
         REG_EXT_ADDR_LO => {
-            inner.ext_addr = (inner.ext_addr & (u64::from(ADDR_32_MASK) << ADDR_32_SHIFT))
-                | (value & ADDR_32_MASK);
+            inner.ext_addr =
+                (inner.ext_addr & (ADDR_32_MASK << ADDR_32_SHIFT)) | (value & ADDR_32_MASK);
         }
         REG_EXT_ADDR_HI => {
             inner.ext_addr =

@@ -100,9 +100,18 @@ impl Lint for RustBannedPatternsLint {
             })
             .collect();
 
-        let walker = WalkBuilder::new(target_dir)
+        let hw_rust_dir = target_dir.join("hw/rust");
+
+        if !hw_rust_dir.exists() {
+            return Ok(true);
+        }
+
+        let walker = WalkBuilder::new(&hw_rust_dir)
             .add_custom_ignore_filename(".geminiignore")
             .build();
+
+        let spinloop_re = Regex::new(r"(?m)(?:while|loop|for)[\s\S]{1,1000}?(?:attempts|retry|count)\s*[-+]=\s*1[\s\S]{1,1000}?(?:thread::sleep|yield_now|cvar\.wait_timeout)").unwrap();
+        let drop_bound_re = Regex::new(r"(?m)impl\s+Drop\s+for[\s\S]{1,500}?(?:while|loop|for)[\s\S]{1,200}?(?:attempts|retry|count)\s*<").unwrap();
 
         for result in walker {
             let entry = match result {
@@ -153,7 +162,6 @@ impl Lint for RustBannedPatternsLint {
             // Multi-line lints
             if path_str.contains("hw/rust") {
                 // Spinloop
-                let spinloop_re = Regex::new(r"(?m)(?:while|loop|for)[\s\S]{1,1000}?(?:attempts|retry|count)\s*[-+]=\s*1[\s\S]{1,1000}?(?:thread::sleep|yield_now|cvar\.wait_timeout)").unwrap();
                 if let Some(m) = spinloop_re.find(&content) {
                     if !is_suppressed_multiline(&content, m.start(), "spinloop") {
                         passed = false;
@@ -166,7 +174,6 @@ impl Lint for RustBannedPatternsLint {
                 }
 
                 // Drop bound
-                let drop_bound_re = Regex::new(r"(?m)impl\s+Drop\s+for[\s\S]{1,500}?(?:while|loop|for)[\s\S]{1,200}?(?:attempts|retry|count)\s*<").unwrap();
                 if let Some(m) = drop_bound_re.find(&content) {
                     if !is_suppressed_multiline(&content, m.start(), "drop_bound") {
                         passed = false;
@@ -204,6 +211,6 @@ fn is_suppressed(lines: &[&str], line_idx: usize, rule: &str) -> bool {
 
 fn is_suppressed_multiline(content: &str, pos: usize, rule: &str) -> bool {
     let suppression_pattern = format!("// virtmcu-allow: {}", rule);
-    let start = if pos > 100 { pos - 100 } else { 0 };
+    let start = pos.saturating_sub(100);
     content[start..pos].contains(&suppression_pattern)
 }

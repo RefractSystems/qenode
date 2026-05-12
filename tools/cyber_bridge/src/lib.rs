@@ -46,6 +46,59 @@ impl TimeAuthorityTransport for ZenohTimeAuthorityTransport {
     }
 }
 
+pub struct ZenohActuatorSink {
+    buffer: Arc<std::sync::Mutex<std::collections::HashMap<u32, Vec<f64>>>>,
+    _subscriber: zenoh::pubsub::Subscriber<()>,
+}
+
+impl ZenohActuatorSink {
+    pub async fn new(
+        session: &zenoh::Session,
+        topic_prefix: &str,
+        node_id: u32,
+    ) -> anyhow::Result<Self> {
+        let buffer = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let buffer_clone = Arc::clone(&buffer);
+        let filter = format!("{}/{}/{}", topic_prefix, node_id, "**");
+
+        let subscriber = session
+            .declare_subscriber(filter)
+            .callback(move |sample| {
+                let topic = sample.key_expr().as_str();
+                if let Some(sensor_id_str) = topic.split('/').next_back() {
+                    if let Ok(sensor_id) = sensor_id_str.parse::<u32>() {
+                        let payload = sample.payload().to_bytes();
+                        if payload.len() >= virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+                            let data_bytes = &payload[virtmcu_api::ZENOH_FRAME_HEADER_SIZE..];
+                            let mut vals = Vec::new();
+                            for chunk in data_bytes.chunks_exact(8) {
+                                let val = f64::from_le_bytes(chunk.try_into().unwrap());
+                                vals.push(val);
+                            }
+                            if let Ok(mut map) = buffer_clone.lock() {
+                                map.insert(sensor_id, vals);
+                            }
+                        }
+                    }
+                }
+            })
+            .wait()
+            .map_err(|e| anyhow::anyhow!("Failed to declare actuator subscriber: {}", e))?;
+
+        Ok(Self {
+            buffer,
+            _subscriber: subscriber,
+        })
+    }
+
+    pub fn drain(&self) -> std::collections::HashMap<u32, Vec<f64>> {
+        let mut map = self.buffer.lock().unwrap();
+        let current = map.clone();
+        map.clear();
+        current
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +148,39 @@ mod tests {
 
         assert_eq!(resp.current_vtime_ns(), 6000);
         assert_eq!(resp.quantum_number(), 5);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_zenoh_actuator_sink() {
+        let mut config = zenoh::Config::default();
+        let _ = config.insert_json5("mode", "\"peer\"");
+        let _ = config.insert_json5("scouting/multicast/enabled", "true");
+
+        let session = Arc::new(zenoh::open(config).wait().unwrap());
+        let node_id = 0;
+        let prefix = "firmware/control";
+
+        let sink = ZenohActuatorSink::new(&session, prefix, node_id)
+            .await
+            .unwrap();
+
+        let topic = format!("{}/{}/7", prefix, node_id);
+        let vals = vec![1.0f64, 2.0f64];
+        let mut data_payload = Vec::new();
+        for val in &vals {
+            data_payload.extend_from_slice(&val.to_le_bytes());
+        }
+        let payload = virtmcu_api::encode_frame(1000, 0, &data_payload);
+
+        session.put(&topic, payload).wait().unwrap();
+
+        // Give some time for Zenoh delivery
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let drained = sink.drain();
+        assert_eq!(drained.get(&7), Some(&vals));
+
+        let drained_again = sink.drain();
+        assert!(drained_again.is_empty());
     }
 }

@@ -75,8 +75,11 @@ VIRTMCU_DOCKER_RUN_DEVENV = $(VIRTMCU_DOCKER_RUN_DEVENV_IMG) $(VIRTMCU_DEVENV_IM
 
 VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 	-v "$(CURDIR):/workspace" -w /workspace \
+	-v ci-cargo-registry:/usr/local/cargo/registry \
 	-e HOST_UID=$$(id -u) \
 	-e HOST_GID=$$(id -g) \
+	-e HOME=/home/vscode \
+	-e USER=vscode \
 	-e CI=true \
 	-e VIRTMCU_STALL_TIMEOUT_MS=120000 \
 	-e VIRTMCU_USE_PREBUILT_QEMU=1
@@ -84,7 +87,7 @@ VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
 VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
-.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan docker-runtime tag ensure-ci-image ensure-ci-asan-image
+.PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
 .PHONY: dev-unit ci-unit dev-integration ci-integration dev-integration-asan ci-integration-asan dev-unit-miri ci-unit-miri dev-unit-coverage ci-unit-coverage dev-integration-coverage ci-integration-coverage dev-peripheral-coverage ci-peripheral-coverage dev-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan
 
 # Automatically determine the number of parallel jobs for make
@@ -164,7 +167,7 @@ build-test-artifacts:
 		BOOTSTRAP=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] || [ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "1" || echo "0"); \
 		RUSTFLAGS="$$ASAN_FLAG $$TSAN_FLAG"; \
 		TRIPLE=$$(rustc -vV | grep "host:" | awk "{print \$$2}"); \
-		RUSTC_BOOTSTRAP=$$BOOTSTRAP HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo build --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
+		HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo +nightly build -Z bindeps --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.
@@ -207,18 +210,13 @@ ci-unit-miri: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-unit-miri
 
 ci-integration: ensure-ci-image
-	@if [ -z "$(DOMAIN)" ]; then \
-		echo "❌ Error: DOMAIN is required for ci-integration."; \
-		echo "==> Example: make ci-integration DOMAIN=boot_arm"; \
-		exit 1; \
-	fi
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration DOMAIN=$(DOMAIN)
 
 ci-integration-coverage: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-integration-coverage
 
 ci-integration-asan: ensure-ci-asan-image
-	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) $(MAKE) dev-integration-asan
+	@$(VIRTMCU_DOCKER_RUN_CI_ASAN) $(MAKE) dev-integration-asan DOMAIN=$(DOMAIN)
 
 ci-peripheral-coverage: ensure-ci-image
 	@$(VIRTMCU_DOCKER_RUN_CI) $(MAKE) dev-peripheral-coverage
@@ -343,7 +341,6 @@ docker-all: docker-dev
 	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci
 	@$(BAKE) ci-asan
 	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci-asan
-	@$(BAKE) runtime
 
 # Build only the docker base stage
 docker-base:
@@ -373,9 +370,6 @@ docker-ci:
 docker-ci-asan:
 	@$(BAKE) ci-asan
 
-# Build only the docker runtime stage
-docker-runtime:
-	@$(BAKE) runtime
 
 # ------------------------------------------------------------------------------
 # Release

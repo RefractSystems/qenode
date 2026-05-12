@@ -8,10 +8,6 @@
         clippy::panic_in_result_fn
     )
 )]
-#![cfg_attr(
-    test,
-    allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)
-)]
 #![deny(missing_docs)]
 #![doc = "VirtMCU QEMU Object Model (QOM) and System Emulation bindings."]
 

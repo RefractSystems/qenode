@@ -763,7 +763,7 @@ fn create_chardev_sub_callback(
     max_backlog: u64,
     tx: Sender<OrderedPacket>,
 ) -> virtmcu_api::DataCallback {
-    Box::new(move |data| {
+    Box::new(move |_topic: &str, data: &[u8]| {
         use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
         let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
         if tp == 0 {

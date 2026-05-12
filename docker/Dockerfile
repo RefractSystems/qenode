@@ -261,7 +261,8 @@ FROM devenv AS third-party-builder
 # This provides the 'virtmcu-cli setup patch-qemu' command used below.
 WORKDIR /workspace
 COPY . .
-RUN cargo build -p virtmcu-cli --release \
+RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
     && cp target/release/virtmcu-cli /usr/local/bin/virtmcu-cli \
     && rm -rf target/
 
@@ -314,11 +315,11 @@ COPY patches/ /build/patches/
 COPY BUILD_DEPS /build/
 
 # Apply all patches using the native Rust-powered CLI
-RUN virtmcu-cli setup patch-qemu --path /build/qemu
+RUN virtmcu-cli setup patch-qemu /build/qemu
 
 # Pre-configure with a dummy virtmcu directory to cache the core build.
 # This ensures that changing files in hw/ only triggers a module rebuild.
-RUN mkdir -p qemu/hw/virtmcu \
+RUN rm -rf qemu/hw/virtmcu && mkdir -p qemu/hw/virtmcu \
     && echo "hw_virtmcu_modules = {}" > qemu/hw/virtmcu/meson.build \
     && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build
 
@@ -365,7 +366,6 @@ COPY hw/ /build/virtmcu/hw/
 COPY tools/ /build/virtmcu/tools/
 COPY tests/ /build/virtmcu/tests/
 COPY schema/ /build/virtmcu/schema/
-COPY generated/ /build/virtmcu/generated/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
     && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
@@ -395,10 +395,10 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     else \
         SRC_SUBDIR=""; \
     fi \
-    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
+    && CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/deterministic_coordinator" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/mujoco_bridge" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/resd_replay" /usr/local/bin/
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-time-authority" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-resd-replay" /usr/local/bin/
 
 # hadolint ignore=SC2016
 RUN mkdir -p /usr/local/lib/qemu/plugins \

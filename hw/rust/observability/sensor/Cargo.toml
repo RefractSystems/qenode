@@ -1,20 +1,19 @@
 [package]
-name = "tcg-tracer"
+name = "sensor"
 publish = false
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["staticlib"]
 [lints] 
 workspace = true 
 [dependencies]
+zenoh.workspace = true
 virtmcu-api.workspace = true
 transport-zenoh.workspace = true
+virtmcu-qom.workspace = true
 transport-unix.workspace = true
-crossbeam-channel.workspace = true
-flatbuffers.workspace = true
-tracing.workspace = true
-virtmcu-observability.workspace = true
-libc = "0.2.186"
+[package.metadata.cargo-machete]
+ignored = ["zenoh", "transport-zenoh", "transport-unix", "serde", "serde_json", "tracing"]
