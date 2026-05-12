@@ -58,36 +58,50 @@ In a distributed simulation, messages must be delivered in the order they were s
 The diagram below illustrates how the abstract CPS concepts map to our concrete implementation stack.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  The Digital Twin World                                                     │
-│                                                                             │
-│  ┌──────────────────┐  physics_step() ┌───────────────────────────────────┐ │
-│  │  Physical Node   │ ──────────────► │  TimeAuthority (Rust)             │ │
-│  │  [MuJoCo/Omniverse]                │  - steps all Cyber Node clocks    │ │
-│  │                  │ ◄────────────── │  - pushes topology updates        │ │
-│  └──────────────────┘  sensor data    └───────┬───────────────────────────┘ │
-│                                               │                             │
-│       Control Plane Transport [Zenoh / Unix Sockets]                        │
-│       (one channel per node — direct, low-latency clock sync)               │
-│                                               │                             │
-│           ┌───────────────────────────────────┼─────────────────────────┐   │
-│           │  Cyber Node 0                     │   Cyber Node 1          │   │
-│           │  [QEMU + VirtMCU Rust Plugins]    │   [QEMU + Rust Plugins] │   │
-│           └───────────┬───────────────────────┴───────────┬─────────────┘   │
-│                       │  Data Plane Transport             │                 │
-│                       ▼  [Zenoh]                          ▼                 │
-│            ┌──────────────────────────────────────────────────┐             │
-│            │  Deterministic Coordinator                       │             │
-│            │  - quantum PDES barrier synchronization          │             │
-│            │  - canonical message sorting                     │             │
-│            │  - topology enforcement                          │             │
-│            └──────────────────────────────────────────────────┘             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  The Digital Twin World                                                                │
+│                                                                                        │
+│  ┌──────────────────────┐       ┌─────────────────────┐  PhysicsTrigger / PhysicsDone │
+│  │  Physics Engine      │ ◄─SHM─│  Physics Gateway    │◄────────────────────────────┐ │
+│  │  (any implementation)│ ──SHM►│  (virtmcu-physics-  │                             │ │
+│  └──────────────────────┘       │   gateway)          │                             │ │
+│                                 └─────────────────────┘                             │ │
+│                                                                                      │ │
+│                                 ┌─────────────────────────────────┐                 │ │
+│                                 │  Time Authority                  │─────────────────┘ │
+│                                 │  (virtmcu-time-authority)        │                   │
+│                                 │  - issues ClockAdvanceReq        │                   │
+│                                 │  - collects actuators per quantum│                   │
+│                                 └──────────────┬───────────────────┘                   │
+│                                                │                                       │
+│      Control Plane Transport [Zenoh / Unix Sockets]                                   │
+│      (one channel per node — direct, low-latency clock sync)                          │
+│                                                │                                       │
+│           ┌────────────────────────────────────┼──────────────────────────┐            │
+│           │  Cyber Node 0                      │  Cyber Node 1            │            │
+│           │  [QEMU + VirtMCU Rust Plugins]     │  [QEMU + Rust Plugins]   │            │
+│           └──────────────┬─────────────────────┴──────────┬───────────────┘            │
+│                          │  Data Plane Transport           │                            │
+│                          ▼  [Zenoh]                        ▼                            │
+│               ┌────────────────────────────────────────────────┐                       │
+│               │  Deterministic Coordinator                     │                       │
+│               │  - quantum PDES barrier synchronization        │                       │
+│               │  - canonical message sorting                   │                       │
+│               │  - topology enforcement                        │                       │
+│               └────────────────────────────────────────────────┘                       │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-VirtMCU utilizes two distinct communication planes across the Transport Layer:
-1.  **The Control Plane (Clock Sync)**: A high-frequency, low-latency 1:1 channel for time synchronization driven by the Physical Node.
-2.  **The Data Plane (Emulated Comms)**: A coordinated bus for all inter-node traffic (Ethernet, UART, CAN, RF), ensuring deterministic delivery.
+VirtMCU utilizes three distinct communication channels:
+
+1. **Control Plane (Clock Sync)**: A 1:1 low-latency RPC channel per QEMU node for
+   `ClockAdvanceReq` / `ClockReadyResp`. Carried over Unix sockets or Zenoh.
+2. **Physics Plane (Co-simulation)**: The `PhysicsTrigger` / `PhysicsDone` handshake
+   between the Time Authority and the Physics Gateway, plus the shared-memory (SHM)
+   channel between the gateway and the physics engine. See
+   [Physics Gateway](./12-physics-gateway.md).
+3. **Data Plane (Emulated Comms)**: A coordinated Zenoh bus for inter-node traffic
+   (Ethernet, UART, CAN, RF) with canonical deterministic ordering.
 
 ---
 

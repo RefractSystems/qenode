@@ -47,6 +47,7 @@
 
 - [Part V: Distributed & Cyber-Physical Systems](architecture/volume-v-intro.md)
   - [Cyber-Physical Integration: Bridging the Gap](architecture/07-cyber-physical-integration.md)
+  - [Physics Gateway: Decoupled Co-simulation](architecture/12-physics-gateway.md)
   - [Lesson 12: Co-simulation Strategies: SAL and AAL](tutorials/lesson12-cyber-physical-bridge/README.md)
   - [Observability & AI-Augmented Debugging](architecture/08-observability-and-ai.md)
   - [Lesson 13: Virtual-Time Timeouts](tutorials/lesson13-virtual-time-timeouts/README.md)
