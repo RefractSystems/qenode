@@ -7,6 +7,8 @@ services:
       "/app/tests/fixtures/guest_apps/pendulum_controller/board.yaml",
       "-kernel",
       "/app/tests/fixtures/guest_apps/pendulum_controller/controller.elf",
+      "-global", "actuator.transport=hub0",
+      "-global", "sensor.transport=hub0",
       "-device",
       "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447"
     ]
