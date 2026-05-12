@@ -118,11 +118,11 @@ Mandatory shutdown sequence:
 ## Before Every Commit — Mandatory Lint Gate
 
 ```bash
-make dev-check    # Fast-path: dev-lint + dev-unit (runs natively)
+make test-check    # Fast-path: test-lint + test-unit (runs natively)
 ```
 
 `[workspace.lints.clippy] all = "deny"` — every clippy warning is a build failure. `#[allow(clippy::...)]`, `#[allow(static_mut_refs)]`, and `#[allow(clippy::too_many_lines)]` are all BANNED in production code.
 
-**Git hooks** (`pre-commit` + `pre-push`): run `make dev-lint` (pre-commit) and `make dev-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. Skip (WIP only): `git commit --no-verify` / `git push --no-verify`.
+**Git hooks** (`pre-commit` + `pre-push`): run `make test-lint` (pre-commit) and `make test-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. Skip (WIP only): `git commit --no-verify` / `git push --no-verify`.
 
 **Full CI parity before PR:** `make ci-check`. Complete pre-merge validation: `make ci-full`.

@@ -169,7 +169,7 @@ They are located in `tests/fixtures/guest_apps/<domain>/smoke_test.sh`.
 **To run all integration smoke tests locally:**
 The Makefile automatically handles building required test artifacts (like ELFs) before running the tests.
 ```bash
-make dev-integration
+make test-integration
 ```
 
 **Running in a Mirrored CI Environment (Docker):**
@@ -210,7 +210,7 @@ We adhere to a strict testing strategy to maximize performance, safety, and orch
     *   **Why:** Consolidated Rust-based orchestration provides better performance and safety.
 
 3.  **Thin CI Wrappers (Bash)**
-    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make dev-integration` contract).
+    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
     *   **Never** write complex background process setup/teardown loops in Bash. Just call `virtmcu-test-runner` or `cargo test`.
 
 ---

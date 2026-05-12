@@ -36,7 +36,7 @@ If you are coming from:
 ## 0.3 Exercises
 
 ### Exercise 0.1: Environment Check
-Run `make setup` in your devcontainer. Ensure you can build the project and run `make dev-check`. If this fails, revisit the Laboratory Setup guide.
+Run `make setup` in your devcontainer. Ensure you can build the project and run `make test-check`. If this fails, revisit the Laboratory Setup guide.
 
 ### Exercise 0.2: C Pointer Review
 Write a small C program that simulates a simple vtable: a struct `Device` containing a function pointer `write`. Instantiate two "objects" with different `write` implementations.

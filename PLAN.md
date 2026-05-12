@@ -195,7 +195,7 @@ independently on each vCPU thread. Both vCPUs must halt at the quantum boundary 
 - [ ] `n-vcpus` property added to `clock` device.
 - [ ] With `n-vcpus=2` and `-smp 2`, both vCPUs halt before reply is sent.
 - [ ] Both unit tests pass.
-- [ ] `make dev-lint` passes.
+- [ ] `make test-lint` passes.
 
 ---
 
@@ -213,7 +213,7 @@ node ID, allowing multiple independent clock devices per QEMU process.
 - [ ] `GLOBAL_CLOCK: AtomicPtr` removed.
 - [ ] `CLOCK_REGISTRY: Mutex<HashMap<u32, Arc<ZenohClock>>>` introduced.
 - [ ] `test_two_clock_instances_independent` passes.
-- [ ] `make dev-lint` passes.
+- [ ] `make test-lint` passes.
 
 ---
 
