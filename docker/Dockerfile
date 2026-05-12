@@ -261,7 +261,15 @@ RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs
 FROM devenv AS cli-builder
 ARG TARGETARCH
 WORKDIR /workspace
-COPY . .
+
+# Copy only the files needed for virtmcu-cli to avoid invalidating this stage on unrelated changes.
+COPY Cargo.toml Cargo.lock ./
+COPY tools/virtmcu-cli/ tools/virtmcu-cli/
+COPY tools/virtmcu-observability/ tools/virtmcu-observability/
+COPY tools/virtmcu-test-runner/ tools/virtmcu-test-runner/
+COPY hw/rust/common/ hw/rust/common/
+COPY hw/rust/yaml2qemu/ hw/rust/yaml2qemu/
+
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-target-cli-${TARGETARCH},target=/workspace/target \
     CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
@@ -375,8 +383,7 @@ COPY tests/ /build/virtmcu/tests/
 COPY schema/ /build/virtmcu/schema/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
-    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
-    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
 WORKDIR /build/qemu/build-virtmcu
 ARG VIRTMCU_USE_ASAN=0
 ARG TARGETARCH

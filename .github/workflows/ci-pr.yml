@@ -271,6 +271,23 @@ jobs:
       # third-party-base is intentionally excluded from PR builds — only ci-main.yml
       # writes to the QEMU cache so experimental patch branches never warm the
       # shared cache. The ci target reads third-party-base via its cache-from list.
+      - name: Set Bake Targets
+        id: targets
+        shell: bash
+        run: |
+          if [ "${{ matrix.sanitizer }}" == "standard" ]; then
+            CI_TARGET="ci"
+            BASE_TARGET="third-party-base"
+          else
+            CI_TARGET="ci-asan"
+            BASE_TARGET="third-party-base-asan"
+          fi
+          if [ "${{ env.QEMU_BASE_CACHE }}" == "miss" ]; then
+            echo "targets=$BASE_TARGET $CI_TARGET" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=$CI_TARGET" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push ci stage
         uses: docker/bake-action@v7
         env:
@@ -281,9 +298,7 @@ jobs:
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          targets: |
-            ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
-            ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
+          targets: ${{ steps.targets.outputs.targets }}
           load: true
           files: docker-bake.hcl
 

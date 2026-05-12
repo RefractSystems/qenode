@@ -421,8 +421,7 @@ fn main() -> Result<()> {
                     c
                 };
 
-                let status = cmd
-                    .arg("platform")
+                cmd.arg("platform")
                     .arg("generate")
                     .arg(file)
                     .arg("--out-dtb")
@@ -430,8 +429,13 @@ fn main() -> Result<()> {
                     .arg("--out-cli")
                     .arg(cli_file.path())
                     .arg("--out-arch")
-                    .arg(arch_file.path())
-                    .status()?;
+                    .arg(arch_file.path());
+
+                if let Ok(router) = env::var("ZENOH_ROUTER") {
+                    cmd.arg("--router").arg(router);
+                }
+
+                let status = cmd.status()?;
                 if !status.success() {
                     return Err(anyhow!("virtmcu-cli platform generate failed"));
                 }
