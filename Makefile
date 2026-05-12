@@ -55,7 +55,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
 
 # Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
 # We use 'cargo run' for development to ensure it is always up to date.
-export VIRTMCU_CLI := cargo run --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
+export VIRTMCU_CLI := $(CARGO_CMD) run $(CARGO_OPTS) --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
 
 # Helper macros for running commands in Docker
 VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
@@ -92,6 +92,30 @@ VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+TRIPLE := $(shell rustc -vV | grep "host:" | awk '{print $$2}')
+
+# Set Cargo environment variables for consistency across all targets
+ifeq ($(VIRTMCU_USE_ASAN),1)
+  export BUILD_SUFFIX := -asan
+  export RUSTFLAGS := -Zsanitizer=address
+else ifeq ($(VIRTMCU_USE_TSAN),1)
+  export BUILD_SUFFIX := -tsan
+  export RUSTFLAGS := -Zsanitizer=thread
+else
+  export BUILD_SUFFIX :=
+  export RUSTFLAGS :=
+endif
+
+export CARGO_TARGET_DIR := $(CURDIR)/target$(BUILD_SUFFIX)
+export CARGO_BUILD_JOBS := $(JOBS)
+export CARGO_BUILD_TARGET := $(TRIPLE)
+
+# Canonical paths for built artifacts
+TARGET_BIN_DIR := $(CARGO_TARGET_DIR)/$(TRIPLE)/release
+
+# Canonical Cargo command with unified flags
+CARGO_CMD := cargo +nightly
+CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
 
 # By default, perform an incremental build
 all: dev-all
@@ -103,7 +127,7 @@ all: dev-all
 # Propagate versions from the BUILD_DEPS file to all downstream configuration files.
 sync-versions:
 	@echo "==> Synchronizing dependency versions..."
-	@cargo run -p virtmcu-cli -- setup sync-versions
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup sync-versions
 	@echo "✓ Versions synchronized."
 
 # ------------------------------------------------------------------------------
@@ -113,7 +137,8 @@ sync-versions:
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
 # WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
 bootstrap:
-	@cargo run -p virtmcu-cli -- setup bootstrap
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup bootstrap
+
 
 ifeq ($(VIRTMCU_USE_ASAN),1)
   ZENOHC_BUILD_DIR := third_party/zenoh-c-src/build-asan
@@ -147,32 +172,24 @@ build-third-party: build-zenoh-c build-flatcc build-qemu
 build: build-qemu
 
 # Builds all test artifacts across all domains
-build-test-artifacts:
-	@$(MAKE) -C tests/fixtures/guest_apps/boot_arm -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/uart_echo -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/telemetry_wfi -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/actuator -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/boot_riscv -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/flexray_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/spi_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/lin_bridge -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/complex_board -j$(JOBS)
-	@$(MAKE) -C tests/fixtures/guest_apps/perf_bench -j$(JOBS)
+GUEST_APP_DIRS := $(wildcard tests/fixtures/guest_apps/*)
+GUEST_APP_TARGETS := $(foreach dir,$(GUEST_APP_DIRS),$(if $(wildcard $(dir)/Makefile),$(dir)))
+
+.PHONY: $(GUEST_APP_TARGETS)
+$(GUEST_APP_TARGETS):
+	@$(MAKE) -C $@ -j$(JOBS)
+
+build-test-artifacts: $(GUEST_APP_TARGETS)
 	@if [ "$$CI" = "true" ] && command -v deterministic_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
 		echo "==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)..."; \
-		ASAN_FLAG=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] && echo "-Zsanitizer=address" || echo ""); \
-		TSAN_FLAG=$$([ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "-Zsanitizer=thread" || echo ""); \
-		BOOTSTRAP=$$([ "$$VIRTMCU_USE_ASAN" = "1" ] || [ "$$VIRTMCU_USE_TSAN" = "1" ] && echo "1" || echo "0"); \
-		RUSTFLAGS="$$ASAN_FLAG $$TSAN_FLAG"; \
-		TRIPLE=$$(rustc -vV | grep "host:" | awk "{print \$$2}"); \
-		HOST_CFLAGS="" HOST_CXXFLAGS="" RUSTFLAGS="$$RUSTFLAGS" CARGO_BUILD_TARGET="$$TRIPLE" CARGO_TARGET_DIR="target$(BUILD_SUFFIX)" cargo +nightly build -Z bindeps --release -j$(JOBS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target "$$TRIPLE"; \
+		$(CARGO_CMD) build -Z bindeps --release $(CARGO_OPTS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.
 run:
-	@bash target/release/virtmcu-run \
+	@$(TARGET_BIN_DIR)/virtmcu-run \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/minimal.dtb),--dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb) \
 	  $(if $(wildcard tests/fixtures/guest_apps/boot_arm/hello.elf),--kernel tests/fixtures/guest_apps/boot_arm/hello.elf) \
 	  -nographic \
@@ -256,31 +273,31 @@ dev-all: build-qemu build-test-artifacts dev-check dev-integration dev-periphera
 dev-check: dev-lint dev-unit dev-unit-coverage
 
 dev-lint:
-	@cargo run -p virtmcu-test-runner --release -- lint
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- lint
 
 # --- Unit Tests ---
 dev-unit:
-	@cargo run -p virtmcu-test-runner --release -- run --tier unit
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- run --tier unit
 
 dev-unit-coverage:
-	@cargo run -p virtmcu-test-runner --release -- coverage
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage
 
 dev-unit-miri:
-	@cargo run -p virtmcu-test-runner --release -- miri
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- miri
 
 # --- Integration Tests ---
 dev-integration: build-test-artifacts
-	@cargo +nightly run -Z bindeps -p virtmcu-test-runner --release -- run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
+	@$(CARGO_CMD) run $(CARGO_OPTS) -Z bindeps -p virtmcu-test-runner --release -- run --tier integration $(if $(DOMAIN),--domain $(DOMAIN))
 
 dev-integration-coverage: build-test-artifacts
-	@cargo run -p virtmcu-test-runner --release -- coverage --integration
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage --integration
 
 dev-integration-asan: build-test-artifacts
-	@cargo run -p virtmcu-test-runner --release -- run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
 
 # Run host-side C coverage for peripheral plugins (inside ci)
 dev-peripheral-coverage:
-	@cargo run -p virtmcu-test-runner --release -- coverage --peripheral
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-test-runner --release -- coverage --peripheral
 
 # --- Git Hooks ---
 install-git-hooks:
@@ -327,20 +344,20 @@ BAKE := docker buildx bake --load
 # Build docker base -> toolchain -> devenv with smoke tests
 docker-dev:
 	@$(BAKE) base
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-base
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-base
 	@$(BAKE) toolchain
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-toolchain
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-toolchain
 	@$(BAKE) devenv
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-devenv
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-devenv
 	@echo "✓ All dev-base stages built and verified."
 
 # Build all docker stages including ci
 docker-all: docker-dev
 	@$(BAKE) third-party-base
 	@$(BAKE) ci
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-ci
 	@$(BAKE) ci-asan
-	@cargo run --manifest-path xtask/Cargo.toml -- smoke-ci-asan
+	@$(CARGO_CMD) run $(CARGO_OPTS) --manifest-path xtask/Cargo.toml -- smoke-ci-asan
 
 # Build only the docker base stage
 docker-base:
@@ -408,7 +425,7 @@ tag:
 
 # Kill all simulation-related processes and clean up temporary test files.
 clean-sim:
-	@cargo run -p virtmcu-cli -- setup cleanup-sim
+	@$(CARGO_CMD) run $(CARGO_OPTS) -p virtmcu-cli -- setup cleanup-sim
 
 # Remove backup and profile raw files.
 delete-profraw:

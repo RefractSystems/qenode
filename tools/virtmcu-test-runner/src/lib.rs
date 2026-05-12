@@ -618,11 +618,15 @@ impl LinterEngine {
 
             let mut rust_failed = false;
             let rust_lints = vec![
-                ("cargo fmt", "cargo", vec!["fmt", "--all", "--check"]),
+                (
+                    "cargo fmt",
+                    "cargo",
+                    vec!["+stable", "fmt", "--all", "--check"],
+                ),
                 (
                     "cargo clippy",
                     "cargo",
-                    vec!["clippy", "--workspace", "--", "-D", "warnings"],
+                    vec!["+stable", "clippy", "--workspace", "--", "-D", "warnings"],
                 ),
                 ("cargo machete", "cargo-machete", vec![]),
                 ("cargo deny", "cargo", vec!["deny", "check"]),
