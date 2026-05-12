@@ -270,6 +270,20 @@ COPY tools/virtmcu-test-runner/ tools/virtmcu-test-runner/
 COPY hw/rust/common/ hw/rust/common/
 COPY hw/rust/yaml2qemu/ hw/rust/yaml2qemu/
 
+RUN sed -i '/^members = \[/,/^\]/d' Cargo.toml && \
+    sed -i '/^\[workspace\]/a members = [\n\
+    "tools/virtmcu-cli",\n\
+    "tools/virtmcu-observability",\n\
+    "tools/virtmcu-test-runner",\n\
+    "hw/rust/yaml2qemu",\n\
+    "hw/rust/common/rust-dummy",\n\
+    "hw/rust/common/virtmcu-api",\n\
+    "hw/rust/common/virtmcu-qom",\n\
+    "hw/rust/common/test-qom-device",\n\
+    "hw/rust/common/virtmcu-test-devices",\n\
+    "hw/rust/common/virtmcu-zenoh-config",\n\
+]' Cargo.toml
+
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-target-cli-${TARGETARCH},target=/workspace/target \
     CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
