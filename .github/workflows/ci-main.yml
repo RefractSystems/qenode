@@ -436,9 +436,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
         with:
-          targets: |
-            ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
-            ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
+          targets: ${{ matrix.sanitizer == 'standard' && 'third-party-base,ci' || 'third-party-base-asan,ci-asan' }}
           push: true
           files: |
             docker-bake.hcl

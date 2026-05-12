@@ -283,7 +283,7 @@ jobs:
             BASE_TARGET="third-party-base-asan"
           fi
           if [ "${{ env.QEMU_BASE_CACHE }}" == "miss" ]; then
-            echo "targets=$BASE_TARGET $CI_TARGET" >> "$GITHUB_OUTPUT"
+            echo "targets=$BASE_TARGET,$CI_TARGET" >> "$GITHUB_OUTPUT"
           else
             echo "targets=$CI_TARGET" >> "$GITHUB_OUTPUT"
           fi
