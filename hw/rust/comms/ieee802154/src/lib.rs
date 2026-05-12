@@ -814,8 +814,10 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u
             }
             let dest_pan =
                 LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
-            let dest_addr =
-                LittleEndian::read_u16(&frame[SHORT_ADDR_SIZE..SHORT_ADDR_SIZE + SHORT_ADDR_SIZE]);
+            let dest_addr = LittleEndian::read_u16(
+                &frame[ADDR_FIELDS_START + PAN_ID_SIZE
+                    ..ADDR_FIELDS_START + PAN_ID_SIZE + SHORT_ADDR_SIZE],
+            );
             let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
             let addr_matches = dest_addr == IEEE_BROADCAST_ADDR || dest_addr == short_addr;
             pan_matches && addr_matches
@@ -826,8 +828,10 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, frame: &[u
             }
             let dest_pan =
                 LittleEndian::read_u16(&frame[ADDR_FIELDS_START..ADDR_FIELDS_START + PAN_ID_SIZE]);
-            let dest_addr =
-                LittleEndian::read_u64(&frame[EXT_ADDR_SIZE..EXT_ADDR_SIZE + EXT_ADDR_SIZE]);
+            let dest_addr = LittleEndian::read_u64(
+                &frame[ADDR_FIELDS_START + PAN_ID_SIZE
+                    ..ADDR_FIELDS_START + PAN_ID_SIZE + EXT_ADDR_SIZE],
+            );
             let pan_matches = dest_pan == IEEE_BROADCAST_PAN || dest_pan == pan_id;
             let addr_matches = dest_addr == ext_addr;
             pan_matches && addr_matches

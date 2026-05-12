@@ -185,7 +185,7 @@ use core::sync::atomic::AtomicBool;
 use virtmcu_qom::sync::BqlGuarded;
 
 unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    virtmcu_qom::sim_debug!("flexray_realize starting");
+    virtmcu_qom::sim_err!("flexray_realize starting");
     let s = &mut *(dev as *mut FlexRay);
 
     let _router = if s.router.is_null() {
@@ -450,13 +450,17 @@ unsafe extern "C" fn flexray_instance_init(obj: *mut Object) {
     // DEBUG: Print offsets
     let base = obj as usize;
     virtmcu_qom::sim_err!(
-        "FlexRay offsets: mmio={}, node_id={}, router={}, topic={}, rust_state={}, vrc={}",
+        "FlexRay offsets: mmio={}, node_id={}, router={}, topic={}, debug={}, transport_hub={}, rust_state={}, vrc={}, msg_ram_headers={}, msg_ram_data={}",
         (&raw const s.mmio as usize) - base,
         (&raw const s.node_id as usize) - base,
         (&raw const s.router as usize) - base,
         (&raw const s.topic as usize) - base,
+        (&raw const s.debug as usize) - base,
+        (&raw const s.transport_hub as usize) - base,
         (&raw const s.rust_state as usize) - base,
-        (&raw const s.vrc as usize) - base
+        (&raw const s.vrc as usize) - base,
+        (&raw const s.msg_ram_headers as usize) - base,
+        (&raw const s.msg_ram_data as usize) - base
     );
 
     s.vrc = FLEXRAY_VRC_INITIAL;

@@ -9,14 +9,14 @@ async fn test_coordinator_topology() -> Result<()> {
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/telemetry_wfi/test_wfi.elf")
-                .with_dtb_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.dtb")
+                .with_yaml_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.yaml")
                 .add_qemu_arg("-device")
                 .add_qemu_arg("telemetry,transport=virtmcu-transport-hub"),
         )
         .add_node(
             NodeConfig::new(1)
                 .with_firmware_path("tests/fixtures/guest_apps/telemetry_wfi/test_wfi.elf")
-                .with_dtb_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.dtb")
+                .with_yaml_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.yaml")
                 .add_qemu_arg("-device")
                 .add_qemu_arg("telemetry,transport=virtmcu-transport-hub"),
         )

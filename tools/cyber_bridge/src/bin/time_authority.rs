@@ -160,7 +160,24 @@ async fn main() -> Result<()> {
     loop {
         let req = ClockAdvanceReq::new(args.delta_ns, absolute_vtime_ns, quantum_number);
 
-        let resp = transport.advance(req, timeout).ok_or_else(|| {
+        let mut resp_opt = None;
+        if quantum_number == 0 {
+            for i in 1..=60 {
+                if let Some(resp) = transport.advance(req, timeout) {
+                    resp_opt = Some(resp);
+                    break;
+                }
+                tracing::warn!(
+                    "No response at quantum 0 (attempt {}). Retrying in 1s...",
+                    i
+                );
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        } else {
+            resp_opt = transport.advance(req, timeout);
+        }
+
+        let resp = resp_opt.ok_or_else(|| {
             error!("Transport timeout or error at quantum {}", quantum_number);
             anyhow!("Transport timeout or error at quantum {}", quantum_number)
         })?;

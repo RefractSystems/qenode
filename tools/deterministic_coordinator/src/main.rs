@@ -219,10 +219,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let topo = Arc::new(tokio::sync::RwLock::new(topo_raw));
 
     if transport == topology::Transport::Unix {
-        barrier.set_quantum(1);
         run_unix_coordinator(args, topo, barrier, pcap_log).await
     } else {
-        barrier.set_quantum(1);
         run_deterministic_coordinator(args, topo, barrier, pcap_log).await
     }
 }
@@ -321,7 +319,7 @@ async fn run_deterministic_coordinator(
 
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
-    let mut current_quantum: u64 = 1;
+    let mut current_quantum: u64 = 0;
 
     for i in 0..args.nodes {
         seen_nodes.insert(i as u32);

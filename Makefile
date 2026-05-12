@@ -53,10 +53,6 @@ endif
 QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
 
-# Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
-# We use 'cargo run' for development to ensure it is always up to date.
-export VIRTMCU_CLI := $(CARGO_CMD) run $(CARGO_OPTS) --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
-
 # Helper macros for running commands in Docker
 VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
 	-e HOST_UID=$$(id -u) \
@@ -117,6 +113,10 @@ RUNNER_BIN     := $(TARGET_BIN_DIR)/virtmcu-test-runner
 # Canonical Cargo command with unified flags
 CARGO_CMD := cargo +nightly
 CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
+
+# Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
+# We use 'cargo run' for development to ensure it is always up to date.
+export VIRTMCU_CLI := $(CARGO_CMD) run $(CARGO_OPTS) --manifest-path $(CURDIR)/Cargo.toml -p virtmcu-cli --release --
 
 # By default, perform an incremental build
 all: dev-all

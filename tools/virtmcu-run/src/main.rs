@@ -405,12 +405,23 @@ fn main() -> Result<()> {
                 let cli_file = NamedTempFile::new()?;
                 let arch_file = NamedTempFile::new()?;
 
-                let status = Command::new("cargo")
-                    .arg("run")
-                    .arg("-p")
-                    .arg("virtmcu-cli")
-                    .arg("--release")
-                    .arg("--")
+                let mut cmd = if std::process::Command::new("virtmcu-cli")
+                    .arg("--version")
+                    .output()
+                    .is_ok()
+                {
+                    std::process::Command::new("virtmcu-cli")
+                } else {
+                    let mut c = std::process::Command::new("cargo");
+                    c.arg("run")
+                        .arg("-p")
+                        .arg("virtmcu-cli")
+                        .arg("--release")
+                        .arg("--");
+                    c
+                };
+
+                let status = cmd
                     .arg("platform")
                     .arg("generate")
                     .arg(file)
