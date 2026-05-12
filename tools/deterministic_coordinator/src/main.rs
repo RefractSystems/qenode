@@ -345,7 +345,7 @@ async fn run_deterministic_coordinator(
                              let hdr_slice = &payload[4..4 + sz];
                              let mut aligned = vec![0u8; hdr_slice.len()];
                              aligned.copy_from_slice(hdr_slice);
-                             if let Ok(hdr) = flatbuffers::root::<virtmcu_api::rf802154_header::Rf802154Header>(&aligned) {
+                             if let Ok(hdr) = flatbuffers::root::<virtmcu_api::rf802154::Rf802154Frame>(&aligned) {
                                  vtime = hdr.delivery_vtime_ns();
                                  seq = hdr.sequence_number();
                                  data_opt = Some(payload[4 + sz..].to_vec());
@@ -618,6 +618,7 @@ async fn deliver_message(
                 &msg.payload,
                 -80,
                 255,
+                virtmcu_api::Rf802154Mhr::parse(&msg.payload),
             ),
             Protocol::Lin | Protocol::CanFd | Protocol::FlexRay => msg.payload.clone(), // Raw FlatBuffer delivery
             _ => {
