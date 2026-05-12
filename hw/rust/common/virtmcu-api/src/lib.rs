@@ -62,6 +62,15 @@ pub mod flexray_generated;
 pub mod lin_generated;
 pub use rf802154_generated::virtmcu::rf_802154 as rf802154;
 #[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all,
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    clippy::extra_unused_lifetimes
+)]
+pub mod physics_generated;
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
     clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
     missing_docs,
     clippy::unwrap_used,
@@ -70,6 +79,7 @@ pub use rf802154_generated::virtmcu::rf_802154 as rf802154;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf802154_generated;
+pub use physics_generated::virtmcu::physics as physics_proto;
 
 /// Decoded IEEE 802.15.4 MAC Header (MHR) fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,6 +398,35 @@ pub trait TimeAuthorityTransport: Send + Sync {
         req: ClockAdvanceReq,
         timeout: core::time::Duration,
     ) -> Option<ClockReadyResp>;
+}
+
+/// Abstract transport for the Time Authority ↔ Physics Gateway handshake.
+///
+/// The Time Authority sends a trigger containing all actuator data for the
+/// completed quantum and blocks until the gateway responds with a done signal.
+/// Implementations: ZenohPhysicsTransport, UnixSocketPhysicsTransport.
+pub trait PhysicsGatewayTransport: Send + Sync {
+    /// Send the complete actuator bundle for one quantum to the gateway and
+    /// block until the gateway signals that the physics step is complete.
+    ///
+    /// Returns `Err` on transport failure, timeout, or a non-OK status in the
+    /// `PhysicsDone` response.  Callers must treat any `Err` as fatal.
+    fn trigger_and_wait(
+        &self,
+        trigger_bytes: &[u8],
+        timeout: core::time::Duration,
+    ) -> Result<(), alloc::string::String>;
+}
+
+/// Server-side counterpart: implemented by the Physics Gateway to receive
+/// triggers and send done signals.
+pub trait PhysicsGatewayServer: Send + Sync {
+    /// Block until a trigger arrives.  Returns the raw FlatBuffers bytes of
+    /// the `PhysicsTrigger` table, or `None` on shutdown/transport close.
+    fn recv_trigger(&self, timeout: core::time::Duration) -> Option<alloc::vec::Vec<u8>>;
+
+    /// Send the done signal back to the Time Authority.
+    fn send_done(&self, done: physics_proto::PhysicsDone) -> Result<(), alloc::string::String>;
 }
 
 /// Unix socket-based clock synchronization transport.

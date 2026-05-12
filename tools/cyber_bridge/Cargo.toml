@@ -9,6 +9,10 @@ name = "virtmcu-time-authority"
 path = "src/bin/time_authority.rs"
 
 [[bin]]
+name = "virtmcu-physics-gateway"
+path = "src/bin/physics_gateway.rs"
+
+[[bin]]
 name = "virtmcu-resd-replay"
 path = "src/bin/resd_replay.rs"
 
@@ -20,9 +24,11 @@ byteorder = "1.5"
 virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
 anyhow = "1.0"
 memmap2 = "0.9"
+libc = "0.2"
 clap = { version = "4.4", features = ["derive"] }
 tracing.workspace = true
 virtmcu-observability.workspace = true
+flatbuffers.workspace = true
 
 
 [lints.clippy]

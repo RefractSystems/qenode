@@ -5,6 +5,7 @@ After this chapter, you can:
 1. Define "Binary Fidelity" and explain its importance in firmware validation.
 2. Identify the three core pillars of the VirtMCU architecture.
 3. Distinguish between the Control Plane and the Data Plane in a multi-node simulation.
+4. Explain the three-tier vocabulary: World, Federation, and Stage.
 
 ## 1. What VirtMCU Is: The Cyber-Physical Architecture
 
@@ -105,6 +106,51 @@ VirtMCU utilizes three distinct communication channels:
 
 ---
 
+## 4. World, Federation, and Stage — Terminology Hierarchy
+
+VirtMCU uses three precise terms for the simulation "container" concept, drawn from
+established standards (see [Standards Alignment](./13-standards-alignment.md) for the
+full mapping):
+
+| Term | What it is | Analogy |
+|---|---|---|
+| **World** | The static YAML manifest that declares all nodes, peripherals, links, seeds, and topology. Lives on disk. | HLA Federation Object Model (Federation Object Model) / FMI FMU description XML |
+| **Federation** | A *running instance* of a World — the live processes executing the simulation. Identified at runtime by `--federation-id`. | HLA Federation (IEEE 1516) |
+| **Stage** | Future OpenUSD path: the `UsdStage` that backs a World manifest once VirtMCU is fully USD-native (ADR-010 roadmap item). | OpenUSD `UsdStage` |
+
+The distinction matters in practice:
+
+- **Two federations can share one World** — the same YAML can be instantiated twice
+  simultaneously with different `--federation-id` values and different `global_seed`
+  parameters, e.g. for Monte Carlo runs.
+- **The World does not change at runtime** — topology mutations (mobile nodes, new links)
+  are pushed by the Physics Engine as structured updates, not by editing the YAML in place.
+- **Code and schemas use "World"** — the YAML type names (`WorldSpec`, `world.yaml`) are
+  fixed. "Federation" appears in CLI flags, log messages, and documentation. Renaming
+  schema fields to "federation" would break backward compatibility without adding value.
+
+```
+┌──────────────────────────────────────────────────┐
+│  world.yaml  (World — the Federation Object Model)                   │
+│  global_seed: 0xDEADBEEF                         │
+│  nodes: [node0, node1, physics_gateway]          │
+│  topology: …                                     │
+└──────────────────────┬───────────────────────────┘
+                       │  virtmcu-time-authority --world world.yaml
+                       │                         --federation-id run-42
+                       ▼
+┌──────────────────────────────────────────────────┐
+│  Federation run-42  (running instance)           │
+│  ├── QEMU node 0                                 │
+│  ├── QEMU node 1                                 │
+│  ├── virtmcu-physics-gateway                     │
+│  └── virtmcu-deterministic-coordinator           │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
 ## See Also
 *   **[PDES and Virtual Time](../fundamentals/08-pdes-and-virtual-time.md)**: The theoretical foundation of Pillar 3.
+*   **[Standards Alignment](./13-standards-alignment.md)**: How VirtMCU maps to HLA, FMI, OpenUSD, PDES, and SysML.
 *   **[The FlexRay Case Study](../postmortem/2026-05-01-flexray-rc-11-segfault.md)**: An example of how complex multi-node interactions can fail.

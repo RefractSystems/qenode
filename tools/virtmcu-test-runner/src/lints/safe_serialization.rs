@@ -35,7 +35,8 @@ impl Lint for RustSafeSerializationLint {
                 continue;
             }
 
-            if path.file_name().and_then(|s| s.to_str()) == Some("core_generated.rs") {
+            let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if file_name.ends_with("_generated.rs") {
                 continue;
             }
 

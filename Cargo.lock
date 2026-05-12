@@ -698,6 +698,8 @@ dependencies = [
  "anyhow",
  "byteorder",
  "clap",
+ "flatbuffers",
+ "libc",
  "memmap2",
  "tokio",
  "tracing",

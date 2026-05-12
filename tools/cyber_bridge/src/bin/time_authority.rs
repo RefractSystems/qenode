@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use cyber_bridge::{
-    physics::{NoOpPhysics, PhysicsStep, SharedMemPhysics},
+    physics::{GatewayPhysics, NoOpPhysics, PhysicsStep, SharedMemPhysics},
+    physics_transport::{UnixSocketPhysicsTransport, ZenohPhysicsTransport},
     ZenohActuatorSink, ZenohTimeAuthorityTransport,
 };
 use std::sync::Arc;
@@ -22,6 +23,7 @@ enum TransportType {
 enum PhysicsType {
     Noop,
     Shm,
+    Gateway,
 }
 
 #[derive(Parser, Debug)]
@@ -70,6 +72,14 @@ struct Args {
     /// Sensor topic prefix to publish
     #[arg(long, default_value = "sim/sensor")]
     sensor_prefix: String,
+
+    /// Physics Gateway transport type
+    #[arg(long, value_enum, default_value_t = TransportType::Unix)]
+    gateway_transport: TransportType,
+
+    /// Physics Gateway endpoint
+    #[arg(long)]
+    gateway_connect: Option<String>,
 }
 
 async fn open_zenoh_session(connect: Option<&String>) -> Result<Arc<zenoh::Session>> {
@@ -149,6 +159,26 @@ async fn main() -> Result<()> {
                 args.timeout_ms,
             )?)
         }
+        PhysicsType::Gateway => {
+            let transport: Box<dyn virtmcu_api::PhysicsGatewayTransport> =
+                match args.gateway_transport {
+                    TransportType::Unix => {
+                        let path = args.gateway_connect.as_ref().ok_or_else(|| {
+                            anyhow!("--gateway-connect (path) required for Unix gateway transport")
+                        })?;
+                        Box::new(UnixSocketPhysicsTransport::new(path))
+                    }
+                    TransportType::Zenoh => {
+                        let session = if let Some(session) = &zenoh_session {
+                            Arc::clone(session)
+                        } else {
+                            open_zenoh_session(args.gateway_connect.as_ref()).await?
+                        };
+                        Box::new(ZenohPhysicsTransport::new(session))
+                    }
+                };
+            Box::new(GatewayPhysics::new(transport, args.timeout_ms))
+        }
     };
 
     let mut quantum_number: u64 = 0;
@@ -193,10 +223,11 @@ async fn main() -> Result<()> {
             ));
         }
 
-        let actuators = actuator_sink
-            .as_ref()
-            .map(|s| s.drain())
-            .unwrap_or_default();
+        let actuators: std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>> =
+            actuator_sink
+                .as_ref()
+                .map(|s| s.drain())
+                .unwrap_or_default();
         physics.step(args.delta_ns, &actuators, &resp)?;
 
         quantum_number += 1;

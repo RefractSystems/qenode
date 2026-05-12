@@ -1,4 +1,5 @@
 pub mod physics;
+pub mod physics_transport;
 pub mod resd_parser;
 
 use std::sync::Arc;
@@ -45,9 +46,10 @@ impl TimeAuthorityTransport for ZenohTimeAuthorityTransport {
         None
     }
 }
+type ActuatorBuffer = std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>;
 
 pub struct ZenohActuatorSink {
-    buffer: Arc<std::sync::Mutex<std::collections::HashMap<u32, Vec<f64>>>>,
+    buffer: Arc<std::sync::Mutex<ActuatorBuffer>>,
     _subscriber: zenoh::pubsub::Subscriber<()>,
 }
 
@@ -57,29 +59,40 @@ impl ZenohActuatorSink {
         topic_prefix: &str,
         node_id: u32,
     ) -> anyhow::Result<Self> {
-        let buffer = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let buffer = Arc::new(std::sync::Mutex::new(ActuatorBuffer::new()));
         let buffer_clone = Arc::clone(&buffer);
         let filter = format!("{}/{}/{}", topic_prefix, node_id, "**");
-
         let subscriber = session
             .declare_subscriber(filter)
             .callback(move |sample| {
+                let raw = sample.payload().to_bytes();
+                if raw.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+                    return;
+                }
+                let Some((header, data_bytes)) = virtmcu_api::decode_frame(&raw) else {
+                    return;
+                };
+                let vtime = header.delivery_vtime_ns();
                 let topic = sample.key_expr().as_str();
-                if let Some(sensor_id_str) = topic.split('/').next_back() {
-                    if let Ok(sensor_id) = sensor_id_str.parse::<u32>() {
-                        let payload = sample.payload().to_bytes();
-                        if payload.len() >= virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-                            let data_bytes = &payload[virtmcu_api::ZENOH_FRAME_HEADER_SIZE..];
-                            let mut vals = Vec::new();
-                            for chunk in data_bytes.chunks_exact(8) {
-                                let val = f64::from_le_bytes(chunk.try_into().unwrap());
-                                vals.push(val);
-                            }
-                            if let Ok(mut map) = buffer_clone.lock() {
-                                map.insert(sensor_id, vals);
-                            }
-                        }
+                let Some(actuator_id_str) = topic.split('/').next_back() else {
+                    return;
+                };
+                let Ok(actuator_id) = actuator_id_str.parse::<u32>() else {
+                    return;
+                };
+
+                let mut vals: Vec<f64> = Vec::new();
+                for chunk in data_bytes.chunks_exact(8) {
+                    if let Ok(arr) = <[u8; 8]>::try_from(chunk) {
+                        vals.push(f64::from_le_bytes(arr));
                     }
+                }
+                if vals.is_empty() {
+                    return;
+                }
+
+                if let Ok(mut map) = buffer_clone.lock() {
+                    map.entry(vtime).or_default().insert(actuator_id, vals);
                 }
             })
             .wait()
@@ -91,11 +104,9 @@ impl ZenohActuatorSink {
         })
     }
 
-    pub fn drain(&self) -> std::collections::HashMap<u32, Vec<f64>> {
-        let mut map = self.buffer.lock().unwrap();
-        let current = map.clone();
-        map.clear();
-        current
+    pub fn drain(&self) -> ActuatorBuffer {
+        let mut map = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *map)
     }
 }
 
@@ -166,7 +177,7 @@ mod tests {
 
         let topic = format!("{}/{}/7", prefix, node_id);
         let vals = vec![1.0f64, 2.0f64];
-        let mut data_payload = Vec::new();
+        let mut data_payload: Vec<u8> = Vec::new();
         for val in &vals {
             data_payload.extend_from_slice(&val.to_le_bytes());
         }
@@ -178,7 +189,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let drained = sink.drain();
-        assert_eq!(drained.get(&7), Some(&vals));
+        assert_eq!(drained.get(&1000).unwrap().get(&7), Some(&vals));
 
         let drained_again = sink.drain();
         assert!(drained_again.is_empty());

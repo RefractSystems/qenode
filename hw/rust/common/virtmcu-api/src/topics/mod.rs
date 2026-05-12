@@ -86,6 +86,11 @@ pub mod sim_topic {
     pub const COORD_TX_WILDCARD: &str = "sim/coord/*/tx";
     /// Wildcard topic for all ethernet TX messages.
     pub const ETH_FRAME_TX_WILDCARD: &str = "sim/eth/frame/*/tx";
+
+    /// Topic on which the Time Authority publishes physics triggers.
+    pub const PHYSICS_TRIGGER: &str = "sim/physics/trigger";
+    /// Topic on which the Physics Gateway publishes done signals.
+    pub const PHYSICS_DONE: &str = "sim/physics/done";
 }
 
 #[cfg(test)]
