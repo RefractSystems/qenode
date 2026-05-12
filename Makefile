@@ -296,6 +296,14 @@ dev-integration: build-test-artifacts build-test-runner
 dev-integration-coverage: build-test-artifacts build-test-runner
 	@$(RUNNER_BIN) coverage --integration
 
+# --- End-to-End Tests ---
+dev-e2e:
+	@echo "==> Running E2E tests..."
+	@for script in tests/e2e/*.sh; do \
+		echo "==> Running $$script"; \
+		bash "$$script" || exit 1; \
+	done
+
 dev-integration-asan: build-test-artifacts build-test-runner
 	@$(RUNNER_BIN) run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))
 
