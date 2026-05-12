@@ -111,8 +111,8 @@ TARGET_BIN_DIR := $(CARGO_TARGET_DIR)/$(TRIPLE)/release
 RUNNER_BIN     := $(TARGET_BIN_DIR)/virtmcu-test-runner
 
 # Canonical Cargo command with unified flags
-CARGO_CMD := cargo +nightly
-CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
+override CARGO_CMD := cargo +nightly
+override CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
 
 # Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
 # We use 'cargo run' for development to ensure it is always up to date.
