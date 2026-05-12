@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use xshell::{cmd, Shell};
 
 #[derive(Parser)]
@@ -39,10 +39,13 @@ enum Commands {
     CiUnitMiri,
     CiIntegration {
         #[arg(long, short)]
-        domain: String,
+        domain: Option<String>,
     },
     CiIntegrationCoverage,
-    CiIntegrationAsan,
+    CiIntegrationAsan {
+        #[arg(long, short)]
+        domain: Option<String>,
+    },
     CiPeripheralCoverage,
     CiBuildThirdParty,
     CiBuildThirdPartyAsan,
@@ -225,7 +228,7 @@ fn main() -> Result<()> {
 
     let run_ci = |sh: &Shell, cmd: &str, img: &str| -> Result<()> {
         let curdir_str = curdir.display().to_string();
-        cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e PYTHONPATH=/workspace:/workspace/generated -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 {img} {cmd}")
+        cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 {img} {cmd}")
             .run()?;
         Ok(())
     };
@@ -379,9 +382,10 @@ fn main() -> Result<()> {
         }
         Commands::CiIntegration { domain } => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
+            let domain_val = domain.unwrap_or_else(|| "all".to_string());
             run_ci(
                 &sh,
-                &format!("make dev-integration DOMAIN={}", domain),
+                &format!("make dev-integration DOMAIN={}", domain_val),
                 &virtmcu_ci_img,
             )?;
         }
@@ -389,12 +393,14 @@ fn main() -> Result<()> {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
             run_ci(&sh, "make dev-integration-coverage", &virtmcu_ci_img)?;
         }
-        Commands::CiIntegrationAsan => {
+        Commands::CiIntegrationAsan { domain } => {
             ensure_image(&sh, &virtmcu_ci_asan_img, "ci-asan")?;
-            println!("════════════════════════════════════════════════════");
-            println!("  CI ASan — Docker: ci-asan");
-            println!("════════════════════════════════════════════════════");
-            run_ci(&sh, "make dev-integration-asan", &virtmcu_ci_asan_img)?;
+            let domain_val = domain.unwrap_or_else(|| "all".to_string());
+            run_ci(
+                &sh,
+                &format!("make dev-integration-asan DOMAIN={}", domain_val),
+                &virtmcu_ci_asan_img,
+            )?;
             println!("\n✓ ci-integration-asan passed.");
         }
         Commands::CiPeripheralCoverage => {
@@ -410,9 +416,6 @@ fn main() -> Result<()> {
         }
         Commands::CiFull => {
             ensure_image(&sh, &virtmcu_ci_img, "ci")?;
-            println!("\n════════════════════════════════════════════════════");
-            println!("  CI Full — Docker: ci");
-            println!("════════════════════════════════════════════════════\n");
 
             let xtask = env::current_exe()?;
             cmd!(sh, "{xtask} ci-lint").run()?;
@@ -420,16 +423,10 @@ fn main() -> Result<()> {
             cmd!(sh, "{xtask} ci-integration-asan").run()?;
             cmd!(sh, "{xtask} ci-unit-miri").run()?;
 
-            println!("\n════════════════════════════════════════════════════");
-            println!("  CI Full — Integration smoke tests matrix (inside ci)");
-            println!("════════════════════════════════════════════════════\n");
             fs::create_dir_all("coverage-data")?;
             let curdir_str = curdir.display().to_string();
-            cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e PYTHONPATH=/workspace:/workspace/generated -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make dev-integration DOMAIN=all").run()?;
+            cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make dev-integration DOMAIN=all").run()?;
 
-            println!("\n════════════════════════════════════════════════════");
-            println!("  CI Full — Coverage Checks");
-            println!("════════════════════════════════════════════════════\n");
             cmd!(sh, "{xtask} ci-integration-coverage").run()?;
             cmd!(sh, "{xtask} ci-peripheral-coverage").run()?;
             println!("\n✓ ci-full passed.");

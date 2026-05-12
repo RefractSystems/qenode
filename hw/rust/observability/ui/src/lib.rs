@@ -157,10 +157,9 @@ static UI_OPS: MemoryRegionOps = MemoryRegionOps {
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to ZenohUiQEMU.
 #[no_mangle]
 pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    const UI_MMIO_SIZE: u64 = 0x100;
     // SAFETY: dev is a valid pointer to ZenohUiQEMU provided by QEMU.
     let s = unsafe { &mut *(dev as *mut ZenohUiQEMU) };
-
-    const UI_MMIO_SIZE: u64 = 0x100;
 
     // SAFETY: s.mmio is a valid MemoryRegion, dev is a valid object.
     unsafe {
@@ -307,7 +306,7 @@ fn ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
     let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
     let irq_ptr = irq as usize;
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |payload| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, payload: &[u8]| {
         if payload.is_empty() {
             return;
         }

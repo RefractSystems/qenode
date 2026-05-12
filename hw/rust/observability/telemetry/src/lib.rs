@@ -42,11 +42,10 @@ use virtmcu_qom::{
 
 const MAX_CPUS: usize = 32;
 const TRACE_EVENT_QUEUE_SIZE: usize = 10000;
-const IRQ_ID_SLOT_SHIFT: u32 = 16;
 
-const EVENT_TYPE_CPU_STATE: u8 = 0;
-const EVENT_TYPE_IRQ: u8 = 1;
-const EVENT_TYPE_POWER_STATE: u8 = 3;
+const EVENT_TYPE_CPU_STATE: i8 = 0;
+const EVENT_TYPE_IRQ: i8 = 1;
+const EVENT_TYPE_POWER_STATE: i8 = 3;
 
 /// Virtmcu telemetry device.
 #[repr(C)]

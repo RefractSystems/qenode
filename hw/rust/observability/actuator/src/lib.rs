@@ -85,7 +85,7 @@ struct SharedState {
     drain: virtmcu_qom::sync::VcpuDrain,
 }
 
-const DRAIN_TIMEOUT_MS: u64 = 30000;
+const DRAIN_TIMEOUT_MS: u32 = 30000;
 const MAX_DATA_ELEMENTS: usize = 8;
 const F64_SIZE_BYTES: u64 = core::mem::size_of::<f64>() as u64;
 
@@ -191,14 +191,14 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
     _padding1: [0; 4],
     valid: virtmcu_qom::memory::MemoryRegionValidRange {
         min_access_size: 1,
-        max_access_size: F64_SIZE_BYTES as u8,
+        max_access_size: F64_SIZE_BYTES as u32,
         unaligned: false,
         _padding: [0; 7],
         accepts: ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
         min_access_size: 1,
-        max_access_size: F64_SIZE_BYTES as u8,
+        max_access_size: F64_SIZE_BYTES as u32,
         unaligned: false,
         _padding: [0; 7],
     },
@@ -208,13 +208,12 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to VirtmcuActuatorQEMU.
 #[no_mangle]
 pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    const ACTUATOR_MMIO_SIZE: u64 = 0x1000;
     let s = unsafe { &mut *(dev as *mut VirtmcuActuatorQEMU) };
 
     if !s.rust_state.is_null() {
         return;
     }
-
-    const ACTUATOR_MMIO_SIZE: u64 = 0x1000;
 
     unsafe {
         memory_region_init_io(

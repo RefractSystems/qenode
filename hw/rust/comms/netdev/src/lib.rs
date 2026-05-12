@@ -463,7 +463,7 @@ fn netdev_init_internal(
     let earliest_clone = Arc::clone(&state.earliest_vtime);
 
     let rx_topic = format!("{topic}/rx");
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
         if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
             return;
         }

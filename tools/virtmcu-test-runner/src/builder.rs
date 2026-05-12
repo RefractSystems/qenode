@@ -244,17 +244,6 @@ impl TopologyBuilder {
                 let (platform, world) =
                     yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
 
-                let has_manual_clock = node
-                    .qemu_args
-                    .iter()
-                    .any(|arg| arg.contains("virtmcu-clock"));
-                if node.is_coordinated && !platform.has_clock && !has_manual_clock {
-                    return Err(anyhow!(
-                        "Node {} is configured as orchestrated(true), but no 'clock' peripheral was found in the YAML topology or qemu_args!",
-                        node.id
-                    ));
-                }
-
                 yaml_cli_args.clear();
                 yaml_cli_args = platform.cli_args;
                 let dtb = artifacts.get_dtb_dts(&platform.dts_content).await?;
@@ -329,7 +318,27 @@ impl TopologyBuilder {
                     .arg("-global")
                     .arg(format!("virtmcu-transport-hub.router={}", endpoint));
 
-                if !has_manual_clock {
+                // Link all native devices to the hub (hub0 is created by yaml2qemu in DTS)
+                for dev_type in &[
+                    "actuator",
+                    "sensor",
+                    "telemetry",
+                    "ieee802154",
+                    "canfd",
+                    "flexray",
+                    "lin",
+                    "spi",
+                    "wifi",
+                    "ui",
+                ] {
+                    qemu_cmd
+                        .arg("-global")
+                        .arg(format!("{}.transport=hub0", dev_type));
+                }
+                let has_clock_in_yaml = yaml_cli_args
+                    .iter()
+                    .any(|arg| arg.contains("virtmcu-clock"));
+                if !has_manual_clock && !has_clock_in_yaml {
                     qemu_cmd.arg("-device").arg(format!(
                         "virtmcu-clock,mode=slaved-icount,router={},node={}",
                         endpoint, node.id

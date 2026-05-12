@@ -17,8 +17,11 @@ pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static
 /// Number of logs dropped due to queue overflow.
 pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Global metric accumulator"
 
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 const LOG_QUEUE_SIZE: usize = 4096;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 const VTIME_WIDTH: usize = 10;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 const VTIME_PRECISION: usize = 2;
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]

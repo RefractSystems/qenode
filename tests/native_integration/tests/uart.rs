@@ -69,7 +69,7 @@ async fn test_uart_stress() -> Result<()> {
             );
 
             Ok(())
-        })).await;
+        })).await?;
 
     Ok(())
 }

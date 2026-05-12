@@ -644,7 +644,7 @@ use virtmcu_api::{DataCallback, DataTransport};
 
 struct SubscriptionInternal {
     callback: DataCallback,
-    rx: Receiver<alloc::vec::Vec<u8>>,
+    rx: Receiver<(String, alloc::vec::Vec<u8>)>,
     is_valid: Arc<AtomicBool>,
     active_count: Arc<AtomicUsize>,
     drain_cond: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
@@ -662,12 +662,12 @@ extern "C" fn safe_subscription_timer_cb(opaque: *mut core::ffi::c_void) {
         // We do NOT acquire it here to avoid premature unlocking when the guard is dropped.
 
         // Drain the queue
-        while let Ok(payload) = internal.rx.try_recv() {
+        while let Ok((topic, payload)) = internal.rx.try_recv() {
             // Re-check validity.
             if internal.is_valid.load(Ordering::Acquire)
                 && internal.generation.load(Ordering::Acquire) == internal.expected_generation
             {
-                (internal.callback)(&payload);
+                (internal.callback)(&topic, &payload);
             }
         }
     }
@@ -735,8 +735,10 @@ impl SafeSubscription {
         let timer_clone = Arc::new(timer);
         let timer_kick = Arc::clone(&timer_clone);
         let valid_clone = Arc::clone(&is_valid);
-        let wrapper_callback: DataCallback = Box::new(move |payload| {
-            if valid_clone.load(Ordering::Acquire) && tx.send(payload.to_vec()).is_ok() {
+        let wrapper_callback: DataCallback = Box::new(move |topic: &str, payload: &[u8]| {
+            if valid_clone.load(Ordering::Acquire)
+                && tx.send((topic.to_owned(), payload.to_vec())).is_ok()
+            {
                 timer_kick.kick();
             }
         });

@@ -1,9 +1,18 @@
+---
 # worlds/pendulum.yml
 # Example physics overlay for the standalone virtmcu docker-compose.yml
 # This overrides the cyber-node to run a slaved-clock firmware and adds a physics node.
 services:
   cyber-node:
-    command: ["/app/target/release/virtmcu-run", "--yaml", "/app/tests/fixtures/guest_apps/yaml_boot/test_board.yaml", "-kernel", "/app/tests/fixtures/guest_apps/boot_arm/hello.elf", "-device", "clock,mode=suspend,node=0,coordinated=true"]
+    command: [
+      "/app/target/release/virtmcu-run",
+      "--yaml",
+      "/app/tests/fixtures/guest_apps/yaml_boot/test_board.yaml",
+      "-kernel",
+      "/app/tests/fixtures/guest_apps/boot_arm/hello.elf",
+      "-device",
+      "clock,mode=suspend,node=0,coordinated=true"
+    ]
 
   time-authority:
     build:
@@ -17,12 +26,12 @@ services:
       zenoh-router:
         condition: service_healthy
     command: [
-        "/app/target/release/virtmcu-time-authority",
-        "--transport", "zenoh",
-        "--connect", "tcp/zenoh-router:7447",
-        "--node-id", "0",
-        "--delta-ns", "1000000"
-      ]
+      "/app/target/release/virtmcu-time-authority",
+      "--transport", "zenoh",
+      "--connect", "tcp/zenoh-router:7447",
+      "--node-id", "0",
+      "--delta-ns", "1000000"
+    ]
 
 networks:
   virtmcu-net: {}

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use virtmcu_api::FlatBufferStructExt;
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

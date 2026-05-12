@@ -526,7 +526,7 @@ pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
 }
 
 /// Callback type for data transport subscriptions.
-pub type DataCallback = Box<dyn Fn(&[u8]) + Send + Sync>;
+pub type DataCallback = Box<dyn Fn(&str, &[u8]) + Send + Sync>;
 
 /// Abstract transport for emulated data plane (packets, signals).
 ///
@@ -581,15 +581,12 @@ mod tests {
     use core::cmp::Ordering as CmpOrd;
 
     const TEST_VTIME_1000: u64 = 1_000;
-    const TEST_VTIME_2000: u64 = 2_000;
-    const TEST_VTIME_3000: u64 = 3_000;
     const TEST_VTIME_500: u64 = 500;
     const TEST_SEQ_2: u64 = 2;
     const TEST_SEQ_42: u64 = 42;
     const TEST_VAL_123: u32 = 123;
     const TEST_VTIME_LONG: u64 = 12345678;
     const TEST_VTIME_10M: u64 = 10_000_000;
-    const TEST_QUANTUM: u64 = 123;
     const TEST_QUANTUM_99: u64 = 99;
     const TEST_N_FRAMES_50: u32 = 50;
     const TEST_ADDR_1000: u64 = 0x1000_0000;
@@ -808,19 +805,24 @@ mod tests {
         assert!(decode_frame(&frame).is_some());
     }
 
+    const SLICE_0_8: core::ops::Range<usize> = 0..8;
+    const SLICE_8_16: core::ops::Range<usize> = 8..16;
+    const SLICE_16_20: core::ops::Range<usize> = 16..20;
+    const SLICE_16_24: core::ops::Range<usize> = 16..24;
+
     #[test]
     fn test_little_endian_vtime() {
         // 0x0102030405060708 in LE = bytes [08, 07, 06, 05, 04, 03, 02, 01]
         let vtime: u64 = TEST_PATTERN_U64;
         let frame = encode_frame(vtime, 0, b"");
-        assert_eq!(&frame[HDR_VTIME_START..HDR_VTIME_END], &TEST_LE_PATTERN);
+        assert_eq!(&frame[SLICE_0_8], &TEST_LE_PATTERN);
     }
 
     #[test]
     fn test_little_endian_sequence() {
         let seq: u64 = TEST_PATTERN_U64;
         let frame = encode_frame(0, seq, b"");
-        assert_eq!(&frame[HDR_SEQ_START..HDR_SEQ_END], &TEST_LE_PATTERN);
+        assert_eq!(&frame[SLICE_8_16], &TEST_LE_PATTERN);
     }
 
     #[test]
@@ -828,7 +830,7 @@ mod tests {
         // size = 0x00000005 in LE = bytes [05, 00, 00, 00]
         let frame = encode_frame(0, 0, b"hello");
         const LE_SIZE_5: [u8; 4] = [0x05, 0x00, 0x00, 0x00];
-        assert_eq!(&frame[HDR_SIZE_START..HDR_SIZE_END], &LE_SIZE_5);
+        assert_eq!(&frame[SLICE_16_20], &LE_SIZE_5);
     }
 
     #[test]
@@ -846,11 +848,13 @@ mod tests {
         // 10 Mbps = 1_250_000 bytes/s → 800 ns/byte
         const DIVISOR: u64 = 1_250_000;
         const BAUD_10MBPS_NS: u64 = 1_000_000_000 / DIVISOR;
+        const TEST_VTIME_800: u64 = 800;
         assert_eq!(BAUD_10MBPS_NS, TEST_VTIME_800);
     }
 
     #[test]
     fn test_encode_decode_sequence_monotonic() -> Result<(), String> {
+        const TEST_VTIME_800: u64 = 800;
         const N: u64 = 1_000;
         const START: u64 = 10_000_000;
         for i in 0..N {
@@ -882,8 +886,8 @@ mod tests {
     fn test_clock_advance_req_le_encoding() {
         let req = ClockAdvanceReq::new(TEST_PATTERN_U64, 0, TEST_PATTERN_U64_ALT);
         let bytes = req.pack();
-        assert_eq!(&bytes[HDR_VTIME_START..HDR_VTIME_END], &TEST_LE_PATTERN);
-        assert_eq!(&bytes[HDR_SEQ_END..HDR_TOTAL_SIZE], &TEST_LE_PATTERN_ALT);
+        assert_eq!(&bytes[SLICE_0_8], &TEST_LE_PATTERN);
+        assert_eq!(&bytes[SLICE_16_24], &TEST_LE_PATTERN_ALT);
     }
 
     #[test]
@@ -938,12 +942,14 @@ mod tests {
 
     #[test]
     fn test_mmio_req_cross_language_pack() {
+        const TEST_SIZE_4: u8 = 4;
+        const TEST_PATTERN_U64_MMIO_3: u64 = 0x1122334455667788;
         let req = MmioReq::new(
             1,
             TEST_SIZE_4,
             TEST_VAL_U16_1234,
             TEST_VAL_U32_5678,
-            TEST_PATTERN_U64,
+            TEST_PATTERN_U64_MMIO_3,
             TEST_PATTERN_U64_MMIO_1,
             TEST_PATTERN_U64_MMIO_2,
         );
@@ -1027,7 +1033,7 @@ mod tests {
         const TEST_VTIME: u64 = 12345;
         const TEST_SEQ: u64 = 7;
         const TEST_SIZE: u64 = 100;
-        let h = ZenohFrameHeader::new(TEST_VTIME, TEST_SEQ, TEST_SIZE);
+        let h = ZenohFrameHeader::new(TEST_VTIME, TEST_SEQ, TEST_SIZE.try_into().unwrap());
         let bytes = h.pack();
         let h2 = ZenohFrameHeader::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ h.delivery_vtime_ns() }, { h2.delivery_vtime_ns() });
@@ -1036,7 +1042,8 @@ mod tests {
     }
 
     #[test]
-    fn test_header_size_24() {
+    fn test_zenoh_frame_header_size() {
+        const HDR_TOTAL_SIZE: usize = 24;
         assert_eq!(core::mem::size_of::<ZenohFrameHeader>(), HDR_TOTAL_SIZE);
         assert_eq!(ZENOH_FRAME_HEADER_SIZE, HDR_TOTAL_SIZE);
     }

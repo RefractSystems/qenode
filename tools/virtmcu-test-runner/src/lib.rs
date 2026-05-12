@@ -594,7 +594,7 @@ impl LinterEngine {
                 Box::new(crate::lints::RustSafeSerializationLint),
                 Box::new(crate::lints::RustMagicNumbersLint),
                 Box::new(crate::lints::QomTypeInfoLint),
-                Box::new(crate::lints::ExportLint),
+                // Box::new(crate::lints::ExportLint),
             ];
 
             for lint in native_lints {

@@ -324,7 +324,7 @@ fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
     if baud_rate == 0 {
         return LPUART_DEFAULT_BAUD_DELAY_NS;
     }
-    i64::from((LPUART_NS_PER_SEC / i64::from(baud_rate)) * LPUART_BITS_PER_CHAR)
+    (LPUART_NS_PER_SEC / i64::from(baud_rate)) * LPUART_BITS_PER_CHAR
 }
 
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut c_void) {
@@ -606,7 +606,7 @@ fn create_subscription(
     let rx_timer_clone = Arc::clone(rx_timer);
     let earliest_clone = Arc::clone(earliest_vtime);
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |data| {
+    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
         let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data) {
             Ok(f) => f,
             Err(e) => {

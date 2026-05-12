@@ -31,10 +31,15 @@ if [ "$(id -g vscode)" != "$TARGET_GID" ]; then
 fi
 
 # 2. Fix Volume Permissions
-# The Cargo registry volume might have been created with a different UID in a previous run
-if [ -d "/usr/local/cargo/registry" ] && [ "$(stat -c %u /usr/local/cargo/registry)" != "$TARGET_UID" ]; then
-    echo "Fixing Cargo registry permissions..."
-    chown -R vscode:vscode /usr/local/cargo/registry
+# The Cargo registry volume might have been created with a different UID in a previous run.
+# We check if the registry exists and if it has any files NOT owned by the target user.
+if [ -d "/usr/local/cargo/registry" ]; then
+    # Optimization: if the top level is wrong, or if we suspect deep root-owned files
+    if [ "$(stat -c %u /usr/local/cargo/registry)" != "$TARGET_UID" ] || \
+       [ -n "$(find /usr/local/cargo/registry -maxdepth 2 -user root -print -quit)" ]; then
+        echo "Fixing Cargo registry permissions (this may take a moment)..."
+        chown -R vscode:vscode /usr/local/cargo/registry
+    fi
 fi
 
 if [ -d "/workspace/target" ] && [ "$(stat -c %u /workspace/target)" != "$TARGET_UID" ]; then

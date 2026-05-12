@@ -152,7 +152,17 @@ enum SetupCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    #[derive(Debug)]
+    struct DummyVTimeProvider;
+    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+        fn current_vtime_ns(&self) -> u64 {
+            0
+        }
+    }
+    let _telemetry = virtmcu_observability::init_telemetry(
+        "virtmcu-cli",
+        std::sync::Arc::new(DummyVTimeProvider),
+    );
     let cli = Cli::parse();
 
     match cli.command {
@@ -403,10 +413,8 @@ async fn run_platform_generate_header(input: PathBuf) -> Result<()> {
                 .and_then(|a| {
                     if let Some(s) = a.as_str() {
                         Some(s.to_string())
-                    } else if let Some(i) = a.as_u64() {
-                        Some(format!("{:#x}", i))
                     } else {
-                        None
+                        a.as_u64().map(|i| format!("{:#x}", i))
                     }
                 })
                 .unwrap_or_else(|| "0x0".to_string());
@@ -463,7 +471,7 @@ async fn run_platform_generate(
 
     if let Some(arch_path) = out_arch {
         let arch = if let Some(m) = &world.machine {
-            if let Some(cpus) = m.cpus.get(0) {
+            if let Some(cpus) = m.cpus.first() {
                 if cpus.cpu_type.contains("riscv") {
                     "riscv"
                 } else {
@@ -674,6 +682,7 @@ fn generate_topics_rust(config: &Value) -> String {
 
     lines.push("pub mod templates {".to_string());
     if let Some(templates) = config.get("templates").and_then(|t| t.as_object()) {
+        let re = regex::Regex::new(r"\{([a-z_]+)\}").expect("valid regex");
         for (name, value) in templates {
             let val_str = value.as_str().unwrap_or("");
             let val = val_str
@@ -684,7 +693,6 @@ fn generate_topics_rust(config: &Value) -> String {
                 .replace("{bus}", "{}")
                 .replace("{port_id}", "{}");
 
-            let re = regex::Regex::new(r"\{([a-z_]+)\}").unwrap();
             let placeholders: Vec<_> = re
                 .captures_iter(val_str)
                 .map(|c| c.get(1).unwrap().as_str())
