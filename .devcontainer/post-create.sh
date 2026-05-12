@@ -58,6 +58,10 @@ if ! command -v gemini &>/dev/null; then
     sudo npm install -g @google/gemini-cli@latest
 fi
 
+echo "==> Configuring Docker daemon to skip iptables..."
+sudo mkdir -p /etc/docker
+echo '{"iptables": false}' | sudo tee /etc/docker/daemon.json > /dev/null
+
 echo "==> Fixing Docker volume permissions..."
 # Docker creates volumes as root by default. Fix permissions for Cargo caches.
 sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
