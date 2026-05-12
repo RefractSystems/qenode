@@ -1,0 +1,54 @@
+---
+services:
+  cyber-node:
+    command: [
+      "/app/target/release/virtmcu-run",
+      "--yaml",
+      "/app/tests/fixtures/guest_apps/pendulum_controller/board.yaml",
+      "-kernel",
+      "/app/tests/fixtures/guest_apps/pendulum_controller/controller.elf",
+      "-device",
+      "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447"
+    ]
+
+  time-authority:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    networks:
+      - virtmcu-net
+    environment:
+      ZENOH_CONNECT: tcp/zenoh-router:7447
+      RUST_LOG: info
+    depends_on:
+      zenoh-router:
+        condition: service_healthy
+    volumes:
+      - ../target:/app/target:ro
+      - /dev/shm:/dev/shm
+    command: [
+      "/app/target/release/virtmcu-time-authority",
+      "--transport", "zenoh",
+      "--connect", "tcp/zenoh-router:7447",
+      "--node-id", "0",
+      "--delta-ns", "1000000",
+      "--timeout-ms", "30000",
+      "--physics", "shm",
+      "--n-sensors", "1",
+      "--n-actuators", "1"
+    ]
+
+  mock-physics:
+    image: public.ecr.aws/docker/library/python:3.11-slim
+    networks:
+      - virtmcu-net
+    depends_on:
+      time-authority:
+        condition: service_started
+    volumes:
+      - ../tools/cyber_bridge/scripts/mock_physics.py:/mock_physics.py:ro
+      - /dev/shm:/dev/shm
+    command: ["python", "-u", "/mock_physics.py"]
+
+networks:
+  virtmcu-net: {}

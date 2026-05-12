@@ -192,7 +192,7 @@ pub unsafe extern "C" fn sensor_realize(dev: *mut c_void, errp: *mut *mut c_void
     };
 
     if s.transport_hub.is_null() {
-        error_setg!(errp, "Strict DI violation: transport_hub link is required.");
+        error_setg!(errp, "Strict DI violation: sensor transport_hub link is required.");
         return;
     }
 

@@ -234,7 +234,7 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
     };
 
     if s.transport_hub.is_null() {
-        error_setg!(errp, "Strict DI violation: transport_hub link is required.");
+        error_setg!(errp, "Strict DI violation: actuator transport_hub link is required.");
         return;
     }
 

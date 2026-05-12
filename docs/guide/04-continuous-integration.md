@@ -29,9 +29,9 @@ Every level of our pipeline is reproducible locally. We do not rely on "magic" G
 
 ## 2. Build & Test Target Parity
 
-To ensure seamless transitions between local development and CI troubleshooting, VirtMCU maintains strict 1:1 parity between `dev-` (local) and `ci-` (containerized) targets.
+To ensure seamless transitions between local development and CI troubleshooting, VirtMCU maintains strict 1:1 parity between `test-` (local) and `ci-` (containerized) targets.
 
-| Domain | Local (`dev-`) | Container (`ci-`) | GitHub CI Equivalent |
+| Domain | Local (`test-`) | Container (`ci-`) | GitHub CI Equivalent |
 | :--- | :--- | :--- | :--- |
 | **All-in-one** | `make test-check` | `make ci-check` | `tier-checks` |
 | **Linting** | `make test-lint` | `make ci-lint` | `tier-checks` (lint) |
