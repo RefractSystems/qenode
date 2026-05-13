@@ -35,6 +35,7 @@ use virtmcu_qom::memory::{
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::Bql;
+use virtmcu_api::topics::sim_topic;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,

@@ -694,6 +694,11 @@ impl VirtmcuTestEnv {
         self.ctx.find_binary(name)
     }
 
+    /// Returns the Zenoh router endpoint used by this environment.
+    pub fn router_endpoint(&self) -> Option<String> {
+        self.ctx.variables.get("ROUTER_ENDPOINT").cloned()
+    }
+
     async fn format_qemu_error(&self, node_id: usize, msg: &str) -> String {
         let stderr_lock = self.recent_qemu_stderr[node_id].lock().await;
         let last_lines = stderr_lock.join("\n");

@@ -215,6 +215,8 @@ impl ChardevMonitor {
     }
 }
 
+use virtmcu_api::topics::sim_topic;
+
 pub struct TelemetryMonitor {
     pub captured_traces: Arc<Mutex<Vec<Vec<u8>>>>,
     _subscriber: zenoh::pubsub::Subscriber<()>,
@@ -222,7 +224,8 @@ pub struct TelemetryMonitor {
 
 impl TelemetryMonitor {
     pub async fn new(session: &Session, node_id: u32) -> Result<Self> {
-        let topic = format!("sim/telemetry/trace/{}", node_id);
+        let node_id_str = node_id.to_string();
+        let topic = sim_topic::telemetry_events(&node_id_str);
         let captured_traces = Arc::new(Mutex::new(Vec::new()));
         let captured_traces_clone = captured_traces.clone();
 

@@ -32,6 +32,7 @@ use virtmcu_qom::memory::{
 };
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
+use virtmcu_api::topics::sim_topic;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,
@@ -185,12 +186,6 @@ pub unsafe extern "C" fn sensor_realize(dev: *mut c_void, errp: *mut *mut c_void
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
 
-    let prefix = if s.topic_prefix.is_null() {
-        "sim/sensor".to_owned()
-    } else {
-        unsafe { CStr::from_ptr(s.topic_prefix).to_string_lossy().into_owned() }
-    };
-
     if s.transport_hub.is_null() {
         error_setg!(errp, "Strict DI violation: sensor transport_hub link is required.");
         return;
@@ -219,7 +214,7 @@ pub unsafe extern "C" fn sensor_realize(dev: *mut c_void, errp: *mut *mut c_void
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport = alloc::sync::Arc::clone(transport_ref);
 
-    s.rust_state = sensor_init_internal(s, s.node_id, prefix, transport);
+    s.rust_state = sensor_init_internal(s, s.node_id, transport);
 }
 
 /// # Safety
@@ -304,12 +299,12 @@ use virtmcu_api::ZENOH_FRAME_HEADER_SIZE;
 fn sensor_init_internal(
     _dev: *mut VirtmcuSensorQEMU,
     node_id: u32,
-    topic_prefix: String,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut VirtmcuSensorState {
     let shared = Arc::new(RwLock::new(HashMap::new()));
     let shared_bg = Arc::clone(&shared);
-    let topic = format!("{}/{}/{}", topic_prefix, node_id, "**");
+    let node_id_str = node_id.to_string();
+    let topic = format!("{}/{}", sim_topic::sensor_data(&node_id_str, 0).rsplit_once('/').unwrap().0, "**");
 
     // We construct a generation tracker to satisfy SafeSubscription.
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));

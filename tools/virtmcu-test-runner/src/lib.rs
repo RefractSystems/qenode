@@ -621,19 +621,29 @@ impl LinterEngine {
                 (
                     "cargo fmt",
                     "cargo",
-                    vec!["+stable", "fmt", "--all", "--check"],
+                    vec!["+nightly", "fmt", "--all", "--check"],
                 ),
                 (
                     "cargo clippy",
                     "cargo",
-                    vec!["+stable", "clippy", "--workspace", "--", "-D", "warnings"],
+                    vec![
+                        "+nightly",
+                        "clippy",
+                        "--workspace",
+                        "-Z",
+                        "bindeps",
+                        "--",
+                        "-D",
+                        "warnings",
+                    ],
                 ),
                 ("cargo machete", "cargo-machete", vec![]),
-                ("cargo deny", "cargo", vec!["deny", "check"]),
+                ("cargo deny", "cargo", vec!["+nightly", "deny", "check"]),
                 (
                     "cargo audit",
                     "cargo",
                     vec![
+                        "+nightly",
                         "audit",
                         "--db",
                         "/tmp/advisory-db",

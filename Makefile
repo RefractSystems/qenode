@@ -326,7 +326,7 @@ fmt-all: fmt-rust fmt-meson fmt-c fmt-yaml
 # Individual format targets
 fmt-rust:
 	@echo "==> cargo fmt..."
-	@cargo fmt --all
+	@cargo +nightly fmt --all
 
 fmt-meson:
 	@echo "==> meson format..."
