@@ -64,6 +64,8 @@ extern "C" {
 
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 mod mock {
+    // virtmcu-allow: allow reasoning="wildcard imports in mock module"
+    #[allow(clippy::wildcard_imports)]
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Condvar, Mutex};

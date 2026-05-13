@@ -21,11 +21,14 @@ async fn test_complex_board_wireless() -> Result<()> {
         .await?;
 
     // Wait for the firmware to send its own packet
+    println!("Waiting for Packet sent successfully...");
     env.wait_for_output(0, "Packet sent successfully.").await?;
 
+    println!("Advancing clock to enter RX mode...");
     // Advance clock to ensure firmware is in RX mode
     env.step_clock(100_000_000, 10_000_000).await?;
 
+    println!("Injecting packet...");
     // Now inject a packet back to the radio
     // The firmware expects a packet and prints "Received packet!"
     let mut dummy_packet = vec![
@@ -56,6 +59,7 @@ async fn test_complex_board_wireless() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to publish to radio: {}", e))?;
 
     // Small delay to ensure Zenoh delivers the message to QEMU's main loop
+    // virtmcu-allow: test_sleep reasoning="ensure zenoh delivers message"
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Advance clock to allow processing (we need to advance past the injected vtime)

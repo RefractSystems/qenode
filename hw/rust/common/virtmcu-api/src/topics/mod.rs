@@ -135,7 +135,7 @@ pub mod sim_topic {
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
+
 mod tests {
     use super::sim_topic::*;
     use alloc::format;

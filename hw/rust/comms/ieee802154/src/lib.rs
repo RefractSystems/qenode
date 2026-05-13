@@ -489,7 +489,17 @@ fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
             val
         }
         REG_RX_LEN => u64::from(inner.rx_len),
-        REG_STATUS => u64::from(inner.status | ((inner.state as u32) << STATE_SHIFT)),
+        REG_STATUS => {
+            let status = inner.status | ((inner.state as u32) << STATE_SHIFT);
+            let waiting_rx = status & STATUS_RX_PENDING == 0 && inner.state == RadioState::Rx;
+            let waiting_tx = status & STATUS_TX_DONE == 0 && inner.state == RadioState::Tx;
+            if waiting_rx || waiting_tx {
+                let _yield = virtmcu_qom::sync::Bql::temporary_unlock();
+                // virtmcu-allow: yield reasoning="Enterprise Mandate: yield to allow QEMU main loop progress during BQL unlock in tight polling loops"
+                std::thread::yield_now();
+            }
+            u64::from(status)
+        }
         REG_RSSI => u64::from(inner.rx_rssi as u8),
         REG_STATE => inner.state as u64,
         REG_PAN_ID => u64::from(inner.pan_id),
@@ -709,14 +719,6 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
     let sequence = frame.sequence_number();
     let rssi = frame.rssi();
 
-    virtmcu_qom::sim_info!(
-        "on_rx_frame: vtime={}, seq={}, rssi={}, len={}",
-        vtime,
-        sequence,
-        rssi,
-        frame.data().map_or(0, |d| d.len())
-    );
-
     let mhr = Rf802154Mhr {
         fcf: frame.fcf(),
         seq_num: frame.mhr_seq_num(),
@@ -799,14 +801,7 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
 
 fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    if !inner.rx_queue.is_empty() {
-        virtmcu_qom::sim_info!(
-            "check_rx_queue: now={}, queue_len={}, state={:?}",
-            now,
-            inner.rx_queue.len(),
-            inner.state
-        );
-    }
+
     while !inner.rx_queue.is_empty() {
         if inner.rx_queue[0].delivery_vtime <= now {
             let frame = inner.rx_queue.remove(0);

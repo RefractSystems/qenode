@@ -38,8 +38,6 @@
 #define CMD_TX 3
 
 void uart_putc(char c) {
-  while (*(volatile uint32_t *)UARTFR & UARTFR_TXFF)
-    ;
   *(volatile uint32_t *)UARTDR = c;
 }
 

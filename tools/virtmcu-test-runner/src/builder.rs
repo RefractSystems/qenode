@@ -685,6 +685,25 @@ impl VirtmcuTestEnv {
         self.qemu_children.push(child);
     }
 
+    /// Declares a subscriber and waits briefly to ensure Zenoh discovery is complete.
+    pub async fn safe_subscribe(
+        &self,
+        topic: &str,
+    ) -> Result<zenoh::pubsub::Subscriber<zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>>>
+    {
+        let sub = self
+            ._session
+            .declare_subscriber(topic)
+            .await
+            .map_err(|e| anyhow!("Failed to declare subscriber: {}", e))?;
+
+        // Wait for subscriber discovery to propagate.
+        // In a real deterministic test, Zenoh scout overhead should be minimal or synchronous,
+        // but since we don't have a reliable callback for subscriber matching, we yield/wait.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        Ok(sub)
+    }
+
     pub fn session(&self) -> zenoh::Session {
         self._session.clone()
     }

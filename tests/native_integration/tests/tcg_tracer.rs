@@ -36,8 +36,8 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
 
     let session = env.session();
     let topic = sim_topic::telemetry_insn("0");
-    let subscriber = session
-        .declare_subscriber(&topic)
+    let subscriber = env
+        .safe_subscribe(&topic)
         .await
         .expect("Failed to subscribe");
 

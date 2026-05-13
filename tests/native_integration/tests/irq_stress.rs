@@ -130,6 +130,7 @@ loop:
                         found = true;
                         break;
                     }
+                    // virtmcu-allow: test_sleep reasoning="wait for socket creation"
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 assert!(

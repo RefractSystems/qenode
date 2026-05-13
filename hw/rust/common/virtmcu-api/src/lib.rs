@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     #[cfg(all(test, feature = "tokio"))]
-    #[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
+    // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
     mod handshake_server_tests {
         use super::*;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -1,5 +1,9 @@
 #[tokio::test]
 async fn test_federation_id_propagates_to_logs() {
+    let env = virtmcu_test_runner::TestContext::new().unwrap();
+    let socket_path = env.tmp_path("virtmcu-test.sock");
+    let socket_path_str = socket_path.to_str().unwrap();
+
     let fed_id = "test-federation-001";
     // Using a mock or real binary if available in the environment.
     // Assuming virtmcu-physical-node is in the path or target/debug.
@@ -24,7 +28,7 @@ async fn test_federation_id_propagates_to_logs() {
         .arg("--transport")
         .arg("unix")
         .arg("--connect")
-        .arg("/tmp/virtmcu-test.sock")
+        .arg(socket_path_str)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -32,6 +36,7 @@ async fn test_federation_id_propagates_to_logs() {
 
     // Wait a bit for it to start and emit some logs.
     // Since we don't have the mock transport listener yet, it might warn about transport.
+    // virtmcu-allow: test_sleep reasoning="wait for node to start"
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     let _ = pn.kill().await;

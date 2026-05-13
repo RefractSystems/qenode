@@ -90,6 +90,38 @@ impl Lint for RustBannedPatternsLint {
                 inc_dirs: vec!["hw/rust"],
                 exc_list: vec!["target", "tests", "_generated.rs", "build.rs"],
             },
+            Rule {
+                name: "test_sleep",
+                pattern: r"(tokio::time::sleep|std::thread::sleep)\(",
+                message: "Banned sleep in integration tests.",
+                fix: "Use wait_for_output_passive or async signals instead of polling/sleeping. MANDATE: // virtmcu-allow: test_sleep reasoning=\"<reason>\".",
+                inc_dirs: vec!["tests/native_integration"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "test_hardcoded_path",
+                pattern: r#""(?:/tmp/|/var/tmp)[\w\-\.]*""#,
+                message: "Banned hardcoded temp path in tests.",
+                fix: "Use env.tmp_path() to avoid parallel collisions.",
+                inc_dirs: vec!["tests/native_integration"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "test_hardcoded_port",
+                pattern: r#""127\.0\.0\.1:[1-9]\d{0,3}""#,
+                message: "Banned hardcoded port in tests.",
+                fix: "Use port 0 for OS-assigned unique port.",
+                inc_dirs: vec!["tests/native_integration"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "test_declare_subscriber",
+                pattern: r"\.declare_subscriber\(",
+                message: "Banned raw declare_subscriber in tests.",
+                fix: "Use env.safe_subscribe() which waits for Zenoh discovery readiness.",
+                inc_dirs: vec!["tests/native_integration"],
+                exc_list: vec!["tools/virtmcu-test-runner"],
+            },
         ];
 
         let compiled_rules: Vec<(Rule, Regex)> = rules
@@ -100,13 +132,7 @@ impl Lint for RustBannedPatternsLint {
             })
             .collect();
 
-        let hw_rust_dir = target_dir.join("hw/rust");
-
-        if !hw_rust_dir.exists() {
-            return Ok(true);
-        }
-
-        let walker = WalkBuilder::new(&hw_rust_dir)
+        let walker = WalkBuilder::new(target_dir)
             .add_custom_ignore_filename(".geminiignore")
             .build();
 

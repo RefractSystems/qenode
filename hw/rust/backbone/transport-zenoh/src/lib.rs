@@ -390,7 +390,7 @@ pub(crate) fn test_config() -> Config {
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
+#[allow(clippy::items_after_statements)] // virtmcu-allow: allow reasoning="Tests group constants locally for readability"
 mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU64, AtomicUsize};
