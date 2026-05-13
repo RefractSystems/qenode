@@ -553,6 +553,9 @@ fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64
                 tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
             } else {
                 inner.state = next_state;
+                if inner.state == RadioState::Rx {
+                    check_rx_queue(s.irq, s.rx_timer.as_ref(), &mut inner);
+                }
             }
         }
         REG_PAN_ID => {
@@ -710,9 +713,6 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
 
 fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
     let mut inner = state.inner.get_mut();
-    if inner.state != RadioState::Rx {
-        return;
-    }
 
     let frame = match rf802154::size_prefixed_root_as_rf_802154_frame(data) {
         Ok(f) => f,
@@ -798,26 +798,36 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
 
 fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    if !inner.rx_queue.is_empty() {
+    while !inner.rx_queue.is_empty() {
         if inner.rx_queue[0].delivery_vtime <= now {
-            if inner.status & STATUS_RX_PENDING == 0 {
-                let frame = inner.rx_queue.remove(0);
-                inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
-                inner.rx_len = frame.size as u32;
-                inner.rx_rssi = frame.rssi;
-                inner.rx_read_pos = 0;
-                inner.status |= STATUS_RX_PENDING;
-                unsafe { qemu_set_irq(irq, 1) };
+            let frame = inner.rx_queue.remove(0);
 
-                if !inner.rx_queue.is_empty() {
-                    if let Some(timer) = rx_timer {
-                        timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
-                    }
+            // Only process if the radio is in RX mode at the time of delivery
+            if inner.state == RadioState::Rx {
+                if inner.status & STATUS_RX_PENDING == 0 {
+                    inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
+                    inner.rx_len = frame.size as u32;
+                    inner.rx_rssi = frame.rssi;
+                    inner.rx_read_pos = 0;
+                    inner.status |= STATUS_RX_PENDING;
+                    unsafe {
+                        qemu_set_irq(irq, 1);
+                    };
+                    // One frame at a time into the FIFO
+                    break;
                 }
+                // RX pending, re-insert at front and wait
+                inner.rx_queue.insert(0, frame);
+                break;
             }
-        } else if let Some(timer) = rx_timer {
+            // Not in RX mode, drop the frame and continue to next in queue
+            continue;
+        }
+        // Future frame, schedule timer and stop
+        if let Some(timer) = rx_timer {
             timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
         }
+        break;
     }
 }
 

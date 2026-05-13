@@ -194,6 +194,7 @@ impl TopologyBuilder {
         let mut qmp_clients = Vec::new();
         let mut pgids = Vec::new();
         let mut is_coordinated_flags = Vec::new();
+        let mut recent_qemu_stderr = Vec::new();
 
         let qmp_socket_paths: Vec<PathBuf> = self
             .nodes
@@ -377,24 +378,37 @@ impl TopologyBuilder {
 
             let stderr = qemu.stderr.take().unwrap();
             let mut stderr_lines = BufReader::new(stderr).lines();
+            let recent_stderr = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            recent_qemu_stderr.push(recent_stderr.clone());
+
+            let node_id_for_log = node.id;
+            let recent_stderr_for_spawn = recent_stderr.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = stderr_lines.next_line().await {
+                    {
+                        let mut recent = recent_stderr_for_spawn.lock().await;
+                        recent.push(line.clone());
+                        if recent.len() > 20 {
+                            recent.remove(0);
+                        }
+                    }
+
                     if line.contains("[ERROR]")
                         || line.contains("error:")
                         || line.contains("fatal:")
                         || line.contains("panic")
                     {
-                        error!("[QEMU] {}", line);
+                        error!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[WARN ]") || line.contains("warning:") {
-                        warn!("[QEMU] {}", line);
+                        warn!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[DEBUG]") {
-                        debug!("[QEMU] {}", line);
+                        debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[TRACE]") {
-                        trace!("[QEMU] {}", line);
+                        trace!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[INFO ]") || line.contains("info:") {
-                        info!("[QEMU] {}", line);
+                        info!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else {
-                        info!("[QEMU] {}", line);
+                        info!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     }
                 }
             });
@@ -412,7 +426,20 @@ impl TopologyBuilder {
                 return Err(anyhow!("Timeout waiting for UART socket"));
             }
 
-            let uart_stream = tokio::net::UnixStream::connect(&uart_sock_path).await?;
+            let uart_stream_res = tokio::net::UnixStream::connect(&uart_sock_path).await;
+            let uart_stream = match uart_stream_res {
+                Ok(s) => s,
+                Err(e) => {
+                    let stderr_lock = recent_stderr.lock().await;
+                    let last_lines = stderr_lock.join("\n");
+                    return Err(anyhow!(
+                        "Failed to connect to UART socket at {}: {}. [QEMU Stderr]:\n{}",
+                        uart_sock_path.display(),
+                        e,
+                        last_lines
+                    ));
+                }
+            };
             uart_readers.push(BufReader::new(uart_stream));
 
             // Connect to QMP
@@ -425,10 +452,29 @@ impl TopologyBuilder {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             if !found {
-                return Err(anyhow!("Timeout waiting for QMP socket"));
+                let stderr_lock = recent_stderr.lock().await;
+                let last_lines = stderr_lock.join("\n");
+                return Err(anyhow!(
+                    "Timeout waiting for QMP socket at {}. [QEMU Stderr]:\n{}",
+                    qmp_sock_path.display(),
+                    last_lines
+                ));
             }
 
-            let qmp = QmpClient::connect(&qmp_sock_path).await?;
+            let qmp_res = QmpClient::connect(&qmp_sock_path).await;
+            let qmp = match qmp_res {
+                Ok(q) => q,
+                Err(e) => {
+                    let stderr_lock = recent_stderr.lock().await;
+                    let last_lines = stderr_lock.join("\n");
+                    return Err(anyhow!(
+                        "Failed to connect to QMP socket at {}: {}. [QEMU Stderr]:\n{}",
+                        qmp_sock_path.display(),
+                        e,
+                        last_lines
+                    ));
+                }
+            };
             qmp_clients.push(qmp);
 
             qemu_procs.push(qemu);
@@ -523,6 +569,8 @@ impl TopologyBuilder {
             clock_coordinator: Box::new(ZenohClockCoordinator::new(session)),
             router_child: router_proc,
             is_coordinated: is_coordinated_flags,
+            current_vtime: 0,
+            recent_qemu_stderr,
         })
     }
 }
@@ -606,6 +654,8 @@ pub struct VirtmcuTestEnv {
     clock_coordinator: Box<dyn ClockCoordinator>,
     router_child: Child,
     is_coordinated: Vec<bool>,
+    pub current_vtime: u64,
+    recent_qemu_stderr: Vec<std::sync::Arc<tokio::sync::Mutex<Vec<String>>>>,
 }
 
 impl VirtmcuTestEnv {
@@ -619,6 +669,10 @@ impl VirtmcuTestEnv {
 
     pub fn qmp(&mut self, node_id: usize) -> &mut QmpClient {
         &mut self.qmp_clients[node_id]
+    }
+
+    pub fn vtime(&self) -> u64 {
+        self.current_vtime
     }
 
     /// Registers an external child process to be killed during environment teardown.
@@ -638,11 +692,17 @@ impl VirtmcuTestEnv {
         self.ctx.find_binary(name)
     }
 
+    async fn format_qemu_error(&self, node_id: usize, msg: &str) -> String {
+        let stderr_lock = self.recent_qemu_stderr[node_id].lock().await;
+        let last_lines = stderr_lock.join("\n");
+        format!("{} [Node {} Stderr]:\n{}", msg, node_id, last_lines)
+    }
+
     /// Advances the virtual clock for all coordinated nodes by the specified duration.
     pub async fn step_clock(&mut self, total_ns: u64, step_ns: u64) -> Result<()> {
-        let mut current_vtime: u64 = 0;
+        let mut advanced: u64 = 0;
 
-        while current_vtime < total_ns {
+        while advanced < total_ns {
             // Check if any QEMU crashed
             for child in &mut self.qemu_children {
                 if let Ok(Some(status)) = child.try_wait() {
@@ -653,8 +713,9 @@ impl VirtmcuTestEnv {
                 }
             }
 
-            let advance = std::cmp::min(step_ns, total_ns - current_vtime);
-            current_vtime += advance;
+            let advance = std::cmp::min(step_ns, total_ns - advanced);
+            advanced += advance;
+            self.current_vtime += advance;
 
             for node_id in 0..self.qemu_children.len() {
                 if !self.is_coordinated[node_id] {
@@ -662,7 +723,7 @@ impl VirtmcuTestEnv {
                 }
 
                 self.clock_coordinator
-                    .step_clock(node_id, advance, current_vtime, 0)
+                    .step_clock(node_id, advance, self.current_vtime, 0)
                     .await?;
             }
             // Small yield to allow async tasks (like monitors) to process
@@ -690,11 +751,14 @@ impl VirtmcuTestEnv {
             }
 
             // Check if any QEMU crashed
-            for child in &mut self.qemu_children {
+            for (idx, child) in self.qemu_children.iter_mut().enumerate() {
                 if let Ok(Some(status)) = child.try_wait() {
                     return Err(anyhow!(
-                        "QEMU process died unexpectedly with status: {}",
-                        status
+                        self.format_qemu_error(
+                            idx,
+                            &format!("QEMU process died unexpectedly with status: {}", status)
+                        )
+                        .await
                     ));
                 }
             }
@@ -709,20 +773,32 @@ impl VirtmcuTestEnv {
             .await;
 
             if let Ok(res) = uart_read {
-                let (bytes_read, buf) = res?;
-                if bytes_read == 0 {
-                    return Err(anyhow!("UART socket reached EOF"));
-                }
-                let chunk = String::from_utf8_lossy(&buf[..bytes_read]);
-                self.uart_buffers[node_id].push_str(&chunk);
+                match res {
+                    Ok((bytes_read, buf)) => {
+                        if bytes_read == 0 {
+                            return Err(anyhow!(
+                                self.format_qemu_error(node_id, "UART socket reached EOF")
+                                    .await
+                            ));
+                        }
+                        let chunk = String::from_utf8_lossy(&buf[..bytes_read]);
+                        self.uart_buffers[node_id].push_str(&chunk);
 
-                let trimmed = chunk.trim();
-                if !trimmed.is_empty() {
-                    info!("Node {} UART (passive): {}", node_id, trimmed);
-                }
+                        let trimmed = chunk.trim();
+                        if !trimmed.is_empty() {
+                            info!("Node {} UART (passive): {}", node_id, trimmed);
+                        }
 
-                if self.uart_buffers[node_id].contains(pattern) {
-                    return Ok(());
+                        if self.uart_buffers[node_id].contains(pattern) {
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        return Err(anyhow!(
+                            self.format_qemu_error(node_id, &format!("UART read failed: {}", e))
+                                .await
+                        ));
+                    }
                 }
             }
         }
@@ -752,21 +828,24 @@ impl VirtmcuTestEnv {
             }
 
             // Check if any QEMU crashed
-            for child in &mut self.qemu_children {
+            for (idx, child) in self.qemu_children.iter_mut().enumerate() {
                 if let Ok(Some(status)) = child.try_wait() {
                     return Err(anyhow!(
-                        "QEMU process died unexpectedly with status: {}",
-                        status
+                        self.format_qemu_error(
+                            idx,
+                            &format!("QEMU process died unexpectedly with status: {}", status)
+                        )
+                        .await
                     ));
                 }
             }
 
             // 1. Advance the clock by 1 quantum (if coordinated)
             if self.is_coordinated[node_id] {
-                self.clock_coordinator
-                    .step_clock(node_id, step_ns, current_vtime + step_ns, quantum)
-                    .await?;
                 current_vtime += step_ns;
+                self.clock_coordinator
+                    .step_clock(node_id, step_ns, current_vtime, quantum)
+                    .await?;
                 quantum += 1;
             } else {
                 tokio::time::sleep(Duration::from_millis(1)).await;
@@ -782,21 +861,33 @@ impl VirtmcuTestEnv {
             .await;
 
             if let Ok(res) = uart_read {
-                let (bytes_read, buf) = res?;
-                if bytes_read == 0 {
-                    return Err(anyhow!("UART socket reached EOF"));
-                }
-                if bytes_read > 0 {
-                    let chunk = String::from_utf8_lossy(&buf[..bytes_read]);
-                    self.uart_buffers[node_id].push_str(&chunk);
+                match res {
+                    Ok((bytes_read, buf)) => {
+                        if bytes_read == 0 {
+                            return Err(anyhow!(
+                                self.format_qemu_error(node_id, "UART socket reached EOF")
+                                    .await
+                            ));
+                        }
+                        if bytes_read > 0 {
+                            let chunk = String::from_utf8_lossy(&buf[..bytes_read]);
+                            self.uart_buffers[node_id].push_str(&chunk);
 
-                    let trimmed = chunk.trim();
-                    if !trimmed.is_empty() {
-                        info!("Node {} UART: {}", node_id, trimmed);
+                            let trimmed = chunk.trim();
+                            if !trimmed.is_empty() {
+                                info!("Node {} UART: {}", node_id, trimmed);
+                            }
+
+                            if self.uart_buffers[node_id].contains(pattern) {
+                                return Ok(());
+                            }
+                        }
                     }
-
-                    if self.uart_buffers[node_id].contains(pattern) {
-                        return Ok(());
+                    Err(e) => {
+                        return Err(anyhow!(
+                            self.format_qemu_error(node_id, &format!("UART read failed: {}", e))
+                                .await
+                        ));
                     }
                 }
             }

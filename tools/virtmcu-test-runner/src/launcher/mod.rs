@@ -106,15 +106,34 @@ impl QemuLauncher {
         }
 
         let qemu_dir = self.workspace_root.join("third_party").join("qemu");
-        let paths = vec![
-            qemu_dir
-                .join(&build_dir)
-                .join("install/lib/aarch64-linux-gnu/qemu"),
-            qemu_dir
-                .join(&build_dir)
-                .join("install/lib/x86_64-linux-gnu/qemu"),
-            qemu_dir.join(&build_dir).join("install/lib/qemu"),
-        ];
+
+        let arch = std::env::consts::ARCH;
+        let mut paths = Vec::new();
+
+        if arch == "aarch64" {
+            paths.push(
+                qemu_dir
+                    .join(&build_dir)
+                    .join("install/lib/aarch64-linux-gnu/qemu"),
+            );
+            paths.push(
+                qemu_dir
+                    .join(&build_dir)
+                    .join("install/lib/x86_64-linux-gnu/qemu"),
+            );
+        } else {
+            paths.push(
+                qemu_dir
+                    .join(&build_dir)
+                    .join("install/lib/x86_64-linux-gnu/qemu"),
+            );
+            paths.push(
+                qemu_dir
+                    .join(&build_dir)
+                    .join("install/lib/aarch64-linux-gnu/qemu"),
+            );
+        }
+        paths.push(qemu_dir.join(&build_dir).join("install/lib/qemu"));
 
         for path in paths {
             if path.exists() && path.is_dir() {
@@ -143,25 +162,47 @@ impl QemuLauncher {
             target_dirs.push(PathBuf::from(target_dir_env));
         }
 
-        let mut paths = vec![self
-            .workspace_root
-            .join("third_party/zenoh-c/lib")
-            .display()
-            .to_string()];
+        let mut paths = Vec::new();
+        paths.push(
+            self.workspace_root
+                .join("third_party/zenoh-c/lib")
+                .display()
+                .to_string(),
+        );
 
-        for base in target_dirs {
+        let host_triple = match std::env::consts::ARCH {
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            _ => "unknown",
+        };
+
+        for base in &target_dirs {
+            // Prioritize the current host's target directory
+            let host_target = base.join(host_triple);
+            if host_target.exists() {
+                paths.push(host_target.join("debug").display().to_string());
+                paths.push(host_target.join("release").display().to_string());
+                paths.push(host_target.join("debug/deps").display().to_string());
+            }
+
             paths.push(base.join("debug").display().to_string());
             paths.push(base.join("release").display().to_string());
             paths.push(base.join("debug/deps").display().to_string());
 
-            // Also check triple-prefixed subdirectories (e.g. target/aarch64-unknown-linux-gnu/debug)
-            if let Ok(entries) = std::fs::read_dir(&base) {
+            // Then check other triple-prefixed subdirectories
+            if let Ok(entries) = std::fs::read_dir(base) {
                 for entry in entries.flatten() {
                     if entry.path().is_dir() {
                         let path = entry.path();
-                        paths.push(path.join("debug").display().to_string());
-                        paths.push(path.join("release").display().to_string());
-                        paths.push(path.join("debug/deps").display().to_string());
+                        let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
+                        if dir_name == host_triple {
+                            continue; // Already added
+                        }
+                        if dir_name.contains("-unknown-linux-gnu") {
+                            paths.push(path.join("debug").display().to_string());
+                            paths.push(path.join("release").display().to_string());
+                            paths.push(path.join("debug/deps").display().to_string());
+                        }
                     }
                 }
             }
