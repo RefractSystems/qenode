@@ -17,7 +17,6 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     let firmware_path = guest_app_dir.join("controller.elf");
     let yaml_path = guest_app_dir.join("board.yaml");
     let resd_path = guest_app_dir.join("pendulum_angles.resd");
-
     let mut env = VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
@@ -28,7 +27,6 @@ async fn test_pendulum_closed_loop() -> Result<()> {
         .with_timeout(60)
         .build()
         .await?;
-
     // Wait for boot
     env.wait_for_output(0, "Pendulum PID Controller Starting...")
         .await?;
@@ -44,7 +42,7 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     assert!(parser.init(), "Failed to parse RESD file");
     let sensors = parser.sensors;
 
-    let mut current_vtime_ns = 0;
+    let mut current_vtime_ns = env.vtime();
     let step_ns = 10_000_000; // 10ms steps for faster simulation
 
     let mut count = 0;
@@ -81,13 +79,6 @@ async fn test_pendulum_closed_loop() -> Result<()> {
                 count += 1;
             }
         }
-        println!(
-            "Iteration {}, vtime: {}, msgs: {}, count: {}",
-            i,
-            current_vtime_ns,
-            msgs.len(),
-            count
-        );
         if count >= 3 {
             break;
         }

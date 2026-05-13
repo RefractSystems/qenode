@@ -6,6 +6,7 @@ pub enum MmioResult<'a> {
     /// The value is ready to be returned immediately.
     Ready(u64),
     /// The peripheral is waiting for an asynchronous event (e.g. Zenoh packet).
+    /// The infrastructure will yield the BQL and wait on the condition variable.
     Wait {
         /// The condition to check. Returning true means the event has occurred.
         condition: Box<dyn FnMut() -> bool + 'a>,

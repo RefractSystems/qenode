@@ -87,15 +87,15 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 ---
 
 ### **[ARCH-22] MmioDevice Trait & Condvar BQL Yielding** — Correctness & Safety
-**Status**: 🟡 Open. Depends on: ADR-018.
+**Status**: ✅ Completed.
 
 **Goal**: Eliminate simulation starvation bugs (livelock) caused by guest firmware tight-polling MMIO registers. Replace the manual `Bql::temporary_unlock()` + `yield_now()` pattern with a structurally safe, closure-based `MmioDevice` trait and `wait_yielding_bql`.
 
 **Tasks**:
-- [ ] **Phase 1: True Blocking:** Update the existing stopgap `yield_now()` usages in `sensor` and `ieee802154` to use `QemuCond::wait_yielding_bql` triggered by their respective Zenoh background threads.
-- [ ] **Phase 2: Linter Enforcement:** Add `std::thread::yield_now()` to the custom `virtmcu-test-runner` linter `banned_patterns.rs` to prevent developers from manually spin-yielding in peripheral code.
-- [ ] **Phase 3: MmioDevice Macro:** Create a `pub trait MmioDevice` in `virtmcu-qom` that returns an `MmioResult` (or uses a `wait_for` closure pattern). Create a `#[derive(MmioDevice)]` proc-macro that generates the `unsafe extern "C"` MMIO callbacks and fully encapsulates the BQL condvar yielding logic.
-- [ ] **Phase 4: Migration:** Port all existing Rust peripherals (sensor, radio, actuator, etc.) to the new `MmioDevice` pattern and delete the manual C-FFI boilerplate. Update the `rust-dummy` template.
+- [x] **Phase 1: True Blocking:** Update the existing stopgap `yield_now()` usages in `sensor` and `ieee802154` to use `QemuCond::wait_yielding_bql` triggered by their respective Zenoh background threads.
+- [x] **Phase 2: Linter Enforcement:** Add `std::thread::yield_now()` to the custom `virtmcu-test-runner` linter `banned_patterns.rs` to prevent developers from manually spin-yielding in peripheral code.
+- [x] **Phase 3: MmioDevice Macro:** Create a `pub trait MmioDevice` in `virtmcu-qom` that returns an `MmioResult` (or uses a `wait_for` closure pattern). Create a `#[derive(MmioDevice)]` proc-macro that generates the `unsafe extern "C"` MMIO callbacks and fully encapsulates the BQL condvar yielding logic.
+- [x] **Phase 4: Migration:** Port all existing Rust peripherals (sensor, radio, actuator, etc.) to the new `MmioDevice` pattern and delete the manual C-FFI boilerplate. Update the `rust-dummy` template.
 
 ---
 
