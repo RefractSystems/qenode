@@ -44,6 +44,7 @@ async fn test_complex_board_wireless() -> Result<()> {
         &dummy_packet,
         -50, // rssi
         255, // lqi
+        virtmcu_api::Rf802154Mhr::parse(&dummy_packet),
     );
 
     env.session()

@@ -149,6 +149,7 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
 #[no_mangle]
 pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
     let s = unsafe { &mut *(opaque as *mut VirtmcuActuatorQEMU) };
+    virtmcu_qom::sim_warn!("actuator_write: addr=0x{:x} val=0x{:x} size={}", addr, val, size);
 
     if addr == REG_ACTUATOR_ID {
         s.actuator_id = u32::try_from(val).expect("actuator_id truncated");
@@ -210,6 +211,8 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
 pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     const ACTUATOR_MMIO_SIZE: u64 = 0x1000;
     let s = unsafe { &mut *(dev as *mut VirtmcuActuatorQEMU) };
+
+    virtmcu_qom::sim_warn!("actuator_realize started");
 
     if !s.rust_state.is_null() {
         return;

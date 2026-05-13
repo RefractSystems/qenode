@@ -11,7 +11,7 @@ services:
       "-kernel",
       "/app/tests/fixtures/guest_apps/boot_arm/hello.elf",
       "-device",
-      "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447"
+      "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447,federation_id=compose-run"
     ]
 
   physical-node:
@@ -23,6 +23,7 @@ services:
     environment:
       ZENOH_CONNECT: tcp/zenoh-router:7447
       RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
     depends_on:
       zenoh-router:
         condition: service_healthy

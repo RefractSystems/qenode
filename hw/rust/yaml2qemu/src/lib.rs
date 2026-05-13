@@ -307,7 +307,7 @@ fn emit_device(
                     }
                 }
                 serde_yaml::Value::Bool(b) if *b => {
-                    dts.push_str(&format!("{}    {};\n", indent, k));
+                    dts.push_str(&format!("{}    {} = <1>;\n", indent, k));
                 }
                 _ => {}
             }

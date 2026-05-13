@@ -788,6 +788,7 @@ dependencies = [
 name = "deterministic_coordinator"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "byteorder",
  "clap",
  "flatbuffers",

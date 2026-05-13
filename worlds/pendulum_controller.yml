@@ -10,7 +10,7 @@ services:
       "-global", "actuator.transport=hub0",
       "-global", "sensor.transport=hub0",
       "-device",
-      "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447"
+      "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447,federation_id=compose-run"
     ]
 
   physical-node:
@@ -22,6 +22,7 @@ services:
     environment:
       ZENOH_CONNECT: tcp/zenoh-router:7447
       RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
     depends_on:
       zenoh-router:
         condition: service_healthy

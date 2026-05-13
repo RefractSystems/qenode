@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+use anyhow::{anyhow, bail, Result};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use clap::Parser;
 use deterministic_coordinator::message_log::MessageLog;
@@ -25,10 +26,16 @@ struct Args {
 
     #[arg(long)]
     topology: Option<String>,
+
     #[arg(long)]
     pcap_log: Option<String>,
+
     #[arg(long, default_value_t = false)]
     no_pdes: bool,
+
+    #[arg(long, default_value_t = 5000)]
+    join_timeout_ms: u64,
+
     #[arg(long, default_value_t = 1_000_000)]
     delay_ns: u64,
 }
@@ -178,7 +185,7 @@ fn parse_legacy_topic(topic: &str) -> Option<(Protocol, u32, String)> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     #[derive(Debug)]
     struct DummyVTimeProvider;
     impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
@@ -237,12 +244,12 @@ async fn run_deterministic_coordinator(
     topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     barrier: Arc<QuantumBarrier>,
     mut pcap_log: Option<MessageLog>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let no_pdes = args.no_pdes;
     let mut config = virtmcu_zenoh_config::default_config();
     config
         .insert_json5("mode", "\"client\"")
-        .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
+        .map_err(|e| anyhow!("Invalid Zenoh mode: {}", e))?;
 
     let _ = config.insert_json5(
         "metadata/federation_id",
@@ -253,11 +260,11 @@ async fn run_deterministic_coordinator(
         tracing::info!("Connecting to Zenoh router at {}", router);
         config
             .insert_json5("connect/endpoints", &format!("[\"{}\"]", router))
-            .map_err(|e| format!("Invalid Zenoh endpoint: {}", e))?;
+            .map_err(|e| anyhow!("Invalid Zenoh endpoint: {}", e))?;
     }
     let session = zenoh::open(config)
         .await
-        .map_err(|e| format!("Failed to open Zenoh session: {}", e))?;
+        .map_err(|e| anyhow!("Failed to open Zenoh session: {}", e))?;
 
     let legacy_tx_topics = deterministic_coordinator::topics::ALL_LEGACY_TX_WILDCARDS;
 
@@ -271,18 +278,18 @@ async fn run_deterministic_coordinator(
                 let _ = tx.send(sample);
             })
             .await
-            .map_err(|e| format!("Failed to declare subscriber for {}: {}", topic, e))?;
+            .map_err(|e| anyhow!("Failed to declare subscriber for {}: {}", topic, e))?;
         _subs.push(sub);
     }
     let sub_done = session
         .declare_subscriber(deterministic_coordinator::topics::wildcard::COORD_DONE_WILDCARD)
         .await
-        .map_err(|e| format!("Failed to declare done subscriber: {}", e))?;
+        .map_err(|e| anyhow!("Failed to declare done subscriber: {}", e))?;
 
     let sub_ctrl = session
         .declare_subscriber(deterministic_coordinator::topics::singleton::NETWORK_CONTROL)
         .await
-        .map_err(|e| format!("Failed to declare control subscriber: {}", e))?;
+        .map_err(|e| anyhow!("Failed to declare control subscriber: {}", e))?;
 
     tracing::info!("Coordinator subscribers active");
 
@@ -294,7 +301,7 @@ async fn run_deterministic_coordinator(
         .liveliness()
         .declare_token(&probe_topic)
         .await
-        .map_err(|e| format!("Failed to declare probe token: {}", e))?;
+        .map_err(|e| anyhow!("Failed to declare probe token: {}", e))?;
 
     tracing::info!("Waiting for routing barrier (probe: {})...", probe_topic);
     let mut discovered = false;
@@ -303,7 +310,7 @@ async fn run_deterministic_coordinator(
             .liveliness()
             .get(&probe_topic)
             .await
-            .map_err(|e| format!("Liveliness get failed: {}", e))?;
+            .map_err(|e| anyhow!("Liveliness get failed: {}", e))?;
 
         let mut count = 0;
         while let Ok(_reply) = replies.recv_async().await {
@@ -317,17 +324,76 @@ async fn run_deterministic_coordinator(
     }
     if !discovered {
         tracing::error!("Routing barrier timeout!");
-        return Err("Routing barrier timeout".into());
+        bail!("Routing barrier timeout");
     }
     drop(probe_token);
     tracing::info!("Routing barrier complete.");
+
+    // Validate that all expected nodes have joined within join_timeout_ms.
+    // By default, expect 0..args.nodes. If topology provides valid nodes, use those.
+    let mut expected_nodes = std::collections::HashSet::new();
+    let is_explicit_topo = topo.read().await.is_explicit;
+    if is_explicit_topo {
+        // Fallback for explicit topology (could be derived from topology fields if exposed,
+        // but args.nodes is the source of truth for the barrier count right now)
+    }
+    for i in 0..args.nodes {
+        expected_nodes.insert(i as u32);
+    }
+
+    let start_time = tokio::time::Instant::now();
+    let timeout_duration = tokio::time::Duration::from_millis(args.join_timeout_ms);
+
+    // We check liveliness tokens or we can just wait for liveliness to be declared by nodes.
+    // Virtmcu nodes declare `sim/clock/liveliness/{node_id}` via VirtmcuClock backend.
+    tracing::info!(federation = %federation_id, "Waiting up to {}ms for {} nodes to join...", args.join_timeout_ms, expected_nodes.len());
+
+    let mut joined_nodes = std::collections::HashSet::new();
+    while start_time.elapsed() < timeout_duration {
+        let mut all_joined = true;
+        for node_id in &expected_nodes {
+            if !joined_nodes.contains(node_id) {
+                let liveliness_expr = format!("sim/clock/liveliness/{}", node_id);
+                if let Ok(replies) = session.liveliness().get(&liveliness_expr).await {
+                    let mut count = 0;
+                    while let Ok(_reply) = replies.recv_async().await {
+                        count += 1;
+                    }
+                    if count > 0 {
+                        joined_nodes.insert(*node_id);
+                    } else {
+                        all_joined = false;
+                    }
+                } else {
+                    all_joined = false;
+                }
+            }
+        }
+
+        if all_joined {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    let missing_nodes: Vec<_> = expected_nodes.difference(&joined_nodes).collect();
+    if !missing_nodes.is_empty() {
+        let missing_node_id = missing_nodes[0];
+        bail!(
+            "Federation {}: node '{}' did not join within {}ms",
+            federation_id.as_str(),
+            missing_node_id,
+            args.join_timeout_ms
+        );
+    }
+    tracing::info!(federation = %federation_id, "All {} nodes have joined.", expected_nodes.len());
 
     let liveliness_topic = deterministic_coordinator::topics::singleton::COORD_ALIVE;
     let _liveliness = session
         .liveliness()
         .declare_token(liveliness_topic)
         .await
-        .map_err(|e| format!("Failed to declare liveliness token: {}", e))?;
+        .map_err(|e| anyhow!("Failed to declare liveliness token: {}", e))?;
 
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
@@ -660,7 +726,7 @@ async fn run_unix_coordinator(
     _topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     _barrier: Arc<QuantumBarrier>,
     mut _pcap_log: Option<MessageLog>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     tracing::info!(
         federation = %federation_id,
         "Unix coordinator started (minimal passthrough)"
