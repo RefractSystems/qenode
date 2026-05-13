@@ -1,7 +1,7 @@
 # ADR-017: Enterprise Sensor Data Replay & Trace Formats
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 VirtMCU currently utilizes the Renode Sensor Data Format (RESD) for simple time-series sensor injections. While sufficient for basic educational use cases and lightweight simulation, RESD fails to meet Enterprise Grade SOTA (State-of-the-Art) requirements for scalability, schema-evolution, high-frequency indexing, and integration with modern automotive and robotics ecosystems.

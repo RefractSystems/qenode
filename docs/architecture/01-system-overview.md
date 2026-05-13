@@ -130,23 +130,19 @@ The distinction matters in practice:
   fixed. "Federation" appears in CLI flags, log messages, and documentation. Renaming
   schema fields to "federation" would break backward compatibility without adding value.
 
-```
-┌──────────────────────────────────────────────────┐
-│  world.yaml  (World — the Federation Object Model)                   │
-│  global_seed: 0xDEADBEEF                         │
-│  nodes: [node0, node1, physics_gateway]          │
-│  topology: …                                     │
-└──────────────────────┬───────────────────────────┘
-                       │  virtmcu-physical-node --world world.yaml
-                       │                         --federation-id run-42
-                       ▼
-┌──────────────────────────────────────────────────┐
-│  Federation run-42  (running instance)           │
-│  ├── QEMU node 0                                 │
-│  ├── QEMU node 1                                 │
-│  ├── virtmcu-physics-gateway                     │
-│  └── virtmcu-deterministic-coordinator           │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    World["world.yaml (World — the Federation Object Model)\n- global_seed: 0xDEADBEEF\n- nodes: [node0, node1, physics_gateway]\n- topology: ..."]
+    
+    World -- "virtmcu-physical-node --world world.yaml\n--federation-id run-42" --> Fed
+    
+    subgraph "Federation run-42 (running instance)"
+        direction TB
+        Q0["QEMU node 0"]
+        Q1["QEMU node 1"]
+        PG["virtmcu-physics-gateway"]
+        DC["virtmcu-deterministic-coordinator"]
+    end
 ```
 
 ---

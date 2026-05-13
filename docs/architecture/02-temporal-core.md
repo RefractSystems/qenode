@@ -78,6 +78,29 @@ To achieve deterministic pauses, VirtMCU hooks into the heart of the QEMU execut
 ### The TCG Quantum Hook
 We inject a function pointer into `accel/tcg/cpu-exec.c`. At the end of every Translation Block (TB), QEMU calls the VirtMCU hook. If the requested quantum has expired, the hook pauses the vCPU and waits for the next command.
 
+```mermaid
+sequenceDiagram
+    participant vCPU as QEMU vCPU Thread
+    participant TCG as TCG Engine
+    participant Hook as VirtMCU Hook
+    participant BGL as BQL Mutex
+    participant Clock as Clock Transport
+
+    loop Every Translation Block (TB)
+        vCPU->>TCG: Execute TB
+        TCG->>Hook: End of TB Callback
+        Hook->>Hook: Check if virtual_time >= quantum_end
+        alt Quantum Expired
+            Hook->>Clock: Send Reply (Quantum Complete)
+            Hook->>BGL: Bql::temporary_unlock()
+            Note over Hook, BGL: vCPU yields BQL to allow QMP/GDB
+            Hook->>Clock: Wait for next Request
+            Clock-->>Hook: Receive next Quantum size
+            Hook->>BGL: Re-acquire BQL
+        end
+    end
+```
+
 ### The BQL "Unlock-and-Park" Pattern
 QEMU uses the **Big QEMU Lock (BQL)** to protect hardware state. VirtMCU uses a safe RAII pattern to avoid deadlocks:
 1.  **Detect** quantum expiry.

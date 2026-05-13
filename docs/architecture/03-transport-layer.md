@@ -49,6 +49,48 @@ VirtMCU assumes a reliable underlying transport. If a Zenoh router or Unix socke
 
 ---
 
+## 4. Inter-Node Packet Delivery and PDES Barrier
+
+The `DeterministicCoordinator` sits in the Data Plane and acts as a central router and synchronizer. Direct node-to-node communication is banned to preserve PDES determinism.
+
+### Inter-Node Data Flow
+
+```mermaid
+sequenceDiagram
+    participant NodeA as Cyber Node A
+    participant DC as DeterministicCoordinator
+    participant NodeB as Cyber Node B
+
+    Note over NodeA, NodeB: Quantum Q Execution Phase
+    NodeA->>DC: Send Ethernet Frame (vtime: 1200ns)
+    NodeB->>DC: Send UART Byte (vtime: 1400ns)
+    Note over DC: Packets buffered. NOT routed immediately.
+```
+
+### The PDES Barrier Synchronization
+
+To satisfy Pillar 3 (Causal Ordering), the coordinator waits for all nodes to signal the end of the quantum before delivering any messages.
+
+```mermaid
+sequenceDiagram
+    participant NodeA as Cyber Node A
+    participant DC as DeterministicCoordinator
+    participant NodeB as Cyber Node B
+
+    NodeA->>DC: Signal Quantum Q Complete
+    NodeB->>DC: Signal Quantum Q Complete
+    
+    Note over DC: PDES Barrier Reached
+    Note over DC: Sort buffered messages by (vtime, source, seq)
+    
+    DC-->>NodeB: Deliver Ethernet Frame (vtime: 1200ns)
+    DC-->>NodeA: Deliver UART Byte (vtime: 1400ns)
+    
+    Note over NodeA, NodeB: All nodes synced. Ready for Quantum Q+1.
+```
+
+---
+
 ## See Also
 *   **[Communication Protocols](./04-communication-protocols.md)**: The logical layer built upon this transport foundation.
 *   **[PDES and Virtual Time](../fundamentals/08-pdes-and-virtual-time.md)**: How transport latency affects simulation performance.

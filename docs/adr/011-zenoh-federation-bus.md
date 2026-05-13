@@ -13,7 +13,9 @@ Traditional emulation frameworks approach this in various ways:
 Because `VirtMCU` relies on unmodified QEMU (which is a heavy, standalone C application with its own TCG execution loop), we cannot simply compile multiple QEMU instances into a single binary. They must run as separate processes (or separate Docker containers in a Kubernetes cluster). We need an Inter-Process Communication (IPC) layer.
 
 ## Decision
-We selected **Eclipse Zenoh** (native Rust) as the sole federation message bus for all inter-node communication, time synchronization, and cyber-physical telemetry.
+We originally selected **Eclipse Zenoh** (native Rust) as the sole federation message bus for all inter-node communication, time synchronization, and cyber-physical telemetry.
+
+*Update*: The architecture has since evolved into a **Dual-Transport Architecture**. Zenoh remains the primary Data Plane transport for distributed, multi-node federations and canonical message sorting. However, for 1:1 Control Plane communication (e.g., Clock synchronization and MMIO socket bridging) on a single host, we now also support and prefer **Unix Domain Sockets** to achieve single-digit microsecond latency.
 
 ### Why not standard UDP/TCP sockets?
 If Node A sends a UDP packet to Node B, the packet travels through the host operating system's network stack. The host OS scheduler introduces non-deterministic latency. Node B might receive the packet at virtual time `T=10ms` in one run, and `T=12ms` in the next run, causing the firmware to behave differently.
