@@ -78,7 +78,7 @@ impl Lint for RustBannedPatternsLint {
                 name: "yield",
                 pattern: r"std::thread::yield_now\b",
                 message: "Banned thread::yield_now() found.",
-                fix: "Replace with condvar/channel. MANDATE: // virtmcu-allow: yield reasoning=\"<reason>\" inline.",
+                fix: "Replace with QemuCond::wait_yielding_bql or the new MmioDevice trait. MANDATE: // virtmcu-allow: yield reasoning=\"<reason>\" inline.",
                 inc_dirs: vec!["hw/rust"],
                 exc_list: vec![],
             },

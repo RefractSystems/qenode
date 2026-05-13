@@ -242,6 +242,7 @@ impl TopologyBuilder {
                 let yaml_content = yaml_content.replace("ZENOH_ROUTER_ENDPOINT", &endpoint);
                 let yaml_content = ctx.substitute(&yaml_content);
 
+                std::env::set_var("VIRTMCU_WORKSPACE", &ctx.workspace_root);
                 let (platform, world) =
                     yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
 

@@ -30,6 +30,8 @@ pub mod chardev;
 pub mod cosim;
 /// CPU-related bindings and hooks.
 pub mod cpu;
+/// MmioDevice trait and polling closures.
+pub mod device;
 /// Error handling for QOM operations.
 pub mod error;
 /// Instruction counting and virtual time advancement.
@@ -52,6 +54,8 @@ pub mod sync;
 pub mod sysemu;
 /// QEMU Timer and virtual clock management.
 pub mod timer;
+
+pub use virtmcu_qom_macros::MmioDevice;
 
 /// Telemetry module
 pub mod telemetry;

@@ -22,15 +22,13 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_void};
 use core::ptr;
 use core::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use std::thread::JoinHandle;
 use virtmcu_api::topics::sim_topic;
-use virtmcu_qom::memory::{
-    memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
-};
+use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::Bql;
@@ -40,6 +38,7 @@ use virtmcu_qom::{
 };
 
 #[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
 pub struct VirtmcuActuatorQEMU {
     pub parent_obj: SysBusDevice,
     pub mmio: MemoryRegion,
@@ -69,8 +68,12 @@ struct ActuatorPacket {
 }
 
 pub struct VirtmcuActuatorState {
+    parent_ptr: *mut VirtmcuActuatorQEMU,
     shared: Arc<SharedState>,
     bg_thread: Option<JoinHandle<()>>,
+    cond: virtmcu_qom::sync::Condvar,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    wait_mutex: virtmcu_qom::sync::Mutex<()>,
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
@@ -109,100 +112,99 @@ const REG_DATA_SIZE: u64 = 0x04;
 const REG_GO: u64 = 0x08;
 const REG_DATA_START: u64 = 0x10;
 
-/// # Safety
-/// This function is called by QEMU. opaque must be a valid pointer to VirtmcuActuatorQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
-    let s = unsafe { &mut *(opaque as *mut VirtmcuActuatorQEMU) };
-
-    if addr == REG_ACTUATOR_ID {
-        u64::from(s.actuator_id)
-    } else if addr == REG_DATA_SIZE {
-        u64::from(s.data_size)
-    } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
-        .contains(&addr)
-    {
-        let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
-        let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
-        let mut ret: u64 = 0;
-        if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
-            let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
-            let mut ret_bytes = [0u8; core::mem::size_of::<f64>()];
-            if let (Some(dest), Some(src)) =
-                (ret_bytes.get_mut(..size as usize), bytes.get(offset..offset + size as usize))
-            {
-                dest.copy_from_slice(src);
-                ret = u64::from_le_bytes(ret_bytes);
-            }
+impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
+    fn read(&self, addr: u64, size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let s = unsafe { &mut *self.parent_ptr };
+        if !self.shared.running.load(core::sync::atomic::Ordering::Acquire) {
+            return virtmcu_qom::device::MmioResult::Ready(0);
         }
-        ret
-    } else {
+        let _guard = self.shared.drain.acquire();
+
+        if addr == REG_ACTUATOR_ID {
+            virtmcu_qom::device::MmioResult::Ready(u64::from(s.actuator_id))
+        } else if addr == REG_DATA_SIZE {
+            virtmcu_qom::device::MmioResult::Ready(u64::from(s.data_size))
+        } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+            .contains(&addr)
+        {
+            let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
+            let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
+            let mut ret: u64 = 0;
+            if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
+                let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
+                let mut ret_bytes = [0u8; core::mem::size_of::<f64>()];
+                if let (Some(dest), Some(src)) =
+                    (ret_bytes.get_mut(..size as usize), bytes.get(offset..offset + size as usize))
+                {
+                    dest.copy_from_slice(src);
+                    ret = u64::from_le_bytes(ret_bytes);
+                }
+            }
+            virtmcu_qom::device::MmioResult::Ready(ret)
+        } else {
+            if s.debug {
+                virtmcu_qom::sim_debug!("actuator_read: unhandled offset 0x{:x}", addr);
+            }
+            virtmcu_qom::device::MmioResult::Ready(0)
+        }
+    }
+
+    fn write(&self, addr: u64, val: u64, size: u32) {
+        let s = unsafe { &mut *self.parent_ptr };
+        if !self.shared.running.load(core::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let _guard = self.shared.drain.acquire();
+
         if s.debug {
-            virtmcu_qom::sim_debug!("actuator_read: unhandled offset 0x{:x}", addr);
+            virtmcu_qom::vlog!("actuator_write: addr 0x{:x}, val {}\n", addr, val);
         }
-        0
-    }
-}
-
-/// # Safety
-/// This function is called by QEMU. opaque must be a valid pointer to VirtmcuActuatorQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
-    virtmcu_qom::vlog!("actuator_write: addr 0x{:x}, val {}\n", addr, val);
-    let s = unsafe { &mut *(opaque as *mut VirtmcuActuatorQEMU) };
-    if addr == REG_ACTUATOR_ID {
-        s.actuator_id = val as u32;
-    } else if addr == REG_DATA_SIZE {
-        s.data_size = val as u32;
-        if s.data_size > (MAX_DATA_ELEMENTS as u32) {
-            s.data_size = MAX_DATA_ELEMENTS as u32;
-        }
-    } else if addr == REG_GO {
-        if (val & 0x1) == 1 && !s.rust_state.is_null() {
-            let rs = unsafe { &*s.rust_state };
-            actuator_publish(rs, s.actuator_id, s.data_size, &s.data);
-        }
-    } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
-        .contains(&addr)
-    {
-        let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
-        let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
-        if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
-            let val_bytes = val.to_le_bytes();
-            let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
-            if let (Some(dest), Some(src)) =
-                (data_bytes.get_mut(offset..offset + size as usize), val_bytes.get(..size as usize))
-            {
-                dest.copy_from_slice(src);
-                *s.data.get_mut(idx).expect("idx out of bounds") = f64::from_le_bytes(data_bytes);
+        if addr == REG_ACTUATOR_ID {
+            s.actuator_id = val as u32;
+        } else if addr == REG_DATA_SIZE {
+            s.data_size = val as u32;
+            if s.data_size > (MAX_DATA_ELEMENTS as u32) {
+                s.data_size = MAX_DATA_ELEMENTS as u32;
             }
+        } else if addr == REG_GO {
+            if (val & 0x1) == 1 {
+                actuator_publish(self, s.actuator_id, s.data_size, &s.data);
+            }
+        } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+            .contains(&addr)
+        {
+            let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
+            let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
+            if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
+                let val_bytes = val.to_le_bytes();
+                let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
+                if let (Some(dest), Some(src)) = (
+                    data_bytes.get_mut(offset..offset + size as usize),
+                    val_bytes.get(..size as usize),
+                ) {
+                    dest.copy_from_slice(src);
+                    *s.data.get_mut(idx).expect("idx out of bounds") =
+                        f64::from_le_bytes(data_bytes);
+                }
+            }
+        } else if s.debug {
+            virtmcu_qom::sim_debug!(
+                "actuator_write: unhandled offset 0x{:x} val=0x{:x}",
+                addr,
+                val
+            );
         }
-    } else if s.debug {
-        virtmcu_qom::sim_debug!("actuator_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
+    }
+
+    fn condvar(&self) -> &virtmcu_qom::sync::Condvar {
+        &self.cond
+    }
+
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    fn wait_mutex(&self) -> &virtmcu_qom::sync::Mutex<()> {
+        &self.wait_mutex
     }
 }
-
-static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
-    read: Some(actuator_read),
-    write: Some(actuator_write),
-    read_with_attrs: ptr::null(),
-    write_with_attrs: ptr::null(),
-    endianness: DEVICE_LITTLE_ENDIAN,
-    _padding1: [0; 4],
-    valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 1,
-        max_access_size: F64_SIZE_BYTES as u32,
-        unaligned: false,
-        _padding: [0; 7],
-        accepts: ptr::null(),
-    },
-    impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 1,
-        max_access_size: F64_SIZE_BYTES as u32,
-        unaligned: false,
-        _padding: [0; 7],
-    },
-};
 
 /// # Safety
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to VirtmcuActuatorQEMU.
@@ -220,7 +222,7 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
         memory_region_init_io(
             &raw mut s.mmio,
             dev as *mut Object,
-            &raw const VIRTMCU_ACTUATOR_OPS,
+            &raw const VIRTMCUACTUATORQEMU_OPS,
             dev,
             c"actuator".as_ptr(),
             ACTUATOR_MMIO_SIZE,
@@ -259,7 +261,7 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport_arc = alloc::sync::Arc::clone(transport_ref);
 
-    s.rust_state = actuator_init_internal(s.node_id, transport_arc);
+    s.rust_state = actuator_init_internal(s, s.node_id, transport_arc);
     if s.rust_state.is_null() {
         error_setg!(errp, "actuator: failed to initialize Rust backend");
     }
@@ -359,6 +361,7 @@ fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> Jo
 }
 
 fn actuator_init_internal(
+    parent: *mut VirtmcuActuatorQEMU,
     node_id: u32,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut VirtmcuActuatorState {
@@ -378,8 +381,11 @@ fn actuator_init_internal(
     let liveliness = transport.declare_liveliness(&hb_topic);
 
     Box::into_raw(Box::new(VirtmcuActuatorState {
+        parent_ptr: parent,
         shared,
         bg_thread: Some(bg_thread),
+        cond: virtmcu_qom::sync::Condvar::new(),
+        wait_mutex: virtmcu_qom::sync::Mutex::new(()),
         _liveliness: liveliness,
     }))
 }

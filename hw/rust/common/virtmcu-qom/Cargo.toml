@@ -15,6 +15,7 @@ standalone = []
 [dependencies]
 virtmcu-api.workspace = true
 crossbeam-channel = { workspace = true }
+virtmcu-qom-macros = { path = "../virtmcu-qom-macros" }
 
 [build-dependencies]
 bindgen = "0.72.1"

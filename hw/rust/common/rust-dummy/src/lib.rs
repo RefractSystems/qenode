@@ -11,10 +11,10 @@
 // std is required: virtmcu-qom dependency brings in std
 //! Rust-dummy peripheral template for VirtMCU simulation.
 
-use core::ffi::{c_uint, c_void};
-use virtmcu_qom::memory::{
-    memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
-};
+extern crate alloc;
+
+use core::ffi::c_void;
+use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::Property;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -23,12 +23,12 @@ use virtmcu_qom::{declare_device_type, define_prop_uint64, device_class};
 const DUMMY_REG_8: u64 = 8;
 const DUMMY_VAL_DEADBEEF: u64 = 0xdead_beef;
 const DUMMY_VAL_FACEBABE: u64 = 0xface_babe;
-const DUMMY_MAX_ACCESS: u32 = 8;
 const DUMMY_MMIO_SIZE: u64 = 0x1000;
 const DUMMY_PROP_COUNT: usize = 2;
 
 /// RustDummy peripheral structure
 #[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
 pub struct RustDummyQEMU {
     /// Parent object
     pub parent_obj: SysBusDevice,
@@ -38,64 +38,83 @@ pub struct RustDummyQEMU {
     pub base_addr: u64,
     /// Debug flag
     pub debug: bool,
+
+    /// Rust State
+    pub rust_state: *mut RustDummyState,
 }
 
-unsafe extern "C" fn rust_dummy_read(_opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
-    let s = &*(_opaque as *mut RustDummyQEMU);
+pub struct RustDummyState {
+    pub debug: bool,
+    pub drain: virtmcu_qom::sync::VcpuDrain,
+    pub cond: virtmcu_qom::sync::Condvar,
+    pub wait_mutex: virtmcu_qom::sync::Mutex<()>,
+}
 
-    match addr {
-        0 => DUMMY_VAL_DEADBEEF,
-        DUMMY_REG_8 => DUMMY_VAL_FACEBABE,
-        _ => {
-            if s.debug {
-                virtmcu_qom::sim_warn!("rust_dummy_read: unhandled offset 0x{:x}", addr);
+impl virtmcu_qom::device::MmioDevice for RustDummyState {
+    fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let _guard = self.drain.acquire();
+        match addr {
+            0 => virtmcu_qom::device::MmioResult::Ready(DUMMY_VAL_DEADBEEF),
+            DUMMY_REG_8 => virtmcu_qom::device::MmioResult::Ready(DUMMY_VAL_FACEBABE),
+            _ => {
+                if self.debug {
+                    virtmcu_qom::sim_warn!("rust_dummy_read: unhandled offset 0x{:x}", addr);
+                }
+                virtmcu_qom::device::MmioResult::Ready(0)
             }
-            0
         }
     }
-}
 
-unsafe extern "C" fn rust_dummy_write(_opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
-    let s = &*(_opaque as *mut RustDummyQEMU);
-    if s.debug {
-        virtmcu_qom::sim_warn!("rust_dummy_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
+    fn write(&self, addr: u64, val: u64, _size: u32) {
+        let _guard = self.drain.acquire();
+        if self.debug {
+            virtmcu_qom::sim_warn!(
+                "rust_dummy_write: unhandled offset 0x{:x} val=0x{:x}",
+                addr,
+                val
+            );
+        }
+    }
+
+    fn condvar(&self) -> &virtmcu_qom::sync::Condvar {
+        &self.cond
+    }
+
+    fn wait_mutex(&self) -> &virtmcu_qom::sync::Mutex<()> {
+        &self.wait_mutex
     }
 }
-
-static RUST_DUMMY_OPS: MemoryRegionOps = MemoryRegionOps {
-    read: Some(rust_dummy_read),
-    write: Some(rust_dummy_write),
-    read_with_attrs: core::ptr::null(),
-    write_with_attrs: core::ptr::null(),
-    endianness: DEVICE_LITTLE_ENDIAN,
-    _padding1: [0; 4],
-    valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 1,
-        max_access_size: DUMMY_MAX_ACCESS,
-        unaligned: false,
-        _padding: [0; 7],
-        accepts: core::ptr::null(),
-    },
-    impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 1,
-        max_access_size: DUMMY_MAX_ACCESS,
-        unaligned: false,
-        _padding: [0; 7],
-    },
-};
 
 unsafe extern "C" fn rust_dummy_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut RustDummyQEMU);
 
+    let state = alloc::boxed::Box::new(RustDummyState {
+        debug: s.debug,
+        drain: virtmcu_qom::sync::VcpuDrain::new(),
+        cond: virtmcu_qom::sync::Condvar::new(),
+        wait_mutex: virtmcu_qom::sync::Mutex::new(()),
+    });
+    s.rust_state = alloc::boxed::Box::into_raw(state);
+
     memory_region_init_io(
         &raw mut s.iomem,
         dev as *mut Object,
-        &raw const RUST_DUMMY_OPS,
+        &raw const RUSTDUMMYQEMU_OPS,
         core::ptr::from_mut(s) as *mut c_void,
         c"rust-dummy".as_ptr(),
         DUMMY_MMIO_SIZE,
     );
     sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.iomem);
+}
+
+unsafe extern "C" fn rust_dummy_instance_finalize(obj: *mut Object) {
+    let s = unsafe { &mut *(obj as *mut RustDummyQEMU) };
+    if !s.rust_state.is_null() {
+        unsafe {
+            drop(alloc::boxed::Box::from_raw(s.rust_state));
+        }
+        s.rust_state = core::ptr::null_mut();
+    }
 }
 
 static RUST_DUMMY_PROPERTIES: [Property; DUMMY_PROP_COUNT] = [
@@ -122,7 +141,7 @@ static RUST_DUMMY_TYPE_INFO: TypeInfo = TypeInfo {
     instance_align: 0,
     instance_init: None,
     instance_post_init: None,
-    instance_finalize: None,
+    instance_finalize: Some(rust_dummy_instance_finalize),
     abstract_: false,
     class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
     class_init: Some(rust_dummy_class_init),

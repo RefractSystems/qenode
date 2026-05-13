@@ -732,7 +732,18 @@ impl LinterEngine {
         if self.target_dir.join("docker/Dockerfile").exists() {
             tasks.push(self.spawn_lint("hadolint", "hadolint", vec!["docker/Dockerfile"]));
         }
-        if self.target_dir.join(".github/workflows").exists() {
+        let workflows_dir = self.target_dir.join(".github/workflows");
+        if workflows_dir.exists()
+            && std::fs::read_dir(&workflows_dir)
+                .map(|mut d| {
+                    d.any(|e| {
+                        let p = e.unwrap().path();
+                        p.extension()
+                            .is_some_and(|ext| ext == "yml" || ext == "yaml")
+                    })
+                })
+                .unwrap_or(false)
+        {
             tasks.push(self.spawn_lint("actionlint", "actionlint", vec![]));
         }
         if self.target_dir.join("hw/meson.build").exists() {

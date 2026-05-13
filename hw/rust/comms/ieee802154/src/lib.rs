@@ -17,14 +17,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
 use virtmcu_api::rf802154;
 use virtmcu_api::Rf802154Mhr;
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
-use virtmcu_qom::memory::{
-    memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
-};
+use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
@@ -37,7 +35,7 @@ use virtmcu_qom::{
 use core::cmp::Ordering;
 
 const IEEE_MMIO_SIZE: u64 = 0x100;
-const IEEE_MAX_ACCESS: u32 = 8;
+
 const IEEE_FIFO_SIZE: usize = 128;
 const IEEE_RX_QUEUE_SIZE: usize = 16;
 const IEEE_DEFAULT_BE: u8 = 3;
@@ -61,7 +59,7 @@ const STATUS_RX_PENDING: u32 = 0x01;
 const STATUS_TX_DONE: u32 = 0x02;
 
 // Masks and Shifts
-const TX_LEN_MASK: u64 = 0x7F;
+
 const STATE_SHIFT: u32 = 8;
 const ADDR_32_MASK: u64 = 0xFFFFFFFF;
 const ADDR_32_SHIFT: u32 = 32;
@@ -104,12 +102,9 @@ const HASH_BYTES_LEN: usize = 20;
 const ACK_RESERVED_BYTE: u8 = 0x00;
 
 // Radio States
-const RADIO_STATE_OFF: u64 = 0;
-const RADIO_STATE_IDLE: u64 = 1;
-const RADIO_STATE_RX: u64 = 2;
-const RADIO_STATE_TX: u64 = 3;
 
 #[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
 pub struct Virtmcu802154QEMU {
     pub parent_obj: SysBusDevice,
     pub iomem: MemoryRegion,
@@ -145,6 +140,9 @@ enum RadioState {
 
 pub struct Virtmcu802154State {
     parent_ptr: *mut Virtmcu802154QEMU,
+    cond: virtmcu_qom::sync::Condvar,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    wait_mutex: virtmcu_qom::sync::Mutex<()>,
     irq: QemuIrq,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     topic_tx: String,
@@ -185,46 +183,6 @@ struct Virtmcu802154Inner {
     ack_seq: u8,
     tx_sequence: u64,
 }
-
-extern "C" fn ieee802154_read(opaque: *mut c_void, offset: u64, _size: c_uint) -> u64 {
-    let s = unsafe { &mut *(opaque as *mut Virtmcu802154QEMU) };
-    if s.rust_state.is_null() {
-        return 0;
-    }
-    let rust_state = unsafe { &mut *s.rust_state };
-    ieee802154_read_internal(rust_state, offset)
-}
-
-extern "C" fn ieee802154_write(opaque: *mut c_void, offset: u64, value: u64, _size: c_uint) {
-    let s = unsafe { &mut *(opaque as *mut Virtmcu802154QEMU) };
-    if s.rust_state.is_null() {
-        return;
-    }
-    let rust_state = unsafe { &mut *s.rust_state };
-    ieee802154_write_internal(rust_state, offset, value);
-}
-
-static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
-    read: Some(ieee802154_read),
-    write: Some(ieee802154_write),
-    read_with_attrs: ptr::null(),
-    write_with_attrs: ptr::null(),
-    endianness: DEVICE_LITTLE_ENDIAN,
-    _padding1: [0; 4],
-    valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: 1,
-        max_access_size: IEEE_MAX_ACCESS,
-        unaligned: false,
-        _padding: [0; 7],
-        accepts: ptr::null(),
-    },
-    impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 1,
-        max_access_size: IEEE_MAX_ACCESS,
-        unaligned: false,
-        _padding: [0; 7],
-    },
-};
 
 unsafe extern "C" fn allow_set_link(
     _obj: *mut Object,
@@ -284,7 +242,7 @@ extern "C" fn ieee802154_instance_init(obj: *mut Object) {
         memory_region_init_io(
             &raw mut s.iomem,
             obj,
-            &raw const VIRTM_802154_OPS,
+            &raw const VIRTMCU802154QEMU_OPS,
             obj as *mut c_void,
             c"ieee802154".as_ptr(),
             IEEE_MMIO_SIZE,
@@ -406,7 +364,7 @@ fn ieee802154_init_internal(
     }
 
     let mut state_box = Box::new(Virtmcu802154State {
-        parent_ptr: parent,
+        parent_ptr: parent.cast_const().cast_mut(),
         irq,
         transport: Arc::clone(&transport),
         topic_tx: topic_tx.clone(),
@@ -436,6 +394,8 @@ fn ieee802154_init_internal(
             tx_sequence: 0,
         }),
         _liveliness: None,
+        cond: virtmcu_qom::sync::Condvar::new(),
+        wait_mutex: virtmcu_qom::sync::Mutex::new(()),
     });
 
     let state_ptr = core::ptr::from_mut(&mut *state_box);
@@ -477,107 +437,148 @@ fn ieee802154_init_internal(
     Box::into_raw(state_box)
 }
 
-fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
-    let mut inner = s.inner.get_mut();
-    match offset {
-        REG_TX_LEN => u64::from(inner.tx_len),
-        REG_RX_DATA
-            if (inner.status & STATUS_RX_PENDING != 0) && (inner.rx_read_pos < inner.rx_len) =>
-        {
-            let val = u64::from(inner.rx_fifo[inner.rx_read_pos as usize]);
-            inner.rx_read_pos += 1;
-            val
-        }
-        REG_RX_LEN => u64::from(inner.rx_len),
-        REG_STATUS => {
-            let status = inner.status | ((inner.state as u32) << STATE_SHIFT);
-            let waiting_rx = status & STATUS_RX_PENDING == 0 && inner.state == RadioState::Rx;
-            let waiting_tx = status & STATUS_TX_DONE == 0 && inner.state == RadioState::Tx;
-            if waiting_rx || waiting_tx {
-                let _yield = virtmcu_qom::sync::Bql::temporary_unlock();
-                // virtmcu-allow: yield reasoning="Enterprise Mandate: yield to allow QEMU main loop progress during BQL unlock in tight polling loops"
-                std::thread::yield_now();
+impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
+    fn read(&self, offset: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let mut inner = self.inner.get_mut();
+        match offset {
+            REG_TX_LEN => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.tx_len)),
+            REG_RX_DATA
+                if (inner.status & STATUS_RX_PENDING != 0)
+                    && (inner.rx_read_pos < inner.rx_len) =>
+            {
+                let val = u64::from(inner.rx_fifo[inner.rx_read_pos as usize]);
+                inner.rx_read_pos += 1;
+                virtmcu_qom::device::MmioResult::Ready(val)
             }
-            u64::from(status)
-        }
-        REG_RSSI => u64::from(inner.rx_rssi as u8),
-        REG_STATE => inner.state as u64,
-        REG_PAN_ID => u64::from(inner.pan_id),
-        REG_SHORT_ADDR => u64::from(inner.short_addr),
-        REG_EXT_ADDR_LO => inner.ext_addr & ADDR_32_MASK,
-        REG_EXT_ADDR_HI => inner.ext_addr >> ADDR_32_SHIFT,
-        _ => {
-            let parent = unsafe { &*s.parent_ptr };
-            if parent.debug {
-                virtmcu_qom::sim_debug!("ieee802154_read: unhandled offset 0x{:x}", offset);
+            REG_RX_LEN => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.rx_len)),
+            REG_STATUS => {
+                let status = inner.status | ((inner.state as u32) << STATE_SHIFT);
+                let waiting_rx = status & STATUS_RX_PENDING == 0 && inner.state == RadioState::Rx;
+                let waiting_tx = status & STATUS_TX_DONE == 0 && inner.state == RadioState::Tx;
+                if waiting_rx || waiting_tx {
+                    drop(inner);
+                    return virtmcu_qom::device::MmioResult::wait_for(
+                        move || {
+                            let in2 = self.inner.get();
+                            let s2 = in2.status | ((in2.state as u32) << STATE_SHIFT);
+                            let w_rx = s2 & STATUS_RX_PENDING == 0 && in2.state == RadioState::Rx;
+                            let w_tx = s2 & STATUS_TX_DONE == 0 && in2.state == RadioState::Tx;
+                            !(w_rx || w_tx)
+                        },
+                        move || {
+                            let in3 = self.inner.get();
+                            u64::from(in3.status | ((in3.state as u32) << STATE_SHIFT))
+                        },
+                    );
+                }
+                virtmcu_qom::device::MmioResult::Ready(u64::from(status))
             }
-            0
+            REG_RSSI => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.rx_rssi as u8)),
+            REG_STATE => virtmcu_qom::device::MmioResult::Ready(inner.state as u64),
+            REG_PAN_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.pan_id)),
+            REG_SHORT_ADDR => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.short_addr)),
+            REG_EXT_ADDR_LO => {
+                virtmcu_qom::device::MmioResult::Ready(inner.ext_addr & ADDR_32_MASK)
+            }
+            REG_EXT_ADDR_HI => {
+                virtmcu_qom::device::MmioResult::Ready(inner.ext_addr >> ADDR_32_SHIFT)
+            }
+            _ => {
+                let parent = unsafe { &*self.parent_ptr };
+                if parent.debug {
+                    virtmcu_qom::sim_debug!("ieee802154_read: unhandled offset 0x{:x}", offset);
+                }
+                virtmcu_qom::device::MmioResult::Ready(0)
+            }
         }
     }
-}
 
-fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64) {
-    let mut inner = s.inner.get_mut();
-    match offset {
-        REG_TX_DATA if inner.tx_len < IEEE_FIFO_SIZE as u32 => {
-            let tx_pos = inner.tx_len as usize;
-            inner.tx_fifo[tx_pos] = value as u8;
-            inner.tx_len += 1;
-        }
-        REG_TX_LEN => {
-            inner.tx_len = (value & TX_LEN_MASK) as u32;
-        }
-        REG_TX_GO => {
-            tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
-        }
-        REG_STATUS => {
-            inner.status &= !(value as u32);
-            if inner.status & STATUS_RX_PENDING == 0 {
-                unsafe { qemu_set_irq(s.irq, 0) };
-                check_rx_queue(s.irq, s.rx_timer.as_ref(), &mut inner);
+    fn write(&self, offset: u64, value: u64, _size: u32) {
+        let mut inner = self.inner.get_mut();
+        match offset {
+            REG_TX_DATA => {
+                if inner.tx_len < IEEE_FIFO_SIZE as u32 {
+                    let len = inner.tx_len as usize;
+                    inner.tx_fifo[len] = value as u8;
+                    inner.tx_len += 1;
+                }
             }
-        }
-        REG_STATE => {
-            let next_state = match value {
-                RADIO_STATE_OFF => RadioState::Off,
-                RADIO_STATE_IDLE => RadioState::Idle,
-                RADIO_STATE_RX => RadioState::Rx,
-                RADIO_STATE_TX => RadioState::Tx,
-                _ => inner.state,
-            };
-            if next_state == RadioState::Tx {
-                tx_go(s.irq, s.backoff_timer.as_ref(), &mut inner);
-            } else {
-                inner.state = next_state;
-                if inner.state == RadioState::Rx {
-                    check_rx_queue(s.irq, s.rx_timer.as_ref(), &mut inner);
+            REG_TX_GO => {
+                inner.state = RadioState::Tx;
+                inner.status &= !STATUS_TX_DONE;
+                inner.nb = 0;
+                inner.be = MAC_MIN_BE;
+                schedule_backoff(self.backoff_timer.as_ref(), &mut inner);
+            }
+            REG_STATE => {
+                const STATE_RX: u64 = 2;
+                const STATE_TX: u64 = 3;
+                inner.state = match value {
+                    0 => RadioState::Off,
+                    1 => RadioState::Idle,
+                    STATE_RX => {
+                        // virtmcu-allow: magic_numbers reasoning="State enum mapping"
+                        check_rx_queue(
+                            self.irq,
+                            self.rx_timer.as_ref(),
+                            &mut inner,
+                            &self.cond,
+                            &self.wait_mutex,
+                        );
+                        RadioState::Rx
+                    }
+                    STATE_TX => RadioState::Tx, // virtmcu-allow: magic_numbers reasoning="State enum mapping"
+                    _ => inner.state,
+                };
+            }
+            REG_STATUS => {
+                if value as u32 & STATUS_TX_DONE != 0 {
+                    inner.status &= !STATUS_TX_DONE;
+                }
+                if value as u32 & STATUS_RX_PENDING != 0 {
+                    inner.status &= !STATUS_RX_PENDING;
+                    inner.rx_len = 0;
+                    inner.rx_read_pos = 0;
+                    unsafe {
+                        qemu_set_irq(self.irq, 0);
+                    }
+                    check_rx_queue(
+                        self.irq,
+                        self.rx_timer.as_ref(),
+                        &mut inner,
+                        &self.cond,
+                        &self.wait_mutex,
+                    );
+                }
+            }
+            REG_PAN_ID => inner.pan_id = value as u16,
+            REG_SHORT_ADDR => inner.short_addr = value as u16,
+            REG_EXT_ADDR_LO => {
+                inner.ext_addr = (inner.ext_addr & !(ADDR_32_MASK)) | (value & ADDR_32_MASK);
+            }
+            REG_EXT_ADDR_HI => {
+                inner.ext_addr = (inner.ext_addr & ADDR_32_MASK) | (value << ADDR_32_SHIFT);
+            }
+            _ => {
+                let parent = unsafe { &*self.parent_ptr };
+                if parent.debug {
+                    virtmcu_qom::sim_debug!(
+                        "ieee802154_write: unhandled offset 0x{:x} val 0x{:x}",
+                        offset,
+                        value
+                    );
                 }
             }
         }
-        REG_PAN_ID => {
-            inner.pan_id = value as u16;
-        }
-        REG_SHORT_ADDR => {
-            inner.short_addr = value as u16;
-        }
-        REG_EXT_ADDR_LO => {
-            inner.ext_addr =
-                (inner.ext_addr & (ADDR_32_MASK << ADDR_32_SHIFT)) | (value & ADDR_32_MASK);
-        }
-        REG_EXT_ADDR_HI => {
-            inner.ext_addr =
-                (inner.ext_addr & ADDR_32_MASK) | ((value & ADDR_32_MASK) << ADDR_32_SHIFT);
-        }
-        _ => {
-            let parent = unsafe { &*s.parent_ptr };
-            if parent.debug {
-                virtmcu_qom::sim_debug!(
-                    "ieee802154_write: unhandled offset 0x{:x} val=0x{:x}",
-                    offset,
-                    value
-                );
-            }
-        }
+    }
+
+    fn condvar(&self) -> &virtmcu_qom::sync::Condvar {
+        &self.cond
+    }
+
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    fn wait_mutex(&self) -> &virtmcu_qom::sync::Mutex<()> {
+        &self.wait_mutex
     }
 }
 
@@ -595,16 +596,6 @@ fn ieee802154_cleanup_internal(state: *mut Virtmcu802154State) {
 
 const MAC_MAX_BE: u8 = 5;
 const MAC_MAX_CSMA_BACKOFFS: u8 = 4;
-
-fn tx_go(_irq: QemuIrq, backoff_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
-    if inner.state == RadioState::Tx {
-        return;
-    }
-    inner.nb = 0;
-    inner.be = MAC_MIN_BE;
-    inner.state = RadioState::Tx;
-    schedule_backoff(backoff_timer, inner);
-}
 
 fn deterministic_random(node_id: u32, vtime_ns: u64, extra: u64) -> u32 {
     let mut hash = FNV_OFFSET_BASIS;
@@ -799,7 +790,14 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
     }
 }
 
-fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
+fn check_rx_queue(
+    irq: QemuIrq,
+    rx_timer: Option<&QomTimer>,
+    inner: &mut Virtmcu802154Inner,
+    cond: &virtmcu_qom::sync::Condvar,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    wait_mutex: &virtmcu_qom::sync::Mutex<()>,
+) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
 
     while !inner.rx_queue.is_empty() {
@@ -823,6 +821,8 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
                     unsafe {
                         qemu_set_irq(irq, 1);
                     };
+                    let _guard = wait_mutex.lock();
+                    cond.notify_all();
                     // One frame at a time into the FIFO
                     break;
                 }
@@ -848,7 +848,7 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
 extern "C" fn rx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
     let mut inner = state.inner.get_mut();
-    check_rx_queue(state.irq, state.rx_timer.as_ref(), &mut inner);
+    check_rx_queue(state.irq, state.rx_timer.as_ref(), &mut inner, &state.cond, &state.wait_mutex);
 }
 
 #[cfg(test)]

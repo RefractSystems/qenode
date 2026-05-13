@@ -4378,6 +4378,15 @@ dependencies = [
  "crossbeam-channel",
  "static_assertions",
  "virtmcu-api",
+ "virtmcu-qom-macros",
+]
+
+[[package]]
+name = "virtmcu-qom-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

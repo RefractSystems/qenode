@@ -33,7 +33,7 @@ members = [
     "tools/virtmcu-coverage",
     "tools/virtmcu-observability",
     "tools/benchmarks/clock_rtt_bench",
-    "tests/native_integration",
+    "tests/native_integration", "hw/rust/common/virtmcu-qom-macros",
 ]
 exclude = [
     "xtask",
