@@ -440,10 +440,18 @@ pub fn parse_yaml(
 
                 if svd_path_buf.exists() {
                     let xml = std::fs::read_to_string(&svd_path_buf).map_err(|e| {
-                        anyhow::anyhow!("Failed to read SVD file '{}': {}", svd_path_buf.display(), e)
+                        anyhow::anyhow!(
+                            "Failed to read SVD file '{}': {}",
+                            svd_path_buf.display(),
+                            e
+                        )
                     })?;
                     let device = svd_parser::parse(&xml).map_err(|e| {
-                        anyhow::anyhow!("Failed to parse SVD file '{}': {:?}", svd_path_buf.display(), e)
+                        anyhow::anyhow!(
+                            "Failed to parse SVD file '{}': {:?}",
+                            svd_path_buf.display(),
+                            e
+                        )
                     })?;
                     if let Some(svd_periph) = device.peripherals.first() {
                         // Update address if missing or "none"
@@ -477,10 +485,7 @@ pub fn parse_yaml(
                                 if !ab.is_empty() {
                                     props.insert(
                                         "size".to_string(),
-                                        serde_yaml::Value::String(format!(
-                                            "0x{:x}",
-                                            ab[0].size
-                                        )),
+                                        serde_yaml::Value::String(format!("0x{:x}", ab[0].size)),
                                     );
                                 }
                             }

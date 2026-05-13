@@ -667,6 +667,7 @@ extern "C" fn safe_subscription_timer_cb(opaque: *mut core::ffi::c_void) {
             if internal.is_valid.load(Ordering::Acquire)
                 && internal.generation.load(Ordering::Acquire) == internal.expected_generation
             {
+                crate::vlog!("[SafeSubscription] Calling callback for topic: {}\n", topic);
                 (internal.callback)(&topic, &payload);
             }
         }
@@ -736,6 +737,7 @@ impl SafeSubscription {
         let timer_kick = Arc::clone(&timer_clone);
         let valid_clone = Arc::clone(&is_valid);
         let wrapper_callback: DataCallback = Box::new(move |topic: &str, payload: &[u8]| {
+            crate::vlog!("[SafeSubscription] Received Zenoh message on topic: {}\n", topic);
             if valid_clone.load(Ordering::Acquire)
                 && tx.send((topic.to_owned(), payload.to_vec())).is_ok()
             {

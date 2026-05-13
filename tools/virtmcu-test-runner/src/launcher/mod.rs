@@ -87,10 +87,19 @@ impl QemuLauncher {
             }
         }
 
+        // Fallback: Check system PATH
+        let bin_name = format!("qemu-system-{}", qemu_arch_name);
+        if let Ok(path) = which::which(&bin_name) {
+            return Ok(path);
+        }
+
         Err(anyhow!(
-            "QEMU binary for {} not found. Checked: {:?}",
+            "QEMU binary for {} not found. Checked: {:?}. Also searched PATH for '{}'. Current DIR: {:?}, VIRTMCU_USE_PREBUILT_QEMU: {}",
             arch,
-            possible_paths
+            possible_paths,
+            bin_name,
+            std::env::current_dir().unwrap_or_default(),
+            use_prebuilt
         ))
     }
 
