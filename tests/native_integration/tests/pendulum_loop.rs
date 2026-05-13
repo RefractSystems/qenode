@@ -50,7 +50,7 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     let mut count = 0;
 
     // Step clock and inject data
-    for _ in 0..500 {
+    for i in 0..500 {
         // Step total 1000ms
         for ((_sample_type, channel_id), sensor) in &sensors {
             let topic = sim_topic::sensor_data("0", *channel_id as u32);
@@ -81,6 +81,13 @@ async fn test_pendulum_closed_loop() -> Result<()> {
                 count += 1;
             }
         }
+        println!(
+            "Iteration {}, vtime: {}, msgs: {}, count: {}",
+            i,
+            current_vtime_ns,
+            msgs.len(),
+            count
+        );
         if count >= 3 {
             break;
         }

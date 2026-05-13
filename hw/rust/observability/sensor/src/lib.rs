@@ -390,10 +390,15 @@ extern "C" fn sensor_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     }
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    virtmcu_qom::vlog!("sensor_rx_timer_cb: now={}, queue_len={}\n", now, inner.rx_queue.len());
     let mut notified = false;
 
     while !inner.rx_queue.is_empty() && inner.rx_queue[0].delivery_vtime_ns <= now {
         let frame = inner.rx_queue.remove(0);
+        virtmcu_qom::vlog!(
+            "sensor_rx_timer_cb: processing frame for vtime {}\n",
+            frame.delivery_vtime_ns
+        );
         inner.map.insert(
             frame.sensor_id,
             SensorEntry { data: frame.data, data_size: frame.data_size, new_data: true },
@@ -404,6 +409,7 @@ extern "C" fn sensor_rx_timer_cb(opaque: *mut core::ffi::c_void) {
     if notified {
         let _guard = state.wait_mutex.lock();
         state.cond.notify_all();
+        virtmcu_qom::vlog!("sensor_rx_timer_cb: notified!\n");
     }
 
     if let Some(first) = inner.rx_queue.first() {
