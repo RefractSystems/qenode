@@ -52,10 +52,9 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     && curl -fsSL -o /tmp/binstall.tgz "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz" \
     && tar -xzf /tmp/binstall.tgz -C /usr/local/cargo/bin \
     && rm /tmp/binstall.tgz \
-    && rustup toolchain install stable --profile minimal \
+    && rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-analyzer \
     && rustup default stable \
-    && rustup toolchain install nightly --profile minimal --component miri \
-    && rustup component add rustfmt clippy rust-analyzer \
+    && rustup toolchain install nightly --profile minimal --component miri --component rustfmt --component clippy \
     && GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || echo "") && export GITHUB_TOKEN \
     && cargo install bindgen-cli --version "${BINDGEN_VERSION}" \
     && cargo binstall -y cargo-audit \

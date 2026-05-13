@@ -1,8 +1,8 @@
 #include <stdint.h>
 
 #define UART0_BASE 0x09000000
-#define ACTUATOR_BASE 0x50000000
-#define SENSOR_BASE   0x51000000
+#define ACTUATOR_BASE 0x0A000000
+#define SENSOR_BASE   0x0B000000
 
 #define REG_ACTUATOR_ID (ACTUATOR_BASE + 0x00)
 #define REG_ACT_DATA_SIZE (ACTUATOR_BASE + 0x04)
@@ -45,6 +45,9 @@ void write_actuator(double torque) {
 }
 
 int main() {
+    // Early test write to actuator
+    *(volatile uint32_t *)REG_ACT_DATA_SIZE = 0xAA;
+
     uart_puts("Pendulum PID Controller Starting...\n");
     
     int prev_error = 0;

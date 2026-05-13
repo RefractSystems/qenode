@@ -1309,6 +1309,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "VcpuDrain timed out")]
     fn test_vcpu_drain_wait_timeout() {
         const DRAIN_TIMEOUT_MS: u32 = 10;
         let drain = VcpuDrain::new();

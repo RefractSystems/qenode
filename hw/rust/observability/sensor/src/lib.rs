@@ -103,11 +103,14 @@ pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uin
     if !state.shared.running.load(Ordering::Acquire) {
         return 0;
     }
+    virtmcu_qom::vlog!("sensor_read: addr 0x{:x}\n", addr);
     let _guard = state.shared.drain.acquire();
 
     if addr == REG_SENSOR_ID {
+        virtmcu_qom::vlog!("sensor_read: REG_SENSOR_ID\n");
         u64::from(s.sensor_id)
     } else if addr == REG_DATA_SIZE {
+        virtmcu_qom::vlog!("sensor_read: REG_DATA_SIZE\n");
         u64::from(s.data_size)
     } else if addr == REG_NEW_DATA {
         let mut ret = 0;
@@ -118,6 +121,7 @@ pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uin
                 }
             }
         }
+        virtmcu_qom::vlog!("sensor_read: REG_NEW_DATA -> {}\n", ret);
         ret
     } else if (REG_DATA_START
         ..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * (F64_SIZE_BYTES_USIZE as u64))

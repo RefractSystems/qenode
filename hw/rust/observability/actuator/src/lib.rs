@@ -148,6 +148,7 @@ pub unsafe extern "C" fn actuator_read(opaque: *mut c_void, addr: u64, size: c_u
 /// This function is called by QEMU. opaque must be a valid pointer to VirtmcuActuatorQEMU.
 #[no_mangle]
 pub unsafe extern "C" fn actuator_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
+    virtmcu_qom::vlog!("actuator_write: addr 0x{:x}, val {}\n", addr, val);
     let s = unsafe { &mut *(opaque as *mut VirtmcuActuatorQEMU) };
     if addr == REG_ACTUATOR_ID {
         s.actuator_id = val as u32;

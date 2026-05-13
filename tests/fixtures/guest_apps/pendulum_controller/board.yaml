@@ -16,7 +16,7 @@ peripherals:
 
 - name: actuator
   type: actuator
-  address: '0x50000000'
+  address: '0x0A000000'
   properties:
     node: 0
     region-size: 256
@@ -25,7 +25,7 @@ peripherals:
 
 - name: sensor
   type: sensor
-  address: '0x51000000'
+  address: '0x0B000000'
   properties:
     node: 0
     region-size: 256
