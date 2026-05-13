@@ -110,14 +110,15 @@ pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uin
     } else if addr == REG_DATA_SIZE {
         u64::from(s.data_size)
     } else if addr == REG_NEW_DATA {
+        let mut ret = 0;
         if let Ok(map) = state.shared.map.read() {
             if let Some(entry) = map.get(&s.sensor_id) {
                 if entry.new_data {
-                    return 1;
+                    ret = 1;
                 }
             }
         }
-        0
+        ret
     } else if (REG_DATA_START
         ..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * (F64_SIZE_BYTES_USIZE as u64))
         .contains(&addr)
@@ -156,6 +157,10 @@ pub unsafe extern "C" fn sensor_write(opaque: *mut c_void, addr: u64, val: u64, 
         return;
     }
     let _guard = state.shared.drain.acquire();
+
+    if s.debug {
+        virtmcu_qom::sim_info!("sensor_write: addr 0x{:x}, val {}", addr, val);
+    }
 
     if addr == REG_SENSOR_ID {
         s.sensor_id = val as u32;
@@ -289,6 +294,7 @@ declare_device_type!(VIRTMCU_SENSOR_TYPE_INIT, VIRTMCU_SENSOR_TYPE_INFO);
 /// This function is called by QEMU.
 #[no_mangle]
 pub unsafe extern "C" fn sensor_realize(dev: *mut c_void, errp: *mut *mut c_void) {
+    virtmcu_qom::vlog!("SENSOR_REALIZE CALLED\n");
     let s = unsafe { &mut *(dev as *mut VirtmcuSensorQEMU) };
 
     if s.transport_hub.is_null() {
@@ -355,6 +361,7 @@ fn sensor_init_internal(
     let topic = sim_topic::sensor_data_wildcard(&node_id_str);
 
     let callback: virtmcu_api::DataCallback = Box::new(move |topic_str: &str, payload: &[u8]| {
+        virtmcu_qom::sim_info!("Sensor received data on topic: {}", topic_str);
         if !shared_bg.running.load(Ordering::Acquire) {
             return;
         }

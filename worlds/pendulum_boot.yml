@@ -1,0 +1,12 @@
+# worlds/pendulum_boot.yml
+# PURPOSE: Level 1 — Boot smoke.
+# Validates: ARM boot, DTB generation, UART peripheral, and basic virtmcu-run execution.
+# No clock sync, no physics, no sensors.
+# Run: docker compose -f docker/docker-compose.yml -f worlds/pendulum_boot.yml up
+services:
+  cyber-node:
+    command: [
+      "/app/target/release/virtmcu-run",
+      "--yaml", "/app/tests/fixtures/guest_apps/pendulum_controller/board.yaml",
+      "-kernel", "/app/tests/fixtures/guest_apps/pendulum_controller/controller.elf"
+    ]

@@ -114,15 +114,16 @@ async fn open_zenoh_session(
     Ok(Arc::new(session))
 }
 
+#[derive(Debug)]
+struct DummyVTimeProvider;
+impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+    fn current_vtime_ns(&self) -> u64 {
+        0
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[derive(Debug)]
-    struct DummyVTimeProvider;
-    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
-        fn current_vtime_ns(&self) -> u64 {
-            0
-        }
-    }
     let _telemetry = virtmcu_observability::init_telemetry(
         "virtmcu-physical-node",
         std::sync::Arc::new(DummyVTimeProvider),

@@ -1072,14 +1072,13 @@ impl VcpuDrain {
             )
             .unwrap_or(i64::MAX);
             let elapsed_ns = now_ns.saturating_sub(start_ns);
-            if elapsed_ns >= limit_ns {
-                crate::sim_err!(
-                    "VcpuDrain timed out after {} ms with {} vCPUs still active",
-                    timeout_ms,
-                    *count
-                );
-                break;
-            }
+            assert!(
+                elapsed_ns < limit_ns,
+                "VcpuDrain timed out after {} ms with {} vCPUs still active — \
+                 peripheral teardown is unsafe, aborting",
+                timeout_ms,
+                *count
+            );
 
             let remaining_ms =
                 u32::try_from((limit_ns - elapsed_ns) / 1_000_000).unwrap_or(u32::MAX);
@@ -1292,6 +1291,7 @@ mod tests {
 
     #[test]
     fn test_vcpu_drain() {
+        const TEST_COUNT: usize = 2;
         let drain = VcpuDrain::new();
         assert_eq!(*drain.count.lock(), 0);
 
@@ -1299,7 +1299,6 @@ mod tests {
         assert_eq!(*drain.count.lock(), 1);
 
         let guard2 = drain.acquire();
-        const TEST_COUNT: usize = 2;
         assert_eq!(*drain.count.lock(), TEST_COUNT);
 
         drop(guard1);
@@ -1311,13 +1310,13 @@ mod tests {
 
     #[test]
     fn test_vcpu_drain_wait_timeout() {
+        const DRAIN_TIMEOUT_MS: u32 = 10;
         let drain = VcpuDrain::new();
         let _guard = drain.acquire();
 
         let _bql = Bql::lock();
         let start = std::time::Instant::now();
         // This should timeout since we hold the guard
-        const DRAIN_TIMEOUT_MS: u32 = 10;
         drain.wait_for_drain(DRAIN_TIMEOUT_MS);
         let elapsed = start.elapsed();
 

@@ -150,15 +150,16 @@ enum SetupCommands {
     },
 }
 
+#[derive(Debug)]
+struct DummyVTimeProvider;
+impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+    fn current_vtime_ns(&self) -> u64 {
+        0
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[derive(Debug)]
-    struct DummyVTimeProvider;
-    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
-        fn current_vtime_ns(&self) -> u64 {
-            0
-        }
-    }
     let _telemetry = virtmcu_observability::init_telemetry(
         "virtmcu-cli",
         std::sync::Arc::new(DummyVTimeProvider),
@@ -501,7 +502,7 @@ async fn run_telemetry(node_id: u32, router: Option<String>) -> Result<()> {
     let session = zenoh::open(config)
         .await
         .map_err(|e| anyhow!("Zenoh open: {}", e))?;
-    let topic = format!("sim/telemetry/trace/{}", node_id);
+    let topic = virtmcu_api::topics::sim_topic::telemetry_events(&node_id.to_string());
     info!("Listening on {}", topic);
 
     let subscriber = session

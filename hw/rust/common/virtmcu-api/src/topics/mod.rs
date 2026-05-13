@@ -92,6 +92,11 @@ pub mod sim_topic {
     /// Topic on which the Physics Gateway publishes done signals.
     pub const PHYSICS_DONE: &str = "sim/physics/done";
 
+    /// Wildcard for all telemetry position messages.
+    pub const TELEMETRY_POSITION_WILDCARD: &str = "**/sim/telemetry/position";
+    /// Wildcard for all telemetry trace messages.
+    pub const TELEMETRY_TRACE_WILDCARD: &str = "**/sim/telemetry/trace/**";
+
     /// Generates the instruction trace topic for a node.
     pub fn telemetry_insn(node_id: &str) -> String {
         format!("sim/telemetry/trace/{node_id}/insn")

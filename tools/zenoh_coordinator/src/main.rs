@@ -311,9 +311,10 @@ async fn handle_eth_msg(
 
     for dst in dest_nodes {
         if !tg.is_link_allowed(&src, &dst, &Protocol::Ethernet) {
-            eprintln!(
+            tracing::error!(
                 "[Topology Violation] Dropping ETH msg from {} to {}",
-                src, dst
+                src,
+                dst
             );
             continue;
         }
@@ -384,9 +385,10 @@ async fn handle_uart_msg(
 
     for dst in dest_nodes {
         if !tg.is_link_allowed(&src, &dst, &Protocol::Uart) {
-            eprintln!(
+            tracing::error!(
                 "[Topology Violation] Dropping UART msg from {} to {}",
-                src, dst
+                src,
+                dst
             );
             continue;
         }
@@ -452,7 +454,7 @@ async fn handle_lin_msg(
 
     for dst in dest_nodes {
         if !tg.is_link_allowed(&src, &dst, &Protocol::Lin) {
-            eprintln!("Topology Violation: LIN {}->{}", src, dst);
+            tracing::error!("Topology Violation: LIN {}->{}", src, dst);
             continue;
         }
         let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
@@ -770,7 +772,7 @@ async fn main() {
         .await
         .expect("Failed to declare Zenoh subscriber");
     let pos_sub = session
-        .declare_subscriber("**/sim/telemetry/position")
+        .declare_subscriber(virtmcu_api::topics::sim_topic::TELEMETRY_POSITION_WILDCARD)
         .await
         .expect("Failed to declare Zenoh subscriber");
     let done_sub = session

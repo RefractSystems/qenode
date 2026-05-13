@@ -26,7 +26,7 @@ double read_sensor() {
     
     // Wait for new data to arrive in the shared buffer
     while (*(volatile uint32_t *)REG_SENS_READY == 0) {
-        // Busy wait - virtmcu-clock will yield if slaved-suspend is used
+        // asm volatile("wfi");
     }
     
     // Latch the data into peripheral registers
@@ -51,9 +51,14 @@ int main() {
     int Kp = 50;
     int Kd = 10;
     
+    uart_puts("Entering main loop...\n");
     while (1) {
+        uart_puts("Calling read_sensor()...\n");
+        double angle_rad = read_sensor();
+        uart_puts("read_sensor() returned\n");
+        
         // Angle in milli-radians (0.5 rad = 500 mrad)
-        int angle = (int)(read_sensor() * 1000.0);
+        int angle = (int)(angle_rad * 1000.0);
         int error = 0 - angle;
         
         int derivative = error - prev_error;
@@ -61,7 +66,9 @@ int main() {
         
         int torque_milli = (Kp * error) + (Kd * derivative);
         
+        uart_puts("Calling write_actuator()...\n");
         write_actuator((double)torque_milli / 1000.0);
+        uart_puts("write_actuator() returned\n");
         
         uart_puts("Angle: ");
         if (angle < 0) { uart_putc('-'); angle = -angle; }

@@ -29,6 +29,10 @@ async fn test_pendulum_closed_loop() -> Result<()> {
         .build()
         .await?;
 
+    // Wait for boot
+    env.wait_for_output(0, "Pendulum PID Controller Starting...")
+        .await?;
+
     let session = env.session();
     let actuator_topic = sim_topic::actuator_control("0", 0);
     let monitor = ActuatorMonitor::new(&session, &[&actuator_topic]).await?;
@@ -47,7 +51,8 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     for _ in 0..100 {
         // Step total 1000ms
         for ((_sample_type, channel_id), sensor) in &sensors {
-            let topic = format!("sim/sensor/0/sensordata_{}", channel_id);
+            let topic = sim_topic::sensor_data("0", *channel_id as u32);
+            println!("Publishing to topic: {}", topic);
             let vals = sensor.get_reading(current_vtime_ns);
             let mut data_payload = Vec::with_capacity(vals.len() * 8);
             for v in vals {
@@ -62,6 +67,9 @@ async fn test_pendulum_closed_loop() -> Result<()> {
 
         env.step_clock(step_ns, step_ns).await?;
         current_vtime_ns += step_ns;
+
+        // Drain UART to see what's happening
+        let _ = env.wait_for_output_passive(0, "").await;
 
         // Check if we got enough commands yet
         let msgs = monitor.captured_messages.lock().unwrap();

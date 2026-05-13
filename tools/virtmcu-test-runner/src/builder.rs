@@ -368,6 +368,7 @@ impl TopologyBuilder {
             ctx.setup_cmd(&mut qemu_cmd);
             qemu_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+            println!("Spawning QEMU with command: {:?}", qemu_cmd);
             info!("Spawning QEMU with command: {:?}", qemu_cmd);
             let mut qemu = qemu_cmd
                 .spawn()

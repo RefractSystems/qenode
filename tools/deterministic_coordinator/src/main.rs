@@ -184,15 +184,16 @@ fn parse_legacy_topic(topic: &str) -> Option<(Protocol, u32, String)> {
     None
 }
 
+#[derive(Debug)]
+struct DummyVTimeProvider;
+impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
+    fn current_vtime_ns(&self) -> u64 {
+        0
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[derive(Debug)]
-    struct DummyVTimeProvider;
-    impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
-        fn current_vtime_ns(&self) -> u64 {
-            0
-        }
-    }
     let _telemetry = virtmcu_observability::init_telemetry(
         "virtmcu-deterministic-coordinator",
         std::sync::Arc::new(DummyVTimeProvider),

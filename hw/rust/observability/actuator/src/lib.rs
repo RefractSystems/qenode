@@ -208,6 +208,7 @@ static VIRTMCU_ACTUATOR_OPS: MemoryRegionOps = MemoryRegionOps {
 #[no_mangle]
 pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     const ACTUATOR_MMIO_SIZE: u64 = 0x1000;
+    virtmcu_qom::vlog!("ACTUATOR_REALIZE CALLED\n");
     let s = unsafe { &mut *(dev as *mut VirtmcuActuatorQEMU) };
 
     if !s.rust_state.is_null() {
