@@ -726,7 +726,7 @@ impl SafeSubscription {
         // SAFETY: We are creating a timer during device realization/init which holds BQL.
         let timer = unsafe {
             QomTimer::new(
-                QEMU_CLOCK_REALTIME,
+                crate::timer::QEMU_CLOCK_VIRTUAL,
                 safe_subscription_timer_cb,
                 Arc::as_ptr(&timer_internal) as *mut core::ffi::c_void,
             )

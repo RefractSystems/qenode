@@ -55,8 +55,11 @@ async fn test_complex_board_wireless() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to publish to radio: {}", e))?;
 
+    // Small delay to ensure Zenoh delivers the message to QEMU's main loop
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
     // Advance clock to allow processing (we need to advance past the injected vtime)
-    env.step_clock(200_000_000, 1_000_000).await?;
+    env.step_clock(200_000_000, 10_000_000).await?;
 
     env.wait_for_output(0, "Received packet!").await?;
     env.wait_for_output(0, "HELLO FROM TEST").await?;

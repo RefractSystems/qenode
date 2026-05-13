@@ -118,7 +118,7 @@ pub struct Virtmcu802154QEMU {
 
     /* Properties */
     pub node_id: u32,
-    pub transport: *mut c_char,
+    pub transport_hub: *mut Object,
     pub router: *mut c_char,
     pub topic: *mut c_char,
     pub debug: bool,
@@ -136,7 +136,7 @@ struct RxFrame {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum RadioState {
     Off = 0,
     Idle = 1,
@@ -157,7 +157,7 @@ pub struct Virtmcu802154State {
 
     // All state accessed exclusively under BQL; see BqlGuarded docs.
     inner: BqlGuarded<Virtmcu802154Inner>,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
 struct Virtmcu802154Inner {
@@ -220,40 +220,39 @@ static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
         accepts: ptr::null(),
     },
     impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 0,
-        max_access_size: 0,
+        min_access_size: 1,
+        max_access_size: IEEE_MAX_ACCESS,
         unaligned: false,
         _padding: [0; 7],
     },
 };
 
+extern "C" fn allow_set_link(_obj: *mut Object, _name: *const c_char, _dest: *mut Object) -> bool {
+    true
+}
+
 extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = unsafe { &mut *(dev as *mut Virtmcu802154QEMU) };
 
-    let node = s.node_id.to_string();
-    let transport_name = if s.transport.is_null() {
-        "zenoh".to_owned()
-    } else {
-        unsafe { CStr::from_ptr(s.transport) }.to_string_lossy().into_owned()
-    };
+    if s.transport_hub.is_null() {
+        error_setg!(errp, "Strict DI violation: ieee802154 requires a transport-hub link.");
+        return;
+    }
 
-    // We MUST keep the CString alive for the pointer!
-    let router_env = std::env::var("VIRTMCU_ZENOH_ROUTER").ok();
-    let router_cstring = if !s.router.is_null() {
-        None
-    } else if let Some(r) = router_env {
-        alloc::ffi::CString::new(r).ok()
-    } else {
-        None
+    let ptr_u64 = unsafe {
+        virtmcu_qom::qom::object_property_get_uint(
+            s.transport_hub,
+            c"transport_ptr".as_ptr(),
+            errp as *mut *mut virtmcu_qom::error::Error,
+        )
     };
-
-    let router_ptr = if !s.router.is_null() {
-        s.router.cast_const()
-    } else if let Some(ref c) = router_cstring {
-        c.as_ptr()
-    } else {
-        ptr::null()
-    };
+    if ptr_u64 == 0 {
+        error_setg!(errp, "Strict DI violation: failed to acquire transport from hub.");
+        return;
+    }
+    let transport_ref =
+        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
+    let transport_arc = alloc::sync::Arc::clone(transport_ref);
 
     let topic = if s.topic.is_null() {
         None
@@ -261,8 +260,7 @@ extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         Some(unsafe { CStr::from_ptr(s.topic) }.to_string_lossy().into_owned())
     };
 
-    s.rust_state =
-        ieee802154_init_internal(s, s.irq, s.node_id, &node, transport_name, router_ptr, topic);
+    s.rust_state = ieee802154_init_internal(s, s.irq, s.node_id, transport_arc, topic);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust Virtmcu 802.15.4");
     }
@@ -295,13 +293,13 @@ extern "C" fn ieee802154_instance_init(obj: *mut Object) {
     unsafe {
         sysbus_init_irq(obj as *mut SysBusDevice, &raw mut s.irq);
     }
+    s.transport_hub = ptr::null_mut();
 }
 
 define_properties!(
     VIRTM_802154_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), Virtmcu802154QEMU, node_id, 0),
-        define_prop_string!(c"transport".as_ptr(), Virtmcu802154QEMU, transport),
         define_prop_string!(c"router".as_ptr(), Virtmcu802154QEMU, router),
         define_prop_string!(c"topic".as_ptr(), Virtmcu802154QEMU, topic),
         virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), Virtmcu802154QEMU, debug, false),
@@ -353,6 +351,17 @@ extern "C" fn ieee802154_class_init(klass: *mut ObjectClass, _data: *const c_voi
         (*dc).user_creatable = true;
     }
     virtmcu_qom::device_class_set_props!(dc, VIRTM_802154_PROPERTIES);
+
+    unsafe {
+        virtmcu_qom::qom::object_class_property_add_link(
+            klass,
+            c"transport".as_ptr(),
+            c"virtmcu-transport-hub".as_ptr(),
+            core::mem::offset_of!(Virtmcu802154QEMU, transport_hub) as isize,
+            Some(allow_set_link),
+            virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+        );
+    }
 }
 
 #[used]
@@ -380,34 +389,9 @@ fn ieee802154_init_internal(
     parent: *mut Virtmcu802154QEMU,
     irq: QemuIrq,
     node_id: u32,
-    node: &str,
-    transport_name: String,
-    router: *const c_char,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
     topic: Option<String>,
 ) -> *mut Virtmcu802154State {
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = if router.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node }) // virtmcu-allow: absolute_path reasoning="Legacy script"
-        } else {
-            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
-        };
-        match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
-            Err(e) => {
-                virtmcu_qom::sim_err!("FAILED to open unix socket {}: {}", path, e);
-                return ptr::null_mut();
-            }
-        }
-    } else {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(session) => Arc::new(transport_zenoh::ZenohDataTransport::new(session)),
-            Err(e) => {
-                virtmcu_qom::sim_err!("FAILED to open Zenoh session: {e}");
-                return ptr::null_mut();
-            }
-        }
-    };
-
     let topic_tx;
     let topic_rx;
     if let Some(t) = topic {
@@ -419,7 +403,6 @@ fn ieee802154_init_internal(
     }
 
     let mut state_box = Box::new(Virtmcu802154State {
-        _liveliness: None,
         parent_ptr: parent,
         irq,
         transport: Arc::clone(&transport),
@@ -449,6 +432,7 @@ fn ieee802154_init_internal(
             ack_seq: 0,
             tx_sequence: 0,
         }),
+        _liveliness: None,
     });
 
     let state_ptr = core::ptr::from_mut(&mut *state_box);
@@ -460,9 +444,13 @@ fn ieee802154_init_internal(
     });
 
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
-    state_box.subscription =
-        virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-            .ok();
+    match virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) {
+        Ok(sub) => state_box.subscription = Some(sub),
+        Err(e) => {
+            virtmcu_qom::sim_err!("ieee802154: failed to subscribe to topic {}: {}", topic_rx, e);
+            return ptr::null_mut();
+        }
+    }
 
     state_box.rx_timer =
         Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void) });
@@ -476,17 +464,10 @@ fn ieee802154_init_internal(
     state_box.tx_timer =
         Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, tx_timer_cb, state_ptr as *mut c_void) });
 
-    state_box._liveliness = if transport_name == "zenoh" {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
-            Ok(session) => {
-                let hb_topic = format!("sim/ieee802154/liveliness/{node_id}");
-                session.liveliness().declare_token(hb_topic).wait().ok()
-            }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    let hb_topic = format!("sim/ieee802154/liveliness/{node_id}");
+    state_box._liveliness = transport.declare_liveliness(&hb_topic);
+
+    virtmcu_qom::sim_info!("ieee802154 initialized for node {} on topic {}", node_id, topic_rx);
 
     Box::into_raw(state_box)
 }
@@ -513,7 +494,7 @@ fn ieee802154_read_internal(s: &mut Virtmcu802154State, offset: u64) -> u64 {
         _ => {
             let parent = unsafe { &*s.parent_ptr };
             if parent.debug {
-                virtmcu_qom::sim_warn!("ieee802154_read: unhandled offset 0x{:x}", offset);
+                virtmcu_qom::sim_debug!("ieee802154_read: unhandled offset 0x{:x}", offset);
             }
             0
         }
@@ -575,7 +556,7 @@ fn ieee802154_write_internal(s: &mut Virtmcu802154State, offset: u64, value: u64
         _ => {
             let parent = unsafe { &*s.parent_ptr };
             if parent.debug {
-                virtmcu_qom::sim_warn!(
+                virtmcu_qom::sim_debug!(
                     "ieee802154_write: unhandled offset 0x{:x} val=0x{:x}",
                     offset,
                     value
@@ -723,6 +704,14 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
     let sequence = frame.sequence_number();
     let rssi = frame.rssi();
 
+    virtmcu_qom::sim_info!(
+        "on_rx_frame: vtime={}, seq={}, rssi={}, len={}",
+        vtime,
+        sequence,
+        rssi,
+        frame.data().map(|d| d.len()).unwrap_or(0)
+    );
+
     let mhr = Rf802154Mhr {
         fcf: frame.fcf(),
         seq_num: frame.mhr_seq_num(),
@@ -743,6 +732,7 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
     }
 
     if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, &mhr) {
+        virtmcu_qom::sim_info!("on_rx_frame: address mismatch");
         return;
     }
 
@@ -769,6 +759,8 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
             pos,
             RxFrame { delivery_vtime: vtime, sequence, data: stored_data, size, rssi },
         );
+
+        virtmcu_qom::sim_info!("on_rx_frame: inserted at pos {}, queue len={}", pos, inner.rx_queue.len());
 
         if let Some(rx_timer) = &state.rx_timer {
             rx_timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
@@ -798,6 +790,9 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
 
 fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    if !inner.rx_queue.is_empty() {
+        virtmcu_qom::sim_info!("check_rx_queue: now={}, queue_len={}, state={:?}", now, inner.rx_queue.len(), inner.state);
+    }
     while !inner.rx_queue.is_empty() {
         if inner.rx_queue[0].delivery_vtime <= now {
             let frame = inner.rx_queue.remove(0);
@@ -810,6 +805,9 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
                     inner.rx_rssi = frame.rssi;
                     inner.rx_read_pos = 0;
                     inner.status |= STATUS_RX_PENDING;
+
+                    virtmcu_qom::sim_info!("check_rx_queue: frame delivered to FIFO, len={}", frame.size);
+
                     unsafe {
                         qemu_set_irq(irq, 1);
                     };
@@ -821,6 +819,7 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
                 break;
             }
             // Not in RX mode, drop the frame and continue to next in queue
+            virtmcu_qom::sim_info!("check_rx_queue: frame dropped because state is {:?} (not Rx)", inner.state);
             continue;
         }
         // Future frame, schedule timer and stop
