@@ -73,7 +73,7 @@ See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-over
   human-in-the-loop interactivity with correct virtual ordering.
 
 - **Cooperative Time Slaving**: `hw/rust/backbone/clock` blocks QEMU's TCG loop at each
-  quantum boundary, waiting for a reply from the external TimeAuthority.
+  quantum boundary, waiting for a reply from the external Physical Node.
   Two modes: `slaved-suspend` (full TCG speed, ~95% throughput — default) and
   `slaved-icount` (exact nanosecond virtual time — for firmware measuring sub-quantum
   intervals such as PWM or µs-precision DMA).

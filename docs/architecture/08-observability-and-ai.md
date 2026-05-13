@@ -85,7 +85,7 @@ pub fn init_telemetry(service_name: &'static str) -> impl Drop {
 Each binary:
 ```rust
 fn main() {
-    let _telemetry = virtmcu_observability::init_telemetry("virtmcu-time-authority");
+    let _telemetry = virtmcu_observability::init_telemetry("virtmcu-physical-node");
     // ...
 }
 ```
@@ -94,7 +94,7 @@ fn main() {
 
 | Process | Service name |
 |---|---|
-| `virtmcu-time-authority` | `virtmcu-time-authority` |
+| `virtmcu-physical-node` | `virtmcu-physical-node` |
 | `deterministic_coordinator` | `virtmcu-deterministic-coordinator` |
 | `virtmcu-test-runner` | `virtmcu-test-runner` |
 | `virtmcu-cli` | `virtmcu-cli` |

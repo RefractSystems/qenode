@@ -13,7 +13,7 @@ After this chapter, you can:
 
 ### 1.1 The Monolithic Baseline
 
-The original design fused the physics data bridge directly into the `virtmcu-time-authority` binary. Each quantum, the Time Authority would:
+The original design fused the physics data bridge directly into the `virtmcu-physical-node` binary. Each quantum, the Physical Node would:
 
 1. Issue `ClockAdvanceReq` to all QEMU nodes.
 2. Wait for `ClockReadyResp` from all nodes.
@@ -27,21 +27,21 @@ This worked, but violated three principles:
 
 | Violation | Consequence |
 |---|---|
-| Time management entangled with data routing | Time Authority could not be unit-tested without a real physics engine |
+| Time management entangled with data routing | Physical Node could not be unit-tested without a real physics engine |
 | Spin-polling (1 ms `sleep` loop) | 100 % CPU utilisation on one core during every physics step |
 | No RAII for the `/dev/shm` file | Stale files on crash silently truncated and reused on the next run |
 | `mujoco_seq` name baked into the public SHM protocol | Any physics engine had to pretend to be MuJoCo |
 
 ### 1.2 The Decoupled Architecture
 
-The Physics Gateway is a new binary (`virtmcu-physics-gateway`) that takes over all shared-memory and physics-engine communication. The Time Authority is stripped back to its single responsibility: issuing `ClockAdvanceReq` / `ClockReadyResp` to QEMU nodes.
+The Physics Gateway is a new binary (`virtmcu-physics-gateway`) that takes over all shared-memory and physics-engine communication. The Physical Node is stripped back to its single responsibility: issuing `ClockAdvanceReq` / `ClockReadyResp` to QEMU nodes.
 
 ```
 Before                              After
 ──────                              ─────
 ┌─────────────────────────┐         ┌──────────────────┐   ┌──────────────────────┐
-│   virtmcu-time-authority │         │  virtmcu-time-   │   │ virtmcu-physics-     │
-│                         │         │  authority       │   │ gateway              │
+│   virtmcu-physical-node │         │  virtmcu-        │   │ virtmcu-physics-     │
+│                         │         │  physical-node   │   │ gateway              │
 │  ┌──────────────────┐   │         │                  │   │                      │
 │  │  Clock logic     │   │         │  Clock logic     │   │  PhysicsGateway      │
 │  │  Zenoh actuator  │   │  ─────► │  Zenoh actuator  │──►│  Server              │
@@ -67,18 +67,18 @@ Before                              After
 graph TD
     FW["Firmware (QEMU)<br/>writes MMIO → actuator peripheral"]
     ACT["VirtmcuActuator peripheral<br/>encodes f64 + delivery_vtime_ns<br/>publishes firmware/control/&lt;node&gt;/&lt;id&gt;"]
-    TA["virtmcu-time-authority<br/>ZenohActuatorSink collects commands<br/>Issues ClockAdvanceReq / ClockReadyResp<br/>Sends PhysicsTrigger after quantum"]
+    PN["virtmcu-physical-node<br/>ZenohActuatorSink collects commands<br/>Issues ClockAdvanceReq / ClockReadyResp<br/>Sends PhysicsTrigger after quantum"]
     GW["virtmcu-physics-gateway<br/>Receives PhysicsTrigger<br/>Writes actuators to SHM<br/>futex-wakes physics engine<br/>Reads sensors from SHM<br/>Publishes sim/sensor/**<br/>Sends PhysicsDone"]
     PE["Physics Engine<br/>(reference / MuJoCo / Omniverse)<br/>futex-waits on bridge_seq<br/>Runs one time-step<br/>Writes sensors to SHM<br/>Increments physics_seq"]
     COORD["DeterministicCoordinator<br/>PDES barrier for inter-node messages<br/>(UART, CAN, Ethernet)"]
 
     FW -->|"MMIO write at vtime T"| ACT
-    ACT -->|"Zenoh: firmware/control/**"| TA
-    TA -->|"PhysicsTransport: PhysicsTrigger{Q,actuators}"| GW
+    ACT -->|"Zenoh: firmware/control/**"| PN
+    PN -->|"PhysicsTransport: PhysicsTrigger{Q,actuators}"| GW
     GW -->|"SHM write + futex_wake(bridge_seq)"| PE
     PE -->|"SHM write + futex_wake(physics_seq)"| GW
     GW -->|"Zenoh: sim/sensor/**"| FW
-    GW -->|"PhysicsTransport: PhysicsDone{Q}"| TA
+    GW -->|"PhysicsTransport: PhysicsDone{Q}"| PN
     FW -->|"Zenoh: CoordDoneReq{Q}"| COORD
     COORD -.->|"Releases buffered messages"| FW
 ```
@@ -197,9 +197,9 @@ table ActuatorSample {
 }
 ```
 
-### 4.2 `PhysicsTrigger`  (TA → Gateway)
+### 4.2 `PhysicsTrigger`  (PN → Gateway)
 
-Sent once per quantum, after the TA has confirmed all QEMU nodes are done. Contains the
+Sent once per quantum, after the PN has confirmed all QEMU nodes are done. Contains the
 **complete, causally-ordered** set of actuator commands. The gateway **must not** step
 the physics engine before receiving this message.
 
@@ -216,9 +216,9 @@ table PhysicsTrigger {
 physics engine uses the entry with the highest `delivery_vtime_ns`. The gateway applies
 this rule when writing to the SHM actuator slots.
 
-### 4.3 `PhysicsDone`  (Gateway → TA)
+### 4.3 `PhysicsDone`  (Gateway → PN)
 
-Fixed-size acknowledgment. The TA blocks in `trigger_and_wait()` until this arrives.
+Fixed-size acknowledgment. The PN blocks in `trigger_and_wait()` until this arrives.
 
 ```fbs
 struct PhysicsDone {
@@ -228,17 +228,17 @@ struct PhysicsDone {
 }
 ```
 
-A non-zero `status` is treated as a fatal simulation error by the TA.
+A non-zero `status` is treated as a fatal simulation error by the PN.
 
 ---
 
 ## 5. Transport Abstraction
 
-The TA↔Gateway link is hidden behind two traits in `virtmcu-api`, following the same
-Dependency Injection pattern as `TimeAuthorityTransport` and `ClockSyncTransport`.
+The PN↔Gateway link is hidden behind two traits in `virtmcu-api`, following the same
+Dependency Injection pattern as `PhysicalNodeTransport` and `ClockSyncTransport`.
 
 ```rust
-/// Time Authority side: send trigger, block until done.
+/// Physical Node side: send trigger, block until done.
 pub trait PhysicsGatewayTransport: Send + Sync {
     fn trigger_and_wait(
         &self,
@@ -265,10 +265,10 @@ Two implementations exist, selected at runtime by `--gateway-transport [unix|zen
 
 | Implementation | Transport | Latency | Use case |
 |---|---|---|---|
-| `UnixSocketPhysicsTransport` | Unix domain socket (length-prefixed) | 1–3 µs RTT | TA and gateway on the same host |
-| `ZenohPhysicsTransport` | Zenoh pub/sub on `sim/physics/trigger` / `sim/physics/done` | 10–50 µs RTT | TA and gateway on different hosts |
+| `UnixSocketPhysicsTransport` | Unix domain socket (length-prefixed) | 1–3 µs RTT | PN and gateway on the same host |
+| `ZenohPhysicsTransport` | Zenoh pub/sub on `sim/physics/trigger` / `sim/physics/done` | 10–50 µs RTT | PN and gateway on different hosts |
 
-**Rule**: prefer Unix socket. Use Zenoh only when the TA and gateway are on separate
+**Rule**: prefer Unix socket. Use Zenoh only when the PN and gateway are on separate
 machines. Never use feature flags or runtime probing — the operator picks at launch.
 
 ---
@@ -282,25 +282,25 @@ boundary processing; step 10 opens quantum N+1.
 ```mermaid
 sequenceDiagram
     participant FW as Firmware (QEMU)
-    participant TA as Time Authority
+    participant PN as Physical Node
     participant GW as Physics Gateway
     participant PE as Physics Engine
     participant CO as Deterministic Coordinator
 
     Note over FW,CO: ── Quantum N executing ──
 
-    TA->>FW: ClockAdvanceReq {delta_ns, quantum=N}
+    PN->>FW: ClockAdvanceReq {delta_ns, quantum=N}
     FW->>FW: Execute instructions for delta_ns
-    FW->>TA: (actuator MMIO) publish firmware/control/** via Zenoh
-    TA->>TA: ZenohActuatorSink buffers {vtime → {id → values}}
+    FW->>PN: (actuator MMIO) publish firmware/control/** via Zenoh
+    PN->>PN: ZenohActuatorSink buffers {vtime → {id → values}}
     FW->>CO: CoordDoneReq {quantum=N, messages=[…]}
-    FW->>TA: ClockReadyResp {quantum=N}
+    FW->>PN: ClockReadyResp {quantum=N}
 
     Note over FW,CO: ── Quantum N boundary ──
 
-    TA->>TA: drain() → BTreeMap<vtime, HashMap<id, values>>
-    TA->>TA: serialize PhysicsTrigger{Q=N, actuators=[…]}
-    TA->>GW: PhysicsGatewayTransport::trigger_and_wait(trigger_bytes)
+    PN->>PN: drain() → BTreeMap<vtime, HashMap<id, values>>
+    PN->>PN: serialize PhysicsTrigger{Q=N, actuators=[…]}
+    PN->>GW: PhysicsGatewayTransport::trigger_and_wait(trigger_bytes)
 
     GW->>GW: deserialize PhysicsTrigger
     GW->>GW: apply last-value-wins per actuator_id
@@ -315,16 +315,16 @@ sequenceDiagram
 
     GW->>GW: FUTEX_WAIT wakes; read sensor slots from SHM
     GW->>FW: publish sim/sensor/{node}/{i} via Zenoh (vtime=quantum_end_vtime_ns)
-    GW->>TA: PhysicsDone{quantum=N, status=0}
+    GW->>PN: PhysicsDone{quantum=N, status=0}
 
     CO->>CO: all QEMU nodes done → release buffered messages for Q=N
     CO->>FW: deliver inter-node messages (UART, CAN, …)
 
     Note over FW,CO: ── Quantum N+1 ──
-    TA->>FW: ClockAdvanceReq {quantum=N+1}
+    PN->>FW: ClockAdvanceReq {quantum=N+1}
 ```
 
-**Causal guarantee**: The TA does not issue `ClockAdvanceReq{N+1}` until
+**Causal guarantee**: The PN does not issue `ClockAdvanceReq{N+1}` until
 `PhysicsDone{N}` has been received. Sensor data published at `quantum_end_vtime_ns` is
 therefore available before firmware begins executing quantum N+1.
 
@@ -335,18 +335,18 @@ therefore available before firmware begins executing quantum N+1.
 A key design question is: how does the gateway know it has received *all* actuator
 commands for quantum N before stepping the physics engine?
 
-The answer is that the gateway does not collect actuators independently. The Time
-Authority owns the `ZenohActuatorSink` and drains it **after** receiving
+The answer is that the gateway does not collect actuators independently. The Physical Node
+owns the `ZenohActuatorSink` and drains it **after** receiving
 `ClockReadyResp` from all QEMU nodes. By that point, the `ClockReadyResp` protocol
 guarantees that the node has finished executing quantum N — meaning all MMIO writes
 (and therefore all actuator Zenoh publications) for that quantum have been issued.
 
-The TA then bundles the complete drained map into `PhysicsTrigger` and forwards it.
+The PN then bundles the complete drained map into `PhysicsTrigger` and forwards it.
 The gateway never subscribes to `firmware/control/**` directly — there is no race
 between Zenoh delivery and physics triggering.
 
 ```
-Why the TA, not the gateway, collects actuators:
+Why the PN, not the gateway, collects actuators:
 
   QEMU node finishes Q=N
         │
@@ -354,10 +354,10 @@ Why the TA, not the gateway, collects actuators:
   ClockReadyResp (guarantees all MMIO in Q=N is done)
         │
         ▼
-  TA: drain ZenohActuatorSink (all actuator Zenioh msgs for Q=N are present)
+  PN: drain ZenohActuatorSink (all actuator Zenioh msgs for Q=N are present)
         │
         ▼
-  TA: send PhysicsTrigger{Q=N, complete actuators}
+  PN: send PhysicsTrigger{Q=N, complete actuators}
         │
         ▼
   Gateway: step physics with guaranteed-complete data

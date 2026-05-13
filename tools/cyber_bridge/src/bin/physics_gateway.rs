@@ -21,7 +21,7 @@ struct Args {
     #[arg(long, default_value = "unix")]
     transport: String,
 
-    /// Zenoh endpoint or Unix socket path
+    /// Zenoh endpoint or Unix socket path for control
     #[arg(long)]
     connect: String,
 
@@ -40,6 +40,14 @@ struct Args {
     /// Per-quantum timeout in milliseconds
     #[arg(long, default_value_t = 5000)]
     timeout_ms: u64,
+
+    /// Zenoh endpoint for publishing sensor data. Optional; omit to skip sensor publishing.
+    #[arg(long)]
+    data_connect: Option<String>,
+
+    /// Topic prefix for sensor publications (default: sim/sensor).
+    #[arg(long, default_value = "sim/sensor")]
+    sensor_prefix: String,
 }
 
 struct GatewayShm {
@@ -51,6 +59,10 @@ struct GatewayShm {
 
 impl GatewayShm {
     fn new(node_id: u32, n_sensors: u32, n_actuators: u32) -> Result<Self> {
+        if n_sensors == 0 && n_actuators == 0 {
+            anyhow::bail!("GatewayShm requires at least 1 sensor or 1 actuator. Failing loudly.");
+        }
+
         let shm_path = std::path::PathBuf::from(format!("/dev/shm/virtmcu_physics_{node_id}"));
         let size = SHM_HEADER_SIZE + (n_sensors + n_actuators) as usize * 8;
 
@@ -79,6 +91,11 @@ impl GatewayShm {
             n_sensors,
             n_actuators,
         })
+    }
+
+    pub fn sensor_bytes(&self, sensor_index: u32) -> &[u8] {
+        let offset = SHM_DATA_OFFSET + (sensor_index as usize) * 8;
+        &self.mmap[offset..offset + 8]
     }
 
     fn step(&mut self, trigger: physics_proto::PhysicsTrigger<'_>, timeout_ms: u64) -> Result<()> {
@@ -206,6 +223,21 @@ async fn main() -> Result<()> {
         _ => return Err(anyhow!("Unknown transport: {}", args.transport)),
     };
 
+    let zenoh_session: Option<Arc<zenoh::Session>> = if let Some(ref endpoint) = args.data_connect {
+        let mut config = virtmcu_zenoh_config::client_config();
+        let json_connect = format!("[\"{endpoint}\"]");
+        config
+            .insert_json5("connect/endpoints", &json_connect)
+            .map_err(|e| anyhow::anyhow!("Zenoh config error: {e}"))?;
+        Some(Arc::new(
+            zenoh::open(config)
+                .wait()
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        ))
+    } else {
+        None
+    };
+
     let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let r = Arc::clone(&running);
     tokio::spawn(async move {
@@ -226,6 +258,22 @@ async fn main() -> Result<()> {
 
             let res = shm.step(trigger, args.timeout_ms);
             let status = if res.is_ok() { 0 } else { 1 };
+
+            if res.is_ok() {
+                if let Some(ref session) = zenoh_session {
+                    for i in 0..args.n_sensors {
+                        let val_bytes = shm.sensor_bytes(i);
+                        let topic =
+                            format!("{}/{}/sensordata_{}", args.sensor_prefix, args.node_id, i);
+                        let payload =
+                            virtmcu_api::encode_frame(trigger.quantum_end_vtime_ns(), 0, val_bytes);
+                        session
+                            .put(&topic, payload)
+                            .wait()
+                            .map_err(|e| anyhow::anyhow!("Zenoh sensor publish failed: {e}"))?;
+                    }
+                }
+            }
 
             let done = physics_proto::PhysicsDone::new(quantum_number, status, 0);
             server.send_done(done).map_err(|e| anyhow!(e))?;

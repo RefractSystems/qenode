@@ -10,7 +10,7 @@ After this chapter, you can:
 
 In a standard emulator, time is an afterthought. The emulator typically runs as fast as possible, using the host's wall-clock to drive its internal timers. In the VirtMCU digital twin ecosystem, this is unacceptable. The firmware in the **Cyber Node** interacts with a physical world (simulated by the **Physical Node**, such as a drone in MuJoCo) governed by continuous differential equations. If the Cyber Node runs free, the firmware's control loops will desynchronize from the physics.
 
-**The Golden Rule of VirtMCU**: The Physical Node (acting as the TimeAuthority) owns the clock. Virtual time inside the Cyber Node only advances when the external authority explicitly grants a "quantum" of time over the Transport Layer.
+**The Golden Rule of VirtMCU**: The Physical Node owns the clock. Virtual time inside the Cyber Node only advances when the Physical Node explicitly grants a "quantum" of time over the Transport Layer.
 
 ---
 
@@ -29,7 +29,7 @@ VirtMCU (our QEMU-based Cyber Node implementation) provides three distinct clock
 
 ## 1.1 Clock Transport Modes
 
-The `mode` parameter also determines which transport layer is used to communicate with the `TimeAuthority`.
+The `mode` parameter also determines which transport layer is used to communicate with the Physical Node.
 
 | `mode` parameter   | Transport                    | `sim/clock/start` needed? |
 |--------------------|------------------------------|---------------------------|
@@ -44,16 +44,16 @@ The `sim/clock/start` Zenoh topic is only relevant when `is_coordinated=true` AN
 
 ## 2. The Wire Protocol (Formal Specification)
 
-The `clock` device communicates with the `TimeAuthority` via the **Control Plane**. This is a strictly 1:1, low-latency RPC channel.
+The `clock` device communicates with the Physical Node via the **Control Plane**. This is a strictly 1:1, low-latency RPC channel.
 
-### Request: TimeAuthority → Node
+### Request: Physical Node → Node
 **Topic**: `sim/clock/advance/{node_id}`
 **Payload** (24-byte FlatBuffer struct):
 - `delta_ns` (uint64): The size of the quantum to execute in virtual nanoseconds.
 - `absolute_vtime_ns` (uint64): The current absolute time in the physics world.
 - `quantum_number` (uint64): Global sequence number for the current quantum.
 
-### Reply: Node → TimeAuthority
+### Reply: Node → Physical Node
 **Payload** (24-byte FlatBuffer struct):
 - `current_vtime_ns` (uint64): The actual virtual time reached by QEMU.
 - `n_frames` (uint32): Count of pending Ethernet frames (informational).

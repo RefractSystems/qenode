@@ -1,15 +1,15 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use cyber_bridge::{
-    physics::{GatewayPhysics, NoOpPhysics, PhysicsStep, SharedMemPhysics},
+    physics::{EmbeddedPlant, RemotePlant, TickOnlyPlant},
     physics_transport::{UnixSocketPhysicsTransport, ZenohPhysicsTransport},
-    ZenohActuatorSink, ZenohTimeAuthorityTransport,
+    ZenohActuatorSink, ZenohPhysicalNodeTransport,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 use virtmcu_api::{
-    ClockAdvanceReq, TimeAuthorityTransport, UnixSocketTimeAuthorityTransport, CLOCK_ERROR_STALL,
+    ClockAdvanceReq, PhysicalNodeTransport, UnixSocketPhysicalNodeTransport, CLOCK_ERROR_STALL,
 };
 use zenoh::Wait;
 
@@ -20,10 +20,13 @@ enum TransportType {
 }
 
 #[derive(Debug, Clone, ValueEnum)]
-enum PhysicsType {
-    Noop,
-    Shm,
-    Gateway,
+enum PlantType {
+    /// Advance virtual time only; no physics dynamics.
+    TickOnly,
+    /// In-process SHM plant: write actuators to /dev/shm, read sensors back.
+    Embedded,
+    /// Delegate to an external Physics Gateway process via transport.
+    Remote,
 }
 
 #[derive(Parser, Debug)]
@@ -49,15 +52,15 @@ struct Args {
     #[arg(long)]
     data_connect: Option<String>,
 
-    /// Physics implementation
-    #[arg(long, value_enum, default_value_t = PhysicsType::Noop)]
-    physics: PhysicsType,
+    /// Physical plant implementation
+    #[arg(long, value_enum, default_value_t = PlantType::TickOnly)]
+    plant: PlantType,
 
-    /// Number of sensors (for shm physics)
+    /// Number of sensors
     #[arg(long, default_value_t = 0)]
     n_sensors: u32,
 
-    /// Number of actuators (for shm physics)
+    /// Number of actuators
     #[arg(long, default_value_t = 0)]
     n_actuators: u32,
 
@@ -69,7 +72,7 @@ struct Args {
     #[arg(long, default_value = "firmware/control")]
     topic_prefix: String,
 
-    /// Sensor topic prefix to publish
+    /// Topic prefix for sensor publications (default: sim/sensor).
     #[arg(long, default_value = "sim/sensor")]
     sensor_prefix: String,
 
@@ -110,31 +113,31 @@ async fn main() -> Result<()> {
         }
     }
     let _telemetry = virtmcu_observability::init_telemetry(
-        "virtmcu-time-authority",
+        "virtmcu-physical-node",
         std::sync::Arc::new(DummyVTimeProvider),
     );
     let args = Args::parse();
 
     let mut zenoh_session: Option<Arc<zenoh::Session>> = None;
 
-    let transport: Box<dyn TimeAuthorityTransport> = match args.transport {
+    let transport: Box<dyn PhysicalNodeTransport> = match args.transport {
         TransportType::Zenoh => {
             let session = open_zenoh_session(args.connect.as_ref()).await?;
             zenoh_session = Some(Arc::clone(&session));
-            Box::new(ZenohTimeAuthorityTransport::new(session, args.node_id))
+            Box::new(ZenohPhysicalNodeTransport::new(session, args.node_id))
         }
         TransportType::Unix => {
             let path = args
                 .connect
                 .as_ref()
                 .ok_or_else(|| anyhow!("--connect (path) required for Unix transport"))?;
-            Box::new(UnixSocketTimeAuthorityTransport::new(path)?)
+            Box::new(UnixSocketPhysicalNodeTransport::new(path)?)
         }
     };
 
     // If we don't have a zenoh session yet but need one for data
     if zenoh_session.is_none()
-        && (args.data_connect.is_some() || matches!(args.physics, PhysicsType::Shm))
+        && (args.data_connect.is_some() || matches!(args.plant, PlantType::Embedded))
     {
         zenoh_session = Some(open_zenoh_session(args.data_connect.as_ref()).await?);
     }
@@ -145,39 +148,34 @@ async fn main() -> Result<()> {
         None
     };
 
-    let mut physics: Box<dyn PhysicsStep> = match args.physics {
-        PhysicsType::Noop => Box::new(NoOpPhysics),
-        PhysicsType::Shm => {
-            let session = zenoh_session
-                .ok_or_else(|| anyhow!("Zenoh session required for SHM physics (sensors)"))?;
-            Box::new(SharedMemPhysics::new(
-                args.node_id,
-                args.n_sensors,
-                args.n_actuators,
-                session,
-                args.sensor_prefix.clone(),
-                args.timeout_ms,
-            )?)
-        }
-        PhysicsType::Gateway => {
-            let transport: Box<dyn virtmcu_api::PhysicsGatewayTransport> =
-                match args.gateway_transport {
-                    TransportType::Unix => {
-                        let path = args.gateway_connect.as_ref().ok_or_else(|| {
-                            anyhow!("--gateway-connect (path) required for Unix gateway transport")
-                        })?;
-                        Box::new(UnixSocketPhysicsTransport::new(path))
-                    }
-                    TransportType::Zenoh => {
-                        let session = if let Some(session) = &zenoh_session {
-                            Arc::clone(session)
-                        } else {
-                            open_zenoh_session(args.gateway_connect.as_ref()).await?
-                        };
-                        Box::new(ZenohPhysicsTransport::new(session))
-                    }
-                };
-            Box::new(GatewayPhysics::new(transport, args.timeout_ms))
+    let mut plant: Box<dyn virtmcu_api::PhysicalNode> = match args.plant {
+        PlantType::TickOnly => Box::new(TickOnlyPlant),
+        PlantType::Embedded => Box::new(EmbeddedPlant::new(
+            args.node_id,
+            args.n_sensors,
+            args.n_actuators,
+            args.timeout_ms,
+        )?),
+        PlantType::Remote => {
+            let transport: Box<dyn virtmcu_api::PhysicsGatewayTransport> = match args
+                .gateway_transport
+            {
+                TransportType::Unix => {
+                    let path = args.gateway_connect.as_ref().ok_or_else(|| {
+                        anyhow!("--gateway-connect required for Remote plant with Unix transport")
+                    })?;
+                    Box::new(UnixSocketPhysicsTransport::new(path))
+                }
+                TransportType::Zenoh => {
+                    let session = if let Some(ref s) = zenoh_session {
+                        Arc::clone(s)
+                    } else {
+                        open_zenoh_session(args.gateway_connect.as_ref()).await?
+                    };
+                    Box::new(ZenohPhysicsTransport::new(session))
+                }
+            };
+            Box::new(RemotePlant::new(transport, args.timeout_ms))
         }
     };
 
@@ -185,7 +183,12 @@ async fn main() -> Result<()> {
     let mut absolute_vtime_ns: u64 = 0;
     let timeout = Duration::from_millis(args.timeout_ms);
 
-    info!("Starting Time Authority for node {}", args.node_id);
+    info!(
+        plant = ?args.plant,
+        node_id = args.node_id,
+        delta_ns = args.delta_ns,
+        "Starting Physical Node"
+    );
 
     loop {
         let req = ClockAdvanceReq::new(args.delta_ns, absolute_vtime_ns, quantum_number);
@@ -223,12 +226,34 @@ async fn main() -> Result<()> {
             ));
         }
 
-        let actuators: std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>> =
-            actuator_sink
-                .as_ref()
-                .map(|s| s.drain())
-                .unwrap_or_default();
-        physics.step(args.delta_ns, &actuators, &resp)?;
+        let actuators = actuator_sink
+            .as_ref()
+            .map(|s| s.drain())
+            .unwrap_or_default();
+
+        let plant_state = plant
+            .step(args.delta_ns, &actuators)
+            .map_err(|e| anyhow!("Plant step failed at quantum {quantum_number}: {e}"))?;
+
+        // Publish sensors returned by in-process plant (EmbeddedPlant)
+        if let Some(ref session) = zenoh_session {
+            for (&sensor_id, vals) in &plant_state.sensors {
+                let topic = format!(
+                    "{}/{}/sensordata_{}",
+                    args.sensor_prefix, args.node_id, sensor_id
+                );
+                let mut bytes: Vec<u8> = Vec::with_capacity(vals.len() * 8);
+                for &v in vals {
+                    bytes.extend_from_slice(&v.to_le_bytes());
+                }
+                let vtime_end = absolute_vtime_ns + args.delta_ns;
+                let payload = virtmcu_api::encode_frame(vtime_end, 0, &bytes);
+                session
+                    .put(&topic, payload)
+                    .wait()
+                    .map_err(|e| anyhow!("Sensor publish failed: {e}"))?;
+            }
+        }
 
         quantum_number += 1;
         absolute_vtime_ns += args.delta_ns;

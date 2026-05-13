@@ -11,7 +11,7 @@
 //! Virtmcu deterministic clock with pluggable transport.
 //!
 //! This module provides the `VirtmcuClock` QOM device, which synchronizes
-//! the guest's virtual time with an external TimeAuthority.
+//! the guest's virtual time with an external Physical Node.
 
 extern crate alloc;
 
@@ -93,7 +93,7 @@ impl ClockSyncTransport for ZenohClockTransport {
                     }
                     None => {
                         virtmcu_qom::sim_err!(
-                            "ZenohClockTransport: Received malformed ClockAdvanceReq (size={}, expected {}). Ensure your TimeAuthority uses the {}-byte protocol.",
+                            "ZenohClockTransport: Received malformed ClockAdvanceReq (size={}, expected {}). Ensure your Physical Node uses the {}-byte protocol.",
                             data.len(),
                             CLOCK_ADVANCE_REQ_SIZE,
                             CLOCK_ADVANCE_REQ_SIZE
@@ -157,7 +157,7 @@ impl ClockSyncResponder for ZenohClockResponder {
             }
         }
 
-        // 3. Release the reply back to the Time Authority
+        // 3. Release the reply back to the Physical Node
         let resp_bytes = resp.pack();
         self.query
             .reply(self.query.key_expr().clone(), resp_bytes.to_vec())
@@ -255,7 +255,7 @@ pub struct VirtmcuClockBackend {
     pub delta_ns: AtomicU64,
     /// Current virtual time in nanoseconds as known by the backend.
     pub vtime_ns: AtomicU64,
-    /// Absolute simulation time in nanoseconds as reported by TimeAuthority.
+    /// Absolute simulation time in nanoseconds as reported by Physical Node.
     pub absolute_vtime_ns: AtomicU64,
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,

@@ -68,12 +68,13 @@ The diagram below illustrates how the abstract CPS concepts map to our concrete 
 │  └──────────────────────┘       │   gateway)          │                             │ │
 │                                 └─────────────────────┘                             │ │
 │                                                                                      │ │
-│                                 ┌─────────────────────────────────┐                 │ │
-│                                 │  Time Authority                  │─────────────────┘ │
-│                                 │  (virtmcu-time-authority)        │                   │
-│                                 │  - issues ClockAdvanceReq        │                   │
-│                                 │  - collects actuators per quantum│                   │
-│                                 └──────────────┬───────────────────┘                   │
+┌─────────────────────────────────┐                 │ │
+│  Physical Node                  │─────────────────┘ │
+│  (virtmcu-physical-node)         │                   │
+│  - issues ClockAdvanceReq        │                   │
+│  - collects actuators per quantum│                   │
+└──────────────┬───────────────────┘                   │
+
 │                                                │                                       │
 │      Control Plane Transport [Zenoh / Unix Sockets]                                   │
 │      (one channel per node — direct, low-latency clock sync)                          │
@@ -98,7 +99,7 @@ VirtMCU utilizes three distinct communication channels:
 1. **Control Plane (Clock Sync)**: A 1:1 low-latency RPC channel per QEMU node for
    `ClockAdvanceReq` / `ClockReadyResp`. Carried over Unix sockets or Zenoh.
 2. **Physics Plane (Co-simulation)**: The `PhysicsTrigger` / `PhysicsDone` handshake
-   between the Time Authority and the Physics Gateway, plus the shared-memory (SHM)
+   between the Physical Node and the Physics Gateway, plus the shared-memory (SHM)
    channel between the gateway and the physics engine. See
    [Physics Gateway](./12-physics-gateway.md).
 3. **Data Plane (Emulated Comms)**: A coordinated Zenoh bus for inter-node traffic
@@ -136,7 +137,7 @@ The distinction matters in practice:
 │  nodes: [node0, node1, physics_gateway]          │
 │  topology: …                                     │
 └──────────────────────┬───────────────────────────┘
-                       │  virtmcu-time-authority --world world.yaml
+                       │  virtmcu-physical-node --world world.yaml
                        │                         --federation-id run-42
                        ▼
 ┌──────────────────────────────────────────────────┐

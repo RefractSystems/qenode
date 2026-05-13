@@ -34,7 +34,7 @@ virtmcu measures MIPS in two modes:
 | `standalone` | Firmware reads CNTVCT before and after a tight MULS loop; difference ÷ wall time | ≥ 80 MIPS |
 | `slaved-icount` | `exit_vtime_ns` from Zenoh clock reply (icount shift=0 → 1 ns = 1 instruction) ÷ wall time | ≥ 15 MIPS |
 
-**Why `slaved-icount` is slower**: every quantum boundary (default 10 ms virtual time = 10 million instructions) requires a Zenoh GET round-trip. The vCPU blocks until the TimeAuthority responds. The Zenoh RTT plus QEMU TCG re-entry overhead reduces throughput.
+**Why `slaved-icount` is slower**: every quantum boundary (default 10 ms virtual time = 10 million instructions) requires a Zenoh GET round-trip. The vCPU blocks until the Physical Node responds. The Zenoh RTT plus QEMU TCG re-entry overhead reduces throughput.
 
 ### 2.2 Co-simulation Latency
 
@@ -57,7 +57,7 @@ Two independent `slaved-icount` runs must produce **identical** `exit_vtime_ns` 
 
 ```
   ┌───────────────────────────────────────────────────────────────┐
-  │  bench.py (TimeAuthority mock + measurement harness)           │
+  │  bench.py (Physical Node mock + measurement harness)           │
   │                                                                │
   │   1. Compiles minimal.dtb from src/minimal.dts                 │
   │   2. Starts ephemeral Zenoh router (prevents multicast noise)  │

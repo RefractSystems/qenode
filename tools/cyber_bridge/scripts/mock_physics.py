@@ -21,7 +21,7 @@ OFF_SHUTDOWN    = 16
 SHM_DATA_OFFSET = 24
 
 def main():
-    print(f"Waiting for {SHM_NAME} to be created by time-authority...")
+    print(f"Waiting for {SHM_NAME} to be created by physical-node...")
     while not os.path.exists(SHM_NAME):
         time.sleep(0.5)
 

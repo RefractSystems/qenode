@@ -24,8 +24,8 @@ MuJoCo / RESD replay
         │  shared memory (mjData) or file I/O
         ▼
 tools/cyber_bridge/
-    virtmcu-time-authority  ─── Zenoh sim/clock/advance/{id}  ──► hw/rust/clock
-                                                                  (TimeAuthority role)
+    virtmcu-physical-node  ─── Zenoh sim/clock/advance/{id}  ──► hw/rust/clock
+                                                                  (Physical Node role)
         │  Zenoh sim/sensor/{id}/sensordata_{i}
         ▼
 sensor QEMU plugin ◄─── read by firmware via MMIO
@@ -36,7 +36,7 @@ actuator QEMU plugin ◄── firmware MMIO write
 
 ## Clock Suspend → Cyber Bridge Timing Link
 
-The `virtmcu-time-authority` tool drives the simulation clock and synchronizes with
+The `virtmcu-physical-node` tool drives the simulation clock and synchronizes with
 external physics. It sends a `ClockAdvanceReq` to QEMU and waits for a `ClockReadyResp`.
 After each quantum, it collects actuator commands from Zenoh and pushes them to
 physics (e.g., via shared memory).
@@ -65,14 +65,14 @@ For closed-loop control validation with real physics:
 target/release/virtmcu-run --dtb board.dtb -kernel firmware.elf \
     -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
-# Terminal 2: Time Authority with MuJoCo SHM bridge
-target/release/virtmcu-time-authority \
+# Terminal 2: Physical Node with MuJoCo SHM bridge
+target/release/virtmcu-physical-node \
   --node-id 0 --n-sensors 6 --n-actuators 2 \
-  --physics shm --delta-ns 1000000 \
+  --plant embedded --delta-ns 1000000 \
   --sensor-prefix sim/sensor --topic-prefix firmware/control
 ```
 
-The bridge creates a POSIX shared memory segment `/dev/shm/virtmcu_mujoco_0`. Your MuJoCo
+The bridge creates a POSIX shared memory segment `/dev/shm/virtmcu_physics_0`. Your MuJoCo
 process maps the same segment and uses the epoch-counter protocol to synchronize.
 
 ### Shared Memory Layout

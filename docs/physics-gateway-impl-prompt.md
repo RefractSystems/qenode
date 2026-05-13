@@ -10,7 +10,7 @@ is self-contained — read it fully before writing any code.
 `virtmcu` is a deterministic multi-node firmware simulation framework. The working
 directory is `/workspace`. You will touch three crates:
 
-- `tools/cyber_bridge` — the Time Authority binary and physics bridge (Rust)
+- `tools/cyber_bridge` — the Physical Node binary and physics bridge (Rust)
 - `hw/rust/common/virtmcu-api` — shared protocol types, FlatBuffers schemas, transport
   traits (Rust, `no_std`-compatible)
 - `tools/cyber_bridge/scripts/mock_physics.py` — Python mock physics engine (test only)
@@ -439,7 +439,7 @@ Commit both `physics.fbs` and `physics_generated.rs`.
 
 **File:** `hw/rust/common/virtmcu-api/src/lib.rs`
 
-Add after the existing `TimeAuthorityTransport` trait (around line 391):
+Add after the existing `PhysicalNodeTransport` trait (around line 391):
 
 ```rust
 /// Abstract transport for the Time Authority ↔ Physics Gateway handshake.
@@ -665,11 +665,11 @@ for single-process deployments and is not removed.
 **File:** `tools/cyber_bridge/src/lib.rs` (or a new `src/physics_transport.rs`)
 
 Implement `PhysicsGatewayTransport` and `PhysicsGatewayServer` for both transports.
-Follow the exact pattern of the existing `ZenohTimeAuthorityTransport` and
-`UnixSocketTimeAuthorityTransport` in `virtmcu-api/src/lib.rs`.
+Follow the exact pattern of the existing `ZenohPhysicalNodeTransport` and
+`UnixSocketPhysicalNodeTransport` in `virtmcu-api/src/lib.rs`.
 
 For Unix socket: use a length-prefixed framing identical to the existing
-`UnixSocketTimeAuthorityTransport` (write 8-byte LE length, then payload bytes).
+`UnixSocketPhysicalNodeTransport` (write 8-byte LE length, then payload bytes).
 
 ### Step 3E — Shutdown Sequence
 
@@ -730,7 +730,7 @@ make test-check
 After Phase 3:
 ```bash
 make test-check
-# Start virtmcu-physics-gateway and virtmcu-time-authority,
+# Start virtmcu-physics-gateway and virtmcu-physical-node,
 # run mock_physics.py, confirm physics step completes without timeout
 ```
 

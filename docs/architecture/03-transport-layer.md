@@ -32,7 +32,7 @@ One of the most significant challenges in distributed simulation is ensuring tha
 When a VirtMCU node starts, the `transport-zenoh` layer blocks initialization until it receives a **Liveliness Event** from the Zenoh router. This ensures that the local router is reachable and its topology tables are ready to accept traffic.
 
 ### Orchestrator Sequencing
-The simulation orchestrator (e.g., Python `VirtualTimeAuthority`) is responsible for establishing all subscribers **before** launching the emulator nodes. This "Subscriber-First" policy ensures that when a guest peripheral emits its first packet, the routing fabric is already primed to deliver it.
+The simulation orchestrator (e.g., Python `VirtualPhysicalNode`) is responsible for establishing all subscribers **before** launching the emulator nodes. This "Subscriber-First" policy ensures that when a guest peripheral emits its first packet, the routing fabric is already primed to deliver it.
 
 ### Routing Synchronization (`ensure_session_routing`)
 Declaring a subscriber in Zenoh is an asynchronous operation. To prevent races where the first virtual-time packet is dropped because the router has not yet fully propagated the declaration, VirtMCU provides the `ensure_session_routing(session)` helper.

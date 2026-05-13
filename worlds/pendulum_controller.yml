@@ -13,7 +13,7 @@ services:
       "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447"
     ]
 
-  time-authority:
+  physical-node:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -29,13 +29,13 @@ services:
       - ../target:/app/target:ro
       - /dev/shm:/dev/shm
     command: [
-      "/app/target/release/virtmcu-time-authority",
+      "/app/target/release/virtmcu-physical-node",
       "--transport", "zenoh",
       "--connect", "tcp/zenoh-router:7447",
       "--node-id", "0",
       "--delta-ns", "1000000",
       "--timeout-ms", "30000",
-      "--physics", "shm",
+      "--plant", "embedded",
       "--n-sensors", "1",
       "--n-actuators", "1"
     ]
@@ -45,7 +45,7 @@ services:
     networks:
       - virtmcu-net
     depends_on:
-      time-authority:
+      physical-node:
         condition: service_started
     volumes:
       - ../tools/cyber_bridge/scripts/mock_physics.py:/mock_physics.py:ro

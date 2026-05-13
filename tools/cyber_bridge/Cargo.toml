@@ -5,8 +5,8 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "virtmcu-time-authority"
-path = "src/bin/time_authority.rs"
+name = "virtmcu-physical-node"
+path = "src/bin/physical_node.rs"
 
 [[bin]]
 name = "virtmcu-physics-gateway"

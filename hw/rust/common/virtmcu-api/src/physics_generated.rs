@@ -9,7 +9,7 @@ pub mod virtmcu {
     #[allow(unused_imports, dead_code)]
     pub mod physics {
 
-        /// Sent by the Physics Gateway back to the Time Authority after each step.
+        /// Sent by the Physics Gateway back to the Physical Node after each step.
         // struct PhysicsDone, aligned to 8
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq)]
@@ -340,7 +340,7 @@ pub mod virtmcu {
         pub enum PhysicsTriggerOffset {}
         #[derive(Copy, Clone, PartialEq)]
 
-        /// Sent by the Time Authority to the Physics Gateway once per quantum.
+        /// Sent by the Physical Node to the Physics Gateway once per quantum.
         /// Contains the complete, causally-ordered set of actuator commands for
         /// the completed quantum.  The gateway MUST NOT step the physics engine
         /// until it receives this message.

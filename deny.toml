@@ -106,6 +106,7 @@ skip = [
     { name = "indexmap" },
     { name = "itertools" },
     { name = "r-efi" },
+    { name = "nix" },
     { name = "rand" },
     { name = "rand_chacha" },
     { name = "rand_core" },
