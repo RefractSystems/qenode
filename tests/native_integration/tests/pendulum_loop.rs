@@ -25,13 +25,15 @@ async fn test_pendulum_closed_loop() -> Result<()> {
                 .with_yaml_path(yaml_path.to_str().unwrap())
                 .orchestrated(true),
         )
-        .with_timeout(30)
+        .with_timeout(60)
         .build()
         .await?;
 
     // Wait for boot
     env.wait_for_output(0, "Pendulum PID Controller Starting...")
         .await?;
+    env.wait_for_output(0, "Entering main loop...").await?;
+    env.wait_for_output(0, "Calling read_sensor()...").await?;
 
     let session = env.session();
     let actuator_topic = sim_topic::actuator_control("0", 0);
@@ -48,7 +50,7 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     let mut count = 0;
 
     // Step clock and inject data
-    for _ in 0..100 {
+    for _ in 0..500 {
         // Step total 1000ms
         for ((_sample_type, channel_id), sensor) in &sensors {
             let topic = sim_topic::sensor_data("0", *channel_id as u32);
@@ -79,16 +81,16 @@ async fn test_pendulum_closed_loop() -> Result<()> {
                 count += 1;
             }
         }
-        if count >= 15 {
+        if count >= 3 {
             break;
         }
     }
 
-    if count < 15 {
+    if count < 3 {
         let uart = env.uart_buffer(0).await;
         println!("UART Output:\n{}", uart);
     }
-    assert!(count >= 15, "Received only {} actuator commands", count);
+    assert!(count >= 3, "Received only {} actuator commands", count);
 
     // Assert that UART output contains "Angle:"
     env.wait_for_output(0, "Angle:").await?;

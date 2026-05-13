@@ -9,13 +9,12 @@ void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
 
 // Read sensor 0 (blocking until ready)
 double read_sensor() {
-    uart_puts("Reading sensor...\n");
     *(volatile uint32_t *)REG_SENSOR_ID = 0;
     *(volatile uint32_t *)REG_SENSOR_DATA_SIZE = 1;
     
     // Wait for new data to arrive in the shared buffer
     while (*(volatile uint32_t *)REG_SENSOR_READY == 0) {
-        // asm volatile("wfi");
+        // Pure polling, no WFI, matching hardware without IRQ
     }
     
     // Latch the data into peripheral registers
@@ -26,7 +25,6 @@ double read_sensor() {
 
 // Write actuator 0
 void write_actuator(double torque) {
-    uart_puts("Torque: ");
     *(volatile uint32_t *)REG_ACTUATOR_ID = 0;
     *(volatile uint32_t *)REG_ACTUATOR_DATA_SIZE = 1;
     *(volatile double *)REG_ACTUATOR_DATA = torque;
@@ -47,7 +45,6 @@ int main() {
     while (1) {
         uart_puts("Calling read_sensor()...\n\n");
         double angle_rad = read_sensor();
-        uart_puts("read_sensor() returned\n");
         
         // Angle in milli-radians (0.5 rad = 500 mrad)
         int angle = (int)(angle_rad * 1000.0);
@@ -58,9 +55,7 @@ int main() {
         
         int torque_milli = (Kp * error) + (Kd * derivative);
         
-        uart_puts("Calling write_actuator()...\n");
         write_actuator((double)torque_milli / 1000.0);
-        uart_puts("write_actuator() returned\n");
         
         uart_puts("Angle: ");
         if (angle < 0) { uart_putc('-'); angle = -angle; }

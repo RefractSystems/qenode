@@ -2,7 +2,9 @@
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use alloc::format;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+use core::sync::atomic::Ordering;
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use crossbeam_channel::{bounded, Sender};
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
@@ -10,10 +12,21 @@ use std::sync::OnceLock;
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use std::thread;
 
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 extern "C" {
     static mut virtmcu_global_node_id: u32;
     static mut virtmcu_global_vtime_ns: u64;
 }
+
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
+/// Global node ID for telemetry. Provided as a stub in tests.
+pub static mut virtmcu_global_node_id: u32 = 0; // virtmcu-allow: static_state reasoning="Stub provided for native unit tests"
+
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
+/// Global virtual time for telemetry. Provided as a stub in tests.
+pub static mut virtmcu_global_vtime_ns: u64 = 0; // virtmcu-allow: static_state reasoning="Stub provided for native unit tests"
 
 /// Updates the global virtual time.
 pub fn update_global_vtime(vtime_ns: u64) {

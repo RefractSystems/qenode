@@ -97,6 +97,7 @@ const DEFAULT_TIMEOUT_MS: u32 = 30000;
 #[no_mangle]
 pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
     let s = unsafe { &mut *(opaque as *mut VirtmcuSensorQEMU) };
+
     if s.rust_state.is_null() {
         return 0;
     }
@@ -119,6 +120,21 @@ pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uin
                 }
             }
         }
+
+        // VIRTMCU ENTERPRISE ARCHITECTURE MANDATE:
+        // If the guest is polling REG_NEW_DATA and we have no data,
+        // we MUST yield the BQL temporarily to allow the QEMU main loop
+        // to process incoming Zenoh packets. Without this, a tight polling loop
+        // in the guest (e.g. without WFI) will completely starve the main loop,
+        // causing a deadlock.
+        if ret == 0 {
+            let _yield = virtmcu_qom::sync::Bql::temporary_unlock();
+            // Short busy-wait natively to ensure the host OS reschedules and QEMU's
+            // event loop can make progress before we re-acquire the lock.
+            // virtmcu-allow: yield reasoning="Enterprise Mandate: yield to allow QEMU main loop progress during BQL unlock"
+            std::thread::yield_now();
+        }
+
         if s.debug {
             virtmcu_qom::sim_info!(
                 "sensor_read: REG_NEW_DATA (sensor_id={}) -> {}",
@@ -157,6 +173,7 @@ pub unsafe extern "C" fn sensor_read(opaque: *mut c_void, addr: u64, size: c_uin
 #[no_mangle]
 pub unsafe extern "C" fn sensor_write(opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
     let s = unsafe { &mut *(opaque as *mut VirtmcuSensorQEMU) };
+
     if s.rust_state.is_null() {
         return;
     }

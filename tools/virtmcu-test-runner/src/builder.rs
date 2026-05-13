@@ -389,10 +389,12 @@ impl TopologyBuilder {
                     {
                         let mut recent = recent_stderr_for_spawn.lock().await;
                         recent.push(line.clone());
-                        if recent.len() > 20 {
+                        if recent.len() > 200 {
                             recent.remove(0);
                         }
                     }
+
+                    tracing::debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
 
                     if line.contains("[ERROR]")
                         || line.contains("error:")

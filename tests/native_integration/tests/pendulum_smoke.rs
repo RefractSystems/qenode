@@ -36,7 +36,7 @@ async fn test_pendulum_peripherals_smoke() -> Result<()> {
     let monitor = ActuatorMonitor::new(&env.session(), &[&actuator_topic]).await?;
 
     let mut found = false;
-    for _ in 0..50 {
+    for _ in 0..200 {
         let inject_vtime = env.vtime();
         let payload = encode_frame(inject_vtime, 0, &0.5_f64.to_le_bytes());
         env.session()
