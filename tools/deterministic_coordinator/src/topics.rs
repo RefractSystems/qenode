@@ -131,7 +131,7 @@ pub mod templates {
         format!("sim/spi/{}/{}", bus, node_id)
     }
     pub fn telemetry_trace(node_id: &str) -> String {
-        format!("sim/telemetry/trace/{}", node_id)
+        virtmcu_api::topics::sim_topic::telemetry_events(node_id)
     }
     pub fn test_probe(suffix: &str) -> String {
         format!("sim/test/probe/{}", suffix)

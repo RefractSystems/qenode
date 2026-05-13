@@ -317,7 +317,7 @@ impl RpPktInterrupt {
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
+
 mod tests {
     use super::*;
     use core::ptr;

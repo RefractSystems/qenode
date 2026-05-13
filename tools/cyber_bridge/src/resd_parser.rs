@@ -16,6 +16,7 @@ pub enum ResdSampleType {
     Pressure = 0x0007,
     MagneticFluxDensity = 0x0008,
     BinaryData = 0x0009,
+    Double = 0x000A,
 }
 
 impl ResdSampleType {
@@ -30,6 +31,7 @@ impl ResdSampleType {
             0x0007 => Some(Self::Pressure),
             0x0008 => Some(Self::MagneticFluxDensity),
             0x0009 => Some(Self::BinaryData),
+            0x000A => Some(Self::Double),
             _ => None,
         }
     }
@@ -38,7 +40,7 @@ impl ResdSampleType {
 #[derive(Debug, Clone)]
 pub struct ResdSample {
     pub timestamp_ns: u64,
-    pub data: Vec<i32>,
+    pub data: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +75,7 @@ impl ResdSensor {
 
         if idx + 1 >= self.samples.len() || vtime_ns < self.samples[idx].timestamp_ns {
             // Zero-order hold
-            return self.samples[idx].data.iter().map(|&x| x as f64).collect();
+            return self.samples[idx].data.clone();
         }
 
         // Linear interpolation
@@ -88,7 +90,7 @@ impl ResdSensor {
         s0.data
             .iter()
             .zip(s1.data.iter())
-            .map(|(&v0, &v1)| v0 as f64 + factor * (v1 as f64 - v0 as f64))
+            .map(|(&v0, &v1)| v0 + factor * (v1 - v0))
             .collect()
     }
 }
@@ -124,6 +126,7 @@ impl ResdParser {
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
         if &magic != b"RESD" {
+            eprintln!("[RESD Parser] Invalid magic: {:?}", magic);
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid RESD magic",
@@ -149,6 +152,10 @@ impl ResdParser {
             let sample_type = match ResdSampleType::from_u16(sample_type_val) {
                 Some(t) => t,
                 None => {
+                    eprintln!(
+                        "[RESD Parser] Unknown sample type: 0x{:04X}",
+                        sample_type_val
+                    );
                     file.seek(SeekFrom::Current(data_size as i64))?;
                     continue;
                 }
@@ -197,15 +204,18 @@ impl ResdParser {
 
                 let mut data = Vec::new();
                 if sample_type == ResdSampleType::Temperature {
-                    data.push(file.read_i32::<LittleEndian>()?);
+                    data.push(file.read_i32::<LittleEndian>()? as f64);
                     bytes_read += 4;
                 } else if sample_type == ResdSampleType::Acceleration
                     || sample_type == ResdSampleType::AngularRate
                 {
-                    data.push(file.read_i32::<LittleEndian>()?);
-                    data.push(file.read_i32::<LittleEndian>()?);
-                    data.push(file.read_i32::<LittleEndian>()?);
+                    data.push(file.read_i32::<LittleEndian>()? as f64);
+                    data.push(file.read_i32::<LittleEndian>()? as f64);
+                    data.push(file.read_i32::<LittleEndian>()? as f64);
                     bytes_read += 12;
+                } else if sample_type == ResdSampleType::Double {
+                    data.push(file.read_f64::<LittleEndian>()?);
+                    bytes_read += 8;
                 } else {
                     file.seek(SeekFrom::Current((samples_size - bytes_read) as i64))?;
                     break;
@@ -235,11 +245,11 @@ mod tests {
         let mut s = ResdSensor::new("test".to_owned(), ResdSampleType::Acceleration);
         s.samples.push(ResdSample {
             timestamp_ns: 1000,
-            data: vec![100, 200, 300],
+            data: vec![100.0, 200.0, 300.0],
         });
         s.samples.push(ResdSample {
             timestamp_ns: 2000,
-            data: vec![200, 400, 600],
+            data: vec![200.0, 400.0, 600.0],
         });
 
         let v1 = s.get_reading(500); // zero-order hold before

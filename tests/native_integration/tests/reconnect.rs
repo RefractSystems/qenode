@@ -84,6 +84,7 @@ loop:
                 let socket_path_str = socket_path.to_str().expect("Valid UTF-8 path").to_string();
 
                 // Wait a bit, then start mock adapter
+                // virtmcu-allow: test_sleep reasoning="wait before starting mock adapter"
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 info!("Starting mock adapter at {}...", socket_path_str);
 

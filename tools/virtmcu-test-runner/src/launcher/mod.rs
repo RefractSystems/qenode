@@ -87,10 +87,19 @@ impl QemuLauncher {
             }
         }
 
+        // Fallback: Check system PATH
+        let bin_name = format!("qemu-system-{}", qemu_arch_name);
+        if let Ok(path) = which::which(&bin_name) {
+            return Ok(path);
+        }
+
         Err(anyhow!(
-            "QEMU binary for {} not found. Checked: {:?}",
+            "QEMU binary for {} not found. Checked: {:?}. Also searched PATH for '{}'. Current DIR: {:?}, VIRTMCU_USE_PREBUILT_QEMU: {}",
             arch,
-            possible_paths
+            possible_paths,
+            bin_name,
+            std::env::current_dir().unwrap_or_default(),
+            use_prebuilt
         ))
     }
 
@@ -98,25 +107,39 @@ impl QemuLauncher {
         let build_dir = self.build_dir_name();
         let use_prebuilt =
             env::var("VIRTMCU_USE_PREBUILT_QEMU").unwrap_or_else(|_| "0".to_string()) == "1";
-        if use_prebuilt {
-            return Some(PathBuf::from(format!(
-                "/build/qemu/{}/install/lib/qemu",
-                build_dir
-            )));
+
+        let qemu_base = if use_prebuilt {
+            PathBuf::from(format!("/build/qemu/{}", build_dir))
+        } else {
+            self.workspace_root
+                .join("third_party/qemu")
+                .join(&build_dir)
+        };
+
+        // If specific build_dir (e.g. asan) doesn't exist for prebuilt, fallback to default
+        let qemu_base = if use_prebuilt && !qemu_base.exists() {
+            PathBuf::from("/build/qemu/build-virtmcu")
+        } else {
+            qemu_base
+        };
+
+        let arch = std::env::consts::ARCH;
+        let mut candidate_subdirs = Vec::new();
+
+        if arch == "aarch64" {
+            candidate_subdirs.push("install/lib/aarch64-linux-gnu/qemu");
+            candidate_subdirs.push("install/lib/x86_64-linux-gnu/qemu");
+        } else {
+            candidate_subdirs.push("install/lib/x86_64-linux-gnu/qemu");
+            candidate_subdirs.push("install/lib/aarch64-linux-gnu/qemu");
         }
+        candidate_subdirs.push("install/lib/qemu");
+        candidate_subdirs.push("install/lib64/qemu");
+        candidate_subdirs.push("lib/qemu");
+        candidate_subdirs.push("lib64/qemu");
 
-        let qemu_dir = self.workspace_root.join("third_party").join("qemu");
-        let paths = vec![
-            qemu_dir
-                .join(&build_dir)
-                .join("install/lib/aarch64-linux-gnu/qemu"),
-            qemu_dir
-                .join(&build_dir)
-                .join("install/lib/x86_64-linux-gnu/qemu"),
-            qemu_dir.join(&build_dir).join("install/lib/qemu"),
-        ];
-
-        for path in paths {
+        for subdir in candidate_subdirs {
+            let path = qemu_base.join(subdir);
             if path.exists() && path.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&path) {
                     for entry in entries.flatten() {
@@ -143,25 +166,47 @@ impl QemuLauncher {
             target_dirs.push(PathBuf::from(target_dir_env));
         }
 
-        let mut paths = vec![self
-            .workspace_root
-            .join("third_party/zenoh-c/lib")
-            .display()
-            .to_string()];
+        let mut paths = Vec::new();
+        paths.push(
+            self.workspace_root
+                .join("third_party/zenoh-c/lib")
+                .display()
+                .to_string(),
+        );
 
-        for base in target_dirs {
+        let host_triple = match std::env::consts::ARCH {
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            _ => "unknown",
+        };
+
+        for base in &target_dirs {
+            // Prioritize the current host's target directory
+            let host_target = base.join(host_triple);
+            if host_target.exists() {
+                paths.push(host_target.join("debug").display().to_string());
+                paths.push(host_target.join("release").display().to_string());
+                paths.push(host_target.join("debug/deps").display().to_string());
+            }
+
             paths.push(base.join("debug").display().to_string());
             paths.push(base.join("release").display().to_string());
             paths.push(base.join("debug/deps").display().to_string());
 
-            // Also check triple-prefixed subdirectories (e.g. target/aarch64-unknown-linux-gnu/debug)
-            if let Ok(entries) = std::fs::read_dir(&base) {
+            // Then check other triple-prefixed subdirectories
+            if let Ok(entries) = std::fs::read_dir(base) {
                 for entry in entries.flatten() {
                     if entry.path().is_dir() {
                         let path = entry.path();
-                        paths.push(path.join("debug").display().to_string());
-                        paths.push(path.join("release").display().to_string());
-                        paths.push(path.join("debug/deps").display().to_string());
+                        let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
+                        if dir_name == host_triple {
+                            continue; // Already added
+                        }
+                        if dir_name.contains("-unknown-linux-gnu") {
+                            paths.push(path.join("debug").display().to_string());
+                            paths.push(path.join("release").display().to_string());
+                            paths.push(path.join("debug/deps").display().to_string());
+                        }
                     }
                 }
             }

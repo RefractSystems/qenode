@@ -621,19 +621,29 @@ impl LinterEngine {
                 (
                     "cargo fmt",
                     "cargo",
-                    vec!["+stable", "fmt", "--all", "--check"],
+                    vec!["+nightly", "fmt", "--all", "--check"],
                 ),
                 (
                     "cargo clippy",
                     "cargo",
-                    vec!["+stable", "clippy", "--workspace", "--", "-D", "warnings"],
+                    vec![
+                        "+nightly",
+                        "clippy",
+                        "--workspace",
+                        "-Z",
+                        "bindeps",
+                        "--",
+                        "-D",
+                        "warnings",
+                    ],
                 ),
                 ("cargo machete", "cargo-machete", vec![]),
-                ("cargo deny", "cargo", vec!["deny", "check"]),
+                ("cargo deny", "cargo", vec!["+nightly", "deny", "check"]),
                 (
                     "cargo audit",
                     "cargo",
                     vec![
+                        "+nightly",
                         "audit",
                         "--db",
                         "/tmp/advisory-db",
@@ -722,7 +732,18 @@ impl LinterEngine {
         if self.target_dir.join("docker/Dockerfile").exists() {
             tasks.push(self.spawn_lint("hadolint", "hadolint", vec!["docker/Dockerfile"]));
         }
-        if self.target_dir.join(".github/workflows").exists() {
+        let workflows_dir = self.target_dir.join(".github/workflows");
+        if workflows_dir.exists()
+            && std::fs::read_dir(&workflows_dir)
+                .map(|mut d| {
+                    d.any(|e| {
+                        let p = e.unwrap().path();
+                        p.extension()
+                            .is_some_and(|ext| ext == "yml" || ext == "yaml")
+                    })
+                })
+                .unwrap_or(false)
+        {
             tasks.push(self.spawn_lint("actionlint", "actionlint", vec![]));
         }
         if self.target_dir.join("hw/meson.build").exists() {

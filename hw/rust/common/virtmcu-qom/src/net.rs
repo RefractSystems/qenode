@@ -305,39 +305,43 @@ mod tests {
 
     #[test]
     fn test_net_client_layout() {
-        assert!(core::mem::offset_of!(NetClientState, info) == 0);
-        assert!(core::mem::size_of::<NetClientState>() == QEMU_NET_CLIENT_STATE_SIZE);
+        assert_eq!(core::mem::offset_of!(NetClientState, info), 0);
+        assert_eq!(core::mem::size_of::<NetClientState>(), QEMU_NET_CLIENT_STATE_SIZE);
     }
 
     #[test]
     fn test_net_client_info_layout() {
-        assert!(core::mem::offset_of!(NetClientInfo, type_id) == 0);
-        assert!(core::mem::offset_of!(NetClientInfo, size) == POINTER_SIZE);
-        assert!(core::mem::offset_of!(NetClientInfo, receive) == NET_CLIENT_INFO_RECEIVE_OFFSET);
-        assert!(core::mem::size_of::<NetClientInfo>() == QEMU_NET_CLIENT_INFO_SIZE);
+        assert_eq!(core::mem::offset_of!(NetClientInfo, type_id), 0);
+        assert_eq!(core::mem::offset_of!(NetClientInfo, size), POINTER_SIZE);
+        assert_eq!(core::mem::offset_of!(NetClientInfo, receive), NET_CLIENT_INFO_RECEIVE_OFFSET);
+        assert_eq!(core::mem::size_of::<NetClientInfo>(), QEMU_NET_CLIENT_INFO_SIZE);
     }
 
     #[test]
     fn test_netdev_layout() {
-        assert!(core::mem::offset_of!(Netdev, id) == 0);
-        assert!(core::mem::offset_of!(Netdev, type_) == NETDEV_TYPE_OFFSET);
-        assert!(core::mem::offset_of!(Netdev, u) == NETDEV_U_OFFSET);
-        assert!(core::mem::size_of::<Netdev>() == QEMU_NETDEV_SIZE);
+        assert_eq!(core::mem::offset_of!(Netdev, id), 0);
+        assert_eq!(core::mem::offset_of!(Netdev, type_), NETDEV_TYPE_OFFSET);
+        assert_eq!(core::mem::offset_of!(Netdev, u), NETDEV_U_OFFSET);
+        assert_eq!(core::mem::size_of::<Netdev>(), QEMU_NETDEV_SIZE);
     }
 
     #[test]
     fn test_netdev_virtmcu_options_layout() {
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, node) == 0);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, transport) == OPTIONS_TRANSPORT_OFFSET);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, router) == OPTIONS_ROUTER_OFFSET);
-        assert!(core::mem::offset_of!(NetdevVirtmcuOptions, topic) == OPTIONS_TOPIC_OFFSET);
-        assert!(
-            core::mem::offset_of!(NetdevVirtmcuOptions, has_max_backlog)
-                == OPTIONS_HAS_MAX_BACKLOG_OFFSET
+        assert_eq!(core::mem::offset_of!(NetdevVirtmcuOptions, node), 0);
+        assert_eq!(
+            core::mem::offset_of!(NetdevVirtmcuOptions, transport),
+            OPTIONS_TRANSPORT_OFFSET
         );
-        assert!(
-            core::mem::offset_of!(NetdevVirtmcuOptions, max_backlog) == OPTIONS_MAX_BACKLOG_OFFSET
+        assert_eq!(core::mem::offset_of!(NetdevVirtmcuOptions, router), OPTIONS_ROUTER_OFFSET);
+        assert_eq!(core::mem::offset_of!(NetdevVirtmcuOptions, topic), OPTIONS_TOPIC_OFFSET);
+        assert_eq!(
+            core::mem::offset_of!(NetdevVirtmcuOptions, has_max_backlog),
+            OPTIONS_HAS_MAX_BACKLOG_OFFSET
         );
-        assert!(core::mem::size_of::<NetdevVirtmcuOptions>() == OPTIONS_SIZE);
+        assert_eq!(
+            core::mem::offset_of!(NetdevVirtmcuOptions, max_backlog),
+            OPTIONS_MAX_BACKLOG_OFFSET
+        );
+        assert_eq!(core::mem::size_of::<NetdevVirtmcuOptions>(), OPTIONS_SIZE);
     }
 }

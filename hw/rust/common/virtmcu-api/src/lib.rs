@@ -69,6 +69,15 @@ pub use rf802154_generated::virtmcu::rf_802154 as rf802154;
     clippy::undocumented_unsafe_blocks,
     clippy::extra_unused_lifetimes
 )]
+pub mod insn_trace_generated;
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all,
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    clippy::extra_unused_lifetimes
+)]
 pub mod physics_generated;
 #[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
     clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
@@ -79,7 +88,27 @@ pub mod physics_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf802154_generated;
+pub use insn_trace_generated::virtmcu::insn_trace as insn_trace_proto;
 pub use physics_generated::virtmcu::physics as physics_proto;
+
+/// Opaque identifier for a running simulation instance (IEEE HLA "federation").
+/// Injected at startup via --federation-id; never discovered at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FederationId(pub String);
+
+impl FederationId {
+    /// Returns the federation ID as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for FederationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Decoded IEEE 802.15.4 MAC Header (MHR) fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,7 +399,7 @@ pub const SYSC_MSG_IRQ_SET: u32 = 1;
 /// A constant
 pub const SYSC_MSG_IRQ_CLEAR: u32 = 2;
 
-/// Abstract transport for clock synchronization between TimeAuthority and node.
+/// Abstract transport for clock synchronization between Physical Node and node.
 pub trait ClockSyncTransport: Send + Sync {
     /// Blocks until a clock advancement request is received, a timeout occurs, or transport is closed.
     /// Returns the request and a responder trait object.
@@ -385,12 +414,12 @@ pub trait ClockSyncTransport: Send + Sync {
 
 /// Abstract responder for a specific clock advancement request.
 pub trait ClockSyncResponder: Send + Sync {
-    /// Sends a clock ready response back to the TimeAuthority.
+    /// Sends a clock ready response back to the Physical Node.
     fn send_ready(&self, resp: ClockReadyResp) -> Result<(), alloc::string::String>;
 }
 
-/// Abstract transport for clock synchronization from the TimeAuthority perspective.
-pub trait TimeAuthorityTransport: Send + Sync {
+/// Abstract transport for clock synchronization from the Physical Node perspective.
+pub trait PhysicalNodeTransport: Send + Sync {
     /// Send a clock-advance request and block until the node replies.
     /// Returns the reply, or None on timeout/transport error.
     fn advance(
@@ -400,9 +429,9 @@ pub trait TimeAuthorityTransport: Send + Sync {
     ) -> Option<ClockReadyResp>;
 }
 
-/// Abstract transport for the Time Authority ↔ Physics Gateway handshake.
+/// Abstract transport for the Physical Node ↔ Physics Gateway handshake.
 ///
-/// The Time Authority sends a trigger containing all actuator data for the
+/// The Physical Node sends a trigger containing all actuator data for the
 /// completed quantum and blocks until the gateway responds with a done signal.
 /// Implementations: ZenohPhysicsTransport, UnixSocketPhysicsTransport.
 pub trait PhysicsGatewayTransport: Send + Sync {
@@ -425,8 +454,61 @@ pub trait PhysicsGatewayServer: Send + Sync {
     /// the `PhysicsTrigger` table, or `None` on shutdown/transport close.
     fn recv_trigger(&self, timeout: core::time::Duration) -> Option<alloc::vec::Vec<u8>>;
 
-    /// Send the done signal back to the Time Authority.
+    /// Send the done signal back to the Physical Node.
     fn send_done(&self, done: physics_proto::PhysicsDone) -> Result<(), alloc::string::String>;
+}
+
+/// Causal actuator commands for one quantum.
+///
+/// Outer key: delivery virtual time (ns) at which firmware issued the command.
+/// Inner key: actuator index as declared in the board topology YAML.
+/// Inner value: actuator data words (length = `data_size` from topology).
+///
+/// Use `BTreeMap` (not `HashMap`) throughout — this type must be `no_std`-compatible.
+pub type ActuatorMap =
+    alloc::collections::BTreeMap<u64, alloc::collections::BTreeMap<u32, alloc::vec::Vec<f64>>>;
+
+/// Sensor readings produced by one quantum step of the physical plant.
+///
+/// Key: sensor index as declared in the board topology YAML.
+/// Value: sensor data words (length = `data_size` from topology).
+///
+/// Empty for `RemotePlant` — the Physics Gateway publishes sensors directly.
+pub type SensorMap = alloc::collections::BTreeMap<u32, alloc::vec::Vec<f64>>;
+
+/// State produced by one quantum step of the physical plant.
+pub struct PlantState {
+    /// Virtual time (ns) at the END of the completed quantum.
+    pub vtime_ns: u64,
+    /// Sensor readings to publish on `sim/sensor/{node}/sensordata_{i}`.
+    ///
+    /// Empty when the plant delegates to an external Physics Gateway process,
+    /// which publishes sensors directly. Non-empty for in-process (`EmbeddedPlant`).
+    pub sensors: SensorMap,
+}
+
+/// The physical world in a Cyber-Physical System simulation.
+///
+/// Owns virtual time progression and plant dynamics for exactly one simulation node.
+/// The binary's main loop calls `step()` once per quantum, after:
+/// 1. Issuing `ClockAdvanceReq` and receiving `ClockReadyResp` from the QEMU cyber node.
+/// 2. Draining the `ZenohActuatorSink` to obtain the complete actuator bundle.
+///
+/// Implementations: `TickOnlyPlant`, `EmbeddedPlant`, `RemotePlant`.
+pub trait PhysicalNode: Send + Sync {
+    /// Advance the plant by one quantum.
+    ///
+    /// `quantum_ns` is the size of the completed quantum in nanoseconds.
+    /// `actuators` contains all firmware commands delivered during this quantum,
+    /// ordered by `(delivery_vtime_ns, actuator_id)`.
+    ///
+    /// Returns the updated `PlantState` or a fatal error string. Callers treat
+    /// any `Err` as a simulation abort — do not retry.
+    fn step(
+        &mut self,
+        quantum_ns: u64,
+        actuators: &ActuatorMap,
+    ) -> Result<PlantState, alloc::string::String>;
 }
 
 /// Unix socket-based clock synchronization transport.
@@ -484,16 +566,16 @@ impl ClockSyncTransport for UnixSocketClockTransport {
     }
 }
 
-/// Unix socket-based Time Authority transport.
+/// Unix socket-based Physical Node transport.
 #[cfg(feature = "std")]
-pub struct UnixSocketTimeAuthorityTransport {
+pub struct UnixSocketPhysicalNodeTransport {
     listener: std::os::unix::net::UnixListener,
     stream: std::sync::Mutex<Option<std::os::unix::net::UnixStream>>,
 }
 
 #[cfg(feature = "std")]
-impl UnixSocketTimeAuthorityTransport {
-    /// Creates a new `UnixSocketTimeAuthorityTransport` that listens on the given path.
+impl UnixSocketPhysicalNodeTransport {
+    /// Creates a new `UnixSocketPhysicalNodeTransport` that listens on the given path.
     ///
     /// If the socket file already exists, it will be removed.
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
@@ -519,7 +601,7 @@ impl UnixSocketTimeAuthorityTransport {
 }
 
 #[cfg(feature = "std")]
-impl TimeAuthorityTransport for UnixSocketTimeAuthorityTransport {
+impl PhysicalNodeTransport for UnixSocketPhysicalNodeTransport {
     fn advance(
         &self,
         req: ClockAdvanceReq,
@@ -1277,7 +1359,7 @@ mod tests {
     }
 
     #[cfg(all(test, feature = "tokio"))]
-    #[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
+    // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
     mod handshake_server_tests {
         use super::*;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

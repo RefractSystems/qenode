@@ -11,8 +11,10 @@ async fn test_spi_echo_baremetal() -> Result<()> {
                 .with_firmware_path("tests/fixtures/guest_apps/spi_bridge/spi_echo.elf")
                 .with_yaml_path("tests/fixtures/guest_apps/spi_bridge/spi_test.yaml")
                 // Add the router endpoint as a global property so the YAML-generated SPI bridge connects
+                .add_qemu_arg("-device")
+                .add_qemu_arg("spi,bus=spi0.0,id=spi0_bridge")
                 .add_qemu_arg("-global")
-                .add_qemu_arg("virtmcu-spi-bridge.router={ROUTER_ENDPOINT}")
+                .add_qemu_arg("spi.router={ROUTER_ENDPOINT}")
                 .orchestrated(false),
         )
         .with_timeout(10)

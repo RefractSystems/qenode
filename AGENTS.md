@@ -71,6 +71,7 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 
 - **Async threads** (Transport subscribers): MUST NOT block waiting for BQL. Push to `crossbeam_channel::unbounded`; a QEMU timer (holding BQL) drains the queue. `SafeSubscription` handles this pattern automatically.
 - **MMIO vCPU threads**: yield BQL via `Bql::temporary_unlock()` when blocking.
+  - **Tight Polling Loops (No WFI)**: If a peripheral design requires the guest to busy-wait on an MMIO register (e.g., `while(!STATUS_READY)`), the peripheral `read` handler MUST temporarily unlock the BQL (`Bql::temporary_unlock()`) and yield the host thread (`std::thread::yield_now()`) if the status is not ready. You must suppress the lint using `// virtmcu-allow: yield reasoning="..."`. Failure to do so starves the QEMU main loop from processing Zenoh packets, resulting in a deadlock.
 - **Bql API**: `Bql::lock()` (RAII), `Bql::lock_forget()` (ownership transfer to C), `Bql::temporary_unlock()` (safe yield), `QemuCond::wait_yielding_bql(guard, timeout_ms)` (only approved vCPU-wait pattern).
 - BANNED: raw `virtmcu_bql_unlock/lock()` or `virtmcu_mutex_lock/unlock()` outside `virtmcu-qom/src/sync.rs`; `std::mem::forget(Bql::lock())`; mixing `std::sync::Mutex` with `*mut QemuMutex` in one device.
 - **Lock order (canonical)**: BQL → peripheral mutex → condvar wait. Document in module-level comment.

@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;
-use virtmcu_api::telemetry_generated::virtmcu::telemetry::TraceEvent;
+use virtmcu_api::insn_trace_generated::virtmcu::insn_trace::root_as_insn_trace;
+use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -12,7 +13,10 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
     let mut plugin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     plugin_path.pop(); // Up to tests/
     plugin_path.pop(); // Up to workspace root
+    #[cfg(debug_assertions)]
     plugin_path.push("target/debug/libtcg_tracer.so");
+    #[cfg(not(debug_assertions))]
+    plugin_path.push("target/release/libtcg_tracer.so");
 
     let plugin_arg = format!("{},node_id=0,transport=zenoh", plugin_path.display());
 
@@ -31,8 +35,9 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
         .await?;
 
     let session = env.session();
-    let subscriber = session
-        .declare_subscriber("sim/telemetry/trace/0/insn")
+    let topic = sim_topic::telemetry_insn("0");
+    let subscriber = env
+        .safe_subscribe(&topic)
         .await
         .expect("Failed to subscribe");
 
@@ -49,13 +54,13 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
         {
             if let Ok(msg) = msg {
                 let payload = msg.payload().to_bytes();
-                let event = flatbuffers::root::<TraceEvent>(&payload).expect("Invalid FB");
-                if event.device_name().is_some() {
+                let event = root_as_insn_trace(&payload).expect("Invalid FB");
+                if event.pc() != 0 && event.disassembly().map_or(false, |s| !s.is_empty()) {
                     got_insn = true;
                     tracing::info!(
                         "Received trace event: PC=0x{:X}, Disas={}",
-                        event.id(),
-                        event.device_name().unwrap()
+                        event.pc(),
+                        event.disassembly().unwrap()
                     );
                     break;
                 }

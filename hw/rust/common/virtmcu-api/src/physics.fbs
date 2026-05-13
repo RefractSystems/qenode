@@ -11,7 +11,7 @@ table ActuatorSample {
     values:            [float64];
 }
 
-/// Sent by the Time Authority to the Physics Gateway once per quantum.
+/// Sent by the Physical Node to the Physics Gateway once per quantum.
 /// Contains the complete, causally-ordered set of actuator commands for
 /// the completed quantum.  The gateway MUST NOT step the physics engine
 /// until it receives this message.
@@ -26,7 +26,7 @@ table PhysicsTrigger {
     actuators:            [ActuatorSample];
 }
 
-/// Sent by the Physics Gateway back to the Time Authority after each step.
+/// Sent by the Physics Gateway back to the Physical Node after each step.
 struct PhysicsDone {
     /// Must match the quantum_number in the corresponding PhysicsTrigger.
     quantum_number: uint64;

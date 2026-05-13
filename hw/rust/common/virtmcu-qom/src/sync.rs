@@ -64,6 +64,8 @@ extern "C" {
 
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 mod mock {
+    // virtmcu-allow: allow reasoning="wildcard imports in mock module"
+    #[allow(clippy::wildcard_imports)]
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Condvar, Mutex};
@@ -637,7 +639,7 @@ impl<T> BqlGuarded<T> {
     }
 }
 
-use crate::timer::{QomTimer, QEMU_CLOCK_REALTIME};
+use crate::timer::QomTimer;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crossbeam_channel::{unbounded, Receiver};
 use virtmcu_api::{DataCallback, DataTransport};
@@ -667,6 +669,7 @@ extern "C" fn safe_subscription_timer_cb(opaque: *mut core::ffi::c_void) {
             if internal.is_valid.load(Ordering::Acquire)
                 && internal.generation.load(Ordering::Acquire) == internal.expected_generation
             {
+                crate::vlog!("[SafeSubscription] Calling callback for topic: {}\n", topic);
                 (internal.callback)(&topic, &payload);
             }
         }
@@ -726,7 +729,7 @@ impl SafeSubscription {
         // SAFETY: We are creating a timer during device realization/init which holds BQL.
         let timer = unsafe {
             QomTimer::new(
-                QEMU_CLOCK_REALTIME,
+                crate::timer::QEMU_CLOCK_REALTIME,
                 safe_subscription_timer_cb,
                 Arc::as_ptr(&timer_internal) as *mut core::ffi::c_void,
             )
@@ -736,6 +739,7 @@ impl SafeSubscription {
         let timer_kick = Arc::clone(&timer_clone);
         let valid_clone = Arc::clone(&is_valid);
         let wrapper_callback: DataCallback = Box::new(move |topic: &str, payload: &[u8]| {
+            crate::vlog!("[SafeSubscription] Received Zenoh message on topic: {}\n", topic);
             if valid_clone.load(Ordering::Acquire)
                 && tx.send((topic.to_owned(), payload.to_vec())).is_ok()
             {
@@ -1072,14 +1076,13 @@ impl VcpuDrain {
             )
             .unwrap_or(i64::MAX);
             let elapsed_ns = now_ns.saturating_sub(start_ns);
-            if elapsed_ns >= limit_ns {
-                crate::sim_err!(
-                    "VcpuDrain timed out after {} ms with {} vCPUs still active",
-                    timeout_ms,
-                    *count
-                );
-                break;
-            }
+            assert!(
+                elapsed_ns < limit_ns,
+                "VcpuDrain timed out after {} ms with {} vCPUs still active — \
+                 peripheral teardown is unsafe, aborting",
+                timeout_ms,
+                *count
+            );
 
             let remaining_ms =
                 u32::try_from((limit_ns - elapsed_ns) / 1_000_000).unwrap_or(u32::MAX);
@@ -1292,6 +1295,7 @@ mod tests {
 
     #[test]
     fn test_vcpu_drain() {
+        const TEST_COUNT: usize = 2;
         let drain = VcpuDrain::new();
         assert_eq!(*drain.count.lock(), 0);
 
@@ -1299,7 +1303,6 @@ mod tests {
         assert_eq!(*drain.count.lock(), 1);
 
         let guard2 = drain.acquire();
-        const TEST_COUNT: usize = 2;
         assert_eq!(*drain.count.lock(), TEST_COUNT);
 
         drop(guard1);
@@ -1310,14 +1313,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "VcpuDrain timed out")]
     fn test_vcpu_drain_wait_timeout() {
+        const DRAIN_TIMEOUT_MS: u32 = 10;
         let drain = VcpuDrain::new();
         let _guard = drain.acquire();
 
         let _bql = Bql::lock();
         let start = std::time::Instant::now();
         // This should timeout since we hold the guard
-        const DRAIN_TIMEOUT_MS: u32 = 10;
         drain.wait_for_drain(DRAIN_TIMEOUT_MS);
         let elapsed = start.elapsed();
 

@@ -33,6 +33,7 @@ VIRTMCU_CI_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)
 VIRTMCU_CI_ASAN_IMG ?= $(VIRTMCU_IMAGE_REGISTRY)/$(VIRTMCU_CI_IMAGE):$(IMAGE_TAG)-asan
 VIRTMCU_USE_CCACHE ?= 0
 export VIRTMCU_USE_CCACHE
+export VIRTMCU_WORKSPACE := $(CURDIR)
 
 # Detection for container environment
 IN_CONTAINER := $(shell [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ "$$USER" = "vscode" ] && echo 1 || echo 0)
@@ -326,7 +327,7 @@ fmt-all: fmt-rust fmt-meson fmt-c fmt-yaml
 # Individual format targets
 fmt-rust:
 	@echo "==> cargo fmt..."
-	@cargo fmt --all
+	@cargo +nightly fmt --all
 
 fmt-meson:
 	@echo "==> meson format..."

@@ -284,16 +284,13 @@ impl Drop for SafeSubscriber {
     }
 }
 
-/// Opens a Zenoh session with a standardized config for virtmcu.
-///
-/// If `router` is provided and non-empty, it is used as a connect endpoint.
-/// Scouting is disabled if a router is provided.
+/// Returns a Zenoh configuration for the given router.
 ///
 /// # Safety
 ///
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
-pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
+pub unsafe fn open_config(router: *const c_char) -> Result<zenoh::Config, zenoh::Error> {
     const ZENOH_DEFAULT_CONCURRENCY: &str = "8";
     let mut config = virtmcu_zenoh_config::client_config();
 
@@ -302,8 +299,6 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         let _ = config.insert_json5("mode", "\"peer\"");
         let _ = config.insert_json5("scouting/multicast/enabled", "true");
     }
-
-    let mut has_router = false;
 
     // Task 4.2: High-performance executor for co-simulation
     let _ = config.insert_json5("task_planning/concurrency", ZENOH_DEFAULT_CONCURRENCY);
@@ -333,9 +328,24 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
             let _ = config.insert_json5("mode", "\"client\"");
             let _ = config.insert_json5("connect/endpoints", &json);
             let _ = config.insert_json5("transport/shared_memory/enabled", "false");
-            has_router = true;
         }
     }
+
+    Ok(config)
+}
+
+/// Opens a Zenoh session with a standardized config for virtmcu.
+///
+/// If `router` is provided and non-empty, it is used as a connect endpoint.
+/// Scouting is disabled if a router is provided.
+///
+/// # Safety
+///
+/// The caller must ensure that `router` is either NULL or a valid, null-terminated
+/// C string that remains valid for the duration of this call.
+pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
+    let config = unsafe { open_config(router)? };
+    let has_router = !router.is_null() && unsafe { !CStr::from_ptr(router).to_bytes().is_empty() };
 
     let mut session_res = zenoh::open(config.clone()).wait();
     if session_res.is_err() && has_router {
@@ -380,7 +390,7 @@ pub(crate) fn test_config() -> Config {
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
+#[allow(clippy::items_after_statements)] // virtmcu-allow: allow reasoning="Tests group constants locally for readability"
 mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU64, AtomicUsize};

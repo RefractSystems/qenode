@@ -6,7 +6,7 @@
 #
 # Usage:
 #   docker compose -f docker/docker-compose.yml up
-#   docker compose -f docker/docker-compose.yml -f worlds/pendulum.yml up
+#   docker compose -f docker/docker-compose.yml -f worlds/pendulum_controller.yml up
 
 services:
 
@@ -39,6 +39,7 @@ services:
       NODE_ID: "0"
       VIRTMCU_USE_PREBUILT_QEMU: "1"
       RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
     volumes:
       # Mount firmware from outside if needed:
       # - ../firmware:/app/firmware:ro
@@ -54,7 +55,7 @@ services:
     # has no meaningful firmware; the clock hook fires at the first TB
     # boundary and blocks the vCPU waiting for a clock advance. Overlays (like
     # pendulum.yml) should override this command to supply a -kernel.
-    command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "virtmcu-clock,mode=suspend,node=0,router=tcp/zenoh-router:7447"]
+    command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "virtmcu-clock,mode=suspend,node=0,router=tcp/zenoh-router:7447,federation_id=compose-run"]
     tty: true
 
   # ── 3. Deterministic Coordinator ──────────────────────────────────────────
@@ -67,6 +68,7 @@ services:
     environment:
       ZENOH_CONNECT: tcp/zenoh-router:7447
       RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
     volumes:
       - ../target:/app/target:ro
     command: ["/app/target/release/deterministic_coordinator", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]

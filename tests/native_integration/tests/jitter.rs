@@ -70,6 +70,7 @@ _start:
                 // Step clock with intentional random-like sleeps to simulate jitter
                 for _ in 0..10 {
                     env.step_clock(100_000, 100_000).await?;
+                    // virtmcu-allow: test_sleep reasoning="simulating jitter"
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
 

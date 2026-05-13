@@ -119,15 +119,14 @@ async fn test_multi_node_uart() -> Result<()> {
                 // In the python test it had a bridge script running, but here we can just bridge via code.
                 let session_clone = env.session();
                 let rx1_topic_clone = rx1_topic.clone();
-                let _sub = env
-                    .session()
-                    .declare_subscriber(tx0_topic.clone())
-                    .callback(move |sample| {
+                let sub = env.safe_subscribe(&tx0_topic).await.unwrap();
+                tokio::spawn(async move {
+                    while let Ok(sample) = sub.recv_async().await {
                         let _ = session_clone
-                            .put(&rx1_topic_clone, sample.payload().to_bytes().into_owned());
-                    })
-                    .await
-                    .unwrap();
+                            .put(&rx1_topic_clone, sample.payload().to_bytes().into_owned())
+                            .await;
+                    }
+                });
 
                 // Step clock until welcome message
                 for _ in 0..50 {

@@ -3,24 +3,26 @@ pub mod physics_transport;
 pub mod resd_parser;
 
 use std::sync::Arc;
-use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, TimeAuthorityTransport};
+use virtmcu_api::topics::sim_topic;
+use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, PhysicalNodeTransport};
 use zenoh::{Session, Wait};
 
-/// A Zenoh-backed implementation of the `TimeAuthorityTransport` trait.
-pub struct ZenohTimeAuthorityTransport {
+/// A Zenoh-backed implementation of the `PhysicalNodeTransport` trait.
+pub struct ZenohPhysicalNodeTransport {
     session: Arc<Session>,
     topic: String,
 }
 
-impl ZenohTimeAuthorityTransport {
-    /// Creates a new `ZenohTimeAuthorityTransport` using the provided Zenoh session and node ID.
+impl ZenohPhysicalNodeTransport {
+    /// Creates a new `ZenohPhysicalNodeTransport` using the provided Zenoh session and node ID.
     pub fn new(session: Arc<Session>, node_id: u32) -> Self {
-        let topic = format!("sim/clock/advance/{node_id}");
+        let node_id_str = node_id.to_string();
+        let topic = sim_topic::clock_advance(&node_id_str);
         Self { session, topic }
     }
 }
 
-impl TimeAuthorityTransport for ZenohTimeAuthorityTransport {
+impl PhysicalNodeTransport for ZenohPhysicalNodeTransport {
     fn advance(
         &self,
         req: ClockAdvanceReq,
@@ -46,22 +48,18 @@ impl TimeAuthorityTransport for ZenohTimeAuthorityTransport {
         None
     }
 }
-type ActuatorBuffer = std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>;
+pub use virtmcu_api::ActuatorMap;
 
 pub struct ZenohActuatorSink {
-    buffer: Arc<std::sync::Mutex<ActuatorBuffer>>,
+    buffer: Arc<std::sync::Mutex<ActuatorMap>>,
     _subscriber: zenoh::pubsub::Subscriber<()>,
 }
 
 impl ZenohActuatorSink {
-    pub async fn new(
-        session: &zenoh::Session,
-        topic_prefix: &str,
-        node_id: u32,
-    ) -> anyhow::Result<Self> {
-        let buffer = Arc::new(std::sync::Mutex::new(ActuatorBuffer::new()));
+    pub async fn new(session: &zenoh::Session, node_id_str: &str) -> anyhow::Result<Self> {
+        let buffer = Arc::new(std::sync::Mutex::new(ActuatorMap::new()));
         let buffer_clone = Arc::clone(&buffer);
-        let filter = format!("{}/{}/{}", topic_prefix, node_id, "**");
+        let filter = sim_topic::actuator_control_wildcard(node_id_str);
         let subscriber = session
             .declare_subscriber(filter)
             .callback(move |sample| {
@@ -104,7 +102,7 @@ impl ZenohActuatorSink {
         })
     }
 
-    pub fn drain(&self) -> ActuatorBuffer {
+    pub fn drain(&self) -> ActuatorMap {
         let mut map = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut *map)
     }
@@ -118,14 +116,15 @@ mod tests {
     use zenoh::Wait;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_zenoh_time_authority_transport() {
+    async fn test_zenoh_physical_node_transport() {
         let mut config = zenoh::Config::default();
         let _ = config.insert_json5("mode", "\"peer\"");
         let _ = config.insert_json5("scouting/multicast/enabled", "true");
 
         let session = Arc::new(zenoh::open(config).wait().unwrap());
         let node_id = 42;
-        let topic = format!("sim/clock/advance/{node_id}");
+        let node_id_str = node_id.to_string();
+        let topic = sim_topic::clock_advance(&node_id_str);
 
         // Fake QEMU side: a queryable that echoes back the request in a response
         let session_clone = Arc::clone(&session);
@@ -147,7 +146,7 @@ mod tests {
             .wait()
             .unwrap();
 
-        let transport = ZenohTimeAuthorityTransport::new(Arc::clone(&session), node_id);
+        let transport = ZenohPhysicalNodeTransport::new(Arc::clone(&session), node_id);
         let req = ClockAdvanceReq::new(1000, 5000, 5);
 
         // Give some time for discovery in peer mode
@@ -169,13 +168,13 @@ mod tests {
 
         let session = Arc::new(zenoh::open(config).wait().unwrap());
         let node_id = 0;
-        let prefix = "firmware/control";
+        let node_id_str = node_id.to_string();
 
-        let sink = ZenohActuatorSink::new(&session, prefix, node_id)
+        let sink = ZenohActuatorSink::new(&session, &node_id_str)
             .await
             .unwrap();
 
-        let topic = format!("{}/{}/7", prefix, node_id);
+        let topic = sim_topic::actuator_control(&node_id_str, 7);
         let vals = vec![1.0f64, 2.0f64];
         let mut data_payload: Vec<u8> = Vec::new();
         for val in &vals {

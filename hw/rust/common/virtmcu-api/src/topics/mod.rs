@@ -87,14 +87,55 @@ pub mod sim_topic {
     /// Wildcard topic for all ethernet TX messages.
     pub const ETH_FRAME_TX_WILDCARD: &str = "sim/eth/frame/*/tx";
 
-    /// Topic on which the Time Authority publishes physics triggers.
+    /// Topic on which the Physical Node publishes physics triggers.
     pub const PHYSICS_TRIGGER: &str = "sim/physics/trigger";
     /// Topic on which the Physics Gateway publishes done signals.
     pub const PHYSICS_DONE: &str = "sim/physics/done";
+
+    /// Wildcard for all telemetry position messages.
+    pub const TELEMETRY_POSITION_WILDCARD: &str = "**/sim/telemetry/position";
+    /// Wildcard for all telemetry trace messages.
+    pub const TELEMETRY_TRACE_WILDCARD: &str = "**/sim/telemetry/trace/**";
+
+    /// Generates the instruction trace topic for a node.
+    pub fn telemetry_insn(node_id: &str) -> String {
+        format!("sim/telemetry/trace/{node_id}/insn")
+    }
+    /// Generates the telemetry events topic for a node.
+    pub fn telemetry_events(node_id: &str) -> String {
+        format!("sim/telemetry/trace/{node_id}")
+    }
+
+    /// Topic prefix for actuator command output from firmware.
+    /// Full topic: `firmware/control/{node_id}/{actuator_id}`
+    pub fn actuator_control(node_id: &str, actuator_id: u32) -> String {
+        format!("firmware/control/{node_id}/{actuator_id}")
+    }
+    /// Wildcard for subscribing to all actuator channels for a node.
+    pub fn actuator_control_wildcard(node_id: &str) -> String {
+        format!("firmware/control/{node_id}/**")
+    }
+    /// Wildcard for subscribing to all sensor data for a node.
+    pub fn sensor_data_wildcard(node_id: &str) -> String {
+        format!("sim/sensor/{node_id}/**")
+    }
+    /// Topic for sensor liveliness.
+    pub fn sensor_liveliness(node_id: &str) -> String {
+        format!("sim/sensor/liveliness/{node_id}")
+    }
+    /// Topic for actuator liveliness.
+    pub fn actuator_liveliness(node_id: &str) -> String {
+        format!("sim/actuator/liveliness/{node_id}")
+    }
+    /// Topic for sensor data injected into firmware.
+    /// Full topic: `sim/sensor/{node_id}/sensordata_{sensor_id}`
+    pub fn sensor_data(node_id: &str, sensor_id: u32) -> String {
+        format!("sim/sensor/{node_id}/sensordata_{sensor_id}")
+    }
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
+
 mod tests {
     use super::sim_topic::*;
     use alloc::format;

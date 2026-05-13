@@ -1,9 +1,6 @@
 use anyhow::Result;
 use memmap2::MmapMut;
 use std::fs::OpenOptions;
-use std::sync::Arc;
-use virtmcu_api::ClockReadyResp;
-use zenoh::Wait;
 
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -26,54 +23,52 @@ pub const SHM_OFF_RESERVED: usize = 20;
 pub const SHM_DATA_OFFSET: usize = 24;
 pub const SHM_HEADER_SIZE: usize = 24;
 
-/// Trait for physics engine integration.
-pub trait PhysicsStep: Send + Sync {
-    /// Advance physics by delta_ns.
+/// A physical plant that advances virtual time but models no dynamics.
+///
+/// Use for pure cyber-node testing and nodes with no actuators or sensors.
+pub struct TickOnlyPlant;
+
+impl virtmcu_api::PhysicalNode for TickOnlyPlant {
     fn step(
         &mut self,
-        delta_ns: u64,
-        actuators: &std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>,
-        resp: &ClockReadyResp,
-    ) -> Result<()>;
-}
-
-/// A physics implementation that does nothing.
-pub struct NoOpPhysics;
-
-impl PhysicsStep for NoOpPhysics {
-    fn step(
-        &mut self,
-        _delta_ns: u64,
-        _actuators: &std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>,
-        _resp: &ClockReadyResp,
-    ) -> Result<()> {
-        Ok(())
+        _quantum_ns: u64,
+        _actuators: &virtmcu_api::ActuatorMap,
+    ) -> Result<virtmcu_api::PlantState, String> {
+        Ok(virtmcu_api::PlantState {
+            vtime_ns: 0, // caller tracks absolute vtime; this field unused for TickOnly
+            sensors: virtmcu_api::SensorMap::new(),
+        })
     }
 }
 
-/// A physics implementation that delegates to a remote gateway.
-pub struct GatewayPhysics {
+/// A physical plant that delegates dynamics to an external Physics Gateway process.
+///
+/// Sends a `PhysicsTrigger` FlatBuffer to the gateway and blocks until `PhysicsDone`
+/// is received. The gateway publishes sensor data directly to Zenoh; this struct
+/// returns an empty `sensors` map.
+pub struct RemotePlant {
     transport: Box<dyn virtmcu_api::PhysicsGatewayTransport>,
     timeout: std::time::Duration,
+    quantum_number: u64, // tracked here so the trigger matches ClockAdvanceReq
 }
 
-impl GatewayPhysics {
-    /// Creates a new `GatewayPhysics` instance.
+impl RemotePlant {
+    /// Creates a new `RemotePlant`.
     pub fn new(transport: Box<dyn virtmcu_api::PhysicsGatewayTransport>, timeout_ms: u64) -> Self {
         Self {
             transport,
             timeout: std::time::Duration::from_millis(timeout_ms),
+            quantum_number: 0,
         }
     }
 }
 
-impl PhysicsStep for GatewayPhysics {
+impl virtmcu_api::PhysicalNode for RemotePlant {
     fn step(
         &mut self,
-        _delta_ns: u64,
-        actuators: &std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>,
-        resp: &ClockReadyResp,
-    ) -> Result<()> {
+        _quantum_ns: u64,
+        actuators: &virtmcu_api::ActuatorMap,
+    ) -> Result<virtmcu_api::PlantState, String> {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
 
         let mut samples = Vec::new();
@@ -96,8 +91,8 @@ impl PhysicsStep for GatewayPhysics {
         let trigger = virtmcu_api::physics_proto::PhysicsTrigger::create(
             &mut builder,
             &virtmcu_api::physics_proto::PhysicsTriggerArgs {
-                quantum_number: resp.quantum_number(),
-                quantum_end_vtime_ns: resp.current_vtime_ns(),
+                quantum_number: self.quantum_number,
+                quantum_end_vtime_ns: 0, // binary tracks vtime; field unused by gateway for RemotePlant
                 actuators: Some(samples_offset),
             },
         );
@@ -106,36 +101,37 @@ impl PhysicsStep for GatewayPhysics {
         let trigger_bytes = builder.finished_data();
 
         self.transport
-            .trigger_and_wait(trigger_bytes, self.timeout)
-            .map_err(|e| anyhow::anyhow!("Physics Gateway trigger failed: {e}"))?;
+            .trigger_and_wait(trigger_bytes, self.timeout)?;
 
-        Ok(())
+        self.quantum_number += 1;
+
+        Ok(virtmcu_api::PlantState {
+            vtime_ns: 0,
+            sensors: virtmcu_api::SensorMap::new(),
+        })
     }
 }
 
-/// A physics implementation that communicates via shared memory.
-pub struct SharedMemPhysics {
+/// A physical plant that communicates via shared memory.
+pub struct EmbeddedPlant {
     mmap: MmapMut,
     shm_path: std::path::PathBuf,
-    node_id: u32,
+    _node_id: u32,
     n_sensors: u32,
     n_actuators: u32,
-    session: Arc<zenoh::Session>,
-    topic_prefix: String,
     timeout_ms: u64,
     bridge_seq: u32,
 }
 
-impl SharedMemPhysics {
-    /// Creates a new `SharedMemPhysics` instance.
-    pub fn new(
-        node_id: u32,
-        n_sensors: u32,
-        n_actuators: u32,
-        session: Arc<zenoh::Session>,
-        topic_prefix: String,
-        timeout_ms: u64,
-    ) -> Result<Self> {
+impl EmbeddedPlant {
+    /// Creates a new `EmbeddedPlant` instance.
+    pub fn new(node_id: u32, n_sensors: u32, n_actuators: u32, timeout_ms: u64) -> Result<Self> {
+        if n_sensors == 0 && n_actuators == 0 {
+            anyhow::bail!(
+                "EmbeddedPlant requires at least 1 sensor or 1 actuator. Failing loudly."
+            );
+        }
+
         let shm_path = std::path::PathBuf::from(format!("/dev/shm/virtmcu_physics_{node_id}"));
         let size = SHM_HEADER_SIZE + (n_sensors + n_actuators) as usize * 8;
 
@@ -161,46 +157,41 @@ impl SharedMemPhysics {
         Ok(Self {
             mmap,
             shm_path,
-            node_id,
+            _node_id: node_id,
             n_sensors,
             n_actuators,
-            session,
-            topic_prefix,
             timeout_ms,
             bridge_seq: 0,
         })
     }
 }
 
-impl Drop for SharedMemPhysics {
+impl Drop for EmbeddedPlant {
     fn drop(&mut self) {
         if let Err(e) = std::fs::remove_file(&self.shm_path) {
             // Log but do not panic — Drop must not unwind
             eprintln!(
-                "SharedMemPhysics: failed to remove {}: {e}",
+                "EmbeddedPlant: failed to remove {}: {e}",
                 self.shm_path.display()
             );
         }
     }
 }
 
-impl PhysicsStep for SharedMemPhysics {
+impl virtmcu_api::PhysicalNode for EmbeddedPlant {
     fn step(
         &mut self,
-        delta_ns: u64,
-        actuators: &std::collections::BTreeMap<u64, std::collections::HashMap<u32, Vec<f64>>>,
-        resp: &ClockReadyResp,
-    ) -> Result<()> {
-        let quantum_end = resp.current_vtime_ns();
-        let quantum_start = quantum_end.saturating_sub(delta_ns);
-
-        // For each actuator slot, use the LAST command issued within this quantum.
-        // Multiple writes to the same actuator in one quantum: last value wins.
-        let mut quantum_actuators: std::collections::HashMap<u32, Vec<f64>> =
-            std::collections::HashMap::new();
-        for (_vtime, id_map) in actuators.range(quantum_start..quantum_end) {
+        _quantum_ns: u64,
+        actuators: &virtmcu_api::ActuatorMap,
+    ) -> Result<virtmcu_api::PlantState, String> {
+        // EmbeddedPlant takes the last value per actuator_id from the full map:
+        let mut ctrl_values: std::collections::BTreeMap<u32, f64> =
+            std::collections::BTreeMap::new();
+        for id_map in actuators.values() {
             for (&id, vals) in id_map {
-                quantum_actuators.insert(id, vals.clone());
+                if let Some(&v) = vals.first() {
+                    ctrl_values.insert(id, v);
+                }
             }
         }
 
@@ -208,11 +199,7 @@ impl PhysicsStep for SharedMemPhysics {
 
         // 1. Write actuator (ctrl) values to SHM
         for i in 0..self.n_actuators {
-            let val = quantum_actuators
-                .get(&i)
-                .and_then(|v| v.first())
-                .copied()
-                .unwrap_or(0.0);
+            let val = ctrl_values.get(&i).copied().unwrap_or(0.0);
             let offset = ctrl_offset + (i as usize) * 8;
             self.mmap[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
         }
@@ -246,9 +233,9 @@ impl PhysicsStep for SharedMemPhysics {
                 break;
             }
             if start.elapsed().as_millis() > self.timeout_ms as u128 {
-                return Err(anyhow::anyhow!(
-                    "Physics engine timeout at vtime {}ns",
-                    resp.current_vtime_ns()
+                return Err(format!(
+                    "Physics engine timeout for bridge_seq {}",
+                    self.bridge_seq
                 ));
             }
 
@@ -274,7 +261,7 @@ impl PhysicsStep for SharedMemPhysics {
                     match err {
                         libc::EAGAIN | libc::EINTR => continue, // value changed or signal, retry
                         libc::ETIMEDOUT => continue,            // kernel timeout, check wall-clock
-                        _ => return Err(anyhow::anyhow!("futex WAIT error: errno {err}")),
+                        _ => return Err(format!("futex WAIT error: errno {err}")),
                     }
                 }
             }
@@ -282,18 +269,20 @@ impl PhysicsStep for SharedMemPhysics {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
-        // 4. Read sensor values from SHM and publish to Zenoh
+        // 4. Read sensor values from SHM and return them in PlantState
+        let mut sensors = virtmcu_api::SensorMap::new();
         for i in 0..self.n_sensors {
             let offset = SHM_DATA_OFFSET + (i as usize) * 8;
-            let val_bytes = &self.mmap[offset..offset + 8];
-            let topic = format!("{}/{}/sensordata_{}", self.topic_prefix, self.node_id, i);
-            let payload = virtmcu_api::encode_frame(resp.current_vtime_ns(), 0, val_bytes);
-            self.session
-                .put(&topic, payload)
-                .wait()
-                .map_err(|e| anyhow::anyhow!("Zenoh publish failed: {e}"))?;
+            let val = f64::from_le_bytes(
+                self.mmap[offset..offset + 8]
+                    .try_into()
+                    .expect("SHM sensor slice is 8 bytes"),
+            );
+            sensors.insert(i, vec![val]);
         }
-
-        Ok(())
+        Ok(virtmcu_api::PlantState {
+            vtime_ns: 0, // binary tracks vtime; field unused by main loop for EmbeddedPlant
+            sensors,
+        })
     }
 }

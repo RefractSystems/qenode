@@ -17,6 +17,18 @@ The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator
 
 **Crucial Invariant**: Only ONE thread can hold the BQL at any time. MMIO handlers and QEMUTimer callbacks are invoked by QEMU with the BQL **already held**.
 
+### The Two-Stage Delivery Pipeline
+
+Because `SafeSubscription` acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME` to prevent deadlocks when the BQL is yielded), its execution is entirely non-deterministic from the guest's perspective. It fires whenever the host OS network stack delivers a packet.
+
+Therefore, **"Never mutate guest-visible state or wake a suspended vCPU directly inside a `SafeSubscription` callback."**
+
+Every peripheral receiving asynchronous data MUST strictly implement a **Two-Stage Delivery Pipeline**:
+1. **Stage 1 (Host Time / `SafeSubscription`)**: The callback receives the packet, decodes the `delivery_vtime_ns` from the VirtMCU FlatBuffer header, places the payload into an internal priority queue sorted by virtual time, and schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`). It does NOT touch guest registers, raise IRQs, or signal `wait_yielding_bql` condition variables.
+2. **Stage 2 (Virtual Time / `QomTimer`)**: When QEMU's deterministic virtual clock naturally reaches `delivery_vtime_ns`, the timer callback fires. **This** is where the peripheral moves the data into guest-visible MMIO registers, asserts interrupts, or calls `cond.notify_all()` to wake up a polling vCPU.
+
+If you attempt to bypass the timer and write directly to state in Stage 1, the guest may see data "from the future," or experience severe race conditions resulting in non-deterministic execution paths depending on host OS scheduling.
+
 ### `BqlGuarded<T>` vs. `Mutex<T>`
 In standard Rust, shared state is protected by `std::sync::Mutex<T>`. However, because most peripheral code runs under the BQL, a `Mutex` is redundant and risky—it can lead to deadlocks if not managed carefully.
 

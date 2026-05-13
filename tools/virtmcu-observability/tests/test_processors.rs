@@ -35,7 +35,7 @@ impl SpanProcessor for MockSpanProcessor {
     fn on_start(&self, _span: &mut opentelemetry_sdk::trace::Span, _cx: &Context) {}
 
     fn on_end(&self, span: SpanData) {
-        self.ended_spans.lock().unwrap().push(span);
+        self.ended_spans.lock().expect("Failed to lock").push(span);
     }
 
     fn force_flush(&self) -> opentelemetry::trace::TraceResult<()> {
@@ -51,11 +51,11 @@ impl SpanProcessor for MockSpanProcessor {
 fn test_vtime_span_processor_injects_attributes() {
     let provider = Arc::new(MockVTimeProvider(AtomicU64::new(12345)));
     let mock_inner = MockSpanProcessor::new();
-    let ended_spans = mock_inner.ended_spans.clone();
+    let ended_spans = Arc::clone(&mock_inner.ended_spans);
 
     let processor = VTimeSpanProcessor {
         inner: mock_inner,
-        provider: provider.clone(),
+        provider: Arc::<MockVTimeProvider>::clone(&provider) as Arc<dyn VTimeProvider>,
     };
 
     let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
@@ -69,13 +69,13 @@ fn test_vtime_span_processor_injects_attributes() {
     provider.0.store(12350, Ordering::Relaxed);
     span.end();
 
-    let ended = ended_spans.lock().unwrap();
+    let ended = ended_spans.lock().expect("Failed to lock ended_spans");
     assert_eq!(ended.len(), 1);
     let attrs = &ended[0].attributes;
 
     let mut found_start = false;
     let mut found_end = false;
-    for kv in attrs.iter() {
+    for kv in attrs {
         if kv.key.as_str() == "vtime_ns" {
             if let opentelemetry::Value::I64(v) = kv.value {
                 assert_eq!(v, 12345);

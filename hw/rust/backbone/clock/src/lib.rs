@@ -11,7 +11,7 @@
 //! Virtmcu deterministic clock with pluggable transport.
 //!
 //! This module provides the `VirtmcuClock` QOM device, which synchronizes
-//! the guest's virtual time with an external TimeAuthority.
+//! the guest's virtual time with an external Physical Node.
 
 extern crate alloc;
 
@@ -93,7 +93,7 @@ impl ClockSyncTransport for ZenohClockTransport {
                     }
                     None => {
                         virtmcu_qom::sim_err!(
-                            "ZenohClockTransport: Received malformed ClockAdvanceReq (size={}, expected {}). Ensure your TimeAuthority uses the {}-byte protocol.",
+                            "ZenohClockTransport: Received malformed ClockAdvanceReq (size={}, expected {}). Ensure your Physical Node uses the {}-byte protocol.",
                             data.len(),
                             CLOCK_ADVANCE_REQ_SIZE,
                             CLOCK_ADVANCE_REQ_SIZE
@@ -157,7 +157,7 @@ impl ClockSyncResponder for ZenohClockResponder {
             }
         }
 
-        // 3. Release the reply back to the Time Authority
+        // 3. Release the reply back to the Physical Node
         let resp_bytes = resp.pack();
         self.query
             .reply(self.query.key_expr().clone(), resp_bytes.to_vec())
@@ -178,6 +178,8 @@ pub struct VirtmcuClock {
     /* Properties */
     /// Unique node ID for clock synchronization.
     pub node_id: u32,
+    /// Identifier for this running simulation instance.
+    pub federation_id: *mut c_char,
     /// Synchronization mode ("slaved-suspend", "slaved-icount", "unix").
     pub mode: *mut c_char,
     /// Optional router address or socket path.
@@ -235,6 +237,8 @@ pub struct VirtmcuClockBackend {
     pub transport: Box<dyn ClockSyncTransport>,
     /// Unique node ID.
     pub node_id: u32,
+    /// Identifier for this running simulation instance.
+    pub federation_id: virtmcu_api::FederationId,
     /// Stall timeout in milliseconds.
     pub stall_timeout_ms: u32,
     /// Whether coordination is enabled for this node.
@@ -255,7 +259,7 @@ pub struct VirtmcuClockBackend {
     pub delta_ns: AtomicU64,
     /// Current virtual time in nanoseconds as known by the backend.
     pub vtime_ns: AtomicU64,
-    /// Absolute simulation time in nanoseconds as reported by TimeAuthority.
+    /// Absolute simulation time in nanoseconds as reported by Physical Node.
     pub absolute_vtime_ns: AtomicU64,
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,
@@ -596,7 +600,8 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
                 backend.consecutive_timeouts.store(0, Ordering::Relaxed);
                 if backend.is_coordinated {
                     virtmcu_qom::sim_info!(
-                        "Received advance for quantum {} (delta={}ns, abs={}ns)",
+                        "[{}] Received advance for quantum {} (delta={}ns, abs={}ns)",
+                        backend.federation_id,
                         r.0.quantum_number(),
                         r.0.delta_ns(),
                         r.0.absolute_vtime_ns()
@@ -637,7 +642,8 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
 
         if backend.is_coordinated {
             virtmcu_qom::sim_info!(
-                "Sending ready for quantum {} (vtime={}ns, error={})",
+                "[{}] Sending ready for quantum {} (vtime={}ns, error={})",
+                backend.federation_id,
                 req.quantum_number(),
                 current_vtime,
                 error_code
@@ -785,6 +791,13 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let is_coordinated = s.coordinated;
     let n_vcpus = s.n_vcpus;
 
+    let fed_id_str = if s.federation_id.is_null() {
+        "unnamed-federation"
+    } else {
+        unsafe { CStr::from_ptr(s.federation_id) }.to_str().unwrap_or("unnamed-federation")
+    };
+    let federation_id = virtmcu_api::FederationId(fed_id_str.to_owned());
+
     if is_unix {
         if router_str.is_null() {
             virtmcu_qom::error_setg!(errp, "clock: 'router' (socket path) required for unix\n");
@@ -797,15 +810,16 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         } else {
             stall_ms * CLOCK_DEFAULT_WATCHDOG_THRESHOLD as u32
         };
-        s.rust_state = clock_init_with_transport(
-            s.node_id,
+        s.rust_state = clock_init_with_transport(ClockManagerConfig {
+            node_id: s.node_id,
             n_vcpus,
-            Box::new(transport),
-            None,
-            stall_ms,
+            transport: Box::new(transport),
+            session: None,
+            stall_timeout_ms: stall_ms,
             is_coordinated,
-            watchdog_ms,
-        );
+            session_watchdog_ms: watchdog_ms,
+            federation_id,
+        });
     } else {
         let watchdog_ms = if s.session_watchdog_ms > 0 {
             s.session_watchdog_ms
@@ -819,6 +833,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             stall_ms,
             is_coordinated,
             watchdog_ms,
+            federation_id,
         );
     }
 
@@ -887,6 +902,7 @@ define_properties!(
     VIRT_CLOCK_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuClock, node_id, 0xFFFF_FFFF),
+        define_prop_string!(c"federation_id".as_ptr(), VirtmcuClock, federation_id),
         define_prop_uint32!(c"n-vcpus".as_ptr(), VirtmcuClock, n_vcpus, 1),
         define_prop_string!(c"mode".as_ptr(), VirtmcuClock, mode),
         define_prop_string!(c"router".as_ptr(), VirtmcuClock, router),
@@ -925,7 +941,7 @@ static VIRT_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(VIRT_CLOCK_TYPE_INIT, VIRT_CLOCK_TYPE_INFO);
 
-fn clock_init_with_transport(
+struct ClockManagerConfig {
     node_id: u32,
     n_vcpus: u32,
     transport: Box<dyn ClockSyncTransport>,
@@ -933,21 +949,25 @@ fn clock_init_with_transport(
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-) -> *mut ClockManager {
+    federation_id: virtmcu_api::FederationId,
+}
+
+fn clock_init_with_transport(config: ClockManagerConfig) -> *mut ClockManager {
     let shutdown = Arc::new(AtomicBool::new(false));
-    let watchdog_threshold = if session_watchdog_ms > 0 && stall_timeout_ms > 0 {
-        (session_watchdog_ms / stall_timeout_ms) as u64
+    let watchdog_threshold = if config.session_watchdog_ms > 0 && config.stall_timeout_ms > 0 {
+        (config.session_watchdog_ms / config.stall_timeout_ms) as u64
     } else {
         CLOCK_DEFAULT_WATCHDOG_THRESHOLD
     };
     let backend = Arc::new(VirtmcuClockBackend {
-        n_vcpus: core::sync::atomic::AtomicU32::new(n_vcpus),
+        n_vcpus: core::sync::atomic::AtomicU32::new(config.n_vcpus),
         vcpu_halt_count: core::sync::atomic::AtomicU32::new(0),
-        session,
-        transport,
-        node_id,
-        stall_timeout_ms,
-        is_coordinated,
+        session: config.session,
+        transport: config.transport,
+        node_id: config.node_id,
+        federation_id: config.federation_id,
+        stall_timeout_ms: config.stall_timeout_ms,
+        is_coordinated: config.is_coordinated,
         watchdog_threshold,
         consecutive_timeouts: core::sync::atomic::AtomicU64::new(0),
         abort_fn: Arc::new(|| std::process::exit(1)),
@@ -982,9 +1002,16 @@ fn clock_init_internal(
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
+    federation_id: virtmcu_api::FederationId,
 ) -> *mut ClockManager {
     let session = unsafe {
-        match transport_zenoh::open_session(router) {
+        let mut config = match transport_zenoh::open_config(router) {
+            Ok(c) => c,
+            Err(_) => return ptr::null_mut(),
+        };
+        let _ = config
+            .insert_json5("metadata/federation_id", &format!("\"{}\"", federation_id.as_str()));
+        match zenoh::open(config).wait() {
             Ok(s) => Arc::new(s),
             Err(_) => return ptr::null_mut(),
         }
@@ -1047,15 +1074,16 @@ fn clock_init_internal(
         _node_id: node_id,
         is_coordinated,
     });
-    clock_init_with_transport(
+    clock_init_with_transport(ClockManagerConfig {
         node_id,
         n_vcpus,
         transport,
-        Some(session),
+        session: Some(session),
         stall_timeout_ms,
         is_coordinated,
         session_watchdog_ms,
-    )
+        federation_id,
+    })
 }
 
 #[cfg(test)]

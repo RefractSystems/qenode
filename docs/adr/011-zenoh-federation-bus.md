@@ -13,7 +13,9 @@ Traditional emulation frameworks approach this in various ways:
 Because `VirtMCU` relies on unmodified QEMU (which is a heavy, standalone C application with its own TCG execution loop), we cannot simply compile multiple QEMU instances into a single binary. They must run as separate processes (or separate Docker containers in a Kubernetes cluster). We need an Inter-Process Communication (IPC) layer.
 
 ## Decision
-We selected **Eclipse Zenoh** (native Rust) as the sole federation message bus for all inter-node communication, time synchronization, and cyber-physical telemetry.
+We originally selected **Eclipse Zenoh** (native Rust) as the sole federation message bus for all inter-node communication, time synchronization, and cyber-physical telemetry.
+
+*Update*: The architecture has since evolved into a **Dual-Transport Architecture**. Zenoh remains the primary Data Plane transport for distributed, multi-node federations and canonical message sorting. However, for 1:1 Control Plane communication (e.g., Clock synchronization and MMIO socket bridging) on a single host, we now also support and prefer **Unix Domain Sockets** to achieve single-digit microsecond latency.
 
 ### Why not standard UDP/TCP sockets?
 If Node A sends a UDP packet to Node B, the packet travels through the host operating system's network stack. The host OS scheduler introduces non-deterministic latency. Node B might receive the packet at virtual time `T=10ms` in one run, and `T=12ms` in the next run, causing the firmware to behave differently.
@@ -22,10 +24,10 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 
 ### Pros
 1. **High Performance and Low Overhead**: Zenoh is written in Rust and highly optimized for edge and robotics (ROS2) networks. Native Rust plugins integrate directly into QEMU's event loop.
-2. **Language Agnostic**: The `TimeAuthority` can be written in Python, the `deterministic_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
+2. **Language Agnostic**: The `Physical Node` can be written in Python, the `deterministic_coordinator` in Rust, and the QEMU plugins in Rust. They all interoperate seamlessly.
 3. **Flexible Discovery**: Zenoh supports both decentralized discovery (multicast) and explicit endpoints. VirtMCU strictly mandates explicit TCP/UDP endpoints for deterministic CI execution.
 4. **Flexible Topologies**: Zenoh can route over shared memory (SHM), TCP, UDP, or QUIC. If two QEMU instances are on the same host, Zenoh uses SHM. If they are in different cloud regions, it uses TCP. The `VirtMCU` code does not change.
-5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `clock` requirement where QEMU must block the TCG loop and ask the `TimeAuthority` for the next time quantum.
+5. **Request/Reply Semantics**: Zenoh supports synchronous `GET` queries, which perfectly fits our `clock` requirement where QEMU must block the TCG loop and ask the `Physical Node` for the next time quantum.
 
 ### Cons
 1. **Toolchain Complexity**: Integrating a modern Rust library into QEMU requires managing Rust cross-compilation toolchains alongside the standard C toolchain.
@@ -34,7 +36,7 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 
 ## Implementation Notes for Junior Developers
 If you are reading the code in `hw/rust/`:
-- **`clock`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request to ask the `TimeAuthority` to advance time. It blocks until the reply is received.
+- **`clock`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request to ask the `Physical Node` to advance time. It blocks until the reply is received.
 - **`netdev` and `chardev`** use Zenoh's **Pub/Sub** API. They declare publishers to send outbound bytes and subscribers to receive inbound bytes asynchronously. The subscriber callback places the data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
 
 ## External References

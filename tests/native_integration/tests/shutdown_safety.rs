@@ -59,6 +59,7 @@ async fn test_shutdown_during_vta_step() -> Result<()> {
     let replies = session.get(advance_topic).payload(payload).await.unwrap();
 
     // Give it a tiny bit to actually start processing the request
+    // virtmcu-allow: test_sleep reasoning="wait for request to start processing"
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Shutdown while step is in flight

@@ -66,6 +66,11 @@ This chapter serves as the immutable law for all developers—human or agent—c
 - **Bql API**: Use the RAII `Bql::lock()` and `QemuCond::wait_yielding_bql`.
 - **Lock Order**: BQL → peripheral mutex → condvar wait.
 
+### Two-Stage Delivery Pipeline
+- **Never mutate guest-visible state or wake a suspended vCPU directly inside a `SafeSubscription` callback.**
+- **Stage 1 (Host Time / `SafeSubscription`)**: Queue payload by `delivery_vtime_ns` and schedule a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`).
+- **Stage 2 (Virtual Time / `QomTimer`)**: Timer callback fires at `delivery_vtime_ns`. Move data to guest registers, assert IRQs, or call `cond.notify_all()`.
+
 ### Safe Peripheral Teardown
 - **No Bounded Spinloops**: BANNED: `while attempts < N`. This leads to time-bomb Use-After-Free (UAF) bugs.
 - **The Drain Pattern**: Use `Condvar::notify_all()` + unconditional `Condvar::wait()` in the `Drop` implementation to ensure all vCPUs have exited the MMIO path before the device is freed.

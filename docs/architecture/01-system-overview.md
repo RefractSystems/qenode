@@ -68,12 +68,13 @@ The diagram below illustrates how the abstract CPS concepts map to our concrete 
 │  └──────────────────────┘       │   gateway)          │                             │ │
 │                                 └─────────────────────┘                             │ │
 │                                                                                      │ │
-│                                 ┌─────────────────────────────────┐                 │ │
-│                                 │  Time Authority                  │─────────────────┘ │
-│                                 │  (virtmcu-time-authority)        │                   │
-│                                 │  - issues ClockAdvanceReq        │                   │
-│                                 │  - collects actuators per quantum│                   │
-│                                 └──────────────┬───────────────────┘                   │
+┌─────────────────────────────────┐                 │ │
+│  Physical Node                  │─────────────────┘ │
+│  (virtmcu-physical-node)         │                   │
+│  - issues ClockAdvanceReq        │                   │
+│  - collects actuators per quantum│                   │
+└──────────────┬───────────────────┘                   │
+
 │                                                │                                       │
 │      Control Plane Transport [Zenoh / Unix Sockets]                                   │
 │      (one channel per node — direct, low-latency clock sync)                          │
@@ -98,7 +99,7 @@ VirtMCU utilizes three distinct communication channels:
 1. **Control Plane (Clock Sync)**: A 1:1 low-latency RPC channel per QEMU node for
    `ClockAdvanceReq` / `ClockReadyResp`. Carried over Unix sockets or Zenoh.
 2. **Physics Plane (Co-simulation)**: The `PhysicsTrigger` / `PhysicsDone` handshake
-   between the Time Authority and the Physics Gateway, plus the shared-memory (SHM)
+   between the Physical Node and the Physics Gateway, plus the shared-memory (SHM)
    channel between the gateway and the physics engine. See
    [Physics Gateway](./12-physics-gateway.md).
 3. **Data Plane (Emulated Comms)**: A coordinated Zenoh bus for inter-node traffic
@@ -129,23 +130,19 @@ The distinction matters in practice:
   fixed. "Federation" appears in CLI flags, log messages, and documentation. Renaming
   schema fields to "federation" would break backward compatibility without adding value.
 
-```
-┌──────────────────────────────────────────────────┐
-│  world.yaml  (World — the Federation Object Model)                   │
-│  global_seed: 0xDEADBEEF                         │
-│  nodes: [node0, node1, physics_gateway]          │
-│  topology: …                                     │
-└──────────────────────┬───────────────────────────┘
-                       │  virtmcu-time-authority --world world.yaml
-                       │                         --federation-id run-42
-                       ▼
-┌──────────────────────────────────────────────────┐
-│  Federation run-42  (running instance)           │
-│  ├── QEMU node 0                                 │
-│  ├── QEMU node 1                                 │
-│  ├── virtmcu-physics-gateway                     │
-│  └── virtmcu-deterministic-coordinator           │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    World["world.yaml (World — the Federation Object Model)\n- global_seed: 0xDEADBEEF\n- nodes: [node0, node1, physics_gateway]\n- topology: ..."]
+    
+    World -- "virtmcu-physical-node --world world.yaml\n--federation-id run-42" --> Fed
+    
+    subgraph "Federation run-42 (running instance)"
+        direction TB
+        Q0["QEMU node 0"]
+        Q1["QEMU node 1"]
+        PG["virtmcu-physics-gateway"]
+        DC["virtmcu-deterministic-coordinator"]
+    end
 ```
 
 ---

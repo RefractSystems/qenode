@@ -112,7 +112,7 @@ implements the FMI co-simulation master algorithm:
 
 | FMI 3.0 Concept | VirtMCU Equivalent |
 |---|---|
-| **Co-simulation master** | Time Authority (`virtmcu-time-authority`) |
+| **Co-simulation master** | Physical Node (`virtmcu-physical-node`) |
 | **Co-simulation slave (FMU)** | QEMU node — executes firmware within one time step |
 | **Communication step** (`h`) | Quantum size (`delta_ns`) |
 | **`doStep(currentTime, h)`** | `ClockAdvanceReq {absolute_vtime_ns, delta_ns}` |

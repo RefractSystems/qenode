@@ -16,8 +16,9 @@ peripherals:
 
 - name: actuator
   type: actuator
-  address: '0x50000000'
+  address: none
   properties:
+    svd: hw/defs/actuator.svd
     node: 0
     region-size: 256
     topic-prefix: "firmware/control"
@@ -25,12 +26,14 @@ peripherals:
 
 - name: sensor
   type: sensor
-  address: '0x51000000'
+  address: none
   properties:
+    svd: hw/defs/sensor.svd
     node: 0
     region-size: 256
     topic-prefix: "sim/sensor"
     transport: "hub0"
+    debug: true
 
 topology:
   links: []

@@ -26,7 +26,7 @@ A common question is: *Should Docker Compose start Zenoh directly, or should it 
 
 The abstraction you are looking for—preventing every single peripheral within a QEMU instance from opening its own transport connection—**already exists inside the QEMU guest**. 
 
-It is the **`virtmcu-transport-hub` QOM device** (`hw/rust/backbone/transport_hub`).
+It is the **`virtmcu-transport-hub` QOM device** (`hw/rust/backbone/transport-hub`).
 
 **The Architecture:**
 1. **Infrastructure Level:** Docker Compose spins up the `zenoh-router` (the physical network switch).

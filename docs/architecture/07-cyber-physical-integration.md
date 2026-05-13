@@ -49,18 +49,18 @@ The Cyber Node acts as a compliant participant in federated simulation environme
 
 The Cyber Node connects live to a Physics Engine via the **Physics Gateway**
 (`virtmcu-physics-gateway`). The gateway is a dedicated process that sits between the
-Time Authority and the physics engine:
+Physical Node and the physics engine:
 
-- The Time Authority collects all actuator commands for a completed quantum, serialises
+- The Physical Node collects all actuator commands for a completed quantum, serialises
   them as a `PhysicsTrigger` FlatBuffer, and forwards them to the gateway.
 - The gateway writes actuator values to a shared-memory region (`/dev/shm`) and signals
   the physics engine via a Linux futex doorbell.
 - The physics engine runs one time-step, writes updated sensor values back to SHM, and
   acknowledges via the same futex mechanism.
 - The gateway reads the sensor values, publishes them to Zenoh, and returns
-  `PhysicsDone` to the Time Authority.
+  `PhysicsDone` to the Physical Node.
 
-The Time Authority does not issue the next `ClockAdvanceReq` until `PhysicsDone` is
+The Physical Node does not issue the next `ClockAdvanceReq` until `PhysicsDone` is
 received, ensuring strict causal ordering across every quantum.
 
 For architecture details, SHM layout, wire protocol, and deployment topology, see

@@ -268,27 +268,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # third-party-base is intentionally excluded from PR builds — only ci-main.yml
-      # writes to the QEMU cache so experimental patch branches never warm the
-      # shared cache. The ci target reads third-party-base via its cache-from list.
-      - name: Set Bake Targets
-        id: targets
-        shell: bash
-        run: |
-          if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            CI_TARGET="ci"
-            BASE_TARGET="third-party-base"
-          else
-            CI_TARGET="ci-asan"
-            BASE_TARGET="third-party-base-asan"
-          fi
-          if [ "${{ env.QEMU_BASE_CACHE }}" == "miss" ]; then
-            echo "targets=$BASE_TARGET,$CI_TARGET" >> "$GITHUB_OUTPUT"
-          else
-            echo "targets=$CI_TARGET" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build and push ci stage
+      - name: Build and push third-party-base cache
+        if: env.QEMU_BASE_CACHE == 'miss'
         uses: docker/bake-action@v7
         env:
           ARCH: amd64
@@ -298,7 +279,21 @@ jobs:
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          targets: ${{ steps.targets.outputs.targets }}
+          targets: ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
+          push: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          files: docker-bake.hcl
+
+      - name: Build ci stage
+        uses: docker/bake-action@v7
+        env:
+          ARCH: amd64
+          IMAGE_TAG: sha-${{ github.sha }}
+          PUSH_CACHE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+          CI: "true"
+          THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          targets: ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
           load: true
           files: docker-bake.hcl
 

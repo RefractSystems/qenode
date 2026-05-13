@@ -52,10 +52,9 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     && curl -fsSL -o /tmp/binstall.tgz "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz" \
     && tar -xzf /tmp/binstall.tgz -C /usr/local/cargo/bin \
     && rm /tmp/binstall.tgz \
-    && rustup toolchain install stable --profile minimal \
+    && rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-analyzer \
     && rustup default stable \
-    && rustup toolchain install nightly --profile minimal --component miri \
-    && rustup component add rustfmt clippy rust-analyzer \
+    && rustup toolchain install nightly --profile minimal --component miri --component rustfmt --component clippy \
     && GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || echo "") && export GITHUB_TOKEN \
     && cargo install bindgen-cli --version "${BINDGEN_VERSION}" \
     && cargo binstall -y cargo-audit \
@@ -425,7 +424,8 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     fi \
     && CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/deterministic_coordinator" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-time-authority" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physical-node" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physics-gateway" /usr/local/bin/ \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-resd-replay" /usr/local/bin/
 
 # hadolint ignore=SC2016

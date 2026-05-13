@@ -1,7 +1,7 @@
 # ADR-016: Logical Domain Model for World Specification
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 VirtMCU has transitioned from a flat, emulator-centric configuration format (.repl) to a hierarchical World YAML. Currently, the schema validation is fragmented:

@@ -17,10 +17,6 @@ peripherals:
     address: 0x09005000
     properties:
       size: 0x1000
-  - name: spi_echo
-    type: spi-echo
-    parent: spi0
-    address: 0
 
 topology:
   links: []

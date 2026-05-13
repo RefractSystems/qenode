@@ -647,6 +647,9 @@ VIRTMCU_EXPORT void virtmcu_kick_first_cpu_for_quantum(void) {
 VIRTMCU_EXPORT bool virtmcu_vcpu_should_yield(void) {
     return false; // Default implementation
 }
+
+VIRTMCU_EXPORT uint32_t virtmcu_global_node_id = 0;
+VIRTMCU_EXPORT uint64_t virtmcu_global_vtime_ns = 0;
 "#;
     std::fs::write(&hooks_c, hooks_c_content)?;
 
