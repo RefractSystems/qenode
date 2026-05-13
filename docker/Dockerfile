@@ -425,7 +425,8 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     fi \
     && CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/deterministic_coordinator" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-time-authority" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physical-node" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physics-gateway" /usr/local/bin/ \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-resd-replay" /usr/local/bin/
 
 # hadolint ignore=SC2016
