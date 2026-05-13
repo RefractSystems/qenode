@@ -570,6 +570,7 @@ impl TopologyBuilder {
             router_child: router_proc,
             is_coordinated: is_coordinated_flags,
             current_vtime: 0,
+            current_quantum: 0,
             recent_qemu_stderr,
         })
     }
@@ -655,6 +656,7 @@ pub struct VirtmcuTestEnv {
     router_child: Child,
     is_coordinated: Vec<bool>,
     pub current_vtime: u64,
+    pub current_quantum: u64,
     recent_qemu_stderr: Vec<std::sync::Arc<tokio::sync::Mutex<Vec<String>>>>,
 }
 
@@ -716,6 +718,7 @@ impl VirtmcuTestEnv {
             let advance = std::cmp::min(step_ns, total_ns - advanced);
             advanced += advance;
             self.current_vtime += advance;
+            self.current_quantum += 1;
 
             for node_id in 0..self.qemu_children.len() {
                 if !self.is_coordinated[node_id] {
@@ -723,7 +726,7 @@ impl VirtmcuTestEnv {
                 }
 
                 self.clock_coordinator
-                    .step_clock(node_id, advance, self.current_vtime, 0)
+                    .step_clock(node_id, advance, self.current_vtime, self.current_quantum)
                     .await?;
             }
             // Small yield to allow async tasks (like monitors) to process
@@ -814,9 +817,7 @@ impl VirtmcuTestEnv {
             return Ok(());
         }
 
-        let mut quantum: u64 = 1;
-        let mut current_vtime: u64 = 0;
-        let step_ns: u64 = 1_000_000; // 1ms step
+        let step_ns: u64 = 10_000_000; // 10ms step
 
         loop {
             if start_time.elapsed() > timeout_duration {
@@ -841,12 +842,18 @@ impl VirtmcuTestEnv {
             }
 
             // 1. Advance the clock by 1 quantum (if coordinated)
-            if self.is_coordinated[node_id] {
-                current_vtime += step_ns;
-                self.clock_coordinator
-                    .step_clock(node_id, step_ns, current_vtime, quantum)
-                    .await?;
-                quantum += 1;
+            let any_coordinated = self.is_coordinated.iter().any(|&c| c);
+            if any_coordinated {
+                self.current_vtime += step_ns;
+                self.current_quantum += 1;
+
+                for node_idx in 0..self.qemu_children.len() {
+                    if self.is_coordinated[node_idx] {
+                        self.clock_coordinator
+                            .step_clock(node_idx, step_ns, self.current_vtime, self.current_quantum)
+                            .await?;
+                    }
+                }
             } else {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

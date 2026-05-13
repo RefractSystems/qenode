@@ -16,13 +16,16 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
                 .with_yaml_path(yaml_path)
                 .orchestrated(true),
         )
-        .with_timeout(10)
+        .with_timeout(60)
         .run_test(|env| {
             Box::pin(async move {
                 let topics = vec!["firmware/control/0/42", "firmware/control/0/99"];
                 let monitor = ActuatorMonitor::new(&env.session(), &topics).await?;
 
+                env.wait_for_output(0, "Actuator test firmware starting")
+                    .await?;
                 env.step_clock(500_000_000, 10_000_000).await?;
+                env.wait_for_output(0, "Test complete").await?;
 
                 // The actuator guest app performs multiple math operations and writes them
                 let found = monitor
