@@ -13,6 +13,7 @@ serde_json = "1.0.149"
 tracing = "0.1.44"
 libc = "0.2.186"
 virtmcu-api = { version = "0.1.0", path = "../../hw/rust/common/virtmcu-api" }
+cyber_bridge = { version = "0.1.0", path = "../../tools/cyber_bridge" }
 
 [build-dependencies]
 stress_adapter = { path = "../../tools/stress_adapter", artifact = "bin" }

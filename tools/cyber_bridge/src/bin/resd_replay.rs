@@ -1,4 +1,5 @@
 use std::env;
+use virtmcu_api::topics::sim_topic;
 
 #[tokio::main]
 async fn main() {
@@ -50,8 +51,8 @@ async fn main() {
     let session = zenoh::open(config).await.expect("IO error during setup");
 
     println!("Zenoh session opened successfully.");
-    let topic_prefix = env::var("ZENOH_TOPIC_PREFIX").unwrap_or_else(|_| "sim/clock".to_owned());
-    let advance_topic = format!("{topic_prefix}/advance/{node_id}");
+    let node_id_str = node_id.to_string();
+    let advance_topic = sim_topic::clock_advance(&node_id_str);
     println!("[RESD Replay] Node {node_id}: Advance topic: {advance_topic}");
     let mut current_vtime_ns = 0;
 
@@ -97,20 +98,20 @@ async fn main() {
         }
 
         // Publish sensor readings
-        for ((sample_type, channel_id), sensor) in all_sensors {
-            let topic = format!(
-                "sim/sensor/{}/resd_{}_{}",
-                node_id, *sample_type as u16, channel_id
-            );
+        for ((_sample_type, channel_id), sensor) in all_sensors {
+            let topic = format!("sim/sensor/{}/sensordata_{}", node_id, channel_id);
             let vals = sensor.get_reading(current_vtime_ns);
 
-            // Format: uint64_t vtime_ns + double values[N]
-            let mut payload = Vec::with_capacity(8 + vals.len() * 8);
-            payload.extend_from_slice(&current_vtime_ns.to_le_bytes());
+            let mut data_payload = Vec::with_capacity(vals.len() * 8);
             for v in vals {
-                payload.extend_from_slice(&v.to_le_bytes());
+                data_payload.extend_from_slice(&v.to_le_bytes());
             }
 
+            let payload = virtmcu_api::encode_frame(current_vtime_ns, 0, &data_payload);
+            println!(
+                "[RESD Replay] Publishing sensor data to {} at vtime {}",
+                topic, current_vtime_ns
+            );
             let _ = session.put(&topic, payload).await;
         }
     }

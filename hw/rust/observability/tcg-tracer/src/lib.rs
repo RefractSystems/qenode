@@ -51,6 +51,10 @@ static STATE: OnceLock<Arc<TracerState>> = OnceLock::new();
 // virtmcu-allow: static_state reasoning="High-performance lock-free execution toggle."
 static GLOBAL_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Required by QEMU to load the plugin.
+#[no_mangle]
+pub static qemu_plugin_version: c_int = 2;
+
 #[derive(Clone, Copy)]
 struct ExecEvent {
     vtime: u64,

@@ -1896,6 +1896,7 @@ name = "native-integration"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cyber_bridge",
  "libc",
  "serde_json",
  "stress_adapter",

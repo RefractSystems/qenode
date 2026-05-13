@@ -13,7 +13,10 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
     let mut plugin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     plugin_path.pop(); // Up to tests/
     plugin_path.pop(); // Up to workspace root
+    #[cfg(debug_assertions)]
     plugin_path.push("target/debug/libtcg_tracer.so");
+    #[cfg(not(debug_assertions))]
+    plugin_path.push("target/release/libtcg_tracer.so");
 
     let plugin_arg = format!("{},node_id=0,transport=zenoh", plugin_path.display());
 
@@ -52,7 +55,7 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
             if let Ok(msg) = msg {
                 let payload = msg.payload().to_bytes();
                 let event = root_as_insn_trace(&payload).expect("Invalid FB");
-                if event.pc() != 0 && event.disassembly().is_some() {
+                if event.pc() != 0 && event.disassembly().map_or(false, |s| !s.is_empty()) {
                     got_insn = true;
                     tracing::info!(
                         "Received trace event: PC=0x{:X}, Disas={}",

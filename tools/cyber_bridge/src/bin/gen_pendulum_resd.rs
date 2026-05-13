@@ -1,9 +1,17 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::fs::File;
 use std::io::Write;
+use std::path::Path;
 
 fn main() {
-    let path = "tests/fixtures/guest_apps/pendulum_controller/pendulum_angles.resd";
+    let path_str = "tests/fixtures/guest_apps/pendulum_controller/pendulum_angles.resd";
+    let path = Path::new(path_str);
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("Failed to create directories");
+    }
+
     let mut file = File::create(path).expect("Failed to create RESD file");
 
     // Header: "RESD", version 1, padding
@@ -18,13 +26,9 @@ fn main() {
     // Channel ID: 0
     file.write_u16::<LittleEndian>(0).unwrap();
 
-    // Data Size calculation:
-    // Subheader: Start Time (8) + Period (8) = 16
-    // Metadata Size: 8
-    // Metadata: 0
-    // Samples: 21 samples * 8 bytes = 168
-    // Total = 168 + 16 + 8 = 192
+    // 20 quantum steps of data (21 samples for n=0..20)
     let n_samples = 21;
+    // data_size = subheader (16) + metadata_size_field (8) + metadata (0) + samples (n_samples * 8)
     let data_size = 16 + 8 + (n_samples * 8);
     file.write_u64::<LittleEndian>(data_size as u64).unwrap();
 
@@ -35,11 +39,11 @@ fn main() {
     // Metadata Size = 0
     file.write_u64::<LittleEndian>(0).unwrap();
 
-    // Samples: angle_n = 0.5 * cos(n * 0.1), n = 0..20
+    // Samples
     for n in 0..n_samples {
         let angle = 0.5 * (n as f64 * 0.1).cos();
         file.write_f64::<LittleEndian>(angle).unwrap();
     }
 
-    println!("Successfully generated {}", path);
+    println!("Successfully generated {}", path_str);
 }

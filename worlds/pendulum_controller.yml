@@ -42,16 +42,18 @@ services:
     ]
 
   mock-physics:
-    image: public.ecr.aws/docker/library/python:3.11-slim
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     networks:
       - virtmcu-net
     depends_on:
       physical-node:
         condition: service_started
     volumes:
-      - ../tools/cyber_bridge/scripts/mock_physics.py:/mock_physics.py:ro
+      - ../target:/app/target:ro
       - /dev/shm:/dev/shm
-    command: ["python", "-u", "/mock_physics.py"]
+    command: ["/app/target/release/pendulum-mock-physics", "--node-id", "0", "--delta-ns", "1000000"]
 
 networks:
   virtmcu-net: {}

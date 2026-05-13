@@ -20,6 +20,10 @@ path = "src/bin/resd_replay.rs"
 name = "gen-pendulum-resd"
 path = "src/bin/gen_pendulum_resd.rs"
 
+[[bin]]
+name = "pendulum-mock-physics"
+path = "src/bin/pendulum_mock_physics.rs"
+
 [dependencies]
 zenoh = "1.9.0"
 virtmcu-zenoh-config.workspace = true

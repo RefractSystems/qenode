@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
     }
 
     let actuator_sink = if let Some(session) = &zenoh_session {
-        Some(ZenohActuatorSink::new(session, &args.topic_prefix, args.node_id).await?)
+        Some(ZenohActuatorSink::new(session, &args.node_id.to_string()).await?)
     } else {
         None
     };

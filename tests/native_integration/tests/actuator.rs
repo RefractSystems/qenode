@@ -1,4 +1,5 @@
 use anyhow::Result;
+use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -19,7 +20,9 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
         .with_timeout(60)
         .run_test(|env| {
             Box::pin(async move {
-                let topics = vec!["firmware/control/0/42", "firmware/control/0/99"];
+                let topic_42 = sim_topic::actuator_control("0", 42);
+                let topic_99 = sim_topic::actuator_control("0", 99);
+                let topics = vec![topic_42.as_str(), topic_99.as_str()];
                 let monitor = ActuatorMonitor::new(&env.session(), &topics).await?;
 
                 env.wait_for_output(0, "Actuator test firmware starting")
@@ -34,9 +37,9 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
                         let mut success_2 = false;
 
                         for (topic, _vtime, vals) in msgs {
-                            if topic == "firmware/control/0/42" && (vals[0] - 3.14).abs() < 0.001 {
+                            if topic == &topic_42 && (vals[0] - 3.14).abs() < 0.001 {
                                 success_1 = true;
-                            } else if topic == "firmware/control/0/99"
+                            } else if topic == &topic_99
                                 && vals.len() == 3
                                 && vals == &[1.0, 2.0, 3.0]
                             {

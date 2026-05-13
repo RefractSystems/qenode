@@ -245,11 +245,11 @@ mod tests {
         let mut s = ResdSensor::new("test".to_owned(), ResdSampleType::Acceleration);
         s.samples.push(ResdSample {
             timestamp_ns: 1000,
-            data: vec![100, 200, 300],
+            data: vec![100.0, 200.0, 300.0],
         });
         s.samples.push(ResdSample {
             timestamp_ns: 2000,
-            data: vec![200, 400, 600],
+            data: vec![200.0, 400.0, 600.0],
         });
 
         let v1 = s.get_reading(500); // zero-order hold before

@@ -699,6 +699,11 @@ impl VirtmcuTestEnv {
         self.ctx.variables.get("ROUTER_ENDPOINT").cloned()
     }
 
+    /// Returns the current contents of the UART buffer for a node.
+    pub async fn uart_buffer(&self, node_id: usize) -> String {
+        self.uart_buffers[node_id].clone()
+    }
+
     async fn format_qemu_error(&self, node_id: usize, msg: &str) -> String {
         let stderr_lock = self.recent_qemu_stderr[node_id].lock().await;
         let last_lines = stderr_lock.join("\n");

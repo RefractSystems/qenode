@@ -20,22 +20,20 @@ unsafe extern "C" fn allow_set_link(
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::format;
-use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::{c_char, c_uint, c_void};
 use core::ptr;
 use core::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use std::thread::JoinHandle;
+use virtmcu_api::topics::sim_topic;
 use virtmcu_qom::memory::{
     memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
 };
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::Bql;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,
@@ -79,11 +77,11 @@ pub struct VirtmcuActuatorState {
 struct SharedState {
     transport: Arc<dyn virtmcu_api::DataTransport>,
     node_id: u32,
-    topic_prefix: String,
 
     tx_sender: Sender<ActuatorPacket>,
     running: core::sync::atomic::AtomicBool,
     drain: virtmcu_qom::sync::VcpuDrain,
+    seq: core::sync::atomic::AtomicU64,
 }
 
 const DRAIN_TIMEOUT_MS: u32 = 30000;
@@ -91,6 +89,7 @@ const MAX_DATA_ELEMENTS: usize = 8;
 const F64_SIZE_BYTES: u64 = core::mem::size_of::<f64>() as u64;
 
 impl Drop for VirtmcuActuatorState {
+    /// Safe shutdown sequence follows CLAUDE.md §4 "Safe Peripheral Teardown".
     fn drop(&mut self) {
         self.shared.running.store(false, core::sync::atomic::Ordering::Release);
 
@@ -227,12 +226,6 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
         sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
     }
 
-    let prefix = if s.topic_prefix.is_null() {
-        "firmware/control".to_owned()
-    } else {
-        unsafe { CStr::from_ptr(s.topic_prefix).to_string_lossy().into_owned() }
-    };
-
     if s.transport_hub.is_null() {
         error_setg!(errp, "Strict DI violation: actuator transport_hub link is required.");
         return;
@@ -264,7 +257,7 @@ pub unsafe extern "C" fn actuator_realize(dev: *mut c_void, errp: *mut *mut c_vo
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport_arc = alloc::sync::Arc::clone(transport_ref);
 
-    s.rust_state = actuator_init_internal(s.node_id, prefix, transport_arc);
+    s.rust_state = actuator_init_internal(s.node_id, transport_arc);
     if s.rust_state.is_null() {
         error_setg!(errp, "actuator: failed to initialize Rust backend");
     }
@@ -365,17 +358,16 @@ fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> Jo
 
 fn actuator_init_internal(
     node_id: u32,
-    topic_prefix: String,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut VirtmcuActuatorState {
     let (tx, rx) = bounded(1024);
     let shared = Arc::new(SharedState {
         transport: Arc::clone(&transport),
         node_id,
-        topic_prefix,
         tx_sender: tx,
         running: core::sync::atomic::AtomicBool::new(true),
         drain: virtmcu_qom::sync::VcpuDrain::new(),
+        seq: core::sync::atomic::AtomicU64::new(0),
     });
 
     let bg_thread = start_tx_thread(Arc::clone(&shared), rx);
@@ -406,12 +398,15 @@ fn actuator_publish(
     })
     .expect("vtime is negative");
 
-    let topic = format!("{}/{}/{}", state.shared.topic_prefix, state.shared.node_id, actuator_id);
+    let seq = state.shared.seq.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+    let node_id_str = state.shared.node_id.to_string();
+    let topic = sim_topic::actuator_control(&node_id_str, actuator_id);
     let mut data_payload = Vec::with_capacity((data_size as usize) * (F64_SIZE_BYTES as usize));
     for val in data.iter().take(data_size as usize) {
         data_payload.extend_from_slice(&val.to_le_bytes());
     }
-    let payload = virtmcu_api::encode_frame(vtime_ns, 0, &data_payload);
+    let payload = virtmcu_api::encode_frame(vtime_ns, seq, &data_payload);
 
     match state.shared.tx_sender.try_send(ActuatorPacket { topic, payload }) {
         Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}

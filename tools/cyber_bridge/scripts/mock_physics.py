@@ -1,3 +1,4 @@
+# Deprecated: replaced by pendulum-mock-physics Rust binary. Will be removed in 1.0.0.
 import mmap
 import os
 import struct

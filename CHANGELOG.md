@@ -1,25 +1,29 @@
 # Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
-- ARCH-21: CoSimBridge formalization (Milestone 27.1).
-- Hybrid Replay Architecture (ADR-017).
+- Integrated physics-in-the-loop testing for pendulum controller (ARCH-21).
+- Deterministic RESD sensor fixture generator for closed-loop validation.
+- Rust implementation of pendulum mock-physics to replace Python spin-poll (Milestone 24.1).
 
 ## [0.9.10] - 2026-05-13
+
 ### Added
-- Dedicated `InsnTrace` FlatBuffer protocol for high-fidelity TCG instruction tracing.
-- `federation-id` support for multi-instance traceability and isolation.
-- Coordinator node-join validation to prevent misconfigured topologies.
-- Canonical topic functions for actuator and sensor namespaces in `virtmcu-api`.
+- Dedicated `InsnTrace` FlatBuffer schema for high-fidelity instruction tracing.
+- Canonical topic management in `virtmcu-api` for actuators, sensors, and telemetry.
+- Node-join validation in `DeterministicCoordinator` to prevent topology mismatches.
+- Federation-id support for multi-instance simulation traceability.
 
 ### Changed
-- Renamed `time-authority` to `physical-node` for architectural clarity.
-- Migrated physics gateway to a decoupled protocol as part of Phase X.
-- Refactored `rf802154` to use FlatBuffers for structured frame parsing.
+- Renamed `time-authority` to `physical-node` to better reflect its role in the CPS stack.
+- Updated TCG tracer to use the new `InsnTrace` protocol instead of overloading `TraceEvent`.
+- Migrated inter-node communication protocols to formalized FlatBuffer schemas.
 
 ### API Stability
 

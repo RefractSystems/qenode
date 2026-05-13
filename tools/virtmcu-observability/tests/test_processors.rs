@@ -75,7 +75,7 @@ fn test_vtime_span_processor_injects_attributes() {
 
     let mut found_start = false;
     let mut found_end = false;
-    for kv in attrs.iter() {
+    for kv in attrs {
         if kv.key.as_str() == "vtime_ns" {
             if let opentelemetry::Value::I64(v) = kv.value {
                 assert_eq!(v, 12345);

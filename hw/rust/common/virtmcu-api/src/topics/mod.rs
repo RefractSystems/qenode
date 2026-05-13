@@ -108,7 +108,19 @@ pub mod sim_topic {
     }
     /// Wildcard for subscribing to all actuator channels for a node.
     pub fn actuator_control_wildcard(node_id: &str) -> String {
-        format!("firmware/control/{node_id}/*")
+        format!("firmware/control/{node_id}/**")
+    }
+    /// Wildcard for subscribing to all sensor data for a node.
+    pub fn sensor_data_wildcard(node_id: &str) -> String {
+        format!("sim/sensor/{node_id}/**")
+    }
+    /// Topic for sensor liveliness.
+    pub fn sensor_liveliness(node_id: &str) -> String {
+        format!("sim/sensor/liveliness/{node_id}")
+    }
+    /// Topic for actuator liveliness.
+    pub fn actuator_liveliness(node_id: &str) -> String {
+        format!("sim/actuator/liveliness/{node_id}")
     }
     /// Topic for sensor data injected into firmware.
     /// Full topic: `sim/sensor/{node_id}/sensordata_{sensor_id}`

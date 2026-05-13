@@ -1,5 +1,6 @@
 use anyhow::Result;
-use std::process::Command;
+use cyber_bridge::resd_parser::ResdParser;
+use std::path::PathBuf;
 use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv};
 
@@ -7,15 +8,21 @@ use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv}
 async fn test_pendulum_closed_loop() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let firmware_path = "tests/fixtures/guest_apps/pendulum_controller/controller.elf";
-    let yaml_path = "tests/fixtures/guest_apps/pendulum_controller/board.yaml";
-    let resd_path = "tests/fixtures/guest_apps/pendulum_controller/pendulum_angles.resd";
+    // Find workspace root
+    let mut workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    workspace_root.pop(); // tests/
+    workspace_root.pop(); // workspace root
+
+    let guest_app_dir = workspace_root.join("tests/fixtures/guest_apps/pendulum_controller");
+    let firmware_path = guest_app_dir.join("controller.elf");
+    let yaml_path = guest_app_dir.join("board.yaml");
+    let resd_path = guest_app_dir.join("pendulum_angles.resd");
 
     let mut env = VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
-                .with_firmware_path(firmware_path)
-                .with_yaml_path(yaml_path)
+                .with_firmware_path(firmware_path.to_str().unwrap())
+                .with_yaml_path(yaml_path.to_str().unwrap())
                 .orchestrated(true),
         )
         .with_timeout(30)
@@ -23,51 +30,57 @@ async fn test_pendulum_closed_loop() -> Result<()> {
         .await?;
 
     let session = env.session();
-    let topic_wildcard = sim_topic::actuator_control_wildcard("0");
-    let monitor = ActuatorMonitor::new(&session, &[&topic_wildcard]).await?;
+    let actuator_topic = sim_topic::actuator_control("0", 0);
+    let monitor = ActuatorMonitor::new(&session, &[&actuator_topic]).await?;
 
-    // Spawn resd_replay as a separate process
-    let resd_replay_bin = env.find_binary("virtmcu-resd-replay")?;
+    // Load RESD data
+    let mut parser = ResdParser::new(&resd_path);
+    assert!(parser.init(), "Failed to parse RESD file");
+    let sensors = parser.sensors;
 
-    let mut resd_cmd = Command::new(resd_replay_bin);
-    resd_cmd
-        .arg(resd_path)
-        .arg("0") // node_id
-        .arg("1000000"); // delta_ns (1ms)
+    let mut current_vtime_ns = 0;
+    let step_ns = 10_000_000; // 10ms steps for faster simulation
 
-    // Set ZENOH_CONNECT if needed (VirtmcuTestEnv sets up a local router usually)
-    // Actually, VirtmcuTestEnv handles the router, so we should connect to it.
-    if let Some(router_endpoint) = env.router_endpoint() {
-        resd_cmd.env("ZENOH_CONNECT", router_endpoint);
-    }
+    let mut count = 0;
 
-    let mut resd_handle = resd_cmd.spawn()?;
-
-    // Step the clock for 20 quanta of 1ms each
-    for _ in 0..20 {
-        env.step_clock(1_000_000, 1_000_000).await?;
-    }
-
-    // Wait for resd_replay to finish
-    let _ = resd_handle.wait()?;
-
-    // Assert that the ActuatorMonitor received at least 15 actuator commands
-    let found = monitor
-        .wait_for_responses(5, |msgs| {
-            let mut count = 0;
-            for (_topic, _vtime, vals) in msgs {
-                if vals.len() == 1 {
-                    let val = vals[0];
-                    if (-500.0..=500.0).contains(&val) {
-                        count += 1;
-                    }
-                }
+    // Step clock and inject data
+    for _ in 0..100 {
+        // Step total 1000ms
+        for ((_sample_type, channel_id), sensor) in &sensors {
+            let topic = format!("sim/sensor/0/sensordata_{}", channel_id);
+            let vals = sensor.get_reading(current_vtime_ns);
+            let mut data_payload = Vec::with_capacity(vals.len() * 8);
+            for v in vals {
+                data_payload.extend_from_slice(&v.to_le_bytes());
             }
-            count >= 15
-        })
-        .await?;
+            let payload = virtmcu_api::encode_frame(current_vtime_ns, 0, &data_payload);
+            session
+                .put(&topic, payload)
+                .await
+                .map_err(|e| anyhow::anyhow!("Zenoh error: {e}"))?;
+        }
 
-    assert!(found, "Did not receive enough valid actuator commands");
+        env.step_clock(step_ns, step_ns).await?;
+        current_vtime_ns += step_ns;
+
+        // Check if we got enough commands yet
+        let msgs = monitor.captured_messages.lock().unwrap();
+        count = 0;
+        for (topic, _vtime, vals) in msgs.iter() {
+            if topic == &actuator_topic && vals.len() == 1 && (-500.0..=500.0).contains(&vals[0]) {
+                count += 1;
+            }
+        }
+        if count >= 15 {
+            break;
+        }
+    }
+
+    if count < 15 {
+        let uart = env.uart_buffer(0).await;
+        println!("UART Output:\n{}", uart);
+    }
+    assert!(count >= 15, "Received only {} actuator commands", count);
 
     // Assert that UART output contains "Angle:"
     env.wait_for_output(0, "Angle:").await?;
