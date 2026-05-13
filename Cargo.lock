@@ -4026,6 +4026,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transport-hub"
+version = "0.1.0"
+dependencies = [
+ "transport-zenoh",
+ "virtmcu-api",
+ "virtmcu-qom",
+ "zenoh",
+]
+
+[[package]]
 name = "transport-unix"
 version = "0.1.0"
 dependencies = [
@@ -4043,16 +4053,6 @@ dependencies = [
  "virtmcu-api",
  "virtmcu-qom",
  "virtmcu-zenoh-config",
- "zenoh",
-]
-
-[[package]]
-name = "transport_hub"
-version = "0.1.0"
-dependencies = [
- "transport-zenoh",
- "virtmcu-api",
- "virtmcu-qom",
  "zenoh",
 ]
 
@@ -4326,6 +4326,7 @@ dependencies = [
  "regex",
  "serde_json",
  "serde_yaml",
+ "svd-parser",
  "tokio",
  "toml",
  "tracing",

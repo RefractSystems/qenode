@@ -4,7 +4,7 @@ members = [
     "hw/rust/observability/tcg-tracer",
     "hw/rust/backbone/transport-zenoh",
     "hw/rust/backbone/transport-unix",
-    "hw/rust/backbone/transport_hub",
+    "hw/rust/backbone/transport-hub",
     "hw/rust/common/virtmcu-api",
     "hw/rust/backbone/clock",
     "hw/rust/common/virtmcu-qom",

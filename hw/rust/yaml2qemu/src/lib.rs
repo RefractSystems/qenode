@@ -439,40 +439,61 @@ pub fn parse_yaml(
                 };
 
                 if svd_path_buf.exists() {
-                    let xml = std::fs::read_to_string(&svd_path_buf).unwrap_or_default();
-                    if let Ok(device) = svd_parser::parse(&xml) {
-                        if let Some(svd_periph) = device.peripherals.first() {
-                            // Update address if missing or "none"
-                            let mut need_addr_update = p.address.is_none();
-                            if let Some(serde_yaml::Value::String(s)) = &p.address {
-                                if s == "none" {
-                                    need_addr_update = true;
+                    let xml = std::fs::read_to_string(&svd_path_buf).map_err(|e| {
+                        anyhow::anyhow!("Failed to read SVD file '{}': {}", svd_path_buf.display(), e)
+                    })?;
+                    let device = svd_parser::parse(&xml).map_err(|e| {
+                        anyhow::anyhow!("Failed to parse SVD file '{}': {:?}", svd_path_buf.display(), e)
+                    })?;
+                    if let Some(svd_periph) = device.peripherals.first() {
+                        // Update address if missing or "none"
+                        let mut need_addr_update = p.address.is_none();
+                        if let Some(serde_yaml::Value::String(s)) = &p.address {
+                            if s == "none" {
+                                need_addr_update = true;
+                            }
+                        }
+                        if need_addr_update {
+                            p.address = Some(serde_yaml::Value::String(format!(
+                                "0x{:x}",
+                                svd_periph.base_address
+                            )));
+                        } else {
+                            // Lint check: if address is explicitly provided but doesn't match SVD baseAddress
+                            if let Some(addr_val) = &p.address {
+                                let current_addr = parse_addr(addr_val);
+                                if current_addr != svd_periph.base_address {
+                                    return Err(anyhow::anyhow!(
+                                        "Lint Error: Peripheral '{}' has hardcoded address {:#x} which differs from SVD baseAddress {:#x}. Use 'address: none' to follow SOTA SSoT pattern.",
+                                        p.name, current_addr, svd_periph.base_address
+                                    ));
                                 }
                             }
-                            if need_addr_update {
-                                p.address = Some(serde_yaml::Value::String(format!(
-                                    "0x{:x}",
-                                    svd_periph.base_address
-                                )));
-                            }
+                        }
 
-                            // Update size if missing
-                            if !props.contains_key("size") && !props.contains_key("region-size") {
-                                if let Some(ab) = svd_periph.address_block.as_ref() {
-                                    if !ab.is_empty() {
-                                        props.insert(
-                                            "size".to_string(),
-                                            serde_yaml::Value::String(format!(
-                                                "0x{:x}",
-                                                ab[0].size
-                                            )),
-                                        );
-                                    }
+                        // Update size if missing
+                        if !props.contains_key("size") && !props.contains_key("region-size") {
+                            if let Some(ab) = svd_periph.address_block.as_ref() {
+                                if !ab.is_empty() {
+                                    props.insert(
+                                        "size".to_string(),
+                                        serde_yaml::Value::String(format!(
+                                            "0x{:x}",
+                                            ab[0].size
+                                        )),
+                                    );
                                 }
                             }
                         }
                     }
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "SVD file not found: '{}' (resolved to '{}').",
+                        svd_path,
+                        svd_path_buf.display()
+                    ));
                 }
+                props.remove("svd");
             }
         }
     }
