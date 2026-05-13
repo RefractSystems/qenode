@@ -32,6 +32,11 @@ enum PlantType {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Identifier for this running simulation instance (HLA: federation name).
+    /// Used in log output and Zenoh session metadata. Required.
+    #[arg(long, env = "VIRTMCU_FEDERATION_ID")]
+    federation_id: String,
+
     /// Node to drive
     #[arg(long, default_value_t = 0)]
     node_id: u32,
@@ -85,8 +90,14 @@ struct Args {
     gateway_connect: Option<String>,
 }
 
-async fn open_zenoh_session(connect: Option<&String>) -> Result<Arc<zenoh::Session>> {
+async fn open_zenoh_session(
+    connect: Option<&String>,
+    federation_id: &str,
+) -> Result<Arc<zenoh::Session>> {
     let mut config = virtmcu_zenoh_config::client_config();
+
+    let _ = config.insert_json5("metadata/federation_id", &format!("\"{}\"", federation_id));
+
     if let Some(connect) = connect {
         let json_connect = if connect.starts_with('[') && connect.ends_with(']') {
             connect.clone()
@@ -117,12 +128,13 @@ async fn main() -> Result<()> {
         std::sync::Arc::new(DummyVTimeProvider),
     );
     let args = Args::parse();
+    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
 
     let mut zenoh_session: Option<Arc<zenoh::Session>> = None;
 
     let transport: Box<dyn PhysicalNodeTransport> = match args.transport {
         TransportType::Zenoh => {
-            let session = open_zenoh_session(args.connect.as_ref()).await?;
+            let session = open_zenoh_session(args.connect.as_ref(), federation_id.as_str()).await?;
             zenoh_session = Some(Arc::clone(&session));
             Box::new(ZenohPhysicalNodeTransport::new(session, args.node_id))
         }
@@ -139,7 +151,8 @@ async fn main() -> Result<()> {
     if zenoh_session.is_none()
         && (args.data_connect.is_some() || matches!(args.plant, PlantType::Embedded))
     {
-        zenoh_session = Some(open_zenoh_session(args.data_connect.as_ref()).await?);
+        zenoh_session =
+            Some(open_zenoh_session(args.data_connect.as_ref(), federation_id.as_str()).await?);
     }
 
     let actuator_sink = if let Some(session) = &zenoh_session {
@@ -170,7 +183,8 @@ async fn main() -> Result<()> {
                     let session = if let Some(ref s) = zenoh_session {
                         Arc::clone(s)
                     } else {
-                        open_zenoh_session(args.gateway_connect.as_ref()).await?
+                        open_zenoh_session(args.gateway_connect.as_ref(), federation_id.as_str())
+                            .await?
                     };
                     Box::new(ZenohPhysicsTransport::new(session))
                 }
@@ -184,6 +198,7 @@ async fn main() -> Result<()> {
     let timeout = Duration::from_millis(args.timeout_ms);
 
     info!(
+        federation = %federation_id,
         plant = ?args.plant,
         node_id = args.node_id,
         delta_ns = args.delta_ns,
@@ -191,6 +206,11 @@ async fn main() -> Result<()> {
     );
 
     loop {
+        tracing::info!(
+            federation = %federation_id,
+            quantum = quantum_number,
+            "quantum start"
+        );
         let req = ClockAdvanceReq::new(args.delta_ns, absolute_vtime_ns, quantum_number);
 
         let mut resp_opt = None;

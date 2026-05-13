@@ -67,7 +67,7 @@ Before                              After
 graph TD
     FW["Firmware (QEMU)<br/>writes MMIO → actuator peripheral"]
     ACT["VirtmcuActuator peripheral<br/>encodes f64 + delivery_vtime_ns<br/>publishes firmware/control/&lt;node&gt;/&lt;id&gt;"]
-    PN["virtmcu-physical-node<br/>ZenohActuatorSink collects commands<br/>Issues ClockAdvanceReq / ClockReadyResp<br/>Sends PhysicsTrigger after quantum"]
+    PN["virtmcu-physical-node<br/>--federation-id &lt;id&gt;<br/>ZenohActuatorSink collects commands<br/>Issues ClockAdvanceReq / ClockReadyResp<br/>Sends PhysicsTrigger after quantum"]
     GW["virtmcu-physics-gateway<br/>Receives PhysicsTrigger<br/>Writes actuators to SHM<br/>futex-wakes physics engine<br/>Reads sensors from SHM<br/>Publishes sim/sensor/**<br/>Sends PhysicsDone"]
     PE["Physics Engine<br/>(reference / MuJoCo / Omniverse)<br/>futex-waits on bridge_seq<br/>Runs one time-step<br/>Writes sensors to SHM<br/>Increments physics_seq"]
     COORD["DeterministicCoordinator<br/>PDES barrier for inter-node messages<br/>(UART, CAN, Ethernet)"]

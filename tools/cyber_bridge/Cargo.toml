@@ -25,7 +25,7 @@ virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
 anyhow = "1.0"
 memmap2 = "0.9"
 libc = "0.2"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 tracing.workspace = true
 virtmcu-observability.workspace = true
 flatbuffers.workspace = true

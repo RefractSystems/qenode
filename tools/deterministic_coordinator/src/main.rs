@@ -12,6 +12,11 @@ use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 #[derive(Parser, Debug)]
 #[command(version, about = "Deterministic Coordinator", long_about = None)]
 struct Args {
+    /// Identifier for this running simulation instance (HLA: federation name).
+    /// Used in log output. Required.
+    #[arg(long, env = "VIRTMCU_FEDERATION_ID")]
+    federation_id: String,
+
     #[arg(long, default_value_t = 3)]
     nodes: usize,
 
@@ -185,9 +190,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "virtmcu-deterministic-coordinator",
         std::sync::Arc::new(DummyVTimeProvider),
     );
-    tracing::info!("DeterministicCoordinator starting...");
-
     let args = Args::parse();
+    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
+
+    tracing::info!(federation = %federation_id, "DeterministicCoordinator starting...");
 
     let topo_raw = if let Some(path) = &args.topology {
         match topology::TopologyGraph::from_yaml(std::path::Path::new(path)) {
@@ -219,14 +225,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let topo = Arc::new(tokio::sync::RwLock::new(topo_raw));
 
     if transport == topology::Transport::Unix {
-        run_unix_coordinator(args, topo, barrier, pcap_log).await
+        run_unix_coordinator(args, federation_id, topo, barrier, pcap_log).await
     } else {
-        run_deterministic_coordinator(args, topo, barrier, pcap_log).await
+        run_deterministic_coordinator(args, federation_id, topo, barrier, pcap_log).await
     }
 }
 
 async fn run_deterministic_coordinator(
     args: Args,
+    federation_id: virtmcu_api::FederationId,
     topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     barrier: Arc<QuantumBarrier>,
     mut pcap_log: Option<MessageLog>,
@@ -236,6 +243,11 @@ async fn run_deterministic_coordinator(
     config
         .insert_json5("mode", "\"client\"")
         .map_err(|e| format!("Invalid Zenoh mode: {}", e))?;
+
+    let _ = config.insert_json5(
+        "metadata/federation_id",
+        &format!("\"{}\"", federation_id.as_str()),
+    );
 
     if let Some(ref router) = args.connect {
         tracing::info!("Connecting to Zenoh router at {}", router);
@@ -394,6 +406,12 @@ async fn run_deterministic_coordinator(
                         if no_pdes {
                             deliver_message(&session, &topo, &seen_nodes, &mut pcap_log, &mut msg).await;
                         } else {
+                            tracing::debug!(
+                                federation = %federation_id,
+                                node = node_id,
+                                vtime = msg.delivery_vtime_ns,
+                                "Buffering legacy TX"
+                            );
                             node_batches
                                 .entry(node_id)
                                 .or_insert_with(Vec::new)
@@ -407,9 +425,9 @@ async fn run_deterministic_coordinator(
                 if let Ok(json_str) = String::from_utf8(payload.to_vec()) {
                     let mut t = topo.write().await;
                     if let Err(e) = t.update_from_json(&json_str) {
-                        tracing::error!("Failed to update topology from JSON: {}", e);
+                        tracing::error!(federation = %federation_id, "Failed to update topology from JSON: {}", e);
                     } else {
-                        tracing::info!("Topology updated from JSON: {}", json_str);
+                        tracing::info!(federation = %federation_id, "Topology updated from JSON: {}", json_str);
                     }
                 }
             }
@@ -461,7 +479,13 @@ async fn run_deterministic_coordinator(
                             (q, vtl, msgs)
                         };
 
-                        tracing::info!("Received DONE from node {} for quantum {} (vtime_limit: {}, {} batched msgs)", node_id, quantum, vtime_limit, batched_msgs.len());
+                        tracing::info!(
+                            federation = %federation_id,
+                            node = node_id,
+                            quantum = quantum,
+                            vtime_limit = vtime_limit,
+                            "Received DONE"
+                        );
 
                         let msgs = node_batches.remove(&node_id).unwrap_or_default();
                         let (mut current_msgs, future_msgs): (Vec<CoordMessage>, Vec<CoordMessage>) = msgs.into_iter().partition(|m| m.delivery_vtime_ns <= vtime_limit);
@@ -477,9 +501,10 @@ async fn run_deterministic_coordinator(
                                 sorted_msgs.sort();
 
                                 tracing::info!(
-                                    "Quantum {} complete. Delivering {} messages.",
-                                    current_quantum,
-                                    sorted_msgs.len()
+                                    federation = %federation_id,
+                                    quantum = current_quantum,
+                                    msg_count = sorted_msgs.len(),
+                                    "Quantum complete"
                                 );
 
                                 for mut msg in sorted_msgs {
@@ -631,10 +656,14 @@ async fn deliver_message(
 
 async fn run_unix_coordinator(
     _args: Args,
+    federation_id: virtmcu_api::FederationId,
     _topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     _barrier: Arc<QuantumBarrier>,
     mut _pcap_log: Option<MessageLog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("Unix coordinator started (minimal passthrough)");
+    tracing::info!(
+        federation = %federation_id,
+        "Unix coordinator started (minimal passthrough)"
+    );
     Ok(())
 }

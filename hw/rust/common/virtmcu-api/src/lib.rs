@@ -81,6 +81,25 @@ pub mod physics_generated;
 pub mod rf802154_generated;
 pub use physics_generated::virtmcu::physics as physics_proto;
 
+/// Opaque identifier for a running simulation instance (IEEE HLA "federation").
+/// Injected at startup via --federation-id; never discovered at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FederationId(pub String);
+
+impl FederationId {
+    /// Returns the federation ID as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for FederationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Decoded IEEE 802.15.4 MAC Header (MHR) fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rf802154Mhr {

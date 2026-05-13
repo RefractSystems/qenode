@@ -17,6 +17,11 @@ use zenoh::Wait;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Identifier for this running simulation instance (HLA: federation name).
+    /// Used in log output. Required.
+    #[arg(long, env = "VIRTMCU_FEDERATION_ID")]
+    federation_id: String,
+
     /// Transport type
     #[arg(long, default_value = "unix")]
     transport: String,
@@ -205,6 +210,7 @@ impl Drop for GatewayShm {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
     let timeout = std::time::Duration::from_millis(args.timeout_ms);
 
     let mut shm = GatewayShm::new(args.node_id, args.n_sensors, args.n_actuators)?;
@@ -213,6 +219,10 @@ async fn main() -> Result<()> {
         "unix" => Box::new(UnixSocketPhysicsServer::new(&args.connect)?),
         "zenoh" => {
             let mut config = virtmcu_zenoh_config::client_config();
+            let _ = config.insert_json5(
+                "metadata/federation_id",
+                &format!("\"{}\"", federation_id.as_str()),
+            );
             let json_connect = format!("[\"{}\"]", args.connect);
             config
                 .insert_json5("connect/endpoints", &json_connect)
@@ -225,6 +235,10 @@ async fn main() -> Result<()> {
 
     let zenoh_session: Option<Arc<zenoh::Session>> = if let Some(ref endpoint) = args.data_connect {
         let mut config = virtmcu_zenoh_config::client_config();
+        let _ = config.insert_json5(
+            "metadata/federation_id",
+            &format!("\"{}\"", federation_id.as_str()),
+        );
         let json_connect = format!("[\"{endpoint}\"]");
         config
             .insert_json5("connect/endpoints", &json_connect)
@@ -255,6 +269,13 @@ async fn main() -> Result<()> {
         if let Some(trigger_bytes) = server.recv_trigger(timeout) {
             let trigger = flatbuffers::root::<physics_proto::PhysicsTrigger>(&trigger_bytes)?;
             let quantum_number = trigger.quantum_number();
+
+            tracing::info!(
+                federation = %federation_id,
+                quantum = quantum_number,
+                vtime_ns = trigger.quantum_end_vtime_ns(),
+                "PhysicsDone ack"
+            );
 
             let res = shm.step(trigger, args.timeout_ms);
             let status = if res.is_ok() { 0 } else { 1 };
