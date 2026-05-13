@@ -11,4 +11,5 @@ This index tracks the fundamental design decisions that have shaped the VirtMCU 
 | [ADR-013](013-language-selection-and-native-migration.md) | Rust as the Primary Language for Core Infrastructure | **Accepted** |
 | [ADR-015](015-logging.md) | Deterministic Logging and Observability | **Accepted** |
 | [ADR-016](016-logical-domain-model.md) | Logical Domain Model for World Specification | **Proposed** |
+| [ADR-017](017-sensor-data-replay.md) | Enterprise Sensor Data Replay & Trace Formats | **Proposed** |
 | [ADR-900](900-core-hardening-roadmap.md) | Core Hardening Roadmap | **Active** |

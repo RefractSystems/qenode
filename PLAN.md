@@ -240,3 +240,17 @@ Items here have no immediate action — they are structural constraints or futur
 - [x] Refactor the root `Makefile` into a thin wrapper delegating to `cargo xtask`.
 - [x] Update documentation (`01-build-system.md`).
 
+---
+
+### Phase 2: Enterprise Sensor Data Replay & Telemetry
+**Status**: 🟡 Open.
+**Goal**: Implement ADR-017. Replace the legacy RESD format with a SOTA Hybrid Replay Architecture (MCAP and ASAM MDF4) to enable Enterprise Grade Sensor-in-the-Loop and Hardware-in-the-Loop co-simulation.
+
+**Tasks**:
+- [ ] **2.1 Dependency Update**: Add `mcap` and `camino` (or equivalent path handler) crates to the VirtMCU workspace.
+- [ ] **2.2 `virtmcu-replay` Node**: Create a new Zenoh client binary (`tools/virtmcu-replay`) that acts as a Deterministic Co-Simulation node. It must participate in the CMB quantum barrier and synchronize MCAP payload injection to `delivery_vtime_ns`.
+- [ ] **2.3 `mdf2mcap` Converter**: Build a CLI tool/adapter to convert Automotive ASAM MDF4 (`.mf4`) traces into VirtMCU-compatible MCAP files.
+- [ ] **2.4 OSI Support**: Integrate Protobuf definitions for ASAM OSI (Open Simulation Interface) into the schema pipeline to support Object-Level sensor injection.
+- [ ] **2.5 Schema Update**: Update `world_schema.json` and `yaml2qemu` to support declaring a `replay_trace: "file.mcap"` property on peripherals/nodes.
+- [ ] **2.6 Deprecate RESD**: Remove any residual Renode RESD parsing logic and update documentation to reflect the new MCAP standard.
+
