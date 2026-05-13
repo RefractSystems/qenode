@@ -1896,7 +1896,6 @@ name = "native-integration"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "flatbuffers",
  "libc",
  "serde_json",
  "stress_adapter",

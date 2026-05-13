@@ -69,6 +69,15 @@ pub use rf802154_generated::virtmcu::rf_802154 as rf802154;
     clippy::undocumented_unsafe_blocks,
     clippy::extra_unused_lifetimes
 )]
+pub mod insn_trace_generated;
+#[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
+    clippy::all,
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    clippy::extra_unused_lifetimes
+)]
 pub mod physics_generated;
 #[allow( // virtmcu-allow: allow reasoning="FlatBuffers-generated module"
     clippy::all, // virtmcu-allow: allow reasoning="FlatBuffers-generated module — machine-generated code, not hand-written"
@@ -79,6 +88,7 @@ pub mod physics_generated;
     clippy::extra_unused_lifetimes
 )]
 pub mod rf802154_generated;
+pub use insn_trace_generated::virtmcu::insn_trace as insn_trace_proto;
 pub use physics_generated::virtmcu::physics as physics_proto;
 
 /// Opaque identifier for a running simulation instance (IEEE HLA "federation").

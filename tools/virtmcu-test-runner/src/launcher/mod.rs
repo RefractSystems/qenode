@@ -98,44 +98,39 @@ impl QemuLauncher {
         let build_dir = self.build_dir_name();
         let use_prebuilt =
             env::var("VIRTMCU_USE_PREBUILT_QEMU").unwrap_or_else(|_| "0".to_string()) == "1";
-        if use_prebuilt {
-            return Some(PathBuf::from(format!(
-                "/build/qemu/{}/install/lib/qemu",
-                build_dir
-            )));
-        }
 
-        let qemu_dir = self.workspace_root.join("third_party").join("qemu");
+        let qemu_base = if use_prebuilt {
+            PathBuf::from(format!("/build/qemu/{}", build_dir))
+        } else {
+            self.workspace_root
+                .join("third_party/qemu")
+                .join(&build_dir)
+        };
+
+        // If specific build_dir (e.g. asan) doesn't exist for prebuilt, fallback to default
+        let qemu_base = if use_prebuilt && !qemu_base.exists() {
+            PathBuf::from("/build/qemu/build-virtmcu")
+        } else {
+            qemu_base
+        };
 
         let arch = std::env::consts::ARCH;
-        let mut paths = Vec::new();
+        let mut candidate_subdirs = Vec::new();
 
         if arch == "aarch64" {
-            paths.push(
-                qemu_dir
-                    .join(&build_dir)
-                    .join("install/lib/aarch64-linux-gnu/qemu"),
-            );
-            paths.push(
-                qemu_dir
-                    .join(&build_dir)
-                    .join("install/lib/x86_64-linux-gnu/qemu"),
-            );
+            candidate_subdirs.push("install/lib/aarch64-linux-gnu/qemu");
+            candidate_subdirs.push("install/lib/x86_64-linux-gnu/qemu");
         } else {
-            paths.push(
-                qemu_dir
-                    .join(&build_dir)
-                    .join("install/lib/x86_64-linux-gnu/qemu"),
-            );
-            paths.push(
-                qemu_dir
-                    .join(&build_dir)
-                    .join("install/lib/aarch64-linux-gnu/qemu"),
-            );
+            candidate_subdirs.push("install/lib/x86_64-linux-gnu/qemu");
+            candidate_subdirs.push("install/lib/aarch64-linux-gnu/qemu");
         }
-        paths.push(qemu_dir.join(&build_dir).join("install/lib/qemu"));
+        candidate_subdirs.push("install/lib/qemu");
+        candidate_subdirs.push("install/lib64/qemu");
+        candidate_subdirs.push("lib/qemu");
+        candidate_subdirs.push("lib64/qemu");
 
-        for path in paths {
+        for subdir in candidate_subdirs {
+            let path = qemu_base.join(subdir);
             if path.exists() && path.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&path) {
                     for entry in entries.flatten() {

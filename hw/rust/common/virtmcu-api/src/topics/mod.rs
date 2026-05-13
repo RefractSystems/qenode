@@ -91,6 +91,30 @@ pub mod sim_topic {
     pub const PHYSICS_TRIGGER: &str = "sim/physics/trigger";
     /// Topic on which the Physics Gateway publishes done signals.
     pub const PHYSICS_DONE: &str = "sim/physics/done";
+
+    /// Generates the instruction trace topic for a node.
+    pub fn telemetry_insn(node_id: &str) -> String {
+        format!("sim/telemetry/trace/{node_id}/insn")
+    }
+    /// Generates the telemetry events topic for a node.
+    pub fn telemetry_events(node_id: &str) -> String {
+        format!("sim/telemetry/trace/{node_id}")
+    }
+
+    /// Topic prefix for actuator command output from firmware.
+    /// Full topic: `firmware/control/{node_id}/{actuator_id}`
+    pub fn actuator_control(node_id: &str, actuator_id: u32) -> String {
+        format!("firmware/control/{node_id}/{actuator_id}")
+    }
+    /// Wildcard for subscribing to all actuator channels for a node.
+    pub fn actuator_control_wildcard(node_id: &str) -> String {
+        format!("firmware/control/{node_id}/*")
+    }
+    /// Topic for sensor data injected into firmware.
+    /// Full topic: `sim/sensor/{node_id}/sensordata_{sensor_id}`
+    pub fn sensor_data(node_id: &str, sensor_id: u32) -> String {
+        format!("sim/sensor/{node_id}/sensordata_{sensor_id}")
+    }
 }
 
 #[cfg(test)]

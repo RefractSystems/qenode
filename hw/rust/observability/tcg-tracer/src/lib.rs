@@ -41,9 +41,8 @@ use flatbuffers::FlatBufferBuilder;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::thread::{spawn, JoinHandle};
-use virtmcu_api::telemetry_generated::virtmcu::telemetry::{
-    TraceEvent, TraceEventArgs, TraceEventType,
-};
+use virtmcu_api::insn_trace_generated::virtmcu::insn_trace::{InsnTrace, InsnTraceArgs};
+use virtmcu_api::topics::sim_topic;
 use virtmcu_api::DataTransport;
 
 // virtmcu-allow: static_state reasoning="QEMU TCG Plugin API lacks userdata for tb_trans."
@@ -273,7 +272,8 @@ fn background_stream_worker(
     transport: Arc<dyn DataTransport>,
     node_id: u32,
 ) {
-    let topic = alloc::format!("sim/telemetry/trace/{node_id}/insn");
+    let node_id_str = node_id.to_string();
+    let topic = sim_topic::telemetry_insn(&node_id_str);
     let mut builder = FlatBufferBuilder::new();
 
     while let Ok(event) = rx.recv() {
@@ -289,16 +289,17 @@ fn background_stream_worker(
 
         builder.reset();
         let disas_fb = builder.create_string(&disas);
-        let args = TraceEventArgs {
+        let args = InsnTraceArgs {
             timestamp_ns: event.vtime,
-            type_: TraceEventType::CPU_STATE,
-            id: event.pc as u32,
-            value: 0,
-            device_name: Some(disas_fb),
-            power_uw: 0,
+            pc: event.pc,
+            disassembly: Some(disas_fb),
+            quantum_number: 0u64, // Not yet provided by TCG plugin
         };
-        let trace_event = TraceEvent::create(&mut builder, &args);
-        builder.finish(trace_event, None);
+        let insn_trace = InsnTrace::create(&mut builder, &args);
+        virtmcu_api::insn_trace_generated::virtmcu::insn_trace::finish_insn_trace_buffer(
+            &mut builder,
+            insn_trace,
+        );
         let _ = transport.publish(&topic, builder.finished_data());
     }
 }

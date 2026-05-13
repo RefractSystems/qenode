@@ -10,7 +10,6 @@
 )]
 // std is required: zenoh/tokio bring std
 //! Virtmcu 802.15.4 radio with pluggable transport.
-use zenoh::Wait;
 
 extern crate alloc;
 
@@ -227,8 +226,12 @@ static VIRTM_802154_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-extern "C" fn allow_set_link(_obj: *mut Object, _name: *const c_char, _dest: *mut Object) -> bool {
-    true
+unsafe extern "C" fn allow_set_link(
+    _obj: *mut Object,
+    _name: *const c_char,
+    _dest: *mut Object,
+    _errp: *mut *mut virtmcu_qom::error::Error,
+) {
 }
 
 extern "C" fn ieee802154_realize(dev: *mut c_void, errp: *mut *mut c_void) {
@@ -444,7 +447,9 @@ fn ieee802154_init_internal(
     });
 
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
-    match virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback) {
+    // virtmcu-allow: bql reasoning="SafeSubscription is the approved pattern for async transport subscribers to avoid BQL deadlocks"
+    match virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback)
+    {
         Ok(sub) => state_box.subscription = Some(sub),
         Err(e) => {
             virtmcu_qom::sim_err!("ieee802154: failed to subscribe to topic {}: {}", topic_rx, e);
@@ -709,7 +714,7 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
         vtime,
         sequence,
         rssi,
-        frame.data().map(|d| d.len()).unwrap_or(0)
+        frame.data().map_or(0, |d| d.len())
     );
 
     let mhr = Rf802154Mhr {
@@ -760,7 +765,11 @@ fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
             RxFrame { delivery_vtime: vtime, sequence, data: stored_data, size, rssi },
         );
 
-        virtmcu_qom::sim_info!("on_rx_frame: inserted at pos {}, queue len={}", pos, inner.rx_queue.len());
+        virtmcu_qom::sim_info!(
+            "on_rx_frame: inserted at pos {}, queue len={}",
+            pos,
+            inner.rx_queue.len()
+        );
 
         if let Some(rx_timer) = &state.rx_timer {
             rx_timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
@@ -791,7 +800,12 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
 fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu802154Inner) {
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
     if !inner.rx_queue.is_empty() {
-        virtmcu_qom::sim_info!("check_rx_queue: now={}, queue_len={}, state={:?}", now, inner.rx_queue.len(), inner.state);
+        virtmcu_qom::sim_info!(
+            "check_rx_queue: now={}, queue_len={}, state={:?}",
+            now,
+            inner.rx_queue.len(),
+            inner.state
+        );
     }
     while !inner.rx_queue.is_empty() {
         if inner.rx_queue[0].delivery_vtime <= now {
@@ -806,7 +820,10 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
                     inner.rx_read_pos = 0;
                     inner.status |= STATUS_RX_PENDING;
 
-                    virtmcu_qom::sim_info!("check_rx_queue: frame delivered to FIFO, len={}", frame.size);
+                    virtmcu_qom::sim_info!(
+                        "check_rx_queue: frame delivered to FIFO, len={}",
+                        frame.size
+                    );
 
                     unsafe {
                         qemu_set_irq(irq, 1);
@@ -819,7 +836,10 @@ fn check_rx_queue(irq: QemuIrq, rx_timer: Option<&QomTimer>, inner: &mut Virtmcu
                 break;
             }
             // Not in RX mode, drop the frame and continue to next in queue
-            virtmcu_qom::sim_info!("check_rx_queue: frame dropped because state is {:?} (not Rx)", inner.state);
+            virtmcu_qom::sim_info!(
+                "check_rx_queue: frame dropped because state is {:?} (not Rx)",
+                inner.state
+            );
             continue;
         }
         // Future frame, schedule timer and stop

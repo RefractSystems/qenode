@@ -637,7 +637,7 @@ impl<T> BqlGuarded<T> {
     }
 }
 
-use crate::timer::{QomTimer, QEMU_CLOCK_REALTIME};
+use crate::timer::QomTimer;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crossbeam_channel::{unbounded, Receiver};
 use virtmcu_api::{DataCallback, DataTransport};
