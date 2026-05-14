@@ -45,11 +45,5 @@ Finally, if you have a pre-compiled blob, it can be loaded directly with no tran
 ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
 ```
 
-## Part 3: Migrating Legacy `.repl` files
-If you have legacy Renode `.repl` files, VirtMCU provides a migration tool. *Note: `.repl` parsing relies on regular expressions and is banned from the hot loop or CI pipelines.*
-```bash
-python3 -m tools.repl2yaml legacy_board.repl --out new_board.yaml
-```
-
 ## Summary
 You have successfully learned how virtmcu uses the World Specification YAML to drive dynamic emulation, providing a future-proof, easily validated, and OpenUSD-aligned platform for digital twins.

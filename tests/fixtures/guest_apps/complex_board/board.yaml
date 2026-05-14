@@ -27,6 +27,7 @@ peripherals:
     address: 0x09001000
     properties:
       node: 0
+      debug: true
 
   - name: ble0
     type: chardev

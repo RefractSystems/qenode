@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use cyber_bridge::physics::{
@@ -125,7 +126,7 @@ impl GatewayShm {
                 .get(&i)
                 .and_then(|v| v.first())
                 .copied()
-                .unwrap_or(0.0);
+                .expect("Invalid data format");
             let offset = ctrl_offset + (i as usize) * 8;
             self.mmap[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
         }

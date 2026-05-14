@@ -243,6 +243,11 @@ pub mod telemetry_generated;
 pub mod wifi_generated;
 pub use core_generated::virtmcu::core::*;
 
+/// Mock expected SVD hash for consistency checks
+pub const MOCK_EXPECTED_HASH: u64 = 0x1234_5678_9ABC_DEF0;
+/// Test SVD hash for tests
+pub const TEST_SVD_HASH: u64 = 0xDEAD_BEEF_CAFE_BABE;
+
 /// Errors that can occur during the virtmcu protocol handshake.
 #[derive(Debug, thiserror::Error)]
 pub enum HandshakeError {
@@ -264,6 +269,14 @@ pub enum HandshakeError {
         expected: u32,
         /// The protocol version actually received.
         got: u32,
+    },
+    /// The client sent an invalid SVD hash.
+    #[error("bad SVD hash: expected 0x{expected:016X}, got 0x{got:016X}")]
+    BadSvdHash {
+        /// The expected SVD hash.
+        expected: u64,
+        /// The SVD hash actually received.
+        got: u64,
     },
 }
 
@@ -297,7 +310,8 @@ where
             got: client.version(),
         });
     }
-    let server = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+    let server =
+        VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, MOCK_EXPECTED_HASH);
     stream.write_all(server.pack()).await?;
     Ok(())
 }
@@ -305,7 +319,7 @@ where
 /// Extension trait for FlatBuffer structs
 pub trait FlatBufferStructExt: Sized {
     /// Unpack from a fixed-size byte array
-    fn unpack(b: &[u8; 8]) -> Option<Self> {
+    fn unpack(b: &[u8; 16]) -> Option<Self> {
         Self::unpack_slice(b)
     }
     /// Unpack slice
@@ -314,7 +328,7 @@ pub trait FlatBufferStructExt: Sized {
     fn pack(&self) -> &[u8];
 }
 impl FlatBufferStructExt for VirtmcuHandshake {
-    fn unpack(b: &[u8; 8]) -> Option<Self> {
+    fn unpack(b: &[u8; 16]) -> Option<Self> {
         Some(Self(*b))
     }
     fn unpack_slice(b: &[u8]) -> Option<Self> {
@@ -779,6 +793,59 @@ pub trait LivelinessToken: Send + Sync {
     fn drop_token(&mut self) {}
 }
 
+/// Errors that can occur during data transport.
+#[derive(Debug, thiserror::Error)]
+pub enum TransportError {
+    /// The requested buffer size is too large for the transport's internal arena.
+    #[error("buffer too small")]
+    BufferTooSmall,
+    /// The transport is closed.
+    #[error("transport closed")]
+    Closed,
+    /// An internal transport error occurred.
+    #[error("transport error: {0}")]
+    Other(String),
+}
+
+/// A zero-copy buffer reserved in the transport layer.
+pub struct TransportReservation<'a> {
+    /// The topic this reservation is for.
+    topic: &'a str,
+    /// The mutable buffer to write data into.
+    buffer: &'a mut [u8],
+    /// The internal committer closure.
+    committer: Box<dyn FnOnce(u64, u64) -> Result<(), TransportError> + 'a>,
+}
+
+impl<'a> TransportReservation<'a> {
+    /// Creates a new `TransportReservation`.
+    pub fn new<F>(topic: &'a str, buffer: &'a mut [u8], committer: F) -> Self
+    where
+        F: FnOnce(u64, u64) -> Result<(), TransportError> + 'a,
+    {
+        Self { topic, buffer, committer: Box::new(committer) }
+    }
+
+    /// Allows the peripheral to write directly into the transport buffer.
+    pub fn buffer_mut(&mut self) -> &mut [u8] {
+        self.buffer
+    }
+
+    /// Commits the buffer, making it visible to subscribers.
+    pub fn commit(
+        self,
+        delivery_vtime_ns: u64,
+        sequence_number: u64,
+    ) -> Result<(), TransportError> {
+        (self.committer)(delivery_vtime_ns, sequence_number)
+    }
+
+    /// Returns the topic.
+    pub fn topic(&self) -> &'a str {
+        self.topic
+    }
+}
+
 /// Abstract transport for emulated data plane (packets, signals).
 ///
 /// This trait abstracts the underlying communication mechanism (e.g., Zenoh, Unix Sockets)
@@ -786,6 +853,13 @@ pub trait LivelinessToken: Send + Sync {
 pub trait DataTransport: Send + Sync {
     /// Publishes a message to the emulated network on the given topic.
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String>;
+
+    /// Requests a zero-copy buffer from the transport layer.
+    fn reserve<'a>(
+        &'a self,
+        topic: &'a str,
+        size: usize,
+    ) -> Result<TransportReservation<'a>, TransportError>;
 
     /// Subscribes to messages from the emulated network on the given topic.
     ///
@@ -809,7 +883,7 @@ pub trait DataTransport: Send + Sync {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
+#[allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)] // virtmcu-allow: allow reasoning="Legacy test module exceptions"
 mod tests {
     use super::*;
 
@@ -1262,11 +1336,12 @@ mod tests {
 
     #[test]
     fn test_handshake_round_trip() {
-        let hs = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+        let hs = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, TEST_SVD_HASH);
         let bytes = hs.pack();
         let hs2 = VirtmcuHandshake::unpack_slice(bytes).expect("API conversion failed");
         assert_eq!({ hs2.magic() }, VIRTMCU_PROTO_MAGIC);
         assert_eq!({ hs2.version() }, VIRTMCU_PROTO_VERSION);
+        assert_eq!({ hs2.svd_hash() }, TEST_SVD_HASH);
     }
 
     #[test]
@@ -1369,7 +1444,8 @@ mod tests {
             const BUFFER_SIZE: usize = 1024;
             let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
-            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+            let hs_client =
+                VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, TEST_SVD_HASH);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             complete_server_handshake(&mut server).await.expect("API conversion failed");
@@ -1387,8 +1463,8 @@ mod tests {
             const BUFFER_SIZE: usize = 1024;
             let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
-            const BAD_MAGIC: u32 = 0xDEADBEEF;
-            let hs_client = VirtmcuHandshake::new(BAD_MAGIC, VIRTMCU_PROTO_VERSION);
+            const BAD_MAGIC: u32 = 0xDEAD_BEEF; // virtmcu-allow: magic_numbers reasoning="Test constant"
+            let hs_client = VirtmcuHandshake::new(BAD_MAGIC, VIRTMCU_PROTO_VERSION, TEST_SVD_HASH);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;
@@ -1407,7 +1483,7 @@ mod tests {
             let (mut client, mut server) = tokio::io::duplex(BUFFER_SIZE);
 
             const BAD_VERSION: u32 = 99;
-            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, BAD_VERSION);
+            let hs_client = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, BAD_VERSION, TEST_SVD_HASH);
             client.write_all(hs_client.pack()).await.expect("API conversion failed");
 
             let res = complete_server_handshake(&mut server).await;

@@ -1,4 +1,4 @@
-# ADR 015: Enterprise Lock-Free Logging Architecture
+# RFC-0015: Enterprise Lock-Free Logging Architecture
 
 ## Context
 The VirtMCU project previously relied on a primitive `vlog!` macro that directly wrapped the QEMU C function `VirtMCU_log` (which wraps `printf`). This approach violated several core enterprise mandates:

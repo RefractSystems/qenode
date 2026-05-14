@@ -78,16 +78,12 @@ foreach m : rust_modules
     rust_build_args += m['pkg'] + ':' + m['lib']
 endforeach
 
-# Get all Rust sources to ensure correct dependency tracking
+# Get all Cargo.toml files to trigger a re-configure if new crates are added
 rust_sources_res = run_command(
     'find',
     meson.current_source_dir() / 'rust',
-    '-path',
-    meson.current_source_dir() / 'rust/target',
-    '-prune',
-    '-o',
     '-name',
-    '*.rs',
+    'Cargo.toml',
     '-print',
     check: true,
 )

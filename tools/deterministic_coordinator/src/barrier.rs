@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use crate::topology::Protocol;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -146,7 +147,7 @@ impl QuantumBarrier {
 
         if messages.len() > self.max_messages_per_node {
             let excess = messages.len() - self.max_messages_per_node;
-            tracing::warn!(
+            tracing::debug!(
                 "Node {} exceeded per-quantum message limit ({} > {}); dropping {} messages",
                 node_id,
                 messages.len(),

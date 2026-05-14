@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -73,19 +74,10 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     let session = if router_str.is_null() {
         None
     } else {
-        match transport_zenoh::open_session(router_str) {
-            Ok(sess) => Some(Arc::new(sess)),
+        match unsafe { transport_zenoh::get_or_init_session(router_str) } {
+            Ok(sess) => Some(sess),
             Err(e) => {
-                // Non-fatal: log and degrade gracefully. Peripherals that require
-                // a transport will detect transport_ptr == 0 and fail at realize time.
-                // This allows implicit hubs (created by -global injection) to not crash
-                // QEMU when the router is unreachable (e.g., under ASan or in non-networked tests).
-                virtmcu_qom::sim_warn!(
-                    "hub_realize: failed to open Zenoh session (node={}): {:?}",
-                    s.node_id,
-                    e
-                );
-                None
+                panic!("hub_realize: failed to open Zenoh session (node={}): {:?}", s.node_id, e);
             }
         }
     };

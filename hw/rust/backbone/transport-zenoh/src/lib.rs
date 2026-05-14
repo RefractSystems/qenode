@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -62,6 +63,34 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
         self.publisher.send(topic.to_owned(), payload.to_vec());
         Ok(())
+    }
+
+    fn reserve<'a>(
+        &'a self,
+        topic: &'a str,
+        size: usize,
+    ) -> Result<virtmcu_api::TransportReservation<'a>, virtmcu_api::TransportError> {
+        // Allocate space for the Zenoh header plus the requested payload size.
+        let mut frame = vec![0u8; virtmcu_api::ZENOH_FRAME_HEADER_SIZE + size];
+
+        // Use an unsafe pointer derivation to obtain a mutable slice for the payload
+        // section of the Vec, while the closure takes ownership of the Vec itself.
+        let payload_ptr = unsafe { frame.as_mut_ptr().add(virtmcu_api::ZENOH_FRAME_HEADER_SIZE) };
+
+        // SAFETY: We move `frame` into the closure which is owned by the TransportReservation.
+        // Since Vec's heap memory is stable, the pointer remains valid for the lifetime of
+        // the TransportReservation. We transmute to extend the lifetime of the slice.
+        let buffer = unsafe {
+            let b = core::slice::from_raw_parts_mut(payload_ptr, size);
+            core::mem::transmute::<&mut [u8], &mut [u8]>(b)
+        };
+
+        Ok(virtmcu_api::TransportReservation::new(topic, buffer, move |vtime, seq| {
+            let header = virtmcu_api::ZenohFrameHeader::new(vtime, seq, size as u32);
+            frame[0..virtmcu_api::ZENOH_FRAME_HEADER_SIZE].copy_from_slice(&header.0);
+
+            self.publish(topic, &frame).map_err(virtmcu_api::TransportError::Other)
+        }))
     }
 
     fn subscribe(&self, topic: &str, callback: virtmcu_api::DataCallback) -> Result<(), String> {
@@ -352,7 +381,7 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         // Retry for ASan/slow CI environments where the router might be slightly behind
         // even if the orchestrator thinks it's ready.
         for i in 1..=SESSION_OPEN_MAX_RETRIES {
-            virtmcu_qom::sim_warn!(
+            virtmcu_qom::sim_debug!(
                 "transport-zenoh: Zenoh session open failed (attempt {}). Retrying...",
                 i
             );
@@ -580,8 +609,8 @@ mod tests {
     fn test_generation_accepts_current() -> Result<(), zenoh::Error> {
         let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
+        let counter_pair = Arc::new((std::sync::Mutex::new(0_usize), std::sync::Condvar::new()));
+        let counter_pair_clone = Arc::clone(&counter_pair);
         const GEN_VAL: u64 = 2;
         let generation = Arc::new(AtomicU64::new(GEN_VAL));
         let topic = "tests/fixtures/guest_apps/gen/current";
@@ -592,22 +621,26 @@ mod tests {
             topic,
             Arc::clone(&generation),
             move |_sample| {
-                counter_clone.fetch_add(1, Ordering::SeqCst);
+                let (lock, cvar) = &*counter_pair_clone;
+                let mut count = lock.lock().unwrap();
+                *count += 1;
+                cvar.notify_one();
             },
         )?;
 
         session.put(topic, "valid").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
 
         // Wait for callback
-        let mut attempts = 0;
-        const MAX_ATTEMPTS: usize = 100;
-        const POLL_DELAY_MS: u64 = 10;
-        while counter.load(Ordering::SeqCst) == 0 && attempts < MAX_ATTEMPTS {
-            // virtmcu-allow: spinloop reasoning="legacy teardown"
-            std::thread::sleep(Duration::from_millis(POLL_DELAY_MS)); // virtmcu-allow: sleep reasoning="test-only"
-            attempts += 1;
-        }
-        assert!(counter.load(Ordering::SeqCst) > 0, "Valid callback was NOT invoked!");
+        const WAIT_TIMEOUT_SECS: u64 = 5;
+        let (lock, cvar) = &*counter_pair;
+        let mut count = lock.lock().unwrap();
+        let result = cvar
+            .wait_timeout_while(count, std::time::Duration::from_secs(WAIT_TIMEOUT_SECS), |c| {
+                *c == 0
+            })
+            .unwrap();
+        count = result.0;
+        assert!(*count > 0, "Valid callback was NOT invoked!");
         Ok(())
     }
 

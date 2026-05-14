@@ -1,0 +1,31 @@
+machine:
+  name: lin_test_node
+  type: arm-generic-fdt
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+
+clock:
+  mode: slaved-suspend
+
+peripherals:
+  - name: gic
+    type: IRQControllers.ARM_GenericInterruptController
+    address: 0x08000000
+
+  - name: sram
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x01000000
+
+  - name: lpuart0
+    type: s32k144-lpuart
+    address: 0x4006A000
+    properties:
+      topic: "{LIN_TOPIC}"
+      router: "{ROUTER_ENDPOINT}"
+      debug: true
+
+topology:
+  links: []

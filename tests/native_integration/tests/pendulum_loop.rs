@@ -48,7 +48,7 @@ async fn test_pendulum_closed_loop() -> Result<()> {
     let mut count = 0;
 
     // Step clock and inject data
-    for i in 0..500 {
+    for _i in 0..500 {
         // Step total 1000ms
         for ((_sample_type, channel_id), sensor) in &sensors {
             let topic = sim_topic::sensor_data("0", *channel_id as u32);

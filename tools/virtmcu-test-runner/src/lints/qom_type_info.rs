@@ -63,7 +63,7 @@ impl Lint for QomTypeInfoLint {
                             "{}:{}: TypeInfo has parent TYPE_SYS_BUS_DEVICE but class_size is '{}'.",
                             path.display(), line_no, cs
                         );
-                        error!("  Fix: Set class_size to core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>()");
+                        error!("  Fix: Set class_size to core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(). Quick Tip: SysBus devices need the correct struct layout to avoid memory corruption in QEMU. See docs/guide/09-engineering-mandates.md.");
                     }
                 }
             }

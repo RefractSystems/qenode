@@ -37,5 +37,9 @@
       ]
     }
   },
-  "image": "ghcr.io/refractsystems/virtmcu/virtmcu-devenv:latest"
+  "build": {
+    "dockerfile": "../docker/Dockerfile",
+    "context": "..",
+    "target": "devenv"
+  }
 }

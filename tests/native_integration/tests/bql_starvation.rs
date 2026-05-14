@@ -1,6 +1,4 @@
 use anyhow::Result;
-use std::path::PathBuf;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -19,10 +17,8 @@ async fn test_bql_starvation_avoided() -> Result<()> {
         .await?;
 
     // Wait for the firmware to start and enter the tight loop
-    env.wait_for_output(0, "BQL stress test starting...")
-        .await?;
-    env.wait_for_output(0, "Entering tight polling loop...")
-        .await?;
+    env.wait_for_output(0, "BQL stress starting").await?;
+    env.wait_for_output(0, "Tight polling loop").await?;
 
     // Allow the guest to spin for a full 100 milliseconds of virtual time.
     // If the BQL is locked up, the QEMU main loop will freeze here and hit the with_timeout(10) bound.
@@ -44,8 +40,7 @@ async fn test_bql_starvation_avoided() -> Result<()> {
     env.step_clock(50_000_000, 10_000_000).await?;
 
     // Verify the guest broke out of the loop
-    env.wait_for_output(0, "Starvation avoided! Data received.")
-        .await?;
+    env.wait_for_output(0, "Starvation avoided").await?;
 
     Ok(())
 }

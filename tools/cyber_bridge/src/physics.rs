@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use anyhow::Result;
 use memmap2::MmapMut;
 use std::fs::OpenOptions;
@@ -199,7 +200,7 @@ impl virtmcu_api::PhysicalNode for EmbeddedPlant {
 
         // 1. Write actuator (ctrl) values to SHM
         for i in 0..self.n_actuators {
-            let val = ctrl_values.get(&i).copied().unwrap_or(0.0);
+            let val = ctrl_values.get(&i).copied().expect("Invalid data format");
             let offset = ctrl_offset + (i as usize) * 8;
             self.mmap[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
         }

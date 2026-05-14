@@ -1,4 +1,6 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use anyhow::{anyhow, Result};
+mod patch_svd;
 use byteorder::{LittleEndian, ReadBytesExt};
 use clap::{Parser, Subcommand};
 use std::io::Cursor;
@@ -130,6 +132,25 @@ enum PlatformCommands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Patch an SVD file using a YAML overlay
+    PatchSvd {
+        /// Input SVD file
+        input: PathBuf,
+        /// YAML patch file
+        patch: PathBuf,
+        /// Output patched SVD file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Generate Rust MMIO skeleton from SVD file
+    #[command(name = "svd2rust-skeleton")]
+    Svd2RustSkeleton {
+        /// Input SVD file
+        input: PathBuf,
+        /// Output Rust file (optional, prints to stdout if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -203,6 +224,14 @@ async fn main() -> Result<()> {
             }
             PlatformCommands::Svd2Header { input, output } => {
                 run_platform_svd2header(input, output).await?
+            }
+            PlatformCommands::PatchSvd {
+                input,
+                patch,
+                output,
+            } => patch_svd::run_platform_patch_svd(input, patch, output).await?,
+            PlatformCommands::Svd2RustSkeleton { input, output } => {
+                run_platform_svd2rust_skeleton(input, output).await?
             }
         },
         Commands::Debug { cmd } => match cmd {
@@ -357,35 +386,35 @@ async fn run_debug_pcap_dump(
                         "eth" => {
                             proto_id = 0;
                             if let Some(n) = parts.get(i + 2) {
-                                node_id = n.parse().unwrap_or(0);
+                                node_id = n.parse().expect("Invalid data format");
                             }
                             break;
                         }
                         "uart" => {
                             proto_id = 1;
                             if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().unwrap_or(0);
+                                node_id = n.parse().expect("Invalid data format");
                             }
                             break;
                         }
                         "can" => {
                             proto_id = 3;
                             if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().unwrap_or(0);
+                                node_id = n.parse().expect("Invalid data format");
                             }
                             break;
                         }
                         "lin" => {
                             proto_id = 5;
                             if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().unwrap_or(0);
+                                node_id = n.parse().expect("Invalid data format");
                             }
                             break;
                         }
                         "spi" => {
                             proto_id = 2;
                             if let Some(n) = parts.get(i + 2) {
-                                node_id = n.parse().unwrap_or(0);
+                                node_id = n.parse().expect("Invalid data format");
                             }
                             break;
                         }
@@ -452,23 +481,89 @@ async fn run_platform_svd2header(input: PathBuf, output: Option<PathBuf>) -> Res
         input.display()
     ));
     header.push_str("#pragma once\n\n");
-    header.push_str("#include <stdint.h>\n\n");
+    header.push_str("#include <stdint.h>\n");
+    header.push_str("#include <stddef.h>\n\n");
 
     for periph in &device.peripherals {
         let base_name = periph.name.to_uppercase();
+        let struct_name = &periph.name;
+
+        header.push_str(&format!("struct {} {{\n", struct_name));
+
+        let mut current_offset = 0;
+        let mut registers: Vec<_> = periph.registers().collect();
+        registers.sort_by_key(|r| r.address_offset);
+
+        for (i, reg) in registers.iter().enumerate() {
+            let reg_name = reg.name.to_uppercase();
+            let reg_size_bits = reg
+                .properties
+                .size
+                .or(periph.default_register_properties.size)
+                .or(device.default_register_properties.size)
+                .unwrap_or(32);
+            let reg_size = reg_size_bits / 8;
+
+            if reg.address_offset > current_offset {
+                let pad_size = reg.address_offset - current_offset;
+                header.push_str(&format!("    uint8_t _reserved{}[{}];\n", i, pad_size));
+                current_offset = reg.address_offset;
+            } else if reg.address_offset < current_offset {
+                return Err(anyhow!(
+                    "Overlapping registers in peripheral {}: {} at offset 0x{:X}",
+                    periph.name,
+                    reg.name,
+                    reg.address_offset
+                ));
+            }
+
+            let type_str = match reg_size {
+                1 => "uint8_t",
+                2 => "uint16_t",
+                4 => "uint32_t",
+                8 => "uint64_t",
+                _ => "uint32_t",
+            };
+
+            header.push_str(&format!("    volatile {} {};\n", type_str, reg_name));
+            current_offset += reg_size;
+        }
+
+        if let Some(block) = &periph.address_block {
+            if !block.is_empty() && block[0].size > current_offset {
+                let pad_size = block[0].size - current_offset;
+                header.push_str(&format!("    uint8_t _reserved_end[{}];\n", pad_size));
+            }
+        }
+
+        header.push_str("} __attribute__((packed));\n\n");
+
+        for reg in &registers {
+            let reg_name = reg.name.to_uppercase();
+            header.push_str(&format!(
+                "_Static_assert(offsetof(struct {}, {}) == 0x{:02X}, \"Offset mismatch\");\n",
+                struct_name, reg_name, reg.address_offset
+            ));
+        }
+
+        if let Some(block) = &periph.address_block {
+            if !block.is_empty() {
+                header.push_str(&format!(
+                    "_Static_assert(sizeof(struct {}) == 0x{:02X}, \"Size mismatch\");\n",
+                    struct_name, block[0].size
+                ));
+            }
+        }
+
         header.push_str(&format!(
-            "#define {}_BASE 0x{:08X}\n\n",
+            "\n#define {}_BASE 0x{:08X}\n",
             base_name, periph.base_address
         ));
 
-        for reg in periph.registers() {
-            let reg_name = reg.name.to_uppercase();
-            header.push_str(&format!(
-                "#define REG_{}_{} ({}_BASE + 0x{:02X})\n",
-                base_name, reg_name, base_name, reg.address_offset
-            ));
-        }
-        header.push('\n');
+        header.push_str(&format!(
+            "#define {} ((volatile struct {} *) {}_BASE)\n\n",
+            base_name, struct_name, base_name
+        ));
     }
 
     if let Some(out_path) = output {
@@ -478,6 +573,68 @@ async fn run_platform_svd2header(input: PathBuf, output: Option<PathBuf>) -> Res
         std::fs::write(out_path, header)?;
     } else {
         println!("{}", header);
+    }
+
+    Ok(())
+}
+
+async fn run_platform_svd2rust_skeleton(input: PathBuf, output: Option<PathBuf>) -> Result<()> {
+    let xml = std::fs::read_to_string(&input)?;
+    let device = svd_parser::parse(&xml).map_err(|e| anyhow!("Failed to parse SVD: {:?}", e))?;
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "// Generated by virtmcu-cli from {}\n\n",
+        input.display()
+    ));
+
+    for periph in &device.peripherals {
+        let periph_prefix = periph.name.to_uppercase();
+
+        let mut registers: Vec<_> = periph.registers().collect();
+        registers.sort_by_key(|r| r.address_offset);
+
+        // Constants
+        for reg in &registers {
+            let reg_name = reg.name.to_uppercase();
+            // If the register name already has the peripheral prefix, don't duplicate it unless necessary,
+            // but the example says: const REG_ACTUATOR_ID: u64 = 0x00; when peripheral is ACTUATOR and register is ID.
+            let const_name = if reg_name.starts_with(&periph_prefix) {
+                format!("REG_{}", reg_name)
+            } else {
+                format!("REG_{}_{}", periph_prefix, reg_name)
+            };
+            out.push_str(&format!(
+                "const {}: u64 = 0x{:02X};\n",
+                const_name, reg.address_offset
+            ));
+        }
+
+        out.push_str("\n// Inside MmioDevice::read/write:\n");
+        out.push_str("match offset {\n");
+        for reg in &registers {
+            let reg_name = reg.name.to_uppercase();
+            let const_name = if reg_name.starts_with(&periph_prefix) {
+                format!("REG_{}", reg_name)
+            } else {
+                format!("REG_{}_{}", periph_prefix, reg_name)
+            };
+            out.push_str(&format!(
+                "    {} => virtmcu_qom::device::MmioResult::Ready(0),\n",
+                const_name
+            ));
+        }
+        out.push_str("    _ => virtmcu_qom::device::MmioResult::Ready(0),\n");
+        out.push_str("}\n\n");
+    }
+
+    if let Some(out_path) = output {
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out_path, out)?;
+    } else {
+        println!("{}", out);
     }
 
     Ok(())

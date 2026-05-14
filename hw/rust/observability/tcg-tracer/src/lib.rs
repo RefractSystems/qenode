@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -130,7 +131,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
         if !cstr_ptr.is_null() {
             let decoded = CStr::from_ptr(cstr_ptr).to_string_lossy();
             if let Some(val) = decoded.strip_prefix("node_id=") {
-                node_id = val.parse().unwrap_or(0);
+                node_id = val.parse().expect("Invalid data format");
             } else if let Some(val) = decoded.strip_prefix("transport=") {
                 val.clone_into(&mut transport_cfg);
             }

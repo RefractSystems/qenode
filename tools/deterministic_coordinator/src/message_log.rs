@@ -115,13 +115,10 @@ mod tests {
     // Or we just use a temp file for all tests to match the API which takes a Path.
 
     fn setup_temp_log() -> (MessageLog, std::path::PathBuf) {
-        let path = std::env::temp_dir().join(format!(
-            "test_pcap_{}.pcap",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("test should succeed")
-                .as_nanos()
-        ));
+        let file = tempfile::NamedTempFile::new().expect("test should succeed");
+        let path = file.path().to_path_buf();
+        // Close the file handle from NamedTempFile so MessageLog can open it
+        drop(file);
         let log = MessageLog::create(&path).expect("test should succeed");
         (log, path)
     }

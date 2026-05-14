@@ -94,7 +94,7 @@ allow-workspace = false
 deny = [
     { name = "lz4_flex", wrappers = ["zenoh-transport"] },
     { name = "rsa", wrappers = ["zenoh-transport"] },
-    { name = "paste", wrappers = ["token-cell"] },
+    { name = "paste", wrappers = ["token-cell", "virtmcu-qom", "rust_dummy", "mcap"] },
     { name = "rustls-pemfile", wrappers = ["zenoh-link-commons", "zenoh-link-tls"] }
 ]
 skip = [
@@ -130,6 +130,9 @@ skip = [
     { name = "windows_x86_64_gnullvm" },
     { name = "windows_x86_64_msvc" },
     { name = "wit-bindgen" },
+    { name = "darling" },
+    { name = "darling_core" },
+    { name = "darling_macro" },
 ]
 skip-tree = []
 

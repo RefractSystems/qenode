@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -215,7 +216,10 @@ unsafe extern "C" fn netdev_hook(
     let node_id = if opts.node.is_null() {
         0
     } else {
-        unsafe { CStr::from_ptr(opts.node) }.to_string_lossy().parse::<u32>().unwrap_or(0)
+        unsafe { CStr::from_ptr(opts.node) }
+            .to_string_lossy()
+            .parse::<u32>()
+            .expect("Invalid data format")
     };
 
     let transport_name = if opts.transport.is_null() {

@@ -5,7 +5,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{timeout, Duration};
-use tracing::{debug, error, info, trace, warn};
+use tracing::info;
 
 pub struct NodeConfig {
     pub id: u32,
@@ -312,14 +312,6 @@ impl TopologyBuilder {
                 .iter()
                 .any(|arg| arg.contains("virtmcu-clock"));
             if node.is_coordinated {
-                qemu_cmd.arg("-device").arg(format!(
-                    "virtmcu-transport-hub,id=virtmcu-transport-hub,node={}",
-                    node.id
-                ));
-                qemu_cmd
-                    .arg("-global")
-                    .arg(format!("virtmcu-transport-hub.router={}", endpoint));
-
                 // Link all native devices to the hub (hub0 is created by yaml2qemu in DTS)
                 for dev_type in &[
                     "actuator",
@@ -387,12 +379,11 @@ impl TopologyBuilder {
             let recent_stderr_for_spawn = recent_stderr.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = stderr_lines.next_line().await {
-                    {
-                        let mut recent = recent_stderr_for_spawn.lock().await;
-                        recent.push(line.clone());
-                        if recent.len() > 200 {
-                            recent.remove(0);
-                        }
+                    eprintln!("[QEMU {}] {}", node_id_for_log, line);
+                    let mut recent = recent_stderr_for_spawn.lock().await;
+                    recent.push(line.clone());
+                    if recent.len() > 1000 {
+                        recent.remove(0);
                     }
 
                     tracing::debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
@@ -402,17 +393,17 @@ impl TopologyBuilder {
                         || line.contains("fatal:")
                         || line.contains("panic")
                     {
-                        error!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::error!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[WARN ]") || line.contains("warning:") {
-                        warn!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::warn!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[DEBUG]") {
-                        debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[TRACE]") {
-                        trace!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::trace!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else if line.contains("[INFO ]") || line.contains("info:") {
-                        info!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::info!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     } else {
-                        info!("[QEMU] [Node {}] {}", node_id_for_log, line);
+                        tracing::info!("[QEMU] [Node {}] {}", node_id_for_log, line);
                     }
                 }
             });

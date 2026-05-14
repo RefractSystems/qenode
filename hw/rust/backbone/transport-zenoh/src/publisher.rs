@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -51,12 +52,11 @@ impl SafePublisher {
         if self.is_valid.load(Ordering::Acquire) {
             if let Err(TrySendError::Full(_)) = self.tx.try_send(payload) {
                 let dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed);
-                if dropped.is_multiple_of(DROPPED_WARNING_INTERVAL) {
-                    virtmcu_qom::sim_warn!(
-                        "SafePublisher queue full, dropped {} messages",
-                        dropped + 1
-                    );
-                }
+                assert!(
+                    !(dropped + 1).is_multiple_of(DROPPED_WARNING_INTERVAL),
+                    "SafePublisher queue full, dropped {} messages",
+                    dropped + 1
+                );
             }
         }
     }
@@ -104,12 +104,11 @@ impl SafeSessionPublisher {
         if self.is_valid.load(Ordering::Acquire) {
             if let Err(TrySendError::Full(_)) = self.tx.try_send((topic, payload)) {
                 let dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed);
-                if dropped.is_multiple_of(DROPPED_WARNING_INTERVAL) {
-                    virtmcu_qom::sim_warn!(
-                        "SafeSessionPublisher queue full, dropped {} messages",
-                        dropped + 1
-                    );
-                }
+                assert!(
+                    !(dropped + 1).is_multiple_of(DROPPED_WARNING_INTERVAL),
+                    "SafeSessionPublisher queue full, dropped {} messages",
+                    dropped + 1
+                );
             }
         }
     }
@@ -229,7 +228,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_publisher_drops_when_full() {
-        const OVERFLOW_SEND_COUNT: usize = 10000;
+        const OVERFLOW_SEND_COUNT: usize = 1100; // Triggers ~76 drops (1100 - 1024), below the 100-drop panic threshold.
         let config = crate::test_config();
         let session = zenoh::open(config).wait().expect("test should succeed");
         let topic = "tests/fixtures/guest_apps/safe/pub/overflow";

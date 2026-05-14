@@ -334,8 +334,14 @@ jobs:
       - name: Create and push manifest — rust-builder
         run: |
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
+          ANNOTATIONS=()
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              ANNOTATIONS+=("--annotation" "index:$line")
+            fi
+          done <<< "${{ steps.meta.outputs.labels }}"
           # shellcheck disable=SC2086
-          docker buildx imagetools create ${TAGS} \
+          docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-amd64 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-arm64
 
@@ -375,8 +381,14 @@ jobs:
       - name: Create and push manifest — flatcc-builder
         run: |
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
+          ANNOTATIONS=()
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              ANNOTATIONS+=("--annotation" "index:$line")
+            fi
+          done <<< "${{ steps.meta.outputs.labels }}"
           # shellcheck disable=SC2086
-          docker buildx imagetools create ${TAGS} \
+          docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-arm64
 
@@ -435,8 +447,9 @@ jobs:
           PUSH_CACHE: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
+          QEMU_VERSION: ${{ env.QEMU_VERSION }}
         with:
-          targets: ${{ matrix.sanitizer == 'standard' && 'third-party-base,ci' || 'third-party-base-asan,ci-asan' }}
+          targets: ${{ matrix.sanitizer == 'standard' && 'qemu-base-builder,third-party-base,ci' || 'qemu-base-builder-asan,third-party-base-asan,ci-asan' }}
           push: true
           files: |
             docker-bake.hcl

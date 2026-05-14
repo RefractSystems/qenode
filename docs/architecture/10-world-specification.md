@@ -140,29 +140,23 @@ While the YAML supports multiple address formats, `yaml2qemu.py` normalizes all 
 
 ---
 
-## 7. OpenUSD Alignment and Renode `.repl` Parity
+## 7. OpenUSD Alignment
 
 The VirtMCU World YAML is designed to map directly to **OpenUSD (Universal Scene Description)** primitives. In a future USD schema, the YAML structure translates as follows:
 - `machine`, `peripherals`, `memory` → `UsdGeomXform` (or custom `CyberPrim`) hierarchical nodes.
 - `properties` → `UsdAttribute`.
 - `interrupts`, `links` → `UsdRelationship` (defining connections between Prims).
 
-### Renode `.repl` Parity
-To guarantee backwards compatibility, the World Schema supports all semantics from Renode's `.repl` format:
-- **Ranged Interrupts**: Supported via `properties` or specific string formats in the `interrupts` list (e.g., matching Renode's `[0-3] -> nvic@[19-22]`).
-- **`using` Directives**: Renode allows `#include`-style `.repl` nesting. While YAML does not natively support this, VirtMCU tooling merges included schemas during the `repl2yaml` migration phase.
-- **`sysbus: init:` Tags**: Renode uses these to mock dummy memory regions early in boot. VirtMCU replicates this by instantiating `qemu-memory-region` peripherals with appropriate sizes based on the tag bounds.
-
 ---
 
-## 8. Comparison with Legacy Formats
+## 8. Comparison with OpenUSD
 
-| Feature | VirtMCU YAML | Legacy .repl | OpenUSD (Future) |
-| :--- | :--- | :--- | :--- |
-| **Parsing** | Python (PyYAML) / Rust (Serde) | Custom C# / Python Regex | `pxr.Usd` API |
-| **Topology** | Native `topology:` block | None (Manual scripts) | Network Prims / Graphs |
-| **Hierarchy** | USD Prim Alignment | Flat list | First-class namespaces |
-| **Validation** | Pydantic / JSON Schema | Runtime failures | USD Schema validation |
+| Feature | VirtMCU YAML | OpenUSD (Future) |
+| :--- | :--- | :--- |
+| **Parsing** | Python (PyYAML) / Rust (Serde) | `pxr.Usd` API |
+| **Topology** | Native `topology:` block | Network Prims / Graphs |
+| **Hierarchy** | USD Prim Alignment | First-class namespaces |
+| **Validation** | TypeSpec / JSON Schema | USD Schema validation |
 
 ---
 
@@ -205,5 +199,5 @@ By defining this in the World Schema, Marcus invokes the Parallel Discrete Event
 ---
 
 ## See Also
-*   **[ADR-010: Platform Description](../adr/0010-platform-description-format.md)**: The rationale behind the move to YAML.
+*   **[ADR-010: Platform Description](../rfcs/00010-platform-description-format.md)**: The rationale behind the move to YAML.
 *   **[Determinism and Chaos](./09-determinism-and-chaos.md)**: How `global_seed` and topology influence simulation stability.

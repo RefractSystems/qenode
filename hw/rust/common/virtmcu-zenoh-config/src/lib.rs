@@ -42,5 +42,12 @@ pub fn default_config() -> Config {
 pub fn client_config() -> Config {
     let mut config = default_config();
     let _ = config.insert_json5("mode", "\"client\"");
+    if let Ok(endpoint) = std::env::var("VIRTMCU_ZENOH_ROUTER") {
+        if !endpoint.is_empty() {
+            let json = format!("[\"{endpoint}\"]");
+            let _ = config.insert_json5("connect/endpoints", &json);
+            let _ = config.insert_json5("transport/shared_memory/enabled", "false");
+        }
+    }
     config
 }

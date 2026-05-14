@@ -1,9 +1,9 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -317,7 +317,6 @@ impl RpPktInterrupt {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
     use core::ptr;
@@ -841,7 +840,7 @@ pub struct RemotePortBridgeState {
 unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
     let qemu = unsafe { &*(opaque as *mut RemotePortBridgeQEMU) };
     if qemu.debug {
-        virtmcu_qom::sim_warn!("remote_port_read: addr=0x{:x} size={}", addr, size);
+        panic!("remote_port_read: addr=0x{:x} size={}", addr, size);
     }
     let state = &*qemu.rust_state;
     let req = RpRequest { cmd: RpCmd::Read, addr, size, data: None, data_len: 0 };
@@ -864,12 +863,7 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
 unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
     let qemu = unsafe { &*(opaque as *mut RemotePortBridgeQEMU) };
     if qemu.debug {
-        virtmcu_qom::sim_warn!(
-            "remote_port_write: addr=0x{:x} val=0x{:x} size={}",
-            addr,
-            val,
-            size
-        );
+        panic!("remote_port_write: addr=0x{:x} val=0x{:x} size={}", addr, val, size);
     }
     let state = &*qemu.rust_state;
     let val_bytes = val.to_le_bytes();

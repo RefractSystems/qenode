@@ -13,7 +13,7 @@ async fn test_halt_hook_multiplexing() -> Result<()> {
                 .with_firmware_path("tests/fixtures/guest_apps/telemetry_wfi/test_wfi.elf")
                 .with_dtb_path("tests/fixtures/guest_apps/telemetry_wfi/test_telemetry.dtb")
                 .add_qemu_arg("-device")
-                .add_qemu_arg("telemetry,transport=virtmcu-transport-hub"),
+                .add_qemu_arg("telemetry,transport=hub0"),
         )
         .with_timeout(10)
         .build()

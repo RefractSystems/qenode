@@ -469,6 +469,10 @@ impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
                             let in3 = self.inner.get();
                             u64::from(in3.status | ((in3.state as u32) << STATE_SHIFT))
                         },
+                        move || {
+                            let in4 = self.inner.get();
+                            u64::from(in4.status | ((in4.state as u32) << STATE_SHIFT))
+                        },
                     );
                 }
                 virtmcu_qom::device::MmioResult::Ready(u64::from(status))
@@ -699,11 +703,15 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
 }
 
 fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
+    virtmcu_qom::sim_info!("on_rx_frame: received packet of size {}", data.len());
     let mut inner = state.inner.get_mut();
 
     let frame = match rf802154::size_prefixed_root_as_rf_802154_frame(data) {
         Ok(f) => f,
-        Err(_) => return,
+        Err(e) => {
+            virtmcu_qom::sim_info!("on_rx_frame: parsing failed: {:?}", e);
+            return;
+        }
     };
 
     let vtime = frame.delivery_vtime_ns();

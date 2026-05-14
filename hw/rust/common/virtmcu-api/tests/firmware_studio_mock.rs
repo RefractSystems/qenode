@@ -10,7 +10,7 @@ use virtmcu_api::{
 fn test_firmware_studio_struct_sizes() {
     // Ensuring ABI stability for downstream consumers.
     // If these change, it silently breaks C-bridge protocol and Firmware Studio.
-    assert_eq!(size_of::<VirtmcuHandshake>(), 8);
+    assert_eq!(size_of::<VirtmcuHandshake>(), 16);
     assert_eq!(size_of::<MmioReq>(), 32);
     assert_eq!(size_of::<SyscMsg>(), 16);
     assert_eq!(size_of::<ClockAdvanceReq>(), 24);
@@ -21,7 +21,7 @@ fn test_firmware_studio_struct_sizes() {
 #[test]
 fn test_firmware_studio_handshake() {
     // Firmware Studio needs to send a handshake on socket connection
-    let handshake = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+    let handshake = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, 0);
 
     // Convert to bytes as if sending over a socket
     let bytes = handshake.pack();

@@ -1,4 +1,4 @@
-# ADR-006: Binary Fidelity — Same ELF on Real MCU and VirtMCU
+# RFC-0006: Binary Fidelity — Same ELF on Real MCU and VirtMCU
 
 ## Status
 Accepted
@@ -11,7 +11,7 @@ the simulator, engineers will maintain two codebases — one for hardware, one f
 — and the simulator's test results will not be trustworthy evidence about real-hardware
 behavior.
 
-This concern is concrete, not theoretical. Renode requires a `.repl` that maps devices
+This concern is concrete, not theoretical. It requires a world definition that maps devices
 at Renode's canonical addresses, which often differ from the physical MCU's datasheet
 addresses. Engineers working with Renode frequently discover that the firmware built for
 the sim crashes on silicon because the peripheral base addresses or interrupt numbers

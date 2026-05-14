@@ -119,6 +119,9 @@
         },
         "properties": {
           "$ref": "#/$defs/RecordUnknown"
+        },
+        "replay_trace": {
+          "type": "string"
         }
       },
       "required": [

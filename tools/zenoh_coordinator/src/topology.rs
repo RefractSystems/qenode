@@ -14,6 +14,7 @@ pub enum Protocol {
     Lin,
     Rf802154,
     RfHci,
+    Dummy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +89,7 @@ pub struct TopologyGraph {
     max_wireless_range_m: f64,
     pub is_explicit: bool,
     pub max_messages_per_node_per_quantum: usize,
+    pub routing_map: RoutingMap,
 }
 
 impl Default for TopologyGraph {
@@ -100,6 +102,7 @@ impl Default for TopologyGraph {
             max_wireless_range_m: 0.0,
             is_explicit: false,
             max_messages_per_node_per_quantum: 1024,
+            routing_map: RoutingMap::new(),
         }
     }
 }
@@ -110,9 +113,19 @@ impl TopologyGraph {
         let world: YamlWorld = serde_yaml::from_str(&content)?;
 
         if let Some(topo) = world.topology {
+            let mut routing_map = RoutingMap::new();
             let mut positions = HashMap::new();
             let mut max_range = 0.0;
 
+            for link in &topo.links {
+                for i in 0..link.nodes.len() {
+                    for j in 0..link.nodes.len() {
+                        if i != j {
+                            routing_map.add_route(link.nodes[i].clone(), link.nodes[j].clone());
+                        }
+                    }
+                }
+            }
             if let Some(ref wl) = topo.wireless {
                 max_range = wl.max_range_m;
                 for n in &wl.nodes {
@@ -128,6 +141,7 @@ impl TopologyGraph {
                 max_wireless_range_m: max_range,
                 is_explicit: true,
                 max_messages_per_node_per_quantum: 1024,
+                routing_map,
             })
         } else {
             // Default allow-all topology if no topology section is defined
@@ -211,9 +225,36 @@ impl TopologyGraph {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RoutingMap {
+    pub map: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl RoutingMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_route(&mut self, source: String, target: String) {
+        self.map.entry(source).or_default().push(target);
+    }
+
+    pub fn get_targets(&self, source: &str) -> Option<&Vec<String>> {
+        self.map.get(source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_routing_map_basic() {
+        let mut map = RoutingMap::new();
+        map.add_route("A".to_string(), "B".to_string());
+        assert_eq!(map.get_targets("A").unwrap(), &vec!["B".to_string()]);
+        assert!(map.get_targets("X").is_none());
+    }
 
     #[test]
     fn test_yaml_number_coercion() {
@@ -249,6 +290,7 @@ topology:
             max_wireless_range_m: 0.0,
             is_explicit: true,
             max_messages_per_node_per_quantum: 1024,
+            routing_map: RoutingMap::new(),
         };
 
         assert!(tg.is_link_allowed("0", "1", &Protocol::Uart));
@@ -281,6 +323,7 @@ topology:
             max_wireless_range_m: 10.0,
             is_explicit: true,
             max_messages_per_node_per_quantum: 1024,
+            routing_map: RoutingMap::new(),
         };
 
         tg.update_positions(vec![

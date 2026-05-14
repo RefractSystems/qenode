@@ -1,3 +1,5 @@
+use tokio::io::AsyncBufReadExt;
+
 #[tokio::test]
 async fn test_federation_id_propagates_to_logs() {
     let env = virtmcu_test_runner::TestContext::new().unwrap();
@@ -5,17 +7,7 @@ async fn test_federation_id_propagates_to_logs() {
     let socket_path_str = socket_path.to_str().unwrap();
 
     let fed_id = "test-federation-001";
-    // Using a mock or real binary if available in the environment.
-    // Assuming virtmcu-physical-node is in the path or target/debug.
-    let bin_path = if std::path::Path::new("../../target/release/virtmcu-physical-node").exists() {
-        "../../target/release/virtmcu-physical-node"
-    } else if std::path::Path::new("../../target/debug/virtmcu-physical-node").exists() {
-        "../../target/debug/virtmcu-physical-node"
-    } else if std::path::Path::new("./target/release/virtmcu-physical-node").exists() {
-        "./target/release/virtmcu-physical-node"
-    } else {
-        "virtmcu-physical-node"
-    };
+    let bin_path = env.find_binary("virtmcu-physical-node").unwrap();
 
     let mut pn = tokio::process::Command::new(bin_path)
         .env("RUST_LOG", "info")
@@ -34,38 +26,64 @@ async fn test_federation_id_propagates_to_logs() {
         .spawn()
         .expect("Failed to spawn virtmcu-physical-node");
 
-    // Wait a bit for it to start and emit some logs.
-    // Since we don't have the mock transport listener yet, it might warn about transport.
-    // virtmcu-allow: test_sleep reasoning="wait for node to start"
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let stdout = pn.stdout.take().unwrap();
+    let stderr = pn.stderr.take().unwrap();
+
+    let mut reader_stdout = tokio::io::BufReader::new(stdout).lines();
+    let mut reader_stderr = tokio::io::BufReader::new(stderr).lines();
+
+    let mut all_logs = String::new();
+    let mut found = false;
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !stdout_done || !stderr_done {
+            tokio::select! {
+                res = reader_stdout.next_line(), if !stdout_done => {
+                    match res {
+                        Ok(Some(line)) => {
+                            all_logs.push_str(&line);
+                            all_logs.push('\n');
+                            if line.contains(fed_id) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        _ => stdout_done = true,
+                    }
+                }
+                res = reader_stderr.next_line(), if !stderr_done => {
+                    match res {
+                        Ok(Some(line)) => {
+                            all_logs.push_str(&line);
+                            all_logs.push('\n');
+                            if line.contains(fed_id) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        _ => stderr_done = true,
+                    }
+                }
+            }
+        }
+    })
+    .await;
 
     let _ = pn.kill().await;
 
-    let output = pn.wait_with_output().await.unwrap();
-    let logs = String::from_utf8_lossy(&output.stdout);
-    let logs_err = String::from_utf8_lossy(&output.stderr);
-    let all_logs = format!("{}{}", logs, logs_err);
-
     assert!(
-        all_logs.contains(fed_id),
-        "Expected federation ID '{}' in logs: \nSTDOUT: {}\nSTDERR: {}",
-        fed_id,
-        logs,
-        logs_err
+        found,
+        "Expected federation ID '{}' in logs: \nLOGS: {}",
+        fed_id, all_logs
     );
 }
 
 #[tokio::test]
 async fn test_federation_id_required() {
-    let bin_path = if std::path::Path::new("../../target/release/virtmcu-physical-node").exists() {
-        "../../target/release/virtmcu-physical-node"
-    } else if std::path::Path::new("../../target/debug/virtmcu-physical-node").exists() {
-        "../../target/debug/virtmcu-physical-node"
-    } else if std::path::Path::new("./target/release/virtmcu-physical-node").exists() {
-        "./target/release/virtmcu-physical-node"
-    } else {
-        "virtmcu-physical-node"
-    };
+    let env = virtmcu_test_runner::TestContext::new().unwrap();
+    let bin_path = env.find_binary("virtmcu-physical-node").unwrap();
 
     let output = tokio::process::Command::new(bin_path)
         .arg("--node-id")

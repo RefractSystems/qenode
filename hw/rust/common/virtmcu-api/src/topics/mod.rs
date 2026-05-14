@@ -135,7 +135,6 @@ pub mod sim_topic {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::sim_topic::*;
     use alloc::format;

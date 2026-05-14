@@ -6,7 +6,60 @@
 
 ---
 
-## Language Selection Rules (Enterprise SOTA Mandate)
+## Immediate Tactical Sprint: Assertion-Based Routing & Safe Peripherals
+
+This section outlines the sequential implementation of RFC-0024 (Assertion-Based Routing) followed by the completion of RFC-0023 (Safe QOM Macros). By shifting to strict point-to-point routing *first*, we eliminate silent drops and establish a "Fail Loudly" network foundation.
+
+### Step 1: Core Topology Engine (RFC-0024 Foundation)
+**Goal:** Modify the `TopologyGraph` to act as the absolute source of truth, moving away from loose protocol enums to explicit Endpoint-to-Endpoint links.
+*   **Actions:** Implement `RoutingMap` and explicit link validation in `topology.rs`.
+*   **Gate Criteria:** Unit tests pass for strict topological routing.
+
+### Step 2: Coordinator Re-architecture (The Fail Loudly Engine)
+**Goal:** Gut legacy string-matching and wildcard logic from Coordinators.
+*   **Actions:** Replace `parse_legacy_topic` with explicit `RoutingMap` lookups. Call `panic!` on unroutable packets.
+*   **Gate Criteria:** Coordinators compile cleanly; unit tests prove rogue packets cause panic.
+
+### Step 3: Test Migration & Tracer Validation (The Proof)
+**Goal:** Migrate YAML topologies and validate the `rust-dummy` tracer bullet.
+*   **Actions:** Update `dummy_ping_pong.yml` to use explicit `type: dummy` links and node arrays. Verify `dummy_network.rs`.
+*   **Gate Criteria:** Integration test passes; no silent drops occur.
+
+### Step 4: Mass Peripheral Migration (RFC-0023 Completion)
+**Goal:** Use subagents to rapidly migrate remaining C-FFI peripherals to Safe QOM Macros.
+*   **Actions:** Migrate `observability/`, `mcu/`, and `comms/` to use `#[qom_device]` and `DeterministicReceiver`.
+*   **Gate Criteria:** `make test-integration` passes completely.
+
+### Step 5: Preparations for Zero-Copy (RFC-0025)
+**Goal:** Lay groundwork for SHM implementation.
+*   **Actions:** Refactor `virtmcu_api::DataTransport` to use the `reserve()` and `commit()` API.
+*   **Gate Criteria:** Framework compiles and tests pass.
+
+---
+
+
+### **[ARCH-23] Core Hardening Roadmap (from legacy ADR-900)** — Stability & Security
+
+**Status**: 🚧 Under Construction.
+
+**Goal**: Systematically address known vulnerabilities regarding virtual time synchronization, the Big QEMU Lock (BQL), and high-frequency serialization.
+
+**Tasks (High - Data Corruption / Resource Leaks)**:
+- [ ] **H-1: Unbounded Channel Flooding**: Implement `bounded(65536)` with explicit overflow counters visible via telemetry in `chardev` and `netdev`.
+- [ ] **H-2: Global Instance Singletons**: Migrate `GLOBAL_CLOCK` and `GLOBAL_TELEMETRY` from `static mut` to `OnceLock<AtomicPtr>` or a thread-safe registry.
+- [ ] **H-3: Thread Leakage on Finalization**: Implement `Arc<AtomicBool>` shutdown signals for background heartbeat and Zenoh subscriber threads to prevent pointer dereference after hot-unplug.
+
+**Tasks (Medium - Performance & Correctness)**:
+- [ ] **M-1: Startup Blocking**: Implement configurable `VIRTMCU_ZENOH_CONNECT_TIMEOUT_MS` to prevent router discovery from blocking QEMU main thread for 4 seconds.
+- [ ] **M-2: Serialization Alignment**: Fully transition all core I/O to FlatBuffers (`vproto`) accessor patterns, removing manual `read_unaligned` and raw casts.
+
+**Verification Requirements**:
+No core component is considered "Hardened" until it satisfies:
+- 100% Python protocol coverage.
+- 60%+ Rust unit test coverage (pure logic).
+- Successful completion of the `arch8_stress` suite under AddressSanitizer (ASan).
+
+---
 To maintain performance, type-safety, and long-term maintainability, the following language rules apply:
 
 1. **Write in Rust if**:
@@ -30,20 +83,6 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 7. **P12** — Deterministic Deadlock Detection (virtual-time budgets).
 8. **Milestone 32** — Vendor Firmware Validation (Ethernet & CAN-FD Binary Fidelity).
 9. **Milestone 33** — Deprecation of `repl2qemu` and `.repl` format (Migration to YAML+SVD SSOT).
-
----
-
-### Phase X: The Native Rust Singularity (Testing Framework Migration) ✅
-**Status**: ✅ Completed.
-**Goal**: Eradicate `virtmcu-test-runner`, Python-based orchestration, and fragile bash wrappers, shifting 100% of the integration testing logic into native `#[tokio::test]` leveraging the RAII-safe `virtmcu-test-runner` library.
-
-**Tasks**:
-- [x] **X.1 Core Tooling Migration**: Port QMP edge case and failure injection tests to `tests/native_integration/tests/qmp.rs`.
-- [x] **X.2 Generic Peripheral Monitors**: Build Flatbuffer-aware type-safe Zenoh clients (`monitors.rs`) for Telemetry, SPI, LIN, FlexRay, UART, and Actuators.
-- [x] **X.3 Python Purge - Peripherals**: Rewrite `test_spi.py`, `test_telemetry.py`, `test_canfd.py`, `test_lin.py`, `test_flexray.py`, `test_uart_echo.py`, and `test_actuator.py` into native Rust and delete the Python implementations.
-- [x] **X.4 Python Purge - Infrastructure**: Migrate the core Determinism logic: `test_clock_suspend.py`, `test_ftrt_timing.py`, `test_coordinator.py`, `test_topology_integrity.py`.
-- [x] **X.5 CLI Tool Subsumption**: Integrate `--coverage`, `--miri`, and `--asan` flags natively into the `virtmcu-test-runner` CLI, subsuming `scripts/testing/*.sh` wrappers.
-- [x] **X.6 The Final Strike**: Delete `tools/testing/virtmcu_test_suite/`, remove `virtmcu-test-runner` from all environment files, delete all YAML specs in `tests/specs/`, and purge Python scripts embedded within `docs/tutorials/`. Migrated `yaml2qemu` to `packaging/virtmcu-tools` as a self-contained package.
 
 
 ---
@@ -86,19 +125,6 @@ To maintain performance, type-safety, and long-term maintainability, the followi
 
 ---
 
-### **[ARCH-22] MmioDevice Trait & Condvar BQL Yielding** — Correctness & Safety
-**Status**: ✅ Completed.
-
-**Goal**: Eliminate simulation starvation bugs (livelock) caused by guest firmware tight-polling MMIO registers. Replace the manual `Bql::temporary_unlock()` + `yield_now()` pattern with a structurally safe, closure-based `MmioDevice` trait and `wait_yielding_bql`.
-
-**Tasks**:
-- [x] **Phase 1: True Blocking:** Update the existing stopgap `yield_now()` usages in `sensor` and `ieee802154` to use `QemuCond::wait_yielding_bql` triggered by their respective Zenoh background threads.
-- [x] **Phase 2: Linter Enforcement:** Add `std::thread::yield_now()` to the custom `virtmcu-test-runner` linter `banned_patterns.rs` to prevent developers from manually spin-yielding in peripheral code.
-- [x] **Phase 3: MmioDevice Macro:** Create a `pub trait MmioDevice` in `virtmcu-qom` that returns an `MmioResult` (or uses a `wait_for` closure pattern). Create a `#[derive(MmioDevice)]` proc-macro that generates the `unsafe extern "C"` MMIO callbacks and fully encapsulates the BQL condvar yielding logic.
-- [x] **Phase 4: Migration:** Port all existing Rust peripherals (sensor, radio, actuator, etc.) to the new `MmioDevice` pattern and delete the manual C-FFI boilerplate. Update the `rust-dummy` template.
-
----
-
 ### **[Infrastructure] Milestone 30 — Deep Oxidization & Testing Overhaul** 🚧
 *Ongoing*
 - [ ] **30.8** Comprehensive Firmware Coverage (drcov integration).
@@ -130,16 +156,6 @@ To maintain performance, type-safety, and long-term maintainability, the followi
   - *Target*: Identify a specific vendor MCU/Board with an Ethernet MAC supported by QEMU (e.g., SMSC LAN9118 on Cortex-A15, or NXP ENET on i.MX).
   - *Action*: Download the official vendor SDK lwIP/ping example. Compile unmodified and test against `virtmcu-netdev` to verify bidirectional packet flow.
 - [x] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
-
-### [Infrastructure] Milestone 33 — Deprecation of `repl2qemu` and `.repl` format 🚧
-**Status**: 🚧 Completed (Legacy files purged).
-
-**Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). 
-
-**Tasks**:
-- [x] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format.
-- [x] **33.2**: Purge legacy `repl2qemu` Python scripts and dependencies.
-- [ ] **33.3**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow.
 
 
 ### [Infrastructure] INFRA-9 — Execution Pacing & Faster-Than-Real-Time (FTRT) Support
@@ -260,10 +276,63 @@ Items here have no immediate action — they are structural constraints or futur
 **Goal**: Implement ADR-017. Replace the legacy RESD format with a SOTA Hybrid Replay Architecture (MCAP and ASAM MDF4) to enable Enterprise Grade Sensor-in-the-Loop and Hardware-in-the-Loop co-simulation.
 
 **Tasks**:
-- [ ] **2.1 Dependency Update**: Add `mcap` and `camino` (or equivalent path handler) crates to the VirtMCU workspace.
-- [ ] **2.2 `virtmcu-replay` Node**: Create a new Zenoh client binary (`tools/virtmcu-replay`) that acts as a Deterministic Co-Simulation node. It must participate in the CMB quantum barrier and synchronize MCAP payload injection to `delivery_vtime_ns`.
+- [x] **2.1 Dependency Update**: Add `mcap` and `camino` (or equivalent path handler) crates to the VirtMCU workspace.
+- [x] **2.2 `virtmcu-replay` Node**: Create a new Zenoh client binary (`tools/virtmcu-replay`) that acts as a Deterministic Co-Simulation node. It must participate in the CMB quantum barrier and synchronize MCAP payload injection to `delivery_vtime_ns`.
 - [ ] **2.3 `mdf2mcap` Converter**: Build a CLI tool/adapter to convert Automotive ASAM MDF4 (`.mf4`) traces into VirtMCU-compatible MCAP files.
 - [ ] **2.4 OSI Support**: Integrate Protobuf definitions for ASAM OSI (Open Simulation Interface) into the schema pipeline to support Object-Level sensor injection.
-- [ ] **2.5 Schema Update**: Update `world_schema.json` and `yaml2qemu` to support declaring a `replay_trace: "file.mcap"` property on peripherals/nodes.
+- [x] **2.5 Schema Update**: Update `world_schema.json` and `yaml2qemu` to support declaring a `replay_trace: "file.mcap"` property on peripherals/nodes.
 - [ ] **2.6 Deprecate RESD**: Remove any residual Renode RESD parsing logic and update documentation to reflect the new MCAP standard.
+
+---
+
+### Phase 3: Native IPC Hybrid Architecture (ADR-019 & RFC-0025) 🚧
+**Status**: 🟡 Open.
+**Goal**: Implement the Single-Host Native IPC Hybrid Architecture, bypassing Zenoh for single-machine deployments in favor of Unix Domain Sockets (UDS) with a Thread-Local Arena "Reserve/Commit" API. This achieves SOTA performance and eradicates broker-induced race conditions while ensuring kernel-level lifecycle robustness.
+
+**Enterprise SOTA & Testing Mandates**:
+- **Test-Driven Development**: Every new IPC component must be rigorously unit-tested in isolation *before* system integration.
+- **Fail-Fast**: Any UDS connection drop, timeout, or malformed reservation must immediately trigger a fatal error (`panic!` or `exit(1)`). No silent retries.
+- **Borrow Checker Enforcement**: The `TransportReservation<'a>` API must strictly use lifetimes to prevent peripherals from holding buffer references after a `commit()`.
+
+**Tasks (In Strict Execution Order)**:
+- [x] **3.1 Zero-Copy API Definition & Adapter Arenas (RFC-0025 Phase 1 & 2)**
+  - *Implementation*: Introduce the `TransportReservation<'a>` struct and `reserve()`/`commit()` methods to the `DataTransport` trait. Update the existing `ZenohDataTransport` and `UnixDataTransport` to act as adapters using thread-local safe arenas to achieve zero-allocation without UB.
+  - *Testing*: Unit tests (`lifetime_tests.rs`) confirming that the borrow checker prevents use-after-commit safely.
+- [ ] **3.2 UDS Thread-Local Arena Backend (RFC-0025 Phase 3)**
+  - *Implementation*: Build the `UdsDataTransport`. Implement a thread-local arena (e.g., `RefCell<[u8; 4096]>`). `reserve()` returns a mutable slice from the arena. `commit()` performs a blocking `write()` to the provided Unix Domain Socket file descriptor.
+  - *Risk Mitigation*: Implement strict bounds checking in `reserve()` to return `TransportError::BufferTooSmall` if the requested size exceeds the arena. Ensure `commit()` handles partial writes via `write_all()`.
+- [ ] **3.3 UDS Coordinator Server (`DeterministicCoordinator`)**
+  - *Implementation*: Extend the `DeterministicCoordinator` to accept a `--transport unix` flag. Implement a UDS server that accepts inbound connections from QEMU nodes and the Time Authority.
+  - *Testing*: Write isolated Rust `#[tokio::test]` units verifying that the server correctly multiplexes connections, buffers messages by `vtime_ns`, and enforces the PDES barrier via UDS `CoordDoneReq` messages. Assert that a dropped client socket triggers a Coordinator panic.
+- [ ] **3.4 Peripheral Refactoring (RFC-0025 Phase 4)**
+  - **BLOCKED/DEPENDS ON**: RFC-0023 Mass Peripheral Migration (Step 4 of the concurrent agent's plan).
+  - *Implementation*: Update all `hw/rust/` peripherals to use the new `reserve()`/`commit()` API instead of `publish()`. Remove all `encode_frame` boilerplate. This MUST NOT be executed until the peripherals are fully migrated to `#[qom_device]`.
+  - *Regression Prevention*: Run `make test-check` and `make ci-full`. Ensure the legacy Zenoh tests still pass using the Adapter implemented in 3.1.
+- [ ] **3.5 QEMU Native IPC Plugins (`netdev` & `chardev`)**
+  - *Implementation*: Refactor `hw/rust/comms/netdev` and `hw/rust/comms/chardev` to bypass Zenoh publishers/subscribers when local mode is active, instead reading/writing FlatBuffers directly to the Coordinator's UDS socket.
+  - *Testing*: Create headless Rust tests instantiating two QOM devices communicating solely over a UDS pair, ensuring the FlatBuffer serialization matches the exact schema expected by the coordinator.
+- [ ] **3.3 Time Authority UDS Integration**
+  - *Implementation*: Update `virtmcu-physical-node` to route the `PhysicsTrigger` FlatBuffer bundle via UDS to the Physics Gateway (latency ~1-3µs) instead of Zenoh.
+  - *Testing*: Unit test the Time Authority with a mock Gateway UDS socket to verify the trigger is serialized and sent correctly after the quantum barrier is resolved.
+- [ ] **3.4 End-to-End Validation (`virtmcu-test-runner`)**
+  - *Implementation*: Add a `--transport unix` flag to `virtmcu-test-runner` to spin up the topology using the UDS Coordinator and SHM Gateway instead of Zenoh Routers.
+  - *Testing*: Run the existing 6-node + MuJoCo integration tests using the new flag. The test MUST pass with absolutely zero `vtime_ns` regressions compared to the Zenoh baseline, empirically proving bit-exact causal determinism is maintained without the network broker.
+
+---
+
+### [Infrastructure] INFRA-10 — Zero Python/Shell Goal & Enterprise Build Quality
+**Status**: 🟡 Open.
+**Goal**: Eradicate fragile shell and Python scripts from the build and testing pipeline to achieve 100% Rust-based tooling.
+
+**Tasks**:
+- [ ] **10.1 Oxidize the Meson-Cargo Bridge**
+  - *Implementation*: Replace `hw/rust/build.sh` and `hw/gen_trigger.sh` with a dedicated Rust tool (e.g., a new subcommand in `virtmcu-cli` or `xtask`). This tool will handle environment variables (ASan/TSan), compiler flags, parallel job configuration, and C-code generation (`_trigger.c` files for QEMU's module system).
+  - *Outcome*: Build logic is centralized in Rust, ensuring consistent dependency tracking and flag handling across the workspace without relying on Bash.
+- [ ] **10.2 Port E2E Tests to `virtmcu-test-runner`**
+  - *Implementation*: Migrate scripts like `tests/e2e/test_pendulum_compose.sh` and `tests/firmware/capture_golden.sh` to Rust integration tests orchestrated by the `virtmcu-test-runner`. 
+  - *Outcome*: Eliminate non-deterministic "magic sleeps" (e.g., `sleep 10`) and basic `grep` commands, replacing them with robust, type-safe assertions on the simulation state and captured stdout/stderr streams.
+- [x] **10.3 Hash-based Handshake Validation**
+  - *Description*: Implement the SVD-hash safety check in the `VirtMCUHandshake` (RFC-0012). The emulator must hash the SVDs of its active peripherals and compare them against a hash sent by the firmware or external client during connection.
+  - *Outcome*: Immediate rejection of connections where the client's hardware definition differs from the emulator's.
+  - *Testing*: Connect a Rust client built with an old version of an SVD to a new simulation instance and verify it is disconnected during the handshake phase.
 

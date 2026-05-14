@@ -97,6 +97,30 @@ impl DataTransport for UnixDataTransport {
         self.tx.send((topic.to_string(), payload.to_vec())).map_err(|e| e.to_string())
     }
 
+    fn reserve<'a>(
+        &'a self,
+        topic: &'a str,
+        size: usize,
+    ) -> Result<virtmcu_api::TransportReservation<'a>, virtmcu_api::TransportError> {
+        let mut frame = vec![0u8; virtmcu_api::ZENOH_FRAME_HEADER_SIZE + size];
+
+        let payload_ptr = unsafe { frame.as_mut_ptr().add(virtmcu_api::ZENOH_FRAME_HEADER_SIZE) };
+        // SAFETY: We move `frame` into the closure which is owned by the TransportReservation.
+        // Since Vec's heap memory is stable, the pointer remains valid for the lifetime of
+        // the TransportReservation. We transmute to extend the lifetime of the slice.
+        let buffer = unsafe {
+            let b = core::slice::from_raw_parts_mut(payload_ptr, size);
+            core::mem::transmute::<&mut [u8], &mut [u8]>(b)
+        };
+
+        Ok(virtmcu_api::TransportReservation::new(topic, buffer, move |vtime, seq| {
+            let header = virtmcu_api::ZenohFrameHeader::new(vtime, seq, size as u32);
+            frame[0..virtmcu_api::ZENOH_FRAME_HEADER_SIZE].copy_from_slice(&header.0);
+
+            self.publish(topic, &frame).map_err(virtmcu_api::TransportError::Other)
+        }))
+    }
+
     fn subscribe(&self, topic: &str, callback: DataCallback) -> Result<(), String> {
         self.subscriptions
             .lock()

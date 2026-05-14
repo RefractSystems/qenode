@@ -79,10 +79,11 @@ jobs:
         env:
           ARCH: amd64
           IMAGE_TAG: sha-${{ github.sha }}
-          PUSH_CACHE: "false"
+          PUSH_CACHE: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           targets: default
+          push: true
 
 # ── Tier 2: Lint & Unit Tests ──────────────────────────────────────────────
 
@@ -250,51 +251,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
 
-      - name: Check for pre-built third-party-base image
-        run: |
-          if [ "${{ matrix.sanitizer }}" == "standard" ]; then
-            TAG="${{ env.VIRTMCU_IMAGE_REGISTRY }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-amd64"
-          else
-            TAG="${{ env.VIRTMCU_IMAGE_REGISTRY }}/third-party-base:${{ env.THIRD_PARTY_CACHE_TAG }}-asan-amd64"
-          fi
-          if docker manifest inspect "$TAG" >/dev/null 2>&1; then
-            echo "QEMU_BASE_CACHE=hit" >> "$GITHUB_ENV"
-            echo "third-party-base cache HIT — QEMU compile will be skipped ($TAG)"
-          else
-            echo "QEMU_BASE_CACHE=miss" >> "$GITHUB_ENV"
-            echo "third-party-base cache MISS — patches changed or first build; full QEMU compile required"
-          fi
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Build and push third-party-base cache
-        if: env.QEMU_BASE_CACHE == 'miss'
-        uses: docker/bake-action@v7
-        env:
-          ARCH: amd64
-          IMAGE_TAG: sha-${{ github.sha }}
-          PUSH_CACHE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
-          CI: "true"
-          THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          targets: ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
-          push: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-          files: docker-bake.hcl
 
       - name: Build ci stage
         uses: docker/bake-action@v7
         env:
           ARCH: amd64
           IMAGE_TAG: sha-${{ github.sha }}
-          PUSH_CACHE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+          # PRs never push to the shared registry to prevent pollution.
+          # They use GitHub Actions Cache (type=gha) because PUSH_CACHE=false.
+          PUSH_CACHE: "true"
           CI: "true"
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
+          QEMU_VERSION: ${{ env.QEMU_VERSION }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          targets: ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
-          load: true
+          targets: ${{ matrix.sanitizer == 'standard' && 'qemu-base-builder,third-party-base,ci' || 'qemu-base-builder-asan,third-party-base-asan,ci-asan' }}
+          push: true
           files: docker-bake.hcl
 
       - name: Verify QEMU binary

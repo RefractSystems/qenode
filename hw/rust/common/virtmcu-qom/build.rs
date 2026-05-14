@@ -1,4 +1,4 @@
-#[allow(clippy::too_many_lines, clippy::std_instead_of_core)]
+#[allow(clippy::too_many_lines, clippy::std_instead_of_core)] // virtmcu-allow: allow reasoning="Build script requires standard library and is naturally long"
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-env-changed=VIRTMCU_UNIT_TEST"); // virtmcu-allow: print reasoning="cargo build script protocol"
     println!("cargo:rerun-if-env-changed=VIRTMCU_USE_ASAN"); // virtmcu-allow: print reasoning="cargo build script protocol"

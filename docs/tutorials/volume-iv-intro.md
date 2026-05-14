@@ -18,8 +18,8 @@ Learn to define and boot a custom ARM machine using only a Device Tree and a YAM
 ### [Lesson 2: Dynamic QOM Plugins](lesson2-dynamic-plugins/README.md)
 The gateway to extensibility. Master the creation of dynamic shared objects (DSOs) that can be loaded into QEMU at runtime.
 
-### [Lesson 3: Parsing .repl to DTB](lesson3-repl2qemu/README.md)
-Bridging ecosystem formats. Learn how to convert Antmicro Renode (`.repl`) files into the Flattened Device Trees (`.dtb`) used by VirtMCU.
+### [Lesson 3: The World Specification (YAML)](lesson03-world-specification/README.md)
+Bridging ecosystem formats. Learn how to convert VirtMCU World Specification (`.yaml`) files into the Flattened Device Trees (`.dtb`) used by VirtMCU.
 
 ### [Lesson 4: Emulation Automation](lesson4-emulation-automation/README.md)
 Orchestration at scale. Use Python and `virtmcu-test-runner` to automate the execution, monitoring, and verification of your firmware.

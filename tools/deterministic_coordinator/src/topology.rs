@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use crate::generated::topology as gen;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -16,6 +17,7 @@ pub enum Protocol {
     Rf802154,
     RfHci,
     Control,
+    Dummy,
 }
 
 impl Protocol {
@@ -122,12 +124,13 @@ pub struct TopologyGraph {
     max_wireless_range_m: f64,
     pub is_explicit: bool,
     drop_list: HashSet<(u32, u32)>,
+    pub routing_map: RoutingMap,
 }
 
 fn node_id_to_u32(nid: &gen::NodeId) -> u32 {
     match nid {
         gen::NodeId::Integer(i) => *i as u32,
-        gen::NodeId::String(s) => s.parse::<u32>().unwrap_or(u32::MAX),
+        gen::NodeId::String(s) => s.parse::<u32>().expect("Invalid data format"),
     }
 }
 
@@ -178,7 +181,7 @@ impl TopologyGraph {
             }
 
             if all_numeric && !fallback_nodes.is_empty() {
-                tracing::warn!("DEPRECATION: Top-level 'peripherals' for topology nodes is deprecated. Move them to 'topology.nodes'.");
+                tracing::debug!("DEPRECATION: Top-level 'peripherals' for topology nodes is deprecated. Move them to 'topology.nodes'.");
                 for id in fallback_nodes {
                     valid_nodes.insert(id);
                 }
@@ -186,6 +189,7 @@ impl TopologyGraph {
         }
 
         if let Some(topo) = world.topology {
+            let mut routing_map = RoutingMap::new();
             let mut positions = HashMap::new();
             let mut max_range = 0.0;
 
@@ -198,6 +202,13 @@ impl TopologyGraph {
                         return Err(TopologyError::UnknownNode(id));
                     }
                     nodes.push(id);
+                    for i in 0..nodes.len() {
+                        for j in 0..nodes.len() {
+                            if i != j {
+                                routing_map.add_route(nodes[i].to_string(), nodes[j].to_string());
+                            }
+                        }
+                    }
                 }
                 wire_links.push(WireLink {
                     protocol: Protocol::from(link.type_.clone()),
@@ -249,7 +260,7 @@ impl TopologyGraph {
                     .global_seed
                     .as_ref()
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(0),
+                    .unwrap_or(0), // virtmcu-allow: unwrap_or_fallback reasoning="global_seed is optional and defaults to 0"
                 transport: topo.transport.map(Transport::from).unwrap_or_default(),
                 wire_links,
                 wireless_medium,
@@ -257,6 +268,7 @@ impl TopologyGraph {
                 max_wireless_range_m: max_range,
                 is_explicit: true,
                 drop_list: HashSet::new(),
+                routing_map,
             })
         } else {
             Ok(TopologyGraph::default())
@@ -276,6 +288,7 @@ impl Default for TopologyGraph {
             max_wireless_range_m: 0.0,
             is_explicit: false,
             drop_list: HashSet::new(),
+            routing_map: RoutingMap::new(),
         }
     }
 }
@@ -360,11 +373,38 @@ impl TopologyGraph {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RoutingMap {
+    pub map: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl RoutingMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_route(&mut self, source: String, target: String) {
+        self.map.entry(source).or_default().push(target);
+    }
+
+    pub fn get_targets(&self, source: &str) -> Option<&Vec<String>> {
+        self.map.get(source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_routing_map_basic() {
+        let mut map = RoutingMap::new();
+        map.add_route("A".to_string(), "B".to_string());
+        assert_eq!(map.get_targets("A").unwrap(), &vec!["B".to_string()]);
+        assert!(map.get_targets("X").is_none());
+    }
 
     #[test]
     fn test_topology_nodes_new_schema() {

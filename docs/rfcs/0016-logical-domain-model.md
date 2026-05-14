@@ -1,17 +1,17 @@
-# ADR-016: Logical Domain Model for World Specification
+# RFC-0016: Logical Domain Model for World Specification
 
 ## Status
 Accepted
 
 ## Context
-VirtMCU has transitioned from a flat, emulator-centric configuration format (.repl) to a hierarchical World YAML. Currently, the schema validation is fragmented:
+VirtMCU has transitioned from a flat, emulator-centric configuration format to a hierarchical World YAML. Currently, the schema validation is fragmented:
 1.  **Python (`world_schema.py`)**: Uses Pydantic for authoring validation.
 2.  **Rust (`topology.rs`)**: Uses Serde for execution-time parsing.
 3.  **Documentation (World Specification)**: Describes the intent but is not programmatically linked to the code.
 
-To achieve Enterprise SOTA standards and align with our OpenUSD roadmap (ADR-010), we need a **Single Source of Truth (SSoT)**. We have selected **TypeSpec** as the IDL to define this model. 
+To achieve Enterprise SOTA standards and align with our OpenUSD roadmap (RFC-0010), we need a **Single Source of Truth (SSoT)**. We have selected **TypeSpec** as the IDL to define this model. 
 
-This ADR formalizes the **Logical Domain Model**—the mathematical ontology that the TypeSpec implementation must follow.
+This RFC-00formalizes the **Logical Domain Model**—the mathematical ontology that the TypeSpec implementation must follow.
 
 ## Decision: The VirtMCU Ontology
 

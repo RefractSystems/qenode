@@ -29,11 +29,12 @@ members = [
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
     "tools/virtmcu-test-runner",
     "tools/virtmcu-run",
+    "tools/virtmcu-replay",
     "tools/virtmcu-cli",
     "tools/virtmcu-coverage",
     "tools/virtmcu-observability",
     "tools/benchmarks/clock_rtt_bench",
-    "tests/native_integration", "hw/rust/common/virtmcu-qom-macros",
+     "hw/rust/common/virtmcu-qom-macros",
 ]
 exclude = [
     "xtask",
@@ -68,6 +69,8 @@ opentelemetry-otlp       = { version = "0.27", features = ["trace", "logs", "grp
 opentelemetry_sdk        = { version = "0.27", features = ["trace", "logs", "rt-tokio"] }
 opentelemetry-appender-tracing = "0.27"
 tracing-opentelemetry    = "0.28"
+mcap = "0.13.0"
+camino = "1.1.9"
 
 [profile.release]
 panic = "abort"

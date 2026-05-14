@@ -3,6 +3,7 @@ namespace virtmcu.core;
 struct VirtmcuHandshake {
     magic: uint32;
     version: uint32;
+    svd_hash: uint64;
 }
 
 struct MmioReq {

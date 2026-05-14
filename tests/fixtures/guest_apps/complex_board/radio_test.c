@@ -37,13 +37,18 @@
 #define CMD_RX 2
 #define CMD_TX 3
 
-void uart_putc(char c) {
-  *(volatile uint32_t *)UARTDR = c;
+void uart_putc(char c) { *(volatile uint32_t *)UARTDR = c; }
+
+void delay(int count) {
+  for (int i = 0; i < count; i++) {
+    asm volatile("nop");
+  }
 }
 
 void uart_puts(const char *s) {
   while (*s) {
     uart_putc(*s++);
+    delay(5000);
   }
 }
 
@@ -51,12 +56,7 @@ void uart_puthex(uint32_t v) {
   const char *hex = "0123456789ABCDEF";
   for (int i = 7; i >= 0; i--) {
     uart_putc(hex[(v >> (i * 4)) & 0xF]);
-  }
-}
-
-void delay(int count) {
-  for (int i = 0; i < count; i++) {
-    asm volatile("nop");
+    delay(5000);
   }
 }
 
@@ -119,8 +119,13 @@ int main() {
 
       /* Clear RX_READY */
       *(volatile uint32_t *)REG_RADIO_STATUS = STATUS_RX_READY;
+      break;
     }
-    delay(1000);
+  }
+
+  uart_puts("Test finished.\n");
+  while (1) {
+    delay(1000000);
   }
 
   return 0;

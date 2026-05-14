@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 //! Enterprise Lock-Free Telemetry System.
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
@@ -159,9 +160,9 @@ fn init_logger_thread() -> Sender<LogEntry> {
             while let Ok(entry) = rx.recv() {
                 let dropped = DROPPED_LOGS.swap(0, Ordering::Relaxed);
                 if dropped > 0 {
-                    // Use sim_warn! to log overflow. In the logger thread, this will
+                    // Use sim_debug! to log overflow. In the logger thread, this will
                     // add a message to the queue we are currently draining.
-                    sim_warn!("Logger queue overflow: dropped {dropped} messages");
+                    sim_debug!("Logger queue overflow: dropped {dropped} messages");
                 }
 
                 let msg_str = entry.msg.get(..entry.msg_len).map_or("<missing msg>", |b| {

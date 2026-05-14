@@ -1,4 +1,4 @@
-# ADR-017: Enterprise Sensor Data Replay & Trace Formats
+# RFC-0017: Enterprise Sensor Data Replay & Trace Formats
 
 ## Status
 Accepted
@@ -6,7 +6,7 @@ Accepted
 ## Context
 VirtMCU currently utilizes the Renode Sensor Data Format (RESD) for simple time-series sensor injections. While sufficient for basic educational use cases and lightweight simulation, RESD fails to meet Enterprise Grade SOTA (State-of-the-Art) requirements for scalability, schema-evolution, high-frequency indexing, and integration with modern automotive and robotics ecosystems.
 
-Simultaneously, VirtMCU is aligning with OpenUSD (Universal Scene Description) for defining the spatial-temporal "World State" (see ADR-010, ADR-016). However, storing high-frequency telemetry (e.g., 1MB/s UART dumps, CAN-FD traces, or I2C sensor bursts) inside an OpenUSD scene graph causes severe binary bloat and performance degradation during rendering and querying.
+Simultaneously, VirtMCU is aligning with OpenUSD (Universal Scene Description) for defining the spatial-temporal "World State" (see RFC-0010, RFC-0016). However, storing high-frequency telemetry (e.g., 1MB/s UART dumps, CAN-FD traces, or I2C sensor bursts) inside an OpenUSD scene graph causes severe binary bloat and performance degradation during rendering and querying.
 
 Research into Enterprise SOTA practices—specifically those utilized by Siemens (Simcenter/PreScan) and MathWorks (MATLAB/Simulink)—reveals a standardized bifurcation of data formats:
 1. **ASAM MDF4 (.mf4):** The "Gold Standard" in the automotive industry (OEMs and Tier-1s) for high-speed bus logging (CAN, LIN, FlexRay) and raw signal tracing.

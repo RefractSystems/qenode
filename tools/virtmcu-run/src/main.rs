@@ -346,8 +346,6 @@ fn main() -> Result<()> {
     if let Some(file) = &input_file {
         if file.ends_with(".yaml") || file.ends_with(".yml") {
             input_type = Some("yaml".to_string());
-        } else if file.ends_with(".repl") {
-            input_type = Some("repl".to_string());
         } else if file.ends_with(".dts") {
             input_type = Some("dts".to_string());
         } else if file.ends_with(".dtb") {
@@ -365,40 +363,6 @@ fn main() -> Result<()> {
     if let Some(ref itype) = input_type {
         let file = input_file.as_ref().unwrap();
         match itype.as_str() {
-            "repl" => {
-                println!(
-                    "⚠ WARNING: .repl format is DEPRECATED and will be removed in Milestone 34."
-                );
-                println!("   Please migrate to the modern YAML format using: python3 -m tools.repl2yaml {}", file);
-                println!("Processing Renode platform: {}", file);
-                let dtb = NamedTempFile::new()?;
-                let arch_file = NamedTempFile::new()?;
-
-                let status = Command::new("python3")
-                    .arg("-m")
-                    .arg("tools.repl2qemu")
-                    .arg(file)
-                    .arg("--out-dtb")
-                    .arg(dtb.path())
-                    .arg("--out-arch")
-                    .arg(arch_file.path())
-                    .status()?;
-                if !status.success() {
-                    return Err(anyhow!("tools.repl2qemu failed"));
-                }
-
-                let mut arch_content = String::new();
-                std::fs::File::open(arch_file.path())?.read_to_string(&mut arch_content)?;
-                let arch_content = arch_content.trim();
-                if !arch_content.is_empty() {
-                    arch = arch_content.to_string();
-                }
-
-                dtb_path = dtb.path().to_string_lossy().to_string();
-                is_temp_dtb = true;
-                _temp_dtb = Some(dtb);
-                _temp_arch = Some(arch_file);
-            }
             "yaml" => {
                 println!("Processing virtmcu YAML platform: {}", file);
                 let dtb = NamedTempFile::new()?;

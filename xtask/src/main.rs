@@ -658,7 +658,7 @@ fn main() -> Result<()> {
         Commands::SmokeCiAsan => {
             println!("==> Smoke test: ci-asan");
             cmd!(sh, "docker run --rm {virtmcu_ci_asan_img} qemu-system-arm --version").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_ci_asan_img} bash -c 'nm /build/qemu/build-virtmcu-asan/install/bin/qemu-system-arm | grep -q __asan'").run()?;
+            cmd!(sh, "docker run --rm {virtmcu_ci_asan_img} bash -c 'nm $(which qemu-system-arm) | grep -q __asan'").run()?;
             println!("✓ ci-asan smoke test passed");
         }
         Commands::CleanSim => {

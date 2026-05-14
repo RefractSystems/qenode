@@ -69,6 +69,7 @@ pub struct Peripheral {
     pub container: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct YamlPlatform {
     pub dts_content: String,
     pub cli_args: Vec<String>,
@@ -77,16 +78,19 @@ pub struct YamlPlatform {
 
 fn parse_addr(val: &serde_yaml::Value) -> u64 {
     match val {
-        serde_yaml::Value::Number(n) => n.as_u64().unwrap_or(0),
+        serde_yaml::Value::Number(n) => n.as_u64().expect("YAML number should be parseable as u64"),
         serde_yaml::Value::String(s) => {
             let s = s.trim();
+            if s == "none" || s == "sysbus" {
+                return 0;
+            }
             if let Some(stripped) = s.strip_prefix("0x") {
-                u64::from_str_radix(stripped, HEX_RADIX).unwrap_or(0)
+                u64::from_str_radix(stripped, HEX_RADIX).expect("Invalid hex string for address")
             } else {
-                s.parse::<u64>().unwrap_or(0)
+                s.parse::<u64>().expect("Invalid decimal string for address")
             }
         }
-        _ => 0,
+        _ => unreachable!("Address must be a number or string"),
     }
 }
 
@@ -177,7 +181,11 @@ fn emit_device(
 
     dts.push_str(&format!("{}{}@{:x} {{\n", indent, p.name, addr));
     dts.push_str(&format!("{}    compatible = \"{}\";\n", indent, compat));
-    dts.push_str(&format!("{}    phandle = <{}>;\n", indent, phandles.get(&p.name).unwrap_or(&0)));
+    dts.push_str(&format!(
+        "{}    phandle = <{}>;\n",
+        indent,
+        phandles.get(&p.name).expect("Phandle must be present")
+    ));
 
     let addr_hi = addr >> ADDR_SHIFT;
     let addr_lo = addr & ADDR_MASK;
@@ -219,13 +227,13 @@ fn emit_device(
         let mut cells = Vec::new();
         for irq in irqs {
             let num = match irq {
-                serde_yaml::Value::Number(n) => n.as_u64().unwrap_or(0),
+                serde_yaml::Value::Number(n) => n.as_u64().expect("Invalid data format"),
                 serde_yaml::Value::String(s) => {
                     let parts: Vec<&str> = s.split('@').collect();
                     if parts.len() == IRQ_STRING_PARTS {
-                        parts[1].parse::<u64>().unwrap_or(0)
+                        parts[1].parse::<u64>().expect("Invalid data format")
                     } else {
-                        s.parse::<u64>().unwrap_or(0)
+                        s.parse::<u64>().expect("Invalid data format")
                     }
                 }
                 _ => 0,
@@ -336,9 +344,19 @@ fn emit_device(
             "".to_string()
         };
 
+        let svd_hash = if let Some(props) = &p.properties {
+            if let Some(serde_yaml::Value::Number(n)) = props.get("svd-hash") {
+                n.as_u64().expect("svd-hash property must be a valid u64")
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
         cli_args.push(format!(
-            "mmio-socket-bridge,id={},base-addr={},region-size={},socket-path={}",
-            p.name, addr, region_size, sock
+            "mmio-socket-bridge,id={},base-addr={},region-size={},socket-path={},svd-hash={}",
+            p.name, addr, region_size, sock, svd_hash
         ));
     }
 
@@ -411,15 +429,43 @@ pub fn parse_yaml(
         dts.push_str("    };\n\n");
     }
 
-    // Inject hub0
-    dts.push_str("    hub0 {\n");
-    dts.push_str("        compatible = \"virtmcu-transport-hub\";\n");
-    dts.push_str(&format!("        phandle = <{}>;\n", HUB_PHANDLE));
-    if let Some(ep) = endpoint {
-        dts.push_str(&format!("        router = \"{}\";\n", ep));
+    let mut has_native = false;
+    for p in &world.peripherals {
+        let p_type = p.periph_type.as_deref().unwrap_or("Unknown");
+        let is_native = [
+            "telemetry",
+            "ieee802154",
+            "zenoh-wifi",
+            "wifi",
+            "spi",
+            "spi-echo",
+            "canfd",
+            "flexray",
+            "lin",
+            "clock",
+            "ui",
+            "actuator",
+            "sensor",
+            "s32k144-lpuart",
+        ]
+        .contains(&p_type);
+        if is_native {
+            has_native = true;
+            break;
+        }
     }
-    dts.push_str(&format!("        node = <{}>;\n", node_id));
-    dts.push_str("    };\n\n");
+
+    if has_native {
+        // Inject hub0
+        dts.push_str("    hub0 {\n");
+        dts.push_str("        compatible = \"virtmcu-transport-hub\";\n");
+        dts.push_str(&format!("        phandle = <{}>;\n", HUB_PHANDLE));
+        if let Some(ep) = endpoint {
+            dts.push_str(&format!("        router = \"{}\";\n", ep));
+        }
+        dts.push_str(&format!("        node = <{}>;\n", node_id));
+        dts.push_str("    };\n\n");
+    }
 
     // Pass 1: Assign phandles, bucket children, and apply SVD augmentation
     let mut children_by_parent: HashMap<String, Vec<Peripheral>> = HashMap::new();
@@ -446,6 +492,14 @@ pub fn parse_yaml(
                             e
                         )
                     })?;
+
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = fnv::FnvHasher::default();
+                    xml.hash(&mut hasher);
+                    let svd_hash = hasher.finish();
+                    props
+                        .insert("svd-hash".to_string(), serde_yaml::Value::Number(svd_hash.into()));
+
                     let device = svd_parser::parse(&xml).map_err(|e| {
                         anyhow::anyhow!(
                             "Failed to parse SVD file '{}': {:?}",
@@ -583,5 +637,41 @@ peripherals:
         assert!(result.is_ok());
         let (platform, _) = result.unwrap();
         assert!(platform.has_clock);
+    }
+
+    #[test]
+    fn test_parse_yaml_mac_parsing() {
+        let yaml = r#"
+machine:
+  cpus:
+    - name: cpu0
+      type: cortex-a15
+peripherals:
+  - name: ram
+    type: Memory.MappedMemory
+    address: 0x40000000
+    properties:
+      size: 0x1000000
+  - name: test_dev
+    type: test-rust-device
+    address: sysbus
+    properties:
+      MACAddress: "00:11:22:33:44:55"
+"#;
+        let result = parse_yaml(yaml, None, 0);
+        assert!(result.is_ok());
+        let (platform, _) = result.unwrap();
+        println!("Generated DTS:\n{}", platform.dts_content);
+    }
+
+    #[test]
+    fn test_mismatched_svd_address() {
+        let yaml_path =
+            std::path::Path::new("../../../tests/fixtures/guest_apps/mismatched_svd/board.yaml");
+        let yaml = std::fs::read_to_string(yaml_path).expect("Failed to read fixture");
+        let result = parse_yaml(&yaml, None, 0);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Lint Error: Peripheral 'actuator0' has hardcoded address 0xb000000 which differs from SVD baseAddress 0xa000000. Use 'address: none' to follow SOTA SSoT pattern."));
     }
 }

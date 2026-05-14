@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -497,11 +498,10 @@ fn clock_quantum_wait_internal(
 ) -> u64 {
     // Runtime assertion (not just debug_assert): BQL must NOT be held here.
     if virtmcu_qom::sync::Bql::is_held() {
-        if virtmcu_qom::sysemu::runstate_is_running() {
-            virtmcu_qom::sim_warn!(
-                "BQL held entering quantum_wait — would deadlock. Skipping sync."
-            );
-        }
+        assert!(
+            !virtmcu_qom::sysemu::runstate_is_running(),
+            "BQL held entering quantum_wait — would deadlock. Skipping sync."
+        );
         return QUANTUM_WAIT_STALL_SENTINEL;
     }
 
@@ -699,10 +699,7 @@ fn wait_for_ready_and_execute(
             backend.state.store(QuantumState::Executing as u8, Ordering::SeqCst);
             backend.cond.notify_all();
         } else {
-            virtmcu_qom::sim_warn!(
-                "Clock: Worker attempted to grant quantum but state is {:?}",
-                current
-            );
+            panic!("Clock: Worker attempted to grant quantum but state is {current:?}");
         }
     }
 

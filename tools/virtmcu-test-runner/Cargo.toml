@@ -30,7 +30,6 @@ ignore = "0.4.25"
 quote = "1.0"
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 regex = "1.12.3"
-rand = "0.8.5"
 which = "7.0.0"
 
 [dev-dependencies]

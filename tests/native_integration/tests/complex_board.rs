@@ -26,7 +26,9 @@ async fn test_complex_board_wireless() -> Result<()> {
 
     println!("Advancing clock to enter RX mode...");
     // Advance clock to ensure firmware is in RX mode
-    env.step_clock(100_000_000, 10_000_000).await?;
+    env.step_clock(500_000_000, 10_000_000).await?;
+
+    env.wait_for_output(0, "Waiting for RX...").await?;
 
     println!("Injecting packet...");
     // Now inject a packet back to the radio
@@ -42,8 +44,11 @@ async fn test_complex_board_wireless() -> Result<()> {
 
     let radio_rx_topic = "sim/rf/ieee802154/0/rx";
 
+    // Use env.safe_subscribe
+    let sub = env.safe_subscribe(radio_rx_topic).await.unwrap();
+
     // Create a Zenoh packet with header. Use a future vtime to ensure it's processed.
-    let now_vtime = env.vtime() + 50_000_000;
+    let now_vtime = 0;
     let payload = virtmcu_api::encode_rf802154_frame(
         now_vtime,
         0,
@@ -52,18 +57,30 @@ async fn test_complex_board_wireless() -> Result<()> {
         255, // lqi
         virtmcu_api::Rf802154Mhr::parse(&dummy_packet),
     );
+    println!("Payload size: {}", payload.len());
 
     env.session()
         .put(radio_rx_topic, payload)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to publish to radio: {}", e))?;
 
+    if let Ok(sample) =
+        tokio::time::timeout(std::time::Duration::from_millis(500), sub.recv_async()).await
+    {
+        println!(
+            "TEST RUNNER VERIFIED: Zenoh put successful, received back {} bytes",
+            sample.unwrap().payload().to_bytes().len()
+        );
+    } else {
+        println!("TEST RUNNER VERIFIED: Zenoh put FAILED TO BE RECEIVED BY SELF");
+    }
+
     // Small delay to ensure Zenoh delivers the message to QEMU's main loop
     // virtmcu-allow: test_sleep reasoning="ensure zenoh delivers message"
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Advance clock to allow processing (we need to advance past the injected vtime)
-    env.step_clock(200_000_000, 10_000_000).await?;
+    env.step_clock(500_000_000, 10_000_000).await?;
 
     env.wait_for_output(0, "Received packet!").await?;
     env.wait_for_output(0, "HELLO FROM TEST").await?;

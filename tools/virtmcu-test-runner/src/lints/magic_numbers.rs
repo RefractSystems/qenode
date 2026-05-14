@@ -54,6 +54,9 @@ impl Lint for RustMagicNumbersLint {
                 Err(_) => continue,
             };
 
+            let mut in_test_module = false;
+            let mut test_mod_brace_depth = 0;
+
             // Strip comments (simple version)
             let lines: Vec<&str> = content.lines().collect();
             for (i, line) in lines.iter().enumerate() {
@@ -62,6 +65,23 @@ impl Lint for RustMagicNumbersLint {
                 } else {
                     line
                 };
+
+                let trimmed = line_no_comment.trim();
+
+                if trimmed.starts_with("#[cfg(test)]") {
+                    in_test_module = true;
+                    test_mod_brace_depth = 0;
+                }
+
+                if in_test_module {
+                    test_mod_brace_depth += trimmed.matches('{').count() as i32;
+                    test_mod_brace_depth -= trimmed.matches('}').count() as i32;
+
+                    if test_mod_brace_depth <= 0 && !trimmed.starts_with("#[cfg(test)]") {
+                        in_test_module = false;
+                    }
+                    continue;
+                }
 
                 if const_re.is_match(line_no_comment)
                     || enum_re.is_match(line_no_comment)
@@ -89,7 +109,7 @@ impl Lint for RustMagicNumbersLint {
 
                     passed = false;
                     error!(
-                        "{}:{}: Magic number '{}' found.\n  Fix: Extract to a named 'const'.",
+                        "{}:{}: Magic number '{}' found.\n  Fix: Extract to a named 'const'. Quick Tip: Avoid magic numbers to improve readability and maintainability. See docs/guide/09-engineering-mandates.md.",
                         path.display(),
                         i + 1,
                         val_str

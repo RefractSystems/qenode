@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 pub mod processors;
 
 use alloc::sync::Arc;
@@ -84,7 +85,7 @@ pub fn init_telemetry(
             tracer_builder = tracer_builder.with_span_processor(vtime_processor);
         }
         Err(e) => {
-            log::warn!("virtmcu-observability: Failed to create OTLP trace exporter: {e}. Proceeding with local tracing only.");
+            log::debug!("virtmcu-observability: Failed to create OTLP trace exporter: {e}. Proceeding with local tracing only.");
         }
     }
 
@@ -104,7 +105,7 @@ pub fn init_telemetry(
             logger_builder = logger_builder.with_log_processor(vtime_log_processor);
         }
         Err(e) => {
-            log::warn!("virtmcu-observability: Failed to create OTLP log exporter: {e}. Proceeding with local logging only.");
+            log::debug!("virtmcu-observability: Failed to create OTLP log exporter: {e}. Proceeding with local logging only.");
         }
     }
 
@@ -154,7 +155,7 @@ pub fn init_plugin_telemetry(
             tracer_builder = tracer_builder.with_span_processor(vtime_processor);
         }
         Err(e) => {
-            log::warn!("virtmcu-observability: Failed to create OTLP trace exporter: {e}. Proceeding with local tracing only.");
+            log::debug!("virtmcu-observability: Failed to create OTLP trace exporter: {e}. Proceeding with local tracing only.");
         }
     }
 
@@ -174,7 +175,7 @@ pub fn init_plugin_telemetry(
             logger_builder = logger_builder.with_log_processor(vtime_log_processor);
         }
         Err(e) => {
-            log::warn!("virtmcu-observability: Failed to create OTLP log exporter: {e}. Proceeding with local logging only.");
+            log::debug!("virtmcu-observability: Failed to create OTLP log exporter: {e}. Proceeding with local logging only.");
         }
     }
 

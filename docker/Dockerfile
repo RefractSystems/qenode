@@ -14,6 +14,7 @@ ARG QEMU_REF=v11.0.0
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG MESON_VERSION=1.8.0
+ARG YAMLLINT_VERSION=1.37.1
 ARG RUST_VERSION=1.95.0
 ARG BINDGEN_VERSION=0.72.1
 ARG CARGO_BINSTALL_VERSION=1.10.4
@@ -184,8 +185,9 @@ RUN curl -fsSL --retry 3 -o /tmp/flatc.zip "https://github.com/google/flatbuffer
 
 ARG CMAKE_VERSION
 ARG MESON_VERSION
+ARG YAMLLINT_VERSION
 ENV UV_LINK_MODE=copy
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} --break-system-packages
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} yamllint==${YAMLLINT_VERSION} --break-system-packages
 
 # ── Stage 3: devenv ──────────────────────────────────────────────────────
 FROM toolchain AS devenv
@@ -288,8 +290,8 @@ RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/r
     CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
     && cp target/release/virtmcu-cli /usr/local/bin/virtmcu-cli
 
-# ── Stage 6: third-party-builder ─────────────────────────────────────────────────────
-FROM devenv AS third-party-builder
+# ── Stage 6: qemu-base-builder ─────────────────────────────────────────────────────
+FROM devenv AS qemu-base-builder
 
 ARG TARGETARCH
 ENV ARCH=arm
@@ -336,14 +338,6 @@ ARG QEMU_REF
 WORKDIR /build
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
-# 2. Project-specific tools and patches (The invalidation point for subsequent layers)
-COPY --from=cli-builder /usr/local/bin/virtmcu-cli /usr/local/bin/virtmcu-cli
-COPY patches/ /build/patches/
-COPY BUILD_DEPS /build/
-
-# 3. Patch and build QEMU
-RUN virtmcu-cli setup patch-qemu /build/qemu
-
 # Pre-configure with a dummy virtmcu directory to cache the core build.
 # This ensures that changing files in hw/ only triggers a module rebuild.
 RUN rm -rf qemu/hw/virtmcu && mkdir -p qemu/hw/virtmcu \
@@ -382,12 +376,29 @@ RUN QEMU_CONF_FLAGS=( \
 RUN --mount=type=cache,target=/var/cache/ccache \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
 
-# ── Stage 7: ci ──────────────────────────────────────────────────────────────
+# ── Stage 7: third-party-builder ─────────────────────────────────────────────────────
+FROM qemu-base-builder AS third-party-builder
+
+# 2. Project-specific tools and patches (The invalidation point for subsequent layers)
+COPY --from=cli-builder /usr/local/bin/virtmcu-cli /usr/local/bin/virtmcu-cli
+COPY patches/ /build/patches/
+COPY BUILD_DEPS /build/
+
+# 3. Patch and incrementally build QEMU
+WORKDIR /build
+RUN virtmcu-cli setup patch-qemu /build/qemu
+
+WORKDIR /build/qemu/build-virtmcu
+RUN --mount=type=cache,target=/var/cache/ccache \
+    VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
+
+# ── Stage 8: ci ──────────────────────────────────────────────────────────────
 FROM third-party-builder AS ci
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV PATH="/build/qemu/build-virtmcu/install/bin:${PATH}"
+ENV GCOV_PREFIX=/tmp
 
 COPY Cargo.toml Cargo.lock /build/virtmcu/
 COPY hw/ /build/virtmcu/hw/

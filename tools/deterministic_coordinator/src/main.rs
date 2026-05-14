@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![deny(unsafe_code)]
 use anyhow::{anyhow, bail, Result};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -50,6 +51,7 @@ fn parse_protocol(p: u8) -> Protocol {
         5 => Protocol::Lin,
         6 => Protocol::Rf802154,
         7 => Protocol::RfHci,
+        9 => Protocol::Dummy,
         _ => Protocol::Ethernet,
     }
 }
@@ -65,6 +67,7 @@ fn serialize_protocol(p: &Protocol) -> u8 {
         Protocol::Rf802154 => 6,
         Protocol::RfHci => 7,
         Protocol::Control => 8,
+        Protocol::Dummy => 9,
     }
 }
 
@@ -115,73 +118,6 @@ fn encode_message(msg: &CoordMessage) -> Vec<u8> {
         .expect("Vec write failed");
     buf.extend_from_slice(&msg.payload);
     buf
-}
-
-fn parse_legacy_topic(topic: &str) -> Option<(Protocol, u32, String)> {
-    let parts: Vec<&str> = topic.split('/').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-
-    if topic.contains("eth") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Ethernet, nid, base));
-            }
-        }
-    } else if topic.contains("uart") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Uart, nid, base));
-            }
-        }
-    } else if topic.contains("can") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::CanFd, nid, base));
-            }
-        }
-    } else if topic.contains("lin") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Lin, nid, base));
-            }
-        }
-    } else if topic.contains("spi") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Spi, nid, base));
-            }
-        }
-    } else if topic.contains("rf/hci") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::RfHci, nid, base));
-            }
-        }
-    } else if topic.contains("rf") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Rf802154, nid, base));
-            }
-        }
-    } else if topic.contains("systemc") {
-        if let Some(nid_str) = parts.iter().rev().nth(1) {
-            if let Ok(nid) = nid_str.parse::<u32>() {
-                let base = parts[..parts.len() - 2].join("/");
-                return Some((Protocol::Ethernet, nid, base));
-            }
-        }
-    }
-
-    None
 }
 
 #[derive(Debug)]
@@ -267,14 +203,34 @@ async fn run_deterministic_coordinator(
         .await
         .map_err(|e| anyhow!("Failed to open Zenoh session: {}", e))?;
 
-    let legacy_tx_topics = deterministic_coordinator::topics::ALL_LEGACY_TX_WILDCARDS;
-
     let (tx_chan, mut rx_chan) = tokio::sync::mpsc::unbounded_channel();
     let mut _subs = Vec::new();
-    for topic in legacy_tx_topics {
+
+    let routing_map_keys: Vec<String> = topo.read().await.routing_map.map.keys().cloned().collect();
+    let mut explicit_topics = Vec::new();
+    for node in &routing_map_keys {
+        explicit_topics.push(deterministic_coordinator::topics::templates::eth_tx(node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::uart_tx(node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::can_tx(node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::lin_tx(node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::rf_hci_tx(
+            node,
+        ));
+        explicit_topics.push(deterministic_coordinator::topics::templates::rf_ieee802154_tx(node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::chardev_tx(
+            node,
+        ));
+        explicit_topics.push(format!("sim/systemc/frame/{}/tx", node));
+        explicit_topics.push(deterministic_coordinator::topics::templates::sim_uart_tx(
+            node,
+        ));
+        explicit_topics.push(format!("sim/spi/default/{}/tx", node));
+    }
+
+    for topic in explicit_topics {
         let tx = tx_chan.clone();
         let sub = session
-            .declare_subscriber(*topic)
+            .declare_subscriber(topic.clone())
             .callback(move |sample| {
                 let _ = tx.send(sample);
             })
@@ -408,10 +364,31 @@ async fn run_deterministic_coordinator(
         tokio::select! {
             Some(sample) = rx_chan.recv() => {
                 let topic = sample.key_expr().as_str();
-                if let Some((proto, node_id, base)) = parse_legacy_topic(topic) {
-                    seen_nodes.insert(node_id);
-                    tracing::info!("Received legacy {:?} TX from node {} (base: {})", proto, node_id, base);
-                    let payload = sample.payload().to_bytes();
+                let parts: Vec<&str> = topic.split('/').collect();
+                if parts.len() >= 2 {
+                    let node_id_str = parts[parts.len() - 2];
+                    if let Ok(node_id) = node_id_str.parse::<u32>() {
+                        let t = topo.read().await;
+                        let node_id_string = node_id.to_string();
+                        if !t.routing_map.map.contains_key(&node_id_string) {
+                            panic!("Unregistered packet received!");
+                        }
+                        drop(t);
+
+                        let proto = if topic.contains("eth") { Protocol::Ethernet }
+                                    else if topic.contains("uart") { Protocol::Uart }
+                                    else if topic.contains("can") { Protocol::CanFd }
+                                    else if topic.contains("lin") { Protocol::Lin }
+                                    else if topic.contains("spi") { Protocol::Spi }
+                                    else if topic.contains("rf/hci") { Protocol::RfHci }
+                                    else if topic.contains("rf") { Protocol::Rf802154 }
+                                    else if topic.contains("chardev") { Protocol::Dummy }
+                                    else { Protocol::Ethernet };
+                        let base = parts[..parts.len() - 2].join("/");
+
+                        seen_nodes.insert(node_id);
+                        tracing::info!("Received legacy {:?} TX from node {} (base: {})", proto, node_id, base);
+                        let payload = sample.payload().to_bytes();
 
                     let mut data_opt = None;
                     let mut vtime = 0;
@@ -419,7 +396,7 @@ async fn run_deterministic_coordinator(
 
                     // 1. Try Rf802154Header if protocol is 802.15.4
                     if proto == Protocol::Rf802154 && payload.len() >= 4 {
-                        let sz = u32::from_le_bytes(payload[0..4].try_into().unwrap_or([0;4])) as usize;
+                        let sz = u32::from_le_bytes(payload[0..4].try_into().expect("payload length checked but conversion failed")) as usize;
                         if sz > 0 && sz <= 1024 && payload.len() >= 4 + sz {
                              let hdr_slice = &payload[4..4 + sz];
                              let mut aligned = vec![0u8; hdr_slice.len()];
@@ -443,7 +420,7 @@ async fn run_deterministic_coordinator(
                                 data_opt = Some(payload[data_start..data_start + header.size() as usize].to_vec());
                             } else {
                                 // MALFORMED: skip it!
-                                tracing::warn!("Skipping malformed legacy frame: expected {} bytes, got {}", data_start + header.size() as usize, payload.len());
+                                tracing::debug!("Skipping malformed legacy frame: expected {} bytes, got {}", data_start + header.size() as usize, payload.len());
                                 continue;
                             }
                         }
@@ -485,6 +462,7 @@ async fn run_deterministic_coordinator(
                                 .push(msg);
                         }
                     }
+                }
                 }
             }
             Ok(sample) = sub_ctrl.recv_async() => {
@@ -533,9 +511,9 @@ async fn run_deterministic_coordinator(
                             let mut msgs = Vec::new();
                             if payload.len() >= 8 {
                                 let mut cursor = Cursor::new(&payload);
-                                q = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                q = cursor.read_u64::<LittleEndian>().expect("malformed legacy DONE: missing field");
                                 if payload.len() >= 16 {
-                                    vtl = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                    vtl = cursor.read_u64::<LittleEndian>().expect("malformed legacy DONE: missing field");
                                     if payload.len() > 16 {
                                         msgs = decode_batch(&payload[16..]);
                                     }
@@ -610,37 +588,29 @@ async fn run_deterministic_coordinator(
 async fn deliver_message(
     session: &zenoh::Session,
     topo: &Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
-    seen_nodes: &std::collections::HashSet<u32>,
+    _seen_nodes: &std::collections::HashSet<u32>,
     pcap_log: &mut Option<MessageLog>,
     msg: &mut CoordMessage,
 ) {
     let t = topo.read().await;
     let mut target_nodes = Vec::new();
+    let src_str = msg.src_node_id.to_string();
+    let allowed_targets = t.routing_map.map.get(&src_str).unwrap_or_else(|| {
+        panic!("Unregistered packet received!");
+    });
+
     if msg.dst_node_id == u32::MAX {
-        if !t.is_explicit {
-            for &nid in seen_nodes {
-                if nid != msg.src_node_id
-                    && t.is_link_allowed(msg.src_node_id, nid, msg.protocol.clone())
-                {
-                    target_nodes.push(nid);
-                }
-            }
-        } else if msg.protocol.is_wireless() {
-            target_nodes = t.rf_neighbors(msg.src_node_id);
-        } else {
-            for link in t.wire_links() {
-                if link.protocol == msg.protocol && link.nodes.contains(&msg.src_node_id) {
-                    for &node in &link.nodes {
-                        if node != msg.src_node_id {
-                            target_nodes.push(node);
-                        }
-                    }
-                }
+        for target_str in allowed_targets {
+            if let Ok(tid) = target_str.parse::<u32>() {
+                target_nodes.push(tid);
             }
         }
     } else {
-        if t.is_link_allowed(msg.src_node_id, msg.dst_node_id, msg.protocol.clone()) {
+        let dst_str = msg.dst_node_id.to_string();
+        if allowed_targets.contains(&dst_str) {
             target_nodes.push(msg.dst_node_id);
+        } else {
+            panic!("Unregistered packet received!");
         }
     }
 
@@ -698,6 +668,9 @@ async fn deliver_message(
                 Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
                     &target_node.to_string(),
                 ),
+                Protocol::Dummy => deterministic_coordinator::topics::templates::chardev_rx(
+                    &target_node.to_string(),
+                ),
                 _ => format!("sim/unknown/{}/rx", target_node),
             }
         };
@@ -733,4 +706,34 @@ async fn run_unix_coordinator(
         "Unix coordinator started (minimal passthrough)"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deterministic_coordinator::barrier::CoordMessage;
+    use deterministic_coordinator::topology::{Protocol, TopologyGraph};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[should_panic(expected = "Unregistered packet received!")]
+    async fn test_unregistered_packet_panics() {
+        let topo = TopologyGraph::default();
+        let arc_topo = Arc::new(RwLock::new(topo));
+        let mut msg = CoordMessage {
+            src_node_id: 99,
+            dst_node_id: 100,
+            delivery_vtime_ns: 0,
+            sequence_number: 0,
+            protocol: Protocol::Ethernet,
+            payload: vec![],
+            base_topic: None,
+        };
+        let dummy_session = zenoh::config::Config::default();
+        let session = zenoh::open(dummy_session).await.unwrap();
+        let seen_nodes = std::collections::HashSet::new();
+        let mut pcap = None;
+        deliver_message(&session, &arc_topo, &seen_nodes, &mut pcap, &mut msg).await;
+    }
 }

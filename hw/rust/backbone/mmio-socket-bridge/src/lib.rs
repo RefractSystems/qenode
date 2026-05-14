@@ -1,9 +1,9 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -74,6 +74,7 @@ pub struct MmioSocketBridgeQEMU {
     pub socket_path: *mut c_char,
     pub region_size: u32,
     pub base_addr: u64,
+    pub svd_hash: u64,
     pub reconnect_ms: u32,
     pub debug: bool,
 
@@ -91,6 +92,7 @@ unsafe impl Sync for RawIrqArray {}
 
 struct MmioTransport {
     socket_path: String,
+    svd_hash: u64,
     reconnect_ms: u32,
     irqs: RawIrqArray,
     stream: Mutex<Option<UnixStream>>,
@@ -120,7 +122,8 @@ impl CoSimTransport for MmioTransport {
             };
 
             // Handshake
-            let hs_out = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+            let hs_out =
+                VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, self.svd_hash);
             if stream.write_all(hs_out.pack()).is_err() {
                 continue;
             }
@@ -133,6 +136,14 @@ impl CoSimTransport for MmioTransport {
                 .expect("Failed to unpack VirtmcuHandshake");
             if hs_in.magic() != VIRTMCU_PROTO_MAGIC || hs_in.version() != VIRTMCU_PROTO_VERSION {
                 virtmcu_qom::sim_info!("handshake mismatch, retrying");
+                continue;
+            }
+            if hs_in.svd_hash() != self.svd_hash {
+                virtmcu_qom::sim_err!(
+                    "handshake SVD hash mismatch: expected {:#018x}, got {:#018x}",
+                    self.svd_hash,
+                    hs_in.svd_hash()
+                );
                 continue;
             }
 
@@ -207,15 +218,15 @@ pub struct MmioSocketBridgeState {
 unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -> u64 {
     let qemu = unsafe { &*(opaque as *mut MmioSocketBridgeQEMU) };
     if qemu.debug {
-        virtmcu_qom::sim_warn!("bridge_read: addr=0x{:x} size={}", addr, size);
+        virtmcu_qom::sim_debug!("bridge_read: addr=0x{:x} size={}", addr, size);
     }
     let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_READ,
-        u8::try_from(size).unwrap_or(u8::MAX),
+        u8::try_from(size).expect("Invalid data format"),
         0,
         0,
-        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).unwrap_or(0),
+        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).expect("Invalid data format"),
         addr,
         0,
     );
@@ -233,15 +244,15 @@ unsafe extern "C" fn bridge_read(opaque: *mut c_void, addr: u64, size: c_uint) -
 unsafe extern "C" fn bridge_write(opaque: *mut c_void, addr: u64, val: u64, size: c_uint) {
     let qemu = unsafe { &*(opaque as *mut MmioSocketBridgeQEMU) };
     if qemu.debug {
-        virtmcu_qom::sim_warn!("bridge_write: addr=0x{:x} val=0x{:x} size={}", addr, val, size);
+        virtmcu_qom::sim_debug!("bridge_write: addr=0x{:x} val=0x{:x} size={}", addr, val, size);
     }
     let state = unsafe { &*(qemu.rust_state) };
     let req = MmioReq::new(
         MMIO_REQ_WRITE,
-        u8::try_from(size).unwrap_or(u8::MAX),
+        u8::try_from(size).expect("Invalid data format"),
         0,
         0,
-        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).unwrap_or(0),
+        u64::try_from(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)).expect("Invalid data format"),
         addr,
         val,
     );
@@ -293,6 +304,7 @@ unsafe extern "C" fn bridge_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 
     let transport = MmioTransport {
         socket_path: CStr::from_ptr(qemu.socket_path).to_string_lossy().into_owned(),
+        svd_hash: qemu.svd_hash,
         reconnect_ms: qemu.reconnect_ms,
         irqs: RawIrqArray(qemu.irqs.as_mut_ptr()),
         stream: Mutex::new(None),
@@ -352,7 +364,7 @@ unsafe extern "C" fn bridge_unrealize(_dev: *mut c_void) {}
 
 const BRIDGE_DEFAULT_REGION_SIZE: u32 = 0x1000;
 const BRIDGE_DEFAULT_RECONNECT_MS: u32 = 1000;
-const BRIDGE_PROP_COUNT: usize = 6;
+const BRIDGE_PROP_COUNT: usize = 7;
 
 static BRIDGE_PROPERTIES: [Property; BRIDGE_PROP_COUNT] = [
     define_prop_string!(c"id".as_ptr(), MmioSocketBridgeQEMU, id),
@@ -364,6 +376,7 @@ static BRIDGE_PROPERTIES: [Property; BRIDGE_PROP_COUNT] = [
         BRIDGE_DEFAULT_REGION_SIZE
     ),
     define_prop_uint64!(c"base-addr".as_ptr(), MmioSocketBridgeQEMU, base_addr, u64::MAX),
+    define_prop_uint64!(c"svd-hash".as_ptr(), MmioSocketBridgeQEMU, svd_hash, 0),
     define_prop_uint32!(
         c"reconnect-ms".as_ptr(),
         MmioSocketBridgeQEMU,

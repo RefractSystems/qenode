@@ -464,7 +464,7 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
             .status()?;
         Command::new("git")
             .current_dir(qemu_dir)
-            .args(["clean", "-fd"])
+            .args(["clean", "-fd", "-e", "build-virtmcu*", "-e", "hw/virtmcu*"])
             .status()?;
 
         Command::new("git")

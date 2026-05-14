@@ -24,6 +24,28 @@ macro_rules! count_items {
     ($head:expr $(, $tail:expr)* $(,)?) => { 1 + $crate::count_items!($($tail),*) };
 }
 
+#[doc(hidden)]
+pub use paste;
+
+/// Macro-based abstractions for QOM (RFC-0023).
+pub mod macros {
+    pub use virtmcu_qom_macros::qom_device;
+}
+
+#[macro_export]
+/// Registers a peripheral with QEMU's Object Model (RFC-0023).
+/// This handles the DSO entry point and type registration.
+macro_rules! register_peripheral {
+    ($name:ident) => {
+        $crate::paste::paste! {
+            $crate::declare_device_type!(
+                [< $name:upper _INIT >],
+                [< $name:upper _TYPE_INFO >]
+            );
+        }
+    };
+}
+
 /// Character device (Chardev) bindings.
 pub mod chardev;
 /// Co-simulation bridging abstractions.

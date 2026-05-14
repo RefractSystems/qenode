@@ -12,6 +12,7 @@ runs:
       run: |
         PATCHES_HASH=$(
           { find patches/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null
+            sha256sum scripts/apply-qemu-patches.sh 2>/dev/null
             sha256sum BUILD_DEPS 2>/dev/null
           } | sha256sum | cut -c1-12
         )

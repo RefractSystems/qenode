@@ -215,7 +215,7 @@ make run                  # test-integration
 
 The core framework development is complete. All architectural pillars and capabilities listed above have been implemented, tested, and integrated into the CI/CD pipeline.
 
-- [x] Dynamic ARM and RISC-V machine generation from `.repl` and `.yaml` files.
+- [x] Dynamic ARM and RISC-V machine generation from `.yaml` files.
 - [x] Dynamic QOM plugin infrastructure for C and Rust peripherals.
 - [x] Native clock plugin (`slaved-suspend` and `slaved-icount` modes) for physics engine synchronization.
 - [x] Deterministic multi-node Ethernet and UART communication via an abstract transport (Zenoh or Unix sockets).

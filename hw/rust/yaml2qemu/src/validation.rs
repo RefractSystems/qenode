@@ -58,7 +58,10 @@ pub fn validate_dtb(dtb_path: &Path, world: &World) -> Result<()> {
                 let addr_hex = s.trim_start_matches("0x");
                 format!("memory@{}", addr_hex)
             } else if let Some(serde_yaml::Value::Number(n)) = &dev.address {
-                format!("memory@{:x}", n.as_u64().unwrap_or(0))
+                format!(
+                    "memory@{:x}",
+                    n.as_u64().expect("Memory address should be parseable as u64")
+                )
             } else {
                 "memory".to_string()
             }
@@ -87,13 +90,17 @@ pub fn validate_dtb(dtb_path: &Path, world: &World) -> Result<()> {
                                     serde_yaml::Value::String(s) => {
                                         let s = s.trim();
                                         if let Some(stripped) = s.strip_prefix("0x") {
-                                            u64::from_str_radix(stripped, HEX_RADIX).unwrap_or(0)
+                                            u64::from_str_radix(stripped, HEX_RADIX)
+                                                .expect("Invalid hex string for memory size")
                                         } else {
-                                            s.parse::<u64>().unwrap_or(0)
+                                            s.parse::<u64>()
+                                                .expect("Invalid decimal string for memory size")
                                         }
                                     }
-                                    serde_yaml::Value::Number(n) => n.as_u64().unwrap_or(0),
-                                    _ => 0,
+                                    serde_yaml::Value::Number(n) => {
+                                        n.as_u64().expect("Memory size must be parseable as u64")
+                                    }
+                                    _ => unreachable!("Memory size must be a number or string"),
                                 };
 
                                 if actual_size != expected_size {

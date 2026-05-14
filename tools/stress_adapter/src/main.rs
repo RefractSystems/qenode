@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     let _hs_in = VirtmcuHandshake::unpack_slice(&hs_buf).expect("Failed to unpack handshake");
     // Could check magic/version here, but we'll just echo our own
 
-    let hs_out = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION);
+    let hs_out = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, 0);
     stream.write_all(hs_out.pack())?;
 
     println!("Handshake complete. Starting stress loop...");

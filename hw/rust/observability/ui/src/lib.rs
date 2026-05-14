@@ -1,9 +1,9 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -18,13 +18,11 @@ unsafe extern "C" fn allow_set_link(
 extern crate alloc;
 
 use alloc::sync::Arc;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::collections::HashMap;
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
-use virtmcu_qom::memory::{
-    memory_region_init_io, MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN,
-};
+use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_get_connected_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
 use virtmcu_qom::sync::BqlGuarded;
@@ -34,6 +32,7 @@ use virtmcu_qom::{
 };
 
 #[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
 pub struct ZenohUiQEMU {
     pub parent_obj: SysBusDevice,
     pub mmio: MemoryRegion,
@@ -59,9 +58,13 @@ const _: () = assert!(core::mem::offset_of!(ZenohUiQEMU, parent_obj) == 0);
 const _: () = assert!(core::mem::size_of::<ZenohUiQEMU>() == 1152);
 
 pub struct ZenohUiState {
+    parent_ptr: *mut ZenohUiQEMU,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     node_id: u32,
     buttons: BqlGuarded<HashMap<u32, ButtonState>>,
+    cond: virtmcu_qom::sync::Condvar,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    wait_mutex: virtmcu_qom::sync::Mutex<()>,
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
@@ -75,83 +78,56 @@ const REG_LED_STATE: u64 = 0x04;
 const REG_BTN_ID: u64 = 0x10;
 const REG_BTN_STATE: u64 = 0x14;
 
-/// # Safety
-/// This function is called by QEMU. opaque must be a valid pointer to ZenohUiQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn ui_read(opaque: *mut c_void, addr: u64, _size: c_uint) -> u64 {
-    // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
-    let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
-    if s.debug {
-        virtmcu_qom::sim_warn!("ui_read: addr=0x{:x}", addr);
-    }
-    if addr == REG_LED_ID {
-        return u64::from(s.active_led_id);
-    }
-    if addr == REG_BTN_ID {
-        return u64::from(s.active_btn_id);
-    }
-    if addr == REG_BTN_STATE {
-        if s.rust_state.is_null() {
-            return 0;
+impl virtmcu_qom::device::MmioDevice for ZenohUiState {
+    fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let s = unsafe { &mut *self.parent_ptr };
+        if s.debug {
+            virtmcu_qom::sim_debug!("ui_read: addr=0x{:x}", addr);
         }
-        // SAFETY: rust_state is non-null and owned by the device.
-        return u64::from(ui_get_button(unsafe { &*s.rust_state }, s.active_btn_id));
+        if addr == REG_LED_ID {
+            return virtmcu_qom::device::MmioResult::Ready(u64::from(s.active_led_id));
+        }
+        if addr == REG_BTN_ID {
+            return virtmcu_qom::device::MmioResult::Ready(u64::from(s.active_btn_id));
+        }
+        if addr == REG_BTN_STATE {
+            return virtmcu_qom::device::MmioResult::Ready(u64::from(ui_get_button(
+                self,
+                s.active_btn_id,
+            )));
+        }
+        virtmcu_qom::device::MmioResult::Ready(0)
     }
-    0
-}
 
-/// # Safety
-/// This function is called by QEMU. opaque must be a valid pointer to ZenohUiQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn ui_write(opaque: *mut c_void, addr: u64, val: u64, _size: c_uint) {
-    // SAFETY: opaque is a valid pointer to ZenohUiQEMU provided by QEMU.
-    let s = unsafe { &mut *(opaque as *mut ZenohUiQEMU) };
-    if s.debug {
-        virtmcu_qom::sim_warn!("ui_write: addr=0x{:x} val=0x{:x}", addr, val);
+    fn write(&self, addr: u64, val: u64, _size: u32) {
+        let s = unsafe { &mut *self.parent_ptr };
+        if addr == REG_LED_ID {
+            s.active_led_id = u32::try_from(val).expect("Invalid data format");
+        } else if addr == REG_LED_STATE {
+            ui_set_led(self, s.active_led_id, val != 0);
+        } else if addr == REG_BTN_ID {
+            s.active_btn_id = u32::try_from(val).expect("Invalid data format");
+            let irq = unsafe {
+                sysbus_get_connected_irq(
+                    self.parent_ptr as *mut SysBusDevice,
+                    s.active_btn_id as c_int,
+                )
+            };
+            ui_ensure_button(self, s.active_btn_id, irq);
+        } else {
+            unreachable!("ui_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
+        }
     }
-    if addr == REG_LED_ID {
-        s.active_led_id = u32::try_from(val).unwrap_or(u32::MAX);
-    } else if addr == REG_LED_STATE {
-        if !s.rust_state.is_null() {
-            // SAFETY: rust_state is non-null and owned by the device.
-            ui_set_led(unsafe { &*s.rust_state }, s.active_led_id, val != 0);
-        }
-    } else if addr == REG_BTN_ID {
-        s.active_btn_id = u32::try_from(val).unwrap_or(u32::MAX);
-        // SAFETY: opaque is a valid pointer to SysBusDevice.
-        let irq = unsafe {
-            sysbus_get_connected_irq(opaque as *mut SysBusDevice, s.active_btn_id as c_int)
-        };
-        if !s.rust_state.is_null() {
-            // SAFETY: rust_state is non-null and owned by the device.
-            ui_ensure_button(unsafe { &*s.rust_state }, s.active_btn_id, irq);
-        }
+
+    fn condvar(&self) -> &virtmcu_qom::sync::Condvar {
+        &self.cond
+    }
+
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    fn wait_mutex(&self) -> &virtmcu_qom::sync::Mutex<()> {
+        &self.wait_mutex
     }
 }
-
-const UI_MEMORY_ACCESS_SIZE: u32 = 4;
-
-static UI_OPS: MemoryRegionOps = MemoryRegionOps {
-    read: Some(ui_read),
-    write: Some(ui_write),
-    read_with_attrs: ptr::null(),
-    write_with_attrs: ptr::null(),
-    endianness: DEVICE_LITTLE_ENDIAN,
-    _padding1: [0; 4],
-    valid: virtmcu_qom::memory::MemoryRegionValidRange {
-        min_access_size: UI_MEMORY_ACCESS_SIZE,
-        max_access_size: UI_MEMORY_ACCESS_SIZE,
-        unaligned: false,
-        _padding: [0; 7],
-        accepts: ptr::null(),
-    },
-    impl_: virtmcu_qom::memory::MemoryRegionImplRange {
-        min_access_size: 0,
-        max_access_size: 0,
-        unaligned: false,
-        _padding: [0; 7],
-    },
-};
 
 /// # Safety
 /// This function is called by QEMU to realize the device. dev must be a valid pointer to ZenohUiQEMU.
@@ -166,7 +142,7 @@ pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         memory_region_init_io(
             &raw mut s.mmio,
             dev as *mut Object,
-            &raw const UI_OPS,
+            &raw const ZENOHUIQEMU_OPS,
             dev,
             c"ui".as_ptr(),
             UI_MMIO_SIZE,
@@ -194,7 +170,7 @@ pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
     let transport = alloc::sync::Arc::clone(transport_ref);
 
-    s.rust_state = ui_init_internal(s.node_id, transport);
+    s.rust_state = ui_init_internal(s, s.node_id, transport);
     if s.rust_state.is_null() {
         error_setg!(errp, "Failed to initialize Rust Zenoh UI");
     }
@@ -273,16 +249,20 @@ declare_device_type!(ZENOH_UI_TYPE_INIT, ZENOH_UI_TYPE_INFO);
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
 fn ui_init_internal(
+    s: &mut ZenohUiQEMU,
     node_id: u32,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut ZenohUiState {
     let liveliness = transport.declare_liveliness(&format!("sim/ui/liveliness/{node_id}"));
 
     Box::into_raw(Box::new(ZenohUiState {
+        parent_ptr: core::ptr::from_mut(s),
         _liveliness: liveliness,
         transport,
         node_id,
         buttons: BqlGuarded::new(HashMap::new()),
+        cond: virtmcu_qom::sync::Condvar::new(),
+        wait_mutex: virtmcu_qom::sync::Mutex::new(()),
     }))
 }
 

@@ -137,8 +137,8 @@ chains without modifying the firmware binary.
 ## 4. OpenUSD — Universal Scene Description
 
 **Standard**: Pixar OpenUSD (open source, `openusd.org`), NVIDIA Omniverse Kit.  
-**Alignment**: [ADR-010](../adr/010-platform-description-format.md),
-[ADR-016](../adr/016-logical-domain-model.md).
+**Alignment**: [ADR-010](../rfcs/0010-platform-description-format.md),
+[ADR-016](../rfcs/0016-logical-domain-model.md).
 
 VirtMCU's World YAML is designed as a transitional format toward OpenUSD-native scene
 description. The mapping is formalised in ADR-016:
@@ -190,7 +190,7 @@ The USD `Stage` is a future persistence path for the `World` manifest, not a syn
 
 Zenoh is not a DDS implementation, but it is the semantic successor for edge robotics
 (ROS2 supports Zenoh via `rmw_zenoh_cpp`). VirtMCU's message bus was designed with this
-lineage in mind — see [ADR-011](../adr/011-zenoh-federation-bus.md).
+lineage in mind — see [ADR-011](../rfcs/0011-zenoh-federation-bus.md).
 
 ---
 
@@ -217,7 +217,7 @@ is a synthesisable RTL description rather than a QEMU device model.
 ## 7. SysML v2 — Systems Modeling Language
 
 **Standard**: OMG SysML v2 (2024), Object-Oriented Systems Engineering Method (OOSEM).  
-**Alignment**: [ADR-016](../adr/016-logical-domain-model.md).
+**Alignment**: [ADR-016](../rfcs/0016-logical-domain-model.md).
 
 VirtMCU's World YAML maps mechanically to a SysML v2 Block Definition Diagram (BDD):
 
@@ -285,8 +285,8 @@ Standards define the *what*; VirtMCU specifies the *how* for firmware emulation:
   implementation.
 - **[Physics Gateway](./12-physics-gateway.md)**: FMI-style master algorithm extended
   with a physics step.
-- **[ADR-016: Logical Domain Model](../adr/016-logical-domain-model.md)**: OpenUSD and
+- **[ADR-016: Logical Domain Model](../rfcs/0016-logical-domain-model.md)**: OpenUSD and
   SysML mapping formalised.
-- **[ADR-011: Zenoh Federation Bus](../adr/011-zenoh-federation-bus.md)**: Why Zenoh
+- **[ADR-011: Zenoh Federation Bus](../rfcs/0011-zenoh-federation-bus.md)**: Why Zenoh
   over standard DDS.
 - **[World Specification](./10-world-specification.md)**: The YAML schema (the Federation Object Model).

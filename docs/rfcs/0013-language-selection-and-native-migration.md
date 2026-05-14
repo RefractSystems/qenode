@@ -1,4 +1,4 @@
-# ADR-013: Language Selection Policy and Native Zenoh Migration
+# RFC-0013: Language Selection Policy and Native Zenoh Migration
 
 **Status:** Implemented
 **Date:** 2026-04-16

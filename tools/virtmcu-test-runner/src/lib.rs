@@ -153,11 +153,21 @@ impl TestContext {
         );
         std::fs::create_dir_all(&dir)?;
 
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let base_seed = std::env::var("VIRTMCU_PORT_SEED")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or_else(std::process::id);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        for _ in 0..1000 {
-            let port: u16 = rng.gen_range(10000..32000);
+        let hash = base_seed.wrapping_add(count).wrapping_mul(2654435761);
+        let start_port = 10000 + (hash % 22000) as u16;
+
+        for i in 0..1000 {
+            let mut port = start_port.wrapping_add(i as u16);
+            if port >= 32000 {
+                port -= 22000;
+            }
             if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
                 let res_path = dir.join(port.to_string());
                 if std::fs::OpenOptions::new()
@@ -724,7 +734,7 @@ impl LinterEngine {
                 "--skip",
                 "./third_party/*,**/build/*,**/target/*,**/target-*/*,./.git/*,./.claude/*,Cargo.lock,Cargo.toml,./patches/*,./coverage_report/*,./test-results/*,./.cargo-cache/*,./temp/*,./schema/node_modules/*,./schema/package-lock.json,mermaid.min.js,mermaid-init.js",
                 "--ignore-words-list",
-                "virtmcu,zenoh,qemu,qmp,riscv,TE",
+                "virtmcu,zenoh,qemu,qmp,riscv,TE,Statics",
                 ".",
             ],
         ));
@@ -837,11 +847,13 @@ impl LinterEngine {
                 .unwrap_or(false);
 
             if !exists {
-                warn!(
-                    "Skipping lint {}: command {} not found",
-                    name, cmd_str_clone
+                return (
+                    name,
+                    Err(anyhow!(
+                        "command '{}' not found. This lint is mandated.",
+                        cmd_str_clone
+                    )),
                 );
-                return (name, Ok(()));
             }
 
             let out = cmd.output().await;

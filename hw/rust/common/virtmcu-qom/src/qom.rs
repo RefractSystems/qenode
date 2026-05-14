@@ -3,6 +3,52 @@ use core::ffi::{c_char, c_int, c_void};
 /// A constant
 pub const LOG_UNIMP: i32 = 0x400;
 
+use alloc::sync::Arc;
+use core::marker::PhantomData;
+
+/// A safe wrapper for a QOM Link property (Dependency Injection).
+/// This replaces manual pointer management and unsafe casts.
+#[repr(transparent)]
+pub struct QomLink<T: ?Sized> {
+    /// The underlying QOM object pointer.
+    pub obj: *mut Object,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: ?Sized> QomLink<T> {
+    /// Returns the linked object as a safe Rust trait reference.
+    /// This assumes the linked object is a VirtMCU hub that exposes a pointer to the trait.
+    pub fn get(&self) -> Option<Arc<T>> {
+        if self.obj.is_null() {
+            return None;
+        }
+
+        // Standard VirtMCU pattern: Hubs expose a 'transport_ptr' or similar.
+        // Note: RFC-0023 proposes generalizing this. For Step 2, we encapsulate
+        // the existing 'transport_ptr' logic used by the transport-hub.
+        let mut err: *mut crate::error::Error = core::ptr::null_mut();
+        let ptr_u64 =
+            unsafe { object_property_get_uint(self.obj, c"transport_ptr".as_ptr(), &mut err) };
+
+        if ptr_u64 == 0 {
+            return None;
+        }
+
+        // SAFETY: We trust the Hub that it put a valid Arc<T> at this address.
+        // This is still internally unsafe but encapsulated within the framework.
+        let trait_ref = unsafe { &*(ptr_u64 as *const Arc<T>) };
+        Some(Arc::clone(trait_ref))
+    }
+
+    /// Returns true if the link is not null.
+    pub fn is_linked(&self) -> bool {
+        !self.obj.is_null()
+    }
+}
+
+unsafe impl<T: ?Sized> Send for QomLink<T> {}
+unsafe impl<T: ?Sized> Sync for QomLink<T> {}
+
 extern "C" {
     /// A function
     pub fn qemu_log(fmt: *const c_char, ...);

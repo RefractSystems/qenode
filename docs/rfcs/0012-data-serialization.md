@@ -1,4 +1,4 @@
-# ADR-012: Hybrid Data Serialization Architecture
+# RFC-0012: Hybrid Data Serialization Architecture
 
 **Status:** Accepted
 **Date:** 2026-04-16

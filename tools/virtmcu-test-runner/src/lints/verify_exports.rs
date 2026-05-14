@@ -138,9 +138,9 @@ fn check_symbols(path: &Path, required: &[&str], is_executable: bool) -> Result<
             missing
         );
         if !is_executable {
-            error!("  Ensure these are marked with #[no_mangle] extern \"C\" in Rust.");
+            error!("  Fix: Ensure these are marked with #[no_mangle] extern \"C\" in Rust. Quick Tip: C-FFI boundaries must explicitly export symbols to cross the DSO boundary safely. See docs/rfcs/0019-single-host-native-ipc.md.");
         } else {
-            error!("  Ensure these are marked with __attribute__((visibility(\"default\"))) in QEMU C code.");
+            error!("  Fix: Ensure these are marked with __attribute__((visibility(\"default\"))) in QEMU C code. Quick Tip: C-FFI boundaries must explicitly export symbols to cross the DSO boundary safely. See docs/rfcs/0019-single-host-native-ipc.md.");
         }
         return Ok(false);
     }

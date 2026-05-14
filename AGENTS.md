@@ -18,6 +18,11 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 2. **arm-generic-fdt machine** — ARM machines defined by Device Tree.
 3. **Native VirtMCU QOM plugin** (`hw/rust/`) — deterministic clock and I/O.
 
+## Single Source of Truth (SSOT) Mandate
+- **Micro-Architecture**: All MMIO addresses, register offsets, and bitfields MUST be derived from a CMSIS-SVD file. Hardcoding these in Rust or C is BANNED.
+- **Macro-Architecture**: Topology (which device is at which address) MUST be defined in the world YAML.
+- **Unidirectional Generation**: Always use `virtmcu-cli` or `build.rs` to generate headers/constants. Never manually align "shadow" definitions.
+
 ## IMPORTANT REQUIREMENTS
 
 **The same firmware ELF that runs on a real MCU must run unmodified in VirtMCU.**
@@ -106,7 +111,9 @@ Mandatory shutdown sequence:
 
 ### 6. The "Fail Loudly" Principle (Crash-Only Design)
 - **No Silent Failures**: Never catch an exception or `Result` just to log a warning and continue. If an internal invariant is violated, crash immediately.
-- **Developer Errors**: Use `assert!`, `unreachable!`, or `.expect("reason")` for logic bugs (e.g., unexpected enum variants, layout mismatches).
+- **Developer Errors vs Linting**: The codebase denies `clippy::panic` and `clippy::unwrap_used` but mandates crashing on invalid states. You MUST navigate this conflict as follows:
+  - Prefer `.expect("reason")` for `Option`/`Result` since `clippy::expect_used` is explicitly allowed. NEVER use `.unwrap()`.
+  - For `assert!`, `unreachable!`, or explicit `panic!` (e.g., unexpected enum variants, layout mismatches), you MUST add `#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"` to the top of the file.
 - **User/Config Errors**: Return `Result::Err` or raise specific Exceptions for bad inputs, allowing the CLI boundary to print actionable help before exiting with `exit(1)`.
 - **Warnings are Code Smell**: If a state is invalid enough to warrant a warning, it is invalid enough to be an error.
 
@@ -124,6 +131,6 @@ make test-check    # Fast-path: test-lint + test-unit (runs natively)
 
 `[workspace.lints.clippy] all = "deny"` — every clippy warning is a build failure. `#[allow(clippy::...)]`, `#[allow(static_mut_refs)]`, and `#[allow(clippy::too_many_lines)]` are all BANNED in production code.
 
-**Git hooks** (`pre-commit` + `pre-push`): run `make test-lint` (pre-commit) and `make test-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. Skip (WIP only): `git commit --no-verify` / `git push --no-verify`.
+**Git hooks** (`pre-commit` + `pre-push`): run `make test-lint` (pre-commit) and `make test-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. **Agents are PROHIBITED from skipping git hooks (`--no-verify` is disabled) during commit and push, unless explicitly permitted by a human.**
 
 **Full CI parity before PR:** `make ci-check`. Complete pre-merge validation: `make ci-full`.

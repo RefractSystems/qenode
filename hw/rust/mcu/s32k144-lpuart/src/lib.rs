@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
@@ -16,7 +17,7 @@ extern crate alloc;
 use alloc::collections::{BinaryHeap, VecDeque};
 use alloc::sync::Arc;
 use core::cmp::Ordering;
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::{c_char, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crossbeam_channel::{Receiver, Sender};
@@ -139,7 +140,7 @@ const REG_FIFO: u64 = 0x28;
 const REG_WATER: u64 = 0x2C;
 
 const LPUART_RESET_BAUD: u32 = 0x0F000004;
-const LPUART_RESET_STAT: u32 = 0xC0000000;
+const LPUART_RESET_STAT: u32 = 0x00C00000;
 const LPUART_RESET_FIFO: u32 = 0x00C00011;
 
 const LPUART_DATA_MASK: u32 = 0xFF;
@@ -192,7 +193,13 @@ pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_
         REG_PARAM => LPUART_PARAM,    // PARAM
         REG_GLOBAL | REG_PINCFG => 0, // GLOBAL, PINCFG
         REG_BAUD => u64::from(state.baud),
-        REG_STAT => u64::from(state.stat),
+        REG_STAT => {
+            let _unlock = virtmcu_qom::sync::Bql::temporary_unlock();
+            std::thread::yield_now(); // virtmcu-allow: yield reasoning="Guest spins on STAT waiting for RX/TX/Break."
+            drop(_unlock); // Re-acquire BQL
+            let state = unsafe { &mut *s.rust_state }; // Re-borrow after re-acquiring BQL
+            u64::from(state.stat)
+        }
         REG_CTRL => u64::from(state.ctrl),
         REG_DATA => {
             let val = if state.rx_buffer.is_empty() {
@@ -212,7 +219,7 @@ pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_
         REG_WATER => u64::from(state.water),
         _ => {
             if s.debug {
-                virtmcu_qom::sim_warn!("lpuart_read: unhandled offset 0x{:x}", offset);
+                virtmcu_qom::sim_debug!("lpuart_read: unhandled offset 0x{:x}", offset);
             }
             0
         }
@@ -267,7 +274,7 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
         REG_WATER => state.water = val,
         _ => {
             if s.debug {
-                virtmcu_qom::sim_warn!(
+                virtmcu_qom::sim_debug!(
                     "lpuart_write: unhandled offset 0x{:x} val=0x{:x}",
                     offset,
                     value
@@ -278,6 +285,7 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
 }
 
 fn send_lin_msg(s: &mut LpuartState, msg_type: LinMessageType, data: &[u8]) {
+    virtmcu_qom::sim_info!("Sending LIN message to topic: {}", s.tx_topic);
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
     let data_offset = fbb.create_vector(data);
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
@@ -436,10 +444,27 @@ pub unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void
     let router_addr = if s.router.is_null() {
         String::new()
     } else {
-        unsafe { core::ffi::CStr::from_ptr(s.router).to_string_lossy().into_owned() }
+        let mut len = 0;
+        while len < 1024 {
+            if unsafe { *s.router.add(len) } == 0 {
+                break;
+            }
+            len += 1;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(s.router.cast::<u8>(), len) };
+        String::from_utf8_lossy(slice).into_owned()
     };
+    virtmcu_qom::sim_info!("ROUTER STRING: {}", router_addr);
     let transport_name = if !s.transport.is_null() {
-        unsafe { core::ffi::CStr::from_ptr(s.transport).to_string_lossy().into_owned() }
+        let mut len = 0;
+        while len < 1024 {
+            if unsafe { *s.transport.add(len) } == 0 {
+                break;
+            }
+            len += 1;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(s.transport.cast::<u8>(), len) };
+        String::from_utf8_lossy(slice).into_owned()
     } else if std::path::Path::new(&router_addr)
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
@@ -454,7 +479,15 @@ pub unsafe extern "C" fn lpuart_realize(dev: *mut c_void, errp: *mut *mut c_void
     let topic = if s.topic.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(s.topic).to_string_lossy().into_owned() })
+        let mut len = 0;
+        while len < 1024 {
+            if unsafe { *s.topic.add(len) } == 0 {
+                break;
+            }
+            len += 1;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(s.topic.cast::<u8>(), len) };
+        Some(String::from_utf8_lossy(slice).into_owned())
     };
 
     s.rust_state = lpuart_init_internal(s.irq, s.node_id, transport_name, router_ptr, topic);
@@ -607,11 +640,11 @@ fn create_subscription(
     let earliest_clone = Arc::clone(earliest_vtime);
 
     let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
+        virtmcu_qom::sim_info!("Zenoh subscriber received packet of len {}", data.len());
         let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data) {
             Ok(f) => f,
             Err(e) => {
-                virtmcu_qom::sim_warn!("Failed to parse LinFrame: {:?}", e);
-                return;
+                panic!("Failed to parse LinFrame: {e:?}");
             }
         };
 
@@ -678,6 +711,11 @@ fn lpuart_init_internal(
 
     let subscription =
         create_subscription(&transport, &rx_topic, &rx_timer, &earliest_vtime, tx.clone());
+    if subscription.is_none() {
+        virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!");
+    } else {
+        virtmcu_qom::sim_info!("SUCCESSFULLY CREATED SUBSCRIPTION to {}", rx_topic);
+    }
 
     let liveliness = if transport_name == "zenoh" {
         match unsafe { transport_zenoh::get_or_init_session(router) } {

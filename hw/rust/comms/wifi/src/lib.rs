@@ -1,9 +1,9 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -35,7 +35,7 @@ pub struct VirtmcuWifiQEMU {
 unsafe extern "C" fn wifi_read(_opaque: *mut c_void, addr: u64, _size: core::ffi::c_uint) -> u64 {
     let s = &*(_opaque as *mut VirtmcuWifiQEMU);
     if s.debug {
-        virtmcu_qom::sim_warn!("wifi_read: unhandled offset 0x{:x}", addr);
+        virtmcu_qom::sim_debug!("wifi_read: unhandled offset 0x{:x}", addr);
     }
     0
 }
@@ -46,10 +46,7 @@ unsafe extern "C" fn wifi_write(
     val: u64,
     _size: core::ffi::c_uint,
 ) {
-    let s = &*(_opaque as *mut VirtmcuWifiQEMU);
-    if s.debug {
-        virtmcu_qom::sim_warn!("wifi_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
-    }
+    unreachable!("wifi_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
 }
 
 const WIFI_MAX_ACCESS: u32 = 8;

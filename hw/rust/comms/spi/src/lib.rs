@@ -61,9 +61,7 @@ const SPI_WORD_SIZE_U32: u32 = 4;
 #[no_mangle]
 pub unsafe extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
     let was_locked = virtmcu_qom::sync::Bql::is_held();
-    if !was_locked {
-        virtmcu_qom::sim_warn!("spi_transfer called without BQL!");
-    }
+    assert!(was_locked, "spi_transfer called without BQL!");
 
     // SAFETY: dev is a valid pointer to VirtmcuSPI provided by QEMU.
     let s = unsafe { &mut *(dev as *mut VirtmcuSPI) };

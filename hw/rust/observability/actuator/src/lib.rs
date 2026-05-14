@@ -108,9 +108,9 @@ impl Drop for VirtmcuActuatorState {
 }
 
 const REG_ACTUATOR_ID: u64 = 0x00;
-const REG_DATA_SIZE: u64 = 0x04;
-const REG_GO: u64 = 0x08;
-const REG_DATA_START: u64 = 0x10;
+const REG_ACTUATOR_DATA_SIZE: u64 = 0x04;
+const REG_ACTUATOR_GO: u64 = 0x08;
+const REG_ACTUATOR_DATA: u64 = 0x10;
 
 impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
     fn read(&self, addr: u64, size: u32) -> virtmcu_qom::device::MmioResult<'_> {
@@ -120,32 +120,37 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
         }
         let _guard = self.shared.drain.acquire();
 
-        if addr == REG_ACTUATOR_ID {
-            virtmcu_qom::device::MmioResult::Ready(u64::from(s.actuator_id))
-        } else if addr == REG_DATA_SIZE {
-            virtmcu_qom::device::MmioResult::Ready(u64::from(s.data_size))
-        } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
-            .contains(&addr)
-        {
-            let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
-            let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
-            let mut ret: u64 = 0;
-            if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
-                let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
-                let mut ret_bytes = [0u8; core::mem::size_of::<f64>()];
-                if let (Some(dest), Some(src)) =
-                    (ret_bytes.get_mut(..size as usize), bytes.get(offset..offset + size as usize))
-                {
-                    dest.copy_from_slice(src);
-                    ret = u64::from_le_bytes(ret_bytes);
+        match addr {
+            REG_ACTUATOR_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(s.actuator_id)),
+            REG_ACTUATOR_DATA_SIZE => {
+                virtmcu_qom::device::MmioResult::Ready(u64::from(s.data_size))
+            }
+            addr if (REG_ACTUATOR_DATA
+                ..REG_ACTUATOR_DATA + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+                .contains(&addr) =>
+            {
+                let idx = ((addr - REG_ACTUATOR_DATA) / F64_SIZE_BYTES) as usize;
+                let offset = ((addr - REG_ACTUATOR_DATA) % F64_SIZE_BYTES) as usize;
+                let mut ret: u64 = 0;
+                if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
+                    let bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
+                    let mut ret_bytes = [0u8; core::mem::size_of::<f64>()];
+                    if let (Some(dest), Some(src)) = (
+                        ret_bytes.get_mut(..size as usize),
+                        bytes.get(offset..offset + size as usize),
+                    ) {
+                        dest.copy_from_slice(src);
+                        ret = u64::from_le_bytes(ret_bytes);
+                    }
                 }
+                virtmcu_qom::device::MmioResult::Ready(ret)
             }
-            virtmcu_qom::device::MmioResult::Ready(ret)
-        } else {
-            if s.debug {
-                virtmcu_qom::sim_debug!("actuator_read: unhandled offset 0x{:x}", addr);
+            _ => {
+                if s.debug {
+                    virtmcu_qom::sim_debug!("actuator_read: unhandled offset 0x{:x}", addr);
+                }
+                virtmcu_qom::device::MmioResult::Ready(0)
             }
-            virtmcu_qom::device::MmioResult::Ready(0)
         }
     }
 
@@ -159,40 +164,50 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
         if s.debug {
             virtmcu_qom::vlog!("actuator_write: addr 0x{:x}, val {}\n", addr, val);
         }
-        if addr == REG_ACTUATOR_ID {
-            s.actuator_id = val as u32;
-        } else if addr == REG_DATA_SIZE {
-            s.data_size = val as u32;
-            if s.data_size > (MAX_DATA_ELEMENTS as u32) {
-                s.data_size = MAX_DATA_ELEMENTS as u32;
+
+        match addr {
+            REG_ACTUATOR_ID => {
+                s.actuator_id = val as u32;
             }
-        } else if addr == REG_GO {
-            if (val & 0x1) == 1 {
-                actuator_publish(self, s.actuator_id, s.data_size, &s.data);
-            }
-        } else if (REG_DATA_START..REG_DATA_START + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
-            .contains(&addr)
-        {
-            let idx = ((addr - REG_DATA_START) / F64_SIZE_BYTES) as usize;
-            let offset = ((addr - REG_DATA_START) % F64_SIZE_BYTES) as usize;
-            if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
-                let val_bytes = val.to_le_bytes();
-                let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
-                if let (Some(dest), Some(src)) = (
-                    data_bytes.get_mut(offset..offset + size as usize),
-                    val_bytes.get(..size as usize),
-                ) {
-                    dest.copy_from_slice(src);
-                    *s.data.get_mut(idx).expect("idx out of bounds") =
-                        f64::from_le_bytes(data_bytes);
+            REG_ACTUATOR_DATA_SIZE => {
+                s.data_size = val as u32;
+                if s.data_size > (MAX_DATA_ELEMENTS as u32) {
+                    s.data_size = MAX_DATA_ELEMENTS as u32;
                 }
             }
-        } else if s.debug {
-            virtmcu_qom::sim_debug!(
-                "actuator_write: unhandled offset 0x{:x} val=0x{:x}",
-                addr,
-                val
-            );
+            REG_ACTUATOR_GO => {
+                if (val & 0x1) == 1 {
+                    actuator_publish(self, s.actuator_id, s.data_size, &s.data);
+                }
+            }
+            addr if (REG_ACTUATOR_DATA
+                ..REG_ACTUATOR_DATA + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
+                .contains(&addr) =>
+            {
+                let idx = ((addr - REG_ACTUATOR_DATA) / F64_SIZE_BYTES) as usize;
+                let offset = ((addr - REG_ACTUATOR_DATA) % F64_SIZE_BYTES) as usize;
+                if offset + (size as usize) <= (F64_SIZE_BYTES as usize) {
+                    let val_bytes = val.to_le_bytes();
+                    let mut data_bytes = s.data.get(idx).expect("idx out of bounds").to_le_bytes();
+                    if let (Some(dest), Some(src)) = (
+                        data_bytes.get_mut(offset..offset + size as usize),
+                        val_bytes.get(..size as usize),
+                    ) {
+                        dest.copy_from_slice(src);
+                        *s.data.get_mut(idx).expect("idx out of bounds") =
+                            f64::from_le_bytes(data_bytes);
+                    }
+                }
+            }
+            _ => {
+                if s.debug {
+                    virtmcu_qom::sim_debug!(
+                        "actuator_write: unhandled offset 0x{:x} val=0x{:x}",
+                        addr,
+                        val
+                    );
+                }
+            }
         }
     }
 

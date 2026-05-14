@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 const _: () = ();
 #[repr(C, align(8))] // virtmcu-allow: align requirements
 /// A struct
@@ -64,8 +65,7 @@ extern "C" {
 
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 mod mock {
-    // virtmcu-allow: allow reasoning="wildcard imports in mock module"
-    #[allow(clippy::wildcard_imports)]
+    #![allow(clippy::wildcard_imports)] // virtmcu-allow: allow reasoning="Mocking framework requires wildcard imports for test setup"
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Condvar, Mutex};
@@ -1085,7 +1085,7 @@ impl VcpuDrain {
             );
 
             let remaining_ms =
-                u32::try_from((limit_ns - elapsed_ns) / 1_000_000).unwrap_or(u32::MAX);
+                u32::try_from((limit_ns - elapsed_ns) / 1_000_000).expect("Invalid data format");
             let (new_count, _) = self.cond.wait_yielding_bql(count, remaining_ms);
             count = new_count;
         }
@@ -1109,6 +1109,142 @@ impl Drop for VcpuDrainGuard<'_> {
         *count = count.saturating_sub(1);
         if *count == 0 {
             self.drain.cond.notify_all();
+        }
+    }
+}
+
+/// Trait for packets delivered by a DeterministicReceiver.
+pub trait DeliveryPacket: Ord + Send + 'static {
+    /// Returns the virtual time in nanoseconds when this packet should be delivered.
+    fn delivery_vtime_ns(&self) -> u64;
+}
+
+/// Internal state for DeterministicReceiver.
+pub struct ReceiverInternal<T: DeliveryPacket> {
+    queue: BqlGuarded<alloc::collections::BinaryHeap<core::cmp::Reverse<T>>>,
+    opaque: *mut core::ffi::c_void,
+    deliver_cb: fn(*mut core::ffi::c_void, T),
+    timer_ptr: core::sync::atomic::AtomicUsize,
+}
+
+// SAFETY: ReceiverInternal is only used under BQL for queue mutation (via BqlGuarded)
+// and opaque pointer dereferencing. deliver_cb executes under BQL.
+unsafe impl<T: DeliveryPacket> Send for ReceiverInternal<T> {}
+unsafe impl<T: DeliveryPacket> Sync for ReceiverInternal<T> {}
+
+/// A generic receiver that queues Zenoh packets and delivers them at the correct virtual time.
+pub struct DeterministicReceiver<T: DeliveryPacket> {
+    internal: alloc::sync::Arc<ReceiverInternal<T>>,
+    _subscription: SafeSubscription,
+    _timer: alloc::sync::Arc<crate::timer::QomTimer>,
+}
+
+impl<T: DeliveryPacket> DeterministicReceiver<T> {
+    /// Creates a new `DeterministicReceiver`.
+    pub fn new<TR: virtmcu_api::DataTransport + ?Sized>(
+        transport: &TR,
+        topic: &str,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        opaque: *mut core::ffi::c_void,
+        decode_cb: fn(*mut core::ffi::c_void, &str, &[u8]) -> Option<T>,
+        deliver_cb: fn(*mut core::ffi::c_void, T),
+    ) -> Result<Self, alloc::string::String> {
+        let internal = alloc::sync::Arc::new(ReceiverInternal {
+            queue: BqlGuarded::new(alloc::collections::BinaryHeap::new()),
+            opaque,
+            deliver_cb,
+            timer_ptr: core::sync::atomic::AtomicUsize::new(0),
+        });
+
+        let timer_internal = alloc::sync::Arc::clone(&internal);
+        let timer = alloc::sync::Arc::new(unsafe {
+            crate::timer::QomTimer::new(
+                crate::timer::QEMU_CLOCK_VIRTUAL,
+                deterministic_receiver_timer_cb::<T>,
+                alloc::sync::Arc::into_raw(timer_internal) as *mut core::ffi::c_void,
+            )
+        });
+
+        internal.timer_ptr.store(
+            alloc::sync::Arc::as_ptr(&timer) as usize,
+            core::sync::atomic::Ordering::Release,
+        );
+
+        let sub_internal = alloc::sync::Arc::clone(&internal);
+        let sub_timer = alloc::sync::Arc::clone(&timer);
+        let callback: virtmcu_api::DataCallback =
+            alloc::boxed::Box::new(move |topic_str: &str, payload: &[u8]| {
+                if let Some(packet) = decode_cb(sub_internal.opaque, topic_str, payload) {
+                    let mut queue = sub_internal.queue.get_mut();
+                    queue.push(core::cmp::Reverse(packet));
+                    if let Some(core::cmp::Reverse(first)) = queue.peek() {
+                        sub_timer.mod_ns(first.delivery_vtime_ns() as i64);
+                    }
+                }
+            });
+
+        // virtmcu-allow: bql reasoning="Safe Zenoh integration via SafeSubscription"
+        let subscription = SafeSubscription::new(transport, topic, generation, callback)?;
+
+        // Fields are dropped in declaration order: _subscription, then _timer.
+        Ok(Self { internal, _subscription: subscription, _timer: timer })
+    }
+
+    /// Pushes a new packet into the priority queue and updates the virtual timer.
+    pub fn push(&self, packet: T) {
+        let mut queue = self.internal.queue.get_mut();
+        queue.push(core::cmp::Reverse(packet));
+        if let Some(core::cmp::Reverse(first)) = queue.peek() {
+            let timer_ptr = self.internal.timer_ptr.load(core::sync::atomic::Ordering::Acquire)
+                as *const crate::timer::QomTimer;
+            if !timer_ptr.is_null() {
+                unsafe { (*timer_ptr).mod_ns(first.delivery_vtime_ns() as i64) };
+            }
+        }
+    }
+}
+
+extern "C" fn deterministic_receiver_timer_cb<T: DeliveryPacket>(opaque: *mut core::ffi::c_void) {
+    let internal = unsafe { &*(opaque as *const ReceiverInternal<T>) };
+    let now = unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_VIRTUAL) } as u64;
+
+    loop {
+        let mut queue = internal.queue.get_mut();
+        if let Some(core::cmp::Reverse(first)) = queue.peek() {
+            if first.delivery_vtime_ns() <= now {
+                let core::cmp::Reverse(packet) = queue.pop().expect("queue is not empty");
+                drop(queue);
+                (internal.deliver_cb)(internal.opaque, packet);
+                continue;
+            }
+
+            let next_vtime = first.delivery_vtime_ns();
+            drop(queue);
+            let timer_ptr = internal.timer_ptr.load(core::sync::atomic::Ordering::Acquire)
+                as *const crate::timer::QomTimer;
+            if !timer_ptr.is_null() {
+                unsafe { (*timer_ptr).mod_ns(next_vtime as i64) };
+            }
+            break;
+        }
+        break;
+    }
+}
+
+impl<T: DeliveryPacket> Drop for DeterministicReceiver<T> {
+    fn drop(&mut self) {
+        // Disconnect the timer
+        self.internal.timer_ptr.store(0, core::sync::atomic::Ordering::Release);
+        self._timer.del();
+
+        // Recover the leaked Arc from the timer callback opaque pointer.
+        // It's safe to do this here because SafeSubscription has already been dropped
+        // before we drop the DeterministicReceiver (assuming correct destruction order),
+        // and the QEMU timer is deleted so no more callbacks will run.
+        let timer_opaque = alloc::sync::Arc::as_ptr(&self.internal).cast_mut();
+        unsafe {
+            // Drop the reference held by the timer callback
+            let _ = alloc::sync::Arc::from_raw(timer_opaque);
         }
     }
 }

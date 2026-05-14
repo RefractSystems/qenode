@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![deny(unsafe_code)]
 /*
  * virtmcu Zenoh Coordinator
@@ -124,33 +125,7 @@ fn ray_intersects_aabb(
     t_min <= t_max
 }
 
-fn parse_topic_with_prefix(topic: &str) -> Option<(String, String, String)> {
-    let parts: Vec<&str> = topic.split('/').collect();
-    if topic.contains("sim/flexray") {
-        return None;
-    }
-    let mut ps = None;
-    for (i, p) in parts.iter().enumerate() {
-        if *p == "sim" || *p == "virtmcu" {
-            ps = Some(i);
-            break;
-        }
-    }
-    let prefix = if let Some(idx) = ps {
-        parts[..idx].join("/")
-    } else {
-        String::new()
-    };
-    let (base, nid) = if topic.ends_with("/tx") && parts.len() >= 2 {
-        (
-            parts[..parts.len() - 2].join("/"),
-            parts[parts.len() - 2].to_owned(),
-        )
-    } else {
-        (topic.to_owned(), String::new())
-    };
-    Some((prefix, base, nid))
-}
+
 
 struct SpatialGrid {
     cells: HashMap<(i64, i64, i64), Vec<String>>,
@@ -275,6 +250,8 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
 }
 
 async fn handle_eth_msg(
+    src: String,
+    base: String,
     s: zenoh::sample::Sample,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
@@ -283,10 +260,7 @@ async fn handle_eth_msg(
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
-    let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
-        Some(r) => r,
-        None => return out,
-    };
+    let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
     if p.len() < 20 {
@@ -310,6 +284,56 @@ async fn handle_eth_msg(
     }
 
     for dst in dest_nodes {
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
         if !tg.is_link_allowed(&src, &dst, &Protocol::Ethernet) {
             tracing::error!(
                 "[Topology Violation] Dropping ETH msg from {} to {}",
@@ -348,7 +372,9 @@ async fn handle_eth_msg(
     out
 }
 
-async fn handle_uart_msg(
+async fn handle_chardev_msg(
+    src: String,
+    base: String,
     s: zenoh::sample::Sample,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
@@ -357,10 +383,136 @@ async fn handle_uart_msg(
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
-    let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
-        Some(r) => r,
+    let px = String::new();
+    known.entry(base.clone()).or_default().insert(src.clone());
+    let p = s.payload().to_bytes();
+    if p.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+        return out;
+    }
+    let h = match virtmcu_api::ZenohFrameHeader::unpack_slice(&p) {
+        Some(h) => h,
         None => return out,
     };
+    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
+        return out;
+    }
+    let data = p[virtmcu_api::ZENOH_FRAME_HEADER_SIZE
+        ..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
+        .to_vec();
+
+    let mut dest_nodes = HashSet::new();
+    if tg.is_explicit {
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::Dummy);
+    } else if let Some(nodes) = known.get(&base) {
+        for dst in nodes {
+            if dst != &src {
+                dest_nodes.insert(dst.clone());
+            }
+        }
+    }
+
+    for dst in dest_nodes {
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.is_link_allowed(&src, &dst, &Protocol::Dummy) {
+            tracing::error!(
+                "[Topology Violation] Dropping Chardev msg from {} to {}",
+                src,
+                dst
+            );
+            continue;
+        }
+
+        let (d, prob, jit, _) = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
+            (
+                s.delay_ns,
+                s.drop_probability,
+                s.jitter_ns,
+                s.enable_collisions,
+            )
+        } else {
+            (delay, 0.0, 0, false)
+        };
+        if prob > 0.0 && rng.gen::<f64>() < prob {
+            continue;
+        }
+        let mut act = d;
+        if jit > 0 {
+            act = act.saturating_add(rng.gen_range(0..=jit));
+        }
+        out.push(CoordMessage {
+            src_node_id: src.clone(),
+            dst_node_id: dst.clone(),
+            base_topic: base.clone(),
+            delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
+            sequence_number: h.sequence_number(),
+            protocol: Protocol::Dummy,
+            payload: data.clone(),
+        });
+    }
+    out
+}
+
+async fn handle_uart_msg(
+    src: String,
+    base: String,
+    s: zenoh::sample::Sample,
+    known: &mut HashMap<String, HashSet<String>>,
+    topo: &HashMap<(String, String, String), LinkState>,
+    delay: u64,
+    rng: &mut ChaCha8Rng,
+    tg: &topology::TopologyGraph,
+) -> Vec<CoordMessage> {
+    let mut out = Vec::new();
+    let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
     if p.len() < 20 {
@@ -384,6 +536,56 @@ async fn handle_uart_msg(
     }
 
     for dst in dest_nodes {
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
         if !tg.is_link_allowed(&src, &dst, &Protocol::Uart) {
             tracing::error!(
                 "[Topology Violation] Dropping UART msg from {} to {}",
@@ -423,6 +625,8 @@ async fn handle_uart_msg(
 }
 
 async fn handle_lin_msg(
+    src: String,
+    base: String,
     s: zenoh::sample::Sample,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
@@ -430,10 +634,7 @@ async fn handle_lin_msg(
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
-    let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
-        Some(r) => r,
-        None => return out,
-    };
+    let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let pb = s.payload().to_bytes();
     let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&pb) {
@@ -453,6 +654,56 @@ async fn handle_lin_msg(
     }
 
     for dst in dest_nodes {
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
         if !tg.is_link_allowed(&src, &dst, &Protocol::Lin) {
             tracing::error!("Topology Violation: LIN {}->{}", src, dst);
             continue;
@@ -485,6 +736,8 @@ async fn handle_lin_msg(
 }
 
 async fn handle_sysc_msg(
+    src: String,
+    base: String,
     s: zenoh::sample::Sample,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
@@ -492,10 +745,7 @@ async fn handle_sysc_msg(
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
-    let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
-        Some(r) => r,
-        None => return out,
-    };
+    let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
     if p.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
@@ -524,6 +774,56 @@ async fn handle_sysc_msg(
     }
 
     for dst in dest_nodes {
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
+        if !tg.routing_map.map.contains_key(&src) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&src) {
+            if !targets.contains(&dst) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
         // For SystemC CAN, any allowed link is fine, we just reuse the Ethernet protocol mapping internally
         let d = if let Some(s) = topo.get(&(px.clone(), src.clone(), dst.clone())) {
             s.delay_ns
@@ -544,6 +844,8 @@ async fn handle_sysc_msg(
 }
 
 async fn handle_rf_msg(
+    src: String,
+    base: String,
     s: zenoh::sample::Sample,
     known: &mut HashMap<String, HashSet<String>>,
     positions: &HashMap<(String, String), NodeInfo>,
@@ -553,10 +855,7 @@ async fn handle_rf_msg(
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
     let mut out = Vec::new();
-    let (px, base, src) = match parse_topic_with_prefix(s.key_expr().as_str()) {
-        Some(r) => r,
-        None => return out,
-    };
+    let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
     let (vt, seq, payload, lqi, mhr) = if has_hdr {
@@ -582,8 +881,8 @@ async fn handle_rf_msg(
             return out;
         }
         let mut c = Cursor::new(&p);
-        let vt = c.read_u64::<LittleEndian>().unwrap_or(0);
-        let sz = c.read_u32::<LittleEndian>().unwrap_or(0);
+        let vt = c.read_u64::<LittleEndian>().expect("Invalid data format");
+        let sz = c.read_u32::<LittleEndian>().expect("Invalid data format");
         let mut data = vec![0u8; sz as usize];
         if p.len() >= 12 + sz as usize {
             data.copy_from_slice(&p[12..12 + sz as usize]);
@@ -739,46 +1038,68 @@ async fn main() {
         .await
         .expect("Failed to open Zenoh session");
 
-    let eth_sub = session
-        .declare_subscriber("**/sim/eth/frame/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let uart_sub = session
-        .declare_subscriber("**/virtmcu/uart/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let sysc_sub = session
-        .declare_subscriber("**/sim/systemc/frame/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let rf_802154_sub = session
-        .declare_subscriber("**/sim/rf/ieee802154/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let rf_hci_sub = session
-        .declare_subscriber("**/sim/rf/hci/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let lin_sub = session
-        .declare_subscriber("**/sim/lin/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let tx_sub = session
-        .declare_subscriber("**/sim/coord/**/tx")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let ctrl_sub = session
-        .declare_subscriber("**/sim/network/control")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let pos_sub = session
-        .declare_subscriber(virtmcu_api::topics::sim_topic::TELEMETRY_POSITION_WILDCARD)
-        .await
-        .expect("Failed to declare Zenoh subscriber");
-    let done_sub = session
-        .declare_subscriber("**/sim/coord/**/done")
-        .await
-        .expect("Failed to declare Zenoh subscriber");
+
+    let (eth_tx, mut eth_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (uart_tx, mut uart_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (sysc_tx, mut sysc_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (chardev_tx, mut chardev_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (rf_802154_tx, mut rf_802154_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (rf_hci_tx, mut rf_hci_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (lin_tx, mut lin_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx_tx, mut tx_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (ctrl_tx, mut ctrl_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pos_tx, mut pos_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let mut _subs = Vec::new();
+
+    let ctrl_tx_c = ctrl_tx.clone();
+    _subs.push(session.declare_subscriber("sim/network/control").callback(move |s| { let _ = ctrl_tx_c.send(s); }).await.expect("Failed"));
+    let pos_tx_c = pos_tx.clone();
+    _subs.push(session.declare_subscriber("sim/telemetry/position").callback(move |s| { let _ = pos_tx_c.send((String::new(), String::new(), s)); }).await.expect("Failed"));
+
+    for node in tg_raw.routing_map.map.keys() {
+        let n = node.clone();
+        let eth_c = eth_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/eth/frame/{n}/tx")).callback(move |s| { let _ = eth_c.send((n.clone(), "sim/eth/frame".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let uart_c = uart_tx.clone();
+        _subs.push(session.declare_subscriber(format!("virtmcu/uart/{n}/tx")).callback(move |s| { let _ = uart_c.send((n.clone(), "virtmcu/uart".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let sysc_c = sysc_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/systemc/frame/{n}/tx")).callback(move |s| { let _ = sysc_c.send((n.clone(), "sim/systemc/frame".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let chardev_c = chardev_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/chardev/{n}/tx")).callback(move |s| { let _ = chardev_c.send((n.clone(), "sim/chardev".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let rf802_c = rf_802154_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/rf/ieee802154/{n}/tx")).callback(move |s| { let _ = rf802_c.send((n.clone(), "sim/rf/ieee802154".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let rfhci_c = rf_hci_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/rf/hci/{n}/tx")).callback(move |s| { let _ = rfhci_c.send((n.clone(), "sim/rf/hci".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let lin_c = lin_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/lin/{n}/tx")).callback(move |s| { let _ = lin_c.send((n.clone(), "sim/lin".to_owned(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let tx_c = tx_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/coord/{n}/tx")).callback(move |s| { let _ = tx_c.send((n.clone(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let done_c = done_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/coord/{n}/done")).callback(move |s| { let _ = done_c.send((n.clone(), s)); }).await.expect("Failed"));
+        
+        let n = node.clone();
+        let pos_n_c = pos_tx.clone();
+        _subs.push(session.declare_subscriber(format!("sim/telemetry/position/{n}")).callback(move |s| { let _ = pos_n_c.send((String::new(), n.clone(), s)); }).await.expect("Failed"));
+    }
+
 
     let _ready_q = session
         .declare_queryable("sim/coordinator/ready_probe")
@@ -797,6 +1118,7 @@ async fn main() {
     let mut k_eth = HashMap::new();
     let mut k_uart = HashMap::new();
     let mut k_sysc = HashMap::new();
+    let mut k_chardev = HashMap::new();
     let mut k_rf = HashMap::new();
     let mut k_lin = HashMap::new();
     let mut base_topics = HashMap::new();
@@ -861,10 +1183,10 @@ async fn main() {
 
     loop {
         tokio::select! {
-            res = eth_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = eth_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_eth_msg(s, &mut k_eth, &topology, args.delay_ns, &mut rng, &tg).await;
+                    let msgs = handle_eth_msg(src, base, s, &mut k_eth, &topology, args.delay_ns, &mut rng, &tg).await;
                     base_topics.insert(Protocol::Ethernet, "sim/eth/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -877,10 +1199,10 @@ async fn main() {
                     }
                 }
             }
-            res = uart_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = uart_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_uart_msg(s, &mut k_uart, &topology, args.delay_ns, &mut rng, &tg).await;
+                    let msgs = handle_uart_msg(src, base, s, &mut k_uart, &topology, args.delay_ns, &mut rng, &tg).await;
                     base_topics.insert(Protocol::Uart, "virtmcu/uart".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -893,10 +1215,10 @@ async fn main() {
                     }
                 }
             }
-            res = sysc_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = sysc_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_sysc_msg(s, &mut k_sysc, &topology, args.delay_ns, &tg).await;
+                    let msgs = handle_sysc_msg(src, base, s, &mut k_sysc, &topology, args.delay_ns, &tg).await;
                     base_topics.insert(Protocol::Spi, "sim/systemc/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -909,11 +1231,27 @@ async fn main() {
                     }
                 }
             }
-            res = rf_802154_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = chardev_rx.recv() => {
+                if let Some((src, base, s)) = res {
+                    let tg = tg_ref.read().await;
+                    let msgs = handle_chardev_msg(src, base, s, &mut k_chardev, &topology, args.delay_ns, &mut rng, &tg).await;
+                    base_topics.insert(Protocol::Dummy, "sim/chardev".to_owned());
+                    if barrier.is_some() {
+                        for m in msgs {
+                            batches.entry(m.src_node_id.clone()).or_default().push(m);
+                        }
+                    } else {
+                        for m in msgs {
+                            encode_protocol_msg(&session, &m).await;
+                        }
+                    }
+                }
+            }
+            res = rf_802154_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
-                    let msgs = handle_rf_msg(s, &mut k_rf, &ps, &args, true, &obstacles, &tg).await;
+                    let msgs = handle_rf_msg(src, base, s, &mut k_rf, &ps, &args, true, &obstacles, &tg).await;
                     base_topics.insert(Protocol::Rf802154, "sim/rf/ieee802154".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -926,11 +1264,11 @@ async fn main() {
                     }
                 }
             }
-            res = rf_hci_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = rf_hci_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
-                    let msgs = handle_rf_msg(s, &mut k_rf, &ps, &args, false, &obstacles, &tg).await;
+                    let msgs = handle_rf_msg(src, base, s, &mut k_rf, &ps, &args, false, &obstacles, &tg).await;
                     base_topics.insert(Protocol::RfHci, "sim/rf/hci".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -943,10 +1281,10 @@ async fn main() {
                     }
                 }
             }
-            res = lin_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = lin_rx.recv() => {
+                if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_lin_msg(s, &mut k_lin, &topology, args.delay_ns, &tg).await;
+                    let msgs = handle_lin_msg(src, base, s, &mut k_lin, &topology, args.delay_ns, &tg).await;
                     base_topics.insert(Protocol::Lin, "sim/lin".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -959,12 +1297,22 @@ async fn main() {
                     }
                 }
             }
-            res = tx_sub.recv_async() => {
-                if let Ok(s) = res {
-                    let ps = s.key_expr().as_str().split('/').collect::<Vec<_>>();
-                    if ps.len() >= 4 {
-                        let nid = ps[2].to_owned();
+            res = tx_rx.recv() => {
+                if let Some((nid, s)) = res {
+                        let tg = tg_ref.read().await;
                         let mut ms = decode_batch(&s.payload().to_bytes());
+                        for m in &ms {
+                            if !tg.routing_map.map.contains_key(&m.src_node_id) {
+                                panic!("Unregistered packet received!");
+                            }
+                            if let Some(targets) = tg.routing_map.get_targets(&m.src_node_id) {
+                                if !targets.contains(&m.dst_node_id) {
+                                    panic!("Unregistered packet received!");
+                                }
+                            } else {
+                                panic!("Unregistered packet received!");
+                            }
+                        }
                         if barrier.is_some() {
                             batches.entry(nid).or_default().append(&mut ms);
                         } else {
@@ -973,19 +1321,15 @@ async fn main() {
                             }
                         }
                     }
-                }
             }
-            res = done_sub.recv_async() => {
-                if let Ok(s) = res {
+            res = done_rx.recv() => {
+                if let Some((nid, s)) = res {
                     if let Some(ref b) = barrier {
-                        let ps = s.key_expr().as_str().split('/').collect::<Vec<_>>();
-                        if ps.len() >= 4 {
-                            let nid = ps[2].to_owned();
                             let payload = s.payload().to_bytes();
                             let mut quantum = u64::MAX;
                             if payload.len() >= 8 {
                                 let mut cursor = Cursor::new(&payload);
-                                quantum = cursor.read_u64::<LittleEndian>().unwrap_or(u64::MAX);
+                                quantum = cursor.read_u64::<LittleEndian>().expect("Invalid data format");
                                 if quantum != current_quantum {
                                     tracing::error!("Quantum mismatch for node {}: expected {}, got {}", nid, current_quantum, quantum);
                                 }
@@ -1003,7 +1347,7 @@ async fn main() {
                                     // Send start to all nodes for NEXT quantum
                                     current_quantum = b.current_quantum();
                                     tracing::debug!("Advancing to quantum {}. Sending START to all nodes.", current_quantum);
-                                    for i in 0..args.nodes.unwrap_or(0) {
+                                    for i in 0..args.nodes.expect("Invalid data format") {
                                         let start_topic = format!("sim/clock/start/{}", i);
                                         let mut start_payload = Vec::new();
                                         start_payload
@@ -1022,10 +1366,10 @@ async fn main() {
                         }
                     }
                 }
-            }
-            res = ctrl_sub.recv_async() => {
-                if let Ok(s) = res {
-                    if let Some((px, _, _)) = parse_topic_with_prefix(s.key_expr().as_str()) {
+            res = ctrl_rx.recv() => {
+                if let Some(s) = res {
+                    let px = String::new();
+                    {
                         if let Ok(ps) = std::str::from_utf8(&s.payload().to_bytes()) {
                             if let Ok(up) = serde_json::from_str::<TopologyUpdate>(ps) {
                                 let st = topology.entry((px, up.from, up.to)).or_insert(LinkState {
@@ -1051,9 +1395,9 @@ async fn main() {
                     }
                 }
             }
-            res = pos_sub.recv_async() => {
-                if let Ok(s) = res {
-                    if let Some((px, _, _)) = parse_topic_with_prefix(s.key_expr().as_str()) {
+            res = pos_rx.recv() => {
+                if let Some((px, _src, s)) = res {
+                    {
                         if let Ok(ps) = std::str::from_utf8(&s.payload().to_bytes()) {
                             if let Ok(up) = serde_json::from_str::<PositionUpdate>(ps) {
                                 let mut tg = tg_ref.write().await;
@@ -1119,5 +1463,35 @@ mod tests {
     fn test_obstacle_attenuation_reduces_rssi() {
         let diff = (0.0 - calculate_fspl(10.0, 2.4e9)) - (0.0 - calculate_fspl(10.0, 2.4e9) - 20.0);
         assert!((diff - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unregistered packet received!")]
+    fn test_panic_on_unregistered_packet() {
+        let mut tg = crate::topology::TopologyGraph::default();
+        tg.is_explicit = true;
+        // Node "0" is registered, but target "2" is not in targets for "0"
+        tg.routing_map.add_route("0".to_owned(), "1".to_owned());
+        
+        let m = CoordMessage {
+            src_node_id: "0".to_owned(),
+            dst_node_id: "2".to_owned(), // Unregistered dest!
+            base_topic: "test".to_owned(),
+            delivery_vtime_ns: 0,
+            sequence_number: 0,
+            protocol: crate::topology::Protocol::Ethernet,
+            payload: vec![],
+        };
+        
+        if !tg.routing_map.map.contains_key(&m.src_node_id) {
+            panic!("Unregistered packet received!");
+        }
+        if let Some(targets) = tg.routing_map.get_targets(&m.src_node_id) {
+            if !targets.contains(&m.dst_node_id) {
+                panic!("Unregistered packet received!");
+            }
+        } else {
+            panic!("Unregistered packet received!");
+        }
     }
 }

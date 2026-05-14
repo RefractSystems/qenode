@@ -1,40 +1,29 @@
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use quote::{format_ident, quote};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, ItemStruct, LitStr, Type};
 
 #[proc_macro_derive(MmioDevice)]
 pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
-    // We expect the struct to have `pub parent_obj: SysBusDevice` and `pub rust_state: *mut State`
-    // but the trait is implemented on the State object (e.g., VirtmcuSensorState), not the QEMU struct.
-    // Actually, looking at rust-dummy, the operations take the opaque pointer which is the QEMU struct.
-    // Let's generate a trait `MmioDevice` implementation block and the `MemoryRegionOps`.
+    let mut state_field = quote! { rust_state };
 
-    // The name here is likely the State struct (e.g., VirtmcuSensorState) or the QEMU struct.
-    // The easiest is to make the user apply `#[derive(MmioDevice)]` to the QEMU struct,
-    // which has `rust_state` pointing to the state struct that implements the trait.
-    // Wait, the prompt says:
-    // Create a `#[derive(MmioDevice)]` proc-macro... consuming the safe `MmioDevice` trait implementation.
-
-    // Let's generate the `MemoryRegionOps` with `name` being the struct that implements `MmioDevice`.
-    // We need to know the QEMU struct name or have it passed as an attribute.
-    // Actually, in `sensor`, `s` is `VirtmcuSensorQEMU`, and `state` is `VirtmcuSensorState`.
-    // It's better if `MmioDevice` is implemented on `VirtmcuSensorState` and we generate the C callbacks.
-    // But how do we know the QEMU struct name?
-
-    // Let's define the macro to be applied on the QEMU struct instead.
-    // `#[derive(MmioDevice)]` on `VirtmcuSensorQEMU`.
-    // The macro generates `VIRTM_MMIO_OPS` constant? Let's just generate the read/write functions and ops.
+    if let Data::Struct(ref data) = input.data {
+        if let Fields::Named(ref fields) = data.fields {
+            for field in &fields.named {
+                if field.ident.as_ref().unwrap() == "state" {
+                    state_field = quote! { state };
+                    break;
+                }
+            }
+        }
+    }
 
     let qemu_struct = name;
-    let ops_name =
-        syn::Ident::new(&format!("{}_OPS", name.to_string().to_uppercase()), name.span());
-    let read_fn =
-        syn::Ident::new(&format!("{}_read_shim", name.to_string().to_lowercase()), name.span());
-    let write_fn =
-        syn::Ident::new(&format!("{}_write_shim", name.to_string().to_lowercase()), name.span());
+    let ops_name = format_ident!("{}_OPS", name.to_string().to_uppercase());
+    let read_fn = format_ident!("{}_read_shim", name.to_string().to_lowercase());
+    let write_fn = format_ident!("{}_write_shim", name.to_string().to_lowercase());
 
     let expanded = quote! {
         const BQL_YIELD_TIMEOUT_MS: u32 = 100;
@@ -42,30 +31,37 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
 
         unsafe extern "C" fn #read_fn(opaque: *mut core::ffi::c_void, offset: u64, size: core::ffi::c_uint) -> u64 {
             let s = unsafe { &mut *(opaque as *mut #qemu_struct) };
-            if s.rust_state.is_null() {
+            let state_ptr = s.#state_field;
+            if state_ptr.is_null() {
                 return 0;
             }
-            let state = unsafe { &*s.rust_state };
+            let state = unsafe { &*state_ptr };
 
             let mut res = virtmcu_qom::device::MmioDevice::read(state, offset, size as u32);
             match res {
                 virtmcu_qom::device::MmioResult::Ready(val) => val,
-                virtmcu_qom::device::MmioResult::Wait { mut condition, mut ready_val } => {
-                    while !condition() {
-                        let guard = virtmcu_qom::device::MmioDevice::wait_mutex(state).lock();
-                        let _ = virtmcu_qom::device::MmioDevice::condvar(state).wait_yielding_bql(guard, BQL_YIELD_TIMEOUT_MS);
+                virtmcu_qom::device::MmioResult::Wait { mut condition, mut ready_val, mut fallback_val } => {
+                    if condition() {
+                        ready_val()
+                    } else {
+                        {
+                            let _unlock = virtmcu_qom::sync::Bql::temporary_unlock();
+                            // virtmcu-allow: yield reasoning="Required to advance icount"
+                            std::thread::yield_now();
+                        }
+                        fallback_val()
                     }
-                    ready_val()
                 }
             }
         }
 
         unsafe extern "C" fn #write_fn(opaque: *mut core::ffi::c_void, offset: u64, value: u64, size: core::ffi::c_uint) {
             let s = unsafe { &mut *(opaque as *mut #qemu_struct) };
-            if s.rust_state.is_null() {
+            let state_ptr = s.#state_field;
+            if state_ptr.is_null() {
                 return;
             }
-            let state = unsafe { &*s.rust_state };
+            let state = unsafe { &*state_ptr };
             virtmcu_qom::device::MmioDevice::write(state, offset, value, size as u32);
         }
 
@@ -93,4 +89,248 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// RFC-0023 Phase 3 & 4: Declarative QOM Device and Safe Lifecycles.
+#[proc_macro_attribute]
+pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut qom_name = String::new();
+    let mut qom_parent = String::from("sys-bus-device");
+
+    let attr_parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("name") {
+            let value = meta.value()?;
+            let s: LitStr = value.parse()?;
+            qom_name = s.value();
+        } else if meta.path.is_ident("parent") {
+            let value = meta.value()?;
+            let s: LitStr = value.parse()?;
+            qom_parent = s.value();
+        }
+        Ok(())
+    });
+    parse_macro_input!(attr with attr_parser);
+
+    let mut input = parse_macro_input!(item as ItemStruct);
+    let name = &input.ident;
+    let name_str = name.to_string();
+
+    let mut props = Vec::new();
+    let mut links = Vec::new();
+    let mut state_field_type = None;
+    let mut state_field_name = None;
+
+    if let Fields::Named(ref mut fields) = input.fields {
+        for field in &mut fields.named {
+            let mut is_prop = false;
+            let mut is_link = false;
+            let mut is_state = false;
+            let mut link_target = String::new();
+            let prop_name = field.ident.as_ref().unwrap().to_string().replace('_', "-");
+            let default_val = quote! { 0 };
+
+            field.attrs.retain(|attr| {
+                if attr.path().is_ident("qom_property") {
+                    is_prop = true;
+                    false
+                } else if attr.path().is_ident("qom_link") {
+                    is_link = true;
+                    let _ = attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("target") {
+                            let value = meta.value()?;
+                            let s: syn::LitStr = value.parse()?;
+                            link_target = s.value();
+                        }
+                        Ok(())
+                    });
+                    false
+                } else if attr.path().is_ident("qom_state") {
+                    is_state = true;
+                    false
+                } else {
+                    true
+                }
+            });
+
+            let field_ident = field.ident.as_ref().unwrap();
+            let prop_name_c = format!("{}\0", prop_name);
+            let prop_name_lit = syn::LitByteStr::new(prop_name_c.as_bytes(), field_ident.span());
+
+            if is_state {
+                state_field_type = Some(field.ty.clone());
+                state_field_name = Some(field_ident.clone());
+                field.ty = syn::parse_quote! { *mut #state_field_type };
+            }
+
+            if is_prop {
+                let field_ty = &field.ty;
+                let define_macro;
+                let mut needs_default = true;
+
+                if is_type(field_ty, "u64") {
+                    define_macro = quote! { virtmcu_qom::define_prop_uint64 };
+                } else if is_type(field_ty, "u32") {
+                    define_macro = quote! { virtmcu_qom::define_prop_uint32 };
+                } else if is_type(field_ty, "bool") {
+                    define_macro = quote! { virtmcu_qom::define_prop_bool };
+                } else if is_type(field_ty, "*mut c_char") || is_type(field_ty, "c_char") {
+                    define_macro = quote! { virtmcu_qom::define_prop_string };
+                    needs_default = false; // define_prop_string only takes 3 arguments
+                } else {
+                    define_macro = quote! { virtmcu_qom::define_prop_uint64 };
+                };
+
+                if needs_default {
+                    props.push(quote! {
+                        #define_macro!(#prop_name_lit.as_ptr() as *const core::ffi::c_char, #name, #field_ident, #default_val)
+                    });
+                } else {
+                    props.push(quote! {
+                        #define_macro!(#prop_name_lit.as_ptr() as *const core::ffi::c_char, #name, #field_ident)
+                    });
+                }
+            }
+
+            if is_link {
+                let link_target_c = format!("{}\0", link_target);
+                let target_lit = syn::LitByteStr::new(link_target_c.as_bytes(), field_ident.span());
+                links.push(quote! {
+                    virtmcu_qom::qom::object_class_property_add_link(
+                        klass,
+                        #prop_name_lit.as_ptr() as *const core::ffi::c_char,
+                        #target_lit.as_ptr() as *const core::ffi::c_char,
+                        core::mem::offset_of!(#name, #field_ident) as isize,
+                        Some(allow_set_link),
+                        virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
+                    );
+                });
+            }
+        }
+    }
+
+    let state_ty = state_field_type.expect("Missing #[qom_state] field");
+    let state_field = state_field_name.expect("Missing #[qom_state] field");
+    let prop_array_name = format_ident!("{}_PROPERTIES", name.to_string().to_uppercase());
+    let prop_count = props.len();
+
+    let realize_fn = format_ident!("{}_realize", name_str.to_lowercase());
+    let finalize_fn = format_ident!("{}_finalize", name_str.to_lowercase());
+    let init_fn = format_ident!("{}_instance_init", name_str.to_lowercase());
+    let class_init_fn = format_ident!("{}_class_init", name_str.to_lowercase());
+    let type_info_name = format_ident!("{}_TYPE_INFO", name.to_string().to_uppercase());
+    let mmio_ops_name = format_ident!("{}_OPS", name_str.to_uppercase());
+
+    let qom_name_lit = LitStr::new(&qom_name, name.span());
+    let qom_name_c = format!("{}\0", qom_name);
+    let qom_name_c_lit = syn::LitByteStr::new(qom_name_c.as_bytes(), name.span());
+    let qom_parent_c = format!("{}\0", qom_parent);
+    let qom_parent_lit = syn::LitByteStr::new(qom_parent_c.as_bytes(), name.span());
+
+    let expanded = quote! {
+        #input
+
+        #[used]
+        static #prop_array_name: [virtmcu_qom::qom::Property; #prop_count] = [
+            #(#props),*
+        ];
+
+        unsafe extern "C" fn allow_set_link(
+            _obj: *mut virtmcu_qom::qom::Object,
+            _name: *const core::ffi::c_char,
+            _val: *mut virtmcu_qom::qom::Object,
+            _errp: *mut *mut virtmcu_qom::error::Error,
+        ) {}
+
+        unsafe extern "C" fn #init_fn(obj: *mut virtmcu_qom::qom::Object) {
+            let s = unsafe { &mut *(obj as *mut #name) };
+            s.#state_field = core::ptr::null_mut();
+        }
+
+        unsafe extern "C" fn #finalize_fn(obj: *mut virtmcu_qom::qom::Object) {
+            let s = unsafe { &mut *(obj as *mut #name) };
+            if !s.#state_field.is_null() {
+                unsafe {
+                    drop(Box::from_raw(s.#state_field));
+                }
+                s.#state_field = core::ptr::null_mut();
+            }
+        }
+
+        unsafe extern "C" fn #realize_fn(dev: *mut core::ffi::c_void, _errp: *mut *mut core::ffi::c_void) {
+            const DEFAULT_MMIO_REGION_SIZE: u64 = 0x1000;
+            let s = unsafe { &mut *(dev as *mut #name) };
+            if !s.#state_field.is_null() {
+                return;
+            }
+
+            let mut state = Box::new(<#state_ty as virtmcu_qom::device::PeripheralState>::new(s));
+
+            if let Err(e) = virtmcu_qom::device::Peripheral::realize(&mut *state) {
+                virtmcu_qom::sim_err!("{}: realization failed: {}", #qom_name_lit, e);
+            }
+
+            s.#state_field = Box::into_raw(state);
+
+            virtmcu_qom::memory::memory_region_init_io(
+                &raw mut s.iomem,
+                dev as *mut virtmcu_qom::qom::Object,
+                &raw const #mmio_ops_name,
+                core::ptr::from_mut(s) as *mut core::ffi::c_void,
+                #qom_name_c_lit.as_ptr() as *const core::ffi::c_char,
+                DEFAULT_MMIO_REGION_SIZE,
+            );
+            virtmcu_qom::qdev::sysbus_init_mmio(dev as *mut virtmcu_qom::qdev::SysBusDevice, &raw mut s.iomem);
+        }
+
+        unsafe extern "C" fn #class_init_fn(klass: *mut virtmcu_qom::qom::ObjectClass, _data: *const core::ffi::c_void) {
+            let dc = virtmcu_qom::device_class!(klass);
+            (*dc).realize = Some(#realize_fn);
+            (*dc).user_creatable = true;
+            virtmcu_qom::qdev::device_class_set_props_n(
+                dc,
+                #prop_array_name.as_ptr(),
+                #prop_count,
+            );
+            unsafe {
+                #(#links)*
+            }
+        }
+
+        #[used]
+        pub static #type_info_name: virtmcu_qom::qom::TypeInfo = virtmcu_qom::qom::TypeInfo {
+            name: #qom_name_c_lit.as_ptr() as *const core::ffi::c_char,
+            parent: #qom_parent_lit.as_ptr() as *const core::ffi::c_char,
+            instance_size: core::mem::size_of::<#name>(),
+            instance_align: 0,
+            instance_init: Some(#init_fn),
+            instance_post_init: None,
+            instance_finalize: Some(#finalize_fn),
+            abstract_: false,
+            class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
+            class_init: Some(#class_init_fn),
+            class_base_init: None,
+            class_data: core::ptr::null(),
+            interfaces: core::ptr::null(),
+        };
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn is_type(ty: &Type, name: &str) -> bool {
+    if let Type::Path(ref p) = ty {
+        if let Some(segment) = p.path.segments.last() {
+            return segment.ident == name;
+        }
+    } else if let Type::Ptr(ref ptr) = ty {
+        // Simple check for *mut c_char
+        if name == "*mut c_char" {
+            if let Type::Path(ref p) = *ptr.elem {
+                if let Some(segment) = p.path.segments.last() {
+                    return segment.ident == "c_char";
+                }
+            }
+        }
+    }
+    false
 }

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use tokio::process::Command;
 use tracing::{error, info, warn};
 use virtmcu_test_runner::{run_spec, LinterEngine};
 
@@ -119,40 +120,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     "integration" => {
-                        let mut extra_env = Vec::new();
-                        if asan {
-                            info!("==> Enabling ASan for integration tests...");
-                            extra_env.push(("VIRTMCU_USE_ASAN", "1"));
-                            extra_env.push(("VIRTMCU_STALL_TIMEOUT_MS", "300000"));
-                            extra_env.push((
-                                "ASAN_OPTIONS",
-                                "detect_leaks=0,halt_on_error=1,detect_stack_use_after_return=1",
-                            ));
-                            extra_env.push(("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1"));
-                        }
-
-                        let mut cmd = std::process::Command::new("cargo");
-                        cmd.arg("+nightly")
-                            .arg("test")
-                            .arg("-Z")
-                            .arg("bindeps")
-                            .arg("-p")
-                            .arg("native-integration");
-
-                        if !cfg!(debug_assertions) {
-                            cmd.arg("--release");
-                        }
-
-                        if let Some(domain_name) = domain {
-                            if domain_name != "all" {
-                                cmd.arg("--test").arg(domain_name);
-                            }
-                        }
-
-                        let status = cmd.status()?;
-                        if !status.success() {
-                            return Err(anyhow!("Integration tests failed"));
-                        }
+                        run_native_integration_tests(domain, asan).await?;
                     }
                     _ => {
                         let spec_dir = std::env::current_dir()?.join("tests/specs").join(tier_name);
@@ -222,6 +190,149 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn run_native_integration_tests(domain: Option<String>, asan: bool) -> Result<()> {
+    let mut extra_env = Vec::new();
+    if asan {
+        info!("==> Enabling ASan for integration tests...");
+        extra_env.push(("VIRTMCU_USE_ASAN".to_string(), "1".to_string()));
+        extra_env.push(("VIRTMCU_STALL_TIMEOUT_MS".to_string(), "300000".to_string()));
+        extra_env.push((
+            "ASAN_OPTIONS".to_string(),
+            "detect_leaks=0,halt_on_error=1,detect_stack_use_after_return=1".to_string(),
+        ));
+        extra_env.push((
+            "UBSAN_OPTIONS".to_string(),
+            "halt_on_error=1:print_stacktrace=1".to_string(),
+        ));
+    }
+
+    let tests_dir = std::env::current_dir()?.join("tests/native_integration/tests");
+    let mut test_names = Vec::new();
+
+    if let Some(domain_name) = &domain {
+        if domain_name != "all" {
+            test_names.push(domain_name.clone());
+        }
+    }
+
+    if test_names.is_empty() {
+        if tests_dir.exists() {
+            for entry in std::fs::read_dir(tests_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                        test_names.push(name.to_string());
+                    }
+                }
+            }
+        }
+        test_names.sort();
+    }
+
+    if test_names.is_empty() {
+        warn!("No integration tests found.");
+        return Ok(());
+    }
+
+    info!(
+        "==> Found {} integration tests. Running in parallel...",
+        test_names.len()
+    );
+
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for name in test_names {
+        let name_clone = name.clone();
+        let envs_clone = extra_env.clone();
+
+        join_set.spawn(async move {
+            info!("==> [STARTING] {}", name_clone);
+            let mut cmd = Command::new("cargo");
+            cmd.arg("+nightly")
+                .arg("test")
+                .arg("-Z")
+                .arg("bindeps")
+                .arg("-p")
+                .arg("native-integration")
+                .arg("--test")
+                .arg(&name_clone);
+
+            if !cfg!(debug_assertions) {
+                cmd.arg("--release");
+            }
+
+            for (k, v) in envs_clone {
+                cmd.env(k, v);
+            }
+
+            let start = std::time::Instant::now();
+            let output = cmd.output().await;
+            let duration = start.elapsed();
+
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        info!("[PASS] {} ({:.2?})", name_clone, duration);
+                        (name_clone, true, duration, None)
+                    } else {
+                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                        error!("[FAIL] {} ({:.2?})", name_clone, duration);
+                        (
+                            name_clone,
+                            false,
+                            duration,
+                            Some(format!("{}\n{}", stdout, stderr)),
+                        )
+                    }
+                }
+                Err(e) => {
+                    error!("[ERROR] {} ({:.2?}): {}", name_clone, duration, e);
+                    (name_clone, false, duration, Some(e.to_string()))
+                }
+            }
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(result_tuple) = res {
+            results.push(result_tuple);
+        }
+    }
+
+    // Sort results by name to have a deterministic summary output
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+
+    info!("\n--- Integration Test Summary ---");
+    let mut failed = 0;
+    for (name, success, duration, _) in &results {
+        if *success {
+            info!("  [PASS] {:<30} ({:.2?})", name, duration);
+        } else {
+            error!("  [FAIL] {:<30} ({:.2?})", name, duration);
+            failed += 1;
+        }
+    }
+
+    if failed > 0 {
+        error!("\nDetailed failures:");
+        for (name, success, _, err) in &results {
+            if !*success {
+                error!("\n--- {} FAIL ---", name);
+                if let Some(e) = err {
+                    error!("{}", e);
+                }
+            }
+        }
+        return Err(anyhow!("{} integration tests failed", failed));
+    }
+
+    info!("\n✓ All integration tests passed!");
+    Ok(())
+}
+
 fn run_unit_coverage() -> Result<()> {
     info!("==> Running Unit Coverage (Rust)...");
 
@@ -257,7 +368,7 @@ fn run_unit_coverage() -> Result<()> {
         }
         info!("✓ Coverage reports generated in test-results/");
     } else {
-        warn!("Skipping Rust coverage: cargo-tarpaulin is not installed. (Run `cargo install cargo-tarpaulin`)");
+        return Err(anyhow!("cargo-tarpaulin is not installed. This tool is mandated for coverage. (Run `cargo install cargo-tarpaulin`)"));
     }
     Ok(())
 }

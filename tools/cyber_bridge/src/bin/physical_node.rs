@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use cyber_bridge::{
@@ -221,11 +222,11 @@ async fn main() -> Result<()> {
                     resp_opt = Some(resp);
                     break;
                 }
-                tracing::warn!(
+                tracing::debug!(
                     "No response at quantum 0 (attempt {}). Retrying in 1s...",
                     i
                 );
-                std::thread::sleep(Duration::from_secs(1));
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         } else {
             resp_opt = transport.advance(req, timeout);

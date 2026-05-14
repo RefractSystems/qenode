@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::collections::HashMap;
 use std::fs::File;
@@ -117,7 +118,7 @@ impl ResdParser {
             .values()
             .map(ResdSensor::last_timestamp)
             .max()
-            .unwrap_or(0)
+            .expect("Invalid data format")
     }
 
     fn parse(&mut self) -> std::io::Result<()> {

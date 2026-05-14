@@ -1,4 +1,4 @@
-# ADR 018: Safe Peripheral BQL Yielding via MmioDevice Trait
+# RFC-0018: Safe Peripheral BQL Yielding via MmioDevice Trait
 
 ## Status
 Accepted
@@ -44,5 +44,5 @@ All `unsafe extern "C"` MMIO boilerplate across all peripherals (sensor, radio, 
 - **Negative:** Increased complexity in the `virtmcu-qom` framework to handle closure lifetimes across the `wait_yielding_bql` boundary.
 
 ## Related
-- ADR 006: Binary Fidelity
+- RFC-0006: Binary Fidelity
 - `virtmcu-test-runner` lints (`banned_patterns.rs`)

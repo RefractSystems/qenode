@@ -1,10 +1,10 @@
-# ADR-010: Platform Description Format & OpenUSD Alignment
+# RFC-0010: Platform Description Format & OpenUSD Alignment
 
 ## Status
 Accepted
 
 ## Context
-In early milestones, we implemented `repl2qemu` to parse Renode's `.repl` format. While this achieves our goal of "Renode parity", `.repl` is a bespoke format unique to one tool.
+In early milestones, we implemented `repl2qemu` to parse a legacy emulation configuration format. While this achieved our initial goals, this was a bespoke format unique to one tool.
 
 For a modern Digital Twin platform (FirmwareStudio) where physics and cyber-nodes (firmware) coexist, we need a format that is:
 1. Standardized and extensible.
@@ -49,9 +49,7 @@ peripherals:
 2.  **Federated Simulation Standard (FSS)**: The declarative structure of YAML enables seamless manifest generation for FSS orchestrators, detailing the exact hardware capabilities, abstraction levels, and timing requirements of the virtual MCU.
 3.  **SAL/AAL Integration**: By defining peripherals strongly in YAML, we can programmatically map virtual peripheral endpoints to Sensor/Actuator Abstraction Layer transfer functions in future cyber-physical integrations.
 4.  **Tooling Ecosystem**: YAML has first-class support in every major language. It allows for easy validation using JSON Schema or Pydantic.
-5.  **Migration Path**: We provide a `repl2yaml` tool to ensure legacy users can instantly modernize their hardware descriptions without data loss.
 
 ## Action Plan
-1.  Create `tools/repl2yaml.py`: Converts Renode `.repl` files to this new schema.
-2.  Create `tools/yaml2qemu.py`: Parses the YAML and drives the existing `FdtEmitter`.
-3.  Update `target/release/virtmcu-run`: Add `--yaml` support.
+1.  Create `virtmcu-cli platform generate`: Converts the modern YAML schema to DTB.
+2.  Update `target/release/virtmcu-run`: Add `--yaml` support.

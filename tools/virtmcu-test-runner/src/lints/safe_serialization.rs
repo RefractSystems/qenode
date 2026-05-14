@@ -53,7 +53,7 @@ impl Lint for RustSafeSerializationLint {
                     }
                     passed = false;
                     error!(
-                        "{}:{}: Banned ptr::copy_nonoverlapping found (Safe Endianness Serialization Mandate).\n  Fix: Use .to_le_bytes() / .from_le_bytes() instead.",
+                        "{}:{}: Banned ptr::copy_nonoverlapping found (Safe Endianness Serialization Mandate).\n  Fix: Use .to_le_bytes() / .from_le_bytes() instead. Quick Tip: Simulation state must be endian-independent across different host architectures. See docs/rfcs/0012-data-serialization.md. MANDATE: // virtmcu-allow: copy reasoning=\"<reason>\".",
                         path.display(), i + 1
                     );
                 }

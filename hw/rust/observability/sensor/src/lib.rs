@@ -1,9 +1,10 @@
+#![allow(clippy::panic)]
+// virtmcu-allow: allow reasoning="Fail Loudly"
 /*
  * hw/rust/observability/sensor/src/lib.rs
  *
  * Virtmcu sensor device with Zenoh ingress.
  */
-
 #![cfg_attr(
     test,
     allow(
@@ -28,8 +29,7 @@ use virtmcu_qom::define_properties;
 use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription};
-use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
+use virtmcu_qom::sync::BqlGuarded;
 use virtmcu_qom::{define_prop_bool, define_prop_string, define_prop_uint32};
 
 unsafe extern "C" fn allow_set_link(
@@ -61,16 +61,37 @@ pub struct VirtmcuSensorQEMU {
     pub rust_state: *mut VirtmcuSensorState,
 }
 
-struct SensorFrame {
+pub struct SensorFrame {
     delivery_vtime_ns: u64,
     sensor_id: u32,
     data: [f64; 8],
     data_size: u32,
 }
 
+impl PartialEq for SensorFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.delivery_vtime_ns == other.delivery_vtime_ns
+    }
+}
+impl Eq for SensorFrame {}
+impl PartialOrd for SensorFrame {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for SensorFrame {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.delivery_vtime_ns.cmp(&other.delivery_vtime_ns)
+    }
+}
+impl virtmcu_qom::sync::DeliveryPacket for SensorFrame {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.delivery_vtime_ns
+    }
+}
+
 pub struct VirtmcuSensorInner {
     map: HashMap<u32, SensorEntry>,
-    rx_queue: alloc::vec::Vec<SensorFrame>,
     running: bool,
 }
 
@@ -81,8 +102,7 @@ pub struct VirtmcuSensorState {
     cond: virtmcu_qom::sync::Condvar,
     // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
     wait_mutex: virtmcu_qom::sync::Mutex<()>,
-    rx_timer: Option<QomTimer>,
-    pub _subscription: Option<SafeSubscription>,
+    pub receiver: Option<virtmcu_qom::sync::DeterministicReceiver<SensorFrame>>,
     pub _liveliness: Option<Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
@@ -147,6 +167,7 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuSensorState {
                         }
                         1
                     },
+                    || 0,
                 );
             }
 
@@ -289,6 +310,61 @@ pub unsafe extern "C" fn sensor_realize(dev: *mut c_void, errp: *mut *mut c_void
     }
 }
 
+fn decode_cb(
+    _opaque: *mut core::ffi::c_void,
+    topic_str: &str,
+    payload: &[u8],
+) -> Option<SensorFrame> {
+    if let Some((header, data_ptr)) = virtmcu_api::decode_frame(payload) {
+        if let Some(sensor_id_str) = topic_str.split('/').next_back() {
+            let id_str = if sensor_id_str.starts_with("resd_") {
+                sensor_id_str.rsplit_once('_').map_or(sensor_id_str, |(_, id)| id)
+            } else {
+                sensor_id_str.strip_prefix("sensordata_").unwrap_or(sensor_id_str)
+            };
+
+            if let Ok(sensor_id) = id_str.parse::<u32>() {
+                let mut data = [0.0f64; MAX_DATA_ELEMENTS];
+                let mut count = 0;
+                for (d, chunk) in data.iter_mut().zip(data_ptr.chunks_exact(F64_SIZE_BYTES_USIZE)) {
+                    *d = f64::from_le_bytes(chunk.try_into().expect("Invalid data format"));
+                    count += 1;
+                }
+                let data_size = count as u32;
+
+                return Some(SensorFrame {
+                    delivery_vtime_ns: header.delivery_vtime_ns(),
+                    sensor_id,
+                    data,
+                    data_size,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn deliver_cb(opaque: *mut core::ffi::c_void, frame: SensorFrame) {
+    let state = unsafe { &mut *(opaque as *mut VirtmcuSensorState) };
+    let mut inner = state.inner.get_mut();
+    if !inner.running {
+        return;
+    }
+
+    virtmcu_qom::vlog!(
+        "sensor_rx_timer_cb: processing frame for vtime {}\n",
+        frame.delivery_vtime_ns
+    );
+    inner.map.insert(
+        frame.sensor_id,
+        SensorEntry { data: frame.data, data_size: frame.data_size, new_data: true },
+    );
+
+    let _guard = state.wait_mutex.lock();
+    state.cond.notify_all();
+    virtmcu_qom::vlog!("sensor_rx_timer_cb: notified!\n");
+}
+
 fn sensor_init_internal(
     s: &VirtmcuSensorQEMU,
     node_id: u32,
@@ -296,127 +372,44 @@ fn sensor_init_internal(
 ) -> *mut VirtmcuSensorState {
     let mut state_box = Box::new(VirtmcuSensorState {
         parent_ptr: core::ptr::from_ref::<VirtmcuSensorQEMU>(s).cast_mut(),
-        inner: BqlGuarded::new(VirtmcuSensorInner {
-            map: HashMap::new(),
-            rx_queue: alloc::vec::Vec::new(),
-            running: true,
-        }),
+        inner: BqlGuarded::new(VirtmcuSensorInner { map: HashMap::new(), running: true }),
         drain: virtmcu_qom::sync::VcpuDrain::new(),
         cond: virtmcu_qom::sync::Condvar::new(),
         wait_mutex: virtmcu_qom::sync::Mutex::new(()),
-        rx_timer: None,
-        _subscription: None,
+        receiver: None,
         _liveliness: None,
     });
 
     let state_ptr = core::ptr::from_mut(&mut *state_box);
-    let state_ptr_usize = state_ptr as usize;
 
     let node_id_str = node_id.to_string();
     let topic = sim_topic::sensor_data_wildcard(&node_id_str);
 
-    let callback: virtmcu_api::DataCallback = Box::new(move |topic_str: &str, payload: &[u8]| {
-        let state = unsafe { &mut *(state_ptr_usize as *mut VirtmcuSensorState) };
-        let mut inner = state.inner.get_mut();
-        if !inner.running {
-            return;
-        }
+    let generation = alloc::sync::Arc::new(core::sync::atomic::AtomicU64::new(0));
 
-        if let Some((header, data_ptr)) = virtmcu_api::decode_frame(payload) {
-            if let Some(sensor_id_str) = topic_str.split('/').next_back() {
-                let id_str = if sensor_id_str.starts_with("resd_") {
-                    sensor_id_str.rsplit_once('_').map_or(sensor_id_str, |(_, id)| id)
-                } else {
-                    sensor_id_str.strip_prefix("sensordata_").unwrap_or(sensor_id_str)
-                };
+    let receiver = virtmcu_qom::sync::DeterministicReceiver::new(
+        transport.as_ref(),
+        &topic,
+        generation,
+        state_ptr as *mut core::ffi::c_void,
+        decode_cb,
+        deliver_cb,
+    );
 
-                if let Ok(sensor_id) = id_str.parse::<u32>() {
-                    let mut data = [0.0f64; MAX_DATA_ELEMENTS];
-                    let mut count = 0;
-                    for (d, chunk) in
-                        data.iter_mut().zip(data_ptr.chunks_exact(F64_SIZE_BYTES_USIZE))
-                    {
-                        *d = f64::from_le_bytes(
-                            chunk.try_into().unwrap_or([0u8; F64_SIZE_BYTES_USIZE]),
-                        );
-                        count += 1;
-                    }
-                    let data_size = count;
-
-                    let vtime = header.delivery_vtime_ns();
-                    inner.rx_queue.push(SensorFrame {
-                        delivery_vtime_ns: vtime,
-                        sensor_id,
-                        data,
-                        data_size,
-                    });
-                    inner.rx_queue.sort_by_key(|f| f.delivery_vtime_ns);
-
-                    if let Some(timer) = &state.rx_timer {
-                        timer.mod_ns(inner.rx_queue[0].delivery_vtime_ns as i64);
-                    }
-                }
-            }
-        }
-    });
-
-    let generation = alloc::sync::Arc::new(core::sync::atomic::AtomicU64::new(0)); // Generation 0
-                                                                                   // virtmcu-allow: bql reasoning="SafeSubscription is the approved pattern for async transport subscribers to avoid BQL deadlocks"
-    let sub = match SafeSubscription::new(transport.as_ref(), &topic, generation, callback) {
-        Ok(s) => s,
+    match receiver {
+        Ok(r) => state_box.receiver = Some(r),
         Err(e) => {
             virtmcu_qom::sim_err!("Failed to subscribe to topic {}: {}", topic, e);
             return ptr::null_mut();
         }
-    };
+    }
 
     let hb_topic = format!("sim/sensor/liveliness/{node_id}");
     let liveliness = transport.declare_liveliness(&hb_topic);
 
-    state_box._subscription = Some(sub);
     state_box._liveliness = liveliness;
-    state_box.rx_timer = Some(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, sensor_rx_timer_cb, state_ptr as *mut core::ffi::c_void)
-    });
 
     Box::into_raw(state_box)
-}
-
-extern "C" fn sensor_rx_timer_cb(opaque: *mut core::ffi::c_void) {
-    let state = unsafe { &mut *(opaque as *mut VirtmcuSensorState) };
-    let mut inner = state.inner.get_mut();
-    if !inner.running {
-        return;
-    }
-
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    virtmcu_qom::vlog!("sensor_rx_timer_cb: now={}, queue_len={}\n", now, inner.rx_queue.len());
-    let mut notified = false;
-
-    while !inner.rx_queue.is_empty() && inner.rx_queue[0].delivery_vtime_ns <= now {
-        let frame = inner.rx_queue.remove(0);
-        virtmcu_qom::vlog!(
-            "sensor_rx_timer_cb: processing frame for vtime {}\n",
-            frame.delivery_vtime_ns
-        );
-        inner.map.insert(
-            frame.sensor_id,
-            SensorEntry { data: frame.data, data_size: frame.data_size, new_data: true },
-        );
-        notified = true;
-    }
-
-    if notified {
-        let _guard = state.wait_mutex.lock();
-        state.cond.notify_all();
-        virtmcu_qom::vlog!("sensor_rx_timer_cb: notified!\n");
-    }
-
-    if let Some(first) = inner.rx_queue.first() {
-        if let Some(timer) = &state.rx_timer {
-            timer.mod_ns(first.delivery_vtime_ns as i64);
-        }
-    }
 }
 
 /// # Safety

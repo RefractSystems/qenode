@@ -67,7 +67,7 @@ impl Lint for StaticStateLint {
                             }
                             let line_num = i + 1;
                             visitor.violations.push(format!(
-                                "{}:{}: Banned macro detected ('{}').\n  Fix: Move state into the peripheral struct. MANDATE: // virtmcu-allow: static_state reasoning=\"<reason>\".",
+                                "{}:{}: Banned macro detected ('{}').\n  Fix: Move state into the peripheral struct. Quick Tip: Static state breaks across DSO boundaries. See docs/guide/09-engineering-mandates.md. MANDATE: // virtmcu-allow: static_state reasoning=\"<reason>\".",
                                 path.display(), line_num, macro_name
                             ));
                         }
@@ -120,7 +120,7 @@ impl<'ast> Visit<'ast> for StaticVisitor {
         if is_mut || has_banned_type {
             let actual_type_str = quote::quote!(#node.ty).to_string();
             self.violations.push(format!(
-                "{}:{}: Banned static state detected in type: {}.\n  Fix: Move state into the peripheral struct or export from main binary. MANDATE: // virtmcu-allow: static_state reasoning=\"<reason>\".",
+                "{}:{}: Banned static state detected in type: {}.\n  Fix: Move state into the peripheral struct or export from main binary. Quick Tip: Static state breaks across DSO boundaries. See docs/guide/09-engineering-mandates.md. MANDATE: // virtmcu-allow: static_state reasoning=\"<reason>\".",
                 self.path.display(), start_line, actual_type_str
             ));
         }
