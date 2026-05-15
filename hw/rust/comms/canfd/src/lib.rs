@@ -14,14 +14,13 @@ use zenoh::Wait;
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::collections::{BinaryHeap, VecDeque};
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cmp::Ordering;
 use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Sender};
 use flatbuffers::root;
 use virtmcu_api::can_generated::virtmcu::can::{CanFdFrame, CanFdFrameArgs};
 use virtmcu_qom::declare_device_type;
@@ -31,8 +30,7 @@ use virtmcu_qom::net::{
     CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
 };
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
+use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 
 pub const TYPE_CAN_HOST_VIRTMCU: *const c_char = c"can-host-virtmcu".as_ptr();
 
@@ -59,30 +57,30 @@ impl PartialEq for OrderedCanFrame {
 }
 impl Eq for OrderedCanFrame {}
 impl PartialOrd for OrderedCanFrame {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 impl Ord for OrderedCanFrame {
-    fn cmp(&self, other: &Self) -> Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         // Reverse for min-heap
         match other.vtime.cmp(&self.vtime) {
-            Ordering::Equal => other.sequence.cmp(&self.sequence),
+            core::cmp::Ordering::Equal => other.sequence.cmp(&self.sequence),
             ord => ord,
         }
     }
 }
 
+impl virtmcu_qom::sync::DeliveryPacket for OrderedCanFrame {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
+    }
+}
+
 pub struct State {
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="Safe Zenoh integration"
+    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedCanFrame>>,
     tx_sender: Sender<Vec<u8>>,
-    rx_sender: Sender<OrderedCanFrame>,
-    rx_receiver: Receiver<OrderedCanFrame>,
-    local_heap: BqlGuarded<BinaryHeap<OrderedCanFrame>>,
-    backlog: BqlGuarded<VecDeque<QemuCanFrame>>,
-    earliest_vtime: Arc<AtomicU64>,
-    rx_timer: Option<Arc<QomTimer>>,
+    backlog: virtmcu_qom::sync::Mutex<VecDeque<QemuCanFrame>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
     client_ptr: *mut CanBusClientState,
     tx_sequence: AtomicU64,
     _topic: String,
@@ -95,7 +93,7 @@ unsafe extern "C" fn virtmcu_can_receive(client: *mut CanBusClientState) -> bool
     if state.is_null() {
         return true;
     }
-    let backlog = unsafe { (*state).backlog.get() };
+    let backlog = unsafe { (*state).backlog.lock() };
     backlog.is_empty()
 }
 
@@ -144,123 +142,64 @@ static VIRTMCU_CAN_CLIENT_INFO: CanBusClientInfo = CanBusClientInfo {
     receive: Some(virtmcu_can_receive_frames),
 };
 
-fn drain_can_backlog(state: &State) -> bool {
-    let mut backlog = state.backlog.get_mut();
-    while let Some(_frame) = backlog.front() {
-        if unsafe {
-            match (*(*state.client_ptr).info).can_receive {
-                Some(can_receive) => !can_receive(state.client_ptr),
-                None => false,
-            }
-        } {
-            return false;
-        }
+fn decode_canfd(
+    _opaque: *mut core::ffi::c_void,
+    _topic: &str,
+    data: &[u8],
+) -> Option<OrderedCanFrame> {
+    const CAN_FD_MAX_PAYLOAD: usize = 64;
+    let fbs = root::<CanFdFrame>(data).ok()?;
 
-        let f = backlog.pop_front().unwrap_or_else(|| std::process::abort());
-        unsafe {
-            can_bus_client_send(state.client_ptr, &raw const f, 1);
-        }
-    }
-    true
+    let mut data_arr = [0u8; CAN_FD_MAX_PAYLOAD];
+    let dlc = if let Some(d) = fbs.data() {
+        let len = core::cmp::min(d.len(), CAN_FD_MAX_PAYLOAD);
+        data_arr[..len].copy_from_slice(&d.bytes()[..len]);
+        len as u8
+    } else {
+        0
+    };
+
+    let frame = QemuCanFrame {
+        can_id: fbs.can_id(),
+        can_dlc: dlc,
+        flags: fbs.flags() as u8,
+        _padding: [0; 2],
+        data: data_arr,
+    };
+
+    let vtime = fbs.delivery_vtime_ns();
+    // CanFdFrame schema does not have a sequence_number field, so we use 0.
+    let sequence = 0;
+    Some(OrderedCanFrame { vtime, sequence, frame })
 }
 
-extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
-    let state = unsafe { &*(opaque as *mut State) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+fn deliver_canfd(opaque: *mut core::ffi::c_void, packet: OrderedCanFrame) {
+    let state = unsafe { &mut *(opaque as *mut State) };
+    let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
 
-    if !drain_can_backlog(state) {
-        if let Some(rx_timer) = &state.rx_timer {
-            rx_timer.mod_ns(now as i64 + 1_000_000);
-        }
-        return;
+    // Add to backlog
+    backlog.push_back(packet.frame);
+
+    // Drain the backlog to QEMU via can_bus_client_send
+    let mut batch = Vec::new();
+    while let Some(f) = backlog.pop_front() {
+        batch.push(f);
     }
 
-    let mut heap = state.local_heap.get_mut();
-
-    while let Ok(packet) = state.rx_receiver.try_recv() {
-        heap.push(packet);
-    }
-    while let Some(packet) = heap.peek() {
-        if packet.vtime <= now {
-            if unsafe {
-                match (*(*state.client_ptr).info).can_receive {
-                    Some(can_receive) => !can_receive(state.client_ptr),
-                    None => false,
-                }
-            } {
-                let mut backlog = state.backlog.get_mut();
-                let p = heap.pop().unwrap_or_else(|| std::process::abort());
-                backlog.push_back(p.frame);
-                break;
-            }
-
-            let p = heap.pop().unwrap_or_else(|| std::process::abort());
-            unsafe {
-                can_bus_client_send(state.client_ptr, &raw const p.frame, 1);
+    if !batch.is_empty() {
+        let sent = unsafe { can_bus_client_send(state.client_ptr, batch.as_ptr(), batch.len()) };
+        // Re-queue any unsent frames
+        if sent > 0 {
+            for f in batch.into_iter().skip(sent as usize) {
+                backlog.push_back(f);
             }
         } else {
-            if let Some(rx_timer) = &state.rx_timer {
-                rx_timer.mod_ns(packet.vtime as i64);
-            }
-            break;
-        }
-    }
-
-    if heap.is_empty() {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    }
-}
-
-fn create_can_sub_callback(
-    tx_clone: Sender<OrderedCanFrame>,
-    earliest_vtime: Arc<AtomicU64>,
-    rx_timer_clone: Arc<QomTimer>,
-) -> virtmcu_api::DataCallback {
-    const CAN_FD_MAX_PAYLOAD: usize = 64;
-    Box::new(move |_topic: &str, data: &[u8]| {
-        if let Ok(fbs) = root::<CanFdFrame>(data) {
-            let mut data_arr = [0u8; CAN_FD_MAX_PAYLOAD];
-            let dlc = if let Some(d) = fbs.data() {
-                let len = core::cmp::min(d.len(), CAN_FD_MAX_PAYLOAD);
-                data_arr[..len].copy_from_slice(&d.bytes()[..len]);
-                len as u8
-            } else {
-                0
-            };
-
-            let frame = QemuCanFrame {
-                can_id: fbs.can_id(),
-                can_dlc: dlc,
-                flags: fbs.flags() as u8,
-                _padding: [0; 2],
-                data: data_arr,
-            };
-
-            let vtime = fbs.delivery_vtime_ns();
-            // CanFdFrame schema does not have a sequence_number field, so we use 0 or sequence_number if it exists in another layer.
-            let sequence = 0;
-            let packet = OrderedCanFrame { vtime, sequence, frame };
-
-            if tx_clone.send(packet).is_ok() {
-                let mut current = earliest_vtime.load(AtomicOrdering::Relaxed);
-                while vtime < current {
-                    if earliest_vtime
-                        .compare_exchange_weak(
-                            current,
-                            vtime,
-                            AtomicOrdering::Release,
-                            AtomicOrdering::Relaxed,
-                        )
-                        .is_ok()
-                    {
-                        rx_timer_clone.mod_ns(vtime as i64);
-                        break;
-                    }
-                    current = earliest_vtime.load(AtomicOrdering::Relaxed);
-                }
+            // Nothing was sent (client not ready or error), put everything back
+            for f in batch {
+                backlog.push_back(f);
             }
         }
-    })
+    }
 }
 
 unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut *mut Error) {
@@ -292,7 +231,7 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };
-        match transport_unix::UnixDataTransport::new(&path) {
+        match transport_unix::UdsDataTransport::new(&path) {
             Ok(t) => Arc::new(t),
             Err(_) => return,
         }
@@ -313,9 +252,6 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
         }
     });
 
-    let (tx, rx) = unbounded();
-    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-
     unsafe {
         (*zch).parent_obj.bus_client.info =
             core::ptr::from_ref::<CanBusClientInfo>(&VIRTMCU_CAN_CLIENT_INFO).cast_mut();
@@ -333,43 +269,42 @@ unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut
     } else {
         None
     };
-    let mut state = Box::new(State {
+
+    let mut state_box = Box::new(State {
         _liveliness: liveliness,
-        transport,
-        subscription: None,
+        receiver: None,
         tx_sender: tx_rx,
-        rx_sender: tx,
-        rx_receiver: rx,
-        local_heap: BqlGuarded::new(BinaryHeap::new()),
-        backlog: BqlGuarded::new(VecDeque::new()),
-        earliest_vtime: Arc::clone(&earliest_vtime),
-        rx_timer: None,
+        backlog: virtmcu_qom::sync::Mutex::new(VecDeque::new()), // virtmcu-allow: mutex reasoning="Backlog managed securely"
         client_ptr: unsafe { &raw mut (*zch).parent_obj.bus_client },
         tx_sequence: AtomicU64::new(0),
         _topic: topic_str.clone(),
     });
 
-    let state_ptr = &raw mut *state;
-    let rx_timer = Arc::new(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut core::ffi::c_void)
-    });
-    let rx_timer_clone = Arc::clone(&rx_timer);
-
-    let tx_clone = state.rx_sender.clone();
-    let sub_callback =
-        create_can_sub_callback(tx_clone, Arc::clone(&earliest_vtime), rx_timer_clone);
-
+    let state_ptr = core::ptr::from_mut(&mut *state_box);
     let generation = Arc::new(AtomicU64::new(0));
-    state.subscription =
-        SafeSubscription::new(&*state.transport, &topic_str, generation, sub_callback).ok(); // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-    state.rx_timer = Some(rx_timer);
+
+    match virtmcu_qom::sync::DeterministicReceiver::new(
+        &*transport,
+        &topic_str,
+        generation,
+        state_ptr as *mut c_void,
+        decode_canfd,
+        deliver_canfd,
+    ) {
+        Ok(receiver) => {
+            state_box.receiver = Some(receiver);
+        }
+        Err(e) => {
+            virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!: {}", e);
+            return;
+        }
+    }
 
     unsafe {
-        (*zch).rust_state = Box::into_raw(state);
+        (*zch).rust_state = Box::into_raw(state_box);
         can_bus_insert_client((*zch).parent_obj.bus, &raw mut (*zch).parent_obj.bus_client);
     }
 }
-
 unsafe extern "C" fn virtmcu_can_host_disconnect(ch: *mut CanHostState) {
     let zch = ch as *mut VirtmcuCanHostState;
     unsafe {
@@ -377,8 +312,7 @@ unsafe extern "C" fn virtmcu_can_host_disconnect(ch: *mut CanHostState) {
 
         if !(*zch).rust_state.is_null() {
             let mut state = Box::from_raw((*zch).rust_state);
-            state.subscription.take();
-            state.rx_timer.take();
+            state.receiver.take();
             (*zch).rust_state = ptr::null_mut();
         }
     }
@@ -547,8 +481,7 @@ unsafe extern "C" fn virtmcu_can_host_instance_finalize(obj: *mut Object) {
         }
         if !(*zch).rust_state.is_null() {
             let mut state = Box::from_raw((*zch).rust_state);
-            state.subscription.take();
-            state.rx_timer.take();
+            state.receiver.take();
         }
     }
 }

@@ -14,7 +14,8 @@ pub enum Protocol {
     Lin,
     Rf802154,
     RfHci,
-    Dummy,
+    #[serde(rename = "reference-link")]
+    ReferenceLink, // Special protocol for direct peripheral connections
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,8 +252,8 @@ mod tests {
     #[test]
     fn test_routing_map_basic() {
         let mut map = RoutingMap::new();
-        map.add_route("A".to_string(), "B".to_string());
-        assert_eq!(map.get_targets("A").unwrap(), &vec!["B".to_string()]);
+        map.add_route("A".to_owned(), "B".to_owned());
+        assert_eq!(map.get_targets("A").unwrap(), &vec!["B".to_owned()]);
         assert!(map.get_targets("X").is_none());
     }
 

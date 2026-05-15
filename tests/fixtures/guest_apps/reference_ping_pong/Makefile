@@ -1,4 +1,4 @@
-# Makefile for dummy_ping_pong
+# Makefile for reference_ping_pong
 
 CC = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy

@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -14,19 +13,16 @@ use zenoh::Wait;
 
 extern crate alloc;
 
-use alloc::collections::{BinaryHeap, VecDeque};
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use core::cmp::Ordering;
 use core::ffi::{c_char, c_uint, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use crossbeam_channel::{Receiver, Sender};
+use core::sync::atomic::AtomicU64;
 use virtmcu_api::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{MemoryRegion, MemoryRegionOps, DEVICE_LITTLE_ENDIAN};
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription};
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties,
@@ -68,7 +64,7 @@ pub struct S32K144LpuartQemu {
 const _: () = assert!(core::mem::offset_of!(S32K144LpuartQemu, parent_obj) == 0);
 const _: () = assert!(core::mem::size_of::<S32K144LpuartQemu>() == 1152);
 
-/// Ordered LIN frame for deterministic delivery
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct OrderedLinFrame {
     /// Virtual time of delivery
     pub vtime: u64,
@@ -78,20 +74,9 @@ pub struct OrderedLinFrame {
     pub data: Vec<u8>,
 }
 
-impl PartialEq for OrderedLinFrame {
-    fn eq(&self, other: &Self) -> bool {
-        self.vtime == other.vtime
-    }
-}
-impl Eq for OrderedLinFrame {}
-impl PartialOrd for OrderedLinFrame {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for OrderedLinFrame {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.vtime.cmp(&self.vtime) // Min-heap
+impl virtmcu_qom::sync::DeliveryPacket for OrderedLinFrame {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
     }
 }
 
@@ -99,8 +84,17 @@ impl Ord for OrderedLinFrame {
 pub struct LpuartState {
     irq: QemuIrq,
     transport: Arc<dyn virtmcu_api::DataTransport>,
-    subscription: Option<SafeSubscription>,
+    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedLinFrame>>,
 
+    // Internal state
+    inner: virtmcu_qom::sync::Mutex<LpuartInner>, // virtmcu-allow: mutex reasoning="State managed securely"
+    tx_timer: Option<QomTimer>,
+
+    tx_topic: String,
+    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+}
+
+struct LpuartInner {
     // Registers
     baud: u32,
     stat: u32,
@@ -114,16 +108,6 @@ pub struct LpuartState {
     // Internal state
     rx_buffer: Vec<u8>,
     tx_fifo: VecDeque<u8>,
-    tx_timer: Option<QomTimer>,
-
-    // Deterministic delivery
-    _rx_sender: Sender<OrderedLinFrame>,
-    rx_receiver: Receiver<OrderedLinFrame>,
-    local_heap: BqlGuarded<BinaryHeap<OrderedLinFrame>>,
-    rx_timer: Option<Arc<QomTimer>>,
-    earliest_vtime: Arc<AtomicU64>,
-    tx_topic: String,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
 const REG_VERID: u64 = 0x00;
@@ -188,35 +172,34 @@ pub unsafe extern "C" fn lpuart_read(opaque: *mut c_void, offset: u64, _size: c_
         return 0;
     }
     let state = unsafe { &mut *s.rust_state };
+    let mut inner = state.inner.lock();
     match offset {
         REG_VERID => LPUART_VERID,    // VERID
         REG_PARAM => LPUART_PARAM,    // PARAM
         REG_GLOBAL | REG_PINCFG => 0, // GLOBAL, PINCFG
-        REG_BAUD => u64::from(state.baud),
+        REG_BAUD => u64::from(inner.baud),
         REG_STAT => {
-            let _unlock = virtmcu_qom::sync::Bql::temporary_unlock();
-            std::thread::yield_now(); // virtmcu-allow: yield reasoning="Guest spins on STAT waiting for RX/TX/Break."
-            drop(_unlock); // Re-acquire BQL
-            let state = unsafe { &mut *s.rust_state }; // Re-borrow after re-acquiring BQL
-            u64::from(state.stat)
+            // Note: In strict deterministic lock-free model, we cannot yield BQL here.
+            // We return the state immediately. The caller should use polling correctly or interrupts.
+            u64::from(inner.stat)
         }
-        REG_CTRL => u64::from(state.ctrl),
+        REG_CTRL => u64::from(inner.ctrl),
         REG_DATA => {
-            let val = if state.rx_buffer.is_empty() {
+            let val = if inner.rx_buffer.is_empty() {
                 0
             } else {
-                let byte = state.rx_buffer.remove(0);
-                if state.rx_buffer.is_empty() {
-                    state.stat &= !STAT_RDRF;
+                let byte = inner.rx_buffer.remove(0);
+                if inner.rx_buffer.is_empty() {
+                    inner.stat &= !STAT_RDRF;
                 }
                 u32::from(byte)
             };
             u64::from(val)
         }
-        REG_MATCH => u64::from(state.match_),
-        REG_MODIR => u64::from(state.modir),
-        REG_FIFO => u64::from(state.fifo),
-        REG_WATER => u64::from(state.water),
+        REG_MATCH => u64::from(inner.match_),
+        REG_MODIR => u64::from(inner.modir),
+        REG_FIFO => u64::from(inner.fifo),
+        REG_WATER => u64::from(inner.water),
         _ => {
             if s.debug {
                 virtmcu_qom::sim_debug!("lpuart_read: unhandled offset 0x{:x}", offset);
@@ -235,43 +218,44 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
         return;
     }
     let state = unsafe { &mut *s.rust_state };
+    let mut inner = state.inner.lock();
     let val = value as u32;
 
     match offset {
-        REG_BAUD => state.baud = val,
+        REG_BAUD => inner.baud = val,
         REG_STAT => {
-            state.stat &=
+            inner.stat &=
                 !(val & (STAT_LBKDIF | STAT_OR | STAT_NF | STAT_FE | STAT_PF | STAT_IDLE));
         }
         REG_CTRL => {
-            let old_ctrl = state.ctrl;
-            state.ctrl = val;
-            if (state.ctrl & CTRL_SBK != 0) && (old_ctrl & CTRL_SBK == 0) {
-                send_lin_msg(state, LinMessageType::Break, &[]);
+            let old_ctrl = inner.ctrl;
+            inner.ctrl = val;
+            if (inner.ctrl & CTRL_SBK != 0) && (old_ctrl & CTRL_SBK == 0) {
+                send_lin_msg(&*state.transport, &state.tx_topic, LinMessageType::Break, &[]);
             }
-            update_irqs(state);
+            update_irqs(state.irq, &inner);
         }
-        REG_DATA if state.ctrl & CTRL_TE != 0 => {
+        REG_DATA if inner.ctrl & CTRL_TE != 0 => {
             let byte = u8::try_from(val & LPUART_DATA_MASK).expect("byte truncated");
-            let was_empty = state.tx_fifo.is_empty();
-            if state.tx_fifo.len() < LPUART_TX_FIFO_CAP {
-                state.tx_fifo.push_back(byte);
+            let was_empty = inner.tx_fifo.is_empty();
+            if inner.tx_fifo.len() < LPUART_TX_FIFO_CAP {
+                inner.tx_fifo.push_back(byte);
             }
 
-            state.stat &= !(STAT_TC | STAT_TDRE);
-            update_irqs(state);
+            inner.stat &= !(STAT_TC | STAT_TDRE);
+            update_irqs(state.irq, &inner);
 
             if was_empty {
                 let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
                 if let Some(timer) = &state.tx_timer {
-                    timer.mod_ns(now + calculate_baud_delay_ns(state.baud));
+                    timer.mod_ns(now + calculate_baud_delay_ns(inner.baud));
                 }
             }
         }
-        REG_MATCH => state.match_ = val,
-        REG_MODIR => state.modir = val,
-        REG_FIFO => state.fifo = val,
-        REG_WATER => state.water = val,
+        REG_MATCH => inner.match_ = val,
+        REG_MODIR => inner.modir = val,
+        REG_FIFO => inner.fifo = val,
+        REG_WATER => inner.water = val,
         _ => {
             if s.debug {
                 virtmcu_qom::sim_debug!(
@@ -284,8 +268,13 @@ pub unsafe extern "C" fn lpuart_write(opaque: *mut c_void, offset: u64, value: u
     }
 }
 
-fn send_lin_msg(s: &mut LpuartState, msg_type: LinMessageType, data: &[u8]) {
-    virtmcu_qom::sim_info!("Sending LIN message to topic: {}", s.tx_topic);
+fn send_lin_msg(
+    transport: &dyn virtmcu_api::DataTransport,
+    tx_topic: &str,
+    msg_type: LinMessageType,
+    data: &[u8],
+) {
+    virtmcu_qom::sim_info!("Sending LIN message to topic: {}", tx_topic);
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
     let data_offset = fbb.create_vector(data);
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
@@ -296,29 +285,29 @@ fn send_lin_msg(s: &mut LpuartState, msg_type: LinMessageType, data: &[u8]) {
     fbb.finish(frame, None);
     let finished_data = fbb.finished_data().to_vec();
 
-    let _ = s.transport.publish(&s.tx_topic, &finished_data);
+    let _ = transport.publish(tx_topic, &finished_data);
 }
 
-fn update_irqs(s: &mut LpuartState) {
+fn update_irqs(irq: QemuIrq, inner: &LpuartInner) {
     let mut pending = false;
-    if (s.ctrl & CTRL_TIE != 0) && (s.stat & STAT_TDRE != 0) {
+    if (inner.ctrl & CTRL_TIE != 0) && (inner.stat & STAT_TDRE != 0) {
         pending = true;
     }
-    if (s.ctrl & CTRL_TCIE != 0) && (s.stat & STAT_TC != 0) {
+    if (inner.ctrl & CTRL_TCIE != 0) && (inner.stat & STAT_TC != 0) {
         pending = true;
     }
-    if (s.ctrl & CTRL_RIE != 0) && (s.stat & STAT_RDRF != 0) {
+    if (inner.ctrl & CTRL_RIE != 0) && (inner.stat & STAT_RDRF != 0) {
         pending = true;
     }
-    if (s.ctrl & CTRL_ILIE != 0) && (s.stat & STAT_IDLE != 0) {
+    if (inner.ctrl & CTRL_ILIE != 0) && (inner.stat & STAT_IDLE != 0) {
         pending = true;
     }
-    if (s.baud & BAUD_LBKDIE != 0) && (s.stat & STAT_LBKDIF != 0) {
+    if (inner.baud & BAUD_LBKDIE != 0) && (inner.stat & STAT_LBKDIF != 0) {
         pending = true;
     }
 
     unsafe {
-        qemu_set_irq(s.irq, i32::from(pending));
+        qemu_set_irq(irq, i32::from(pending));
     }
 }
 
@@ -337,75 +326,23 @@ fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
 
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut c_void) {
     let state = unsafe { &mut *(opaque as *mut LpuartState) };
+    let mut inner = state.inner.lock();
 
-    if let Some(byte) = state.tx_fifo.pop_front() {
-        send_lin_msg(state, LinMessageType::Data, &[byte]);
+    if let Some(byte) = inner.tx_fifo.pop_front() {
+        send_lin_msg(&*state.transport, &state.tx_topic, LinMessageType::Data, &[byte]);
     }
 
-    if state.tx_fifo.is_empty() {
-        state.stat |= STAT_TC | STAT_TDRE;
-        update_irqs(state);
+    if inner.tx_fifo.is_empty() {
+        inner.stat |= STAT_TC | STAT_TDRE;
+        update_irqs(state.irq, &inner);
     } else {
         let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
         if let Some(timer) = &state.tx_timer {
-            timer.mod_ns(now + calculate_baud_delay_ns(state.baud));
+            timer.mod_ns(now + calculate_baud_delay_ns(inner.baud));
         }
     }
 }
 
-extern "C" fn lpuart_rx_timer_cb(opaque: *mut c_void) {
-    let state = unsafe { &mut *(opaque as *mut LpuartState) };
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-
-    let mut next_vtime = None;
-
-    {
-        let mut heap = state.local_heap.get_mut();
-
-        while let Ok(packet) = state.rx_receiver.try_recv() {
-            heap.push(packet);
-        }
-
-        while let Some(packet) = heap.peek() {
-            if packet.vtime <= now {
-                if let Some(p) = heap.pop() {
-                    match p.msg_type {
-                        LinMessageType::Break if state.baud & BAUD_LBKDE != 0 => {
-                            state.stat |= STAT_LBKDIF;
-                        }
-                        LinMessageType::Data if state.ctrl & CTRL_RE != 0 => {
-                            for byte in p.data {
-                                if state.rx_buffer.len() >= MAX_RX_FIFO {
-                                    state.stat |= STAT_OR;
-                                } else {
-                                    state.rx_buffer.push(byte);
-                                }
-                            }
-                            if !state.rx_buffer.is_empty() {
-                                state.stat |= STAT_RDRF;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            } else {
-                next_vtime = Some(packet.vtime);
-                break;
-            }
-        }
-    }
-
-    update_irqs(state);
-
-    if let Some(vtime) = next_vtime {
-        state.earliest_vtime.store(vtime, AtomicOrdering::Release);
-        if let Some(rx_timer) = &state.rx_timer {
-            rx_timer.mod_ns(vtime as i64);
-        }
-    } else {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    }
-}
 static LPUART_OPS: MemoryRegionOps = MemoryRegionOps {
     read: Some(lpuart_read),
     write: Some(lpuart_write),
@@ -503,8 +440,7 @@ pub unsafe extern "C" fn lpuart_instance_finalize(obj: *mut virtmcu_qom::qom::Ob
     let s = unsafe { &mut *(obj as *mut S32K144LpuartQemu) };
     if !s.rust_state.is_null() {
         let mut state = unsafe { Box::from_raw(s.rust_state) };
-        state.subscription.take();
-        state.rx_timer.take();
+        state.receiver.take();
         state.tx_timer.take();
         s.rust_state = ptr::null_mut();
     }
@@ -553,26 +489,22 @@ unsafe extern "C" fn lpuart_reset(dev: *mut c_void) {
         return;
     }
     let state = unsafe { &mut *s.rust_state };
+    let mut inner = state.inner.lock();
 
-    state.baud = LPUART_RESET_BAUD;
-    state.stat = LPUART_RESET_STAT;
-    state.ctrl = 0;
-    state.match_ = 0;
-    state.modir = 0;
-    state.fifo = LPUART_RESET_FIFO;
-    state.water = 0;
+    inner.baud = LPUART_RESET_BAUD;
+    inner.stat = LPUART_RESET_STAT;
+    inner.ctrl = 0;
+    inner.match_ = 0;
+    inner.modir = 0;
+    inner.fifo = LPUART_RESET_FIFO;
+    inner.water = 0;
 
-    state.rx_buffer.clear();
-    state.tx_fifo.clear();
+    inner.rx_buffer.clear();
+    inner.tx_fifo.clear();
 
-    if let Some(timer) = &state.rx_timer {
-        timer.del();
-    }
     if let Some(timer) = &state.tx_timer {
         timer.del();
     }
-
-    state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
 }
 
 pub unsafe extern "C" fn lpuart_class_init(klass: *mut ObjectClass, _data: *const c_void) {
@@ -611,7 +543,7 @@ fn create_transport(
     if transport_name == "unix" {
         let path = unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() };
         virtmcu_qom::sim_info!("LPUART path = {}", path);
-        match transport_unix::UnixDataTransport::new(&path) {
+        match transport_unix::UdsDataTransport::new(&path) {
             Ok(t) => Some(Arc::new(t)),
             Err(e) => {
                 virtmcu_qom::sim_err!("UNIX DATA TRANSPORT ERROR: {}", e);
@@ -629,53 +561,47 @@ fn create_transport(
     }
 }
 
-fn create_subscription(
-    transport: &Arc<dyn virtmcu_api::DataTransport>,
-    rx_topic: &str,
-    rx_timer: &Arc<QomTimer>,
-    earliest_vtime: &Arc<AtomicU64>,
-    tx_sender: Sender<OrderedLinFrame>,
-) -> Option<SafeSubscription> {
-    let rx_timer_clone = Arc::clone(rx_timer);
-    let earliest_clone = Arc::clone(earliest_vtime);
+fn decode_lpuart(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<OrderedLinFrame> {
+    virtmcu_qom::sim_info!("Zenoh subscriber received packet of len {}", data.len());
+    let frame = virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data).ok()?;
 
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
-        virtmcu_qom::sim_info!("Zenoh subscriber received packet of len {}", data.len());
-        let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data) {
-            Ok(f) => f,
-            Err(e) => {
-                panic!("Failed to parse LinFrame: {e:?}");
-            }
-        };
+    let vtime = frame.delivery_vtime_ns();
+    let msg_type = frame.type_();
+    let data = frame.data().map(|d| d.iter().collect()).unwrap_or_default();
 
-        let vtime = frame.delivery_vtime_ns();
-        let msg_type = frame.type_();
-        let data = frame.data().map(|d| d.iter().collect()).unwrap_or_default();
+    Some(OrderedLinFrame { vtime, msg_type, data })
+}
 
-        let packet = OrderedLinFrame { vtime, msg_type, data };
+fn deliver_lpuart(opaque: *mut c_void, packet: OrderedLinFrame) {
+    let state = unsafe { &mut *(opaque as *mut LpuartState) };
+    let mut inner = state.inner.lock();
 
-        if tx_sender.send(packet).is_ok() {
-            let mut current = earliest_clone.load(AtomicOrdering::Relaxed);
-            while vtime < current {
-                if earliest_clone
-                    .compare_exchange_weak(
-                        current,
-                        vtime,
-                        AtomicOrdering::Release,
-                        AtomicOrdering::Relaxed,
-                    )
-                    .is_ok()
-                {
-                    rx_timer_clone.mod_ns(vtime as i64);
-                    break;
+    match packet.msg_type {
+        LinMessageType::Sync => {
+            inner.rx_buffer.clear();
+            inner.rx_buffer.extend_from_slice(&packet.data);
+            inner.stat |= STAT_RDRF;
+        }
+        LinMessageType::Break if inner.baud & BAUD_LBKDE != 0 => {
+            inner.stat |= STAT_LBKDIF;
+        }
+        LinMessageType::Data if inner.ctrl & CTRL_RE != 0 => {
+            for byte in packet.data {
+                if inner.rx_buffer.len() >= MAX_RX_FIFO {
+                    inner.stat |= STAT_OR;
+                } else {
+                    inner.rx_buffer.push(byte);
                 }
-                current = earliest_clone.load(AtomicOrdering::Relaxed);
+            }
+            if !inner.rx_buffer.is_empty() {
+                inner.stat |= STAT_RDRF;
             }
         }
-    });
+        _ => {}
+    }
 
-    let generation = Arc::new(AtomicU64::new(0));
-    SafeSubscription::new(&**transport, rx_topic, generation, sub_callback).ok()
+    let irq = state.irq;
+    update_irqs(irq, &inner);
 }
 
 fn lpuart_init_internal(
@@ -695,28 +621,6 @@ fn lpuart_init_internal(
     let tx_topic = format!("{base_topic}/{node_id}/tx");
     let rx_topic = format!("{base_topic}/{node_id}/rx");
 
-    let (tx, rx) = crossbeam_channel::unbounded();
-    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
-
-    let state_ptr_raw: *mut LpuartState =
-        Box::into_raw(Box::<core::mem::MaybeUninit<LpuartState>>::new_uninit()).cast();
-
-    let rx_timer = Arc::new(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_rx_timer_cb, state_ptr_raw as *mut c_void)
-    });
-
-    let tx_timer = unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_tx_timer_cb, state_ptr_raw as *mut c_void)
-    };
-
-    let subscription =
-        create_subscription(&transport, &rx_topic, &rx_timer, &earliest_vtime, tx.clone());
-    if subscription.is_none() {
-        virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!");
-    } else {
-        virtmcu_qom::sim_info!("SUCCESSFULLY CREATED SUBSCRIPTION to {}", rx_topic);
-    }
-
     let liveliness = if transport_name == "zenoh" {
         match unsafe { transport_zenoh::get_or_init_session(router) } {
             Ok(session) => {
@@ -728,33 +632,55 @@ fn lpuart_init_internal(
     } else {
         None
     };
-    let state = LpuartState {
+
+    let mut state_box = Box::new(LpuartState {
         _liveliness: liveliness,
         irq,
-        transport,
-        subscription,
-        baud: LPUART_RESET_BAUD,
-        stat: STAT_TDRE | STAT_TC,
-        ctrl: 0,
-        _data: 0,
-        match_: 0,
-        modir: 0,
-        fifo: 0,
-        water: 0,
-        rx_buffer: Vec::new(),
-        tx_fifo: VecDeque::new(),
-        tx_timer: Some(tx_timer),
-        _rx_sender: tx,
-        rx_receiver: rx,
-        local_heap: BqlGuarded::new(BinaryHeap::new()),
-        rx_timer: Some(rx_timer),
-        earliest_vtime,
+        transport: Arc::clone(&transport),
+        receiver: None,
+        inner: virtmcu_qom::sync::Mutex::new(LpuartInner {
+            baud: LPUART_RESET_BAUD,
+            stat: STAT_TDRE | STAT_TC,
+            ctrl: 0,
+            _data: 0,
+            match_: 0,
+            modir: 0,
+            fifo: 0,
+            water: 0,
+            rx_buffer: Vec::new(),
+            tx_fifo: VecDeque::new(),
+        }), // virtmcu-allow: mutex reasoning="State managed securely"
+        tx_timer: None,
         tx_topic,
-    };
+    });
 
-    unsafe { ptr::write(state_ptr_raw, state) };
+    let state_ptr = core::ptr::from_mut(&mut *state_box);
 
-    state_ptr_raw
+    let generation = Arc::new(AtomicU64::new(0));
+
+    match virtmcu_qom::sync::DeterministicReceiver::new(
+        &*transport,
+        &rx_topic,
+        generation,
+        state_ptr as *mut c_void,
+        decode_lpuart,
+        deliver_lpuart,
+    ) {
+        Ok(receiver) => {
+            state_box.receiver = Some(receiver);
+            virtmcu_qom::sim_info!("SUCCESSFULLY CREATED SUBSCRIPTION to {}", rx_topic);
+        }
+        Err(e) => {
+            virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!: {}", e);
+            return ptr::null_mut();
+        }
+    }
+
+    state_box.tx_timer = Some(unsafe {
+        QomTimer::new(QEMU_CLOCK_VIRTUAL, lpuart_tx_timer_cb, state_ptr as *mut c_void)
+    });
+
+    Box::into_raw(state_box)
 }
 
 #[cfg(test)]

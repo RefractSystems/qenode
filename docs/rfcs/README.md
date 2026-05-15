@@ -18,8 +18,8 @@ VirtMCU uses non-contiguous RFC numbers based on the **GitHub Pull Request numbe
 | [RFC-0012](0012-data-serialization.md) | Data Serialization (FlatBuffers vs. Raw Structs) | **Accepted** |
 | [RFC-0013](0013-language-selection-and-native-migration.md) | Rust as the Primary Language for Core Infrastructure | **Accepted** |
 | [RFC-0015](0015-logging.md) | Deterministic Logging and Observability | **Accepted** |
-| [RFC-0016](0016-logical-domain-model.md) | Logical Domain Model for World Specification | **Proposed** |
-| [RFC-0017](0017-sensor-data-replay.md) | Enterprise Sensor Data Replay & Trace Formats | **Proposed** |
+| [RFC-0016](0016-logical-domain-model.md) | Logical Domain Model for World Specification | **Accepted** |
+| [RFC-0017](0017-sensor-data-replay.md) | Enterprise Sensor Data Replay & Trace Formats | **Accepted** |
 | [RFC-0018](0018-safe-peripheral-bql-yielding.md) | Safe Peripheral BQL Yielding | **Accepted** |
 | [RFC-0019](0019-single-host-native-ipc.md) | Native IPC Hybrid Architecture for Single-Host Co-Simulation | **Accepted** |
 | [RFC-0020](0020-deterministic-test-orchestration-seeding.md) | Deterministic Test Orchestration Seeding | **Accepted** |

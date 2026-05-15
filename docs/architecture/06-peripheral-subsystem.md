@@ -19,20 +19,26 @@ The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator
 
 ### The Two-Stage Delivery Pipeline
 
-Because `SafeSubscription` acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME` to prevent deadlocks when the BQL is yielded), its execution is entirely non-deterministic from the guest's perspective. It fires whenever the host OS network stack delivers a packet.
+Because network delivery acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME`), its execution is non-deterministic relative to the guest. VirtMCU enforces a **Two-Stage Delivery Pipeline** via the `DeterministicReceiver` utility to ensure bit-identical results:
 
-Therefore, **"Never mutate guest-visible state or wake a suspended vCPU directly inside a `SafeSubscription` callback."**
+1. **Stage 1 (Host Ingress)**: The `DeterministicReceiver` receives a packet from the transport, decodes the `delivery_vtime_ns`, and places it into a virtual-time-sorted priority queue. It does NOT touch guest registers or raise IRQs.
+2. **Stage 2 (Virtual Time Delivery)**: A `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) fires at exactly `delivery_vtime_ns`. It drains the queue and invokes the peripheral's delivery callback under the BQL. **This** is the only safe context for mutating guest-visible state or signaling vCPUs.
 
-Every peripheral receiving asynchronous data MUST strictly implement a **Two-Stage Delivery Pipeline**:
-1. **Stage 1 (Host Time / `SafeSubscription`)**: The callback receives the packet, decodes the `delivery_vtime_ns` from the VirtMCU FlatBuffer header, places the payload into an internal priority queue sorted by virtual time, and schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`). It does NOT touch guest registers, raise IRQs, or signal `wait_yielding_bql` condition variables.
-2. **Stage 2 (Virtual Time / `QomTimer`)**: When QEMU's deterministic virtual clock naturally reaches `delivery_vtime_ns`, the timer callback fires. **This** is where the peripheral moves the data into guest-visible MMIO registers, asserts interrupts, or calls `cond.notify_all()` to wake up a polling vCPU.
+> [!MANDATE]
+> **Never mutate guest-visible state or wake a suspended vCPU directly inside a transport callback.** Always route through Stage 2.
 
-If you attempt to bypass the timer and write directly to state in Stage 1, the guest may see data "from the future," or experience severe race conditions resulting in non-deterministic execution paths depending on host OS scheduling.
+If you attempt to bypass this pipeline and write directly to state in Stage 1, the guest may see data "from the future" or experience non-deterministic execution paths based on host OS scheduling jitter.
 
-### `BqlGuarded<T>` vs. `Mutex<T>`
-In standard Rust, shared state is protected by `std::sync::Mutex<T>`. However, because most peripheral code runs under the BQL, a `Mutex` is redundant and risky—it can lead to deadlocks if not managed carefully.
+### `virtmcu_qom::sync::Mutex<T>` vs. Atomics
+In standard Rust, shared state is protected by `std::sync::Mutex<T>`. **`std::sync::Mutex<T>` is BANNED in VirtMCU peripherals** because it deadlocks with the BQL.
 
-VirtMCU mandates the use of `BqlGuarded<T>` for state accessed from MMIO handlers, timers, and `SafeSubscriber` callbacks. It uses `UnsafeCell<T>` internally and debug-asserts that the BQL is held at every access point.
+VirtMCU mandates the following synchronization patterns:
+1. **Atomics (`AtomicBool`, `AtomicU64`)**: Use for simple flags and status registers. This is the "Gold Standard" for performance and determinism.
+2. **`virtmcu_qom::sync::Mutex<T>`**: A QEMU-backed mutex compatible with the BQL. Use this for complex state that requires locking (e.g., a `VecDeque` backlog) and for guarding `QemuCond` wait loops.
+3. **`BqlGuarded<T>` (DEPRECATED)**: Historically used to enforce BQL-only access. This is being phased out in favor of the `MmioDevice` trait and `DeterministicReceiver`, which handle implicit synchronization via the BQL and `DrainToken` exchanges.
+
+> [!TIP]
+> **Safety-by-Construction:** If your peripheral follows the `MmioDevice` trait and uses `DeterministicReceiver` for ingress, your state is automatically synchronized under the BQL, and you should rarely need manual Mutexes. Use Atomics for high-frequency status flags.
 
 ### Co-Simulation and BQL Discipline: `CoSimBridge`
 When a peripheral needs to block waiting for an external co-simulation response (like over a Remote Port Unix socket), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.

@@ -23,9 +23,10 @@ ARG FLATBUFFERS_VERSION=25.12.19
 ARG FLATCC_VERSION=0.6.1
 ARG HADOLINT_VERSION=2.14.0
 ARG ACTIONLINT_VERSION=1.7.12
-ARG MDBOOK_VERSION=0.4.43
+ARG MDBOOK_VERSION=0.4.52
 ARG MDBOOK_MERMAID_VERSION=0.17.0
 ARG MDBOOK_PDF_VERSION=0.1.13
+ARG CARGO_TARPAULIN_VERSION=0.35.4
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
@@ -41,6 +42,7 @@ ARG BINDGEN_VERSION
 ARG MDBOOK_VERSION
 ARG MDBOOK_MERMAID_VERSION
 ARG MDBOOK_PDF_VERSION
+ARG CARGO_TARPAULIN_VERSION
 ARG RUST_VERSION
 ARG CARGO_BINSTALL_VERSION
 ENV CARGO_HOME=/usr/local/cargo \
@@ -61,6 +63,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     && cargo binstall -y cargo-audit \
     && cargo binstall -y cargo-deny \
     && cargo binstall -y cargo-machete \
+    && cargo binstall -y cargo-tarpaulin@"${CARGO_TARPAULIN_VERSION}" \
     && cargo binstall -y mdbook@"${MDBOOK_VERSION}" \
     && cargo binstall -y mdbook-mermaid@"${MDBOOK_MERMAID_VERSION}" \
     && curl -sSL "https://github.com/HollowMan6/mdbook-pdf/releases/download/v${MDBOOK_PDF_VERSION}/mdbook-pdf-v${MDBOOK_PDF_VERSION}-$(uname -m)-unknown-linux-gnu" -o /usr/local/cargo/bin/mdbook-pdf \
@@ -151,6 +154,7 @@ RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y --no-ins
     gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     lld cppcheck codespell libsystemc-dev \
     libasan8 libubsan1 libtsan2 \
+    yamllint \
     && rm -rf /var/lib/apt/lists/*
 
 ARG ARM_TOOLCHAIN_VERSION
@@ -218,6 +222,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-tarpaulin /usr/local/bin/cargo-tarpaulin
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook-pdf /usr/local/bin/mdbook-pdf
@@ -277,7 +282,7 @@ RUN sed -i '/^members = \[/,/^\]/d' Cargo.toml && \
     "tools/virtmcu-observability",\n\
     "tools/virtmcu-test-runner",\n\
     "hw/rust/yaml2qemu",\n\
-    "hw/rust/common/rust-dummy",\n\
+    "hw/rust/common/reference-peripheral",\n\
     "hw/rust/common/virtmcu-api",\n\
     "hw/rust/common/virtmcu-qom",\n\
     "hw/rust/common/test-qom-device",\n\

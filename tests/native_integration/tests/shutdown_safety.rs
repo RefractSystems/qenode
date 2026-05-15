@@ -73,3 +73,37 @@ async fn test_shutdown_during_vta_step() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_reference_peripheral_shutdown_safety() -> Result<()> {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    // Launch the reference ping-pong world.
+    // Node 1 (Ponger) will block on REG_DUMMY_STATUS until Node 0 sends a ping.
+    let mut env = VirtmcuTestEnv::builder()
+        .add_node(
+            NodeConfig::new(0)
+                .with_firmware_path("tests/fixtures/guest_apps/reference_ping_pong/pinger.elf")
+                .with_yaml_path("worlds/reference_ping_pong.yml"),
+        )
+        .add_node(
+            NodeConfig::new(1)
+                .with_firmware_path("tests/fixtures/guest_apps/reference_ping_pong/ponger.elf")
+                .with_yaml_path("worlds/reference_ping_pong.yml"),
+        )
+        .with_timeout(10)
+        .build()
+        .await?;
+
+    // Node 1 starts and immediately blocks on MMIO read (STATUS).
+    env.wait_for_output(1, "Node 1: Ponger starting").await?;
+
+    // Step a bit to ensure it is deep in the MMIO read loop
+    env.step_clock(1_000_000, 1_000_000).await?;
+
+    // Shutdown while Node 1 is blocked on MMIO.
+    // This tests if VcpuDrain and the shutdown logic work together to avoid deadlocks.
+    drop(env);
+
+    Ok(())
+}

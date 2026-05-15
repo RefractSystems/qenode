@@ -21,7 +21,7 @@ pub use zenoh::Config;
 pub fn default_config() -> Config {
     let mut config = Config::default();
 
-    // Always disable multicast and gossip scouting (CLAUDE.md Second Priority, ADR-014)
+    // Always disable multicast and gossip scouting (CLAUDE.md Second Priority, RFC-0001)
     // to prevent peer discovery bleeding across parallel test workers and networks.
     let _ = config.insert_json5("scouting/multicast/enabled", "false");
     let _ = config.insert_json5("scouting/gossip/enabled", "false");

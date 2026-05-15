@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -635,7 +634,7 @@ mod tests {
         let (lock, cvar) = &*counter_pair;
         let mut count = lock.lock().unwrap();
         let result = cvar
-            .wait_timeout_while(count, std::time::Duration::from_secs(WAIT_TIMEOUT_SECS), |c| {
+            .wait_timeout_while(count, core::time::Duration::from_secs(WAIT_TIMEOUT_SECS), |c| {
                 *c == 0
             })
             .unwrap();

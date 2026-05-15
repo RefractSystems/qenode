@@ -37,7 +37,8 @@ async fn test_actuator_zenoh_publish() -> Result<()> {
                         let mut success_2 = false;
 
                         for (topic, _vtime, vals) in msgs {
-                            if topic == &topic_42 && (vals[0] - 3.14).abs() < 0.001 {
+                            if topic == &topic_42 && (vals[0] - std::f64::consts::PI).abs() < 0.001
+                            {
                                 success_1 = true;
                             } else if topic == &topic_99
                                 && vals.len() == 3

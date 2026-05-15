@@ -11,7 +11,7 @@ prerecorded telemetry) speaks in continuous state variables — angular velocity
 temperature, joint torque. The SAL/AAL is the translation layer:
 
 - **SAL** (Sensor Abstraction Layer): Reads physical states from the simulation
-  (or from an RESD file), models sensor noise/calibration, and injects data into
+  (or from an MCAP file), models sensor noise/calibration, and injects data into
   the MMIO register file at the exact virtual time the firmware would sample them.
 - **AAL** (Actuator Abstraction Layer): Intercepts MMIO writes from firmware
   (e.g., a PWM duty cycle), translates them into physical command semantics
@@ -20,7 +20,7 @@ temperature, joint torque. The SAL/AAL is the translation layer:
 ## Architecture
 
 ```
-MuJoCo / RESD replay
+MuJoCo / MCAP replay
         │  shared memory (mjData) or file I/O
         ▼
 tools/cyber_bridge/
@@ -43,7 +43,7 @@ physics (e.g., via shared memory).
 
 ## Two Operating Modes
 
-### 1. Standalone — RESD Replay
+### 1. Standalone — MCAP Replay
 
 For deterministic CI/CD regression testing without a physics engine:
 
@@ -52,8 +52,8 @@ For deterministic CI/CD regression testing without a physics engine:
 target/release/virtmcu-run --dtb board.dtb -kernel firmware.elf \
     -device virtmcu-clock,mode=suspend,node=0 -nographic -monitor none
 
-# Terminal 2: Play the RESD trace
-target/release/virtmcu-resd-replay --resd test_trace.resd --node-id 0 --delta-ns 1000000
+# Terminal 2: Play the MCAP trace
+target/release/virtmcu-mcap-replay --mcap test_trace.mcap --node-id 0 --delta-ns 1000000
 ```
 
 ### 2. Integrated — MuJoCo Zero-Copy Bridge

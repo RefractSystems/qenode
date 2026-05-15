@@ -2,7 +2,7 @@
  * Minimal Educational C Dummy Device for virtmcu.
  * This device serves as an example of a legacy C QOM peripheral.
  *
- * NOTE: For new peripherals, refer to hw/rust/common/rust-dummy/ as the
+ * NOTE: For new peripherals, refer to hw/rust/common/reference-peripheral/ as the
  * preferred Rust-native approach.
  */
 
@@ -70,7 +70,7 @@ static const TypeInfo dummy_info = {
     .class_init = dummy_class_init,
 };
 
-static void dummy_register_types(void) { type_register_static(&dummy_info); }
+static void REFERENCE_REGister_types(void) { type_register_static(&dummy_info); }
 
-type_init(dummy_register_types);
+type_init(REFERENCE_REGister_types);
 module_obj(TYPE_DUMMY_DEVICE);

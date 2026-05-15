@@ -17,13 +17,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use virtmcu_api::{DataCallback, DataTransport};
 
-pub struct UnixDataTransport {
+pub struct UdsDataTransport {
     _stream: Arc<Mutex<UnixStream>>,
     subscriptions: Arc<Mutex<Vec<(String, DataCallback)>>>,
     tx: Sender<(String, Vec<u8>)>,
 }
 
-impl UnixDataTransport {
+impl UdsDataTransport {
     pub fn new(path: &str) -> Result<Self, String> {
         let stream = UnixStream::connect(path).map_err(|e| e.to_string())?;
         let mut read_stream = stream.try_clone().map_err(|e| e.to_string())?;
@@ -92,7 +92,7 @@ impl UnixDataTransport {
     }
 }
 
-impl DataTransport for UnixDataTransport {
+impl DataTransport for UdsDataTransport {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
         self.tx.send((topic.to_string(), payload.to_vec())).map_err(|e| e.to_string())
     }

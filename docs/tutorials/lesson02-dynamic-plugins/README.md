@@ -58,28 +58,28 @@ Look closely at the output. Under `/machine/peripheral-anon`, you should see a `
 
 ## Part 3: The Rust Interop Story (Hybrid C/Rust Plugins)
 
-While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust.  `virtmcu` provides a hybrid C/Rust template in `hw/rust-dummy/`.
+While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust.  `virtmcu` provides a hybrid C/Rust template in `hw/rust/common/reference-peripheral/`.
 
 ### Why not QEMU's native Rust support?
 
-QEMU 10+ ships an official Meson+cargo pipeline for writing device models in Rust (`hw/rust/`).  That pipeline compiles Rust into the **monolithic `qemu-system-*` binary** — it cannot produce standalone `.so` modules.  Our template uses a different approach: `rustc` compiles `src/lib.rs` into a `staticlib`, which Meson links into `hw-virtmcu-rust-dummy.so` alongside the C boilerplate.  This works with `--enable-modules` and keeps your code outside the QEMU source tree.
+QEMU 10+ ships an official Meson+cargo pipeline for writing device models in Rust (`hw/rust/`).  That pipeline compiles Rust into the **monolithic `qemu-system-*` binary** — it cannot produce standalone `.so` modules.  Our template uses a different approach: `rustc` compiles `src/lib.rs` into a `staticlib`, which Meson links into `hw-virtmcu-reference-peripheral.so` alongside the C boilerplate.  This works with `--enable-modules` and keeps your code outside the QEMU source tree.
 
 ### How the split works
 
-1. **The QOM Boilerplate (C)** — `hw/rust-dummy/rust-dummy.c`
+1. **The QOM Boilerplate (C)** — `hw/rust/common/reference-peripheral/reference-peripheral.c`
    - Registers the `TypeInfo`, initialises the `MemoryRegion`, and handles QEMU's object lifecycle.
-   - Every MMIO access calls `rust_dummy_read()` / `rust_dummy_write()`, forwarding the device's private state pointer (`priv_state`) so Rust can access per-instance data.
+   - Every MMIO access calls `reference_peripheral_read()` / `reference_peripheral_write()`, forwarding the device's private state pointer (`priv_state`) so Rust can access per-instance data.
 
-2. **The Device Logic (Rust)** — `hw/rust-dummy/src/lib.rs`
+2. **The Device Logic (Rust)** — `hw/rust/common/reference-peripheral/src/lib.rs`
    - A `#[no_std]` crate exporting two `extern "C"` functions.
    - Receives `priv_state: *mut c_void` as its first argument.  In this demo it is `NULL` (stateless), but the template doc-comments show how to allocate Rust-owned state and pass it through.
 
 ### Build flow
 
 ```
-rustc --crate-type=staticlib src/lib.rs  →  librust_dummy.a
+rustc --crate-type=staticlib src/lib.rs  →  libreference_peripheral.a
                                                ↓ linked into
-                             hw-virtmcu-rust-dummy.so
+                             hw-virtmcu-reference-peripheral.so
 ```
 
 Meson drives the build via a `custom_target`.  `Cargo.toml` is present for IDE tooling (`rust-analyzer`, `cargo clippy`) but **Meson is authoritative** — running `cargo build` directly does not produce a QEMU-loadable module.
@@ -88,25 +88,25 @@ Meson drives the build via a `custom_target`.  `Cargo.toml` is present for IDE t
 
 The C side declares:
 ```c
-extern uint64_t rust_dummy_read(void *priv_state, uint64_t addr, uint32_t size);
-extern void     rust_dummy_write(void *priv_state, uint64_t addr, uint64_t val, uint32_t size);
+extern uint64_t reference_peripheral_read(void *priv_state, uint64_t addr, uint32_t size);
+extern void     reference_peripheral_write(void *priv_state, uint64_t addr, uint64_t val, uint32_t size);
 ```
 
 The Rust side exports matching symbols:
 ```rust
 #[no_mangle]
-pub extern "C" fn rust_dummy_read(_priv_state: *mut c_void, addr: u64, _size: u32) -> u64 {
+pub extern "C" fn reference_peripheral_read(_priv_state: *mut c_void, addr: u64, _size: u32) -> u64 {
     match addr { 0 => 0xdead_beef, _ => 0 }
 }
 ```
 
-The `priv_state` parameter is the key to stateful devices.  See the doc-comments in `src/lib.rs` for the full extension pattern using `rust_dummy_init()` and `Box::into_raw`.
+The `priv_state` parameter is the key to stateful devices.  See the doc-comments in `src/lib.rs` for the full extension pattern using `reference_peripheral_init()` and `Box::into_raw`.
 
 ### Testing the Rust Plugin
 
 ```bash
 ../../target/release/virtmcu-run --dtb ../../tests/fixtures/guest_apps/boot_arm/minimal.dtb \
-    -device rust-dummy,base-addr=0x60000000 \
+    -device reference-peripheral,base-addr=0x60000000 \
     -nographic
 ```
 

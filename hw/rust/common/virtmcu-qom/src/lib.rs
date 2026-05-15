@@ -111,51 +111,52 @@ extern "C" {
 #[no_mangle]
 /// Stub for virtmcu_log in tests and standalone mode.
 pub unsafe extern "C" fn virtmcu_log(_fmt: *const c_char) {}
+
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for DeviceState in tests.
 pub extern "C" fn virtmcu_sizeof_device_state() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SysBusDevice in tests.
 pub extern "C" fn virtmcu_sizeof_sys_bus_device() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for DeviceClass in tests.
 pub extern "C" fn virtmcu_sizeof_device_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SSIPeripheral in tests.
 pub extern "C" fn virtmcu_sizeof_ssi_peripheral() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SSIPeripheralClass in tests.
 pub extern "C" fn virtmcu_sizeof_ssi_peripheral_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for Chardev in tests.
 pub extern "C" fn virtmcu_sizeof_chardev() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for ChardevClass in tests.
 pub extern "C" fn virtmcu_sizeof_chardev_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for CharBackend in tests.
 pub extern "C" fn virtmcu_sizeof_char_backend() -> usize {
     1024
 }

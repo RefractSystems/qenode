@@ -136,7 +136,4 @@ While Iceoryx is exceptional for moving gigabytes of point-cloud data autonomous
 - **Positive:** Simplified process topology for developers running VirtMCU locally.
 - **Negative:** The `DeterministicCoordinator` must be refactored to support a UDS server mode alongside its existing Zenoh subscription mode. QEMU network plugins (`netdev`, `chardev`) require an update to support UDS streaming.
 
-## Future Action Plan
-1. Extend `DeterministicCoordinator` to accept a `--transport unix` flag and spin up a UDS server socket binding.
-2. Refactor QEMU VirtMCU plugin `chardev` and `netdev` backends to write to a UDS file descriptor instead of the Zenoh publisher when operating in local mode.
-3. Validate the single-host topology using a 6-node + MuJoCo deployment via the `virtmcu-test-runner` ensuring zero `vtime_ns` regressions.
+

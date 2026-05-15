@@ -41,15 +41,26 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
             match res {
                 virtmcu_qom::device::MmioResult::Ready(val) => val,
                 virtmcu_qom::device::MmioResult::Wait { mut condition, mut ready_val, mut fallback_val } => {
-                    if condition() {
-                        ready_val()
-                    } else {
-                        {
-                            let _unlock = virtmcu_qom::sync::Bql::temporary_unlock();
-                            // virtmcu-allow: yield reasoning="Required to advance icount"
-                            std::thread::yield_now();
+                    if virtmcu_qom::icount::icount_enabled() {
+                        if condition() {
+                            ready_val()
+                        } else {
+                            {
+                                let _unlock = virtmcu_qom::sync::Bql::temporary_unlock();
+                                // virtmcu-allow: yield reasoning="Required to advance icount"
+                                std::thread::yield_now();
+                            }
+                            fallback_val()
                         }
-                        fallback_val()
+                    } else {
+                        let cond = virtmcu_qom::device::MmioDevice::condvar(state);
+                        let mutex = virtmcu_qom::device::MmioDevice::wait_mutex(state);
+                        let mut guard = mutex.lock();
+                        loop {
+                            if condition() { return ready_val(); }
+                            let (g, _) = cond.wait_yielding_bql(guard, BQL_YIELD_TIMEOUT_MS);
+                            guard = g;
+                        }
                     }
                 }
             }
@@ -96,6 +107,7 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
 pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut qom_name = String::new();
     let mut qom_parent = String::from("sys-bus-device");
+    let mut class_init_custom = None;
 
     let attr_parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
@@ -106,6 +118,10 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
             let value = meta.value()?;
             let s: LitStr = value.parse()?;
             qom_parent = s.value();
+        } else if meta.path.is_ident("class_init_custom") {
+            let value = meta.value()?;
+            let s: LitStr = value.parse()?;
+            class_init_custom = Some(s.value());
         }
         Ok(())
     });
@@ -173,7 +189,11 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
                     define_macro = quote! { virtmcu_qom::define_prop_uint32 };
                 } else if is_type(field_ty, "bool") {
                     define_macro = quote! { virtmcu_qom::define_prop_bool };
-                } else if is_type(field_ty, "*mut c_char") || is_type(field_ty, "c_char") {
+                } else if is_type(field_ty, "*mut c_char")
+                    || is_type(field_ty, "c_char")
+                    || is_type(field_ty, "QomString")
+                    || is_type(field_ty, "virtmcu_qom::qom::QomString")
+                {
                     define_macro = quote! { virtmcu_qom::define_prop_string };
                     needs_default = false; // define_prop_string only takes 3 arguments
                 } else {
@@ -226,8 +246,25 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
     let qom_parent_c = format!("{}\0", qom_parent);
     let qom_parent_lit = syn::LitByteStr::new(qom_parent_c.as_bytes(), name.span());
 
+    let custom_init_call = if let Some(custom_init) = class_init_custom {
+        let custom_fn = format_ident!("{}", custom_init);
+        quote! { #custom_fn(klass, _data); }
+    } else {
+        quote! {}
+    };
+
     let expanded = quote! {
         #input
+
+        #[cfg(test)]
+        impl #name {
+            /// Creates a zero-initialized mock instance for testing.
+            /// This encapsulates unsafe zero-initialization of QEMU FFI types.
+            pub fn new_mock() -> Self {
+                // SAFETY: This is strictly for unit testing where full QEMU initialization is not required.
+                unsafe { core::mem::zeroed() }
+            }
+        }
 
         #[used]
         static #prop_array_name: [virtmcu_qom::qom::Property; #prop_count] = [
@@ -275,7 +312,7 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
                 &raw mut s.iomem,
                 dev as *mut virtmcu_qom::qom::Object,
                 &raw const #mmio_ops_name,
-                core::ptr::from_mut(s) as *mut core::ffi::c_void,
+                dev,
                 #qom_name_c_lit.as_ptr() as *const core::ffi::c_char,
                 DEFAULT_MMIO_REGION_SIZE,
             );
@@ -294,6 +331,7 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
             unsafe {
                 #(#links)*
             }
+            #custom_init_call
         }
 
         #[used]
@@ -306,7 +344,7 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
             instance_post_init: None,
             instance_finalize: Some(#finalize_fn),
             abstract_: false,
-            class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
+            class_size: 0,
             class_init: Some(#class_init_fn),
             class_base_init: None,
             class_data: core::ptr::null(),

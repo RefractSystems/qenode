@@ -1122,13 +1122,12 @@ pub trait DeliveryPacket: Ord + Send + 'static {
 /// Internal state for DeterministicReceiver.
 pub struct ReceiverInternal<T: DeliveryPacket> {
     queue: BqlGuarded<alloc::collections::BinaryHeap<core::cmp::Reverse<T>>>,
-    opaque: *mut core::ffi::c_void,
-    deliver_cb: fn(*mut core::ffi::c_void, T),
+    deliver_cb: BqlGuarded<alloc::boxed::Box<dyn FnMut(T) + Send + Sync + 'static>>,
     timer_ptr: core::sync::atomic::AtomicUsize,
 }
 
 // SAFETY: ReceiverInternal is only used under BQL for queue mutation (via BqlGuarded)
-// and opaque pointer dereferencing. deliver_cb executes under BQL.
+// and deliver_cb executes under BQL.
 unsafe impl<T: DeliveryPacket> Send for ReceiverInternal<T> {}
 unsafe impl<T: DeliveryPacket> Sync for ReceiverInternal<T> {}
 
@@ -1140,7 +1139,7 @@ pub struct DeterministicReceiver<T: DeliveryPacket> {
 }
 
 impl<T: DeliveryPacket> DeterministicReceiver<T> {
-    /// Creates a new `DeterministicReceiver`.
+    /// Creates a new `DeterministicReceiver` (Legacy API).
     pub fn new<TR: virtmcu_api::DataTransport + ?Sized>(
         transport: &TR,
         topic: &str,
@@ -1149,10 +1148,43 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
         decode_cb: fn(*mut core::ffi::c_void, &str, &[u8]) -> Option<T>,
         deliver_cb: fn(*mut core::ffi::c_void, T),
     ) -> Result<Self, alloc::string::String> {
+        #[derive(Copy, Clone)]
+        struct SyncPtr(*mut core::ffi::c_void);
+        unsafe impl Send for SyncPtr {}
+        unsafe impl Sync for SyncPtr {}
+        impl SyncPtr {
+            fn get(self) -> *mut core::ffi::c_void {
+                self.0
+            }
+        }
+
+        let decode_opaque = SyncPtr(opaque);
+        let deliver_opaque = SyncPtr(opaque);
+
+        Self::new_safe(
+            transport,
+            topic,
+            generation,
+            move |t, p| decode_cb(decode_opaque.get(), t, p),
+            move |packet| deliver_cb(deliver_opaque.get(), packet),
+        )
+    }
+
+    /// Creates a new `DeterministicReceiver` safely using closures.
+    pub fn new_safe<TR: virtmcu_api::DataTransport + ?Sized, FDecode, FDeliver>(
+        transport: &TR,
+        topic: &str,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        decode_cb: FDecode,
+        deliver_cb: FDeliver,
+    ) -> Result<Self, alloc::string::String>
+    where
+        FDecode: Fn(&str, &[u8]) -> Option<T> + Send + Sync + 'static,
+        FDeliver: FnMut(T) + Send + Sync + 'static,
+    {
         let internal = alloc::sync::Arc::new(ReceiverInternal {
             queue: BqlGuarded::new(alloc::collections::BinaryHeap::new()),
-            opaque,
-            deliver_cb,
+            deliver_cb: BqlGuarded::new(alloc::boxed::Box::new(deliver_cb)),
             timer_ptr: core::sync::atomic::AtomicUsize::new(0),
         });
 
@@ -1174,7 +1206,7 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
         let sub_timer = alloc::sync::Arc::clone(&timer);
         let callback: virtmcu_api::DataCallback =
             alloc::boxed::Box::new(move |topic_str: &str, payload: &[u8]| {
-                if let Some(packet) = decode_cb(sub_internal.opaque, topic_str, payload) {
+                if let Some(packet) = decode_cb(topic_str, payload) {
                     let mut queue = sub_internal.queue.get_mut();
                     queue.push(core::cmp::Reverse(packet));
                     if let Some(core::cmp::Reverse(first)) = queue.peek() {
@@ -1214,7 +1246,8 @@ extern "C" fn deterministic_receiver_timer_cb<T: DeliveryPacket>(opaque: *mut co
             if first.delivery_vtime_ns() <= now {
                 let core::cmp::Reverse(packet) = queue.pop().expect("queue is not empty");
                 drop(queue);
-                (internal.deliver_cb)(internal.opaque, packet);
+                let mut cb = internal.deliver_cb.get_mut();
+                (*cb)(packet);
                 continue;
             }
 

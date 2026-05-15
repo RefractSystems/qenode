@@ -27,8 +27,8 @@ Macros will generate implementations of safe Rust traits (`Peripheral`, `QomLife
 use virtmcu_qom::macros::{qom_device, qom_property, qom_link};
 use virtmcu_qom::device::{MmioResult, DrainToken};
 
-#[qom_device(name = "rust-dummy", parent = "sys-bus-device")]
-pub struct RustDummy {
+#[qom_device(name = "reference-peripheral", parent = "sys-bus-device")]
+pub struct ReferencePeripheral {
     #[qom_property(default = "u64::MAX")]
     pub base_addr: u64,
 
@@ -37,10 +37,10 @@ pub struct RustDummy {
 
     // Framework manages the state lifecycle and BqlGuarded accessibility
     #[qom_state]
-    pub state: RustDummyState,
+    pub state: ReferencePeripheralState,
 }
 
-impl virtmcu_qom::Peripheral for RustDummy {
+impl virtmcu_qom::Peripheral for ReferencePeripheral {
     fn realize(&mut self) -> Result<()> {
         let transport = self.transport.get().ok_or("Transport link missing")?;
         self.state.receiver = DeterministicReceiver::new(transport, ...);
@@ -61,30 +61,10 @@ impl virtmcu_qom::Peripheral for RustDummy {
 }
 
 // Explicit registration required for DSO (.so) compatibility
-virtmcu_qom::register_peripheral!(RustDummy);
+virtmcu_qom::register_peripheral!(ReferencePeripheral);
 ```
 
-## Execution Plan
 
-### Phase 1: Safe DI and Upstream Mirroring
-*   Implement `QomLink<T>` and `QomProperty<T>`.
-*   Ensure the attribute syntax matches the current `qemu-api` drafts in the upstream QEMU repository.
-
-### Phase 2: The `Peripheral` Trait and `DrainToken`
-*   Define the unified `Peripheral` trait.
-*   Implement the `DrainToken` type-state mechanism to bridge the FFI boundary safely.
-
-### Phase 3: Declarative Macro Generation
-*   Build the procedural macro to parse the `#[qom_device]` struct and generate:
-    *   The `unsafe extern "C"` FFI shims.
-    *   The `static Property` arrays (safe array bounds).
-    *   The `TypeInfo` and class initialization boilerplate.
-
-### Phase 4: Escape Hatches for QOM Flexibility
-*   Provide a `class_init_custom(&mut ClassBuilder)` hook in the trait to allow developers to perform complex QOM operations (like dynamic property generation) without abandoning the macro system.
-
-### Phase 5: Modular (DSO) Support
-*   Implement `register_peripheral!()` to handle C-FFI symbol export and module registration in a way that is stable across dynamic library boundaries.
 
 ## Consequences
 *   **Positive:** Guaranteed memory safety at the QOM/Rust boundary.

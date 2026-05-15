@@ -24,14 +24,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use core::time::Duration;
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use std::thread::JoinHandle;
 use virtmcu_api::topics::sim_topic;
 use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::Bql;
+use virtmcu_qom::sync::VcpuDrain;
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,
@@ -62,69 +59,32 @@ pub struct VirtmcuActuatorQEMU {
     pub rust_state: *mut VirtmcuActuatorState,
 }
 
-struct ActuatorPacket {
-    topic: String,
-    payload: Vec<u8>,
-}
-
-pub struct VirtmcuActuatorState {
-    parent_ptr: *mut VirtmcuActuatorQEMU,
-    shared: Arc<SharedState>,
-    bg_thread: Option<JoinHandle<()>>,
-    cond: virtmcu_qom::sync::Condvar,
-    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
-    wait_mutex: virtmcu_qom::sync::Mutex<()>,
-    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
-}
-
-struct SharedState {
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-    node_id: u32,
-
-    tx_sender: Sender<ActuatorPacket>,
-    running: core::sync::atomic::AtomicBool,
-    drain: virtmcu_qom::sync::VcpuDrain,
-    seq: core::sync::atomic::AtomicU64,
-}
-
-const DRAIN_TIMEOUT_MS: u32 = 30000;
 const MAX_DATA_ELEMENTS: usize = 8;
 const F64_SIZE_BYTES: u64 = core::mem::size_of::<f64>() as u64;
-
-impl Drop for VirtmcuActuatorState {
-    /// Safe shutdown sequence follows CLAUDE.md §4 "Safe Peripheral Teardown".
-    fn drop(&mut self) {
-        self.shared.running.store(false, core::sync::atomic::Ordering::Release);
-
-        // Wait for all vCPU threads to drain (panic-safe blocking call)
-        self.shared.drain.wait_for_drain(DRAIN_TIMEOUT_MS);
-
-        if let Some(handle) = self.bg_thread.take() {
-            let bql_unlock = Bql::temporary_unlock();
-            let _ = handle.join();
-            drop(bql_unlock);
-        }
-    }
-}
 
 const REG_ACTUATOR_ID: u64 = 0x00;
 const REG_ACTUATOR_DATA_SIZE: u64 = 0x04;
 const REG_ACTUATOR_GO: u64 = 0x08;
 const REG_ACTUATOR_DATA: u64 = 0x10;
 
+pub struct VirtmcuActuatorState {
+    pub qemu_dev_ptr: *mut VirtmcuActuatorQEMU,
+    pub drain: VcpuDrain,
+    pub transport: Arc<dyn virtmcu_api::DataTransport>,
+    pub seq: core::sync::atomic::AtomicU64,
+    pub cond: virtmcu_qom::sync::Condvar,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    pub wait_mutex: virtmcu_qom::sync::Mutex<()>,
+    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
+}
+
 impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
     fn read(&self, addr: u64, size: u32) -> virtmcu_qom::device::MmioResult<'_> {
-        let s = unsafe { &mut *self.parent_ptr };
-        if !self.shared.running.load(core::sync::atomic::Ordering::Acquire) {
-            return virtmcu_qom::device::MmioResult::Ready(0);
-        }
-        let _guard = self.shared.drain.acquire();
-
-        match addr {
-            REG_ACTUATOR_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(s.actuator_id)),
-            REG_ACTUATOR_DATA_SIZE => {
-                virtmcu_qom::device::MmioResult::Ready(u64::from(s.data_size))
-            }
+        let _guard = self.drain.acquire();
+        let s = unsafe { &mut *self.qemu_dev_ptr };
+        let ret = match addr {
+            REG_ACTUATOR_ID => u64::from(s.actuator_id),
+            REG_ACTUATOR_DATA_SIZE => u64::from(s.data_size),
             addr if (REG_ACTUATOR_DATA
                 ..REG_ACTUATOR_DATA + (MAX_DATA_ELEMENTS as u64) * F64_SIZE_BYTES)
                 .contains(&addr) =>
@@ -143,28 +103,24 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
                         ret = u64::from_le_bytes(ret_bytes);
                     }
                 }
-                virtmcu_qom::device::MmioResult::Ready(ret)
+                ret
             }
             _ => {
                 if s.debug {
                     virtmcu_qom::sim_debug!("actuator_read: unhandled offset 0x{:x}", addr);
                 }
-                virtmcu_qom::device::MmioResult::Ready(0)
+                0
             }
-        }
+        };
+        virtmcu_qom::device::MmioResult::Ready(ret)
     }
 
     fn write(&self, addr: u64, val: u64, size: u32) {
-        let s = unsafe { &mut *self.parent_ptr };
-        if !self.shared.running.load(core::sync::atomic::Ordering::Acquire) {
-            return;
-        }
-        let _guard = self.shared.drain.acquire();
-
+        let _guard = self.drain.acquire();
+        let s = unsafe { &mut *self.qemu_dev_ptr };
         if s.debug {
             virtmcu_qom::vlog!("actuator_write: addr 0x{:x}, val {}\n", addr, val);
         }
-
         match addr {
             REG_ACTUATOR_ID => {
                 s.actuator_id = val as u32;
@@ -177,7 +133,35 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuActuatorState {
             }
             REG_ACTUATOR_GO => {
                 if (val & 0x1) == 1 {
-                    actuator_publish(self, s.actuator_id, s.data_size, &s.data);
+                    let vtime_ns = u64::try_from(unsafe {
+                        virtmcu_qom::timer::qemu_clock_get_ns(
+                            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
+                        )
+                    })
+                    .expect("vtime is negative");
+
+                    let seq = self.seq.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+                    let node_id_str = s.node_id.to_string();
+                    let topic = sim_topic::actuator_control(&node_id_str, s.actuator_id);
+                    let mut data_payload =
+                        Vec::with_capacity((s.data_size as usize) * (F64_SIZE_BYTES as usize));
+                    for val in s.data.iter().take(s.data_size as usize) {
+                        data_payload.extend_from_slice(&val.to_le_bytes());
+                    }
+                    let payload = virtmcu_api::encode_frame(vtime_ns, seq, &data_payload);
+
+                    match self.transport.as_ref().reserve(&topic, payload.len()) {
+                        Ok(mut reservation) => {
+                            reservation.buffer_mut().copy_from_slice(&payload);
+                            let _ = reservation.commit(vtime_ns, seq);
+                        }
+                        Err(e) => {
+                            virtmcu_qom::sim_err!(
+                                "actuator: failed to reserve transport for topic {topic}: {e:?}",
+                            );
+                        }
+                    };
                 }
             }
             addr if (REG_ACTUATOR_DATA
@@ -358,86 +342,26 @@ declare_device_type!(VIRTMCU_ACTUATOR_TYPE_INIT, VIRTMCU_ACTUATOR_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
-const TX_THREAD_RECV_TIMEOUT_MS: u64 = 10;
-
-fn start_tx_thread(shared: Arc<SharedState>, rx: Receiver<ActuatorPacket>) -> JoinHandle<()> {
-    std::thread::spawn(move || loop {
-        if !shared.running.load(core::sync::atomic::Ordering::Acquire) && rx.is_empty() {
-            break;
-        }
-        match rx.recv_timeout(Duration::from_millis(TX_THREAD_RECV_TIMEOUT_MS)) {
-            Ok(packet) => {
-                let _ = shared.transport.publish(&packet.topic, &packet.payload);
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-        }
-    })
-}
-
 fn actuator_init_internal(
     parent: *mut VirtmcuActuatorQEMU,
     node_id: u32,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> *mut VirtmcuActuatorState {
-    let (tx, rx) = bounded(1024);
-    let shared = Arc::new(SharedState {
-        transport: Arc::clone(&transport),
-        node_id,
-        tx_sender: tx,
-        running: core::sync::atomic::AtomicBool::new(true),
-        drain: virtmcu_qom::sync::VcpuDrain::new(),
-        seq: core::sync::atomic::AtomicU64::new(0),
-    });
-
-    let bg_thread = start_tx_thread(Arc::clone(&shared), rx);
-
     let hb_topic = format!("sim/actuator/liveliness/{node_id}");
     let liveliness = transport.declare_liveliness(&hb_topic);
 
     Box::into_raw(Box::new(VirtmcuActuatorState {
-        parent_ptr: parent,
-        shared,
-        bg_thread: Some(bg_thread),
+        qemu_dev_ptr: parent,
+        drain: VcpuDrain::new(),
+        transport,
+        seq: core::sync::atomic::AtomicU64::new(0),
         cond: virtmcu_qom::sync::Condvar::new(),
         wait_mutex: virtmcu_qom::sync::Mutex::new(()),
         _liveliness: liveliness,
     }))
 }
 
-fn actuator_publish(
-    state: &VirtmcuActuatorState,
-    actuator_id: u32,
-    data_size: u32,
-    data: &[f64; 8],
-) {
-    if !state.shared.running.load(core::sync::atomic::Ordering::Acquire) {
-        return;
-    }
-    let _guard = state.shared.drain.acquire();
-
-    let vtime_ns = u64::try_from(unsafe {
-        virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
-    })
-    .expect("vtime is negative");
-
-    let seq = state.shared.seq.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-    let node_id_str = state.shared.node_id.to_string();
-    let topic = sim_topic::actuator_control(&node_id_str, actuator_id);
-    let mut data_payload = Vec::with_capacity((data_size as usize) * (F64_SIZE_BYTES as usize));
-    for val in data.iter().take(data_size as usize) {
-        data_payload.extend_from_slice(&val.to_le_bytes());
-    }
-    let payload = virtmcu_api::encode_frame(vtime_ns, seq, &data_payload);
-
-    match state.shared.tx_sender.try_send(ActuatorPacket { topic, payload }) {
-        Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}
-    }
-}
-
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
 

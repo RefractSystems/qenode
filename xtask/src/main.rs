@@ -27,6 +27,24 @@ enum Commands {
     BuildFlatcc,
     /// Build all third-party dependencies
     BuildThirdParty,
+    /// Build rust modules
+    BuildRustModules {
+        rust_dir: String,
+        target_dir: String,
+        out_dir: String,
+        artifacts: Vec<String>,
+    },
+    /// Gen module trigger
+    GenModuleTrigger {
+        out: String,
+        #[arg(long)]
+        obj: Option<String>,
+        #[arg(long)]
+        extra_inc: Option<String>,
+        #[arg(long)]
+        extra_c: Option<String>,
+        objs: Vec<String>,
+    },
     /// Alias for build-qemu
     Build,
     /// Build all test artifacts across all domains
@@ -228,7 +246,7 @@ fn main() -> Result<()> {
 
     let run_ci = |sh: &Shell, cmd: &str, img: &str| -> Result<()> {
         let curdir_str = curdir.display().to_string();
-        cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 {img} {cmd}")
+        cmd!(sh, "docker run --rm --net=host -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 {img} {cmd}")
             .run()?;
         Ok(())
     };
@@ -259,9 +277,121 @@ fn main() -> Result<()> {
         }
         Commands::BuildQemu | Commands::Build => {
             println!("==> Rebuilding QEMU (jobs={})...", jobs);
+            if let Ok(xtask_exe) = env::current_exe() {
+                let mut exe_str = xtask_exe.display().to_string();
+                if exe_str.ends_with(" (deleted)") {
+                    exe_str = exe_str.replace(" (deleted)", "");
+                }
+                sh.set_var("XTASK_BIN", exe_str);
+            }
             cmd!(sh, "make -C {qemu_build} -j{jobs}").run()?;
             cmd!(sh, "make -C {qemu_build} install").run()?;
             println!("✓ Done.");
+        }
+        Commands::BuildRustModules { rust_dir, target_dir, out_dir, artifacts } => {
+            env::set_current_dir(&rust_dir)?;
+
+            if cmd!(sh, "command -v lld").quiet().run().is_ok() {
+                let current_rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+                sh.set_var("RUSTFLAGS", format!("{} -C link-arg=-fuse-ld=lld", current_rustflags));
+            }
+
+            let use_asan = env::var("VIRTMCU_USE_ASAN").unwrap_or_default() == "1";
+            let use_tsan = env::var("VIRTMCU_USE_TSAN").unwrap_or_default() == "1";
+            let mut build_target = env::var("CARGO_BUILD_TARGET").ok();
+
+            if (use_asan || use_tsan) && build_target.is_none() {
+                sh.set_var("RUSTC_BOOTSTRAP", "1");
+                let current_rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+                if use_asan {
+                    sh.set_var("RUSTFLAGS", format!("{} -Zsanitizer=address", current_rustflags));
+                    sh.set_var("HOST_CFLAGS", "");
+                    sh.set_var("HOST_CXXFLAGS", "");
+                } else if use_tsan {
+                    sh.set_var("RUSTFLAGS", format!("{} -Z sanitizer=thread", current_rustflags));
+                }
+
+                let target = cmd!(sh, "bash -c 'rustc -vV | grep \"host:\" | awk \"{print \\$2}\"'").read()?;
+                sh.set_var("CARGO_BUILD_TARGET", &target);
+                build_target = Some(target);
+            }
+
+            println!("Building Rust workspace in {} with target-dir {}", rust_dir, target_dir);
+
+            let mut final_target_dir = target_dir.clone();
+            let fs_type_out = cmd!(sh, "bash -c 'df -T \"{target_dir}\" 2>/dev/null | awk \"NR==2 {print \\$2}\" || df -T \"$(dirname \"{target_dir}\")\" 2>/dev/null | awk \"NR==2 {print \\$2}\" || true'").read().unwrap_or_default();
+            let fs_type = fs_type_out.trim();
+
+            if fs_type == "virtiofs" || fs_type == "fakeowner" || fs_type == "9p" {
+                let uid = cmd!(sh, "id -u").read().unwrap_or_else(|_| "1000".to_string());
+                let safe_target = format!("/tmp/virtmcu-rust-target-{}", uid);
+                println!("WARNING: {} is on a {} mount. Redirecting Cargo target-dir to {} to avoid Bus errors.", target_dir, fs_type, safe_target);
+                final_target_dir = safe_target;
+            }
+
+            fs::create_dir_all(&final_target_dir)?;
+
+            // Disconnect from Ninja's jobserver
+            env::remove_var("MAKEFLAGS");
+
+            let num_jobs = cmd!(sh, "bash -c 'nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4'").read().unwrap_or_else(|_| "4".to_string());
+
+            sh.set_var("CARGO_UNSTABLE_BINDEPS", "true");
+            sh.set_var("RUSTC_BOOTSTRAP", "1");
+
+            let mut cargo_cmd = cmd!(sh, "cargo build --release --workspace --target-dir {final_target_dir} --jobs {num_jobs}");
+            if let Some(t) = &build_target {
+                cargo_cmd = cargo_cmd.args(["--target", t]);
+            }
+            cargo_cmd.run()?;
+
+            for pair in artifacts {
+                let parts: Vec<&str> = pair.split(':').collect();
+                if parts.len() != 2 { continue; }
+                let lib = parts[1];
+                
+                let mut src_path = format!("{}/release/{}", final_target_dir, lib);
+                if !Path::new(&src_path).exists() {
+                    if let Some(t) = &build_target {
+                        src_path = format!("{}/{}/release/{}", final_target_dir, t, lib);
+                    }
+                }
+
+                println!("Copying {} to {}/{}", src_path, out_dir, lib);
+                fs::copy(&src_path, format!("{}/{}", out_dir, lib))?;
+            }
+
+            println!("Listing outputs in {}:", out_dir);
+            // Outputs were successfully copied.
+        }
+        Commands::GenModuleTrigger { out, obj, extra_inc, extra_c, objs } => {
+            if let Some(parent) = Path::new(&out).parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let mut content = String::new();
+            content.push_str("#include \"qemu/osdep.h\"\n");
+            content.push_str("#include \"qemu/module.h\"\n");
+
+            if let Some(inc) = extra_inc {
+                content.push_str(&inc);
+                content.push('\n');
+            }
+
+            if let Some(o) = obj {
+                content.push_str(&format!("module_obj(\"{}\");\n", o));
+            }
+
+            for o in objs {
+                content.push_str(&format!("module_obj(\"{}\");\n", o));
+            }
+
+            if let Some(c) = extra_c {
+                content.push_str(&c);
+                content.push('\n');
+            }
+
+            fs::write(out, content)?;
         }
         Commands::BuildZenohC => {
             let zenohc_build_dir = if use_asan {
@@ -425,7 +555,7 @@ fn main() -> Result<()> {
 
             fs::create_dir_all("coverage-data")?;
             let curdir_str = curdir.display().to_string();
-            cmd!(sh, "docker run --rm -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make test-integration DOMAIN=all").run()?;
+            cmd!(sh, "docker run --rm --net=host -v {curdir_str}:/workspace -w /workspace -e HOST_UID={host_uid} -e HOST_GID={host_gid} -e CI=true -e VIRTMCU_STALL_TIMEOUT_MS=120000 -e VIRTMCU_USE_PREBUILT_QEMU=1 -e GCOV_PREFIX=/workspace/coverage-data -e GCOV_PREFIX_STRIP=3 {virtmcu_ci_img} make test-integration DOMAIN=all").run()?;
 
             cmd!(sh, "{xtask} ci-integration-coverage").run()?;
             cmd!(sh, "{xtask} ci-peripheral-coverage").run()?;
@@ -612,12 +742,12 @@ fn main() -> Result<()> {
         Commands::SmokeBase => {
             println!("==> Smoke test: base");
             let img = format!("{}/base:{}-{}", registry, image_tag, arch);
-            cmd!(sh, "docker run --rm {img} bash -c 'id vscode'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'sudo -n true'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'zsh --version'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'test -d /home/vscode/.oh-my-zsh'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'locale | grep \"LANG=en_US.UTF-8\"'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'gh --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'id vscode'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'sudo -n true'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'zsh --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'test -d /home/vscode/.oh-my-zsh'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'locale | grep \"LANG=en_US.UTF-8\"'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'gh --version | head -1'").run()?;
             println!("✓ base smoke test passed");
         }
         Commands::SmokeToolchain => {
@@ -625,40 +755,41 @@ fn main() -> Result<()> {
             let img = format!("{}/toolchain:{}-{}", registry, image_tag, arch);
             let python_version = sh.var("PYTHON_VERSION").unwrap_or_else(|_| "3.13.1".to_string());
             let py_check = format!("uv run --python {} python --version", python_version);
-            cmd!(sh, "docker run --rm {img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'riscv64-linux-gnu-gcc --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c {py_check}").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'cmake --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'flatc --version'").run()?;
-            cmd!(sh, "docker run --rm {img} bash -c 'meson --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'riscv64-linux-gnu-gcc --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c {py_check}").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'cmake --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'flatc --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {img} bash -c 'meson --version'").run()?;
             println!("✓ toolchain smoke test passed");
         }
         Commands::SmokeDevenv => {
             println!("==> Smoke test: devenv");
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'node --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'which mdbook-pdf'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'node --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'npm --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'cargo --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'cargo tarpaulin --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'rustc --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'mdbook --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'mdbook-mermaid --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'which mdbook-pdf'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'chromium --version'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'arm-none-eabi-gcc --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_devenv_img} bash -c 'uv --version'").run()?;
             println!("✓ devenv smoke test passed");
         }
         Commands::SmokeCi => {
             println!("==> Smoke test: ci");
-            cmd!(sh, "docker run --rm {virtmcu_ci_img} qemu-system-arm --version").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_ci_img} bash -c 'qemu-system-riscv32 --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_ci_img} bash -c 'qemu-system-riscv64 --version | head -1'").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_ci_img} bash -c 'ls ${{QEMU_MODULE_DIR}}/*.so | head -5'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_img} qemu-system-arm --version").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_img} bash -c 'qemu-system-riscv32 --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_img} bash -c 'qemu-system-riscv64 --version | head -1'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_img} bash -c 'ls ${{QEMU_MODULE_DIR}}/*.so | head -5'").run()?;
             println!("✓ ci smoke test passed");
         }
         Commands::SmokeCiAsan => {
             println!("==> Smoke test: ci-asan");
-            cmd!(sh, "docker run --rm {virtmcu_ci_asan_img} qemu-system-arm --version").run()?;
-            cmd!(sh, "docker run --rm {virtmcu_ci_asan_img} bash -c 'nm $(which qemu-system-arm) | grep -q __asan'").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_asan_img} qemu-system-arm --version").run()?;
+            cmd!(sh, "docker run --rm --net=host {virtmcu_ci_asan_img} bash -c 'nm $(which qemu-system-arm) | grep -q __asan'").run()?;
             println!("✓ ci-asan smoke test passed");
         }
         Commands::CleanSim => {

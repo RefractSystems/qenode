@@ -49,21 +49,19 @@ async fn test_tcg_tracer_loads_and_streams() -> Result<()> {
     // Wait for at least one valid instruction trace
     let start = tokio::time::Instant::now();
     while start.elapsed() < Duration::from_secs(3) {
-        if let Ok(msg) =
+        if let Ok(Ok(msg)) =
             tokio::time::timeout(Duration::from_millis(100), subscriber.recv_async()).await
         {
-            if let Ok(msg) = msg {
-                let payload = msg.payload().to_bytes();
-                let event = root_as_insn_trace(&payload).expect("Invalid FB");
-                if event.pc() != 0 && event.disassembly().map_or(false, |s| !s.is_empty()) {
-                    got_insn = true;
-                    tracing::info!(
-                        "Received trace event: PC=0x{:X}, Disas={}",
-                        event.pc(),
-                        event.disassembly().unwrap()
-                    );
-                    break;
-                }
+            let payload = msg.payload().to_bytes();
+            let event = root_as_insn_trace(&payload).expect("Invalid FB");
+            if event.pc() != 0 && event.disassembly().is_some_and(|s| !s.is_empty()) {
+                got_insn = true;
+                tracing::info!(
+                    "Received trace event: PC=0x{:X}, Disas={}",
+                    event.pc(),
+                    event.disassembly().unwrap()
+                );
+                break;
             }
         }
     }

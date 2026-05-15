@@ -18,8 +18,8 @@ peripherals:
     properties:
       size: '0x1000'
 
-  - name: dummy
-    type: rust-dummy
+  - name: reference_peripheral
+    type: reference-peripheral
     address: '0x09005000'
     properties:
       size: '0x1000'

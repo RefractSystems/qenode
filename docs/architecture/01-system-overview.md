@@ -117,7 +117,7 @@ full mapping):
 |---|---|---|
 | **World** | The static YAML manifest that declares all nodes, peripherals, links, seeds, and topology. Lives on disk. | HLA Federation Object Model (Federation Object Model) / FMI FMU description XML |
 | **Federation** | A *running instance* of a World — the live processes executing the simulation. Identified at runtime by `--federation-id`. | HLA Federation (IEEE 1516) |
-| **Stage** | Future OpenUSD path: the `UsdStage` that backs a World manifest once VirtMCU is fully USD-native (ADR-010 roadmap item). | OpenUSD `UsdStage` |
+| **Stage** | Future OpenUSD path: the `UsdStage` that backs a World manifest once VirtMCU is fully USD-native (RFC-0010 roadmap item). | OpenUSD `UsdStage` |
 
 The distinction matters in practice:
 

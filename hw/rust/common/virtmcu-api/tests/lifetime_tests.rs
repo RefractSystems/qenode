@@ -44,7 +44,7 @@ mod tests {
                 final_buf[0..8].copy_from_slice(&vtime.to_le_bytes());
                 final_buf[8..16].copy_from_slice(&seq.to_le_bytes());
                 final_buf[16..].copy_from_slice(mock_buf);
-                self.publish(topic, &final_buf).map_err(|e| TransportError::Other(e))
+                self.publish(topic, &final_buf).map_err(TransportError::Other)
             }))
         }
 

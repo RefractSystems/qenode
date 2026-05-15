@@ -51,7 +51,7 @@ fn parse_protocol(p: u8) -> Protocol {
         5 => Protocol::Lin,
         6 => Protocol::Rf802154,
         7 => Protocol::RfHci,
-        9 => Protocol::Dummy,
+        9 => Protocol::ReferenceLink,
         _ => Protocol::Ethernet,
     }
 }
@@ -67,7 +67,7 @@ fn serialize_protocol(p: &Protocol) -> u8 {
         Protocol::Rf802154 => 6,
         Protocol::RfHci => 7,
         Protocol::Control => 8,
-        Protocol::Dummy => 9,
+        Protocol::ReferenceLink => 9,
     }
 }
 
@@ -382,7 +382,7 @@ async fn run_deterministic_coordinator(
                                     else if topic.contains("spi") { Protocol::Spi }
                                     else if topic.contains("rf/hci") { Protocol::RfHci }
                                     else if topic.contains("rf") { Protocol::Rf802154 }
-                                    else if topic.contains("chardev") { Protocol::Dummy }
+                                    else if topic.contains("chardev") { Protocol::ReferenceLink }
                                     else { Protocol::Ethernet };
                         let base = parts[..parts.len() - 2].join("/");
 
@@ -668,9 +668,11 @@ async fn deliver_message(
                 Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
                     &target_node.to_string(),
                 ),
-                Protocol::Dummy => deterministic_coordinator::topics::templates::chardev_rx(
-                    &target_node.to_string(),
-                ),
+                Protocol::ReferenceLink => {
+                    deterministic_coordinator::topics::templates::chardev_rx(
+                        &target_node.to_string(),
+                    )
+                }
                 _ => format!("sim/unknown/{}/rx", target_node),
             }
         };

@@ -1,4 +1,49 @@
+use alloc::string::String;
 use core::ffi::{c_char, c_int, c_void};
+
+/// A safe wrapper for QOM string properties, encapsulating raw UTF-8 C strings.
+#[repr(transparent)]
+pub struct QomString(pub *mut c_char);
+
+impl Default for QomString {
+    fn default() -> Self {
+        Self(core::ptr::null_mut())
+    }
+}
+
+impl From<&'static core::ffi::CStr> for QomString {
+    fn from(s: &'static core::ffi::CStr) -> Self {
+        Self(s.as_ptr().cast_mut())
+    }
+}
+
+impl QomString {
+    /// Safely converts the QOM string to a Rust String.
+    /// Returns an empty string if the underlying pointer is null.
+    pub fn as_string(&self) -> String {
+        if self.0.is_null() {
+            String::new()
+        } else {
+            let mut len = 0;
+            while unsafe { *self.0.add(len) } != 0 {
+                len += 1;
+            }
+            let slice = unsafe { core::slice::from_raw_parts(self.0.cast::<u8>(), len) };
+            // Enforce crash-only design on invalid UTF encoding (Fail Loudly mandate)
+            alloc::string::String::from_utf8(slice.to_vec())
+                .expect("QOM property string contains invalid UTF encoding")
+        }
+    }
+
+    /// Checks if the underlying string is null.
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+}
+
+// SAFETY: QomString wraps a property pointer initialized by QEMU.
+unsafe impl Send for QomString {}
+unsafe impl Sync for QomString {}
 
 /// A constant
 pub const LOG_UNIMP: i32 = 0x400;

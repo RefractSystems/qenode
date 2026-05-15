@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "hw/rust/common/rust-dummy",
+    "hw/rust/common/reference-peripheral",
     "hw/rust/observability/tcg-tracer",
     "hw/rust/backbone/transport-zenoh",
     "hw/rust/backbone/transport-unix",
@@ -34,6 +34,7 @@ members = [
     "tools/virtmcu-coverage",
     "tools/virtmcu-observability",
     "tools/benchmarks/clock_rtt_bench",
+    "tests/native_integration",
      "hw/rust/common/virtmcu-qom-macros",
 ]
 exclude = [

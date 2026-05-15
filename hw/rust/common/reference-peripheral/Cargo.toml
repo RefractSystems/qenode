@@ -1,5 +1,5 @@
 [package]
-name = "rust_dummy"
+name = "reference_peripheral"
 publish = false
 version.workspace = true
 edition.workspace = true

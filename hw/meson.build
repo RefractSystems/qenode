@@ -15,7 +15,11 @@ hw_virtmcu_modules = {}
 hw_virtmcu_inc = include_directories('.', 'misc')
 
 rust_modules = [
-    {'pkg': 'rust-dummy', 'lib': 'librust_dummy.a', 'obj': 'rust-dummy'},
+    {
+        'pkg': 'reference-peripheral',
+        'lib': 'libreference_peripheral.a',
+        'obj': 'reference-peripheral',
+    },
     {
         'pkg': 'clock',
         'lib': 'libclock.a',
@@ -100,6 +104,29 @@ message(
     'Configuring Rust virtmcu modules with QEMU_SRC_DIR=' + meson.project_source_root(),
 )
 
+xtask_bin_res = run_command('sh', '-c', 'echo $XTASK_BIN', check: false)
+xtask_bin = xtask_bin_res.stdout().strip()
+if xtask_bin != ''
+    xtask_cmd = [xtask_bin]
+else
+    virtmcu_workspace = run_command(
+        'sh',
+        '-c',
+        'echo $VIRTMCU_WORKSPACE',
+        check: false,
+    ).stdout().strip()
+    if virtmcu_workspace == ''
+        virtmcu_workspace = meson.current_source_dir() / '..'
+    endif
+    xtask_cmd = [
+        'cargo',
+        'run',
+        '--manifest-path',
+        virtmcu_workspace / 'xtask/Cargo.toml',
+        '--',
+    ]
+endif
+
 rust_libs_env = {
     'QEMU_SRC_DIR': meson.project_source_root(),
     'QEMU_BUILD_DIR': meson.project_build_root(),
@@ -122,8 +149,8 @@ rust_libs = custom_target(
     output: rust_libs_outputs,
     build_by_default: true,
     env: rust_libs_env,
-    command: [
-        meson.current_source_dir() / 'rust/build.sh',
+    command: xtask_cmd + [
+        'build-rust-modules',
         meson.current_source_dir() / 'rust',
         meson.current_build_dir() / 'target',
         meson.current_build_dir(),
@@ -141,14 +168,28 @@ foreach m : rust_modules
         m['pkg'] + '_trigger_c',
         output: m['pkg'] + '_trigger.c',
         depends: rust_libs,
-        command: [
-            meson.current_source_dir() / 'gen_trigger.sh',
-            '@OUTPUT@',
-            m.get('obj', ''),
-            m.get('extra_inc', ''),
-            m.get('extra_c', ''),
-            m.get('objs', []),
-        ],
+        command: xtask_cmd + ['gen-module-trigger', '@OUTPUT@'] + (m.get(
+            'obj',
+            '',
+        ) != '' ? [
+            '--obj',
+            m.get('obj'),
+        ] : []) + (m.get(
+            'extra_inc',
+            '',
+        ) != '' ? [
+            '--extra-inc',
+            m.get('extra_inc'),
+        ] : []) + (m.get(
+            'extra_c',
+            '',
+        ) != '' ? [
+            '--extra-c',
+            m.get('extra_c'),
+        ] : []) + m.get(
+            'objs',
+            [],
+        ),
     )
 
     ss_name = ss.source_set()

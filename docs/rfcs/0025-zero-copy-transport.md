@@ -47,7 +47,7 @@ impl<'a> TransportReservation<'a> {
 }
 ```
 
-### Flow Example in a Peripheral (e.g., `dummy`)
+### Flow Example in a Peripheral (e.g., `reference-peripheral`)
 
 ```rust
 // Old Pattern (1 memory allocation, 1 memory copy):
@@ -74,18 +74,7 @@ Instead, VirtMCU will adopt the **API design** of this RFC, but back it with the
 
 This hybrid approach eliminates memory allocations in the peripheral while leveraging the OS kernel for robust IPC lifecycle management (Fail Loudly on socket closure).
 
-## Execution Plan (RFC-0025 Implementation)
 
-This RFC will be executed as part of `PLAN.md` Phase 3 (Native IPC Hybrid Architecture).
-
-1. **Phase 1: API Definition**
-   * Introduce `TransportReservation` and update `virtmcu_api::DataTransport`.
-2. **Phase 2: Zenoh Implementation (Adapter)**
-   * Update `ZenohDataTransport` to implement `reserve()`. In this mode, `reserve` will allocate a `Vec` and `commit` will send it down the crossbeam channel, mimicking the old behavior under the new API to maintain multi-node support.
-3. **Phase 3: UDS/Arena Implementation**
-   * Build the `UdsDataTransport` using thread-local arenas. `commit()` issues the `write()` syscall to the `DeterministicCoordinator`.
-4. **Phase 4: Peripheral Refactoring**
-   * Refactor all auto-generated `#[qom_device]` peripherals to use `reservation.commit()` instead of `encode_frame()`.
 
 ## Consequences
 * **Positive:** Complete elimination of `encode_frame` boilerplate inside peripheral business logic.

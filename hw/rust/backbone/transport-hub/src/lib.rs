@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )

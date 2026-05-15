@@ -11,17 +11,14 @@
 use zenoh::Wait;
 extern crate alloc;
 
-use alloc::collections::{BinaryHeap, VecDeque};
+use alloc::collections::VecDeque;
 use alloc::ffi::CString;
 use alloc::sync::Arc;
-use core::cmp::Ordering;
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::ptr;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use core::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use std::sync::{Condvar, Mutex};
-use virtmcu_qom::sync::{Bql, BqlGuarded};
+use virtmcu_qom::cosim::{CoSimBridge, CoSimContext, CoSimTransport};
 
 use virtmcu_qom::chardev::{Chardev, ChardevClass};
 use virtmcu_qom::declare_device_type;
@@ -38,34 +35,18 @@ const FLUSH_THRESHOLD: usize = 4096;
 const FLUSH_INTERVAL_MS: u64 = 20;
 const DEFAULT_BAUD_DELAY_NS: u64 = 86800;
 const SERIAL_BITS_PER_CHAR: u64 = 10;
-const RX_DRAIN_LIMIT: usize = 1000;
-const ACCEPT_INPUT_DRAIN_LIMIT: usize = 10;
 const RECV_TIMEOUT_MS: u64 = 10;
-const DRAIN_TIMEOUT_SECS: u64 = 30;
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OrderedPacket {
     pub vtime: u64,
     pub sequence: u64,
     pub data: Vec<u8>,
 }
 
-impl PartialEq for OrderedPacket {
-    fn eq(&self, other: &Self) -> bool {
-        self.vtime == other.vtime && self.sequence == other.sequence
-    }
-}
-impl Eq for OrderedPacket {}
-impl PartialOrd for OrderedPacket {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for OrderedPacket {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match other.vtime.cmp(&self.vtime) {
-            Ordering::Equal => other.sequence.cmp(&self.sequence),
-            ord => ord,
-        }
+impl virtmcu_qom::sync::DeliveryPacket for OrderedPacket {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
     }
 }
 
@@ -121,41 +102,26 @@ pub struct TxPacket {
 }
 
 pub struct VirtmcuChardevState {
-    pub shared: Arc<SharedState>,
+    pub bridge: CoSimBridge<ChardevTransport>,
+    pub tx_sender: Sender<TxPacket>,
     pub chr: *mut Chardev,
     pub rx_timer: *mut QemuTimer,
     pub rx_baud_timer: *mut QemuTimer,
     pub kick_timer: *mut QemuTimer,
     pub timer_ptr: Arc<AtomicUsize>,
-    pub rx_receiver: Receiver<OrderedPacket>,
-    // All state accessed exclusively under BQL; see BqlGuarded docs.
-    pub local_heap: BqlGuarded<BinaryHeap<OrderedPacket>>,
-    pub backlog: BqlGuarded<VecDeque<u8>>,
-    pub tx_fifo: BqlGuarded<VecDeque<u8>>,
+    pub receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedPacket>>,
+    // All state accessed securely; see Mutex docs.
+    pub backlog: virtmcu_qom::sync::Mutex<VecDeque<u8>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
+    pub tx_fifo: Arc<virtmcu_qom::sync::Mutex<VecDeque<u8>>>, // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
     pub tx_timer: *mut QemuTimer,
-    pub baud_delay_ns: BqlGuarded<u64>,
+    pub tx_timer_ptr: Arc<AtomicUsize>,
+    pub baud_delay_ns: Arc<AtomicU64>,
     pub earliest_vtime: Arc<AtomicU64>,
-    pub tx_thread: Option<std::thread::JoinHandle<()>>,
     pub tx_sequence: AtomicU64,
     pub max_backlog: u64,
     pub backlog_size_atomic: Arc<AtomicU64>,
     pub dropped_frames_atomic: Arc<AtomicU64>,
     pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
-}
-
-pub struct InnerState {
-    pub running: bool,
-    pub active_vcpu_count: usize,
-}
-
-pub struct SharedState {
-    pub transport: Box<dyn virtmcu_api::DataTransport>,
-    pub topic: String,
-    pub node: String,
-    pub subscription: Mutex<Option<virtmcu_qom::sync::SafeSubscription>>, // virtmcu-allow: mutex reasoning="shared with QEMU callbacks // virtmcu-allow: bql reasoning="Safe Zenoh integration""
-    pub tx_sender: Sender<TxPacket>,
-    pub drain_cond: Condvar,
-    pub state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="shared for lifecycle"
 }
 
 extern "C" {
@@ -171,14 +137,49 @@ extern "C" {
     pub fn qemu_chr_be_can_write(s: *mut Chardev) -> c_int;
 }
 
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
+fn decode_chardev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<OrderedPacket> {
+    use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
+    if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+        return None;
+    }
+    let header =
+        ZenohFrameHeader::unpack(data[..virtmcu_api::ZENOH_FRAME_HEADER_SIZE].try_into().ok()?)?;
+    let p = &data[virtmcu_api::ZENOH_FRAME_HEADER_SIZE..];
+    let actual_len = core::cmp::min(header.size() as usize, p.len());
+    let payload = p[..actual_len].to_vec();
+
+    Some(OrderedPacket {
+        vtime: header.delivery_vtime_ns(),
+        sequence: header.sequence_number(),
+        data: payload,
+    })
+}
+
+fn deliver_chardev(opaque: *mut c_void, packet: OrderedPacket) {
+    let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) };
+    let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
+
+    if state.backlog_size_atomic.load(AtomicOrdering::SeqCst) + packet.data.len() as u64
+        > state.max_backlog
+    {
+        state.dropped_frames_atomic.fetch_add(1, AtomicOrdering::SeqCst);
+        return;
+    }
+
+    let was_empty = backlog.is_empty();
+    let payload_len = packet.data.len() as u64;
+    backlog.extend(&packet.data);
+    state.backlog_size_atomic.fetch_add(payload_len, AtomicOrdering::SeqCst);
+
+    if was_empty && !backlog.is_empty() {
+        unsafe {
+            let now = virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            virtmcu_timer_mod(state.rx_baud_timer, now);
         }
+    }
+
+    unsafe {
+        virtmcu_timer_mod(state.rx_timer, 0);
     }
 }
 
@@ -194,36 +195,10 @@ pub unsafe extern "C" fn virtmcu_chr_write(chr: *mut Chardev, buf: *const u8, le
     // SAFETY: rust_state is non-null and owned by the Chardev instance.
     let state = unsafe { &*s.rust_state };
 
-    {
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !lock.running {
-            return 0;
-        }
-        lock.active_vcpu_count += 1;
-    }
-    let _guard = VcpuCountGuard(&state.shared);
-
     // SAFETY: buf is a valid pointer provided by QEMU with length len.
     let data = unsafe { core::slice::from_raw_parts(buf, len as usize) };
 
-    let mut fifo = state.tx_fifo.get_mut();
-    let was_empty = fifo.is_empty();
-    if fifo.len() + data.len() <= MAX_FIFO_SIZE {
-        fifo.extend(data.iter().copied());
-    } else {
-        // Drop data if FIFO is full to prevent unbounded memory growth.
-        virtmcu_qom::sim_info!("TX FIFO overflow, dropping {} bytes", data.len());
-    }
-
-    if was_empty && !data.is_empty() {
-        // SAFETY: Safe to query clock under BQL
-        let now = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-        let delay = *state.baud_delay_ns.get();
-        // SAFETY: Valid timer
-        unsafe {
-            virtmcu_qom::timer::virtmcu_timer_mod(state.tx_timer, now + delay as i64);
-        }
-    }
+    state.bridge.send_and_wait(data.to_vec(), 0);
     len
 }
 
@@ -309,16 +284,13 @@ extern "C" fn virtmcu_chr_tx_timer_cb(opaque: *mut core::ffi::c_void) {
     // SAFETY: Valid pointer
     let state = unsafe { &*rust_state };
 
-    let mut fifo = state.tx_fifo.get_mut();
+    let mut fifo = state.tx_fifo.lock(); // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
     if let Some(byte) = fifo.pop_front() {
         // SAFETY: Safe to query clock under BQL
         let vtime = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
         let sequence = state.tx_sequence.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-        match state.shared.tx_sender.try_send(TxPacket {
-            vtime: vtime as u64,
-            sequence,
-            data: vec![byte],
-        }) {
+        match state.tx_sender.try_send(TxPacket { vtime: vtime as u64, sequence, data: vec![byte] })
+        {
             Ok(_) | Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
                 virtmcu_qom::sim_info!("TX channel full, dropping packet");
@@ -329,7 +301,7 @@ extern "C" fn virtmcu_chr_tx_timer_cb(opaque: *mut core::ffi::c_void) {
     if !fifo.is_empty() {
         // SAFETY: Safe to query clock under BQL
         let now = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-        let delay = *state.baud_delay_ns.get();
+        let delay = state.baud_delay_ns.load(AtomicOrdering::Relaxed);
         // SAFETY: Valid timer
         unsafe {
             virtmcu_qom::timer::virtmcu_timer_mod(state.tx_timer, now + delay as i64);
@@ -368,7 +340,7 @@ pub unsafe extern "C" fn virtmcu_chr_ioctl(
             let ssp = unsafe { &*(arg as *mut QEMUSerialSetParams) };
             if ssp.speed > 0 {
                 let delay = (1_000_000_000_u64 / (ssp.speed as u64)) * SERIAL_BITS_PER_CHAR;
-                *state.baud_delay_ns.get_mut() = delay;
+                state.baud_delay_ns.store(delay, AtomicOrdering::Relaxed);
                 virtmcu_qom::sim_info!("{} bps (delay: {} ns)", ssp.speed, delay);
             }
         }
@@ -409,13 +381,14 @@ unsafe fn init_chardev_timers(state: &mut VirtmcuChardevState, s: *mut ChardevVi
         )
     };
     state.timer_ptr.store(state.kick_timer as usize, core::sync::atomic::Ordering::Release);
+    state.tx_timer_ptr.store(state.tx_timer as usize, core::sync::atomic::Ordering::Release);
 }
 
 extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
     // SAFETY: Provided by QEMU
     let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) };
 
-    let mut backlog = state.backlog.get_mut();
+    let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
     if backlog.is_empty() {
         return;
     }
@@ -425,6 +398,7 @@ extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
     if can_write > 0 {
         if let Some(byte) = backlog.pop_front() {
             let data = [byte];
+            state.backlog_size_atomic.fetch_sub(1, AtomicOrdering::SeqCst);
             // SAFETY: qemu_chr_be_write expects valid buffer and length.
             unsafe {
                 qemu_chr_be_write(state.chr, data.as_ptr(), 1);
@@ -435,7 +409,7 @@ extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
     if !backlog.is_empty() && can_write > 0 {
         // SAFETY: Safe to query clock under BQL
         let now = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-        let delay = *state.baud_delay_ns.get();
+        let delay = state.baud_delay_ns.load(AtomicOrdering::Relaxed);
         // SAFETY: Valid timer
         unsafe {
             virtmcu_qom::timer::virtmcu_timer_mod(state.rx_baud_timer, now + delay as i64);
@@ -443,102 +417,20 @@ extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
     }
 }
 
-fn drain_backlog(state: &mut VirtmcuChardevState) -> bool {
-    // SAFETY: Safe to query clock under BQL
-    let now = unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-
-    // 1. Next, process ONE packet from the heap that is ready (vtime <= now)
-    let mut heap = state.local_heap.get_mut();
-    // Move any pending packets from receiver to heap first
-    while let Ok(mut packet) = state.rx_receiver.try_recv() {
-        if packet.vtime == 0 {
-            packet.vtime = now;
-        }
-        heap.push(packet);
-    }
-
-    if let Some(packet) = heap.peek() {
-        if packet.vtime <= now {
-            if let Some(p) = heap.pop() {
-                state.backlog_size_atomic.fetch_sub(p.data.len() as u64, AtomicOrdering::SeqCst);
-                let mut backlog = state.backlog.get_mut();
-                let was_empty = backlog.is_empty();
-                backlog.extend(&p.data);
-
-                if was_empty && !backlog.is_empty() {
-                    // SAFETY: Safe to query clock under BQL.
-                    let now_ns =
-                        unsafe { virtmcu_qom::timer::qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-                    let delay = *state.baud_delay_ns.get();
-                    // SAFETY: Valid timer
-                    unsafe {
-                        virtmcu_qom::timer::virtmcu_timer_mod(
-                            state.rx_baud_timer,
-                            now_ns + delay as i64,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // Return true if there's STILL more ready work to do, false if we're done for now.
-    heap.peek().is_some_and(|p| p.vtime <= now)
+fn drain_backlog(_state: &mut VirtmcuChardevState) -> bool {
+    false
 }
 
 extern "C" fn virtmcu_chr_rx_timer_cb(opaque: *mut c_void) {
     // SAFETY: opaque is a valid pointer to VirtmcuChardevState.
     let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) };
-
-    // Try to drain everything ready. Process in a loop but with a safety limit
-    // to avoid hogging the BQL for too long in a single timer callback.
-    let mut count = 0;
-    let mut more_work = true;
-    while count < RX_DRAIN_LIMIT && more_work {
-        more_work = drain_backlog(state);
-        count += 1;
-    }
-
-    // Schedule next wakeup
-    let mut next_vtime = u64::MAX;
-
-    if more_work {
-        // If we still have more ready work (reached limit), we must wait a tiny bit of virtual time
-        // to allow guest to process data and avoid hogging the BQL forever.
-        // SAFETY: Accessing QEMU clock is safe within BQL context.
-        let now = unsafe {
-            virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
-        } as u64;
-        next_vtime = now + 100_000; // 100us virtual time
-    } else {
-        // No more work ready NOW, check if there are future packets in the heap
-        let heap = state.local_heap.get();
-        // SAFETY: Accessing QEMU clock is safe within BQL context.
-        let _now = unsafe {
-            virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
-        } as u64;
-        if let Some(packet) = heap.peek() {
-            next_vtime = packet.vtime;
-        }
-    }
-
-    if next_vtime == u64::MAX {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    } else {
-        state.earliest_vtime.store(next_vtime, AtomicOrdering::Release);
-        // SAFETY: rx_timer is a valid QemuTimer pointer.
-        unsafe {
-            virtmcu_timer_mod(state.rx_timer, next_vtime as i64);
-        }
-    }
+    drain_backlog(state);
 }
 
 extern "C" fn virtmcu_chr_kick_timer_cb(opaque: *mut c_void) {
     virtmcu_chr_rx_timer_cb(opaque);
 }
 
-/// # Safety
-/// This function is called by QEMU when the backend can accept more data.
 #[no_mangle]
 pub unsafe extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     // SAFETY: chr is a valid pointer to ChardevVirtmcu.
@@ -549,42 +441,13 @@ pub unsafe extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     // SAFETY: rust_state is non-null and owned by the Chardev instance.
     let state = unsafe { &mut *s.rust_state };
 
-    // Guest is ready for more data. Try to drain ready work.
-    let mut count = 0;
-    let mut more_work = true;
-    while count < ACCEPT_INPUT_DRAIN_LIMIT && more_work {
-        more_work = drain_backlog(state);
-        count += 1;
-    }
-
-    if !state.backlog.get().is_empty() {
+    if !state.backlog.lock().is_empty() {
+        // virtmcu-allow: mutex reasoning="Backlog managed securely"
         // Resume pushing bytes into the guest
         unsafe {
             let now = virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL);
             virtmcu_qom::timer::virtmcu_timer_mod(state.rx_baud_timer, now);
         };
-    }
-
-    // Schedule next wakeup if we have future work or more ready work (reached limit)
-    let mut next_vtime = u64::MAX;
-    if more_work {
-        let now = unsafe {
-            virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
-        } as u64;
-        next_vtime = now + 1_000_000; // 1ms virtual time
-    } else {
-        let heap = state.local_heap.get();
-        if let Some(packet) = heap.peek() {
-            next_vtime = packet.vtime;
-        }
-    }
-
-    if next_vtime == u64::MAX {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    } else {
-        state.earliest_vtime.store(next_vtime, AtomicOrdering::Release);
-        // SAFETY: rx_timer is a valid QemuTimer pointer.
-        unsafe { virtmcu_timer_mod(state.rx_timer, next_vtime as i64) };
     }
 }
 
@@ -598,67 +461,6 @@ fn send_packet(transport: &dyn virtmcu_api::DataTransport, topic: &str, packet: 
     if let Err(e) = transport.publish(topic, &payload) {
         virtmcu_qom::sim_err!("{}", e);
     }
-}
-
-fn start_tx_thread(
-    shared: Arc<SharedState>,
-    rx_out: Receiver<TxPacket>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut buffer = Vec::with_capacity(SEND_BUF_CAPACITY);
-        let mut first_vtime = 0;
-        let mut first_seq = 0;
-        let mut last_send = std::time::Instant::now();
-
-        loop {
-            {
-                let lock = shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if !lock.running && rx_out.is_empty() {
-                    break;
-                }
-            }
-            match rx_out.recv_timeout(core::time::Duration::from_millis(RECV_TIMEOUT_MS)) {
-                Ok(packet) => {
-                    if buffer.is_empty() {
-                        first_vtime = packet.vtime;
-                        first_seq = packet.sequence;
-                    }
-                    buffer.extend_from_slice(&packet.data);
-                    if buffer.len() >= FLUSH_THRESHOLD
-                        || last_send.elapsed().as_millis() >= FLUSH_INTERVAL_MS as u128
-                    {
-                        send_packet(
-                            &*shared.transport,
-                            &shared.topic,
-                            TxPacket {
-                                vtime: first_vtime,
-                                sequence: first_seq,
-                                data: buffer.clone(),
-                            },
-                        );
-                        buffer.clear();
-                        last_send = std::time::Instant::now();
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    if !buffer.is_empty() {
-                        send_packet(
-                            &*shared.transport,
-                            &shared.topic,
-                            TxPacket {
-                                vtime: first_vtime,
-                                sequence: first_seq,
-                                data: buffer.clone(),
-                            },
-                        );
-                        buffer.clear();
-                        last_send = std::time::Instant::now();
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-    })
 }
 
 unsafe fn add_chardev_properties(chr: *mut Chardev, state: &VirtmcuChardevState) {
@@ -724,15 +526,15 @@ fn create_chardev_transport(
     node: &str,
     router_ptr: *const c_char,
     errp: *mut *mut c_void,
-) -> Option<Box<dyn virtmcu_api::DataTransport>> {
+) -> Option<Arc<dyn virtmcu_api::DataTransport>> {
     if transport_name == "unix" {
         let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{}.sock", { node }) // virtmcu-allow: absolute_path reasoning="Legacy script"
+            format!("/tmp/virtmcu-coord-{node}.sock") // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
             unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
         };
-        match transport_unix::UnixDataTransport::new(&path) {
-            Ok(t) => Some(Box::new(t)),
+        match transport_unix::UdsDataTransport::new(&path) {
+            Ok(t) => Some(Arc::new(t) as Arc<dyn virtmcu_api::DataTransport>),
             Err(e) => {
                 let msg = format!("chardev: virtmcu: failed to open unix socket {path}: {e}");
                 if let Ok(c_msg) = CString::new(msg) {
@@ -744,7 +546,8 @@ fn create_chardev_transport(
     } else {
         // Default to Zenoh
         match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
-            Ok(session) => Some(Box::new(transport_zenoh::ZenohDataTransport::new(session))),
+            Ok(session) => Some(Arc::new(transport_zenoh::ZenohDataTransport::new(session))
+                as Arc<dyn virtmcu_api::DataTransport>),
             Err(e) => {
                 let msg = format!("chardev: virtmcu: failed to open zenoh session: {e}");
                 if let Ok(c_msg) = CString::new(msg) {
@@ -754,61 +557,6 @@ fn create_chardev_transport(
             }
         }
     }
-}
-
-fn create_chardev_sub_callback(
-    timer_ptr_clone: Arc<AtomicUsize>,
-    backlog_size_clone: Arc<AtomicU64>,
-    dropped_frames_clone: Arc<AtomicU64>,
-    max_backlog: u64,
-    tx: Sender<OrderedPacket>,
-) -> virtmcu_api::DataCallback {
-    Box::new(move |_topic: &str, data: &[u8]| {
-        use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
-        let tp = timer_ptr_clone.load(AtomicOrdering::Acquire);
-        if tp == 0 {
-            return;
-        }
-        let kick_timer = tp as *mut QemuTimer;
-
-        if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-            return;
-        }
-
-        let header =
-            match ZenohFrameHeader::unpack_slice(&data[..virtmcu_api::ZENOH_FRAME_HEADER_SIZE]) {
-                Some(h) => h,
-                None => return,
-            };
-
-        let p = &data[virtmcu_api::ZENOH_FRAME_HEADER_SIZE..];
-        let actual_len = core::cmp::min(header.size() as usize, p.len());
-        let payload = p[..actual_len].to_vec();
-
-        // Backlog Admission Control (bytes)
-        if backlog_size_clone.load(AtomicOrdering::SeqCst) + payload.len() as u64 > max_backlog {
-            dropped_frames_clone.fetch_add(1, AtomicOrdering::SeqCst);
-            return;
-        }
-
-        let payload_len = payload.len() as u64;
-        if tx
-            .try_send(OrderedPacket {
-                vtime: header.delivery_vtime_ns(),
-                sequence: header.sequence_number(),
-                data: payload,
-            })
-            .is_ok()
-        {
-            backlog_size_clone.fetch_add(payload_len, AtomicOrdering::SeqCst);
-            // SAFETY: kick_timer is a valid QemuTimer pointer.
-            unsafe {
-                virtmcu_timer_mod(kick_timer, 0);
-            }
-        } else {
-            dropped_frames_clone.fetch_add(1, AtomicOrdering::SeqCst);
-        }
-    })
 }
 
 /// # Safety
@@ -838,30 +586,30 @@ pub unsafe extern "C" fn virtmcu_chr_open(
     let rx_topic = format!("{base_topic}/{node}/rx");
     let tx_topic = format!("{base_topic}/{node}/tx");
 
-    let (tx, rx) = bounded(1024);
     let timer_ptr = Arc::new(AtomicUsize::new(0));
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
 
     let (tx_out, rx_out): (Sender<TxPacket>, Receiver<TxPacket>) = bounded(1024);
     let backlog_size_atomic = Arc::new(AtomicU64::new(0));
     let dropped_frames_atomic = Arc::new(AtomicU64::new(0));
+    let tx_fifo = Arc::new(virtmcu_qom::sync::Mutex::new(VecDeque::new()));
+    let baud_delay_ns_arc = Arc::new(AtomicU64::new(baud_delay_ns));
+    let tx_timer_ptr = Arc::new(AtomicUsize::new(0));
 
-    let shared = Arc::new(SharedState {
-        transport,
+    let transport_impl = ChardevTransport {
+        transport: Arc::clone(&transport),
         topic: tx_topic,
-        node,
-        subscription: Mutex::new(None),
-        tx_sender: tx_out,
-        drain_cond: Condvar::new(),
-        state: Mutex::new(InnerState { running: true, active_vcpu_count: 0 }),
-    });
-
-    let tx_thread = start_tx_thread(Arc::clone(&shared), rx_out);
+        rx_out,
+        tx_fifo: Arc::clone(&tx_fifo),
+        baud_delay_ns: Arc::clone(&baud_delay_ns_arc),
+        tx_timer_ptr: Arc::clone(&tx_timer_ptr),
+    };
+    let bridge = CoSimBridge::new(transport_impl);
 
     let liveliness = if transport_name == "zenoh" {
         match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
             Ok(session) => {
-                let hb_topic = format!("sim/chardev/liveliness/{}", shared.node);
+                let hb_topic = format!("sim/chardev/liveliness/{node}");
                 session.liveliness().declare_token(hb_topic).wait().ok()
             }
             Err(_) => None,
@@ -871,20 +619,20 @@ pub unsafe extern "C" fn virtmcu_chr_open(
     };
     let mut state = Box::new(VirtmcuChardevState {
         _liveliness: liveliness,
-        shared: Arc::clone(&shared),
+        bridge,
+        tx_sender: tx_out,
         chr,
         rx_timer: ptr::null_mut(),
         rx_baud_timer: ptr::null_mut(),
         kick_timer: ptr::null_mut(),
         timer_ptr: Arc::clone(&timer_ptr),
-        rx_receiver: rx,
-        local_heap: BqlGuarded::new(BinaryHeap::new()),
-        backlog: BqlGuarded::new(VecDeque::new()),
-        tx_fifo: BqlGuarded::new(VecDeque::new()),
+        receiver: None,
+        backlog: virtmcu_qom::sync::Mutex::new(VecDeque::new()), // virtmcu-allow: mutex reasoning="Backlog managed securely"
+        tx_fifo,
         tx_timer: ptr::null_mut(),
-        baud_delay_ns: BqlGuarded::new(baud_delay_ns),
+        tx_timer_ptr,
+        baud_delay_ns: baud_delay_ns_arc,
         earliest_vtime: Arc::clone(&earliest_vtime),
-        tx_thread: Some(tx_thread),
         tx_sequence: AtomicU64::new(0),
         max_backlog,
         backlog_size_atomic: Arc::clone(&backlog_size_atomic),
@@ -895,34 +643,19 @@ pub unsafe extern "C" fn virtmcu_chr_open(
     // SAFETY: chr is a valid pointer to a Chardev instance.
     unsafe { add_chardev_properties(chr, &state) };
 
-    let timer_ptr_clone = Arc::clone(&timer_ptr);
-    let backlog_size_clone = Arc::clone(&backlog_size_atomic);
-    let dropped_frames_clone = Arc::clone(&dropped_frames_atomic);
-
-    let sub_callback = create_chardev_sub_callback(
-        timer_ptr_clone,
-        backlog_size_clone,
-        dropped_frames_clone,
-        max_backlog,
-        tx,
-    );
-
     let generation = Arc::new(AtomicU64::new(0)); // chardev doesn't use generations yet
-    #[rustfmt::skip]
-    let sub = virtmcu_qom::sync::SafeSubscription::new( // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-        &*shared.transport,
+    let state_ptr = core::ptr::from_mut::<VirtmcuChardevState>(&mut *state);
+
+    match virtmcu_qom::sync::DeterministicReceiver::new(
+        &*transport,
         &rx_topic,
         generation,
-        sub_callback,
-    );
-
-    match sub {
-        Ok(subscription) => {
-            {
-                let mut lock =
-                    shared.subscription.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                *lock = Some(subscription);
-            }
+        state_ptr as *mut c_void,
+        decode_chardev,
+        deliver_chardev,
+    ) {
+        Ok(receiver) => {
+            state.receiver = Some(receiver);
             // SAFETY: Safe to initialize timers
             unsafe { init_chardev_timers(&mut state, s) };
 
@@ -951,22 +684,12 @@ pub unsafe extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
         // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
         unsafe {
             let mut state = Box::from_raw(s.rust_state);
-            {
-                let mut lock =
-                    state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.running = false;
-            }
-            state.timer_ptr.store(0, AtomicOrdering::Release);
 
-            // Dropping the SafeSubscription automatically undeclares and waits // virtmcu-allow: bql reasoning="docs"
-            {
-                let mut lock = state
-                    .shared
-                    .subscription
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.take();
-            }
+            state.timer_ptr.store(0, AtomicOrdering::Release);
+            state.tx_timer_ptr.store(0, AtomicOrdering::Release);
+
+            // Take the DeterministicReceiver to automatically undeclare and wait
+            state.receiver.take();
 
             if !state.rx_timer.is_null() {
                 virtmcu_timer_del(state.rx_timer);
@@ -985,33 +708,8 @@ pub unsafe extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
                 virtmcu_timer_free(state.rx_baud_timer);
             }
 
-            // Wait for all vCPU threads to drain (bounded: avoids permanent deadlock)
-            let mut lock =
-                state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            while lock.active_vcpu_count > 0 {
-                let bql_unlock = Bql::temporary_unlock();
-                let (new_lock, timed_out) = state
-                    .shared
-                    .drain_cond
-                    .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock = new_lock;
-                drop(bql_unlock);
-                if timed_out.timed_out() {
-                    virtmcu_qom::sim_info!(
-                        "drain timeout after {} s ({} vCPU threads still active); proceeding with teardown",
-                        DRAIN_TIMEOUT_SECS,
-                        lock.active_vcpu_count
-                    );
-                    break;
-                }
-            }
-
-            if let Some(handle) = state.tx_thread.take() {
-                let bql_unlock = Bql::temporary_unlock();
-                let _ = handle.join();
-                drop(bql_unlock);
-            }
+            // Bridge handles tx_thread teardown and vcpu draining!
+            drop(state);
 
             s.rust_state = ptr::null_mut();
         }
@@ -1051,8 +749,102 @@ static CHAR_VIRTMCU_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(VIRTMCU_CHARDEV_VIRTMCU_TYPE_INIT, CHAR_VIRTMCU_TYPE_INFO);
 
+pub struct ChardevTransport {
+    pub transport: Arc<dyn virtmcu_api::DataTransport>,
+    pub topic: String,
+    pub rx_out: Receiver<TxPacket>,
+    pub tx_fifo: Arc<virtmcu_qom::sync::Mutex<VecDeque<u8>>>, // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
+    pub baud_delay_ns: Arc<AtomicU64>,
+    pub tx_timer_ptr: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for ChardevTransport {}
+unsafe impl Sync for ChardevTransport {}
+
+impl CoSimTransport for ChardevTransport {
+    type Request = Vec<u8>;
+    type Response = ();
+
+    fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
+        let mut buffer = Vec::with_capacity(SEND_BUF_CAPACITY);
+        let mut first_vtime = 0;
+        let mut first_seq = 0;
+        let mut last_send = std::time::Instant::now();
+
+        while ctx.is_running() {
+            match self.rx_out.recv_timeout(core::time::Duration::from_millis(RECV_TIMEOUT_MS)) {
+                Ok(packet) => {
+                    if buffer.is_empty() {
+                        first_vtime = packet.vtime;
+                        first_seq = packet.sequence;
+                    }
+                    buffer.extend_from_slice(&packet.data);
+                    if buffer.len() >= FLUSH_THRESHOLD
+                        || last_send.elapsed().as_millis() >= FLUSH_INTERVAL_MS as u128
+                    {
+                        send_packet(
+                            &*self.transport,
+                            &self.topic,
+                            TxPacket {
+                                vtime: first_vtime,
+                                sequence: first_seq,
+                                data: buffer.clone(),
+                            },
+                        );
+                        buffer.clear();
+                        last_send = std::time::Instant::now();
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if !buffer.is_empty() {
+                        send_packet(
+                            &*self.transport,
+                            &self.topic,
+                            TxPacket {
+                                vtime: first_vtime,
+                                sequence: first_seq,
+                                data: buffer.clone(),
+                            },
+                        );
+                        buffer.clear();
+                        last_send = std::time::Instant::now();
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    }
+
+    fn send_request(&self, req: Self::Request) -> bool {
+        let data = req;
+        let mut fifo = self.tx_fifo.lock(); // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
+        let was_empty = fifo.is_empty();
+        if fifo.len() + data.len() <= MAX_FIFO_SIZE {
+            fifo.extend(data.iter().copied());
+        } else {
+            virtmcu_qom::sim_info!("TX FIFO overflow, dropping {} bytes", data.len());
+        }
+
+        if was_empty && !data.is_empty() {
+            // SAFETY: Safe to query clock under BQL
+            let now = unsafe {
+                virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)
+            };
+            let delay = self.baud_delay_ns.load(AtomicOrdering::Relaxed);
+            let timer_ptr = self.tx_timer_ptr.load(AtomicOrdering::Acquire) as *mut QemuTimer;
+            if !timer_ptr.is_null() {
+                unsafe {
+                    virtmcu_qom::timer::virtmcu_timer_mod(timer_ptr, now + delay as i64);
+                }
+            }
+        }
+        false
+    }
+
+    fn interrupt_rx(&self) {}
+}
+
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
 
@@ -1066,18 +858,19 @@ mod tests {
         const OPTS_SIZE: usize = 72;
         const CHARDEV_SIZE: usize = 160;
 
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, logfile) == 0);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, node) == NODE_OFFSET);
-        assert!(
-            core::mem::offset_of!(ChardevVirtmcuOptions, has_max_backlog) == HAS_MAX_BACKLOG_OFFSET
+        assert_eq!(core::mem::offset_of!(ChardevVirtmcuOptions, logfile), 0);
+        assert_eq!(core::mem::offset_of!(ChardevVirtmcuOptions, node), NODE_OFFSET);
+        assert_eq!(
+            core::mem::offset_of!(ChardevVirtmcuOptions, has_max_backlog),
+            HAS_MAX_BACKLOG_OFFSET
         );
-        assert!(
-            core::mem::offset_of!(ChardevVirtmcuOptions, has_baud_rate_ns)
-                == HAS_BAUD_RATE_NS_OFFSET
+        assert_eq!(
+            core::mem::offset_of!(ChardevVirtmcuOptions, has_baud_rate_ns),
+            HAS_BAUD_RATE_NS_OFFSET
         );
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, max_backlog) == MAX_BACKLOG_OFFSET);
-        assert!(core::mem::offset_of!(ChardevVirtmcuOptions, baud_rate_ns) == BAUD_RATE_NS_OFFSET);
-        assert!(core::mem::size_of::<ChardevVirtmcuOptions>() == OPTS_SIZE);
-        assert!(core::mem::size_of::<Chardev>() == CHARDEV_SIZE);
+        assert_eq!(core::mem::offset_of!(ChardevVirtmcuOptions, max_backlog), MAX_BACKLOG_OFFSET);
+        assert_eq!(core::mem::offset_of!(ChardevVirtmcuOptions, baud_rate_ns), BAUD_RATE_NS_OFFSET);
+        assert_eq!(core::mem::size_of::<ChardevVirtmcuOptions>(), OPTS_SIZE);
+        assert_eq!(core::mem::size_of::<Chardev>(), CHARDEV_SIZE);
     }
 }

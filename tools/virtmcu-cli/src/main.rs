@@ -536,7 +536,7 @@ async fn run_platform_svd2header(input: PathBuf, output: Option<PathBuf>) -> Res
             }
         }
 
-        header.push_str("} __attribute__((packed));\n\n");
+        header.push_str("};\n\n");
 
         for reg in &registers {
             let reg_name = reg.name.to_uppercase();

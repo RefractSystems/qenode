@@ -44,12 +44,22 @@ peripherals:
     container: sysmem
 ```
 
+### The "Generation vs Instantiation" Principle
+Unlike Renode's `.repl` format, which is primarily for **instantiating** pre-compiled C# classes at runtime, the VirtMCU format is designed for **full-stack generation**.
+
+| Feature | Renode (.repl) | VirtMCU (Ideal SOTA) |
+| :--- | :--- | :--- |
+| **Primary Role** | Runtime Instantiation | Build-time Generation |
+| **Logic Source** | Manual C# Implementation | Unified IDL (TypeSpec) |
+| **Firmware Sync** | Manual Headers | Auto-generated Headers |
+| **Fidelity Gate** | Post-boot Error | Compile-time Verification |
+
+We will move from starting with Silicon SVDs to starting with a **Logical Domain Model (IDL)** using TypeSpec. The `virtmcu-cli gen` tool will then produce the SVD, the C headers, the Rust QOM stubs, and the YAML schema from a single authority.
+
 ### Rationale
 1.  **OpenUSD Readiness**: By using a hierarchical `name`/`type`/`properties` structure, we can eventually replace the YAML parser with a USD parser (`pxr.Usd`) without changing our internal Emitter logic.
 2.  **Federated Simulation Standard (FSS)**: The declarative structure of YAML enables seamless manifest generation for FSS orchestrators, detailing the exact hardware capabilities, abstraction levels, and timing requirements of the virtual MCU.
 3.  **SAL/AAL Integration**: By defining peripherals strongly in YAML, we can programmatically map virtual peripheral endpoints to Sensor/Actuator Abstraction Layer transfer functions in future cyber-physical integrations.
 4.  **Tooling Ecosystem**: YAML has first-class support in every major language. It allows for easy validation using JSON Schema or Pydantic.
 
-## Action Plan
-1.  Create `virtmcu-cli platform generate`: Converts the modern YAML schema to DTB.
-2.  Update `target/release/virtmcu-run`: Add `--yaml` support.
+

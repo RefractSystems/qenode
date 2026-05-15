@@ -64,6 +64,13 @@ The TypeSpec implementation must facilitate the generation of validators that en
 2.  **No Split-Brain**: Node definitions belong exclusively to the `topology.nodes` namespace (deprecated legacy paths are rejected).
 3.  **Address Normalization**: All peripheral addresses must be mapped within the `Machine` address space.
 
+### 5. Composition & Referencing (DRY Principle)
+
+To eliminate the duplication of base machine definitions (RAM, CPUs, UARTs) across multiple world files, the model will support **Composition through Referencing**.
+
+- **The `include` Directive (Interim)**: YAML files may use an `include: "path/to/base.yaml"` attribute to merge base machine configurations.
+- **The `reference` Prim (OpenUSD Alignment)**: In the final USD migration, nodes will "reference" base hardware assets, performing sparse overrides on specific attributes (e.g., changing only the `node_id` or `firmware_path`).
+
 ## Rationale
 - **OpenUSD Readiness**: By defining our model in terms of Prims and Relationships, the transition to a `.usd` native format becomes a 1:1 mapping exercise rather than a refactor.
 - **Polyglot Safety**: Code generation from this model ensures the Rust `DeterministicCoordinator` and Python `yaml2qemu` tool share the exact same understanding of the world.

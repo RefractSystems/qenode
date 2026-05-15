@@ -17,7 +17,8 @@ pub enum Protocol {
     Rf802154,
     RfHci,
     Control,
-    Dummy,
+    #[serde(rename = "reference-link")]
+    ReferenceLink,
 }
 
 impl Protocol {

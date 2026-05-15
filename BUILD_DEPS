@@ -43,7 +43,7 @@ NPM_VERSION=11.14.1
 
 # ARM GNU Toolchain — downloaded from developer.arm.com official releases
 # Pinned independently of Debian apt to guarantee cross-compiler reproducibility.
-# Binary fidelity (ADR-006) requires the toolchain to be bit-for-bit stable.
+# Binary fidelity (RFC-0006) requires the toolchain to be bit-for-bit stable.
 ARM_TOOLCHAIN_VERSION=13.3.rel1
 
 # CI Tooling
@@ -53,6 +53,7 @@ YAMLLINT_VERSION=1.37.1
 MDBOOK_VERSION=0.4.52
 MDBOOK_MERMAID_VERSION=0.17.0
 MDBOOK_PDF_VERSION=0.1.13
+CARGO_TARPAULIN_VERSION=0.35.4
 
 # Cargo binary installer (pinned to prevent silent installer updates)
 CARGO_BINSTALL_VERSION=1.10.4

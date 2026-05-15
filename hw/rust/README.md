@@ -28,7 +28,7 @@ The crates are organized into logical subdirectories based on their role in the 
 - `common/`: Shared utilities and internal APIs.
   - `virtmcu-api`: Central wire protocol and `DataTransport` traits.
   - `virtmcu-qom`: Safe Rust wrappers for QEMU Object Model (QOM) FFI.
-  - `rust-dummy`: Template for new peripheral models.
+  - `reference-peripheral`: Template for new peripheral models.
 
 ## Development Mandates
 

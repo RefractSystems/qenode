@@ -1,9 +1,11 @@
 use anyhow::Result;
 use std::time::Duration;
-use tokio::net::UnixListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use virtmcu_api::{VirtmcuHandshake, FlatBufferStructExt, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION};
-use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv, TestContext};
+use tokio::net::UnixListener;
+use virtmcu_api::{
+    FlatBufferStructExt, VirtmcuHandshake, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
+};
+use virtmcu_test_runner::{NodeConfig, TestContext, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_svd_hash_handshake_rejection() -> Result<()> {
@@ -15,7 +17,8 @@ async fn test_svd_hash_handshake_rejection() -> Result<()> {
 
     let listener = UnixListener::bind(&socket_path)?;
 
-    let yaml = format!(r#"
+    let yaml = format!(
+        r#"
 machine:
   cpus:
     - name: cpu0
@@ -28,7 +31,9 @@ peripherals:
       region-size: 0x1000
       socket-path: {}
       svd: hw/defs/actuator.svd
-"#, socket_path.to_string_lossy());
+"#,
+        socket_path.to_string_lossy()
+    );
 
     std::fs::write(&yaml_path, yaml)?;
 
@@ -38,25 +43,25 @@ peripherals:
     let mut hasher = fnv::FnvHasher::default();
     svd_content.hash(&mut hasher);
     let correct_svd_hash = hasher.finish();
-    
+
     // Simulate a client with the WRONG hash
     let bad_hash = correct_svd_hash ^ 0xDEADBEEF;
 
     let test_task = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        
+
         let mut buf = [0u8; virtmcu_api::VIRTMCU_HANDSHAKE_SIZE];
         stream.read_exact(&mut buf).await.unwrap();
         let client_hs = VirtmcuHandshake::unpack_slice(&buf).unwrap();
-        
+
         assert_eq!(client_hs.magic(), VIRTMCU_PROTO_MAGIC);
         assert_eq!(client_hs.version(), VIRTMCU_PROTO_VERSION);
-        assert_eq!(client_hs.svd_hash(), correct_svd_hash); 
+        assert_eq!(client_hs.svd_hash(), correct_svd_hash);
 
         // Send handshake with a BAD hash
         let our_hs = VirtmcuHandshake::new(VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION, bad_hash);
         stream.write_all(our_hs.pack()).await.unwrap();
-        
+
         // The emulator should reject it and drop the connection
         let mut dummy = [0u8; 1];
         let res = stream.read(&mut dummy).await.unwrap();
@@ -67,7 +72,7 @@ peripherals:
     let _env = VirtmcuTestEnv::builder()
         .add_node(
             NodeConfig::new(0)
-                .with_firmware_path("tests/fixtures/guest_apps/actuator/actuator.elf") 
+                .with_firmware_path("tests/fixtures/guest_apps/actuator/actuator.elf")
                 .with_yaml_path(yaml_path.to_str().unwrap())
                 .orchestrated(false),
         )

@@ -37,17 +37,17 @@ impl Lint for RustBannedPatternsLint {
             Rule {
                 name: "mutex",
                 pattern: r"Mutex<",
-                message: "Banned Mutex<T> in peripheral state.",
-                fix: "Replace Mutex<T> with BqlGuarded<T> from virtmcu_qom::sync. Quick Tip: Standard Mutex deadlocks with the BQL. See docs/rfcs/0018-safe-peripheral-bql-yielding.md. MANDATE: // virtmcu-allow: mutex reasoning=\"<reason>\".",
+                message: "Banned Mutex<T> found in peripheral state.",
+                fix: "Replace std::sync::Mutex<T> with virtmcu_qom::sync::Mutex<T> or Atomics. Quick Tip: Standard Mutex deadlocks with the BQL. BqlGuarded is DEPRECATED. See docs/rfcs/0018-safe-peripheral-bql-yielding.md. MANDATE: // virtmcu-allow: mutex reasoning=\"<reason>\".",
                 inc_dirs: vec!["hw/rust/comms", "hw/rust/mcu", "hw/rust/observability"],
                 exc_list: vec![],
             },
             Rule {
                 name: "bql",
                 pattern: r"Bql::lock\(\)|SafeSubscription",
-                message: "Banned BQL usage found in async/comms paths.",
-                fix: "Remove Bql::lock()/SafeSubscription, or use lock-free channels. Quick Tip: Do not block async threads on the BQL. See docs/rfcs/0018-safe-peripheral-bql-yielding.md. MANDATE: // virtmcu-allow: bql reasoning=\"<reason>\".",
-                inc_dirs: vec!["hw/rust/comms"],
+                message: "Banned BQL usage or SafeSubscription found.",
+                fix: "Use DeterministicReceiver (RFC-0021) instead of SafeSubscription. Use virtmcu_qom::sync::Mutex for state. Quick Tip: Do not block async threads on the BQL. See docs/rfcs/0018-safe-peripheral-bql-yielding.md and RFC-0021. MANDATE: // virtmcu-allow: bql reasoning=\"<reason>\".",
+                inc_dirs: vec!["hw/rust/comms", "hw/rust/mcu", "hw/rust/observability"],
                 exc_list: vec![],
             },
             Rule {

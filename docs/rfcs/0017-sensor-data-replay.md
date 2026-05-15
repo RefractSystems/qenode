@@ -41,8 +41,4 @@ We will deprecate RESD as the primary trace format and adopt a **Hybrid Replay A
 *   **Positive:** We avoid the massive binary bloat and performance overhead of forcing OpenUSD to act as a time-series database.
 *   **Negative:** Adds implementation complexity; we must build or integrate an MCAP parser in Rust and ensure it aligns perfectly with the virtual time (`vtime_ns`) abstraction.
 
-## Future Action Plan
-1. Add `mcap` to the workspace dependencies.
-2. Build `virtmcu-replay` as a deterministic co-simulation node.
-3. Implement `mdf2mcap` converter in `tools/`.
-4. Update `world_schema.json` to allow nodes to declare a `replay_trace: "file.mcap"` property.
+

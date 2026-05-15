@@ -75,8 +75,8 @@ target/
 .ci-target/
 .cargo-cache/
 tools/deterministic_coordinator/target/
-hw/rust-dummy/target/
-hw/rust-dummy/Cargo.lock
+hw/rust/common/reference-peripheral/target/
+hw/rust/common/reference-peripheral/Cargo.lock
 test-results/
 \n# Compiled test binaries\nprint_rust_sizes\nprint_sizes
 .venv-docker/

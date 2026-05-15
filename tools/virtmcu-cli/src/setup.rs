@@ -542,23 +542,27 @@ pub async fn run_patch_qemu(qemu_dir: &Path) -> Result<()> {
     if !qemu_hw_virtmcu.exists() {
         info!("  -> Linking virtmcu/hw to qemu/hw/virtmcu...");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(workspace_root.join("hw"), &qemu_hw_virtmcu)?;
+        std::os::unix::fs::symlink(workspace_root.join("hw"), &qemu_hw_virtmcu)
+            .map_err(|e| anyhow!("Failed to symlink hw: {}", e))?;
     }
 
     let qemu_hw_cargo_toml = qemu_dir.join("hw/Cargo.toml");
     if !qemu_hw_cargo_toml.exists() {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(workspace_root.join("Cargo.toml"), &qemu_hw_cargo_toml)?;
+        std::os::unix::fs::symlink(workspace_root.join("Cargo.toml"), &qemu_hw_cargo_toml)
+            .map_err(|e| anyhow!("Failed to symlink Cargo.toml: {}", e))?;
     }
     let qemu_hw_cargo_lock = qemu_dir.join("hw/Cargo.lock");
     if !qemu_hw_cargo_lock.exists() {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(workspace_root.join("Cargo.lock"), &qemu_hw_cargo_lock)?;
+        std::os::unix::fs::symlink(workspace_root.join("Cargo.lock"), &qemu_hw_cargo_lock)
+            .map_err(|e| anyhow!("Failed to symlink Cargo.lock: {}", e))?;
     }
 
     // 5. Meson subdir
     let hw_meson = qemu_dir.join("hw/meson.build");
-    let content = std::fs::read_to_string(&hw_meson)?;
+    let content = std::fs::read_to_string(&hw_meson)
+        .map_err(|e| anyhow!("Failed to read hw_meson: {}", e))?;
     if !content.contains("subdir('virtmcu')") {
         info!("  -> Injecting subdir('virtmcu') into hw/meson.build...");
         std::fs::write(&hw_meson, format!("{}\nsubdir('virtmcu')\n", content))?;
@@ -1119,6 +1123,15 @@ fn apply_fdt_generic_util_fix(qemu: &Path) -> Result<()> {
         "        if (device_type) {\n            if (!fdt_init_qdev(node_path, fdti, device_type)) {\n                goto exit;\n            }\n        }",
         "        if (device_type && strcmp(device_type, \"memory\") != 0 && strcmp(device_type, \"cpu\") != 0) {\n            fdt_init_qdev(node_path, fdti, device_type);\n        }",
     );
+
+    // Fix 9: module_load_qom chicken-and-egg
+    let old_qdev = "static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)\n{\n    Object *dev, *parent;\n    char *parent_node_path;\n    ObjectProperty *p;\n\n    if (!compat) {\n        return 1;\n    }\n    dev = fdt_create_from_compat(compat);";
+    let new_qdev = "static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)\n{\n    Object *dev, *parent;\n    char *parent_node_path;\n    ObjectProperty *p;\n\n    if (!compat) {\n        return 1;\n    }\n\n    /* VirtMCU: trigger module load before fdt_create_from_compat */\n    module_load_qom(compat, NULL);\n    if (strncmp(compat, \"virtmcu,\", 8) == 0 && !object_class_by_name(compat)) {\n        error_report(\"Fail Loudly: required VirtMCU module '%s' cannot be found\", compat);\n        exit(1);\n    }\n\n    dev = fdt_create_from_compat(compat);";
+    if text.contains(old_qdev) {
+        text = text.replace(old_qdev, new_qdev);
+    } else {
+        warn!("Fix 9: fdt_init_qdev match not found");
+    }
 
     std::fs::write(&filepath, text)?;
     Ok(())

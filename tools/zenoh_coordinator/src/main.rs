@@ -22,6 +22,12 @@ use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
 
 use zenoh::Wait;
 
+struct MsgArgs {
+    src: String,
+    base: String,
+    s: zenoh::sample::Sample,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -124,8 +130,6 @@ fn ray_intersects_aabb(
     }
     t_min <= t_max
 }
-
-
 
 struct SpatialGrid {
     cells: HashMap<(i64, i64, i64), Vec<String>>,
@@ -250,15 +254,14 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
 }
 
 async fn handle_eth_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
     rng: &mut ChaCha8Rng,
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -373,15 +376,14 @@ async fn handle_eth_msg(
 }
 
 async fn handle_chardev_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
     rng: &mut ChaCha8Rng,
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -402,7 +404,7 @@ async fn handle_chardev_msg(
 
     let mut dest_nodes = HashSet::new();
     if tg.is_explicit {
-        dest_nodes = tg.get_wire_peers(&src, &Protocol::Dummy);
+        dest_nodes = tg.get_wire_peers(&src, &Protocol::ReferenceLink);
     } else if let Some(nodes) = known.get(&base) {
         for dst in nodes {
             if dst != &src {
@@ -462,7 +464,7 @@ async fn handle_chardev_msg(
         } else {
             panic!("Unregistered packet received!");
         }
-        if !tg.is_link_allowed(&src, &dst, &Protocol::Dummy) {
+        if !tg.is_link_allowed(&src, &dst, &Protocol::ReferenceLink) {
             tracing::error!(
                 "[Topology Violation] Dropping Chardev msg from {} to {}",
                 src,
@@ -494,7 +496,7 @@ async fn handle_chardev_msg(
             base_topic: base.clone(),
             delivery_vtime_ns: h.delivery_vtime_ns().saturating_add(act),
             sequence_number: h.sequence_number(),
-            protocol: Protocol::Dummy,
+            protocol: Protocol::ReferenceLink,
             payload: data.clone(),
         });
     }
@@ -502,15 +504,14 @@ async fn handle_chardev_msg(
 }
 
 async fn handle_uart_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
     rng: &mut ChaCha8Rng,
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -625,14 +626,13 @@ async fn handle_uart_msg(
 }
 
 async fn handle_lin_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -736,14 +736,13 @@ async fn handle_lin_msg(
 }
 
 async fn handle_sysc_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     topo: &HashMap<(String, String, String), LinkState>,
     delay: u64,
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -844,9 +843,7 @@ async fn handle_sysc_msg(
 }
 
 async fn handle_rf_msg(
-    src: String,
-    base: String,
-    s: zenoh::sample::Sample,
+    msg: MsgArgs,
     known: &mut HashMap<String, HashSet<String>>,
     positions: &HashMap<(String, String), NodeInfo>,
     args: &Args,
@@ -854,6 +851,7 @@ async fn handle_rf_msg(
     obstacles: &[ObstacleBox],
     tg: &topology::TopologyGraph,
 ) -> Vec<CoordMessage> {
+    let MsgArgs { src, base, s } = msg;
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
@@ -1012,7 +1010,7 @@ async fn main() {
         Vec::new()
     };
     // Force client mode + disabled multicast scouting (CLAUDE.md Second Priority,
-    // ADR-014). `Config::default()` is peer mode with multicast scouting ON, which
+    // RFC-0001). `Config::default()` is peer mode with multicast scouting ON, which
     // causes parallel pytest workers' coordinators to silently discover each
     // other across the container's network namespace and cross-talk on shared
     // topics like `sim/coord/*/done`.
@@ -1038,7 +1036,6 @@ async fn main() {
         .await
         .expect("Failed to open Zenoh session");
 
-
     let (eth_tx, mut eth_rx) = tokio::sync::mpsc::unbounded_channel();
     let (uart_tx, mut uart_rx) = tokio::sync::mpsc::unbounded_channel();
     let (sysc_tx, mut sysc_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1054,52 +1051,147 @@ async fn main() {
     let mut _subs = Vec::new();
 
     let ctrl_tx_c = ctrl_tx.clone();
-    _subs.push(session.declare_subscriber("sim/network/control").callback(move |s| { let _ = ctrl_tx_c.send(s); }).await.expect("Failed"));
+    _subs.push(
+        session
+            .declare_subscriber("sim/network/control")
+            .callback(move |s| {
+                let _ = ctrl_tx_c.send(s);
+            })
+            .await
+            .expect("Failed"),
+    );
     let pos_tx_c = pos_tx.clone();
-    _subs.push(session.declare_subscriber("sim/telemetry/position").callback(move |s| { let _ = pos_tx_c.send((String::new(), String::new(), s)); }).await.expect("Failed"));
+    _subs.push(
+        session
+            .declare_subscriber("sim/telemetry/position")
+            .callback(move |s| {
+                let _ = pos_tx_c.send((String::new(), String::new(), s));
+            })
+            .await
+            .expect("Failed"),
+    );
 
     for node in tg_raw.routing_map.map.keys() {
         let n = node.clone();
         let eth_c = eth_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/eth/frame/{n}/tx")).callback(move |s| { let _ = eth_c.send((n.clone(), "sim/eth/frame".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/eth/frame/{n}/tx"))
+                .callback(move |s| {
+                    let _ = eth_c.send((n.clone(), "sim/eth/frame".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let uart_c = uart_tx.clone();
-        _subs.push(session.declare_subscriber(format!("virtmcu/uart/{n}/tx")).callback(move |s| { let _ = uart_c.send((n.clone(), "virtmcu/uart".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("virtmcu/uart/{n}/tx"))
+                .callback(move |s| {
+                    let _ = uart_c.send((n.clone(), "virtmcu/uart".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let sysc_c = sysc_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/systemc/frame/{n}/tx")).callback(move |s| { let _ = sysc_c.send((n.clone(), "sim/systemc/frame".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/systemc/frame/{n}/tx"))
+                .callback(move |s| {
+                    let _ = sysc_c.send((n.clone(), "sim/systemc/frame".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let chardev_c = chardev_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/chardev/{n}/tx")).callback(move |s| { let _ = chardev_c.send((n.clone(), "sim/chardev".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/chardev/{n}/tx"))
+                .callback(move |s| {
+                    let _ = chardev_c.send((n.clone(), "sim/chardev".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let rf802_c = rf_802154_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/rf/ieee802154/{n}/tx")).callback(move |s| { let _ = rf802_c.send((n.clone(), "sim/rf/ieee802154".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/rf/ieee802154/{n}/tx"))
+                .callback(move |s| {
+                    let _ = rf802_c.send((n.clone(), "sim/rf/ieee802154".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let rfhci_c = rf_hci_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/rf/hci/{n}/tx")).callback(move |s| { let _ = rfhci_c.send((n.clone(), "sim/rf/hci".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/rf/hci/{n}/tx"))
+                .callback(move |s| {
+                    let _ = rfhci_c.send((n.clone(), "sim/rf/hci".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let lin_c = lin_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/lin/{n}/tx")).callback(move |s| { let _ = lin_c.send((n.clone(), "sim/lin".to_owned(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/lin/{n}/tx"))
+                .callback(move |s| {
+                    let _ = lin_c.send((n.clone(), "sim/lin".to_owned(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let tx_c = tx_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/coord/{n}/tx")).callback(move |s| { let _ = tx_c.send((n.clone(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/coord/{n}/tx"))
+                .callback(move |s| {
+                    let _ = tx_c.send((n.clone(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let done_c = done_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/coord/{n}/done")).callback(move |s| { let _ = done_c.send((n.clone(), s)); }).await.expect("Failed"));
-        
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/coord/{n}/done"))
+                .callback(move |s| {
+                    let _ = done_c.send((n.clone(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
+
         let n = node.clone();
         let pos_n_c = pos_tx.clone();
-        _subs.push(session.declare_subscriber(format!("sim/telemetry/position/{n}")).callback(move |s| { let _ = pos_n_c.send((String::new(), n.clone(), s)); }).await.expect("Failed"));
+        _subs.push(
+            session
+                .declare_subscriber(format!("sim/telemetry/position/{n}"))
+                .callback(move |s| {
+                    let _ = pos_n_c.send((String::new(), n.clone(), s));
+                })
+                .await
+                .expect("Failed"),
+        );
     }
-
 
     let _ready_q = session
         .declare_queryable("sim/coordinator/ready_probe")
@@ -1186,7 +1278,7 @@ async fn main() {
             res = eth_rx.recv() => {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_eth_msg(src, base, s, &mut k_eth, &topology, args.delay_ns, &mut rng, &tg).await;
+                    let msgs = handle_eth_msg(MsgArgs { src, base, s }, &mut k_eth, &topology, args.delay_ns, &mut rng, &tg).await;
                     base_topics.insert(Protocol::Ethernet, "sim/eth/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1202,7 +1294,7 @@ async fn main() {
             res = uart_rx.recv() => {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_uart_msg(src, base, s, &mut k_uart, &topology, args.delay_ns, &mut rng, &tg).await;
+                    let msgs = handle_uart_msg(MsgArgs { src, base, s }, &mut k_uart, &topology, args.delay_ns, &mut rng, &tg).await;
                     base_topics.insert(Protocol::Uart, "virtmcu/uart".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1218,7 +1310,7 @@ async fn main() {
             res = sysc_rx.recv() => {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_sysc_msg(src, base, s, &mut k_sysc, &topology, args.delay_ns, &tg).await;
+                    let msgs = handle_sysc_msg(MsgArgs { src, base, s }, &mut k_sysc, &topology, args.delay_ns, &tg).await;
                     base_topics.insert(Protocol::Spi, "sim/systemc/frame".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1234,8 +1326,8 @@ async fn main() {
             res = chardev_rx.recv() => {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_chardev_msg(src, base, s, &mut k_chardev, &topology, args.delay_ns, &mut rng, &tg).await;
-                    base_topics.insert(Protocol::Dummy, "sim/chardev".to_owned());
+                    let msgs = handle_chardev_msg(MsgArgs { src, base, s }, &mut k_chardev, &topology, args.delay_ns, &mut rng, &tg).await;
+                    base_topics.insert(Protocol::ReferenceLink, "sim/chardev".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
                             batches.entry(m.src_node_id.clone()).or_default().push(m);
@@ -1251,7 +1343,7 @@ async fn main() {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
-                    let msgs = handle_rf_msg(src, base, s, &mut k_rf, &ps, &args, true, &obstacles, &tg).await;
+                    let msgs = handle_rf_msg(MsgArgs { src, base, s }, &mut k_rf, &ps, &args, true, &obstacles, &tg).await;
                     base_topics.insert(Protocol::Rf802154, "sim/rf/ieee802154".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1268,7 +1360,7 @@ async fn main() {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
                     let ps = node_positions.read().await;
-                    let msgs = handle_rf_msg(src, base, s, &mut k_rf, &ps, &args, false, &obstacles, &tg).await;
+                    let msgs = handle_rf_msg(MsgArgs { src, base, s }, &mut k_rf, &ps, &args, false, &obstacles, &tg).await;
                     base_topics.insert(Protocol::RfHci, "sim/rf/hci".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1284,7 +1376,7 @@ async fn main() {
             res = lin_rx.recv() => {
                 if let Some((src, base, s)) = res {
                     let tg = tg_ref.read().await;
-                    let msgs = handle_lin_msg(src, base, s, &mut k_lin, &topology, args.delay_ns, &tg).await;
+                    let msgs = handle_lin_msg(MsgArgs { src, base, s }, &mut k_lin, &topology, args.delay_ns, &tg).await;
                     base_topics.insert(Protocol::Lin, "sim/lin".to_owned());
                     if barrier.is_some() {
                         for m in msgs {
@@ -1472,7 +1564,7 @@ mod tests {
         tg.is_explicit = true;
         // Node "0" is registered, but target "2" is not in targets for "0"
         tg.routing_map.add_route("0".to_owned(), "1".to_owned());
-        
+
         let m = CoordMessage {
             src_node_id: "0".to_owned(),
             dst_node_id: "2".to_owned(), // Unregistered dest!
@@ -1482,7 +1574,7 @@ mod tests {
             protocol: crate::topology::Protocol::Ethernet,
             payload: vec![],
         };
-        
+
         if !tg.routing_map.map.contains_key(&m.src_node_id) {
             panic!("Unregistered packet received!");
         }

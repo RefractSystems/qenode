@@ -97,6 +97,8 @@ pub struct TopologyBuilder {
     nodes: Vec<NodeConfig>,
     timeout_secs: u64,
     variables: std::collections::HashMap<String, String>,
+    federation_id: Option<String>,
+    transport_override: Option<String>,
 }
 
 impl Default for TopologyBuilder {
@@ -111,7 +113,19 @@ impl TopologyBuilder {
             nodes: Vec::new(),
             timeout_secs: 10,
             variables: std::collections::HashMap::new(),
+            federation_id: None,
+            transport_override: None,
         }
+    }
+
+    pub fn with_transport_override(mut self, transport: &str) -> Self {
+        self.transport_override = Some(transport.to_string());
+        self
+    }
+
+    pub fn with_federation_id(mut self, id: &str) -> Self {
+        self.federation_id = Some(id.to_string());
+        self
     }
 
     /// SOTA Async Teardown: Builds the environment and executes a test closure,
@@ -139,6 +153,38 @@ impl TopologyBuilder {
         self
     }
 
+    async fn spawn_zenoh_coordinator(
+        ctx: &TestContext,
+        endpoint: &str,
+    ) -> Result<tokio::process::Child> {
+        let router_bin = ctx.find_binary("zenoh_coordinator")?;
+        info!("Spawning zenoh_coordinator from: {}", router_bin.display());
+
+        let mut router_cmd = Command::new(&router_bin);
+        router_cmd.arg("--listen").arg(endpoint);
+
+        let router_proc = router_cmd.spawn().map_err(|e| {
+            let mut extra_hint = String::new();
+            if e.kind() == std::io::ErrorKind::NotFound && router_bin.exists() {
+                extra_hint = format!(
+                    "\nNote: Binary exists at {} but spawn failed with 'Not Found'. \
+                     This often means the binary was built for a different architecture (e.g. x86_64 vs aarch64) \
+                     or its dynamic linker is missing. Try running 'cargo build -p zenoh_coordinator' in this environment.",
+                    router_bin.display()
+                );
+            }
+            anyhow!(
+                "Failed to spawn native zenoh_coordinator at {}: {}. {}. \n\
+                Hint: Ensure zenoh_coordinator is built for the current architecture and its dependencies are available.",
+                router_bin.display(),
+                e,
+                extra_hint
+            )
+        })?;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        Ok(router_proc)
+    }
+
     pub async fn build(self) -> Result<VirtmcuTestEnv> {
         if self.nodes.is_empty() {
             return Err(anyhow!("Topology must have at least one node"));
@@ -150,41 +196,14 @@ impl TopologyBuilder {
         }
         let endpoint = ctx.variables.get("ROUTER_ENDPOINT").unwrap().clone();
 
-        // Spawn a native Zenoh coordinator acting as a router
-        let router_bin = ctx.find_binary("zenoh_coordinator")?;
+        let transport = self.transport_override.as_deref().unwrap_or("zenoh");
+        let is_unix = transport == "unix";
 
-        info!("Spawning zenoh_coordinator from: {}", router_bin.display());
+        let mut router_proc_opt = None;
 
-        let mut router_cmd = Command::new(&router_bin);
-        router_cmd
-            .arg("--listen")
-            .arg(&endpoint)
-            .arg("--pdes")
-            .arg("--nodes")
-            .arg(self.nodes.len().to_string());
-
-        let router_proc = router_cmd
-            .spawn()
-            .map_err(|e| {
-                let mut extra_hint = String::new();
-                if e.kind() == std::io::ErrorKind::NotFound && router_bin.exists() {
-                    extra_hint = format!(
-                        "\nNote: Binary exists at {} but spawn failed with 'Not Found'. \
-                         This often means the binary was built for a different architecture (e.g. x86_64 vs aarch64) \
-                         or its dynamic linker is missing. Try running 'cargo build -p zenoh_coordinator' in this environment.",
-                        router_bin.display()
-                    );
-                }
-                anyhow!(
-                    "Failed to spawn native zenoh_coordinator at {}: {}. {}. \n\
-                    Hint: Ensure zenoh_coordinator is built for the current architecture and its dependencies are available.",
-                    router_bin.display(),
-                    e,
-                    extra_hint
-                )
-            })?;
-
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        if !is_unix {
+            router_proc_opt = Some(Self::spawn_zenoh_coordinator(&ctx, &endpoint).await?);
+        }
 
         let artifacts = ArtifactCache::new(ctx.workspace_root.clone())?;
         let launcher = crate::launcher::QemuLauncher::new(ctx.workspace_root.clone());
@@ -236,8 +255,25 @@ impl TopologyBuilder {
             } else if let Some(p) = &node.dtb_path {
                 ctx.workspace_root.join(p)
             } else if let Some(p) = &node.yaml_path {
-                let yaml_content = std::fs::read_to_string(ctx.workspace_root.join(p))
+                let mut yaml_content = std::fs::read_to_string(ctx.workspace_root.join(p))
                     .context(format!("Failed to read YAML path: {}", p))?;
+
+                if let Some(t) = &self.transport_override {
+                    if yaml_content.contains("transport:") {
+                        yaml_content =
+                            yaml_content.replace("transport: zenoh", &format!("transport: {}", t));
+                        yaml_content =
+                            yaml_content.replace("transport: unix", &format!("transport: {}", t));
+                    } else {
+                        yaml_content = yaml_content
+                            .replace("topology:\n", &format!("topology:\n  transport: {}\n", t));
+                        // Also try CRLF just in case
+                        yaml_content = yaml_content.replace(
+                            "topology:\r\n",
+                            &format!("topology:\r\n  transport: {}\r\n", t),
+                        );
+                    }
+                }
 
                 let yaml_content = yaml_content.replace("ZENOH_ROUTER_ENDPOINT", &endpoint);
                 let yaml_content = ctx.substitute(&yaml_content);
@@ -324,6 +360,7 @@ impl TopologyBuilder {
                     "spi",
                     "wifi",
                     "ui",
+                    "reference-peripheral",
                 ] {
                     qemu_cmd
                         .arg("-global")
@@ -475,70 +512,78 @@ impl TopologyBuilder {
             qemu_procs.push(qemu);
         }
 
-        let mut zconfig = zenoh::Config::default();
-        zconfig
-            .insert_json5("connect/endpoints", &format!("[\"{}\"]", endpoint))
-            .map_err(|e| anyhow!("Config error: {}", e))?;
-        zconfig
-            .insert_json5("scouting/multicast/enabled", "false")
-            .map_err(|e| anyhow!("Config error: {}", e))?;
-        zconfig
-            .insert_json5("mode", "\"client\"")
-            .map_err(|e| anyhow!("Config error: {}", e))?;
-        let session = zenoh::open(zconfig)
-            .await
-            .map_err(|e| anyhow!("Zenoh error: {}", e))?;
+        let mut session_opt = None;
+        let clock_coordinator: Box<dyn ClockCoordinator>;
 
-        // 2. Wait for Clock Liveliness for all coordinated nodes
-        for node_id in &coordinated_nodes {
-            let hb_topic = format!("sim/clock/liveliness/{}", node_id);
-            info!("Waiting for Zenoh Liveliness heartbeat on {}...", hb_topic);
+        if !is_unix {
+            let mut zconfig = zenoh::Config::default();
+            zconfig
+                .insert_json5("connect/endpoints", &format!("[\"{}\"]", endpoint))
+                .map_err(|e| anyhow!("Config error: {}", e))?;
+            zconfig
+                .insert_json5("scouting/multicast/enabled", "false")
+                .map_err(|e| anyhow!("Config error: {}", e))?;
+            zconfig
+                .insert_json5("mode", "\"client\"")
+                .map_err(|e| anyhow!("Config error: {}", e))?;
+            let session = zenoh::open(zconfig)
+                .await
+                .map_err(|e| anyhow!("Zenoh error: {}", e))?;
 
-            let success = timeout(Duration::from_secs(15), async {
-                loop {
-                    let mut found = false;
-                    let replies = session
-                        .liveliness()
-                        .get(&hb_topic)
-                        .await
-                        .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
-                    while let Ok(reply) = replies.recv_async().await {
-                        if reply.result().is_ok() {
-                            found = true;
-                            break;
+            // 2. Wait for Clock Liveliness for all coordinated nodes
+            for node_id in &coordinated_nodes {
+                let hb_topic = format!("sim/clock/liveliness/{}", node_id);
+                info!("Waiting for Zenoh Liveliness heartbeat on {}...", hb_topic);
+
+                let success = timeout(Duration::from_secs(15), async {
+                    loop {
+                        let mut found = false;
+                        let replies = session
+                            .liveliness()
+                            .get(&hb_topic)
+                            .await
+                            .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
+                        while let Ok(reply) = replies.recv_async().await {
+                            if reply.result().is_ok() {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if found {
+                            return Ok::<(), anyhow::Error>(());
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await;
+
+                if success.is_err() {
+                    for p in pgids.iter().flatten() {
+                        unsafe {
+                            libc::kill(-*p, libc::SIGKILL);
                         }
                     }
-                    if found {
-                        return Ok::<(), anyhow::Error>(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    return Err(anyhow!(
+                        "Timed out waiting for QEMU clock liveliness barrier on node {}",
+                        node_id
+                    ));
                 }
-            })
-            .await;
-
-            if success.is_err() {
-                for p in pgids.iter().flatten() {
-                    unsafe {
-                        libc::kill(-*p, libc::SIGKILL);
-                    }
-                }
-                return Err(anyhow!(
-                    "Timed out waiting for QEMU clock liveliness barrier on node {}",
-                    node_id
-                ));
             }
-        }
 
-        if !coordinated_nodes.is_empty() {
-            info!("Liveliness barrier passed. Executing 0-ns VTA sync...");
+            if !coordinated_nodes.is_empty() {
+                info!("Liveliness barrier passed. Executing 0-ns VTA sync...");
 
-            let coordinator = ZenohClockCoordinator::new(session.clone());
-            coordinator
-                .step_clock(0, 0, 0, 0)
-                .await
-                .map_err(|e| anyhow!("Failed to receive VTA 0-ns sync reply from QEMU: {}", e))?;
+                let coordinator = ZenohClockCoordinator::new(session.clone());
+                coordinator.step_clock(0, 0, 0, 0).await.map_err(|e| {
+                    anyhow!("Failed to receive VTA 0-ns sync reply from QEMU: {}", e)
+                })?;
 
-            info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
+                info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
+            }
+            session_opt = Some(session.clone());
+            clock_coordinator = Box::new(ZenohClockCoordinator::new(session));
+        } else {
+            clock_coordinator = Box::new(DummyClockCoordinator);
         }
 
         for (idx, qmp) in qmp_clients.iter_mut().enumerate() {
@@ -560,9 +605,10 @@ impl TopologyBuilder {
             qmp_clients,
             qmp_socket_paths,
             timeout_secs: self.timeout_secs,
-            _session: session.clone(),
-            clock_coordinator: Box::new(ZenohClockCoordinator::new(session)),
-            router_child: router_proc,
+            _session: session_opt,
+            clock_coordinator,
+            router_child: router_proc_opt,
+            external_children: Vec::new(),
             is_coordinated: is_coordinated_flags,
             current_vtime: 0,
             current_quantum: 0,
@@ -582,6 +628,21 @@ pub trait ClockCoordinator: Send + Sync {
         current_vtime: u64,
         quantum: u64,
     ) -> Result<()>;
+}
+
+pub struct DummyClockCoordinator;
+
+#[async_trait]
+impl ClockCoordinator for DummyClockCoordinator {
+    async fn step_clock(
+        &self,
+        _node_id: usize,
+        _step_ns: u64,
+        _current_vtime: u64,
+        _quantum: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub struct ZenohClockCoordinator {
@@ -646,9 +707,10 @@ pub struct VirtmcuTestEnv {
     qmp_socket_paths: Vec<PathBuf>,
     timeout_secs: u64,
     #[allow(dead_code)]
-    _session: zenoh::Session,
+    _session: Option<zenoh::Session>,
     clock_coordinator: Box<dyn ClockCoordinator>,
-    router_child: Child,
+    router_child: Option<Child>,
+    pub external_children: Vec<Child>,
     is_coordinated: Vec<bool>,
     pub current_vtime: u64,
     pub current_quantum: u64,
@@ -674,7 +736,7 @@ impl VirtmcuTestEnv {
 
     /// Registers an external child process to be killed during environment teardown.
     pub fn register_child(&mut self, child: Child) {
-        self.qemu_children.push(child);
+        self.external_children.push(child);
     }
 
     /// Declares a subscriber and waits briefly to ensure Zenoh discovery is complete.
@@ -683,21 +745,26 @@ impl VirtmcuTestEnv {
         topic: &str,
     ) -> Result<zenoh::pubsub::Subscriber<zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>>>
     {
-        let sub = self
-            ._session
-            .declare_subscriber(topic)
-            .await
-            .map_err(|e| anyhow!("Failed to declare subscriber: {}", e))?;
+        if let Some(session) = &self._session {
+            let sub = session
+                .declare_subscriber(topic)
+                .await
+                .map_err(|e| anyhow!("Failed to declare subscriber: {}", e))?;
 
-        // Wait for subscriber discovery to propagate.
-        // In a real deterministic test, Zenoh scout overhead should be minimal or synchronous,
-        // but since we don't have a reliable callback for subscriber matching, we yield/wait.
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        Ok(sub)
+            // Wait for subscriber discovery to propagate.
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            Ok(sub)
+        } else {
+            Err(anyhow!(
+                "safe_subscribe called but no Zenoh session is active (UDS mode)"
+            ))
+        }
     }
 
     pub fn session(&self) -> zenoh::Session {
-        self._session.clone()
+        self._session
+            .clone()
+            .expect("session() called but no Zenoh session is active (UDS mode)")
     }
 
     pub fn tmp_path(&self, name: &str) -> PathBuf {
@@ -936,7 +1003,9 @@ impl VirtmcuTestEnv {
         for child in &mut self.qemu_children {
             let _ = child.kill().await;
         }
-        let _ = self.router_child.kill().await;
+        if let Some(child) = &mut self.router_child {
+            let _ = child.kill().await;
+        }
 
         // Clear children to avoid double-kill in Drop
         self.qemu_children.clear();
@@ -978,6 +1047,11 @@ impl Drop for VirtmcuTestEnv {
         for child in &mut self.qemu_children {
             let _ = child.start_kill();
         }
-        let _ = self.router_child.start_kill();
+        for child in &mut self.external_children {
+            let _ = child.start_kill();
+        }
+        if let Some(child) = &mut self.router_child {
+            let _ = child.start_kill();
+        }
     }
 }

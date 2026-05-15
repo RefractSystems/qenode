@@ -12,7 +12,7 @@
 #define UART0_BASE 0x09000000
 #define DUMMY_BASE 0x09005000
 
-// Using the rust-dummy peripheral layout
+// Using the reference-peripheral peripheral layout
 #define REG_DUMMY_STATUS (DUMMY_BASE + 0x00)
 #define STATUS_DATA_READY 0x01
 

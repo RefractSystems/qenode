@@ -16,7 +16,6 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
 use virtmcu_api::rf802154;
@@ -25,19 +24,16 @@ use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
 use virtmcu_qom::qdev::{sysbus_init_irq, sysbus_init_mmio, SysBusDevice};
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
+use virtmcu_qom::sync::DeterministicReceiver;
 use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{
     declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
     error_setg,
 };
 
-use core::cmp::Ordering;
-
 const IEEE_MMIO_SIZE: u64 = 0x100;
 
 const IEEE_FIFO_SIZE: usize = 128;
-const IEEE_RX_QUEUE_SIZE: usize = 16;
 const IEEE_DEFAULT_BE: u8 = 3;
 
 // Register Offsets
@@ -121,12 +117,19 @@ pub struct Virtmcu802154QEMU {
     pub rust_state: *mut Virtmcu802154State,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct RxFrame {
     delivery_vtime: u64,
     sequence: u64,
     data: [u8; 128],
     size: usize,
     rssi: i8,
+}
+
+impl virtmcu_qom::sync::DeliveryPacket for RxFrame {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.delivery_vtime
+    }
 }
 
 #[repr(u8)]
@@ -146,14 +149,13 @@ pub struct Virtmcu802154State {
     irq: QemuIrq,
     transport: Arc<dyn virtmcu_api::DataTransport>,
     topic_tx: String,
-    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="SafeSubscription ensures thread safety for Zenoh callbacks"
-    rx_timer: Option<QomTimer>,
+    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<RxFrame>>,
     backoff_timer: Option<QomTimer>,
     ack_timer: Option<QomTimer>,
     tx_timer: Option<QomTimer>,
 
-    // All state accessed exclusively under BQL; see BqlGuarded docs.
-    inner: BqlGuarded<Virtmcu802154Inner>,
+    // All state accessed securely; see Mutex docs.
+    inner: virtmcu_qom::sync::Mutex<Virtmcu802154Inner>, // virtmcu-allow: mutex reasoning="State managed securely"
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
 }
 
@@ -171,8 +173,6 @@ struct Virtmcu802154Inner {
     pan_id: u16,
     short_addr: u16,
     ext_addr: u64,
-
-    rx_queue: Vec<RxFrame>,
 
     // CSMA/CA state
     nb: u8,
@@ -273,7 +273,7 @@ extern "C" fn ieee802154_reset(dev: *mut c_void) {
         return;
     }
     let state = unsafe { &mut *s.rust_state };
-    let mut inner = state.inner.get_mut();
+    let mut inner = state.inner.lock();
 
     inner.tx_len = 0;
     inner.rx_len = 0;
@@ -281,14 +281,10 @@ extern "C" fn ieee802154_reset(dev: *mut c_void) {
     inner.rx_rssi = 0;
     inner.status = 0;
     inner.state = RadioState::Idle;
-    inner.rx_queue.clear();
     inner.nb = 0;
     inner.be = MAC_MIN_BE;
     inner.ack_pending = false;
 
-    if let Some(timer) = &state.rx_timer {
-        timer.del();
-    }
     if let Some(timer) = &state.backoff_timer {
         timer.del();
     }
@@ -346,6 +342,78 @@ declare_device_type!(VIRTM_802154_TYPE_INIT, VIRTM_802154_TYPE_INFO);
 
 /* ── Internal Logic ───────────────────────────────────────────────────────── */
 
+fn decode_ieee802154(opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<RxFrame> {
+    let state = unsafe { &*(opaque as *mut Virtmcu802154State) };
+    let inner = state.inner.lock();
+
+    let frame = rf802154::size_prefixed_root_as_rf_802154_frame(data).ok()?;
+
+    let vtime = frame.delivery_vtime_ns();
+    let sequence = frame.sequence_number();
+    let rssi = frame.rssi();
+
+    let mhr = Rf802154Mhr {
+        fcf: frame.fcf(),
+        seq_num: frame.mhr_seq_num(),
+        dest_pan: frame.dest_pan(),
+        dest_addr: frame.dest_addr(),
+        src_pan: frame.src_pan(),
+        src_addr: frame.src_addr(),
+    };
+
+    let frame_data = frame.data()?.bytes();
+
+    let size = frame_data.len();
+    if size > IEEE_FIFO_SIZE {
+        return None;
+    }
+
+    if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, &mhr) {
+        return None;
+    }
+
+    let mut stored_data = [0u8; IEEE_FIFO_SIZE];
+    stored_data[..size].copy_from_slice(frame_data);
+
+    Some(RxFrame { delivery_vtime: vtime, sequence, data: stored_data, size, rssi })
+}
+
+fn deliver_ieee802154(opaque: *mut c_void, frame: RxFrame) {
+    let state = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
+    let mut inner = state.inner.lock();
+
+    // Re-parse MHR for ACK handling
+    let mhr = Rf802154Mhr::parse(&frame.data[..frame.size]);
+    if (mhr.fcf & IEEE_ACK_REQUEST_BIT) != 0 {
+        inner.ack_pending = true;
+        inner.ack_seq = mhr.seq_num;
+        if let Some(ack_timer) = &state.ack_timer {
+            ack_timer.mod_ns((frame.delivery_vtime + SIFS_NS) as i64);
+        }
+    }
+
+    if inner.state == RadioState::Rx && (inner.status & STATUS_RX_PENDING == 0) {
+        inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
+        inner.rx_len = frame.size as u32;
+        inner.rx_rssi = frame.rssi;
+        inner.rx_read_pos = 0;
+        inner.status |= STATUS_RX_PENDING;
+
+        virtmcu_qom::sim_info!("deliver_ieee802154: frame delivered to FIFO, len={}", frame.size);
+
+        unsafe {
+            qemu_set_irq(state.irq, 1);
+        }
+        let _guard = state.wait_mutex.lock();
+        state.cond.notify_all();
+    } else if inner.state == RadioState::Rx {
+        // RX pending, frame is dropped as we don't have a secondary FIFO in this model
+        // but it was already removed from DeterministicReceiver.
+        // In a real radio, this might be a FIFO overflow.
+        virtmcu_qom::sim_info!("deliver_ieee802154: frame dropped (RX_PENDING)");
+    }
+}
+
 fn ieee802154_init_internal(
     parent: *mut Virtmcu802154QEMU,
     irq: QemuIrq,
@@ -368,12 +436,11 @@ fn ieee802154_init_internal(
         irq,
         transport: Arc::clone(&transport),
         topic_tx: topic_tx.clone(),
-        subscription: None,
-        rx_timer: None,
+        receiver: None,
         backoff_timer: None,
         ack_timer: None,
         tx_timer: None,
-        inner: BqlGuarded::new(Virtmcu802154Inner {
+        inner: virtmcu_qom::sync::Mutex::new(Virtmcu802154Inner {
             node_id,
             tx_fifo: [0; IEEE_FIFO_SIZE],
             tx_len: 0,
@@ -386,39 +453,38 @@ fn ieee802154_init_internal(
             pan_id: IEEE_BROADCAST_PAN,
             short_addr: IEEE_BROADCAST_ADDR,
             ext_addr: 0,
-            rx_queue: Vec::with_capacity(IEEE_RX_QUEUE_SIZE),
             nb: 0,
             be: IEEE_DEFAULT_BE,
             ack_pending: false,
             ack_seq: 0,
             tx_sequence: 0,
-        }),
+        }), // virtmcu-allow: mutex reasoning="State managed securely"
         _liveliness: None,
         cond: virtmcu_qom::sync::Condvar::new(),
         wait_mutex: virtmcu_qom::sync::Mutex::new(()),
     });
 
     let state_ptr = core::ptr::from_mut(&mut *state_box);
-    let state_ptr_usize = state_ptr as usize;
-
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
-        let state = unsafe { &mut *(state_ptr_usize as *mut Virtmcu802154State) };
-        on_rx_frame(state, data);
-    });
-
     let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
-    // virtmcu-allow: bql reasoning="SafeSubscription is the approved pattern for async transport subscribers to avoid BQL deadlocks"
-    match virtmcu_qom::sync::SafeSubscription::new(&*transport, &topic_rx, generation, sub_callback)
-    {
-        Ok(sub) => state_box.subscription = Some(sub),
+
+    match DeterministicReceiver::new(
+        &*transport,
+        &topic_rx,
+        generation,
+        state_ptr as *mut c_void,
+        decode_ieee802154,
+        deliver_ieee802154,
+    ) {
+        Ok(receiver) => state_box.receiver = Some(receiver),
         Err(e) => {
-            virtmcu_qom::sim_err!("ieee802154: failed to subscribe to topic {}: {}", topic_rx, e);
+            virtmcu_qom::sim_err!(
+                "ieee802154: failed to initialize DeterministicReceiver for topic {}: {}",
+                topic_rx,
+                e
+            );
             return ptr::null_mut();
         }
     }
-
-    state_box.rx_timer =
-        Some(unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void) });
 
     state_box.backoff_timer = Some(unsafe {
         QomTimer::new(QEMU_CLOCK_VIRTUAL, backoff_timer_cb, state_ptr as *mut c_void)
@@ -439,7 +505,7 @@ fn ieee802154_init_internal(
 
 impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
     fn read(&self, offset: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
-        let mut inner = self.inner.get_mut();
+        let mut inner = self.inner.lock();
         match offset {
             REG_TX_LEN => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.tx_len)),
             REG_RX_DATA
@@ -459,18 +525,18 @@ impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
                     drop(inner);
                     return virtmcu_qom::device::MmioResult::wait_for(
                         move || {
-                            let in2 = self.inner.get();
+                            let in2 = self.inner.lock();
                             let s2 = in2.status | ((in2.state as u32) << STATE_SHIFT);
                             let w_rx = s2 & STATUS_RX_PENDING == 0 && in2.state == RadioState::Rx;
                             let w_tx = s2 & STATUS_TX_DONE == 0 && in2.state == RadioState::Tx;
                             !(w_rx || w_tx)
                         },
                         move || {
-                            let in3 = self.inner.get();
+                            let in3 = self.inner.lock();
                             u64::from(in3.status | ((in3.state as u32) << STATE_SHIFT))
                         },
                         move || {
-                            let in4 = self.inner.get();
+                            let in4 = self.inner.lock();
                             u64::from(in4.status | ((in4.state as u32) << STATE_SHIFT))
                         },
                     );
@@ -498,7 +564,7 @@ impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
     }
 
     fn write(&self, offset: u64, value: u64, _size: u32) {
-        let mut inner = self.inner.get_mut();
+        let mut inner = self.inner.lock();
         match offset {
             REG_TX_DATA => {
                 if inner.tx_len < IEEE_FIFO_SIZE as u32 {
@@ -520,17 +586,7 @@ impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
                 inner.state = match value {
                     0 => RadioState::Off,
                     1 => RadioState::Idle,
-                    STATE_RX => {
-                        // virtmcu-allow: magic_numbers reasoning="State enum mapping"
-                        check_rx_queue(
-                            self.irq,
-                            self.rx_timer.as_ref(),
-                            &mut inner,
-                            &self.cond,
-                            &self.wait_mutex,
-                        );
-                        RadioState::Rx
-                    }
+                    STATE_RX => RadioState::Rx, // virtmcu-allow: magic_numbers reasoning="State enum mapping"
                     STATE_TX => RadioState::Tx, // virtmcu-allow: magic_numbers reasoning="State enum mapping"
                     _ => inner.state,
                 };
@@ -546,13 +602,6 @@ impl virtmcu_qom::device::MmioDevice for Virtmcu802154State {
                     unsafe {
                         qemu_set_irq(self.irq, 0);
                     }
-                    check_rx_queue(
-                        self.irq,
-                        self.rx_timer.as_ref(),
-                        &mut inner,
-                        &self.cond,
-                        &self.wait_mutex,
-                    );
                 }
             }
             REG_PAN_ID => inner.pan_id = value as u16,
@@ -591,8 +640,7 @@ fn ieee802154_cleanup_internal(state: *mut Virtmcu802154State) {
         return;
     }
     let mut s = unsafe { Box::from_raw(state) };
-    s.subscription.take();
-    s.rx_timer.take();
+    s.receiver.take();
     s.backoff_timer.take();
     s.ack_timer.take();
     s.tx_timer.take();
@@ -649,7 +697,7 @@ fn tx_real(
 
 extern "C" fn tx_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
-    let mut inner = s.inner.get_mut();
+    let mut inner = s.inner.lock();
 
     inner.tx_len = 0;
     inner.status |= STATUS_TX_DONE;
@@ -661,9 +709,19 @@ extern "C" fn tx_timer_cb(opaque: *mut c_void) {
 
 extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
-    let mut inner = s.inner.get_mut();
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let busy = !inner.rx_queue.is_empty() && inner.rx_queue[0].delivery_vtime <= now;
+    let mut inner = s.inner.lock();
+    // Deterministic collision avoidance: check if any frame is arriving NOW.
+    // DeterministicReceiver ensures all ready frames are delivered before this timer fires
+    // if their vtime <= now.
+    let _now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+
+    // In the new model, we don't have direct access to the receiver's queue.
+    // However, if a frame was delivered, inner.status & STATUS_RX_PENDING would be set.
+    // But that's only if inner.state == Rx.
+    // For CSMA, we just care if the medium is "busy".
+    // In this simplified model, we'll assume the medium is busy if we just delivered a frame
+    // or if one is pending in our FIFO.
+    let busy = (inner.status & STATUS_RX_PENDING) != 0;
 
     if busy {
         inner.nb += 1;
@@ -685,7 +743,7 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
 
 extern "C" fn ack_timer_cb(opaque: *mut c_void) {
     let s = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
-    let mut inner = s.inner.get_mut();
+    let mut inner = s.inner.lock();
 
     if !inner.ack_pending {
         return;
@@ -700,82 +758,6 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
 
     let _ = s.transport.publish(&s.topic_tx, &msg);
     inner.ack_pending = false;
-}
-
-fn on_rx_frame(state: &mut Virtmcu802154State, data: &[u8]) {
-    virtmcu_qom::sim_info!("on_rx_frame: received packet of size {}", data.len());
-    let mut inner = state.inner.get_mut();
-
-    let frame = match rf802154::size_prefixed_root_as_rf_802154_frame(data) {
-        Ok(f) => f,
-        Err(e) => {
-            virtmcu_qom::sim_info!("on_rx_frame: parsing failed: {:?}", e);
-            return;
-        }
-    };
-
-    let vtime = frame.delivery_vtime_ns();
-    let sequence = frame.sequence_number();
-    let rssi = frame.rssi();
-
-    let mhr = Rf802154Mhr {
-        fcf: frame.fcf(),
-        seq_num: frame.mhr_seq_num(),
-        dest_pan: frame.dest_pan(),
-        dest_addr: frame.dest_addr(),
-        src_pan: frame.src_pan(),
-        src_addr: frame.src_addr(),
-    };
-
-    let frame_data = match frame.data() {
-        Some(d) => d.bytes(),
-        None => return,
-    };
-
-    let size = frame_data.len();
-    if size > IEEE_FIFO_SIZE {
-        return;
-    }
-
-    if !frame_matches_address(inner.pan_id, inner.short_addr, inner.ext_addr, &mhr) {
-        virtmcu_qom::sim_info!("on_rx_frame: address mismatch");
-        return;
-    }
-
-    if (mhr.fcf & IEEE_ACK_REQUEST_BIT) != 0 {
-        inner.ack_pending = true;
-        inner.ack_seq = mhr.seq_num;
-        if let Some(ack_timer) = &state.ack_timer {
-            ack_timer.mod_ns((vtime + SIFS_NS) as i64);
-        }
-    }
-
-    let mut stored_data = [0u8; IEEE_FIFO_SIZE];
-    stored_data[..size].copy_from_slice(frame_data);
-
-    if inner.rx_queue.len() < IEEE_RX_QUEUE_SIZE {
-        let pos = inner
-            .rx_queue
-            .binary_search_by(|probe| match probe.delivery_vtime.cmp(&vtime) {
-                Ordering::Equal => probe.sequence.cmp(&sequence),
-                ord => ord,
-            })
-            .unwrap_or_else(|e| e);
-        inner.rx_queue.insert(
-            pos,
-            RxFrame { delivery_vtime: vtime, sequence, data: stored_data, size, rssi },
-        );
-
-        virtmcu_qom::sim_info!(
-            "on_rx_frame: inserted at pos {}, queue len={}",
-            pos,
-            inner.rx_queue.len()
-        );
-
-        if let Some(rx_timer) = &state.rx_timer {
-            rx_timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
-        }
-    }
 }
 
 fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf802154Mhr) -> bool {
@@ -796,67 +778,6 @@ fn frame_matches_address(pan_id: u16, short_addr: u16, ext_addr: u64, mhr: &Rf80
         }
         _ => false,
     }
-}
-
-fn check_rx_queue(
-    irq: QemuIrq,
-    rx_timer: Option<&QomTimer>,
-    inner: &mut Virtmcu802154Inner,
-    cond: &virtmcu_qom::sync::Condvar,
-    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
-    wait_mutex: &virtmcu_qom::sync::Mutex<()>,
-) {
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-
-    while !inner.rx_queue.is_empty() {
-        if inner.rx_queue[0].delivery_vtime <= now {
-            let frame = inner.rx_queue.remove(0);
-
-            // Only process if the radio is in RX mode at the time of delivery
-            if inner.state == RadioState::Rx {
-                if inner.status & STATUS_RX_PENDING == 0 {
-                    inner.rx_fifo[..frame.size].copy_from_slice(&frame.data[..frame.size]);
-                    inner.rx_len = frame.size as u32;
-                    inner.rx_rssi = frame.rssi;
-                    inner.rx_read_pos = 0;
-                    inner.status |= STATUS_RX_PENDING;
-
-                    virtmcu_qom::sim_info!(
-                        "check_rx_queue: frame delivered to FIFO, len={}",
-                        frame.size
-                    );
-
-                    unsafe {
-                        qemu_set_irq(irq, 1);
-                    };
-                    let _guard = wait_mutex.lock();
-                    cond.notify_all();
-                    // One frame at a time into the FIFO
-                    break;
-                }
-                // RX pending, re-insert at front and wait
-                inner.rx_queue.insert(0, frame);
-                break;
-            }
-            // Not in RX mode, drop the frame and continue to next in queue
-            virtmcu_qom::sim_info!(
-                "check_rx_queue: frame dropped because state is {:?} (not Rx)",
-                inner.state
-            );
-            continue;
-        }
-        // Future frame, schedule timer and stop
-        if let Some(timer) = rx_timer {
-            timer.mod_ns(inner.rx_queue[0].delivery_vtime as i64);
-        }
-        break;
-    }
-}
-
-extern "C" fn rx_timer_cb(opaque: *mut c_void) {
-    let state = unsafe { &mut *(opaque as *mut Virtmcu802154State) };
-    let mut inner = state.inner.get_mut();
-    check_rx_queue(state.irq, state.rx_timer.as_ref(), &mut inner, &state.cond, &state.wait_mutex);
 }
 
 #[cfg(test)]

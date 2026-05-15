@@ -24,19 +24,19 @@ async fn test_bql_starvation_avoided() -> Result<()> {
     // If the BQL is locked up, the QEMU main loop will freeze here and hit the with_timeout(10) bound.
     env.step_clock(100_000_000, 10_000_000).await?;
 
-    // Construct a basic dummy packet to signal the peripheral to wake up
-    // The rust-dummy peripheral doesn't strictly parse a complex packet yet,
+    // Construct a basic packet to signal the peripheral to wake up
+    // The reference-peripheral peripheral doesn't strictly parse a complex packet yet,
     // but sending to its transport topic should trigger its internal callbacks.
-    let dummy_topic = "sim/dummy/rx/0";
+    let target_topic = "sim/chardev/0/rx";
     let payload = virtmcu_api::encode_frame(env.vtime() + 10_000_000, 0, &[1, 2, 3, 4]);
 
     env.session()
-        .put(dummy_topic, payload)
+        .put(target_topic, payload)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to publish to dummy: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to publish to topic {}: {}", target_topic, e))?;
 
     // Advance the clock again. If BQL yielding works, the QEMU main loop
-    // grabs the lock, processes the packet, and updates REG_DUMMY_STATUS.
+    // grabs the lock, processes the packet, and updates REFERENCE_REG_STATUS.
     env.step_clock(50_000_000, 10_000_000).await?;
 
     // Verify the guest broke out of the loop

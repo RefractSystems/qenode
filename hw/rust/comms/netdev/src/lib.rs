@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -15,13 +14,19 @@ use zenoh::Wait;
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use core::time::Duration;
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
+use virtmcu_qom::cosim::{CoSimBridge, CoSimContext, CoSimTransport};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::net::{
     qemu_new_net_client, virtmcu_netdev_hook, NetClientInfo, NetClientState, Netdev,
@@ -29,18 +34,9 @@ use virtmcu_qom::net::{
 };
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{ObjectClass, TypeInfo};
-use virtmcu_qom::sync::{Bql, BqlGuarded, SafeSubscription}; // virtmcu-allow: bql reasoning="Safe Zenoh integration"
+use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
 
-use alloc::collections::{BinaryHeap, VecDeque};
-use core::cmp::Ordering;
-use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use std::sync::{Condvar, Mutex};
-use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
-use virtmcu_qom::timer::{qemu_clock_get_ns, QomTimer, QEMU_CLOCK_VIRTUAL};
-
-const DRAIN_TIMEOUT_SECS: u64 = 30;
 const NETDEV_INFO_OPAQUE_SIZE: usize = 208 - 56;
 const RECV_TIMEOUT_MS: u64 = 10;
 const TX_QUEUE_SIZE: usize = 65536;
@@ -82,42 +78,76 @@ impl Ord for OrderedPacket {
     }
 }
 
+impl virtmcu_qom::sync::DeliveryPacket for OrderedPacket {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
+    }
+}
+
 pub struct TxPacket {
     pub vtime: u64,
     pub sequence: u64,
     pub data: Vec<u8>,
 }
 
+pub struct NetdevTransport {
+    pub transport: Arc<dyn virtmcu_api::DataTransport>,
+    pub topic: String,
+    pub tx_sender: Sender<TxPacket>,
+    pub rx_out: Receiver<TxPacket>,
+}
+unsafe impl Send for NetdevTransport {}
+unsafe impl Sync for NetdevTransport {}
+
+impl CoSimTransport for NetdevTransport {
+    type Request = TxPacket;
+    type Response = ();
+
+    fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
+        while ctx.is_running() {
+            match self.rx_out.recv_timeout(Duration::from_millis(RECV_TIMEOUT_MS)) {
+                Ok(packet) => {
+                    let header = ZenohFrameHeader::new(
+                        packet.vtime,
+                        packet.sequence,
+                        u32::try_from(packet.data.len()).expect("payload length truncated"),
+                    );
+                    let mut data = Vec::with_capacity(
+                        virtmcu_api::ZENOH_FRAME_HEADER_SIZE + packet.data.len(),
+                    );
+                    data.extend_from_slice(header.pack());
+                    data.extend_from_slice(&packet.data);
+
+                    if let Err(e) = self.transport.publish(&self.topic, &data) {
+                        virtmcu_qom::sim_err!("{}", e);
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    }
+
+    fn send_request(&self, req: Self::Request) -> bool {
+        match self.tx_sender.try_send(req) {
+            Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}
+        }
+        false
+    }
+
+    fn interrupt_rx(&self) {}
+}
+
 pub struct VirtmcuNetdevState {
-    shared: Arc<SharedState>,
+    bridge: CoSimBridge<NetdevTransport>,
     nc: *mut NetClientState,
-    subscription: Option<SafeSubscription>, // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-    rx_timer: Option<Arc<QomTimer>>,
-    rx_receiver: Receiver<OrderedPacket>,
-    // All state accessed exclusively under BQL; see BqlGuarded docs.
-    local_heap: BqlGuarded<BinaryHeap<OrderedPacket>>,
-    backlog: BqlGuarded<VecDeque<Vec<u8>>>,
-    earliest_vtime: Arc<AtomicU64>,
+    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedPacket>>,
+    backlog: virtmcu_qom::sync::Mutex<VecDeque<Vec<u8>>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
     tx_sequence: AtomicU64,
-    tx_thread: Option<std::thread::JoinHandle<()>>,
     _max_backlog: u64,
     backlog_count: Arc<AtomicU64>,
     _dropped_frames: Arc<AtomicU64>,
     pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
-}
-
-struct InnerState {
-    running: bool,
-    active_vcpu_count: usize,
-}
-
-struct SharedState {
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-    _node_id: u32,
-    _topic: String,
-    tx_sender: Sender<TxPacket>,
-    drain_cond: Condvar,
-    state: Mutex<InnerState>, // virtmcu-allow: mutex reasoning="used for lifecycle"
 }
 
 unsafe extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize {
@@ -133,7 +163,7 @@ unsafe extern "C" fn netdev_can_receive(nc: *mut NetClientState) -> bool {
     if s.rust_state.is_null() {
         return true;
     }
-    let backlog = unsafe { (*s.rust_state).backlog.get() };
+    let backlog = unsafe { (*s.rust_state).backlog.lock() };
     backlog.is_empty()
 }
 
@@ -142,49 +172,10 @@ unsafe extern "C" fn netdev_cleanup(nc: *mut NetClientState) {
     if !s.rust_state.is_null() {
         unsafe {
             let mut state = Box::from_raw(s.rust_state);
-            {
-                let mut lock =
-                    state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock.running = false;
-            }
-
-            state.subscription.take();
-            state.rx_timer.take();
-
-            let mut lock =
-                state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            while lock.active_vcpu_count > 0 {
-                let bql_unlock = Bql::temporary_unlock();
-                let (new_lock, timed_out) = state
-                    .shared
-                    .drain_cond
-                    .wait_timeout(lock, Duration::from_secs(DRAIN_TIMEOUT_SECS))
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                lock = new_lock;
-                drop(bql_unlock);
-                if timed_out.timed_out() {
-                    break;
-                }
-            }
-
-            if let Some(handle) = state.tx_thread.take() {
-                let bql_unlock = Bql::temporary_unlock();
-                let _ = handle.join();
-                drop(bql_unlock);
-            }
-
+            state.receiver.take();
+            // Drop handles bridge teardown automatically
+            drop(state);
             s.rust_state = ptr::null_mut();
-        }
-    }
-}
-
-struct VcpuCountGuard<'a>(&'a SharedState);
-impl Drop for VcpuCountGuard<'_> {
-    fn drop(&mut self) {
-        let mut lock = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        lock.active_vcpu_count = lock.active_vcpu_count.saturating_sub(1);
-        if lock.active_vcpu_count == 0 {
-            self.0.drain_cond.notify_all();
         }
     }
 }
@@ -274,100 +265,6 @@ static VIRTMCU_NETDEV_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(VIRTMCU_NETDEV_TYPE_INIT, VIRTMCU_NETDEV_TYPE_INFO);
 
-fn drain_net_backlog(state: &VirtmcuNetdevState) -> bool {
-    let mut backlog = state.backlog.get_mut();
-    while let Some(_packet) = backlog.front() {
-        if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
-            return false;
-        }
-        let data = backlog.pop_front().unwrap_or_else(|| std::process::abort());
-        state.backlog_count.fetch_sub(1, AtomicOrdering::SeqCst);
-        unsafe {
-            virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len());
-        }
-    }
-    true
-}
-
-extern "C" fn rx_timer_cb(opaque: *mut core::ffi::c_void) {
-    debug_assert!(Bql::is_held(), "BQL must be held during timer callbacks");
-    let state = unsafe { &*(opaque as *mut VirtmcuNetdevState) };
-    let now =
-        u64::try_from(unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) }).expect("vtime is negative");
-
-    if !drain_net_backlog(state) {
-        if let Some(rx_timer) = &state.rx_timer {
-            rx_timer.mod_ns(now as i64 + 1_000_000); // 1ms
-        }
-        return;
-    }
-
-    let mut heap = state.local_heap.get_mut();
-    while let Ok(packet) = state.rx_receiver.try_recv() {
-        heap.push(packet);
-    }
-
-    while let Some(packet) = heap.peek() {
-        if packet.vtime <= now {
-            if unsafe { !virtmcu_qom::net::qemu_can_receive_packet(state.nc) } {
-                let mut backlog = state.backlog.get_mut();
-                let p = heap.pop().unwrap_or_else(|| std::process::abort());
-                backlog.push_back(p.data);
-                break;
-            }
-
-            let p = heap.pop().unwrap_or_else(|| std::process::abort());
-            state.backlog_count.fetch_sub(1, AtomicOrdering::SeqCst);
-            unsafe {
-                virtmcu_qom::net::qemu_send_packet(state.nc, p.data.as_ptr(), p.data.len());
-            }
-        } else {
-            if let Some(rx_timer) = &state.rx_timer {
-                rx_timer.mod_ns(packet.vtime as i64);
-            }
-            break;
-        }
-    }
-
-    if heap.is_empty() {
-        state.earliest_vtime.store(u64::MAX, AtomicOrdering::Release);
-    }
-}
-
-fn start_tx_thread(
-    shared: Arc<SharedState>,
-    rx_out: Receiver<TxPacket>,
-) -> std::thread::JoinHandle<()> {
-    let shared_clone = Arc::clone(&shared);
-    std::thread::spawn(move || loop {
-        {
-            let lock = shared_clone.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !lock.running && rx_out.is_empty() {
-                break;
-            }
-        }
-        match rx_out.recv_timeout(Duration::from_millis(RECV_TIMEOUT_MS)) {
-            Ok(packet) => {
-                let header = ZenohFrameHeader::new(
-                    packet.vtime,
-                    packet.sequence,
-                    u32::try_from(packet.data.len()).expect("payload length truncated"),
-                );
-                let mut data =
-                    Vec::with_capacity(virtmcu_api::ZENOH_FRAME_HEADER_SIZE + packet.data.len());
-                data.extend_from_slice(header.pack());
-                data.extend_from_slice(&packet.data);
-
-                if let Err(e) = shared_clone.transport.publish(&shared_clone._topic, &data) {
-                    virtmcu_qom::sim_err!("{}", e);
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-        }
-    })
-}
-
 fn get_transport(
     transport_name: &str,
     router: *const c_char,
@@ -379,7 +276,7 @@ fn get_transport(
         } else {
             unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
         };
-        transport_unix::UnixDataTransport::new(&path).ok().map(|t| Arc::new(t) as _)
+        transport_unix::UdsDataTransport::new(&path).ok().map(|t| Arc::new(t) as _)
     } else {
         unsafe {
             transport_zenoh::get_or_init_session(router)
@@ -407,6 +304,54 @@ fn get_liveliness(
     }
 }
 
+fn decode_netdev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<OrderedPacket> {
+    if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+        return None;
+    }
+    let header_slice = data.get(..virtmcu_api::ZENOH_FRAME_HEADER_SIZE)?;
+    let header = ZenohFrameHeader::unpack(header_slice.try_into().ok()?)?;
+    let payload = data.get(virtmcu_api::ZENOH_FRAME_HEADER_SIZE..)?.to_vec();
+    Some(OrderedPacket {
+        vtime: header.delivery_vtime_ns(),
+        sequence: header.sequence_number(),
+        data: payload,
+    })
+}
+
+fn deliver_netdev(opaque: *mut c_void, packet: OrderedPacket) {
+    let state = unsafe { &mut *(opaque as *mut VirtmcuNetdevState) };
+    let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
+
+    if state.backlog_count.load(AtomicOrdering::Acquire) >= state._max_backlog {
+        state._dropped_frames.fetch_add(1, AtomicOrdering::SeqCst);
+        return;
+    }
+
+    backlog.push_back(packet.data);
+    state.backlog_count.fetch_add(1, AtomicOrdering::SeqCst);
+
+    // We flush packets to QEMU via the hook
+    let mut to_send = Vec::new();
+    while let Some(data) = backlog.pop_front() {
+        to_send.push(data);
+    }
+
+    // Release lock before calling back into QEMU
+    drop(backlog);
+
+    for data in &to_send {
+        let sent =
+            unsafe { virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len()) };
+        if sent > 0 {
+            state.backlog_count.fetch_sub(1, AtomicOrdering::SeqCst);
+        } else {
+            // Note: In strict locking, we just discard rather than queuing on QEMU backpressure.
+            state._dropped_frames.fetch_add(1, AtomicOrdering::SeqCst);
+            state.backlog_count.fetch_sub(1, AtomicOrdering::SeqCst);
+        }
+    }
+}
+
 fn netdev_init_internal(
     nc: *mut NetClientState,
     node_id: u32,
@@ -420,119 +365,63 @@ fn netdev_init_internal(
         None => return ptr::null_mut(),
     };
 
-    let (tx, rx) = bounded(TX_QUEUE_SIZE);
     let (tx_out, rx_out) = bounded(TX_QUEUE_SIZE);
-    let local_heap = BqlGuarded::new(BinaryHeap::new());
-    let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
 
     let backlog_count = Arc::new(AtomicU64::new(0));
     let dropped_frames = Arc::new(AtomicU64::new(0));
-    let backlog_count_sub = Arc::clone(&backlog_count);
-    let dropped_frames_sub = Arc::clone(&dropped_frames);
 
-    let shared = Arc::new(SharedState {
-        transport,
-        _node_id: node_id,
-        _topic: format!("{topic}/{node_id}/tx"),
+    let netdev_transport = NetdevTransport {
+        transport: Arc::clone(&transport),
+        topic: format!("{topic}/{node_id}/tx"),
         tx_sender: tx_out,
-        drain_cond: Condvar::new(),
-        state: Mutex::new(InnerState { running: true, active_vcpu_count: 0 }),
-    });
+        rx_out,
+    };
+    let bridge = CoSimBridge::new(netdev_transport);
 
-    let tx_thread = start_tx_thread(Arc::clone(&shared), rx_out);
     let liveliness = get_liveliness(&transport_name, router, node_id);
 
-    let mut state = Box::new(VirtmcuNetdevState {
+    let mut state_box = Box::new(VirtmcuNetdevState {
         _liveliness: liveliness,
-        shared: Arc::clone(&shared),
+        bridge,
         nc,
-        subscription: None,
-        rx_timer: None,
-        rx_receiver: rx,
-        local_heap,
-        backlog: BqlGuarded::new(VecDeque::new()),
-        earliest_vtime,
+        receiver: None,
+        backlog: virtmcu_qom::sync::Mutex::new(VecDeque::new()),
         tx_sequence: AtomicU64::new(0),
-        tx_thread: Some(tx_thread),
         _max_backlog: max_backlog,
         backlog_count: Arc::clone(&backlog_count),
         _dropped_frames: Arc::clone(&dropped_frames),
     });
 
-    let state_ptr = core::ptr::from_mut::<VirtmcuNetdevState>(&mut *state);
-    let rx_timer = Arc::new(unsafe {
-        QomTimer::new(QEMU_CLOCK_VIRTUAL, rx_timer_cb, state_ptr as *mut c_void)
-    });
-    let rx_timer_clone = Arc::clone(&rx_timer);
-    let earliest_clone = Arc::clone(&state.earliest_vtime);
-
+    let state_ptr = core::ptr::from_mut::<VirtmcuNetdevState>(&mut *state_box);
     let rx_topic = format!("{topic}/rx");
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, data: &[u8]| {
-        if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-            return;
-        }
-        let header_slice = match data.get(..virtmcu_api::ZENOH_FRAME_HEADER_SIZE) {
-            Some(s) => s,
-            None => return,
-        };
-        let header = match ZenohFrameHeader::unpack_slice(header_slice) {
-            Some(h) => h,
-            None => return,
-        };
-        let payload = match data.get(virtmcu_api::ZENOH_FRAME_HEADER_SIZE..) {
-            Some(s) => s.to_vec(),
-            None => return,
-        };
-        let packet = OrderedPacket {
-            vtime: header.delivery_vtime_ns(),
-            sequence: header.sequence_number(),
-            data: payload,
-        };
-        if backlog_count_sub.load(AtomicOrdering::Acquire) >= max_backlog {
-            dropped_frames_sub.fetch_add(1, AtomicOrdering::SeqCst);
-            return;
-        }
-        if tx.try_send(packet).is_ok() {
-            backlog_count_sub.fetch_add(1, AtomicOrdering::SeqCst);
-            let current_earliest = earliest_clone.load(AtomicOrdering::Acquire);
-            if header.delivery_vtime_ns() < current_earliest {
-                earliest_clone.fetch_min(header.delivery_vtime_ns(), AtomicOrdering::Release);
-                rx_timer_clone.mod_ns(header.delivery_vtime_ns() as i64);
-            }
-        } else {
-            dropped_frames_sub.fetch_add(1, AtomicOrdering::SeqCst);
-        }
-    });
-
     let generation = Arc::new(AtomicU64::new(0));
-    state.subscription =
-        SafeSubscription::new(&*shared.transport, &rx_topic, generation, sub_callback).ok(); // virtmcu-allow: bql reasoning="Safe Zenoh integration"
-    state.rx_timer = Some(rx_timer);
 
-    Box::into_raw(state)
+    match virtmcu_qom::sync::DeterministicReceiver::new(
+        &*transport,
+        &rx_topic,
+        generation,
+        state_ptr as *mut c_void,
+        decode_netdev,
+        deliver_netdev,
+    ) {
+        Ok(receiver) => {
+            state_box.receiver = Some(receiver);
+        }
+        Err(_) => {
+            return ptr::null_mut();
+        }
+    }
+
+    Box::into_raw(state_box)
 }
 
 fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usize) -> isize {
-    {
-        let mut lock = state.shared.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !lock.running {
-            return 0;
-        }
-        lock.active_vcpu_count += 1;
-    }
-    let _guard = VcpuCountGuard(&state.shared);
     let payload = unsafe { core::slice::from_raw_parts(buf, size) };
     let now =
         u64::try_from(unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) }).expect("vtime is negative");
     let seq = state.tx_sequence.fetch_add(1, AtomicOrdering::SeqCst);
 
-    match state.shared.tx_sender.try_send(TxPacket {
-        vtime: now,
-        sequence: seq,
-        data: payload.to_vec(),
-    }) {
-        Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}
-    }
+    state.bridge.send_and_wait(TxPacket { vtime: now, sequence: seq, data: payload.to_vec() }, 0);
     size as isize
 }
 

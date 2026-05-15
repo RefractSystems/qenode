@@ -51,6 +51,13 @@ pub fn validate_dtb(dtb_path: &Path, world: &World) -> Result<()> {
             continue;
         }
 
+        if let Some(serde_yaml::Value::String(s)) = &dev.address {
+            let s = s.trim();
+            if s == "none" {
+                continue;
+            }
+        }
+
         let prefix = if dev.periph_type.as_deref() == Some("Memory.MappedMemory") {
             if dev.name.contains('@') {
                 format!("memory@{}", dev.name.split('@').nth(1).unwrap())

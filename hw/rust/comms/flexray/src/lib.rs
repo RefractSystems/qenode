@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -26,7 +25,6 @@ use core::ffi::CStr;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use crossbeam_channel::{bounded, Receiver};
 use flatbuffers::FlatBufferBuilder;
 use virtmcu_api::flexray_generated::virtmcu::flexray::{FlexRayFrame, FlexRayFrameArgs};
 use virtmcu_qom::declare_device_type;
@@ -67,7 +65,6 @@ const CMD_COLDSTART: u32 = 0x01;
 const CCSV_NORMAL_ACTIVE: u32 = 0x2;
 const FLEXRAY_MMIO_SIZE: u64 = 0x1000;
 const FLEXRAY_VRC_INITIAL: u32 = 0x00000001;
-const FLEXRAY_RX_QUEUE_SIZE: usize = 100;
 const FLEXRAY_SLOT_SIZE: usize = 64;
 
 // Control Bits
@@ -139,6 +136,7 @@ pub struct FlexRayMsgHeader {
     pub config: u32,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct OrderedFlexRayPacket {
     pub vtime: u64,
     pub frame_id: u16,
@@ -148,16 +146,20 @@ pub struct OrderedFlexRayPacket {
     pub data: Vec<u8>,
 }
 
+impl virtmcu_qom::sync::DeliveryPacket for OrderedFlexRayPacket {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
+    }
+}
+
 pub struct FlexRayState {
     parent_ptr: *mut FlexRay,
     _node_id: u32,
     _debug: bool,
     topic: String,
     transport: Arc<dyn virtmcu_api::DataTransport>,
-    rx_timer: Option<Arc<QomTimer>>,
     cycle_timer: Option<QomTimer>,
-    rx_receiver: Receiver<OrderedFlexRayPacket>,
-    pending_packet: BqlGuarded<Option<OrderedFlexRayPacket>>,
+    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedFlexRayPacket>>,
     current_cycle: Arc<AtomicUsize>,
     is_valid: Arc<AtomicBool>,
     pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
@@ -166,25 +168,7 @@ pub struct FlexRayState {
     wait_mutex: virtmcu_qom::sync::Mutex<()>,
 }
 
-impl PartialEq for OrderedFlexRayPacket {
-    fn eq(&self, other: &Self) -> bool {
-        self.vtime == other.vtime
-    }
-}
-impl Eq for OrderedFlexRayPacket {}
-impl PartialOrd for OrderedFlexRayPacket {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for OrderedFlexRayPacket {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        other.vtime.cmp(&self.vtime)
-    }
-}
-
 use core::sync::atomic::AtomicBool;
-use virtmcu_qom::sync::BqlGuarded;
 
 unsafe extern "C" fn flexray_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     virtmcu_qom::sim_err!("flexray_realize starting");
@@ -526,56 +510,56 @@ static FLEXRAY_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(flexray_type_init, FLEXRAY_TYPE_INFO);
 
-extern "C" fn flexray_rx_timer_cb(opaque: *mut core::ffi::c_void) {
+fn decode_flexray(
+    _opaque: *mut core::ffi::c_void,
+    _topic: &str,
+    data: &[u8],
+) -> Option<OrderedFlexRayPacket> {
+    virtmcu_qom::sim_debug!("FlexRay RX: received {} bytes", data.len());
+    let frame = flatbuffers::root::<FlexRayFrame>(data).ok()?;
+    virtmcu_qom::sim_debug!(
+        "FlexRay RX: frame_id={} vtime={}",
+        frame.frame_id(),
+        frame.delivery_vtime_ns()
+    );
+
+    Some(OrderedFlexRayPacket {
+        vtime: frame.delivery_vtime_ns(),
+        frame_id: frame.frame_id(),
+        cycle_count: frame.cycle_count(),
+        channel: frame.channel(),
+        flags: frame.flags(),
+        data: frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
+    })
+}
+
+fn deliver_flexray(opaque: *mut core::ffi::c_void, packet: OrderedFlexRayPacket) {
     let s_ptr = opaque as *mut FlexRay;
     let s = unsafe { &mut *s_ptr };
-    let state = unsafe { &*s.rust_state };
 
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-    virtmcu_qom::sim_debug!("flexray_rx_timer_cb fired at {}", now);
+    virtmcu_qom::sim_debug!("deliver_flexray fired at {}", now);
 
-    loop {
-        let mut pending = state.pending_packet.get_mut();
-        let packet = if let Some(p) = pending.take() {
-            p
-        } else {
-            match state.rx_receiver.try_recv() {
-                Ok(p) => p,
-                Err(_) => break,
-            }
-        };
-
-        if now >= packet.vtime as i64 {
-            // Find matching slot
-            for i in 0..128 {
-                if s.msg_ram_headers[i].frame_id == packet.frame_id {
-                    virtmcu_qom::sim_debug!(
-                        "FlexRay RX: Matched frame_id={} in slot {}",
-                        packet.frame_id,
-                        i
-                    );
-                    let data_word = if packet.data.len() >= FLEXRAY_WORD_SIZE {
-                        u32::from_le_bytes(
-                            packet.data[0..FLEXRAY_WORD_SIZE]
-                                .try_into()
-                                .expect("flexray logic assumption failed"),
-                        )
-                    } else {
-                        0
-                    };
-                    virtmcu_qom::sim_debug!("FlexRay RX: Updating wrhs3 and wrds[0]");
-                    s.wrhs3 |= 1;
-                    s.wrds[0] = data_word;
-                }
-            }
-        } else {
-            // Not yet time, store in pending and re-schedule
-            let vtime = packet.vtime as i64;
-            *pending = Some(packet);
-            if let Some(timer) = &state.rx_timer {
-                timer.mod_ns(vtime);
-            }
-            break;
+    // Find matching slot
+    for i in 0..128 {
+        if s.msg_ram_headers[i].frame_id == packet.frame_id {
+            virtmcu_qom::sim_debug!(
+                "FlexRay RX: Matched frame_id={} in slot {}",
+                packet.frame_id,
+                i
+            );
+            let data_word = if packet.data.len() >= FLEXRAY_WORD_SIZE {
+                u32::from_le_bytes(
+                    packet.data[0..FLEXRAY_WORD_SIZE]
+                        .try_into()
+                        .expect("flexray logic assumption failed"),
+                )
+            } else {
+                0
+            };
+            virtmcu_qom::sim_debug!("FlexRay RX: Updating wrhs3 and wrds[0]");
+            s.wrhs3 |= 1;
+            s.wrds[0] = data_word;
         }
     }
 }
@@ -587,61 +571,42 @@ pub fn flexray_init_internal(
     debug: bool,
     transport: Arc<dyn virtmcu_api::DataTransport>,
 ) -> Result<*mut FlexRayState, String> {
-    let (tx, rx) = bounded::<OrderedFlexRayPacket>(FLEXRAY_RX_QUEUE_SIZE);
-
     let liveliness = transport.declare_liveliness(&format!("sim/flexray/liveliness/{node_id}"));
-    let mut state = Box::new(FlexRayState {
+    let mut state_box = Box::new(FlexRayState {
         parent_ptr: s_ptr,
         _liveliness: liveliness,
         _node_id: node_id,
         _debug: debug,
         topic: topic.clone(),
-        transport,
-        rx_timer: None,
+        transport: Arc::clone(&transport),
         cycle_timer: None,
-        rx_receiver: rx,
-        pending_packet: BqlGuarded::new(None),
+        receiver: None,
         current_cycle: Arc::new(AtomicUsize::new(0)),
         is_valid: Arc::new(AtomicBool::new(true)),
         cond: virtmcu_qom::sync::Condvar::new(),
         wait_mutex: virtmcu_qom::sync::Mutex::new(()),
     });
 
-    let rx_timer =
-        unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_rx_timer_cb, s_ptr as *mut c_void) };
-
-    let rx_timer_clone = Arc::new(rx_timer);
-
-    let sub_callback = {
-        let tx = tx.clone();
-        let rx_timer_clone = Arc::clone(&rx_timer_clone);
-        move |_topic: &str, payload: &[u8]| {
-            virtmcu_qom::sim_debug!("FlexRay RX: received {} bytes", payload.len());
-            let frame = flatbuffers::root::<FlexRayFrame>(payload)
-                .expect("flexray logic assumption failed");
-            virtmcu_qom::sim_debug!(
-                "FlexRay RX: frame_id={} vtime={}",
-                frame.frame_id(),
-                frame.delivery_vtime_ns()
-            );
-
-            let packet = OrderedFlexRayPacket {
-                vtime: frame.delivery_vtime_ns(),
-                frame_id: frame.frame_id(),
-                cycle_count: frame.cycle_count(),
-                channel: frame.channel(),
-                flags: frame.flags(),
-                data: frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
-            };
-            let _ = tx.send(packet);
-            rx_timer_clone.kick();
-        }
-    };
-
-    // Subscribe to per-node RX subtopic; tests publish to this exact path.
+    let state_ptr = core::ptr::from_mut(&mut *state_box);
+    let generation = Arc::new(core::sync::atomic::AtomicU64::new(0));
     let rx_topic = alloc::format!("{topic}/{node_id}/rx");
-    let _ = state.transport.subscribe(&rx_topic, Box::new(sub_callback));
-    state.rx_timer = Some(rx_timer_clone);
+
+    match virtmcu_qom::sync::DeterministicReceiver::new(
+        &*transport,
+        &rx_topic,
+        generation,
+        state_ptr as *mut c_void,
+        decode_flexray,
+        deliver_flexray,
+    ) {
+        Ok(receiver) => {
+            state_box.receiver = Some(receiver);
+        }
+        Err(e) => {
+            virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!: {}", e);
+            return Err("Failed to create subscription".into());
+        }
+    }
 
     let cycle_timer =
         unsafe { QomTimer::new(QEMU_CLOCK_VIRTUAL, flexray_cycle_timer_cb, s_ptr as *mut c_void) };
@@ -649,9 +614,9 @@ pub fn flexray_init_internal(
     let now =
         unsafe { virtmcu_qom::timer::qemu_clock_get_ns(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) };
     cycle_timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
-    state.cycle_timer = Some(cycle_timer);
+    state_box.cycle_timer = Some(cycle_timer);
 
-    Ok(Box::into_raw(state))
+    Ok(Box::into_raw(state_box))
 }
 
 extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {

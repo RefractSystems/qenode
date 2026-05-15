@@ -38,6 +38,7 @@ fn test_stress_telemetry_serialization() {
     }
     let duration = start.elapsed();
     println!("Serialized and deserialized {num_events} events in {duration:?}");
+    // virtmcu-allow: print reasoning="test output"
     // virtmcu-allow: print reasoning="test measurement reporting"
     // virtmcu-allow: print reasoning="manual benchmark results"
 }

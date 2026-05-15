@@ -99,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bindings_file = out_path.join("bindings.rs");
 
     let bindings = bindgen::Builder::default()
+        .use_core()
         .header("wrapper.h")
         .clang_arg(format!("-I{qemu_dir}/include"))
         .clang_arg(format!("-I{qemu_build_dir}"))

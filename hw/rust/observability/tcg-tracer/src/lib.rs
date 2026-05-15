@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -140,7 +139,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
 
     let transport: Arc<dyn DataTransport> = if let Some(path) = transport_cfg.strip_prefix("unix:")
     {
-        match transport_unix::UnixDataTransport::new(path) {
+        match transport_unix::UdsDataTransport::new(path) {
             Ok(t) => Arc::new(t),
             Err(e) => {
                 plugin_log!("tcg-tracer: Failed to initialize Unix transport: {e:?}");

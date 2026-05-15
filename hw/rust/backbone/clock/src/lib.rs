@@ -4,7 +4,6 @@
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -1022,6 +1021,7 @@ fn clock_init_internal(
     // `clock_init_with_transport()` in `clock_realize()`. Operators running
     // `slaved-unix` mode should NOT include `sim/clock/start` signals in their
     // world configuration; they have no effect and will mislead operators.
+    // virtmcu-allow: bql reasoning="SafeSubscription allowed in backbone devices like virtmcu-clock per GEMINI.md mandate."
     let _start_sub = virtmcu_qom::sync::SafeSubscription::new(
         start_transport.as_ref(),
         &start_topic,

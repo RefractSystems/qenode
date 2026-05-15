@@ -6,7 +6,6 @@ version = 4
 name = "actuator"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "transport-unix",
  "transport-zenoh",
  "virtmcu-api",
@@ -1051,7 +1050,6 @@ dependencies = [
 name = "flexray"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "flatbuffers",
  "transport-unix",
  "transport-zenoh",
@@ -2039,6 +2037,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "native-integration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cyber_bridge",
+ "fnv",
+ "libc",
+ "serde_json",
+ "stress_adapter",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "virtmcu-api",
+ "virtmcu-test-runner",
+]
+
+[[package]]
 name = "netdev"
 version = "0.1.0"
 dependencies = [
@@ -2858,6 +2873,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reference_peripheral"
+version = "0.1.0"
+dependencies = [
+ "virtmcu-api",
+ "virtmcu-qom",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2965,14 +2988,6 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rust_dummy"
-version = "0.1.0"
-dependencies = [
- "virtmcu-api",
- "virtmcu-qom",
 ]
 
 [[package]]
@@ -3133,7 +3148,6 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "s32k144-lpuart"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "flatbuffers",
  "transport-unix",
  "transport-zenoh",

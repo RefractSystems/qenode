@@ -81,8 +81,7 @@ See [`docs/architecture/01-system-overview.md`](docs/architecture/01-system-over
 - **Sensor/Actuator Abstraction (SAL/AAL)**: Peripheral models translate raw firmware
   register writes/reads into continuous physical properties (floating-point force,
   acceleration, angle) with configurable noise and transfer functions.
-  - *Standalone mode*: Ingest Renode Sensor Data (RESD) binary files for fast, fully
-    deterministic CI/CD replay without a physics engine.
+  - *Standalone mode*: Ingest high-fidelity sensor traces from **MCAP** containers (aligned with RFC-0017) or legacy Renode Sensor Data (RESD) files for fast, fully deterministic CI/CD replay.
   - *Integrated mode*: Lock-step with MuJoCo (zero-copy `mjData` shared memory) or
     NVIDIA Omniverse (Accellera Federated Simulation Standard / OpenUSD schemas).
 
@@ -153,7 +152,7 @@ covers the timing design and BQL constraints. Section 6 covers prior art (qbox, 
 
 **For a deep dive on clock modes and BQL mechanics**: [`docs/architecture/02-temporal-core.md`](docs/architecture/02-temporal-core.md).
 
-**Write a new peripheral**: Navigate to `hw/rust/common/rust-dummy/` as a template. Rename, implement MMIO ops, and add an
+**Write a new peripheral**: Navigate to `hw/rust/common/reference-peripheral/` as a template. Rename, implement MMIO ops, and add an
 entry in `hw/meson.build`. Run `make build` then:
 ```bash
 ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb -device your-device-name -nographic
@@ -228,7 +227,7 @@ The core framework development is complete. All architectural pillars and capabi
 ## Key Design Decisions
 
 - **No Python in the simulation loop.** All peripherals, clock sync, and networking are
-  native C/Rust QOM modules. Orchestration and testing are handled by native Rust tools. See ADR-003.
+  native C/Rust QOM modules. Orchestration and testing are handled by native Rust tools. See RFC-0003.
 - **Abstract federation bus.** A pluggable transport layer (`DataTransport`) handles clock quanta, Ethernet
   frames, UART bytes, and sensor data. Default implementations for Zenoh and Unix Domain Sockets.
 - **Three clock modes.** `standalone` (free-run, full speed), `slaved-suspend` (~95%

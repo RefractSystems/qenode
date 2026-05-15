@@ -10,14 +10,14 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ## 1. The Core Constants
 
-### Binary Fidelity (ADR-006)
+### Binary Fidelity (RFC-0006)
 **The same firmware ELF that runs on a real MCU must run unmodified in VirtMCU.**
 - No virtmcu-specific startup code or linker sections.
 - Peripherals mapped at **exact** datasheet base addresses.
 - Infrastructure (clocks, co-sim) must be **invisible** to the guest firmware.
 - Any feature requiring firmware modification is a VirtMCU bug.
 
-### Global Simulation Determinism (ADR-014)
+### Global Simulation Determinism (RFC-0001)
 **Same topology + same firmware + same `global_seed` → bit-identical output.**
 - **Topology declared, not discovered**: Runtime Zenoh "scouting" is BANNED.
 - **Canonical tie-breaking**: Messages delivered in order `(vtime, node_id, seq)`.
@@ -41,12 +41,12 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Protocol Serialization
 - **No Manual Struct Packing**: BANNED: manual packing/unpacking of bytes.
-- **Schema-First**: REQUIRED: Use `virtmcu-api` (FlatBuffers) for all core simulation protocols.
+- **Schema-First**: REQUIRED: Use `virtmcu-api` (FlatBuffers) for all core simulation protocols (see RFC-0012).
 
 ### No Polling / Sleep Avoidance
 - **BANNED**: `std::thread::sleep`, `tokio::time::sleep`, or `time.sleep()` in hot paths, MMIO, or tests.
 - **Deterministic Sync**: Use `vta.step()`, QMP events, or Zenoh `recv_async()`. 
-- **Exception**: `# virtmcu-allow: sleep reasoning="<reason>` is required for the few unavoidable cases."
+- **Exception**: `// virtmcu-allow: sleep reasoning="..."` is required for the few unavoidable cases.
 ---
 
 ## 3. The "Beyoncé Rule" of Verification
@@ -54,22 +54,22 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 - **Empirical Reproduction**: You must write a failing test reproducing a bug **before** applying the fix.
 - **Coverage**: Every feature must be backed by unit or integration tests (Rust).
-- **Stress Testing**: New features must survive 10,000+ iterations (`cargo test --release`) or 100+ integration runs.
+- **Stress Testing**: New features must survive 10,000+ iterations (`cargo test --release`) or 100+ integration runs (see RFC-0040).
 
 ---
 
 ## 4. Concurrency & Safety Mandates
 
 ### Safe Big QEMU Lock (BQL) Usage
-- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer.
-- **MMIO vCPU threads**: Yield BQL via `Bql::temporary_unlock()` when blocking on external I/O.
+- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer. `DeterministicReceiver` (RFC-0021) handles this pattern automatically for ingress.
+- **MMIO vCPU threads**: Yield BQL via `Bql::temporary_unlock()` when blocking on external I/O (see RFC-0018).
 - **Bql API**: Use the RAII `Bql::lock()` and `QemuCond::wait_yielding_bql`.
 - **Lock Order**: BQL → peripheral mutex → condvar wait.
 
 ### Two-Stage Delivery Pipeline
-- **Never mutate guest-visible state or wake a suspended vCPU directly inside a `SafeSubscription` callback.**
-- **Stage 1 (Host Time / `SafeSubscription`)**: Queue payload by `delivery_vtime_ns` and schedule a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`).
-- **Stage 2 (Virtual Time / `QomTimer`)**: Timer callback fires at `delivery_vtime_ns`. Move data to guest registers, assert IRQs, or call `cond.notify_all()`.
+- **Never mutate guest-visible state or wake a suspended vCPU directly inside a transport callback.**
+- **Stage 1 (Host Ingress)**: Use `DeterministicReceiver` to queue payloads by `delivery_vtime_ns` in a virtual-time-sorted priority queue.
+- **Stage 2 (Virtual Time Delivery)**: The `DeterministicReceiver` schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) that fires at `delivery_vtime_ns`. The delivery callback performs the register mutation or signals IRQs under the BQL.
 
 ### Safe Peripheral Teardown
 - **No Bounded Spinloops**: BANNED: `while attempts < N`. This leads to time-bomb Use-After-Free (UAF) bugs.

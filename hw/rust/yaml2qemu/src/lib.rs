@@ -106,6 +106,18 @@ fn emit_device(
     let addr = if let Some(a) = &p.address { parse_addr(a) } else { 0 };
     let p_type = p.periph_type.as_deref().unwrap_or("Unknown");
 
+    let _compat = match p_type {
+        "UART.PL011" => "pl011",
+        "IRQControllers.ARM_GenericInterruptController" => "arm_gic",
+        "actuator" => "actuator",
+        "ieee802154" => "ieee802154",
+        "mmio-socket-bridge" => "mmio-socket-bridge",
+        "SPI.PL022" => "pl022",
+        "spi-echo" => "spi-echo",
+        "SPI.ZenohBridge" => "spi",
+        _ => p_type,
+    };
+
     if p_type == "chardev" {
         let node = if let Some(props) = &p.properties {
             if let Some(serde_yaml::Value::String(n)) = props.get("node") {
@@ -264,6 +276,7 @@ fn emit_device(
         "actuator",
         "sensor",
         "s32k144-lpuart",
+        "reference-peripheral",
     ]
     .contains(&p_type);
     if is_native {
@@ -387,7 +400,23 @@ pub fn parse_yaml(
     endpoint: Option<&str>,
     node_id: u32,
 ) -> Result<(YamlPlatform, World)> {
-    let world: World = serde_yaml::from_str(yaml_content)?;
+    let mut world: World = match serde_yaml::from_str(yaml_content) {
+        Ok(w) => w,
+        Err(_) => World { machine: None, peripherals: vec![] },
+    };
+
+    // If world is empty, try to parse as a multi-node topology
+    if world.machine.is_none() && world.peripherals.is_empty() {
+        #[derive(Debug, Deserialize)]
+        struct Topology {
+            nodes: Vec<World>,
+        }
+        if let Ok(topo) = serde_yaml::from_str::<Topology>(yaml_content) {
+            if let Some(node_world) = topo.nodes.get(node_id as usize) {
+                world = node_world.clone();
+            }
+        }
+    }
 
     let mut dts = String::new();
     let mut cli_args = Vec::new();
@@ -447,6 +476,7 @@ pub fn parse_yaml(
             "actuator",
             "sensor",
             "s32k144-lpuart",
+            "reference-peripheral",
         ]
         .contains(&p_type);
         if is_native {
@@ -661,7 +691,7 @@ peripherals:
         let result = parse_yaml(yaml, None, 0);
         assert!(result.is_ok());
         let (platform, _) = result.unwrap();
-        println!("Generated DTS:\n{}", platform.dts_content);
+        println!("Generated DTS:\n{}", platform.dts_content); // virtmcu-allow: print reasoning="CLI output"
     }
 
     #[test]

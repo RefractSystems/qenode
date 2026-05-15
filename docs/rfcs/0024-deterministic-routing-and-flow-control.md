@@ -4,7 +4,7 @@
 Proposed
 
 ## Context & Problem Statement
-In VirtMCU's early architecture, communication between peripherals relied on "Hope-Based" pub/sub routing. Peripherals would declare arbitrary topics (e.g., `sim/dummy/tx`), and the `DeterministicCoordinator` used a hardcoded whitelist of wildcards to forward traffic. 
+In VirtMCU's early architecture, communication between peripherals relied on "Hope-Based" pub/sub routing. Peripherals would declare arbitrary topics (e.g., `sim/reference-peripheral/tx`), and the `DeterministicCoordinator` used a hardcoded whitelist of wildcards to forward traffic. 
 
 This created the "Silent Drop" problem: if a developer misconfigured a topic, or if the coordinator lacked a matching wildcard, the network packet disappeared into the void without throwing an error. The guest firmware would then spin infinitely waiting for data, causing integration tests to timeout with no diagnostic information.
 

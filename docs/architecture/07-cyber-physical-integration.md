@@ -66,7 +66,9 @@ received, ensuring strict causal ordering across every quantum.
 For architecture details, SHM layout, wire protocol, and deployment topology, see
 [Physics Gateway](./12-physics-gateway.md).
 
-### Standalone Mode (RESD)
+### Standalone Mode (MCAP)
 For CI/CD, the Cyber Node can run without a live Physics Engine by replaying sensor
-values from **Renode Sensor Data (RESD)** files. This allows for deterministic testing
-of control logic against recorded "golden" physical traces.
+values from **MCAP** files (aligned with RFC-0017). This allows for deterministic 
+testing of control logic against recorded "golden" physical traces. The legacy 
+Renode Sensor Data (RESD) format is deprecated but remains supported for 
+backward compatibility in specific educational workloads.

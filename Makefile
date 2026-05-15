@@ -55,7 +55,7 @@ QEMU_SRC  ?= $(CURDIR)/third_party/qemu
 QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu$(BUILD_SUFFIX)
 
 # Helper macros for running commands in Docker
-VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
+VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm --net=host \
 	-e HOST_UID=$$(id -u) \
 	-e HOST_GID=$$(id -g) \
 	-e HOME=/home/vscode \
@@ -70,7 +70,7 @@ VIRTMCU_DOCKER_RUN_DEVENV_IMG = docker run --rm \
 
 VIRTMCU_DOCKER_RUN_DEVENV = $(VIRTMCU_DOCKER_RUN_DEVENV_IMG) $(VIRTMCU_DEVENV_IMG)
 
-VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm \
+VIRTMCU_DOCKER_RUN_CI_IMG = docker run --rm --net=host \
 	-v "$(CURDIR):/workspace" -w /workspace \
 	-v ci-cargo-registry:/usr/local/cargo/registry \
 	-e HOST_UID=$$(id -u) \

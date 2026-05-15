@@ -88,12 +88,12 @@ the right QEMU binary.
 ### Adding a New Peripheral
 
 **For Rust Models (Preferred):**
-1. Copy the `hw/rust/common/rust-dummy/` template to `hw/rust/<category>/<name>`.
+1. Copy the `hw/rust/common/reference-peripheral/` template to `hw/rust/<category>/<name>`.
 2. Edit `src/lib.rs` for your Rust implementation.
 3. Update `hw/meson.build` to compile and link your module.
 
 **For C Models (Legacy/Bridge only):**
-1. Copy `hw/rust/common/virtmcu-test-devices/dummy.c` (as a template) or use existing C models.
+1. Copy `hw/misc/educational-dummy.c` (as a template) or use existing C models.
 2. Add an entry to `hw/meson.build` following the existing pattern.
 
 **For all models:**
@@ -179,7 +179,7 @@ If a test passes locally but fails on CI, you can run the test inside the exact 
 docker build -t virtmcu-ci -f docker/Dockerfile --target ci .
 
 # 2. Run a specific domain smoke test (e.g., boot_arm)
-docker run --rm \
+docker run --rm --net=host \
   -v "$(pwd):/workspace" \
   -w /workspace \
   virtmcu-ci \
