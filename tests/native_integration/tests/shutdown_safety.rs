@@ -2,6 +2,34 @@ use anyhow::Result;
 use tokio::time::Duration;
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
 
+/// Gate test for Task 10.3 (Thread Leakage on Finalization):
+/// Verifies that the CAN-FD device's peripheral-owned TX thread exits cleanly when the
+/// simulation shuts down. Before the fix, the thread outlived its owner and could dereference
+/// freed memory. The test must complete within its `with_timeout` budget; a hang indicates
+/// the thread did not exit on teardown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_canfd_thread_shutdown_safety() -> Result<()> {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let _env = VirtmcuTestEnv::builder()
+        .add_node(
+            NodeConfig::new(0)
+                .with_firmware_path("tests/fixtures/guest_apps/boot_arm/hello.elf")
+                .with_dtb_path("tests/fixtures/guest_apps/boot_arm/minimal.dtb")
+                .add_qemu_arg("-object")
+                .add_qemu_arg("can-bus,id=canbus0")
+                .add_qemu_arg("-object")
+                .add_qemu_arg("can-host-virtmcu,id=canhost0,canbus=canbus0,node=0,topic=sim/can"),
+        )
+        .with_timeout(10)
+        .build()
+        .await?;
+
+    // Drop env here — triggers QEMU teardown and the CAN-FD peripheral finalize/disconnect
+    // path, which now joins the TX thread via `impl Drop for State`.
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_shutdown_while_blocked() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();

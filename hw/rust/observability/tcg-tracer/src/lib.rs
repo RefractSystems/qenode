@@ -23,7 +23,7 @@ use qemu_plugin::{
 macro_rules! plugin_log {
     ($($arg:tt)*) => {{
         let msg = alloc::format!("{}\0", alloc::format!($($arg)*));
-        unsafe { qemu_plugin_outs(msg.as_ptr().cast()) };
+        virtmcu_qom::ffi_call! { qemu_plugin_outs(msg.as_ptr().cast()) };
     }};
 }
 
@@ -64,8 +64,7 @@ struct ExecEvent {
 // Raw pointer to InsnData allocated on the heap and passed to QEMU as callback userdata.
 // Safety: access is serialized through Mutex; QEMU guarantees the ptr lives until plugin_exit.
 struct InsnPtr(*mut InsnData);
-unsafe impl Send for InsnPtr {}
-unsafe impl Sync for InsnPtr {}
+virtmcu_qom::impl_send_sync!(InsnPtr);
 
 struct TracerState {
     // virtmcu-allow: mutex reasoning="Drop management for clean shutdown"
@@ -90,7 +89,7 @@ struct QemuString(*mut c_char);
 impl Drop for QemuString {
     fn drop(&mut self) {
         if !self.0.is_null() {
-            unsafe { libc::free(self.0.cast::<c_void>()) };
+            virtmcu_qom::ffi_call! { libc::free(self.0.cast::<c_void>()) };
         }
     }
 }
@@ -99,7 +98,7 @@ impl QemuString {
         if self.0.is_null() {
             "Unknown".to_owned()
         } else {
-            unsafe { CStr::from_ptr(self.0) }.to_string_lossy().into_owned()
+            virtmcu_qom::ffi_call! { CStr::from_ptr(self.0) }.to_string_lossy().into_owned()
         }
     }
 }
@@ -116,7 +115,7 @@ impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn qemu_plugin_install(
+pub extern "C" fn qemu_plugin_install(
     id: QemuPluginId,
     _info: *const QemuInfo,
     nargs: c_int,
@@ -139,7 +138,8 @@ pub unsafe extern "C" fn qemu_plugin_install(
 
     let transport: Arc<dyn DataTransport> = if let Some(path) = transport_cfg.strip_prefix("unix:")
     {
-        match transport_unix::UdsDataTransport::new(path) {
+        // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
+        match transport_unix::UdsDataTransport::new(path, node_id) {
             Ok(t) => Arc::new(t),
             Err(e) => {
                 plugin_log!("tcg-tracer: Failed to initialize Unix transport: {e:?}");
@@ -148,7 +148,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
         }
     } else {
         match transport_zenoh::get_or_init_session(core::ptr::null()) {
-            Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s)),
+            Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s, node_id)),
             Err(e) => {
                 plugin_log!("tcg-tracer: Failed to initialize Zenoh transport: {e:?}");
                 return -1;
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn qemu_plugin_install(
     0
 }
 
-unsafe extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
+extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
     let state = match STATE.get() {
         Some(s) => s,
         None => return,
@@ -234,7 +234,7 @@ unsafe extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
     }
 }
 
-unsafe extern "C" fn vcpu_insn_exec(_vcpu_index: c_uint, userdata: *mut c_void) {
+extern "C" fn vcpu_insn_exec(_vcpu_index: c_uint, userdata: *mut c_void) {
     if !GLOBAL_TRACE_ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -246,7 +246,7 @@ unsafe extern "C" fn vcpu_insn_exec(_vcpu_index: c_uint, userdata: *mut c_void) 
     let _ = insn_data.tx.try_send(event);
 }
 
-unsafe extern "C" fn plugin_exit(_id: QemuPluginId, _userdata: *mut c_void) {
+extern "C" fn plugin_exit(_id: QemuPluginId, _userdata: *mut c_void) {
     if let Some(state) = STATE.get() {
         // Drop the master sender
         if let Ok(mut tx_opt) = state.tx_master.lock() {
@@ -255,7 +255,7 @@ unsafe extern "C" fn plugin_exit(_id: QemuPluginId, _userdata: *mut c_void) {
         // Drop all QEMU callback heap allocations from the translation phase
         if let Ok(mut contexts) = state.insn_contexts.lock() {
             for InsnPtr(ptr) in contexts.drain(..) {
-                drop(unsafe { Box::from_raw(ptr) });
+                drop(virtmcu_qom::ffi_call! { Box::from_raw(ptr) });
             }
         }
         // Wait for the background worker to flush the queue and cleanly exit
@@ -304,6 +304,11 @@ fn background_stream_worker(
             &mut builder,
             insn_trace,
         );
-        let _ = transport.publish(&topic, builder.finished_data());
+        let payload = builder.finished_data();
+        let seq = 0; // TCG tracer does not currently track seq
+        if let Ok(mut reservation) = transport.reserve(&topic, payload.len()) {
+            reservation.buffer_mut().copy_from_slice(payload);
+            let _ = reservation.commit(event.vtime, seq);
+        }
     }
 }

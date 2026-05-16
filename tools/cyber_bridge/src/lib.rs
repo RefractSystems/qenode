@@ -67,10 +67,9 @@ impl ZenohActuatorSink {
                 if raw.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
                     return;
                 }
-                let Some((header, data_bytes)) = virtmcu_api::decode_frame(&raw) else {
+                let Some((vtime, _, data_bytes)) = virtmcu_api::decode_frame(&raw) else {
                     return;
                 };
-                let vtime = header.delivery_vtime_ns();
                 let topic = sample.key_expr().as_str();
                 let Some(actuator_id_str) = topic.split('/').next_back() else {
                     return;

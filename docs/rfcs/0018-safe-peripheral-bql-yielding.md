@@ -1,7 +1,11 @@
 # RFC-0018: Safe Peripheral BQL Yielding via MmioDevice Trait
 
 ## Status
-Accepted
+Accepted. **Partially superseded by RFC-0027** (`CoSimBridge` now owns BQL
+yielding and `VcpuDrain` for bridges). The `MmioResult::wait_for(...)` closure
+pattern below is still authoritative for peripheral MMIO handlers. Direct
+calls to `Bql::temporary_unlock()` from peripheral code are BANNED per
+`CLAUDE.md`; the framework wraps them.
 
 ## Context
 VirtMCU ensures fidelity by running unmodified firmware that was originally written for bare-metal silicon. Bare-metal firmware frequently utilizes tight polling loops (e.g., `while(!REG_STATUS_READY);`) rather than `WFI` (Wait For Interrupt) to check peripheral states. 

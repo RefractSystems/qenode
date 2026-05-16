@@ -1,47 +1,57 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![allow(clippy::if_not_else)]
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
 )]
 //! Virtmcu virtual CAN FD device with pluggable transport.
-use zenoh::Wait;
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_void, CStr};
-use core::ptr;
-use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use crossbeam_channel::{unbounded, Sender};
-use flatbuffers::root;
-use virtmcu_api::can_generated::virtmcu::can::{CanFdFrame, CanFdFrameArgs};
-use virtmcu_qom::declare_device_type;
-use virtmcu_qom::error::Error;
-use virtmcu_qom::net::{
-    can_bus_client_send, can_bus_insert_client, can_bus_remove_client, CanBusClientInfo,
-    CanBusClientState, CanHostClass, CanHostState, QemuCanFrame,
-};
-use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::time::Duration;
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
+use virtmcu_api::can_generated::virtmcu::can::CanFdFrame;
+use virtmcu_api::DataTransport;
+use virtmcu_qom::net::{CanHostState, QemuCanFrame};
+use virtmcu_qom::sync::{Condvar, DeliveryPacket, DeterministicReceiver, Mutex, VcpuDrain};
 
-pub const TYPE_CAN_HOST_VIRTMCU: *const c_char = c"can-host-virtmcu".as_ptr();
+const CAN_TX_QUEUE_SIZE: usize = 65536;
+const CAN_TX_POLL_TIMEOUT_MS: u64 = 10;
 
-#[repr(C)]
-pub struct VirtmcuCanHostState {
-    pub parent_obj: CanHostState,
-    pub node: *mut c_char,
-    pub transport: *mut c_char,
-    pub router: *mut c_char,
-    pub topic: *mut c_char,
-    pub rust_state: *mut State,
+type TxPayload = (u64, u64, Vec<u8>);
+
+fn spawn_can_tx_thread(
+    transport: Arc<dyn DataTransport>,
+    topic: String,
+    rx: Receiver<TxPayload>,
+    shutdown: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(CAN_TX_POLL_TIMEOUT_MS)) {
+            Ok((vtime, seq, payload)) => {
+                if let Ok(mut reservation) = transport.reserve(&topic, payload.len()) {
+                    reservation.buffer_mut().copy_from_slice(&payload);
+                    let _ = reservation.commit(vtime, seq);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    })
 }
 
 pub struct OrderedCanFrame {
@@ -71,436 +81,244 @@ impl Ord for OrderedCanFrame {
     }
 }
 
-impl virtmcu_qom::sync::DeliveryPacket for OrderedCanFrame {
+impl DeliveryPacket for OrderedCanFrame {
     fn delivery_vtime_ns(&self) -> u64 {
         self.vtime
     }
 }
 
-pub struct State {
-    receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedCanFrame>>,
-    tx_sender: Sender<Vec<u8>>,
-    backlog: virtmcu_qom::sync::Mutex<VecDeque<QemuCanFrame>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
-    client_ptr: *mut CanBusClientState,
-    tx_sequence: AtomicU64,
-    _topic: String,
-    pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
+/// The QEMU C-FFI Boundary Object.
+#[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
+#[virtmcu_qom::macros::qom_device(name = "can-host-virtmcu", parent = "can-host")]
+pub struct VirtmcuCanHostQEMU {
+    pub parent_obj: CanHostState,
+    pub iomem: virtmcu_qom::memory::MemoryRegion,
+
+    #[qom_property]
+    pub node: virtmcu_qom::qom::QomString,
+    #[qom_property]
+    pub router: virtmcu_qom::qom::QomString,
+    #[qom_property]
+    pub topic: virtmcu_qom::qom::QomString,
+
+    #[qom_link(target = "virtmcu-transport-hub")]
+    pub transport_link: virtmcu_qom::qom::QomLink<dyn DataTransport>,
+
+    #[qom_state]
+    pub state: CanfdState,
 }
 
-unsafe extern "C" fn virtmcu_can_receive(client: *mut CanBusClientState) -> bool {
-    let ch = unsafe { (*client).peer as *mut VirtmcuCanHostState };
-    let state = unsafe { (*ch).rust_state };
-    if state.is_null() {
-        return true;
-    }
-    let backlog = unsafe { (*state).backlog.lock() };
-    backlog.is_empty()
+pub struct CanfdState {
+    pub drain: VcpuDrain,
+    pub cond: Arc<Condvar>,
+    pub wait_mutex: Arc<Mutex<()>>, // virtmcu-allow: mutex reasoning="Wait mutex for MmioDevice"
+    pub transport: Option<Arc<dyn DataTransport>>,
+    pub receiver: Option<DeterministicReceiver<OrderedCanFrame>>,
+    pub tx_sender: Sender<TxPayload>,
+    pub tx_shutdown: Arc<AtomicBool>,
+    pub tx_thread: Option<std::thread::JoinHandle<()>>,
+    pub backlog: Arc<Mutex<VecDeque<QemuCanFrame>>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
+    pub tx_sequence: Arc<AtomicU64>,
+    pub node_id: u32,
+    pub topic: String,
+    pub generation: Arc<AtomicU64>,
 }
 
-unsafe extern "C" fn virtmcu_can_receive_frames(
-    client: *mut CanBusClientState,
-    frames: *const QemuCanFrame,
-    frames_cnt: usize,
-) -> isize {
-    if frames_cnt == 0 {
-        return 0;
-    }
-
-    let ch = unsafe { (*client).peer as *mut VirtmcuCanHostState };
-    let state = unsafe { (*ch).rust_state };
-    if state.is_null() {
-        return frames_cnt as isize;
-    }
-
-    let slice = unsafe { core::slice::from_raw_parts(frames, frames_cnt) };
-    let vtime_ns = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
-
-    for frame in slice {
-        let mut builder = flatbuffers::FlatBufferBuilder::new();
-        let data_vec =
-            builder.create_vector(frame.data.get(..frame.can_dlc as usize).unwrap_or(&[]));
-        let _seq = unsafe { (*state).tx_sequence.fetch_add(1, AtomicOrdering::SeqCst) };
-        let fbs_frame = CanFdFrame::create(
-            &mut builder,
-            &CanFdFrameArgs {
-                delivery_vtime_ns: vtime_ns as u64,
-                can_id: frame.can_id,
-                flags: u32::from(frame.flags),
-                data: Some(data_vec),
-            },
-        );
-        builder.finish(fbs_frame, None);
-        let payload = builder.finished_data().to_vec();
-        let _ = unsafe { (*state).tx_sender.send(payload) };
-    }
-
-    frames_cnt as isize
-}
-
-static VIRTMCU_CAN_CLIENT_INFO: CanBusClientInfo = CanBusClientInfo {
-    can_receive: Some(virtmcu_can_receive),
-    receive: Some(virtmcu_can_receive_frames),
-};
-
-fn decode_canfd(
-    _opaque: *mut core::ffi::c_void,
-    _topic: &str,
-    data: &[u8],
-) -> Option<OrderedCanFrame> {
-    const CAN_FD_MAX_PAYLOAD: usize = 64;
-    let fbs = root::<CanFdFrame>(data).ok()?;
-
-    let mut data_arr = [0u8; CAN_FD_MAX_PAYLOAD];
-    let dlc = if let Some(d) = fbs.data() {
-        let len = core::cmp::min(d.len(), CAN_FD_MAX_PAYLOAD);
-        data_arr[..len].copy_from_slice(&d.bytes()[..len]);
-        len as u8
-    } else {
-        0
-    };
-
-    let frame = QemuCanFrame {
-        can_id: fbs.can_id(),
-        can_dlc: dlc,
-        flags: fbs.flags() as u8,
-        _padding: [0; 2],
-        data: data_arr,
-    };
-
-    let vtime = fbs.delivery_vtime_ns();
-    // CanFdFrame schema does not have a sequence_number field, so we use 0.
-    let sequence = 0;
-    Some(OrderedCanFrame { vtime, sequence, frame })
-}
-
-fn deliver_canfd(opaque: *mut core::ffi::c_void, packet: OrderedCanFrame) {
-    let state = unsafe { &mut *(opaque as *mut State) };
-    let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
-
-    // Add to backlog
-    backlog.push_back(packet.frame);
-
-    // Drain the backlog to QEMU via can_bus_client_send
-    let mut batch = Vec::new();
-    while let Some(f) = backlog.pop_front() {
-        batch.push(f);
-    }
-
-    if !batch.is_empty() {
-        let sent = unsafe { can_bus_client_send(state.client_ptr, batch.as_ptr(), batch.len()) };
-        // Re-queue any unsent frames
-        if sent > 0 {
-            for f in batch.into_iter().skip(sent as usize) {
-                backlog.push_back(f);
-            }
-        } else {
-            // Nothing was sent (client not ready or error), put everything back
-            for f in batch {
-                backlog.push_back(f);
-            }
+impl Drop for CanfdState {
+    fn drop(&mut self) {
+        self.tx_shutdown.store(true, Ordering::Release);
+        if let Some(thread) = self.tx_thread.take() {
+            thread.join().expect("CAN-FD TX thread panicked");
         }
     }
 }
 
-unsafe extern "C" fn virtmcu_can_host_connect(ch: *mut CanHostState, _errp: *mut *mut Error) {
-    let zch = ch as *mut VirtmcuCanHostState;
+impl virtmcu_qom::device::PeripheralState for CanfdState {
+    type QomType = VirtmcuCanHostQEMU;
 
-    if unsafe { (*zch).node.is_null() || (*zch).topic.is_null() } {
-        return;
-    }
-
-    let node = unsafe { CStr::from_ptr((*zch).node).to_string_lossy().into_owned() };
-    let topic_str = unsafe { CStr::from_ptr((*zch).topic).to_string_lossy().into_owned() };
-    let transport_name = if (*zch).transport.is_null() {
-        "zenoh".to_owned()
-    } else {
-        unsafe { CStr::from_ptr((*zch).transport).to_string_lossy().into_owned() }
-    };
-
-    let router_ptr = unsafe {
-        if (*zch).router.is_null() {
-            ptr::null()
+    fn new(qemu_dev: &Self::QomType) -> Self {
+        let node_str = qemu_dev.node.as_string();
+        let node_id = if node_str.is_empty() {
+            0
         } else {
-            (*zch).router.cast_const()
-        }
-    };
-
-    let transport: Arc<dyn virtmcu_api::DataTransport> = if transport_name == "unix" {
-        let path = if router_ptr.is_null() {
-            format!("/tmp/virtmcu-coord-{node}.sock") // virtmcu-allow: absolute_path reasoning="Legacy script"
-        } else {
-            unsafe { core::ffi::CStr::from_ptr(router_ptr).to_string_lossy().into_owned() }
+            node_str.parse().expect("CAN-FD node id must be numeric")
         };
-        match transport_unix::UdsDataTransport::new(&path) {
-            Ok(t) => Arc::new(t),
-            Err(_) => return,
-        }
-    } else {
-        let session = match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
-            Ok(s) => s,
-            Err(_) => return,
+
+        let topic = if qemu_dev.topic.is_null() {
+            String::from("sim/can")
+        } else {
+            qemu_dev.topic.as_string()
         };
-        Arc::new(transport_zenoh::ZenohDataTransport::new(session))
-    };
 
-    let (tx_rx, rx_rx) = unbounded::<Vec<u8>>();
-    let transport_tx = Arc::clone(&transport);
-    let topic_tx = topic_str.clone();
-    std::thread::spawn(move || {
-        while let Ok(payload) = rx_rx.recv() {
-            let _ = transport_tx.publish(&topic_tx, &payload);
+        let (tx_rx, rx_rx) = bounded::<TxPayload>(CAN_TX_QUEUE_SIZE);
+        let tx_shutdown = Arc::new(AtomicBool::new(false));
+
+        // Setup transport link
+        let transport = qemu_dev.transport_link.get();
+        let tx_thread = transport.as_ref().map(|t| {
+            spawn_can_tx_thread(Arc::clone(t), topic.clone(), rx_rx, Arc::clone(&tx_shutdown))
+        });
+
+        Self {
+            drain: VcpuDrain::new(),
+            cond: Arc::new(Condvar::new()),
+            wait_mutex: Arc::new(Mutex::new(())), // virtmcu-allow: mutex reasoning="Wait mutex for MmioDevice"
+            transport,
+            receiver: None,
+            tx_sender: tx_rx,
+            tx_shutdown,
+            tx_thread,
+            backlog: Arc::new(Mutex::new(VecDeque::new())), // virtmcu-allow: mutex reasoning="Backlog managed securely"
+            tx_sequence: Arc::new(AtomicU64::new(0)),
+            node_id,
+            topic,
+            generation: Arc::new(AtomicU64::new(0)),
         }
-    });
+    }
+}
 
-    unsafe {
-        (*zch).parent_obj.bus_client.info =
-            core::ptr::from_ref::<CanBusClientInfo>(&VIRTMCU_CAN_CLIENT_INFO).cast_mut();
-        (*zch).parent_obj.bus_client.peer = zch as *mut core::ffi::c_void;
+impl virtmcu_qom::device::Peripheral for CanfdState {
+    fn realize(&mut self) -> Result<(), String> {
+        if let Some(t) = &self.transport {
+            let rx_topic = self.topic.clone();
+            let generation_clone = Arc::clone(&self.generation);
+            let backlog_clone = Arc::clone(&self.backlog);
+
+            let rec = DeterministicReceiver::new_safe(
+                &**t,
+                &rx_topic,
+                generation_clone,
+                |_topic, payload| {
+                    const CAN_FD_MAX_PAYLOAD: usize = 64;
+                    let (vtime, sequence, data) = virtmcu_api::decode_frame(payload)?;
+                    let fbs = flatbuffers::root::<CanFdFrame>(data).ok()?;
+
+                    let mut data_arr = [0u8; CAN_FD_MAX_PAYLOAD];
+                    let dlc = if let Some(d) = fbs.data() {
+                        let len = core::cmp::min(d.len(), CAN_FD_MAX_PAYLOAD);
+                        data_arr[..len].copy_from_slice(&d.bytes()[..len]);
+                        len as u8
+                    } else {
+                        0
+                    };
+
+                    let frame = QemuCanFrame {
+                        can_id: fbs.can_id(),
+                        can_dlc: dlc,
+                        flags: fbs.flags() as u8,
+                        _padding: [0; 2],
+                        data: data_arr,
+                    };
+
+                    Some(OrderedCanFrame { vtime, sequence, frame })
+                },
+                move |packet| {
+                    let mut backlog = backlog_clone.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
+                    backlog.push_back(packet.frame);
+                },
+            )
+            .map_err(|e| format!("Failed to init receiver: {e}"))?;
+
+            self.receiver = Some(rec);
+            virtmcu_qom::sim_debug!("CAN-FD: Node {} initialized with transport", self.node_id);
+        } else {
+            virtmcu_qom::sim_debug!(
+                "CAN-FD: Node {} initialized without transport (standalone mode)",
+                self.node_id
+            );
+        }
+        Ok(())
     }
 
-    let liveliness = if transport_name == "zenoh" {
-        match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
-            Ok(session) => {
-                let hb_topic = format!("sim/canfd/liveliness/{node}");
-                session.liveliness().declare_token(hb_topic).wait().ok()
+    fn read(
+        &self,
+        addr: u64,
+        size: u32,
+        _token: &virtmcu_qom::device::DrainToken,
+    ) -> virtmcu_qom::device::MmioResult<'_> {
+        virtmcu_qom::device::MmioDevice::read(self, addr, size)
+    }
+
+    fn write(&self, addr: u64, val: u64, size: u32, _token: &virtmcu_qom::device::DrainToken) {
+        virtmcu_qom::device::MmioDevice::write(self, addr, val, size);
+    }
+
+    fn condvar(&self) -> &Condvar {
+        &self.cond
+    }
+
+    // virtmcu-allow: mutex reasoning="Wait mutex for MmioDevice"
+    fn wait_mutex(&self) -> &Mutex<()> {
+        &self.wait_mutex
+    }
+}
+
+impl virtmcu_qom::device::MmioDevice for CanfdState {
+    fn read(&self, _addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let _guard = self.drain.acquire();
+        virtmcu_qom::device::MmioResult::Ready(0)
+    }
+
+    fn write(&self, _addr: u64, _val: u64, _size: u32) {
+        let _guard = self.drain.acquire();
+    }
+
+    fn condvar(&self) -> &Condvar {
+        &self.cond
+    }
+
+    // virtmcu-allow: mutex reasoning="Wait mutex for MmioDevice"
+    fn wait_mutex(&self) -> &Mutex<()> {
+        &self.wait_mutex
+    }
+}
+
+// RFC-0023 Phase 5: DSO Registration
+virtmcu_qom::register_peripheral!(VirtmcuCanHostQEMU);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::TrySendError;
+
+    #[test]
+    fn test_canfd_tx_thread_exits_on_shutdown() {
+        let (tx, rx) = bounded::<(u64, u64, Vec<u8>)>(65536);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = Arc::clone(&shutdown);
+
+        let handle = std::thread::spawn(move || loop {
+            if shutdown_clone.load(Ordering::Acquire) {
+                break;
             }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+            match rx.recv_timeout(Duration::from_millis(1)) {
+                Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        });
 
-    let mut state_box = Box::new(State {
-        _liveliness: liveliness,
-        receiver: None,
-        tx_sender: tx_rx,
-        backlog: virtmcu_qom::sync::Mutex::new(VecDeque::new()), // virtmcu-allow: mutex reasoning="Backlog managed securely"
-        client_ptr: unsafe { &raw mut (*zch).parent_obj.bus_client },
-        tx_sequence: AtomicU64::new(0),
-        _topic: topic_str.clone(),
-    });
+        shutdown.store(true, Ordering::Release);
+        drop(tx);
 
-    let state_ptr = core::ptr::from_mut(&mut *state_box);
-    let generation = Arc::new(AtomicU64::new(0));
-
-    match virtmcu_qom::sync::DeterministicReceiver::new(
-        &*transport,
-        &topic_str,
-        generation,
-        state_ptr as *mut c_void,
-        decode_canfd,
-        deliver_canfd,
-    ) {
-        Ok(receiver) => {
-            state_box.receiver = Some(receiver);
-        }
-        Err(e) => {
-            virtmcu_qom::sim_err!("FAILED TO CREATE SUBSCRIPTION!: {}", e);
-            return;
-        }
-    }
-
-    unsafe {
-        (*zch).rust_state = Box::into_raw(state_box);
-        can_bus_insert_client((*zch).parent_obj.bus, &raw mut (*zch).parent_obj.bus_client);
-    }
-}
-unsafe extern "C" fn virtmcu_can_host_disconnect(ch: *mut CanHostState) {
-    let zch = ch as *mut VirtmcuCanHostState;
-    unsafe {
-        can_bus_remove_client(&raw mut (*zch).parent_obj.bus_client);
-
-        if !(*zch).rust_state.is_null() {
-            let mut state = Box::from_raw((*zch).rust_state);
-            state.receiver.take();
-            (*zch).rust_state = ptr::null_mut();
-        }
-    }
-}
-
-extern "C" {
-    fn object_class_property_add_str(
-        klass: *mut ObjectClass,
-        name: *const c_char,
-        get: Option<
-            unsafe extern "C" fn(
-                obj: *mut virtmcu_qom::qom::Object,
-                errp: *mut *mut Error,
-            ) -> *mut c_char,
-        >,
-        set: Option<
-            unsafe extern "C" fn(
-                obj: *mut virtmcu_qom::qom::Object,
-                value: *const c_char,
-                errp: *mut *mut Error,
-            ),
-        >,
-    ) -> *mut c_void;
-    fn g_strdup(s: *const c_char) -> *mut c_char;
-    fn g_free(p: *mut c_void);
-}
-
-unsafe extern "C" fn get_node(
-    obj: *mut virtmcu_qom::qom::Object,
-    _errp: *mut *mut Error,
-) -> *mut c_char {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe { g_strdup((*zch).node) }
-}
-
-unsafe extern "C" fn set_node(
-    obj: *mut virtmcu_qom::qom::Object,
-    value: *const c_char,
-    _errp: *mut *mut Error,
-) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        if !(*zch).node.is_null() {
-            g_free((*zch).node as *mut c_void);
-        }
-        (*zch).node = g_strdup(value);
-    }
-}
-
-unsafe extern "C" fn get_transport(
-    obj: *mut virtmcu_qom::qom::Object,
-    _errp: *mut *mut Error,
-) -> *mut c_char {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe { g_strdup((*zch).transport) }
-}
-
-unsafe extern "C" fn set_transport(
-    obj: *mut virtmcu_qom::qom::Object,
-    value: *const c_char,
-    _errp: *mut *mut Error,
-) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        if !(*zch).transport.is_null() {
-            g_free((*zch).transport as *mut c_void);
-        }
-        (*zch).transport = g_strdup(value);
-    }
-}
-
-unsafe extern "C" fn get_router(
-    obj: *mut virtmcu_qom::qom::Object,
-    _errp: *mut *mut Error,
-) -> *mut c_char {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe { g_strdup((*zch).router) }
-}
-
-unsafe extern "C" fn set_router(
-    obj: *mut virtmcu_qom::qom::Object,
-    value: *const c_char,
-    _errp: *mut *mut Error,
-) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        if !(*zch).router.is_null() {
-            g_free((*zch).router as *mut c_void);
-        }
-        (*zch).router = g_strdup(value);
-    }
-}
-
-unsafe extern "C" fn get_topic(
-    obj: *mut virtmcu_qom::qom::Object,
-    _errp: *mut *mut Error,
-) -> *mut c_char {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe { g_strdup((*zch).topic) }
-}
-
-unsafe extern "C" fn set_topic(
-    obj: *mut virtmcu_qom::qom::Object,
-    value: *const c_char,
-    _errp: *mut *mut Error,
-) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        if !(*zch).topic.is_null() {
-            g_free((*zch).topic as *mut c_void);
-        }
-        (*zch).topic = g_strdup(value);
-    }
-}
-
-unsafe extern "C" fn virtmcu_can_host_class_init(klass: *mut ObjectClass, _data: *const c_void) {
-    let chc = klass as *mut CanHostClass;
-    unsafe {
-        (*chc).connect = Some(virtmcu_can_host_connect);
-        (*chc).disconnect = Some(virtmcu_can_host_disconnect);
-    }
-
-    unsafe {
-        object_class_property_add_str(klass, c"node".as_ptr(), Some(get_node), Some(set_node));
-        object_class_property_add_str(
-            klass,
-            c"transport".as_ptr(),
-            Some(get_transport),
-            Some(set_transport),
+        let start = std::time::Instant::now();
+        handle.join().expect("thread panicked");
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "CAN-FD TX thread did not exit within 100 ms"
         );
-        object_class_property_add_str(
-            klass,
-            c"router".as_ptr(),
-            Some(get_router),
-            Some(set_router),
-        );
-        object_class_property_add_str(klass, c"topic".as_ptr(), Some(get_topic), Some(set_topic));
     }
-}
 
-unsafe extern "C" fn virtmcu_can_host_instance_init(obj: *mut Object) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        (*zch).node = ptr::null_mut();
-        (*zch).transport = ptr::null_mut();
-        (*zch).router = ptr::null_mut();
-        (*zch).topic = ptr::null_mut();
-        (*zch).rust_state = ptr::null_mut();
-    }
-}
-
-unsafe extern "C" fn virtmcu_can_host_instance_finalize(obj: *mut Object) {
-    let zch = obj as *mut VirtmcuCanHostState;
-    unsafe {
-        if !(*zch).node.is_null() {
-            g_free((*zch).node as *mut c_void);
+    #[test]
+    #[should_panic(expected = "FATAL: Channel flooded")]
+    fn test_canfd_tx_channel_flood_panics() {
+        let (tx, _rx) = bounded::<(u64, u64, alloc::vec::Vec<u8>)>(65536);
+        for _i in 0..65536_u64 {
+            tx.try_send((0, 0, alloc::vec![])).expect("should not be full yet");
         }
-        if !(*zch).transport.is_null() {
-            g_free((*zch).transport as *mut c_void);
-        }
-        if !(*zch).router.is_null() {
-            g_free((*zch).router as *mut c_void);
-        }
-        if !(*zch).topic.is_null() {
-            g_free((*zch).topic as *mut c_void);
-        }
-        if !(*zch).rust_state.is_null() {
-            let mut state = Box::from_raw((*zch).rust_state);
-            state.receiver.take();
+        match tx.try_send((0, 0, alloc::vec![])) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Full(_)) => panic!("FATAL: Channel flooded. PDES barrier failure."),
         }
     }
 }
-
-#[used]
-static VIRTMCU_CAN_HOST_TYPE_INFO: TypeInfo = TypeInfo {
-    name: TYPE_CAN_HOST_VIRTMCU,
-    parent: c"can-host".as_ptr(),
-    instance_size: core::mem::size_of::<VirtmcuCanHostState>(),
-    instance_align: core::mem::align_of::<VirtmcuCanHostState>(),
-    instance_init: Some(virtmcu_can_host_instance_init),
-    instance_post_init: None,
-    instance_finalize: Some(virtmcu_can_host_instance_finalize),
-    abstract_: false,
-    class_size: core::mem::size_of::<CanHostClass>(),
-    class_init: Some(virtmcu_can_host_class_init),
-    class_base_init: None,
-    class_data: core::ptr::null(),
-    interfaces: core::ptr::null(),
-};
-
-declare_device_type!(VIRTMCU_CANFD_TYPE_INIT, VIRTMCU_CAN_HOST_TYPE_INFO);

@@ -1,7 +1,13 @@
 # RFC-0024: Assertion-Based Deterministic Routing and Flow Control
 
 ## Status
-Proposed
+Accepted (enforced by `DeterministicCoordinator` — unregistered packets panic)
+
+> Note: §4 ("Zenoh Flow Control Mandate") is transport-specific. For the UDS
+> data plane introduced by RFC-0019, kernel-level socket backpressure replaces
+> the Zenoh `CongestionControl::Block` knob. The general principle — every
+> `DataTransport` implementation must exert backpressure rather than drop —
+> is unchanged.
 
 ## Context & Problem Statement
 In VirtMCU's early architecture, communication between peripherals relied on "Hope-Based" pub/sub routing. Peripherals would declare arbitrary topics (e.g., `sim/reference-peripheral/tx`), and the `DeterministicCoordinator` used a hardcoded whitelist of wildcards to forward traffic. 

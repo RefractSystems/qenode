@@ -1,7 +1,7 @@
 # RFC 0023: Safe QOM Macros and Boilerplate Eradication (Revised)
 
 ## Status
-Proposed
+Accepted (implemented in `virtmcu-qom`; every peripheral uses `#[qom_device]`)
 
 ## Context & Problem Statement
 The boundary between QEMU's C-based Object Model (QOM) and VirtMCU's Rust peripherals is currently a source of critical architectural risk. 

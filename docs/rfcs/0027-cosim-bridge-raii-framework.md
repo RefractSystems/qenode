@@ -9,6 +9,8 @@ Various VirtMCU bridging components (such as `mmio-socket-bridge`, `remote-port`
 ## Decision
 We introduce the `CoSimBridge` and the `CoSimTransport` trait inside `virtmcu-qom`. `CoSimBridge` acts as an Inversion of Control (IoC) container that abstracts all QEMU threading, BQL yielding, and RAII teardown logic.
 
+**Usage Mandate:** `CoSimBridge` is explicitly designated for **Boundary/Infrastructure** peripherals that talk to external processes without a concept of virtual time (e.g., test runners, HiL hardware, the coordinator itself). It MUST NOT be used for **Simulation** peripherals (e.g., actuators, sensors, SPI, radios) that participate in the PDES graph; those MUST use `DeterministicReceiver` and `reserve()/commit()` to ensure data flows through the `DeterministicCoordinator` and respects the quantum barrier.
+
 ## Reference-level explanation
 - **`CoSimTransport` Trait**: Implementers define how to read/write data from their specific transport (e.g., sockets, remote-port).
 - **`CoSimBridge<T>`**: Takes ownership of a `CoSimTransport`. It exposes a safe API to the peripheral's `read` and `write` MMIO handlers. Under the hood, it automatically drops the BQL using `Bql::temporary_unlock()` when waiting for data, and handles the `VcpuDrain` on `Drop`.

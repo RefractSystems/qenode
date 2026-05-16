@@ -138,6 +138,24 @@ impl Lint for RustBannedPatternsLint {
                 inc_dirs: vec!["tests/native_integration"],
                 exc_list: vec!["tools/virtmcu-test-runner"],
             },
+            Rule {
+                name: "env_in_peripheral",
+                // Matches two related violations:
+                //   1. UdsDataTransport::new( — the bare constructor silently reads
+                //      VIRTMCU_SIM_ID; new_with_fed_id( is NOT matched (no paren after "new").
+                //   2. "VIRTMCU_SIM_ID" — any direct read of the federation env var.
+                // Other env vars (VIRTMCU_TRANSPORT, VIRTMCU_ZENOH_ROUTER, etc.) are allowed.
+                // transport-unix is excluded: new() itself is the one permitted holder.
+                pattern: r#"UdsDataTransport::new\(|"VIRTMCU_SIM_ID""#,
+                message: "Banned VIRTMCU_SIM_ID read or UdsDataTransport::new() in peripheral code.",
+                fix: "Use UdsDataTransport::new_with_fed_id(path, node_id, fed_id) where fed_id \
+                      comes from the peripheral's 'federation-id' QOM property. \
+                      new() silently reads VIRTMCU_SIM_ID — violates DI and races in concurrent \
+                      tests. See AGENTS.md §4 'Env Var Reads in Peripherals Are BANNED'. \
+                      MANDATE: // virtmcu-allow: env_in_peripheral reasoning=\"<reason>\".",
+                inc_dirs: vec!["hw/rust"],
+                exc_list: vec!["transport-unix", "tests", "build.rs"],
+            },
         ];
 
         let compiled_rules: Vec<(Rule, Regex)> = rules

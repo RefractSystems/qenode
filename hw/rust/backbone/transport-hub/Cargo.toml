@@ -6,10 +6,11 @@ publish = false
 license = "Apache-2.0 OR MIT"
 
 [dependencies]
-virtmcu-qom = { path = "../../common/virtmcu-qom" }
-virtmcu-api = { path = "../../common/virtmcu-api" }
-transport-zenoh = { path = "../transport-zenoh" }
-zenoh = "1.9.0"
+virtmcu-qom.workspace = true
+virtmcu-api.workspace = true
+transport-zenoh.workspace = true
+transport-unix.workspace = true
+zenoh.workspace = true
 
 [lib]
 crate-type = ["staticlib", "rlib"]

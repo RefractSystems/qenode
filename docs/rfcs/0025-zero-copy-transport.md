@@ -1,7 +1,7 @@
 # RFC-0025: Zero-Copy Deterministic Transport API
 
 ## Status
-Proposed
+Accepted (all peripherals migrated to `reserve()/commit()`; zero `publish()` callers remain in `hw/rust/`)
 
 ## Context & Problem Statement
 VirtMCU currently relies on `DataTransport::publish(&self, topic, payload: &[u8])`. While this interface is simple, it forces a memory allocation and a memory copy for every single packet transmitted. When running high-density simulations (e.g., 50 nodes communicating over virtual CAN bus at 1Mbit/s), the overhead of allocating `Vec<u8>` for every frame becomes a significant bottleneck.

@@ -1,7 +1,12 @@
 # RFC-0021: Unified Peripheral Design and Deterministic Synchronization
 
 ## Status
-Proposed
+Accepted (referenced as the "Gold Standard" mandate in `CLAUDE.md`/`AGENTS.md`)
+
+> Note: The utility table below predates RFC-0025. `SafePublisher` has been
+> replaced by the zero-copy `DataTransport::reserve()/commit()` API in all
+> peripheral code. Treat the row below as historical; the canonical egress
+> API is defined in RFC-0025.
 
 ## Context
 VirtMCU is a deterministic multi-node simulation framework. To achieve bit-identical results across runs while maintaining high execution speed, peripheral models must bridge the gap between the asynchronous host environment (network I/O, OS threads) and the synchronous guest environment (Virtual Time, CPU instructions).
@@ -38,9 +43,10 @@ To simplify development, the framework provides the following "Golden Path" util
 | Utility | Purpose |
 | :--- | :--- |
 | **`QomTimer`** | The "Virtual Clock." Replaces sleep. Schedules callbacks at precise virtual timestamps. |
-| **`SafePublisher`** | Lock-free network egress. Prevents the vCPU from blocking on network congestion. |
+| **`DataTransport::reserve()/commit()`** | **Mandatory for Egress.** Zero-copy publication API (RFC-0025). Replaces the deprecated `SafePublisher` and `transport.publish(...)`. No `encode_frame` boilerplate in peripheral code. |
 | **`DeterministicReceiver`** | **Mandatory for Ingress.** Replaces the now-banned `SafeSubscription`. Automatically acquires the BQL, manages generation counters to prevent UAF, and uses `QomTimer` to sort and deliver packets at their correct Virtual Time, eliminating manual heap/timer boilerplate. |
-| **`Bql::temporary_unlock()`** | An RAII guard to safely drop and re-acquire the BQL during MMIO polling loops. *(Note: RFC-0023 proposes wrapping this behavior behind explicit type-state `DrainToken` exchanges).* |
+| **`MmioResult::wait_for(...)`** | **Mandatory for blocking MMIO reads.** Framework-owned condvar wait. Replaces direct `Bql::temporary_unlock()` calls in peripheral code (RFC-0018 / RFC-0023). |
+| **`CoSimBridge`** | **For co-simulation bridges only** (`mmio-socket-bridge`, `remote-port`). Owns vCPU registration, BQL yielding, and RAII teardown. See RFC-0027. |
 | **`VcpuDrain`** | Ensures safe peripheral destruction by waiting for all active MMIO calls to finish. Inherently managed by the `Peripheral` trait wrapper (RFC-0023) to prevent developers from forgetting the lock guard. |
 
 ## Consequences

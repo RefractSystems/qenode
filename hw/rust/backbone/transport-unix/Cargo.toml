@@ -12,7 +12,6 @@ standalone = ["virtmcu-qom/standalone"]
 [dependencies]
 virtmcu-api.workspace = true
 virtmcu-qom.workspace = true
-crossbeam-channel.workspace = true
 
 [dev-dependencies]
 tempfile = "3.3"

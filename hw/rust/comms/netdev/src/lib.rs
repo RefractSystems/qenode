@@ -23,10 +23,6 @@ use core::cmp::Ordering;
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use core::time::Duration;
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
-use virtmcu_qom::cosim::{CoSimBridge, CoSimContext, CoSimTransport};
 use virtmcu_qom::error::Error;
 use virtmcu_qom::net::{
     qemu_new_net_client, virtmcu_netdev_hook, NetClientInfo, NetClientState, Netdev,
@@ -38,8 +34,6 @@ use virtmcu_qom::timer::{qemu_clock_get_ns, QEMU_CLOCK_VIRTUAL};
 use virtmcu_qom::{declare_device_type, device_class, error_setg};
 
 const NETDEV_INFO_OPAQUE_SIZE: usize = 208 - 56;
-const RECV_TIMEOUT_MS: u64 = 10;
-const TX_QUEUE_SIZE: usize = 65536;
 
 #[repr(C)]
 pub struct VirtmcuNetdevQEMU {
@@ -84,62 +78,9 @@ impl virtmcu_qom::sync::DeliveryPacket for OrderedPacket {
     }
 }
 
-pub struct TxPacket {
-    pub vtime: u64,
-    pub sequence: u64,
-    pub data: Vec<u8>,
-}
-
-pub struct NetdevTransport {
-    pub transport: Arc<dyn virtmcu_api::DataTransport>,
-    pub topic: String,
-    pub tx_sender: Sender<TxPacket>,
-    pub rx_out: Receiver<TxPacket>,
-}
-unsafe impl Send for NetdevTransport {}
-unsafe impl Sync for NetdevTransport {}
-
-impl CoSimTransport for NetdevTransport {
-    type Request = TxPacket;
-    type Response = ();
-
-    fn run_rx_loop(&self, ctx: &CoSimContext<Self::Response>) {
-        while ctx.is_running() {
-            match self.rx_out.recv_timeout(Duration::from_millis(RECV_TIMEOUT_MS)) {
-                Ok(packet) => {
-                    let header = ZenohFrameHeader::new(
-                        packet.vtime,
-                        packet.sequence,
-                        u32::try_from(packet.data.len()).expect("payload length truncated"),
-                    );
-                    let mut data = Vec::with_capacity(
-                        virtmcu_api::ZENOH_FRAME_HEADER_SIZE + packet.data.len(),
-                    );
-                    data.extend_from_slice(header.pack());
-                    data.extend_from_slice(&packet.data);
-
-                    if let Err(e) = self.transport.publish(&self.topic, &data) {
-                        virtmcu_qom::sim_err!("{}", e);
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-    }
-
-    fn send_request(&self, req: Self::Request) -> bool {
-        match self.tx_sender.try_send(req) {
-            Ok(_) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {}
-        }
-        false
-    }
-
-    fn interrupt_rx(&self) {}
-}
-
 pub struct VirtmcuNetdevState {
-    bridge: CoSimBridge<NetdevTransport>,
+    transport: Arc<dyn virtmcu_api::DataTransport>,
+    tx_topic: String,
     nc: *mut NetClientState,
     receiver: Option<virtmcu_qom::sync::DeterministicReceiver<OrderedPacket>>,
     backlog: virtmcu_qom::sync::Mutex<VecDeque<Vec<u8>>>, // virtmcu-allow: mutex reasoning="Backlog managed securely"
@@ -150,30 +91,29 @@ pub struct VirtmcuNetdevState {
     pub _liveliness: Option<zenoh::liveliness::LivelinessToken>,
 }
 
-unsafe extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize {
-    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) };
+extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize {
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
     if s.rust_state.is_null() {
         return 0;
     }
-    unsafe { netdev_receive_internal(&*s.rust_state, buf, size) }
+    virtmcu_qom::ffi_call! { netdev_receive_internal(&*s.rust_state, buf, size) }
 }
 
-unsafe extern "C" fn netdev_can_receive(nc: *mut NetClientState) -> bool {
-    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) };
+extern "C" fn netdev_can_receive(nc: *mut NetClientState) -> bool {
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
     if s.rust_state.is_null() {
         return true;
     }
-    let backlog = unsafe { (*s.rust_state).backlog.lock() };
+    let backlog = virtmcu_qom::timer::opaque_to_state_const::<VirtmcuNetdevState>(s.rust_state as *mut core::ffi::c_void).backlog.lock();
     backlog.is_empty()
 }
 
-unsafe extern "C" fn netdev_cleanup(nc: *mut NetClientState) {
-    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) };
+extern "C" fn netdev_cleanup(nc: *mut NetClientState) {
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
     if !s.rust_state.is_null() {
-        unsafe {
+        virtmcu_qom::ffi_call! {
             let mut state = Box::from_raw(s.rust_state);
             state.receiver.take();
-            // Drop handles bridge teardown automatically
             drop(state);
             s.rust_state = ptr::null_mut();
         }
@@ -191,23 +131,23 @@ static NET_VIRTMCU_INFO: NetClientInfo = NetClientInfo {
     _opaque: [0; NETDEV_INFO_OPAQUE_SIZE],
 };
 
-unsafe extern "C" fn netdev_hook(
+extern "C" fn netdev_hook(
     netdev: *const Netdev,
     name: *const c_char,
     peer: *mut NetClientState,
     errp: *mut *mut Error,
 ) -> c_int {
-    let opts = unsafe { &(*netdev).u.virtmcu };
+    let opts = virtmcu_qom::ffi_call! { &(*netdev).u.virtmcu };
 
-    let nc = unsafe {
+    let nc = virtmcu_qom::ffi_call! {
         qemu_new_net_client(&raw const NET_VIRTMCU_INFO, peer, c"virtmcu".as_ptr(), name)
     };
-    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) };
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
 
     let node_id = if opts.node.is_null() {
         0
     } else {
-        unsafe { CStr::from_ptr(opts.node) }
+        virtmcu_qom::ffi_call! { CStr::from_ptr(opts.node) }
             .to_string_lossy()
             .parse::<u32>()
             .expect("Invalid data format")
@@ -216,7 +156,7 @@ unsafe extern "C" fn netdev_hook(
     let transport_name = if opts.transport.is_null() {
         "zenoh".to_owned()
     } else {
-        unsafe { CStr::from_ptr(opts.transport) }.to_string_lossy().into_owned()
+        virtmcu_qom::ffi_call! { CStr::from_ptr(opts.transport) }.to_string_lossy().into_owned()
     };
 
     let router = if opts.router.is_null() { ptr::null() } else { opts.router.cast_const() };
@@ -224,7 +164,7 @@ unsafe extern "C" fn netdev_hook(
     let topic = if opts.topic.is_null() {
         "sim/eth/frame".to_owned()
     } else {
-        unsafe { CStr::from_ptr(opts.topic) }.to_string_lossy().into_owned()
+        virtmcu_qom::ffi_call! { CStr::from_ptr(opts.topic) }.to_string_lossy().into_owned()
     };
 
     let max_backlog = if opts.has_max_backlog { opts.max_backlog } else { 256 };
@@ -238,9 +178,9 @@ unsafe extern "C" fn netdev_hook(
     0
 }
 
-unsafe extern "C" fn netdev_class_init(klass: *mut ObjectClass, _data: *const c_void) {
+extern "C" fn netdev_class_init(klass: *mut ObjectClass, _data: *const c_void) {
     let dc = device_class!(klass);
-    unsafe {
+    virtmcu_qom::ffi_call! {
         (*dc).user_creatable = true;
         virtmcu_netdev_hook = Some(netdev_hook);
     }
@@ -274,14 +214,15 @@ fn get_transport(
         let path = if router.is_null() {
             format!("/tmp/virtmcu-coord-{node_id}.sock") // virtmcu-allow: absolute_path reasoning="Legacy script"
         } else {
-            unsafe { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
+            virtmcu_qom::ffi_call! { core::ffi::CStr::from_ptr(router).to_string_lossy().into_owned() }
         };
-        transport_unix::UdsDataTransport::new(&path).ok().map(|t| Arc::new(t) as _)
+        // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
+        transport_unix::UdsDataTransport::new(&path, node_id).ok().map(|t| Arc::new(t) as _)
     } else {
-        unsafe {
+        virtmcu_qom::ffi_call! {
             transport_zenoh::get_or_init_session(router)
                 .ok()
-                .map(|s| Arc::new(transport_zenoh::ZenohDataTransport::new(s)) as _)
+                .map(|s| Arc::new(transport_zenoh::ZenohDataTransport::new(s, node_id)) as _)
         }
     }
 }
@@ -292,7 +233,7 @@ fn get_liveliness(
     node_id: u32,
 ) -> Option<zenoh::liveliness::LivelinessToken> {
     if transport_name == "zenoh" {
-        match unsafe { transport_zenoh::get_or_init_session(router) } {
+        match virtmcu_qom::ffi_call! { transport_zenoh::get_or_init_session(router) } {
             Ok(session) => {
                 let hb_topic = format!("sim/netdev/liveliness/{node_id}");
                 session.liveliness().declare_token(hb_topic).wait().ok()
@@ -305,21 +246,13 @@ fn get_liveliness(
 }
 
 fn decode_netdev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<OrderedPacket> {
-    if data.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-        return None;
-    }
-    let header_slice = data.get(..virtmcu_api::ZENOH_FRAME_HEADER_SIZE)?;
-    let header = ZenohFrameHeader::unpack(header_slice.try_into().ok()?)?;
-    let payload = data.get(virtmcu_api::ZENOH_FRAME_HEADER_SIZE..)?.to_vec();
-    Some(OrderedPacket {
-        vtime: header.delivery_vtime_ns(),
-        sequence: header.sequence_number(),
-        data: payload,
-    })
+    let (vtime, sequence, payload) = virtmcu_api::decode_frame(data)?;
+
+    Some(OrderedPacket { vtime, sequence, data: payload.to_vec() })
 }
 
 fn deliver_netdev(opaque: *mut c_void, packet: OrderedPacket) {
-    let state = unsafe { &mut *(opaque as *mut VirtmcuNetdevState) };
+    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuNetdevState>(opaque);
     let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
 
     if state.backlog_count.load(AtomicOrdering::Acquire) >= state._max_backlog {
@@ -341,7 +274,7 @@ fn deliver_netdev(opaque: *mut c_void, packet: OrderedPacket) {
 
     for data in &to_send {
         let sent =
-            unsafe { virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len()) };
+            virtmcu_qom::ffi_call! { virtmcu_qom::net::qemu_send_packet(state.nc, data.as_ptr(), data.len()) };
         if sent > 0 {
             state.backlog_count.fetch_sub(1, AtomicOrdering::SeqCst);
         } else {
@@ -365,24 +298,16 @@ fn netdev_init_internal(
         None => return ptr::null_mut(),
     };
 
-    let (tx_out, rx_out) = bounded(TX_QUEUE_SIZE);
-
     let backlog_count = Arc::new(AtomicU64::new(0));
     let dropped_frames = Arc::new(AtomicU64::new(0));
 
-    let netdev_transport = NetdevTransport {
-        transport: Arc::clone(&transport),
-        topic: format!("{topic}/{node_id}/tx"),
-        tx_sender: tx_out,
-        rx_out,
-    };
-    let bridge = CoSimBridge::new(netdev_transport);
-
+    let tx_topic = format!("{topic}/{node_id}/tx");
     let liveliness = get_liveliness(&transport_name, router, node_id);
 
     let mut state_box = Box::new(VirtmcuNetdevState {
         _liveliness: liveliness,
-        bridge,
+        transport: Arc::clone(&transport),
+        tx_topic,
         nc,
         receiver: None,
         backlog: virtmcu_qom::sync::Mutex::new(VecDeque::new()),
@@ -416,17 +341,25 @@ fn netdev_init_internal(
 }
 
 fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usize) -> isize {
-    let payload = unsafe { core::slice::from_raw_parts(buf, size) };
+    let payload = virtmcu_qom::ffi_call! { core::slice::from_raw_parts(buf, size) };
     let now =
-        u64::try_from(unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) }).expect("vtime is negative");
+        u64::try_from(virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL)).expect("vtime is negative");
     let seq = state.tx_sequence.fetch_add(1, AtomicOrdering::SeqCst);
 
-    state.bridge.send_and_wait(TxPacket { vtime: now, sequence: seq, data: payload.to_vec() }, 0);
+    match state.transport.reserve(&state.tx_topic, payload.len()) {
+        Ok(mut reservation) => {
+            reservation.buffer_mut().copy_from_slice(payload);
+            let _ = reservation.commit(now, seq);
+        }
+        Err(e) => {
+            virtmcu_qom::sim_err!("{}", e);
+        }
+    }
+
     size as isize
 }
 
 #[cfg(test)]
-#[allow(clippy::magic_numbers)] // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
 mod tests {
     use super::*;
     use alloc::collections::BinaryHeap;

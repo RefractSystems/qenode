@@ -32,7 +32,7 @@ pub struct VirtmcuWifiQEMU {
     pub debug: bool,
 }
 
-unsafe extern "C" fn wifi_read(_opaque: *mut c_void, addr: u64, _size: core::ffi::c_uint) -> u64 {
+extern "C" fn wifi_read(_opaque: *mut c_void, addr: u64, _size: core::ffi::c_uint) -> u64 {
     let s = &*(_opaque as *mut VirtmcuWifiQEMU);
     if s.debug {
         virtmcu_qom::sim_debug!("wifi_read: unhandled offset 0x{:x}", addr);
@@ -40,7 +40,7 @@ unsafe extern "C" fn wifi_read(_opaque: *mut c_void, addr: u64, _size: core::ffi
     0
 }
 
-unsafe extern "C" fn wifi_write(
+extern "C" fn wifi_write(
     _opaque: *mut c_void,
     addr: u64,
     val: u64,
@@ -75,28 +75,6 @@ static WIFI_OPS: MemoryRegionOps = MemoryRegionOps {
     },
 };
 
-unsafe extern "C" fn wifi_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    let s = &mut *(dev as *mut VirtmcuWifiQEMU);
-
-    let is_zero = s.mac.a.iter().all(|&x| x == 0);
-    if is_zero {
-        virtmcu_qom::error_setg!(
-            errp,
-            "wifi: macaddr property must be set to a non-zero address\n"
-        );
-        return;
-    }
-
-    memory_region_init_io(
-        &raw mut s.mmio,
-        dev as *mut Object,
-        &raw const WIFI_OPS,
-        core::ptr::from_mut(s) as *mut c_void,
-        c"wifi-mmio".as_ptr(),
-        WIFI_MMIO_SIZE,
-    );
-    sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
-}
 
 static WIFI_PROPERTIES: [Property; WIFI_PROPERTIES_COUNT] = [
     define_prop_macaddr!(c"macaddr".as_ptr(), VirtmcuWifiQEMU, mac),
@@ -106,35 +84,8 @@ static WIFI_PROPERTIES: [Property; WIFI_PROPERTIES_COUNT] = [
     virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuWifiQEMU, debug, false),
 ];
 
-unsafe extern "C" fn wifi_class_init(klass: *mut ObjectClass, _data: *const c_void) {
-    let dc = device_class!(klass);
-    (*dc).realize = Some(wifi_realize);
-    (*dc).user_creatable = true;
-    virtmcu_qom::qdev::device_class_set_props_n(
-        dc,
-        WIFI_PROPERTIES.as_ptr(),
-        WIFI_PROPERTIES_COUNT,
-    );
-}
 
-#[used]
-static WIFI_TYPE_INFO: TypeInfo = TypeInfo {
-    name: c"wifi".as_ptr(),
-    parent: virtmcu_qom::qdev::TYPE_SYS_BUS_DEVICE,
-    instance_size: core::mem::size_of::<VirtmcuWifiQEMU>(),
-    instance_align: 0,
-    instance_init: None,
-    instance_post_init: None,
-    instance_finalize: None,
-    abstract_: false,
-    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
-    class_init: Some(wifi_class_init),
-    class_base_init: None,
-    class_data: core::ptr::null(),
-    interfaces: ptr::null(),
-};
 
-declare_device_type!(VIRTMCU_WIFI_TYPE_INIT, WIFI_TYPE_INFO);
 
 #[cfg(test)]
 mod tests {

@@ -138,12 +138,35 @@ fn node_id_to_u32(nid: &gen::NodeId) -> u32 {
 impl TopologyGraph {
     pub fn from_yaml(path: &Path) -> Result<Self, TopologyError> {
         let content = fs::read_to_string(path)?;
-        let world: gen::World = serde_yaml::from_str(&content)?;
+
+        let mut world_topology: Option<gen::Topology> = None;
+        let mut world_peripherals: Vec<gen::Resource> = Vec::new();
+
+        // First try to parse as strict gen::World
+        if let Ok(world) = serde_yaml::from_str::<gen::World>(&content) {
+            world_topology = world.topology;
+            world_peripherals = world.peripherals;
+        } else {
+            // Fallback: manually extract 'topology' to tolerate multi-node schemas
+            let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+            if let Some(topo_val) = value.get("topology") {
+                if let Ok(topo) = serde_yaml::from_value(topo_val.clone()) {
+                    world_topology = Some(topo);
+                }
+            }
+            if let Some(serde_yaml::Value::Sequence(seq)) = value.get("peripherals") {
+                for item in seq {
+                    if let Ok(res) = serde_yaml::from_value(item.clone()) {
+                        world_peripherals.push(res);
+                    }
+                }
+            }
+        }
 
         // Task 2.2: Split-Brain Schema Rejection
-        let has_topology_nodes = world.topology.as_ref().is_some_and(|t| !t.nodes.is_empty());
+        let has_topology_nodes = world_topology.as_ref().is_some_and(|t| !t.nodes.is_empty());
 
-        let has_numeric_periphs = world.peripherals.iter().any(|p| match &p.name {
+        let has_numeric_periphs = world_peripherals.iter().any(|p| match &p.name {
             gen::NodeId::Integer(_) => true,
             gen::NodeId::String(s) => s.parse::<u32>().is_ok(),
         });
@@ -157,7 +180,7 @@ impl TopologyGraph {
         let mut valid_nodes = HashSet::new();
 
         // 1. Try to get nodes from topology.nodes
-        if let Some(ref topo) = world.topology {
+        if let Some(ref topo) = world_topology {
             for node in &topo.nodes {
                 let id = node_id_to_u32(&node.name);
                 if id != u32::MAX {
@@ -171,7 +194,7 @@ impl TopologyGraph {
             let mut fallback_nodes = Vec::new();
             let mut all_numeric = true;
 
-            for p in &world.peripherals {
+            for p in &world_peripherals {
                 let id = node_id_to_u32(&p.name);
                 if id != u32::MAX {
                     fallback_nodes.push(id);
@@ -189,7 +212,7 @@ impl TopologyGraph {
             }
         }
 
-        if let Some(topo) = world.topology {
+        if let Some(topo) = world_topology {
             let mut routing_map = RoutingMap::new();
             let mut positions = HashMap::new();
             let mut max_range = 0.0;

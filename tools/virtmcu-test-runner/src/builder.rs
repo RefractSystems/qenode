@@ -181,7 +181,7 @@ impl TopologyBuilder {
                 extra_hint
             )
         })?;
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
         Ok(router_proc)
     }
 
@@ -194,16 +194,81 @@ impl TopologyBuilder {
         for (k, v) in self.variables {
             ctx.variables.insert(k, v);
         }
-        let endpoint = ctx.variables.get("ROUTER_ENDPOINT").unwrap().clone();
 
         let transport = self.transport_override.as_deref().unwrap_or("zenoh");
         let is_unix = transport == "unix";
 
-        let mut router_proc_opt = None;
+        let (router_child, endpoint) = if is_unix {
+            let sim_id = self.federation_id.as_deref().unwrap_or("default-fed");
+            let sock_path = ctx.tmp_path(&format!("{}/coordinator.sock", sim_id));
+            let endpoint = sock_path.to_string_lossy().to_string();
 
-        if !is_unix {
-            router_proc_opt = Some(Self::spawn_zenoh_coordinator(&ctx, &endpoint).await?);
-        }
+            // Find a valid YAML path from the nodes to pass to the coordinator
+            let mut topo_path_str = String::new();
+            for node in &self.nodes {
+                if let Some(path) = &node.yaml_path {
+                    let full_path = ctx.workspace_root.join(path);
+                    topo_path_str = full_path.to_string_lossy().to_string();
+                    break;
+                }
+            }
+            if topo_path_str.is_empty() {
+                // Fallback to basic generated topology if no YAML is provided
+                let mut topo_nodes = String::new();
+                for node in &self.nodes {
+                    topo_nodes.push_str(&format!("    - name: '{}'\n", node.id));
+                }
+                let topo_yaml = format!(
+                    "topology:
+  transport: unix
+  nodes:
+{}
+",
+                    topo_nodes
+                );
+                let topo_path = ctx.tmp_path("coordinator_topo.yaml");
+                std::fs::write(&topo_path, topo_yaml).context("Failed to write topo_yaml")?;
+                topo_path_str = topo_path.to_string_lossy().to_string();
+            }
+
+            // Spawn deterministic_coordinator for UDS
+            let coordinator_bin = ctx.find_binary("deterministic_coordinator")?;
+            info!(
+                "Spawning deterministic_coordinator (UDS) from: {}",
+                coordinator_bin.display()
+            );
+
+            let mut coord_cmd = Command::new(&coordinator_bin);
+            coord_cmd
+                .arg("--transport")
+                .arg("unix")
+                .arg("--nodes")
+                .arg(self.nodes.len().to_string())
+                .arg("--federation-id")
+                .arg(self.federation_id.as_deref().unwrap_or("default-fed"))
+                .arg("--run-dir")
+                .arg(ctx.tmp_dir.path().to_string_lossy().to_string())
+                .arg("--topology")
+                .arg(&topo_path_str)
+                .arg("--join-timeout-ms")
+                .arg("10000");
+
+            let coord_proc = coord_cmd
+                .spawn()
+                .context("Failed to spawn deterministic_coordinator")?;
+            // Give it time to bind the socket
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            (Some(coord_proc), endpoint)
+        } else {
+            let endpoint = ctx.variables.get("ROUTER_ENDPOINT").unwrap().clone();
+            (
+                Some(Self::spawn_zenoh_coordinator(&ctx, &endpoint).await?),
+                endpoint,
+            )
+        };
+        // Update ctx variables with the final endpoint
+        ctx.variables
+            .insert("ROUTER_ENDPOINT".to_string(), endpoint.clone());
 
         let artifacts = ArtifactCache::new(ctx.workspace_root.clone())?;
         let launcher = crate::launcher::QemuLauncher::new(ctx.workspace_root.clone());
@@ -279,6 +344,7 @@ impl TopologyBuilder {
                 let yaml_content = ctx.substitute(&yaml_content);
 
                 std::env::set_var("VIRTMCU_WORKSPACE", &ctx.workspace_root);
+                std::env::set_var("VIRTMCU_TRANSPORT", transport);
                 let (platform, world) =
                     yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
 
@@ -325,8 +391,16 @@ impl TopologyBuilder {
                 );
             }
 
-            qemu_cmd.env("ZENOH_ROUTER_ENDPOINT", &endpoint);
-            qemu_cmd.env("VIRTMCU_ZENOH_ROUTER", &endpoint);
+            if !is_unix {
+                qemu_cmd.env("ZENOH_ROUTER_ENDPOINT", &endpoint);
+                qemu_cmd.env("VIRTMCU_ZENOH_ROUTER", &endpoint);
+            } else {
+                qemu_cmd.env("VIRTMCU_COORD_SOCK", &endpoint);
+                qemu_cmd.env(
+                    "VIRTMCU_SIM_ID",
+                    self.federation_id.as_deref().unwrap_or("default-fed"),
+                );
+            }
 
             let qmp_sock_path = ctx.tmp_path(&format!("qmp_{}.sock", node.id));
             qemu_cmd.arg("-qmp").arg(format!(
@@ -370,10 +444,30 @@ impl TopologyBuilder {
                     .iter()
                     .any(|arg| arg.contains("virtmcu-clock"));
                 if !has_manual_clock && !has_clock_in_yaml_args {
-                    qemu_cmd.arg("-device").arg(format!(
-                        "virtmcu-clock,mode=slaved-suspend,router={},node={}",
-                        endpoint, node.id
-                    ));
+                    let mode = if is_unix {
+                        "slaved-unix"
+                    } else {
+                        "slaved-suspend"
+                    };
+                    let clock_router = if is_unix {
+                        ctx.tmp_path(&format!("clock_{}.sock", node.id))
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        endpoint.clone()
+                    };
+                    let mut clock_arg = format!(
+                        "virtmcu-clock,mode={},router={},node={}",
+                        mode, clock_router, node.id
+                    );
+                    if is_unix {
+                        clock_arg.push_str(&format!(
+                            ",coordinated=on,coordinated-router={},federation-id={}",
+                            endpoint,
+                            self.federation_id.as_deref().unwrap_or("default-fed")
+                        ));
+                    }
+                    qemu_cmd.arg("-device").arg(clock_arg);
                 }
                 qemu_cmd.arg("-S");
             }
@@ -423,9 +517,22 @@ impl TopologyBuilder {
                         recent.remove(0);
                     }
 
-                    tracing::debug!("[QEMU] [Node {}] {}", node_id_for_log, line);
-
-                    if line.contains("[ERROR]")
+                    // Detect unknown QOM property names early. QEMU silently ignores
+                    // unknown properties — the device gets a null/default value and the
+                    // failure surfaces 30+ seconds later as CLOCK_ERROR_STALL or a
+                    // coordinator federation_id mismatch. Common cause: underscore instead
+                    // of hyphen in -device arguments (e.g. federation_id= vs federation-id=).
+                    if line.contains("not found")
+                        && (line.contains("Property '") || line.contains("property '"))
+                    {
+                        tracing::error!(
+                            "[QEMU] [Node {}] UNKNOWN QOM PROPERTY DETECTED — check that \
+                             -device argument names use hyphens not underscores. \
+                             This will cause silent null/default values and a downstream stall: {}",
+                            node_id_for_log,
+                            line
+                        );
+                    } else if line.contains("[ERROR]")
                         || line.contains("error:")
                         || line.contains("fatal:")
                         || line.contains("panic")
@@ -513,7 +620,7 @@ impl TopologyBuilder {
         }
 
         let mut session_opt = None;
-        let clock_coordinator: Box<dyn ClockCoordinator>;
+        let clock_coordinator: std::sync::Arc<dyn ClockCoordinator>;
 
         if !is_unix {
             let mut zconfig = zenoh::Config::default();
@@ -571,19 +678,36 @@ impl TopologyBuilder {
             }
 
             if !coordinated_nodes.is_empty() {
-                info!("Liveliness barrier passed. Executing 0-ns VTA sync...");
-
-                let coordinator = ZenohClockCoordinator::new(session.clone());
-                coordinator.step_clock(0, 0, 0, 0).await.map_err(|e| {
-                    anyhow!("Failed to receive VTA 0-ns sync reply from QEMU: {}", e)
-                })?;
-
-                info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
+                info!("Liveliness barrier passed. Executing 0-ns VTA sync for Zenoh...");
             }
             session_opt = Some(session.clone());
-            clock_coordinator = Box::new(ZenohClockCoordinator::new(session));
+            clock_coordinator = std::sync::Arc::new(ZenohClockCoordinator::new(session));
         } else {
-            clock_coordinator = Box::new(DummyClockCoordinator);
+            let mut coordinator = UnixClockCoordinator::new();
+            for node_id in &coordinated_nodes {
+                let sock_path = ctx.tmp_path(&format!("clock_{}.sock", node_id));
+                coordinator.add_node(*node_id as usize, &sock_path.to_string_lossy());
+            }
+            clock_coordinator = std::sync::Arc::new(coordinator);
+        }
+
+        if !coordinated_nodes.is_empty() {
+            info!("Executing 0-ns VTA sync...");
+
+            let mut sync_futures = Vec::new();
+            for node_id in &coordinated_nodes {
+                let cc = clock_coordinator.clone();
+                let nid = *node_id as usize;
+                sync_futures.push(tokio::spawn(
+                    async move { cc.step_clock(nid, 0, 0, 0).await },
+                ));
+            }
+
+            for handle in sync_futures {
+                handle.await??;
+            }
+
+            info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
         }
 
         for (idx, qmp) in qmp_clients.iter_mut().enumerate() {
@@ -607,7 +731,7 @@ impl TopologyBuilder {
             timeout_secs: self.timeout_secs,
             _session: session_opt,
             clock_coordinator,
-            router_child: router_proc_opt,
+            router_child,
             external_children: Vec::new(),
             is_coordinated: is_coordinated_flags,
             current_vtime: 0,
@@ -695,6 +819,64 @@ impl ClockCoordinator for ZenohClockCoordinator {
     }
 }
 
+pub struct UnixClockCoordinator {
+    transports: std::collections::HashMap<
+        usize,
+        std::sync::Arc<virtmcu_api::UnixSocketPhysicalNodeTransport>,
+    >,
+}
+
+impl Default for UnixClockCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UnixClockCoordinator {
+    pub fn new() -> Self {
+        Self {
+            transports: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn add_node(&mut self, node_id: usize, path: &str) {
+        let transport = virtmcu_api::UnixSocketPhysicalNodeTransport::new(path)
+            .expect("failed to bind UDS clock socket");
+        self.transports
+            .insert(node_id, std::sync::Arc::new(transport));
+    }
+}
+
+#[async_trait]
+impl ClockCoordinator for UnixClockCoordinator {
+    async fn step_clock(
+        &self,
+        node_id: usize,
+        step_ns: u64,
+        current_vtime: u64,
+        quantum: u64,
+    ) -> Result<()> {
+        let transport = self
+            .transports
+            .get(&node_id)
+            .ok_or_else(|| anyhow!("No clock transport for node {}", node_id))?
+            .clone();
+
+        let req = virtmcu_api::ClockAdvanceReq::new(step_ns, current_vtime, quantum);
+
+        // Use spawn_blocking for the synchronous advance call
+        tokio::task::spawn_blocking(move || {
+            use virtmcu_api::PhysicalNodeTransport;
+            match transport.advance(req, Duration::from_secs(10)) {
+                Some(resp) if resp.error_code() == 0 => Ok(()),
+                Some(resp) => Err(anyhow!("Clock error code: {}", resp.error_code())),
+                None => Err(anyhow!("Clock timeout on node {}", node_id)),
+            }
+        })
+        .await?
+    }
+}
+
 pub struct VirtmcuTestEnv {
     #[allow(dead_code)]
     ctx: TestContext,
@@ -708,7 +890,7 @@ pub struct VirtmcuTestEnv {
     timeout_secs: u64,
     #[allow(dead_code)]
     _session: Option<zenoh::Session>,
-    clock_coordinator: Box<dyn ClockCoordinator>,
+    clock_coordinator: std::sync::Arc<dyn ClockCoordinator>,
     router_child: Option<Child>,
     pub external_children: Vec<Child>,
     is_coordinated: Vec<bool>,
@@ -809,17 +991,25 @@ impl VirtmcuTestEnv {
             let advance = std::cmp::min(step_ns, total_ns - advanced);
             advanced += advance;
             self.current_vtime += advance;
-            self.current_quantum += 1;
+            let current_quantum_val = self.current_quantum;
 
+            let mut step_futures = Vec::new();
             for node_id in 0..self.qemu_children.len() {
                 if !self.is_coordinated[node_id] {
                     continue;
                 }
 
-                self.clock_coordinator
-                    .step_clock(node_id, advance, self.current_vtime, self.current_quantum)
-                    .await?;
+                let cc = self.clock_coordinator.clone();
+                let current_vtime_val = self.current_vtime;
+                let advance_val = advance;
+                step_futures.push(async move {
+                    cc.step_clock(node_id, advance_val, current_vtime_val, current_quantum_val)
+                        .await
+                });
             }
+            futures::future::try_join_all(step_futures).await?;
+            self.current_quantum += 1;
+
             // Small yield to allow async tasks (like monitors) to process
             tokio::task::yield_now().await;
         }
@@ -834,7 +1024,6 @@ impl VirtmcuTestEnv {
         if self.uart_buffers[node_id].contains(pattern) {
             return Ok(());
         }
-
         loop {
             if start_time.elapsed() > timeout_duration {
                 return Err(anyhow!(
@@ -907,8 +1096,7 @@ impl VirtmcuTestEnv {
         if self.uart_buffers[node_id].contains(pattern) {
             return Ok(());
         }
-
-        let step_ns: u64 = 10_000_000; // 10ms step
+        let step_ns: u64 = 50_000_000; // 50ms step
 
         loop {
             if start_time.elapsed() > timeout_duration {
@@ -936,15 +1124,21 @@ impl VirtmcuTestEnv {
             let any_coordinated = self.is_coordinated.iter().any(|&c| c);
             if any_coordinated {
                 self.current_vtime += step_ns;
-                self.current_quantum += 1;
+                let current_quantum_val = self.current_quantum;
 
+                let mut step_futures = Vec::new();
                 for node_idx in 0..self.qemu_children.len() {
                     if self.is_coordinated[node_idx] {
-                        self.clock_coordinator
-                            .step_clock(node_idx, step_ns, self.current_vtime, self.current_quantum)
-                            .await?;
+                        let cc = self.clock_coordinator.clone();
+                        let current_vtime_val = self.current_vtime;
+                        step_futures.push(async move {
+                            cc.step_clock(node_idx, step_ns, current_vtime_val, current_quantum_val)
+                                .await
+                        });
                     }
                 }
+                futures::future::try_join_all(step_futures).await?;
+                self.current_quantum += 1;
             } else {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

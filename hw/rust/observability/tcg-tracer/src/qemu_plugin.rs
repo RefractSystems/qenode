@@ -40,9 +40,9 @@ pub enum QemuPluginCbFlags {
     RwRegs = 2,
 }
 
-pub type QemuPluginVcpuTbTransCb = unsafe extern "C" fn(id: QemuPluginId, tb: *mut QemuPluginTb);
-pub type QemuPluginVcpuUdataCb = unsafe extern "C" fn(vcpu_index: c_uint, userdata: *mut c_void);
-pub type QemuPluginAtexitCb = unsafe extern "C" fn(id: QemuPluginId, userdata: *mut c_void);
+pub type QemuPluginVcpuTbTransCb = extern "C" fn(id: QemuPluginId, tb: *mut QemuPluginTb);
+pub type QemuPluginVcpuUdataCb = extern "C" fn(vcpu_index: c_uint, userdata: *mut c_void);
+pub type QemuPluginAtexitCb = extern "C" fn(id: QemuPluginId, userdata: *mut c_void);
 
 extern "C" {
     /// Write a message through QEMU's own logging subsystem.

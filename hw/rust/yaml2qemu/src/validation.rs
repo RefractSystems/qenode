@@ -86,10 +86,14 @@ pub fn validate_dtb(dtb_path: &Path, world: &World) -> Result<()> {
                             let data = reg.value;
                             if data.len() >= REG_PROP_LEN_TWO_CELLS {
                                 let size_hi = u32::from_be_bytes(
-                                    data[SIZE_HI_OFFSET..SIZE_HI_END].try_into().unwrap(),
+                                    data[SIZE_HI_OFFSET..SIZE_HI_END]
+                                        .try_into()
+                                        .expect("data slice should match u32 width"),
                                 ) as u64;
                                 let size_lo = u32::from_be_bytes(
-                                    data[SIZE_LO_OFFSET..SIZE_LO_END].try_into().unwrap(),
+                                    data[SIZE_LO_OFFSET..SIZE_LO_END]
+                                        .try_into()
+                                        .expect("data slice should match u32 width"),
                                 ) as u64;
                                 let actual_size = (size_hi << ADDR_SHIFT) | size_lo;
 

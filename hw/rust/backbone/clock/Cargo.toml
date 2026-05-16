@@ -16,4 +16,9 @@ virtmcu-api.workspace = true
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 transport-zenoh.workspace = true
+transport-unix = { path = "../../backbone/transport-unix" }
 crossbeam-channel.workspace = true
+
+[dev-dependencies]
+tempfile = "3.8"
+flatbuffers.workspace = true

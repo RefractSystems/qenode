@@ -31,7 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check if QEMU headers are present
     let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
-    let has_headers = osdep_h.exists();
+    let config_host_h = std::path::Path::new(&qemu_build_dir).join("config-host.h");
+    let has_headers = osdep_h.exists() && config_host_h.exists();
 
     if has_headers {
         println!("cargo:rustc-cfg=qemu_headers_present"); // virtmcu-allow: print reasoning="cargo build script protocol"

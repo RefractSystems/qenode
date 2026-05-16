@@ -375,8 +375,7 @@ async fn run_debug_pcap_dump(
 
         // 2. Try decoding as Legacy ZenohFrameHeader
         if payload.len() >= virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-            if let Some((header, data)) = virtmcu_api::decode_frame(&payload) {
-                let vtime = header.delivery_vtime_ns();
+            if let Some((vtime, _seq, data)) = virtmcu_api::decode_frame(&payload) {
                 let mut node_id = 0;
                 let mut proto_id = 8; // Default to Control
 

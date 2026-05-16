@@ -220,9 +220,6 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
 async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
     let topic = format!("{}/{}/rx", msg.base_topic, msg.dst_node_id);
     let payload = match msg.protocol {
-        Protocol::Lin | Protocol::FlexRay | Protocol::CanFd | Protocol::Rf802154 => {
-            msg.payload.clone()
-        }
         Protocol::Spi => {
             let hdr = virtmcu_api::ZenohSPIHeader::new(
                 msg.delivery_vtime_ns,
@@ -636,8 +633,13 @@ async fn handle_lin_msg(
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
-    let pb = s.payload().to_bytes();
-    let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&pb) {
+    let p_full = s.payload().to_bytes();
+    let pb = if let Some((_, _, data)) = virtmcu_api::decode_frame(&p_full) {
+        data
+    } else {
+        return out;
+    };
+    let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(pb) {
         Ok(f) => f,
         Err(_) => return out,
     };
@@ -855,7 +857,16 @@ async fn handle_rf_msg(
     let mut out = Vec::new();
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
-    let p = s.payload().to_bytes();
+    let p_full = s.payload().to_bytes();
+    let p = if has_hdr {
+        if let Some((_, _, data)) = virtmcu_api::decode_frame(&p_full) {
+            data.to_vec()
+        } else {
+            p_full.to_vec()
+        }
+    } else {
+        p_full.to_vec()
+    };
     let (vt, seq, payload, lqi, mhr) = if has_hdr {
         match virtmcu_api::rf802154::size_prefixed_root_as_rf_802154_frame(&p) {
             Ok(f) => (

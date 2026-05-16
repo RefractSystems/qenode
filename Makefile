@@ -113,7 +113,7 @@ RUNNER_BIN     := $(TARGET_BIN_DIR)/virtmcu-test-runner
 
 # Canonical Cargo command with unified flags
 override CARGO_CMD := cargo +nightly
-override CARGO_OPTS := --target $(TRIPLE) -j$(JOBS)
+override CARGO_OPTS := -Z bindeps --target $(TRIPLE) -j$(JOBS)
 
 # Canonical path to virtmcu-cli for sub-makefiles and guest-app builds.
 # We use 'cargo run' for development to ensure it is always up to date.
@@ -186,7 +186,7 @@ build-test-artifacts: $(GUEST_APP_TARGETS)
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
 		echo "==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)..."; \
-		$(CARGO_CMD) build -Z bindeps --release $(CARGO_OPTS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter; \
+		$(CARGO_CMD) build --release $(CARGO_OPTS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.

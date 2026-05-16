@@ -72,6 +72,7 @@ opentelemetry-appender-tracing = "0.27"
 tracing-opentelemetry    = "0.28"
 mcap = "0.13.0"
 camino = "1.1.9"
+tempfile = "3.10"
 
 [profile.release]
 panic = "abort"

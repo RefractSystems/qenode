@@ -28,6 +28,14 @@ VirtMCU uses non-contiguous RFC numbers based on the **GitHub Pull Request numbe
 | [RFC-0030](0030-qemu-patch-strategy.md) | QEMU Patch Strategy and "No Fork" Policy | **Accepted** |
 | [RFC-0031](0031-di-and-raii-mandate.md) | Global State, Dependency Injection (DI), and RAII Mandate | **Accepted** |
 | [RFC-0040](0040-testing-pyramid-and-emulation-verification.md) | The Testing Pyramid and Emulation Verification | **Accepted** |
-| [RFC-0023](0023-safe-qom-macros.md) | Safe QOM Macros and Boilerplate Eradication | **Proposed** |
-| [RFC-0024](0024-deterministic-routing-and-flow-control.md) | Assertion-Based Deterministic Routing and Flow Control | **Proposed** |
-| [RFC-0025](0025-zero-copy-transport.md) | Zero-Copy Deterministic Transport API | **Proposed** |
+| [RFC-0023](0023-safe-qom-macros.md) | Safe QOM Macros and Boilerplate Eradication | **Accepted** |
+| [RFC-0024](0024-deterministic-routing-and-flow-control.md) | Assertion-Based Deterministic Routing and Flow Control | **Accepted** |
+| [RFC-0025](0025-zero-copy-transport.md) | Zero-Copy Deterministic Transport API | **Accepted** |
+| [RFC-0026](0026-zero-unsafe-qom-peripherals.md) | Zero Unsafe QOM Peripherals | **Accepted** |
+| [RFC-0027](0027-cosim-bridge-raii-framework.md) | CoSimBridge RAII IoC Framework | **Accepted** |
+| [RFC-0028](0028-mmio-socket-bridge-protocol.md) | MMIO Socket Bridge Architecture | **Accepted** |
+| [RFC-0029](0029-remote-port-systemc-integration.md) | Remote Port (SystemC) Co-Simulation Backbone | **Accepted** |
+| [RFC-0032](0032-unified-rust-build-system.md) | Unified Rust Build System (xtask) | **Accepted** |
+| [RFC-0033](0033-uds-coordinator-wire-protocol.md) | UDS Coordinator Wire Protocol | **Accepted** |
+
+> Note: RFC-0011 (Zenoh as Federation Bus) is **Accepted but partially superseded** by RFC-0019 for single-host deployments. Zenoh remains canonical only for cross-host federation; UDS is the default single-host transport.

@@ -864,22 +864,11 @@ impl LinterEngine {
                     } else {
                         let stdout = strip_ansi_codes(&String::from_utf8_lossy(&out.stdout));
                         let stderr = strip_ansi_codes(&String::from_utf8_lossy(&out.stderr));
-                        let all_lines: Vec<&str> = stdout
-                            .lines()
-                            .chain(stderr.lines())
-                            .map(str::trim)
-                            .filter(|l| !l.is_empty())
-                            .collect();
-                        let summary = all_lines
-                            .iter()
-                            .find(|l| l.starts_with("error") || l.starts_with("Diff in"))
-                            .or_else(|| all_lines.first())
-                            .copied()
-                            .unwrap_or("(no output)");
                         let err_msg = format!(
-                            "exit status: {} — {}",
+                            "exit status: {}\nSTDOUT:\n{}\nSTDERR:\n{}",
                             out.status.code().unwrap_or(-1),
-                            summary
+                            stdout.trim(),
+                            stderr.trim()
                         );
                         (name, Err(anyhow!(err_msg)))
                     }

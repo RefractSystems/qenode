@@ -3,10 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::info;
 use virtmcu_api::telemetry_generated::virtmcu::telemetry::root_as_trace_event;
-use virtmcu_api::{
-    FlatBufferStructExt, ZenohFrameHeader, ZenohSPIHeader, ZENOH_FRAME_HEADER_SIZE,
-    ZENOH_SPI_HEADER_SIZE,
-};
+use virtmcu_api::{FlatBufferStructExt, ZenohSPIHeader, ZENOH_SPI_HEADER_SIZE};
 use zenoh::sample::Sample;
 use zenoh::Session;
 use zenoh::Wait;
@@ -69,6 +66,7 @@ impl<T> Default for AsyncMessageBuffer<T> {
 
 pub struct ActuatorMonitor {
     #[allow(clippy::type_complexity)]
+    // virtmcu-allow: allow reasoning="Monitor message types involve complex nested tuples for captured data"
     pub captured_messages: Arc<Mutex<Vec<(String, u64, Vec<f64>)>>>,
     _subscribers: Vec<zenoh::pubsub::Subscriber<()>>,
 }
@@ -85,19 +83,16 @@ impl ActuatorMonitor {
                 .declare_subscriber(topic.to_string())
                 .callback(move |sample: Sample| {
                     let payload = sample.payload().to_bytes();
-                    if payload.len() >= ZENOH_FRAME_HEADER_SIZE {
-                        if let Some(header) =
-                            ZenohFrameHeader::unpack_slice(&payload[..ZENOH_FRAME_HEADER_SIZE])
-                        {
-                            let data_bytes = &payload[ZENOH_FRAME_HEADER_SIZE..];
-                            let mut vals = Vec::new();
-                            for chunk in data_bytes.chunks_exact(8) {
-                                let val = f64::from_le_bytes(chunk.try_into().unwrap());
-                                vals.push(val);
-                            }
-                            let mut msgs = captured_messages_clone.lock().unwrap();
-                            msgs.push((topic_string.clone(), header.delivery_vtime_ns(), vals));
+                    if let Some((vtime, _seq, inner_payload)) =
+                        virtmcu_api::decode_coord_message(&payload)
+                    {
+                        let mut vals = Vec::new();
+                        for chunk in inner_payload.chunks_exact(8) {
+                            let val = f64::from_le_bytes(chunk.try_into().unwrap());
+                            vals.push(val);
                         }
+                        let mut msgs = captured_messages_clone.lock().unwrap();
+                        msgs.push((topic_string.clone(), vtime, vals));
                     }
                 })
                 .await
@@ -146,16 +141,13 @@ impl ChardevMonitor {
             .declare_subscriber(topic.to_string())
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if payload.len() >= ZENOH_FRAME_HEADER_SIZE {
-                    if let Some(_header) =
-                        ZenohFrameHeader::unpack_slice(&payload[..ZENOH_FRAME_HEADER_SIZE])
-                    {
-                        let data_bytes = &payload[ZENOH_FRAME_HEADER_SIZE..];
-                        let text = String::from_utf8_lossy(data_bytes);
-                        tracing::debug!("Chardev RX: {:?}", text);
-                        let mut buf = captured_text_clone.lock().unwrap();
-                        buf.push_str(&text);
-                    }
+                if let Some((_vtime, _seq, inner_payload)) =
+                    virtmcu_api::decode_coord_message(&payload)
+                {
+                    let text = String::from_utf8_lossy(inner_payload);
+                    tracing::debug!("Chardev RX: {:?}", text);
+                    let mut buf = captured_text_clone.lock().unwrap();
+                    buf.push_str(&text);
                 }
             })
             .await
@@ -202,13 +194,18 @@ impl ChardevMonitor {
             vtime_ns,
             String::from_utf8_lossy(data)
         );
-        let header = ZenohFrameHeader::new(vtime_ns, 0, data.len() as u32);
-        let mut payload = Vec::with_capacity(ZENOH_FRAME_HEADER_SIZE + data.len());
-        payload.extend_from_slice(header.pack());
-        payload.extend_from_slice(data);
+
+        let coord_msg = virtmcu_api::encode_coord_message(
+            0,
+            0,
+            vtime_ns,
+            0,
+            virtmcu_api::core_generated::virtmcu::core::Protocol::Uart,
+            data,
+        );
 
         self.session
-            .put(topic, payload)
+            .put(topic, coord_msg)
             .await
             .map_err(|e| anyhow!("Failed to publish Chardev: {}", e))?;
         Ok(())
@@ -305,6 +302,7 @@ impl SpiEchoMonitor {
 
 pub struct LinMonitor {
     #[allow(clippy::type_complexity)]
+    // virtmcu-allow: allow reasoning="Monitor message types involve complex nested tuples for captured data"
     pub captured_messages: Arc<Mutex<Vec<(LinMessageType, Vec<u8>)>>>,
     _subscriber: zenoh::pubsub::Subscriber<()>,
     session: Session,
@@ -319,10 +317,14 @@ impl LinMonitor {
             .declare_subscriber(topic)
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if let Ok(frame) = root_as_lin_frame(&payload) {
-                    let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
-                    let mut msgs = captured_messages_clone.lock().unwrap();
-                    msgs.push((frame.type_(), data_vec));
+                if let Some((_vtime, _seq, inner_payload)) =
+                    virtmcu_api::decode_coord_message(&payload)
+                {
+                    if let Ok(frame) = root_as_lin_frame(inner_payload) {
+                        let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
+                        let mut msgs = captured_messages_clone.lock().unwrap();
+                        msgs.push((frame.type_(), data_vec));
+                    }
                 }
             })
             .await
@@ -376,8 +378,17 @@ impl LinMonitor {
         let frame = LinFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
+        let coord_msg = virtmcu_api::encode_coord_message(
+            0,
+            0,
+            vtime_ns,
+            0,
+            virtmcu_api::core_generated::virtmcu::core::Protocol::Lin,
+            builder.finished_data(),
+        );
+
         self.session
-            .put(topic, builder.finished_data())
+            .put(topic, coord_msg)
             .await
             .map_err(|e| anyhow!("Failed to publish LIN: {}", e))?;
         Ok(())
@@ -386,6 +397,7 @@ impl LinMonitor {
 
 pub struct FlexRayMonitor {
     #[allow(clippy::type_complexity)]
+    // virtmcu-allow: allow reasoning="Monitor message types involve complex nested tuples for captured data"
     pub captured_messages: Arc<Mutex<Vec<(u16, Vec<u8>)>>>,
     _subscriber: zenoh::pubsub::Subscriber<()>,
     session: Session,
@@ -400,10 +412,14 @@ impl FlexRayMonitor {
             .declare_subscriber(topic)
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if let Ok(frame) = root_as_flex_ray_frame(&payload) {
-                    let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
-                    let mut msgs = captured_messages_clone.lock().unwrap();
-                    msgs.push((frame.frame_id(), data_vec));
+                if let Some((_vtime, _seq, inner_payload)) =
+                    virtmcu_api::decode_coord_message(&payload)
+                {
+                    if let Ok(frame) = root_as_flex_ray_frame(inner_payload) {
+                        let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
+                        let mut msgs = captured_messages_clone.lock().unwrap();
+                        msgs.push((frame.frame_id(), data_vec));
+                    }
                 }
             })
             .await
@@ -457,8 +473,17 @@ impl FlexRayMonitor {
         let frame = FlexRayFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
+        let coord_msg = virtmcu_api::encode_coord_message(
+            0,
+            0,
+            vtime_ns,
+            0,
+            virtmcu_api::core_generated::virtmcu::core::Protocol::FlexRay,
+            builder.finished_data(),
+        );
+
         self.session
-            .put(topic, builder.finished_data())
+            .put(topic, coord_msg)
             .await
             .map_err(|e| anyhow!("Failed to publish FlexRay: {}", e))?;
         Ok(())

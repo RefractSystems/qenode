@@ -17,13 +17,13 @@ pub mod virtmcu {
             since = "2.0.0",
             note = "Use associated constants instead. This will no longer be generated in 2021."
         )]
-        pub const ENUM_MAX_PROTOCOL: u8 = 8;
+        pub const ENUM_MAX_PROTOCOL: u8 = 9;
         #[deprecated(
             since = "2.0.0",
             note = "Use associated constants instead. This will no longer be generated in 2021."
         )]
         #[allow(non_camel_case_types)]
-        pub const ENUM_VALUES_PROTOCOL: [Protocol; 9] = [
+        pub const ENUM_VALUES_PROTOCOL: [Protocol; 10] = [
             Protocol::Ethernet,
             Protocol::Uart,
             Protocol::Spi,
@@ -33,6 +33,7 @@ pub mod virtmcu {
             Protocol::Rf802154,
             Protocol::RfHci,
             Protocol::Control,
+            Protocol::ReferenceLink,
         ];
 
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -49,9 +50,10 @@ pub mod virtmcu {
             pub const Rf802154: Self = Self(6);
             pub const RfHci: Self = Self(7);
             pub const Control: Self = Self(8);
+            pub const ReferenceLink: Self = Self(9);
 
             pub const ENUM_MIN: u8 = 0;
-            pub const ENUM_MAX: u8 = 8;
+            pub const ENUM_MAX: u8 = 9;
             pub const ENUM_VALUES: &'static [Self] = &[
                 Self::Ethernet,
                 Self::Uart,
@@ -62,6 +64,7 @@ pub mod virtmcu {
                 Self::Rf802154,
                 Self::RfHci,
                 Self::Control,
+                Self::ReferenceLink,
             ];
             /// Returns the variant's name or "" if unknown.
             pub fn variant_name(self) -> Option<&'static str> {
@@ -75,6 +78,7 @@ pub mod virtmcu {
                     Self::Rf802154 => Some("Rf802154"),
                     Self::RfHci => Some("RfHci"),
                     Self::Control => Some("Control"),
+                    Self::ReferenceLink => Some("ReferenceLink"),
                     _ => None,
                 }
             }
@@ -1946,6 +1950,279 @@ pub mod virtmcu {
                 ds.field("quantum", &self.quantum());
                 ds.field("vtime_limit", &self.vtime_limit());
                 ds.field("messages", &self.messages());
+                ds.finish()
+            }
+        }
+        pub enum UdsRegistrationOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        /// Sent by each node as the first framed message after connecting to the coordinator UDS socket.
+        /// Topic: "sim/coord/register"
+        /// The coordinator panics if federation_id doesn't match topology or proto_version is unknown.
+        pub struct UdsRegistration<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for UdsRegistration<'a> {
+            type Inner = UdsRegistration<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> UdsRegistration<'a> {
+            pub const VT_NODE_ID: ::flatbuffers::VOffsetT = 4;
+            pub const VT_FEDERATION_ID: ::flatbuffers::VOffsetT = 6;
+            pub const VT_PROTO_VERSION: ::flatbuffers::VOffsetT = 8;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                UdsRegistration { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args UdsRegistrationArgs<'args>,
+            ) -> ::flatbuffers::WIPOffset<UdsRegistration<'bldr>> {
+                let mut builder = UdsRegistrationBuilder::new(_fbb);
+                builder.add_proto_version(args.proto_version);
+                if let Some(x) = args.federation_id {
+                    builder.add_federation_id(x);
+                }
+                builder.add_node_id(args.node_id);
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn node_id(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(UdsRegistration::VT_NODE_ID, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn federation_id(&self) -> &'a str {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<::flatbuffers::ForwardsUOffset<&str>>(
+                            UdsRegistration::VT_FEDERATION_ID,
+                            None,
+                        )
+                        .unwrap()
+                }
+            }
+            #[inline]
+            pub fn proto_version(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(UdsRegistration::VT_PROTO_VERSION, Some(0)).unwrap() }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for UdsRegistration<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u32>("node_id", Self::VT_NODE_ID, false)?
+                    .visit_field::<::flatbuffers::ForwardsUOffset<&str>>(
+                        "federation_id",
+                        Self::VT_FEDERATION_ID,
+                        true,
+                    )?
+                    .visit_field::<u32>("proto_version", Self::VT_PROTO_VERSION, false)?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct UdsRegistrationArgs<'a> {
+            pub node_id: u32,
+            pub federation_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+            pub proto_version: u32,
+        }
+        impl<'a> Default for UdsRegistrationArgs<'a> {
+            #[inline]
+            fn default() -> Self {
+                UdsRegistrationArgs {
+                    node_id: 0,
+                    federation_id: None, // required field
+                    proto_version: 0,
+                }
+            }
+        }
+
+        pub struct UdsRegistrationBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> UdsRegistrationBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_node_id(&mut self, node_id: u32) {
+                self.fbb_.push_slot::<u32>(UdsRegistration::VT_NODE_ID, node_id, 0);
+            }
+            #[inline]
+            pub fn add_federation_id(&mut self, federation_id: ::flatbuffers::WIPOffset<&'b str>) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    UdsRegistration::VT_FEDERATION_ID,
+                    federation_id,
+                );
+            }
+            #[inline]
+            pub fn add_proto_version(&mut self, proto_version: u32) {
+                self.fbb_.push_slot::<u32>(UdsRegistration::VT_PROTO_VERSION, proto_version, 0);
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> UdsRegistrationBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                UdsRegistrationBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<UdsRegistration<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                self.fbb_.required(o, UdsRegistration::VT_FEDERATION_ID, "federation_id");
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for UdsRegistration<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("UdsRegistration");
+                ds.field("node_id", &self.node_id());
+                ds.field("federation_id", &self.federation_id());
+                ds.field("proto_version", &self.proto_version());
+                ds.finish()
+            }
+        }
+        pub enum UdsQuantumStartOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        /// Sent by the coordinator to each node to advance to the next quantum.
+        /// Topic: "sim/coord/start/{node_id}"
+        /// Nodes must not deliver messages with delivery_vtime_ns > vtime_limit_ns in their DONE signal.
+        pub struct UdsQuantumStart<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for UdsQuantumStart<'a> {
+            type Inner = UdsQuantumStart<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> UdsQuantumStart<'a> {
+            pub const VT_QUANTUM: ::flatbuffers::VOffsetT = 4;
+            pub const VT_VTIME_LIMIT_NS: ::flatbuffers::VOffsetT = 6;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                UdsQuantumStart { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args UdsQuantumStartArgs,
+            ) -> ::flatbuffers::WIPOffset<UdsQuantumStart<'bldr>> {
+                let mut builder = UdsQuantumStartBuilder::new(_fbb);
+                builder.add_vtime_limit_ns(args.vtime_limit_ns);
+                builder.add_quantum(args.quantum);
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn quantum(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u64>(UdsQuantumStart::VT_QUANTUM, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn vtime_limit_ns(&self) -> u64 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<u64>(UdsQuantumStart::VT_VTIME_LIMIT_NS, Some(0)).unwrap()
+                }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for UdsQuantumStart<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u64>("quantum", Self::VT_QUANTUM, false)?
+                    .visit_field::<u64>("vtime_limit_ns", Self::VT_VTIME_LIMIT_NS, false)?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct UdsQuantumStartArgs {
+            pub quantum: u64,
+            pub vtime_limit_ns: u64,
+        }
+        impl<'a> Default for UdsQuantumStartArgs {
+            #[inline]
+            fn default() -> Self {
+                UdsQuantumStartArgs { quantum: 0, vtime_limit_ns: 0 }
+            }
+        }
+
+        pub struct UdsQuantumStartBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> UdsQuantumStartBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_quantum(&mut self, quantum: u64) {
+                self.fbb_.push_slot::<u64>(UdsQuantumStart::VT_QUANTUM, quantum, 0);
+            }
+            #[inline]
+            pub fn add_vtime_limit_ns(&mut self, vtime_limit_ns: u64) {
+                self.fbb_.push_slot::<u64>(UdsQuantumStart::VT_VTIME_LIMIT_NS, vtime_limit_ns, 0);
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> UdsQuantumStartBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                UdsQuantumStartBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<UdsQuantumStart<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for UdsQuantumStart<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("UdsQuantumStart");
+                ds.field("quantum", &self.quantum());
+                ds.field("vtime_limit_ns", &self.vtime_limit_ns());
                 ds.finish()
             }
         }

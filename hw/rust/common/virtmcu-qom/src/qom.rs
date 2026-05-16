@@ -35,6 +35,22 @@ impl QomString {
         }
     }
 
+    /// Safely returns the QOM string as a borrowed string slice.
+    /// Returns an empty string slice if the underlying pointer is null.
+    pub fn as_str(&self) -> &str {
+        if self.0.is_null() {
+            ""
+        } else {
+            let mut len = 0;
+            while unsafe { *self.0.add(len) } != 0 {
+                len += 1;
+            }
+            let slice = unsafe { core::slice::from_raw_parts(self.0.cast::<u8>(), len) };
+            // Enforce crash-only design on invalid UTF encoding (Fail Loudly mandate)
+            core::str::from_utf8(slice).expect("QOM property string contains invalid UTF encoding")
+        }
+    }
+
     /// Checks if the underlying string is null.
     pub fn is_null(&self) -> bool {
         self.0.is_null()

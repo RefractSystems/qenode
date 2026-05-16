@@ -27,6 +27,7 @@ pub struct VirtmcuTransportHub {
     pub parent_obj: SysBusDevice,
     pub node_id: u32,
     pub router: *mut c_char,
+    pub socket_path: *mut c_char,
     pub rust_state: *mut HubState,
     pub transport_ptr: u64,
 }
@@ -37,13 +38,14 @@ pub struct HubState {
 }
 
 const _: () = assert!(core::mem::offset_of!(VirtmcuTransportHub, parent_obj) == 0);
-const _: () = assert!(core::mem::size_of::<VirtmcuTransportHub>() == 840);
+const _: () = assert!(core::mem::size_of::<VirtmcuTransportHub>() == 848);
 
 define_properties!(
     VIRT_HUB_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuTransportHub, node_id, 0),
         define_prop_string!(c"router".as_ptr(), VirtmcuTransportHub, router),
+        define_prop_string!(c"socket-path".as_ptr(), VirtmcuTransportHub, socket_path),
     ]
 );
 
@@ -82,9 +84,23 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
     };
 
     let transport: Option<Arc<dyn virtmcu_api::DataTransport>> = if let Some(sess) = &session {
-        Some(Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(sess))))
+        Some(Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(sess), s.node_id)))
     } else {
-        None
+        // Try UDS transport if Zenoh is not configured
+        if !s.socket_path.is_null() {
+            let socket_path = unsafe { core::ffi::CStr::from_ptr(s.socket_path) }.to_string_lossy();
+            virtmcu_qom::sim_info!("hub_realize: using UDS transport at {}", socket_path);
+            // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
+            match transport_unix::UdsDataTransport::new(socket_path.as_ref(), s.node_id) {
+                Ok(t) => Some(Arc::new(t)),
+                Err(e) => {
+                    virtmcu_qom::sim_err!("hub_realize: failed to open UDS transport: {}", e);
+                    None
+                }
+            }
+        } else {
+            panic!("hub_realize: no router and no socket-path provided");
+        }
     };
 
     let _transport = transport.map(alloc::boxed::Box::new);

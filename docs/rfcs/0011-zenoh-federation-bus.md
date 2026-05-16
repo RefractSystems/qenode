@@ -1,7 +1,11 @@
 # RFC-0011: Zenoh as the Federation Message Bus
 
 ## Status
-Accepted
+Accepted, **partially superseded by RFC-0019** for single-host deployments.
+Zenoh remains canonical only for cross-host federation. The UDS Hybrid IPC
+(RFC-0019) plus zero-copy `DataTransport` (RFC-0025) is the default for the
+single-host path. The `ZENOH_TOPIC_MAP.md` referenced below was never
+checked in; treat it as a TODO for whoever revisits cross-host federation.
 
 ## Context
 In a deterministic multi-node simulation framework (`VirtMCU`), multiple independent QEMU instances (cyber nodes) and physics engines (like MuJoCo) must coordinate time, exchange Ethernet frames, and transmit serial/UART bytes. 

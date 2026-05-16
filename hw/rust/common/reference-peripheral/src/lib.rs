@@ -1,5 +1,4 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
-#![allow(clippy::if_not_else)]
 #![cfg_attr(
     test,
     allow(
@@ -9,7 +8,6 @@
         clippy::panic_in_result_fn
     )
 )]
-// std is required: virtmcu-qom dependency brings in std
 //! ============================================================================
 //! Welcome to the VirtMCU Peripheral Template!
 //!
@@ -18,6 +16,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use virtmcu_api::DataTransport;
@@ -29,6 +28,7 @@ const REFERENCE_REG_STATUS: u64 = 0x00;
 const REFERENCE_REG_TX: u64 = 0x04;
 const REFERENCE_REG_8: u64 = 0x08;
 const REFERENCE_VAL_FACEBABE: u64 = 0xface_babe;
+const REFERENCE_TX_SIZE: usize = 8;
 
 /// A custom packet structure representing incoming data.
 #[derive(Eq, PartialEq)]
@@ -66,10 +66,15 @@ pub struct ReferencePeripheralQEMU {
 
     #[qom_property]
     pub base_addr: u64,
+    /// Example bool QOM property. VirtMCU already provides sim_debug!() for debug gating;
+    /// this property shows how to expose a bool flag from the device tree.
     #[qom_property]
     pub debug: bool,
     #[qom_property]
     pub node_id: u32,
+    /// Topic namespace for this peripheral's sim topics (e.g. "chardev", "uart", "can").
+    /// Produces topics: sim/{topic}/{node_id}/rx  and  sim/{topic}/{node_id}/tx.
+    /// Default "chardev" matches the coordinator's ReferenceLink legacy routing.
     #[qom_property]
     pub topic: virtmcu_qom::qom::QomString,
 
@@ -81,9 +86,9 @@ pub struct ReferencePeripheralQEMU {
 }
 
 pub struct ReferencePeripheralState {
-    pub debug: bool,
     pub node_id: u32,
-    pub topic: alloc::string::String,
+    /// Topic namespace from the QOM property; drives sim topic construction.
+    pub topic: String,
     pub drain: VcpuDrain,
     pub cond: Arc<Condvar>,
     pub wait_mutex: Arc<Mutex<()>>,
@@ -103,13 +108,13 @@ impl virtmcu_qom::device::PeripheralState for ReferencePeripheralState {
             qemu_dev.node_id
         );
         let topic = if qemu_dev.topic.is_null() {
-            alloc::string::String::from("reference")
+            // "chardev" matches coordinator's ReferenceLink routing (sim/chardev/{n}/rx).
+            String::from("chardev")
         } else {
             qemu_dev.topic.as_string()
         };
 
         Self {
-            debug: qemu_dev.debug,
             node_id: qemu_dev.node_id,
             topic,
             drain: VcpuDrain::new(),
@@ -125,10 +130,9 @@ impl virtmcu_qom::device::PeripheralState for ReferencePeripheralState {
 }
 
 impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
-    fn realize(&mut self) -> Result<(), alloc::string::String> {
-        // Initialize Deterministic Ingress (RFC-0023 Step 1 & 4)
+    fn realize(&mut self) -> Result<(), String> {
         if let Some(t) = &self.transport {
-            let rx_topic = alloc::format!("sim/chardev/{}/rx", self.node_id);
+            let rx_topic = format!("sim/{}/{}/rx", self.topic, self.node_id);
             let generation_clone = Arc::clone(&self.generation);
             let has_data_clone = Arc::clone(&self.has_data);
             let cond_clone = Arc::clone(&self.cond);
@@ -137,13 +141,16 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                 &**t,
                 &rx_topic,
                 generation_clone,
-                |_topic, payload| {
-                    if let Some((header, data)) = virtmcu_api::decode_frame(payload) {
-                        Some(ReferencePacket {
-                            vtime: header.delivery_vtime_ns(),
-                            data: data.to_vec(),
-                        })
+                |topic, payload| {
+                    virtmcu_qom::sim_debug!(
+                        "Reference: Rx callback on topic {} (len={})",
+                        topic,
+                        payload.len()
+                    );
+                    if let Some((vtime, _seq, data)) = virtmcu_api::decode_frame(payload) {
+                        Some(ReferencePacket { vtime, data: data.to_vec() })
                     } else {
+                        virtmcu_qom::sim_err!("Reference: failed to decode frame!");
                         None
                     }
                 },
@@ -152,12 +159,12 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                     cond_clone.notify_all();
                 },
             )
-            .map_err(|e| alloc::format!("Failed to init receiver: {e}"))?;
+            .map_err(|e| format!("Failed to init receiver: {e}"))?;
 
             self.receiver = Some(rec);
-            virtmcu_qom::sim_debug!("Reference: Node {} initialized with transport", self.node_id);
+            virtmcu_qom::sim_info!("Reference: Node {} subscribed to {}", self.node_id, rx_topic);
         } else {
-            virtmcu_qom::sim_debug!(
+            virtmcu_qom::sim_info!(
                 "Reference: Node {} initialized without transport (standalone mode)",
                 self.node_id
             );
@@ -178,6 +185,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
         virtmcu_qom::device::MmioDevice::write(self, addr, val, size);
     }
 
+    // Both Peripheral and MmioDevice require condvar()/wait_mutex() as trait methods.
     fn condvar(&self) -> &Condvar {
         &self.cond
     }
@@ -187,17 +195,11 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
     }
 }
 
-const REFERENCE_TX_SIZE: usize = 8;
-
 impl virtmcu_qom::device::MmioDevice for ReferencePeripheralState {
     fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
         let _guard = self.drain.acquire();
         match addr {
             REFERENCE_REG_STATUS => {
-                virtmcu_qom::sim_debug!(
-                    "Reference: Read STATUS (has_data={})",
-                    self.has_data.load(Ordering::Acquire)
-                );
                 let has_data_clone = Arc::clone(&self.has_data);
                 virtmcu_qom::device::MmioResult::wait_for(
                     move || has_data_clone.load(Ordering::Acquire),
@@ -212,41 +214,33 @@ impl virtmcu_qom::device::MmioDevice for ReferencePeripheralState {
 
     fn write(&self, addr: u64, val: u64, _size: u32) {
         let _guard = self.drain.acquire();
-        virtmcu_qom::sim_debug!(
-            "[DEBUG] ReferencePeripheralState::write 0x{:x} = 0x{:x}",
-            addr,
-            val
-        );
-        if addr == REFERENCE_REG_TX {
-            if let Some(transport) = &self.transport {
-                let tx_topic = alloc::format!("sim/chardev/{}/tx", self.node_id);
+        match addr {
+            REFERENCE_REG_TX => {
+                let Some(transport) = &self.transport else {
+                    virtmcu_qom::sim_info!("Reference: Write to TX but NO transport!");
+                    return;
+                };
+                let tx_topic = format!("sim/{}/{}/tx", self.topic, self.node_id);
                 let vtime = virtmcu_qom::telemetry::get_global_vtime();
                 let seq = self.tx_sequence.fetch_add(1, Ordering::SeqCst);
-
-                virtmcu_qom::sim_info!(
-                    "Reference: Committing packet to {} at vtime {}",
-                    tx_topic,
-                    vtime
-                );
-
-                // Zero-Copy Reservation API (RFC-0025) - Gold Standard Pattern
                 match transport.reserve(&tx_topic, REFERENCE_TX_SIZE) {
                     Ok(mut reservation) => {
                         reservation.buffer_mut().copy_from_slice(&val.to_le_bytes());
-                        let _ = reservation.commit(vtime, seq);
+                        reservation
+                            .commit(vtime, seq)
+                            .expect("FATAL: Reference failed to commit transport reservation");
                     }
-                    Err(e) => {
-                        panic!(
-                            "FATAL: Reference failed to reserve transport for topic {tx_topic}: {e:?}",
-                        );
-                    }
+                    Err(e) => panic!(
+                        "FATAL: Reference failed to reserve transport for topic {tx_topic}: {e:?}",
+                    ),
                 };
-            } else {
-                virtmcu_qom::sim_info!("Reference: Write to TX but NO transport!");
             }
+            // Writes to any other address are a firmware bug — fail loudly (RFC-0022).
+            _ => panic!("Reference: write to unknown register 0x{addr:x} = 0x{val:x}"),
         }
     }
 
+    // Required by MmioDevice; same backing fields as Peripheral impl above.
     fn condvar(&self) -> &Condvar {
         &self.cond
     }
@@ -262,7 +256,6 @@ virtmcu_qom::register_peripheral!(ReferencePeripheralQEMU);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
 
     #[test]
     fn test_reference_peripheral_qemu_layout() {
@@ -277,29 +270,40 @@ mod tests {
 
         assert!(p1 < p2);
         assert!(p2 > p1);
-        // Packets with the same vtime should be considered equal for ordering purposes
+        // Same vtime → equal for ordering purposes (tie-broken by coordinator via seq).
         assert_eq!(p1.cmp(&p3), core::cmp::Ordering::Equal);
     }
 
     #[test]
     fn test_reference_peripheral_state_logic() {
-        // We can test basic state isolation without full QEMU realization
         let mut qemu_dev = ReferencePeripheralQEMU::new_mock();
         qemu_dev.base_addr = 0x1000;
         qemu_dev.debug = false;
         qemu_dev.node_id = 1;
         qemu_dev.topic = virtmcu_qom::qom::QomString::default();
-        // transport defaults to empty mock QomLink through new_mock() zeroing
 
         let state =
             <ReferencePeripheralState as virtmcu_qom::device::PeripheralState>::new(&qemu_dev);
 
         assert_eq!(state.node_id, 1);
-        assert_eq!(state.topic, "reference");
+        assert_eq!(state.topic, "chardev");
         assert!(!state.has_data.load(Ordering::SeqCst));
 
-        // Simulate data arrival
         state.has_data.store(true, Ordering::SeqCst);
         assert!(state.has_data.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_reference_peripheral_mmio_read_immediate() {
+        let mut qemu_dev = ReferencePeripheralQEMU::new_mock();
+        qemu_dev.node_id = 2;
+        qemu_dev.topic = virtmcu_qom::qom::QomString::default();
+
+        let state =
+            <ReferencePeripheralState as virtmcu_qom::device::PeripheralState>::new(&qemu_dev);
+
+        // REFERENCE_REG_8 always returns REFERENCE_VAL_FACEBABE without blocking.
+        let result = virtmcu_qom::device::MmioDevice::read(&state, REFERENCE_REG_8, 4);
+        assert!(matches!(result, virtmcu_qom::device::MmioResult::Ready(REFERENCE_VAL_FACEBABE)));
     }
 }

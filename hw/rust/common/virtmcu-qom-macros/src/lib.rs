@@ -53,14 +53,14 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
                             fallback_val()
                         }
                     } else {
-                        let cond = virtmcu_qom::device::MmioDevice::condvar(state);
+                        let condvar = virtmcu_qom::device::MmioDevice::condvar(state);
                         let mutex = virtmcu_qom::device::MmioDevice::wait_mutex(state);
                         let mut guard = mutex.lock();
-                        loop {
-                            if condition() { return ready_val(); }
-                            let (g, _) = cond.wait_yielding_bql(guard, BQL_YIELD_TIMEOUT_MS);
-                            guard = g;
+                        while !condition() {
+                            let (new_guard, _) = condvar.wait_yielding_bql(guard, BQL_YIELD_TIMEOUT_MS);
+                            guard = new_guard;
                         }
+                        ready_val()
                     }
                 }
             }

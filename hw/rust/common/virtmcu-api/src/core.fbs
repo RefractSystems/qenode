@@ -63,7 +63,8 @@ enum Protocol : uint8 {
     Lin = 5,
     Rf802154 = 6,
     RfHci = 7,
-    Control = 8
+    Control = 8,
+    ReferenceLink = 9
 }
 
 table CoordMessage {
@@ -79,4 +80,21 @@ table CoordDoneReq {
     quantum: uint64;
     vtime_limit: uint64;
     messages: [CoordMessage];
+}
+
+/// Sent by each node as the first framed message after connecting to the coordinator UDS socket.
+/// Topic: "sim/coord/register"
+/// The coordinator panics if federation_id doesn't match topology or proto_version is unknown.
+table UdsRegistration {
+    node_id:       uint32;
+    federation_id: string (required);
+    proto_version: uint32;
+}
+
+/// Sent by the coordinator to each node to advance to the next quantum.
+/// Topic: "sim/coord/start/{node_id}"
+/// Nodes must not deliver messages with delivery_vtime_ns > vtime_limit_ns in their DONE signal.
+table UdsQuantumStart {
+    quantum:        uint64;
+    vtime_limit_ns: uint64;
 }

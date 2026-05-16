@@ -45,6 +45,7 @@ impl virtmcu_api::LivelinessToken for ZenohLivelinessToken {}
 
 /// A Zenoh-backed implementation of the `DataTransport` trait.
 pub struct ZenohDataTransport {
+    node_id: u32,
     session: Arc<Session>,
     publisher: publisher::SafeSessionPublisher,
     subscriptions: std::sync::Mutex<Vec<Subscriber<()>>>,
@@ -52,9 +53,9 @@ pub struct ZenohDataTransport {
 
 impl ZenohDataTransport {
     /// Creates a new `ZenohDataTransport` using the provided Zenoh session.
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, node_id: u32) -> Self {
         let publisher = publisher::SafeSessionPublisher::new(Arc::clone(&session));
-        Self { session, publisher, subscriptions: std::sync::Mutex::new(Vec::new()) }
+        Self { node_id, session, publisher, subscriptions: std::sync::Mutex::new(Vec::new()) }
     }
 }
 
@@ -69,12 +70,10 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
         topic: &'a str,
         size: usize,
     ) -> Result<virtmcu_api::TransportReservation<'a>, virtmcu_api::TransportError> {
-        // Allocate space for the Zenoh header plus the requested payload size.
-        let mut frame = vec![0u8; virtmcu_api::ZENOH_FRAME_HEADER_SIZE + size];
+        // Allocate space for the payload size. The header will be constructed at commit time.
+        let mut frame = vec![0u8; size];
 
-        // Use an unsafe pointer derivation to obtain a mutable slice for the payload
-        // section of the Vec, while the closure takes ownership of the Vec itself.
-        let payload_ptr = unsafe { frame.as_mut_ptr().add(virtmcu_api::ZENOH_FRAME_HEADER_SIZE) };
+        let payload_ptr = frame.as_mut_ptr();
 
         // SAFETY: We move `frame` into the closure which is owned by the TransportReservation.
         // Since Vec's heap memory is stable, the pointer remains valid for the lifetime of
@@ -84,11 +83,18 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
             core::mem::transmute::<&mut [u8], &mut [u8]>(b)
         };
 
+        let node_id = self.node_id;
         Ok(virtmcu_api::TransportReservation::new(topic, buffer, move |vtime, seq| {
-            let header = virtmcu_api::ZenohFrameHeader::new(vtime, seq, size as u32);
-            frame[0..virtmcu_api::ZENOH_FRAME_HEADER_SIZE].copy_from_slice(&header.0);
+            let fb_payload = virtmcu_api::encode_coord_message(
+                node_id,
+                u32::MAX, // Broadcast or coordinator-resolved dst
+                vtime,
+                seq,
+                virtmcu_api::Protocol::ReferenceLink,
+                &frame,
+            );
 
-            self.publish(topic, &frame).map_err(virtmcu_api::TransportError::Other)
+            self.publish(topic, &fb_payload).map_err(virtmcu_api::TransportError::Other)
         }))
     }
 

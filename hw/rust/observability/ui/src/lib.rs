@@ -8,300 +8,250 @@
         clippy::panic_in_result_fn
     )
 )]
-unsafe extern "C" fn allow_set_link(
-    _obj: *mut virtmcu_qom::qom::Object,
-    _name: *const core::ffi::c_char,
-    _val: *mut virtmcu_qom::qom::Object,
-    _errp: *mut *mut virtmcu_qom::error::Error,
-) {
-}
+
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
-use core::ffi::{c_char, c_int, c_void};
-use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::collections::HashMap;
-use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
-use virtmcu_qom::memory::{memory_region_init_io, MemoryRegion};
-use virtmcu_qom::qdev::{sysbus_get_connected_irq, sysbus_init_mmio, SysBusDevice};
-use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
-use virtmcu_qom::sync::BqlGuarded;
-use virtmcu_qom::{
-    declare_device_type, define_prop_string, define_prop_uint32, define_properties, device_class,
-    error_setg,
-};
 
-#[repr(C)]
-#[derive(virtmcu_qom::MmioDevice)]
-pub struct ZenohUiQEMU {
-    pub parent_obj: SysBusDevice,
-    pub mmio: MemoryRegion,
-
-    /* Properties */
-    pub node_id: u32,
-    pub transport: *mut c_char,
-    pub router: *mut c_char,
-    pub debug: bool,
-
-    /* Links */
-    pub transport_hub: *mut Object,
-
-    /* Registers */
-    pub active_led_id: u32,
-    pub active_btn_id: u32,
-
-    /* Rust state */
-    pub rust_state: *mut ZenohUiState,
-}
-
-const _: () = assert!(core::mem::offset_of!(ZenohUiQEMU, parent_obj) == 0);
-const _: () = assert!(core::mem::size_of::<ZenohUiQEMU>() == 1152);
-
-pub struct ZenohUiState {
-    parent_ptr: *mut ZenohUiQEMU,
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-    node_id: u32,
-    buttons: BqlGuarded<HashMap<u32, ButtonState>>,
-    cond: virtmcu_qom::sync::Condvar,
-    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
-    wait_mutex: virtmcu_qom::sync::Mutex<()>,
-    pub _liveliness: Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>>,
-}
-
-struct ButtonState {
-    _irq: QemuIrq,
-    pressed: bool,
-}
+use virtmcu_api::{DataTransport, LivelinessToken};
+use virtmcu_qom::memory::MemoryRegion;
+use virtmcu_qom::qdev::SysBusDevice;
+use virtmcu_qom::sync::{Condvar, DeliveryPacket, DeterministicReceiver, Mutex, VcpuDrain};
 
 const REG_LED_ID: u64 = 0x00;
 const REG_LED_STATE: u64 = 0x04;
 const REG_BTN_ID: u64 = 0x10;
 const REG_BTN_STATE: u64 = 0x14;
 
-impl virtmcu_qom::device::MmioDevice for ZenohUiState {
-    fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
-        let s = unsafe { &mut *self.parent_ptr };
-        if s.debug {
-            virtmcu_qom::sim_debug!("ui_read: addr=0x{:x}", addr);
+#[derive(Eq, PartialEq)]
+pub struct ButtonPacket {
+    pub vtime: u64,
+    pub pressed: bool,
+}
+
+impl PartialOrd for ButtonPacket {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ButtonPacket {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.vtime.cmp(&other.vtime)
+    }
+}
+
+impl DeliveryPacket for ButtonPacket {
+    fn delivery_vtime_ns(&self) -> u64 {
+        self.vtime
+    }
+}
+
+#[repr(C)]
+#[derive(virtmcu_qom::MmioDevice)]
+#[virtmcu_qom::macros::qom_device(name = "ui")]
+pub struct ZenohUiQEMU {
+    pub parent_obj: SysBusDevice,
+    pub iomem: MemoryRegion,
+
+    #[qom_property]
+    pub node: u32,
+    #[qom_property]
+    pub router: virtmcu_qom::qom::QomString,
+    #[qom_property]
+    pub debug: bool,
+
+    #[qom_link(target = "virtmcu-transport-hub")]
+    pub transport: virtmcu_qom::qom::QomLink<dyn DataTransport>,
+
+    #[qom_state]
+    pub state: ZenohUiState,
+}
+
+pub struct ButtonInfo {
+    pub pressed: Arc<AtomicBool>,
+    pub receiver: DeterministicReceiver<ButtonPacket>,
+}
+
+pub struct ZenohUiState {
+    pub node_id: u32,
+    pub debug: bool,
+    pub transport: Option<Arc<dyn DataTransport>>,
+    pub drain: VcpuDrain,
+    pub cond: Arc<Condvar>,
+    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
+    pub wait_mutex: Arc<Mutex<()>>, // virtmcu-allow: mutex reasoning="State managed securely"
+    pub generation: Arc<AtomicU64>,
+
+    pub active_led_id: AtomicU32,
+    pub active_btn_id: AtomicU32,
+
+    pub qemu_dev_ptr: *mut ZenohUiQEMU,
+
+    // virtmcu-allow: mutex reasoning="Protect HashMap of receivers"
+    pub buttons: Mutex<HashMap<u32, ButtonInfo>>, // virtmcu-allow: mutex reasoning="State managed securely"
+    pub _liveliness: Option<Box<dyn LivelinessToken>>,
+}
+
+impl virtmcu_qom::device::PeripheralState for ZenohUiState {
+    type QomType = ZenohUiQEMU;
+
+    fn new(qemu_dev: &Self::QomType) -> Self {
+        let transport = qemu_dev.transport.get();
+        let liveliness = transport.as_ref().and_then(|t| {
+            t.declare_liveliness(&alloc::format!("sim/ui/liveliness/{}", qemu_dev.node))
+        });
+
+        Self {
+            node_id: qemu_dev.node,
+            debug: qemu_dev.debug,
+            transport,
+            drain: VcpuDrain::new(),
+            cond: Arc::new(Condvar::new()),
+            wait_mutex: Arc::new(Mutex::new(())), // virtmcu-allow: mutex reasoning="State managed securely"
+            generation: Arc::new(AtomicU64::new(0)),
+            active_led_id: AtomicU32::new(0),
+            active_btn_id: AtomicU32::new(0),
+            qemu_dev_ptr: core::ptr::from_ref(qemu_dev).cast_mut(),
+            buttons: Mutex::new(HashMap::new()), // virtmcu-allow: mutex reasoning="State managed securely"
+            _liveliness: liveliness,
         }
-        if addr == REG_LED_ID {
-            return virtmcu_qom::device::MmioResult::Ready(u64::from(s.active_led_id));
-        }
-        if addr == REG_BTN_ID {
-            return virtmcu_qom::device::MmioResult::Ready(u64::from(s.active_btn_id));
-        }
-        if addr == REG_BTN_STATE {
-            return virtmcu_qom::device::MmioResult::Ready(u64::from(ui_get_button(
-                self,
-                s.active_btn_id,
-            )));
-        }
-        virtmcu_qom::device::MmioResult::Ready(0)
+    }
+}
+
+impl virtmcu_qom::device::Peripheral for ZenohUiState {
+    fn realize(&mut self) -> Result<(), alloc::string::String> {
+        Ok(())
     }
 
-    fn write(&self, addr: u64, val: u64, _size: u32) {
-        let s = unsafe { &mut *self.parent_ptr };
-        if addr == REG_LED_ID {
-            s.active_led_id = u32::try_from(val).expect("Invalid data format");
-        } else if addr == REG_LED_STATE {
-            ui_set_led(self, s.active_led_id, val != 0);
-        } else if addr == REG_BTN_ID {
-            s.active_btn_id = u32::try_from(val).expect("Invalid data format");
-            let irq = unsafe {
-                sysbus_get_connected_irq(
-                    self.parent_ptr as *mut SysBusDevice,
-                    s.active_btn_id as c_int,
-                )
-            };
-            ui_ensure_button(self, s.active_btn_id, irq);
-        } else {
-            unreachable!("ui_write: unhandled offset 0x{:x} val=0x{:x}", addr, val);
-        }
+    fn read(
+        &self,
+        addr: u64,
+        size: u32,
+        _token: &virtmcu_qom::device::DrainToken,
+    ) -> virtmcu_qom::device::MmioResult<'_> {
+        virtmcu_qom::device::MmioDevice::read(self, addr, size)
     }
 
-    fn condvar(&self) -> &virtmcu_qom::sync::Condvar {
+    fn write(&self, addr: u64, val: u64, size: u32, _token: &virtmcu_qom::device::DrainToken) {
+        virtmcu_qom::device::MmioDevice::write(self, addr, val, size);
+    }
+
+    fn condvar(&self) -> &Condvar {
         &self.cond
     }
 
-    // virtmcu-allow: mutex reasoning="Required for Condvar::wait_yielding_bql"
-    fn wait_mutex(&self) -> &virtmcu_qom::sync::Mutex<()> {
+    fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
 }
 
-/// # Safety
-/// This function is called by QEMU to realize the device. dev must be a valid pointer to ZenohUiQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn ui_realize(dev: *mut c_void, errp: *mut *mut c_void) {
-    const UI_MMIO_SIZE: u64 = 0x100;
-    // SAFETY: dev is a valid pointer to ZenohUiQEMU provided by QEMU.
-    let s = unsafe { &mut *(dev as *mut ZenohUiQEMU) };
-
-    // SAFETY: s.mmio is a valid MemoryRegion, dev is a valid object.
-    unsafe {
-        memory_region_init_io(
-            &raw mut s.mmio,
-            dev as *mut Object,
-            &raw const ZENOHUIQEMU_OPS,
-            dev,
-            c"ui".as_ptr(),
-            UI_MMIO_SIZE,
-        );
-        sysbus_init_mmio(dev as *mut SysBusDevice, &raw mut s.mmio);
-    }
-
-    if s.transport_hub.is_null() {
-        error_setg!(errp, "Strict DI violation: transport_hub link is required.");
-        return;
-    }
-
-    let ptr_u64 = unsafe {
-        virtmcu_qom::qom::object_property_get_uint(
-            s.transport_hub,
-            c"transport_ptr".as_ptr(),
-            errp as *mut *mut virtmcu_qom::error::Error,
-        )
-    };
-    if ptr_u64 == 0 {
-        error_setg!(errp, "Strict DI violation: failed to acquire transport from hub.");
-        return;
-    }
-    let transport_ref =
-        unsafe { &*(ptr_u64 as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport>) };
-    let transport = alloc::sync::Arc::clone(transport_ref);
-
-    s.rust_state = ui_init_internal(s, s.node_id, transport);
-    if s.rust_state.is_null() {
-        error_setg!(errp, "Failed to initialize Rust Zenoh UI");
-    }
-}
-
-/// # Safety
-/// This function is called by QEMU when finalizing the device. obj must be a valid pointer to ZenohUiQEMU.
-#[no_mangle]
-pub unsafe extern "C" fn ui_instance_finalize(obj: *mut Object) {
-    // SAFETY: obj is a valid pointer to ZenohUiQEMU provided by QEMU.
-    let s = unsafe { &mut *(obj as *mut ZenohUiQEMU) };
-    if !s.rust_state.is_null() {
-        // SAFETY: rust_state was allocated via Box::into_raw and is non-null.
-        let state = unsafe { Box::from_raw(s.rust_state) };
-        {
-            let mut btns = state.buttons.get_mut();
-            btns.clear();
+impl virtmcu_qom::device::MmioDevice for ZenohUiState {
+    fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
+        let _guard = self.drain.acquire();
+        if self.debug {
+            virtmcu_qom::sim_debug!("ui_read: addr=0x{:x}", addr);
         }
-        drop(state);
-        s.rust_state = ptr::null_mut();
-    }
-}
 
-define_properties!(
-    ZENOH_UI_PROPERTIES,
-    [
-        define_prop_uint32!(c"node".as_ptr(), ZenohUiQEMU, node_id, 0),
-        define_prop_string!(c"router".as_ptr(), ZenohUiQEMU, router),
-        virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), ZenohUiQEMU, debug, false),
-    ]
-);
-
-/// # Safety
-/// This function is called by QEMU to initialize the class. klass must be a valid pointer to ObjectClass.
-#[no_mangle]
-pub unsafe extern "C" fn ui_class_init(klass: *mut ObjectClass, _data: *const c_void) {
-    let dc = device_class!(klass);
-    // SAFETY: dc is a valid DeviceClass pointer.
-    unsafe {
-        (*dc).realize = Some(ui_realize);
-        (*dc).user_creatable = true;
-    }
-    virtmcu_qom::device_class_set_props!(dc, ZENOH_UI_PROPERTIES);
-
-    unsafe {
-        virtmcu_qom::qom::object_class_property_add_link(
-            klass,
-            c"transport".as_ptr(),
-            c"virtmcu-transport-hub".as_ptr(),
-            core::mem::offset_of!(ZenohUiQEMU, transport_hub) as isize,
-            Some(allow_set_link),
-            virtmcu_qom::qom::OBJ_PROP_LINK_STRONG,
-        );
-    }
-}
-
-#[used]
-static ZENOH_UI_TYPE_INFO: TypeInfo = TypeInfo {
-    name: c"ui".as_ptr(),
-    parent: c"sys-bus-device".as_ptr(),
-    instance_size: core::mem::size_of::<ZenohUiQEMU>(),
-    instance_align: 0,
-    instance_init: None,
-    instance_post_init: None,
-    instance_finalize: Some(ui_instance_finalize),
-    abstract_: false,
-    class_size: core::mem::size_of::<virtmcu_qom::qdev::SysBusDeviceClass>(),
-    class_init: Some(ui_class_init),
-    class_base_init: None,
-    class_data: ptr::null(),
-    interfaces: ptr::null(),
-};
-
-declare_device_type!(ZENOH_UI_TYPE_INIT, ZENOH_UI_TYPE_INFO);
-
-/* ── Internal Logic ───────────────────────────────────────────────────────── */
-
-fn ui_init_internal(
-    s: &mut ZenohUiQEMU,
-    node_id: u32,
-    transport: Arc<dyn virtmcu_api::DataTransport>,
-) -> *mut ZenohUiState {
-    let liveliness = transport.declare_liveliness(&format!("sim/ui/liveliness/{node_id}"));
-
-    Box::into_raw(Box::new(ZenohUiState {
-        parent_ptr: core::ptr::from_mut(s),
-        _liveliness: liveliness,
-        transport,
-        node_id,
-        buttons: BqlGuarded::new(HashMap::new()),
-        cond: virtmcu_qom::sync::Condvar::new(),
-        wait_mutex: virtmcu_qom::sync::Mutex::new(()),
-    }))
-}
-
-fn ui_set_led(state: &ZenohUiState, led_id: u32, on: bool) {
-    let topic = format!("sim/ui/{}/led/{}", state.node_id, led_id);
-    let payload = if on { vec![1u8] } else { vec![0u8] };
-    let _ = state.transport.publish(&topic, &payload);
-}
-
-fn ui_get_button(state: &ZenohUiState, btn_id: u32) -> bool {
-    let btns = state.buttons.get();
-    btns.get(&btn_id).is_some_and(|b| b.pressed)
-}
-
-fn ui_ensure_button(state: &ZenohUiState, btn_id: u32, irq: QemuIrq) {
-    let mut btns = state.buttons.get_mut();
-    if btns.contains_key(&btn_id) {
-        return;
-    }
-
-    let topic = format!("sim/ui/{}/button/{}", state.node_id, btn_id);
-    let irq_ptr = irq as usize;
-
-    let sub_callback: virtmcu_api::DataCallback = Box::new(move |_topic: &str, payload: &[u8]| {
-        if payload.is_empty() {
-            return;
+        match addr {
+            REG_LED_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(self.active_led_id.load(Ordering::Relaxed))),
+            REG_BTN_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(self.active_btn_id.load(Ordering::Relaxed))),
+            REG_BTN_STATE => {
+                let btn_id = self.active_btn_id.load(Ordering::Relaxed);
+                let btns = self.buttons.lock();
+                let pressed = btns.get(&btn_id).is_some_and(|info| info.pressed.load(Ordering::Relaxed));
+                virtmcu_qom::device::MmioResult::Ready(u64::from(pressed))
+            }
+            _ => virtmcu_qom::device::MmioResult::Ready(0),
         }
-        let val = payload.first().is_some_and(|&b| b != 0);
+    }
 
-        // SAFETY: irq_ptr is a valid QemuIrq passed during initialization.
-        unsafe {
-            qemu_set_irq(irq_ptr as QemuIrq, i32::from(val));
+    fn write(&self, addr: u64, val: u64, _size: u32) {
+        let _guard = self.drain.acquire();
+        match addr {
+            REG_LED_ID => {
+                let led_id = u32::try_from(val).expect("Invalid data format");
+                self.active_led_id.store(led_id, Ordering::Relaxed);
+            }
+            REG_LED_STATE => {
+                if let Some(t) = &self.transport {
+                    let led_id = self.active_led_id.load(Ordering::Relaxed);
+                    let topic = alloc::format!("sim/ui/{}/led/{}", self.node_id, led_id);
+                    let payload = if val != 0 { [1u8] } else { [0u8] };
+                    let vtime = virtmcu_qom::telemetry::get_global_vtime();
+                    let seq = 0;
+
+                    match t.reserve(&topic, payload.len()) {
+                        Ok(mut reservation) => {
+                            reservation.buffer_mut().copy_from_slice(&payload);
+                            reservation.commit(vtime, seq).expect("FATAL: UI failed to commit transport reservation");
+                        }
+                        Err(e) => virtmcu_qom::sim_err!("UI: Failed to reserve transport for topic {}: {:?}", topic, e),
+                    };
+                }
+            }
+            REG_BTN_ID => {
+                let btn_id = u32::try_from(val).expect("Invalid data format");
+                self.active_btn_id.store(btn_id, Ordering::Relaxed);
+
+                let mut btns = self.buttons.lock();
+                if let std::collections::hash_map::Entry::Vacant(e) = btns.entry(btn_id) {
+                    let irq = virtmcu_qom::ffi_call! {
+                        virtmcu_qom::qdev::sysbus_get_connected_irq(
+                            self.qemu_dev_ptr as *mut virtmcu_qom::qdev::SysBusDevice,
+                            btn_id as core::ffi::c_int,
+                        )
+                    };
+                    let topic = alloc::format!("sim/ui/{}/button/{}", self.node_id, btn_id);
+                    let irq_ptr = irq as usize;
+                    let pressed = Arc::new(AtomicBool::new(false));
+                    let pressed_clone = Arc::clone(&pressed);
+
+                    if let Some(t) = &self.transport {
+                        let generation_clone = Arc::clone(&self.generation);
+                        let rec = DeterministicReceiver::new_safe(
+                            &**t,
+                            &topic,
+                            generation_clone,
+                            |topic_name, payload| {
+                                virtmcu_qom::sim_debug!("UI: Rx callback on topic {} (len={})", topic_name, payload.len());
+                                if let Some((vtime, _seq, data)) = virtmcu_api::decode_frame(payload) {
+                                    let pressed_val = data.first().is_some_and(|&b| b != 0);
+                                    Some(ButtonPacket { vtime, pressed: pressed_val })
+                                } else {
+                                    virtmcu_qom::sim_err!("UI: failed to decode frame on {}!", topic_name);
+                                    None
+                                }
+                            },
+                            move |packet| {
+                                pressed_clone.store(packet.pressed, Ordering::Relaxed);
+                                // SAFETY: irq_ptr is a valid QemuIrq initialized by sysbus_get_connected_irq.
+                                virtmcu_qom::irq::qemu_set_irq_safe((irq_ptr as virtmcu_qom::irq::QemuIrq, i32::from(packet.pressed));
+                                }
+                            },
+                        ).expect("Failed to init receiver");
+
+                        e.insert(ButtonInfo { pressed, receiver: rec });
+                    }
+                }
+            }
+            _ => unreachable!("ui_write: unhandled offset 0x{:x} val=0x{:x}", addr, val),
         }
-    });
+    }
 
-    let _ = state.transport.subscribe(&topic, sub_callback);
+    fn condvar(&self) -> &Condvar {
+        &self.cond
+    }
 
-    btns.insert(btn_id, ButtonState { _irq: irq, pressed: false });
+    fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
+        &self.wait_mutex
+    }
 }
+
+virtmcu_qom::register_peripheral!(ZenohUiQEMU);
 
 #[cfg(test)]
 mod tests {
@@ -309,11 +259,17 @@ mod tests {
 
     #[test]
     fn test_ui_qemu_layout() {
-        // QOM layout validation
-        assert_eq!(
-            core::mem::offset_of!(ZenohUiQEMU, parent_obj),
-            0,
-            "SysBusDevice must be the first field"
-        );
+        assert_eq!(core::mem::offset_of!(ZenohUiQEMU, parent_obj), 0, "SysBusDevice must be first");
+    }
+
+    #[test]
+    fn test_button_packet_ordering() {
+        let p1 = ButtonPacket { vtime: 100, pressed: true };
+        let p2 = ButtonPacket { vtime: 200, pressed: false };
+        let p3 = ButtonPacket { vtime: 100, pressed: false };
+
+        assert!(p1 < p2);
+        assert!(p2 > p1);
+        assert_eq!(p1.cmp(&p3), core::cmp::Ordering::Equal);
     }
 }

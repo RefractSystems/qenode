@@ -243,6 +243,91 @@ pub mod telemetry_generated;
 pub mod wifi_generated;
 pub use core_generated::virtmcu::core::*;
 
+/// Wire protocol version for UDS coordinator connections.
+/// Coordinator panics if a connecting node sends a different version.
+pub const UDS_PROTO_VERSION: u32 = 1;
+
+const UDS_REGISTRATION_CAPACITY: usize = 128;
+const UDS_QUANTUM_START_CAPACITY: usize = 64;
+
+/// Build a `UdsRegistration` FlatBuffer payload for `sim/coord/register`.
+pub fn encode_uds_registration(node_id: u32, federation_id: &str) -> Vec<u8> {
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(UDS_REGISTRATION_CAPACITY);
+    let fed_id = builder.create_string(federation_id);
+    let args = UdsRegistrationArgs {
+        node_id,
+        federation_id: Some(fed_id),
+        proto_version: UDS_PROTO_VERSION,
+    };
+    let root = UdsRegistration::create(&mut builder, &args);
+    builder.finish(root, None);
+    builder.finished_data().to_vec()
+}
+
+/// Parse a `UdsRegistration` FlatBuffer payload from `sim/coord/register`.
+/// Returns `(node_id, federation_id, proto_version)`.
+pub fn decode_uds_registration(bytes: &[u8]) -> Result<(u32, String, u32), String> {
+    let reg = flatbuffers::root::<UdsRegistration>(bytes)
+        .map_err(|e| format!("UdsRegistration parse error: {e}"))?;
+    let federation_id = reg.federation_id().to_string();
+    Ok((reg.node_id(), federation_id, reg.proto_version()))
+}
+
+/// Build a `UdsQuantumStart` FlatBuffer payload for `sim/clock/start/{node_id}`.
+pub fn encode_uds_quantum_start(quantum: u64, vtime_limit_ns: u64) -> Vec<u8> {
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(UDS_QUANTUM_START_CAPACITY);
+    let args = UdsQuantumStartArgs { quantum, vtime_limit_ns };
+    let root = UdsQuantumStart::create(&mut builder, &args);
+    builder.finish(root, None);
+    builder.finished_data().to_vec()
+}
+
+/// Parse a `UdsQuantumStart` FlatBuffer payload from `sim/clock/start/{node_id}`.
+/// Returns `(quantum, vtime_limit_ns)`.
+pub fn decode_uds_quantum_start(bytes: &[u8]) -> Result<(u64, u64), String> {
+    let qs = flatbuffers::root::<UdsQuantumStart>(bytes)
+        .map_err(|e| format!("UdsQuantumStart parse error: {e}"))?;
+    Ok((qs.quantum(), qs.vtime_limit_ns()))
+}
+
+const COORD_MSG_BUILDER_CAPACITY: usize = 64;
+const COORD_DONE_REQ_BUILDER_CAPACITY: usize = 64;
+
+/// Build a `CoordMessage` FlatBuffer payload.
+pub fn encode_coord_message(
+    src_node_id: u32,
+    dst_node_id: u32,
+    delivery_vtime_ns: u64,
+    sequence_number: u64,
+    protocol: Protocol,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut builder =
+        flatbuffers::FlatBufferBuilder::with_capacity(payload.len() + COORD_MSG_BUILDER_CAPACITY);
+    let data = builder.create_vector(payload);
+    let args = CoordMessageArgs {
+        src_node_id,
+        dst_node_id,
+        delivery_vtime_ns,
+        sequence_number,
+        protocol,
+        payload: Some(data),
+    };
+    let root = CoordMessage::create(&mut builder, &args);
+    builder.finish(root, None);
+    builder.finished_data().to_vec()
+}
+
+/// Build a `CoordDoneReq` FlatBuffer payload.
+pub fn encode_coord_done_req(quantum: u64, vtime_limit: u64) -> Vec<u8> {
+    let mut builder =
+        flatbuffers::FlatBufferBuilder::with_capacity(COORD_DONE_REQ_BUILDER_CAPACITY);
+    let args = CoordDoneReqArgs { quantum, vtime_limit, messages: None };
+    let root = CoordDoneReq::create(&mut builder, &args);
+    builder.finish(root, None);
+    builder.finished_data().to_vec()
+}
+
 /// Mock expected SVD hash for consistency checks
 pub const MOCK_EXPECTED_HASH: u64 = 0x1234_5678_9ABC_DEF0;
 /// Test SVD hash for tests
@@ -604,11 +689,14 @@ impl UnixSocketPhysicalNodeTransport {
     fn ensure_stream(&self) -> Option<std::os::unix::net::UnixStream> {
         let mut guard = self.stream.lock().ok()?;
         if let Some(stream) = &*guard {
+            eprintln!("TA: ensure_stream using cached stream");
             return stream.try_clone().ok();
         }
 
+        eprintln!("TA: ensure_stream calling accept()");
         // Accept a new connection (blocks until QEMU connects)
         let (stream, _) = self.listener.accept().ok()?;
+        eprintln!("TA: ensure_stream accept() returned");
         *guard = Some(stream.try_clone().ok()?);
         Some(stream)
     }
@@ -725,14 +813,22 @@ pub const VIRTMCU_HANDSHAKE_SIZE: usize = core::mem::size_of::<VirtmcuHandshake>
 /// Size of SyscMsg in bytes.
 pub const SYSC_MSG_SIZE: usize = core::mem::size_of::<SyscMsg>();
 
-/// Encode a `ZenohFrameHeader` + payload into a byte vector (little-endian).
-/// Encode a `ZenohFrameHeader` + payload into a byte vector (little-endian).
+/// Decode a `CoordMessage` FlatBuffer payload.
+/// Returns `(vtime, seq, payload_slice)`.
+pub fn decode_coord_message(bytes: &[u8]) -> Option<(u64, u64, &[u8])> {
+    let msg = flatbuffers::root::<CoordMessage>(bytes).ok()?;
+    let payload = msg.payload()?.bytes();
+    Some((msg.delivery_vtime_ns(), msg.sequence_number(), payload))
+}
+
+/// Encode a frame with a `CoordMessage` FlatBuffer (Legacy API wrapper).
 pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(ZENOH_FRAME_HEADER_SIZE + payload.len());
-    let header = ZenohFrameHeader::new(delivery_vtime_ns, sequence_number, payload.len() as u32);
-    out.extend_from_slice(&header.0);
-    out.extend_from_slice(payload);
-    out
+    encode_coord_message(0, 0, delivery_vtime_ns, sequence_number, Protocol::ReferenceLink, payload)
+}
+
+/// Decode a `CoordMessage` from `data`.
+pub fn decode_frame(data: &[u8]) -> Option<(u64, u64, &[u8])> {
+    decode_coord_message(data)
 }
 
 /// Encode an `Rf802154Frame` (including payload) into a byte vector (little-endian, size-prefixed).
@@ -765,19 +861,6 @@ pub fn encode_rf802154_frame(
     let frame = rf802154::Rf802154Frame::create(&mut builder, &args);
     builder.finish_size_prefixed(frame, None);
     builder.finished_data().to_vec()
-}
-
-/// Decode a `ZenohFrameHeader` from the first 20 bytes of `data`.
-///
-/// Returns `None` if `data` is shorter than `ZENOH_FRAME_HEADER_SIZE`.
-/// Decode a `ZenohFrameHeader` from the first 24 bytes of `data`.
-pub fn decode_frame(data: &[u8]) -> Option<(ZenohFrameHeader, &[u8])> {
-    let header_bytes = data.get(..ZENOH_FRAME_HEADER_SIZE)?;
-    let remaining = data.get(ZENOH_FRAME_HEADER_SIZE..)?;
-    let mut buf = [0u8; 24];
-    buf.copy_from_slice(header_bytes);
-    let header = ZenohFrameHeader(buf);
-    Some((header, remaining))
 }
 
 /// Callback type for data transport subscriptions.
@@ -912,7 +995,6 @@ mod tests {
     const TEST_PATTERN_U64: u64 = 0x0102030405060708;
     const TEST_PATTERN_U64_ALT: u64 = 0x0A0B0C0D0E0F1011;
     const TEST_EXPECTED_LEN_2: usize = 2;
-    const TEST_EXPECTED_LEN_5: usize = 5;
     const TEST_FRAME_SIZE: usize = 24;
     const TEST_LE_PATTERN: [u8; 8] = [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01];
     const TEST_PATTERN_U64_MMIO_1: u64 = 0x99AABBCCDDEEFF00;
@@ -1070,12 +1152,10 @@ mod tests {
     fn test_encode_decode_round_trip() -> Result<(), String> {
         let payload = b"hello";
         let frame = encode_frame(TEST_VTIME_LONG, TEST_SEQ_42, payload);
-        assert_eq!(frame.len(), TEST_FRAME_SIZE + TEST_EXPECTED_LEN_5);
 
-        let (hdr, rest) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!({ hdr.delivery_vtime_ns() }, TEST_VTIME_LONG);
-        assert_eq!({ hdr.sequence_number() }, TEST_SEQ_42);
-        assert_eq!({ hdr.size() }, TEST_EXPECTED_LEN_5 as u32);
+        let (vtime, seq, rest) = decode_frame(&frame).ok_or("Decode failed")?;
+        assert_eq!(vtime, TEST_VTIME_LONG);
+        assert_eq!(seq, TEST_SEQ_42);
         assert_eq!(rest, payload);
         Ok(())
     }
@@ -1083,10 +1163,9 @@ mod tests {
     #[test]
     fn test_encode_empty_payload() -> Result<(), String> {
         let frame = encode_frame(0, 0, b"");
-        let (hdr, rest) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!({ hdr.delivery_vtime_ns() }, 0u64);
-        assert_eq!({ hdr.sequence_number() }, 0u64);
-        assert_eq!({ hdr.size() }, 0u32);
+        let (vtime, seq, rest) = decode_frame(&frame).ok_or("Decode failed")?;
+        assert_eq!(vtime, 0u64);
+        assert_eq!(seq, 0u64);
         assert_eq!(rest, b"");
         Ok(())
     }
@@ -1094,8 +1173,8 @@ mod tests {
     #[test]
     fn test_encode_vtime_zero() -> Result<(), String> {
         let frame = encode_frame(0, 0, b"X");
-        let (hdr, _) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!({ hdr.delivery_vtime_ns() }, 0u64);
+        let (vtime, _, _) = decode_frame(&frame).ok_or("Decode failed")?;
+        assert_eq!(vtime, 0u64);
         Ok(())
     }
 
@@ -1103,8 +1182,8 @@ mod tests {
     fn test_encode_vtime_max_u64() -> Result<(), String> {
         let max = u64::MAX;
         let frame = encode_frame(max, 0, b"X");
-        let (hdr, _) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!({ hdr.delivery_vtime_ns() }, max);
+        let (vtime, _, _) = decode_frame(&frame).ok_or("Decode failed")?;
+        assert_eq!(vtime, max);
         Ok(())
     }
 
@@ -1121,40 +1200,15 @@ mod tests {
     }
 
     const SLICE_0_8: core::ops::Range<usize> = 0..8;
-    const SLICE_8_16: core::ops::Range<usize> = 8..16;
-    const SLICE_16_20: core::ops::Range<usize> = 16..20;
     const SLICE_16_24: core::ops::Range<usize> = 16..24;
-
-    #[test]
-    fn test_little_endian_vtime() {
-        // 0x0102030405060708 in LE = bytes [08, 07, 06, 05, 04, 03, 02, 01]
-        let vtime: u64 = TEST_PATTERN_U64;
-        let frame = encode_frame(vtime, 0, b"");
-        assert_eq!(&frame[SLICE_0_8], &TEST_LE_PATTERN);
-    }
-
-    #[test]
-    fn test_little_endian_sequence() {
-        let seq: u64 = TEST_PATTERN_U64;
-        let frame = encode_frame(0, seq, b"");
-        assert_eq!(&frame[SLICE_8_16], &TEST_LE_PATTERN);
-    }
-
-    #[test]
-    fn test_little_endian_size() {
-        // size = 0x00000005 in LE = bytes [05, 00, 00, 00]
-        let frame = encode_frame(0, 0, b"hello");
-        const LE_SIZE_5: [u8; 4] = [0x05, 0x00, 0x00, 0x00];
-        assert_eq!(&frame[SLICE_16_20], &LE_SIZE_5);
-    }
 
     #[test]
     fn test_vtime_ordering() -> Result<(), String> {
         let earlier = encode_frame(1_000_000, 0, b"A");
         let later = encode_frame(2_000_000, 0, b"A");
-        let (h1, _) = decode_frame(&earlier).ok_or("Decode failed")?;
-        let (h2, _) = decode_frame(&later).ok_or("Decode failed")?;
-        assert!({ h1.delivery_vtime_ns() } < { h2.delivery_vtime_ns() });
+        let (vtime1, _, _) = decode_frame(&earlier).ok_or("Decode failed")?;
+        let (vtime2, _, _) = decode_frame(&later).ok_or("Decode failed")?;
+        assert!(vtime1 < vtime2);
         Ok(())
     }
 
@@ -1175,9 +1229,9 @@ mod tests {
         for i in 0..N {
             let vtime = START + i * TEST_VTIME_800;
             let frame = encode_frame(vtime, 0, b"X");
-            let (hdr, payload) = decode_frame(&frame).ok_or("Decode failed")?;
-            assert_eq!({ hdr.delivery_vtime_ns() }, vtime, "frame {i} vtime mismatch");
-            assert_eq!({ hdr.size() }, 1u32);
+            let (vtime_out, seq_out, payload) = decode_frame(&frame).ok_or("Decode failed")?;
+            assert_eq!(vtime_out, vtime, "frame {i} vtime mismatch");
+            assert_eq!(seq_out, 0);
             assert_eq!(payload, b"X");
         }
         Ok(())

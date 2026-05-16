@@ -35,11 +35,9 @@ pub fn icount_advance(delta: i64) {
     // It is used to manually advance the instruction counter when TCG is not
     // doing it automatically. QEMU handles the internal state safely.
     #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
-    {
-        unsafe { virtmcu_icount_advance(delta) }
+    unsafe {
+        virtmcu_icount_advance(delta);
     }
     #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
-    {
-        mock::virtmcu_icount_advance(delta)
-    }
+    mock::virtmcu_icount_advance(delta);
 }

@@ -133,6 +133,21 @@ impl QuantumBarrier {
                 messages.truncate(self.max_messages_per_node);
             }
             state.next_quantum_buffer.extend(messages);
+            // If every node is now in lookahead, no node submitted the current quantum —
+            // the barrier will never release and sim/clock/start will never be sent.
+            // Most common cause: test runner pre-increments current_quantum before step_clock().
+            if state.next_quantum_done_nodes.iter().all(|&d| d) {
+                tracing::error!(
+                    "QuantumBarrier: ALL {} nodes submitted quantum={} as LOOKAHEAD \
+                     (barrier current={}). sim/clock/start will never be sent for quantum={}. \
+                     LIKELY CAUSE: pre-increment bug — capture quantum BEFORE step_clock(), \
+                     increment AFTER try_join_all().",
+                    self.n_nodes,
+                    quantum,
+                    current,
+                    current
+                );
+            }
             return Ok(None);
         }
 

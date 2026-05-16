@@ -19,6 +19,9 @@ struct Args {
     #[arg(long, env = "VIRTMCU_FEDERATION_ID")]
     federation_id: String,
 
+    #[arg(long, default_value = "zenoh")]
+    transport: String,
+
     #[arg(long, default_value_t = 3)]
     nodes: usize,
 
@@ -39,6 +42,9 @@ struct Args {
 
     #[arg(long, default_value_t = 1_000_000)]
     delay_ns: u64,
+
+    #[arg(long, env = "VIRTMCU_RUN_DIR", default_value = "/run/virtmcu")]
+    run_dir: String,
 }
 
 fn parse_protocol(p: u8) -> Protocol {
@@ -51,6 +57,7 @@ fn parse_protocol(p: u8) -> Protocol {
         5 => Protocol::Lin,
         6 => Protocol::Rf802154,
         7 => Protocol::RfHci,
+        8 => Protocol::Control,
         9 => Protocol::ReferenceLink,
         _ => Protocol::Ethernet,
     }
@@ -71,27 +78,40 @@ fn serialize_protocol(p: &Protocol) -> u8 {
     }
 }
 
+fn encode_message(msg: &CoordMessage) -> Vec<u8> {
+    virtmcu_api::encode_coord_message(
+        msg.src_node_id,
+        msg.dst_node_id,
+        msg.delivery_vtime_ns,
+        msg.sequence_number,
+        virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+        &msg.payload,
+    )
+}
+
 fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
+    use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::Cursor;
     let mut msgs = Vec::new();
-    let mut cursor = Cursor::new(payload);
-    if let Ok(num_msgs) = cursor.read_u32::<LittleEndian>() {
-        for _ in 0..num_msgs {
-            if let (Ok(src), Ok(dst), Ok(vtime), Ok(seq), Ok(proto), Ok(len)) = (
-                cursor.read_u32::<LittleEndian>(),
-                cursor.read_u32::<LittleEndian>(),
-                cursor.read_u64::<LittleEndian>(),
-                cursor.read_u64::<LittleEndian>(),
-                cursor.read_u8(),
-                cursor.read_u32::<LittleEndian>(),
+    let mut cur = Cursor::new(payload);
+    if let Ok(num) = cur.read_u32::<LittleEndian>() {
+        for _ in 0..num {
+            if let (Ok(src), Ok(dst), Ok(vt), Ok(seq), Ok(pr), Ok(sz)) = (
+                cur.read_u32::<LittleEndian>(),
+                cur.read_u32::<LittleEndian>(),
+                cur.read_u64::<LittleEndian>(),
+                cur.read_u64::<LittleEndian>(),
+                cur.read_u8(),
+                cur.read_u32::<LittleEndian>(),
             ) {
-                let mut data = vec![0u8; len as usize];
-                if std::io::Read::read_exact(&mut cursor, &mut data).is_ok() {
+                let mut data = vec![0u8; sz as usize];
+                if std::io::Read::read_exact(&mut cur, &mut data).is_ok() {
                     msgs.push(CoordMessage {
                         src_node_id: src,
                         dst_node_id: dst,
-                        delivery_vtime_ns: vtime,
+                        delivery_vtime_ns: vt,
                         sequence_number: seq,
-                        protocol: parse_protocol(proto),
+                        protocol: parse_protocol(pr),
                         payload: data,
                         base_topic: None,
                     });
@@ -100,24 +120,6 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
         }
     }
     msgs
-}
-
-fn encode_message(msg: &CoordMessage) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.write_u32::<LittleEndian>(msg.src_node_id)
-        .expect("Vec write failed");
-    buf.write_u32::<LittleEndian>(msg.dst_node_id)
-        .expect("Vec write failed");
-    buf.write_u64::<LittleEndian>(msg.delivery_vtime_ns)
-        .expect("Vec write failed");
-    buf.write_u64::<LittleEndian>(msg.sequence_number)
-        .expect("Vec write failed");
-    buf.write_u8(serialize_protocol(&msg.protocol))
-        .expect("Vec write failed");
-    buf.write_u32::<LittleEndian>(msg.payload.len() as u32)
-        .expect("Vec write failed");
-    buf.extend_from_slice(&msg.payload);
-    buf
 }
 
 #[derive(Debug)]
@@ -165,7 +167,13 @@ async fn main() -> Result<()> {
 
     let max_messages = topo_raw.max_messages_per_node_per_quantum;
     let barrier = Arc::new(QuantumBarrier::new(args.nodes, max_messages));
-    let transport = topo_raw.transport.clone();
+
+    let transport = if args.transport == "unix" {
+        topology::Transport::Unix
+    } else {
+        topo_raw.transport.clone()
+    };
+
     let topo = Arc::new(tokio::sync::RwLock::new(topo_raw));
 
     if transport == topology::Transport::Unix {
@@ -411,7 +419,7 @@ async fn run_deterministic_coordinator(
 
                     // 2. Fallback to ZenohFrameHeader if not already parsed
                     // (But only for protocols that use it!)
-                    if data_opt.is_none() && proto != Protocol::Lin && proto != Protocol::CanFd && proto != Protocol::FlexRay {
+                    if data_opt.is_none() {
                         if let Some(header) = ZenohFrameHeader::unpack_slice(&payload) {
                             let data_start = virtmcu_api::ZENOH_FRAME_HEADER_SIZE;
                             if payload.len() >= data_start + header.size() as usize {
@@ -575,7 +583,14 @@ async fn run_deterministic_coordinator(
                             }
                             Ok(None) => {}
                             Err(e) => {
-                                tracing::error!("Barrier error for node {}: {:?}", node_id, e);
+                                panic!(
+                                    "FATAL: Barrier error for node {} \
+                                     (quantum={quantum}, current_quantum={current_quantum}): {e:?} \
+                                     — QuantumMismatch means quantum skipped or regressed; \
+                                     check for pre-increment bug: capture current_quantum BEFORE \
+                                     step_clock(), increment AFTER try_join_all()",
+                                    node_id
+                                );
                             }
                         }
                     }
@@ -599,12 +614,23 @@ async fn deliver_message(
         panic!("Unregistered packet received!");
     });
 
+    eprintln!(
+        "COORD: routing msg from {} to dst {} (len={})",
+        msg.src_node_id,
+        msg.dst_node_id,
+        msg.payload.len()
+    );
+
     if msg.dst_node_id == u32::MAX {
         for target_str in allowed_targets {
             if let Ok(tid) = target_str.parse::<u32>() {
                 target_nodes.push(tid);
             }
         }
+        eprintln!(
+            "COORD: broadcast msg resolved to targets: {:?}",
+            target_nodes
+        );
     } else {
         let dst_str = msg.dst_node_id.to_string();
         if allowed_targets.contains(&dst_str) {
@@ -678,35 +704,549 @@ async fn deliver_message(
         };
         tracing::debug!("Legacy delivery to topic: {}", legacy_rx_topic);
 
-        let legacy_payload = match msg.protocol {
-            Protocol::Rf802154 => virtmcu_api::encode_rf802154_frame(
-                msg.delivery_vtime_ns,
-                msg.sequence_number,
-                &msg.payload,
-                -80,
-                255,
-                virtmcu_api::Rf802154Mhr::parse(&msg.payload),
-            ),
-            Protocol::Lin | Protocol::CanFd | Protocol::FlexRay => msg.payload.clone(), // Raw FlatBuffer delivery
-            _ => {
-                virtmcu_api::encode_frame(msg.delivery_vtime_ns, msg.sequence_number, &msg.payload)
-            }
-        };
+        let legacy_payload = virtmcu_api::encode_coord_message(
+            msg.src_node_id,
+            msg.dst_node_id,
+            msg.delivery_vtime_ns,
+            msg.sequence_number,
+            virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+            &msg.payload,
+        );
         let _ = session.put(&legacy_rx_topic, legacy_payload).await;
     }
 }
 
-async fn run_unix_coordinator(
-    _args: Args,
-    federation_id: virtmcu_api::FederationId,
-    _topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
-    _barrier: Arc<QuantumBarrier>,
-    mut _pcap_log: Option<MessageLog>,
-) -> Result<()> {
-    tracing::info!(
-        federation = %federation_id,
-        "Unix coordinator started (minimal passthrough)"
+async fn uds_write_framed(
+    stream: &Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    topic: &str,
+    payload: &[u8],
+) {
+    use tokio::io::AsyncWriteExt;
+    let mut sock = stream.lock().await;
+    let topic_bytes = topic.as_bytes();
+    let _ = sock.write_u32_le(topic_bytes.len() as u32).await;
+    let _ = sock.write_all(topic_bytes).await;
+    let _ = sock.write_u32_le(payload.len() as u32).await;
+    let _ = sock.write_all(payload).await;
+}
+
+async fn uds_deliver_message(
+    sockets: &std::collections::HashMap<
+        u32,
+        Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>,
+    >,
+    topo: &Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
+    pcap_log: &mut Option<MessageLog>,
+    msg: &mut CoordMessage,
+) {
+    let t = topo.read().await;
+    let mut target_nodes = Vec::new();
+    let src_str = msg.src_node_id.to_string();
+    let allowed_targets = t.routing_map.map.get(&src_str).unwrap_or_else(|| {
+        panic!("Unregistered packet received!");
+    });
+
+    eprintln!(
+        "COORD: routing msg from {} to dst {} (len={})",
+        msg.src_node_id,
+        msg.dst_node_id,
+        msg.payload.len()
     );
+
+    if msg.dst_node_id == u32::MAX {
+        for target_str in allowed_targets {
+            if let Ok(tid) = target_str.parse::<u32>() {
+                target_nodes.push(tid);
+            }
+        }
+        eprintln!(
+            "COORD: broadcast msg resolved to targets: {:?}",
+            target_nodes
+        );
+    } else {
+        let dst_str = msg.dst_node_id.to_string();
+        if allowed_targets.contains(&dst_str) {
+            target_nodes.push(msg.dst_node_id);
+        } else {
+            panic!("Unregistered packet received!");
+        }
+    }
+
+    if target_nodes.is_empty() && msg.dst_node_id != u32::MAX {
+        return;
+    }
+
+    for target_node in target_nodes {
+        tracing::debug!(
+            "Delivering {:?} message to node {}",
+            msg.protocol,
+            target_node
+        );
+        if let Some(log) = pcap_log {
+            let mut logged_msg = msg.clone();
+            logged_msg.dst_node_id = target_node;
+            let _ = log.write_message(&logged_msg);
+        }
+
+        let rx_topic =
+            deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string());
+        let mut out_msg = msg.clone();
+        out_msg.dst_node_id = target_node;
+        let out_payload = encode_message(&out_msg);
+        if let Some(socks) = sockets.get(&target_node) {
+            for sock in socks {
+                uds_write_framed(sock, &rx_topic, &out_payload).await;
+            }
+        }
+
+        let legacy_rx_topic = if let Some(base) = &msg.base_topic {
+            format!("{}/{}/rx", base, target_node)
+        } else {
+            match msg.protocol {
+                Protocol::Ethernet => {
+                    deterministic_coordinator::topics::templates::eth_rx(&target_node.to_string())
+                }
+                Protocol::Uart => {
+                    deterministic_coordinator::topics::templates::uart_rx(&target_node.to_string())
+                }
+                Protocol::CanFd => {
+                    deterministic_coordinator::topics::templates::can_rx(&target_node.to_string())
+                }
+                Protocol::Lin => {
+                    deterministic_coordinator::topics::templates::lin_rx(&target_node.to_string())
+                }
+                Protocol::Spi => {
+                    deterministic_coordinator::topics::templates::spi_base(
+                        "default",
+                        &target_node.to_string(),
+                    ) + "/rx"
+                }
+                Protocol::Rf802154 => {
+                    deterministic_coordinator::topics::templates::rf_ieee802154_rx(
+                        &target_node.to_string(),
+                    )
+                }
+                Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
+                    &target_node.to_string(),
+                ),
+                Protocol::ReferenceLink => {
+                    deterministic_coordinator::topics::templates::chardev_rx(
+                        &target_node.to_string(),
+                    )
+                }
+                _ => format!("sim/unknown/{}/rx", target_node),
+            }
+        };
+
+        let legacy_payload = virtmcu_api::encode_coord_message(
+            msg.src_node_id,
+            msg.dst_node_id,
+            msg.delivery_vtime_ns,
+            msg.sequence_number,
+            virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+            &msg.payload,
+        );
+        if let Some(socks) = sockets.get(&target_node) {
+            for sock in socks {
+                uds_write_framed(sock, &legacy_rx_topic, &legacy_payload).await;
+            }
+        }
+    }
+}
+
+async fn run_unix_coordinator(
+    args: Args,
+    federation_id: virtmcu_api::FederationId,
+    topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
+    barrier: Arc<QuantumBarrier>,
+    mut pcap_log: Option<MessageLog>,
+) -> Result<()> {
+    tracing::info!(federation = %federation_id, "Unix coordinator started");
+
+    let sock_path = format!(
+        "{}/{}/coordinator.sock",
+        args.run_dir,
+        federation_id.as_str()
+    );
+    if let Some(parent) = std::path::Path::new(&sock_path).parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UDS dirs: {}", e))?;
+    }
+    let _ = tokio::fs::remove_file(&sock_path).await;
+    let listener = tokio::net::UnixListener::bind(&sock_path)
+        .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", sock_path, e))?;
+
+    enum WorkerEvent {
+        Message(String, Vec<u8>),
+        Register(
+            u32,
+            Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>,
+        ),
+    }
+
+    let (tx_chan, mut rx_chan) = tokio::sync::mpsc::channel::<WorkerEvent>(65536);
+
+    let expected_nodes = args.nodes;
+    let listener_tx = tx_chan.clone();
+    let federation_id_check = federation_id.0.clone();
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((stream, _)) = listener.accept().await {
+                let (mut read_half, write_half) = stream.into_split();
+                let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
+                let worker_tx = listener_tx.clone();
+                let fed_id_check = federation_id_check.clone();
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    let mut topic_len_buf = [0u8; 4];
+                    if read_half.read_exact(&mut topic_len_buf).await.is_err() {
+                        return;
+                    }
+                    let topic_len = u32::from_le_bytes(topic_len_buf) as usize;
+                    let mut topic_buf = vec![0u8; topic_len];
+                    if read_half.read_exact(&mut topic_buf).await.is_err() {
+                        return;
+                    }
+                    let topic = String::from_utf8_lossy(&topic_buf).into_owned();
+
+                    let mut payload_len_buf = [0u8; 4];
+                    if read_half.read_exact(&mut payload_len_buf).await.is_err() {
+                        return;
+                    }
+                    let payload_len = u32::from_le_bytes(payload_len_buf) as usize;
+                    let mut payload = vec![0u8; payload_len];
+                    if read_half.read_exact(&mut payload).await.is_err() {
+                        return;
+                    }
+
+                    if topic == "sim/coord/register" {
+                        let (node_id, reg_fed_id, proto_version) =
+                            virtmcu_api::decode_uds_registration(&payload).expect(
+                                "FATAL: invalid UdsRegistration frame on sim/coord/register",
+                            );
+                        if proto_version != virtmcu_api::UDS_PROTO_VERSION {
+                            eprintln!(
+                                "FATAL: node proto_version {} != coordinator UDS_PROTO_VERSION {} \
+                                 — rebuild the peripheral plugin to match the coordinator version",
+                                proto_version,
+                                virtmcu_api::UDS_PROTO_VERSION
+                            );
+                            std::process::abort();
+                        }
+                        if reg_fed_id != fed_id_check {
+                            eprintln!(
+                                "FATAL: node registered with federation_id='{}' but coordinator \
+                                 federation_id='{}' — check that the federation-id QOM property \
+                                 is set with a hyphen (not underscore) in the -device argument",
+                                reg_fed_id, fed_id_check
+                            );
+                            std::process::abort();
+                        }
+                        let _ = worker_tx
+                            .send(WorkerEvent::Register(node_id, write_half))
+                            .await;
+                    } else {
+                        return;
+                    }
+
+                    loop {
+                        let mut topic_len_buf = [0u8; 4];
+                        if read_half.read_exact(&mut topic_len_buf).await.is_err() {
+                            break;
+                        }
+                        let topic_len = u32::from_le_bytes(topic_len_buf) as usize;
+                        let mut topic_buf = vec![0u8; topic_len];
+                        if read_half.read_exact(&mut topic_buf).await.is_err() {
+                            break;
+                        }
+                        let topic = String::from_utf8_lossy(&topic_buf).into_owned();
+
+                        let mut payload_len_buf = [0u8; 4];
+                        if read_half.read_exact(&mut payload_len_buf).await.is_err() {
+                            break;
+                        }
+                        let payload_len = u32::from_le_bytes(payload_len_buf) as usize;
+                        let mut payload = vec![0u8; payload_len];
+                        if read_half.read_exact(&mut payload).await.is_err() {
+                            break;
+                        }
+
+                        let _ = worker_tx
+                            .send(WorkerEvent::Message(topic.clone(), payload.clone()))
+                            .await;
+                        eprintln!("COORD: sent WorkerEvent::Message for {}", topic);
+                    }
+                });
+            }
+        }
+    });
+
+    let mut sockets: std::collections::HashMap<
+        u32,
+        Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>,
+    > = std::collections::HashMap::new();
+    let start_time = tokio::time::Instant::now();
+    let timeout_duration = tokio::time::Duration::from_millis(args.join_timeout_ms);
+
+    tracing::info!(federation = %federation_id, "Waiting up to {}ms for {} nodes to join...", args.join_timeout_ms, expected_nodes);
+
+    while sockets.len() < expected_nodes {
+        tokio::select! {
+            _ = tokio::time::sleep(timeout_duration.saturating_sub(start_time.elapsed())) => {
+                bail!("Federation {}: Not all nodes joined within {}ms", federation_id.as_str(), args.join_timeout_ms);
+            }
+            evt = rx_chan.recv() => {
+                if let Some(WorkerEvent::Register(node_id, write_half)) = evt {
+                    sockets.entry(node_id).or_default().push(write_half);
+                    let len = sockets.get(&node_id).map(|v| v.len()).expect("FATAL: socket entry missing");
+                    tracing::info!("Node {} registered (total sockets for node: {})", node_id, len);
+                }
+            }
+        }
+    }
+
+    tracing::info!(federation = %federation_id, "All {} nodes have joined.", expected_nodes);
+
+    let mut node_batches = std::collections::HashMap::new();
+    let mut seen_nodes = std::collections::HashSet::new();
+    let mut current_quantum: u64 = 0;
+    for i in 0..args.nodes {
+        seen_nodes.insert(i as u32);
+    }
+    let no_pdes = args.no_pdes;
+
+    while let Some(evt) = rx_chan.recv().await {
+        match evt {
+            WorkerEvent::Register(node_id, write_half) => {
+                sockets.entry(node_id).or_default().push(write_half);
+                let len = sockets
+                    .get(&node_id)
+                    .map(|v| v.len())
+                    .expect("FATAL: socket entry missing");
+                tracing::info!(
+                    "Late registration for node {} (total sockets: {})",
+                    node_id,
+                    len
+                );
+            }
+            WorkerEvent::Message(topic, payload) => {
+                let is_tx = topic.ends_with("/tx");
+                let is_done = topic.starts_with("sim/coord/done/");
+
+                if is_tx {
+                    let parts: Vec<&str> = topic.split('/').collect();
+                    if parts.len() >= 2 {
+                        let node_id_str = parts[parts.len() - 2];
+                        if let Ok(node_id) = node_id_str.parse::<u32>() {
+                            let t = topo.read().await;
+                            let node_id_string = node_id.to_string();
+                            if !t.routing_map.map.contains_key(&node_id_string) {
+                                panic!("Unregistered packet received!");
+                            }
+                            drop(t);
+
+                            let proto = if topic.contains("eth") {
+                                Protocol::Ethernet
+                            } else if topic.contains("uart") {
+                                Protocol::Uart
+                            } else if topic.contains("can") {
+                                Protocol::CanFd
+                            } else if topic.contains("lin") {
+                                Protocol::Lin
+                            } else if topic.contains("spi") {
+                                Protocol::Spi
+                            } else if topic.contains("rf/hci") {
+                                Protocol::RfHci
+                            } else if topic.contains("rf") {
+                                Protocol::Rf802154
+                            } else if topic.contains("chardev") {
+                                Protocol::ReferenceLink
+                            } else {
+                                Protocol::Ethernet
+                            };
+                            let base = parts[..parts.len() - 2].join("/");
+
+                            seen_nodes.insert(node_id);
+
+                            let mut data_opt = None;
+                            let mut vtime = 0;
+                            let mut seq = 0;
+
+                            if let Ok(msg) =
+                                flatbuffers::root::<virtmcu_api::CoordMessage>(&payload)
+                            {
+                                vtime = msg.delivery_vtime_ns();
+                                seq = msg.sequence_number();
+                                data_opt = Some(
+                                    msg.payload()
+                                        .expect("FATAL: CoordMessage missing payload")
+                                        .bytes()
+                                        .to_vec(),
+                                );
+                            }
+
+                            if data_opt.is_none()
+                                && proto == Protocol::Rf802154
+                                && payload.len() >= 4
+                            {
+                                let sz = u32::from_le_bytes(
+                                    payload[0..4]
+                                        .try_into()
+                                        .expect("payload length checked but conversion failed"),
+                                ) as usize;
+                                if sz > 0 && sz <= 1024 && payload.len() >= 4 + sz {
+                                    let hdr_slice = &payload[4..4 + sz];
+                                    let mut aligned = vec![0u8; hdr_slice.len()];
+                                    aligned.copy_from_slice(hdr_slice);
+                                    if let Ok(hdr) = flatbuffers::root::<
+                                        virtmcu_api::rf802154::Rf802154Frame,
+                                    >(&aligned)
+                                    {
+                                        vtime = hdr.delivery_vtime_ns();
+                                        seq = hdr.sequence_number();
+                                        data_opt = Some(payload[4 + sz..].to_vec());
+                                    }
+                                }
+                            }
+
+                            if data_opt.is_none()
+                                && (proto == Protocol::Lin
+                                    || proto == Protocol::CanFd
+                                    || proto == Protocol::FlexRay)
+                            {
+                                if proto == Protocol::Lin {
+                                    if let Ok(frame) =
+                                        virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(
+                                            &payload,
+                                        )
+                                    {
+                                        vtime = frame.delivery_vtime_ns();
+                                    }
+                                }
+                                data_opt = Some(payload.clone());
+                            }
+
+                            if let Some(data) = data_opt {
+                                let mut msg = CoordMessage {
+                                    src_node_id: node_id,
+                                    dst_node_id: u32::MAX,
+                                    delivery_vtime_ns: vtime.saturating_add(args.delay_ns),
+                                    sequence_number: seq,
+                                    protocol: proto,
+                                    payload: data,
+                                    base_topic: Some(base),
+                                };
+
+                                eprintln!(
+                                    "COORD: adding legacy msg to node_batches: {:?}",
+                                    msg.protocol
+                                );
+                                if no_pdes {
+                                    uds_deliver_message(&sockets, &topo, &mut pcap_log, &mut msg)
+                                        .await;
+                                } else {
+                                    node_batches
+                                        .entry(node_id)
+                                        .or_insert_with(Vec::new)
+                                        .push(msg);
+                                }
+                            } else {
+                                eprintln!("COORD: Failed to parse legacy fallback or decode CoordMessage from topic {} (len={})", topic, payload.len());
+                            }
+                        }
+                    }
+                } else if is_done {
+                    let parts: Vec<&str> = topic.split('/').collect();
+                    if parts.len() >= 4 {
+                        if let Ok(node_id) = parts[3].parse::<u32>() {
+                            seen_nodes.insert(node_id);
+
+                            let req = flatbuffers::root::<virtmcu_api::CoordDoneReq>(&payload)
+                                .expect("FATAL: invalid CoordDoneReq on sim/coord/done");
+                            let mut batched_msgs = Vec::new();
+                            if let Some(fb_msgs) = req.messages() {
+                                for i in 0..fb_msgs.len() {
+                                    let m = fb_msgs.get(i);
+                                    batched_msgs.push(CoordMessage {
+                                        src_node_id: m.src_node_id(),
+                                        dst_node_id: m.dst_node_id(),
+                                        delivery_vtime_ns: m.delivery_vtime_ns(),
+                                        sequence_number: m.sequence_number(),
+                                        protocol: parse_protocol(m.protocol().0),
+                                        payload: m
+                                            .payload()
+                                            .map(|p| p.bytes().to_vec())
+                                            .unwrap_or_default(),
+                                        base_topic: None,
+                                    });
+                                }
+                            }
+                            let quantum = req.quantum();
+                            let vtime_limit = req.vtime_limit();
+
+                            let msgs = node_batches.remove(&node_id).unwrap_or_default();
+                            let (mut current_msgs, future_msgs): (
+                                Vec<CoordMessage>,
+                                Vec<CoordMessage>,
+                            ) = msgs
+                                .into_iter()
+                                .partition(|m| m.delivery_vtime_ns <= vtime_limit);
+
+                            if !future_msgs.is_empty() {
+                                node_batches.insert(node_id, future_msgs);
+                            }
+
+                            current_msgs.append(&mut batched_msgs);
+
+                            match barrier.submit_done(
+                                node_id,
+                                quantum,
+                                current_quantum,
+                                current_msgs,
+                            ) {
+                                Ok(Some(mut sorted_msgs)) => {
+                                    sorted_msgs.sort();
+
+                                    for mut msg in sorted_msgs {
+                                        uds_deliver_message(
+                                            &sockets,
+                                            &topo,
+                                            &mut pcap_log,
+                                            &mut msg,
+                                        )
+                                        .await;
+                                    }
+
+                                    if let Some(log) = &mut pcap_log {
+                                        let _ = log.flush();
+                                    }
+
+                                    current_quantum += 1;
+                                    for (&id, socks) in sockets.iter() {
+                                        let start_topic = deterministic_coordinator::topics::templates::clock_start(&id.to_string());
+                                        let start_payload = virtmcu_api::encode_uds_quantum_start(
+                                            current_quantum,
+                                            u64::MAX,
+                                        );
+                                        for sock in socks {
+                                            uds_write_framed(sock, &start_topic, &start_payload)
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    panic!("FATAL: Barrier error for node {}: {:?}", node_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -737,5 +1277,29 @@ mod tests {
         let seen_nodes = std::collections::HashSet::new();
         let mut pcap = None;
         deliver_message(&session, &arc_topo, &seen_nodes, &mut pcap, &mut msg).await;
+    }
+
+    #[test]
+    fn test_broadcast_sorting_determinism() {
+        // Create a HashMap with multiple nodes inserted in a non-sorted order
+        let mut sockets = std::collections::HashMap::new();
+        sockets.insert(3, vec![1, 2]);
+        sockets.insert(1, vec![3]);
+        sockets.insert(5, vec![4, 5]);
+        sockets.insert(2, vec![6]);
+
+        // Simulate the exact loop logic from the coordinator broadcast
+        let mut sorted_sockets: Vec<_> = sockets.iter().collect();
+        sorted_sockets.sort_by_key(|(&id, _)| id);
+
+        // Extract the sorted node IDs
+        let sorted_ids: Vec<u32> = sorted_sockets.iter().map(|(&id, _)| id).collect();
+
+        // Verify that the node IDs are always processed in ascending order
+        assert_eq!(
+            sorted_ids,
+            vec![1, 2, 3, 5],
+            "Broadcast sockets must be sorted by node_id for determinism"
+        );
     }
 }

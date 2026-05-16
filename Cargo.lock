@@ -558,6 +558,9 @@ name = "clock"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "flatbuffers",
+ "tempfile",
+ "transport-unix",
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
@@ -873,6 +876,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "transport-unix",
  "typify",
  "virtmcu-api",
  "virtmcu-observability",
@@ -1626,6 +1630,7 @@ dependencies = [
 name = "ieee802154"
 version = "0.1.0"
 dependencies = [
+ "flatbuffers",
  "transport-unix",
  "transport-zenoh",
  "virtmcu-api",
@@ -2045,6 +2050,7 @@ dependencies = [
  "fnv",
  "libc",
  "serde_json",
+ "sha2",
  "stress_adapter",
  "tokio",
  "tracing",
@@ -2057,7 +2063,6 @@ dependencies = [
 name = "netdev"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "transport-unix",
  "transport-zenoh",
  "virtmcu-api",
@@ -4187,6 +4192,7 @@ dependencies = [
 name = "transport-hub"
 version = "0.1.0"
 dependencies = [
+ "transport-unix",
  "transport-zenoh",
  "virtmcu-api",
  "virtmcu-qom",
@@ -4197,7 +4203,6 @@ dependencies = [
 name = "transport-unix"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "tempfile",
  "virtmcu-api",
  "virtmcu-qom",

@@ -71,19 +71,19 @@ impl virtmcu_qom::device::PeripheralState for VirtmcuSPIState {
         let id = if qemu_dev.id.is_null() {
             format!("spi{}", qemu_dev.node_id)
         } else {
-            unsafe { CStr::from_ptr(qemu_dev.id).to_string_lossy().into_owned() }
+            virtmcu_qom::ffi_call! { CStr::from_ptr(qemu_dev.id).to_string_lossy().into_owned() }
         };
 
         let transport_name = if qemu_dev.transport.is_null() {
             "zenoh".to_owned()
         } else {
-            unsafe { CStr::from_ptr(qemu_dev.transport).to_string_lossy().into_owned() }
+            virtmcu_qom::ffi_call! { CStr::from_ptr(qemu_dev.transport).to_string_lossy().into_owned() }
         };
 
         let router = if qemu_dev.router.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(qemu_dev.router).to_string_lossy().into_owned() }
+            virtmcu_qom::ffi_call! { CStr::from_ptr(qemu_dev.router).to_string_lossy().into_owned() }
         };
 
         Self {
@@ -116,13 +116,16 @@ impl virtmcu_qom::device::Peripheral for VirtmcuSPIState {
                 } else {
                     self.router.clone()
                 };
-                match transport_unix::UdsDataTransport::new(&path) {
+                // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
+                match transport_unix::UdsDataTransport::new(&path, self.node_id) {
                     Ok(t) => Arc::new(t),
                     Err(_) => return Err("spi: failed to open unix socket".into()),
                 }
             } else {
-                match unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
-                    Ok(session) => Arc::new(transport_zenoh::ZenohDataTransport::new(session)),
+                match virtmcu_qom::ffi_call! { transport_zenoh::get_or_init_session(router_ptr) } {
+                    Ok(session) => {
+                        Arc::new(transport_zenoh::ZenohDataTransport::new(session, self.node_id))
+                    }
                     Err(_) => return Err("spi: failed to open Zenoh session".into()),
                 }
             };
@@ -130,7 +133,7 @@ impl virtmcu_qom::device::Peripheral for VirtmcuSPIState {
         }
 
         if self.transport_name == "zenoh" {
-            if let Ok(session) = unsafe { transport_zenoh::get_or_init_session(router_ptr) } {
+            if let Ok(session) = virtmcu_qom::ffi_call! { transport_zenoh::get_or_init_session(router_ptr) } {
                 let hb_topic = format!("sim/spi/liveliness/{}", self.node_id);
                 self._liveliness = session.liveliness().declare_token(hb_topic).wait().ok();
             }
@@ -185,23 +188,23 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuSPIState {
 /// # Safety
 /// This function is called by QEMU when an SPI transfer happens.
 #[no_mangle]
-pub unsafe extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
-    let s = unsafe { &mut *(dev as *mut VirtmcuSPIQEMU) };
+pub extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSPIQEMU>(dev as *mut core::ffi::c_void);
     if s.state.is_null() {
         return 0;
     }
-    let backend = unsafe { &*s.state };
+    let backend = virtmcu_qom::ffi_call! { &*s.state };
     let _guard = backend.drain.acquire();
 
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
+    let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) as u64;
     let header =
-        unsafe { ZenohSPIHeader::new(now, 0, SPI_WORD_SIZE_U32, (*dev).cs, (*dev).cs_index, 0) };
+        virtmcu_qom::ffi_call! { ZenohSPIHeader::new(now, 0, SPI_WORD_SIZE_U32, (*dev).cs, (*dev).cs_index, 0) };
 
     let mut data = Vec::with_capacity(virtmcu_api::ZENOH_SPI_HEADER_SIZE + SPI_WORD_SIZE);
     data.extend_from_slice(header.pack());
     data.extend_from_slice(&val.to_le_bytes());
 
-    let topic = unsafe { format!("sim/spi/{}/{}", backend.id, (*dev).cs_index) };
+    let topic = virtmcu_qom::ffi_call! { format!("sim/spi/{}/{}", backend.id, (*dev).cs_index) };
 
     if let Some(transport) = &backend.transport {
         // TODO(Task-11): transport.query() bypasses the PDES quantum barrier.
@@ -224,20 +227,20 @@ pub unsafe extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 
 /// # Safety
 /// This function is called by QEMU when Chip Select state changes.
 #[no_mangle]
-pub unsafe extern "C" fn spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
-    let s = unsafe { &mut *(dev as *mut VirtmcuSPIQEMU) };
+pub extern "C" fn spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
+    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSPIQEMU>(dev as *mut core::ffi::c_void);
     if s.state.is_null() {
         return 0;
     }
-    let backend = unsafe { &*s.state };
+    let backend = virtmcu_qom::ffi_call! { &*s.state };
     let _guard = backend.drain.acquire();
 
-    let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) } as u64;
-    let header = unsafe { ZenohSPIHeader::new(now, 0, 0, select, (*dev).cs_index, 0) };
+    let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) as u64;
+    let header = virtmcu_qom::ffi_call! { ZenohSPIHeader::new(now, 0, 0, select, (*dev).cs_index, 0) };
 
     let header_bytes = header.pack();
 
-    let topic = unsafe { format!("sim/spi/{}/{}/cs", backend.id, (*dev).cs_index) };
+    let topic = virtmcu_qom::ffi_call! { format!("sim/spi/{}/{}/cs", backend.id, (*dev).cs_index) };
 
     if let Some(transport) = &backend.transport {
         if let Ok(mut reservation) = transport.reserve(&topic, header_bytes.len()) {

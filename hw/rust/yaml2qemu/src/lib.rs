@@ -139,13 +139,21 @@ fn emit_device(
             "".to_string()
         };
 
-        let router_arg =
-            if let Some(ep) = endpoint { format!(",router={}", ep) } else { "".to_string() };
+        let transport = std::env::var("VIRTMCU_TRANSPORT").unwrap_or_else(|_| "zenoh".to_string());
+        let router_arg = if let Some(ep) = endpoint {
+            if transport == "zenoh" {
+                format!(",router={}", ep)
+            } else {
+                "".to_string()
+            }
+        } else {
+            "".to_string()
+        };
 
         cli_args.push("-chardev".to_string());
         cli_args.push(format!(
-            "virtmcu,id=chr_{},node={},transport=zenoh{}{}",
-            p.name, node, router_arg, topic
+            "virtmcu,id=chr_{},node={},transport={}{}{}",
+            p.name, node, transport, router_arg, topic
         ));
         return; // chardevs don't emit DT nodes
     }
@@ -316,7 +324,7 @@ fn emit_device(
                             "{}    {} = <{}>;\n",
                             indent,
                             k_qemu,
-                            phandles.get(s).unwrap()
+                            phandles.get(s).expect("phandle should exist as it was just checked")
                         ));
                     } else {
                         dts.push_str(&format!("{}    {} = \"{}\";\n", indent, k_qemu, s));
@@ -486,12 +494,17 @@ pub fn parse_yaml(
     }
 
     if has_native {
+        let transport = std::env::var("VIRTMCU_TRANSPORT").unwrap_or_else(|_| "zenoh".to_string());
         // Inject hub0
         dts.push_str("    hub0 {\n");
         dts.push_str("        compatible = \"virtmcu-transport-hub\";\n");
         dts.push_str(&format!("        phandle = <{}>;\n", HUB_PHANDLE));
         if let Some(ep) = endpoint {
-            dts.push_str(&format!("        router = \"{}\";\n", ep));
+            if transport == "zenoh" {
+                dts.push_str(&format!("        router = \"{}\";\n", ep));
+            } else {
+                dts.push_str(&format!("        socket-path = \"{}\";\n", ep));
+            }
         }
         dts.push_str(&format!("        node = <{}>;\n", node_id));
         dts.push_str("    };\n\n");

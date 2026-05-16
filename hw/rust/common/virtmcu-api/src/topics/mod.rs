@@ -24,6 +24,10 @@ pub mod sim_topic {
     pub fn clock_liveliness(node_id: &str) -> String {
         format!("sim/clock/liveliness/{node_id}")
     }
+    /// Generates the clock start topic for a node.
+    pub fn clock_start(node_id: &str) -> String {
+        format!("sim/clock/start/{node_id}")
+    }
     /// Generates the virtual time topic for a node.
     pub fn clock_vtime(node_id: &str) -> String {
         format!("sim/clock/vtime/{node_id}")

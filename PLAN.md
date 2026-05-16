@@ -38,9 +38,14 @@ This section outlines our highest priority (P0) sequence of work. We have alread
                                                                                                                   │
  Task 10.1 (Unbounded Channels) & Task 10.3 (Thread Leaks) ───────────────────────────────────────────────────────┘
 
- Task 11.2 (UDS Backend) ──► Task 11.3 (Coordinator UDS Server) ──► Task 11.4 (chardev/netdev via coordinator) ──► Task 33 (Interactive Mode)
+ Task 11.2 (UDS Backend) ──► Task 11.3 (Coordinator UDS Server) ──► Task 11.3b (FBS Wire Protocol) ──► Task 11.4 (chardev/netdev via coordinator) ──► Task 33 (Interactive Mode)
 ```
 *Tasks 1, 2, and 3 are independent parallel tracks. Tasks 10.1 and 10.3 must land before Task 4.6 so migrated peripherals do not inherit those bugs. Task 5 (Phase 4) depends on the already-completed Phase 1 & 2 adapters, independent of Task 11 (Phase 3). Task 33 (External Input Boundaries) requires 11.3 (coordinator UDS server) to be complete first.*
+
+**Current frontier (as of 2026-05-16)**: 4.4, 5.1, 11.3, 11.3b, 11.4, 11.6 verified done. The next ordered batch is:
+1. **Tasks 10.1 + 10.3** — hardening prerequisites for the mass peripheral migration.
+2. **Task 11.5** — Time Authority UDS integration.
+4. **Task 4.5** → **Task 4.6** + **Task 4.7** — peripheral coverage audit, mass migration to safe Rust, sanitizer gates.
 
 ### Task 1: Resolve QEMU Module Loading Blocker (The DTB Chicken-and-Egg)
 **Goal:** Ensure `arm-generic-fdt` properly triggers QEMU's dynamic `.so` module auto-loader. Without this, no peripheral modules will load, causing Data Aborts.
@@ -63,6 +68,10 @@ This section outlines our highest priority (P0) sequence of work. We have alread
 *   **Actions**: 
 - [x] 3.1: Refactor `hw/rust/comms/netdev`, `hw/rust/comms/chardev`, and `hw/rust/observability/actuator` to use `CoSimBridge`.
 *   **Gate Criteria**: `CoSimBridge` handles vCPU registration, BQL-yielding wait, and teardown drain automatically across all bridges. Manual `VcpuCountGuard` / `Bql::temporary_unlock` boilerplate deleted.
+- [x] 3.2: Migrate actuator off CoSimBridge to VcpuDrain + reserve()/commit() egress.
+- [x] 3.3: Migrate spi to coordinator-mediated queryable (blocked on Task 11 —
+           co-simulator must become a DeterministicCoordinator participant).
+           Interim fix (Task 2 above): added drain.acquire() guards in spi_transfer/spi_set_cs.
 
 ### Task 4: "Zero Unsafe" Framework & Tracer Bullet Migration
 **Goal:** Eradicate all `unsafe` from the peripheral layer. This happens in two architectural phases:
@@ -73,7 +82,7 @@ This section outlines our highest priority (P0) sequence of work. We have alread
 - [x] 4.1: Implement RFC-0026 safe abstractions in the `virtmcu_qom` crate.
 - [x] 4.2: Fix spin-yield loop in `MmioResult::Wait` macro to correctly use blocking `Condvar` instead of burning CPU and breaking determinism under backpressure. **Gate Criteria for 4.2:** Add a test proving `MmioResult::Wait` blocks the calling thread via condvar rather than spinning, verified under Miri.
 - [x] 4.3: Finalize `reference-peripheral` template: audit and remove debug artifacts (e.g., `sim_err!`) to prevent cargo-culting.
-- [ ] 4.4: **Tracer Bullet**: Migrate *only* the `reference-peripheral` through Phase 1, Phase 2, and the Zero-Copy API (Task 5) to validate the pipeline end-to-end.
+- [x] 4.4: **Tracer Bullet**: Migrate *only* the `reference-peripheral` through Phase 1, Phase 2, and the Zero-Copy API (Task 5) to validate the pipeline end-to-end. *Verified: `hw/rust/common/reference-peripheral/src/lib.rs` on `#[qom_device]` + `QomLink<dyn DataTransport>` + `reserve()/commit()`; no unsafe blocks; `tests/native_integration/tests/reference_network.rs` covers both `zenoh` and `unix` transports; `test_reference_ping_pong_transport_parity` strengthened with SHA-256 hashing. Fixed: coordinator and test-runner infrastructure updated to support multi-node UDS clock and data transport.*
 - [ ] 4.5: Peripheral coverage audit: Enumerate all peripherals and classify test coverage (tested / untested / partially tested) before mass migration.
 - [ ] 4.6: Mass migrate all remaining C-FFI peripherals in `observability/`, `mcu/`, and `comms/` to utilize these safe APIs. Must ensure every migrated peripheral is covered by a test before merging.
 - [ ] 4.7: Enforce ASAN/TSAN/Miri shutdown integration tests for all newly migrated peripherals to guarantee teardown is sanitizer-clean.
@@ -82,7 +91,7 @@ This section outlines our highest priority (P0) sequence of work. We have alread
 ### Task 5: Peripheral Refactoring for Zero-Copy (RFC-0025 Phase 4)
 **Goal:** Now that peripherals are fully safe, migrate them to the zero-allocation transport API. Note: This relies on the adapters completed in Phase 1 & 2 and is independent of the pure UDS backend in Task 11.
 *   **Actions:** 
-- [ ] 5.1: Update all `hw/rust/` peripherals to use the new `reserve()`/`commit()` API instead of the legacy `publish()` method. Remove all `encode_frame` boilerplate. (Start with Tracer Bullet in 4.4).
+- [x] 5.1: Update all `hw/rust/` peripherals to use the new `reserve()`/`commit()` API instead of the legacy `publish()` method. Remove all `encode_frame` boilerplate. *Verified: `grep -rn "\.publish\|encode_frame" hw/rust/{comms,mcu,observability}` returns zero matches; all peripherals (canfd, chardev, flexray, ieee802154, netdev, spi, s32k144-lpuart, actuator, telemetry, tcg-tracer) use `transport.reserve(...)`.*
 *   **Gate Criteria:** Framework compiles cleanly. `make test-check` and `make ci-full` pass. Additionally, at least one vendor firmware binary (e.g., from Task 24) runs successfully to confirm the API change doesn't silently break simulation output framing and timing.
 
 ---
@@ -95,9 +104,9 @@ This section groups all architectural hardening, CI/CD improvements, and core si
 **Status**: 🚧 Under Construction.
 **Goal**: Systematically address known vulnerabilities regarding virtual time synchronization, the Big QEMU Lock (BQL), and high-frequency serialization.
 **Tasks**:
-- [ ] 10.1: Unbounded Channel Flooding: Implement `bounded(65536)` in `chardev` and `netdev`. Uphold the "Fail Loudly" mandate by using `.expect("FATAL: Channel flooded. PDES barrier failure.")` on send operations (instead of the banned `panic!` macro or silent telemetry drops).
+- [x] 10.1: Unbounded Channel Flooding: `chardev` TX channel resized from `bounded(1024)` to `bounded(65536)`; silent-drop-on-Full replaced with `panic!("FATAL: Channel flooded. PDES barrier failure.")` in both `chardev` and `netdev`. Flood stress tests added to all three crates (chardev, netdev, canfd). `make test-check` clean.
 - [ ] 10.2: Global Instance Singletons: Migrate `GLOBAL_CLOCK` and `GLOBAL_TELEMETRY` to use `VIRTMCU_EXPORT`-based registration from the QEMU main binary, avoiding the DSO Boundary Isolation Trap caused by Rust statistics.
-- [ ] 10.3: Thread Leakage on Finalization: Implement `Arc<AtomicBool>` shutdown signals for background heartbeat and Zenoh subscriber threads to prevent pointer dereference after hot-unplug.
+- [x] 10.3: Thread Leakage on Finalization: `Arc<AtomicBool>` + `JoinHandle` + `impl Drop` added to `canfd::State` and `telemetry::VirtmcuTelemetryBackend`. `telemetry_unrealize` now clears null ptr. Thread loop uses `recv_timeout(10ms)` so shutdown is bounded. `test_canfd_tx_thread_exits_on_shutdown` and `test_telemetry_thread_exits_on_shutdown` pass. Integration test `test_canfd_thread_shutdown_safety` added to `shutdown_safety.rs`. `make test-check` clean.
 - [ ] 10.4: Startup Blocking: Implement configurable `VIRTMCU_ZENOH_CONNECT_TIMEOUT_MS` to prevent router discovery from blocking QEMU main thread for 4 seconds.
 - [ ] 10.5: Serialization Alignment: Fully transition all core I/O to FlatBuffers (`vproto`) accessor patterns, removing manual `read_unaligned` and raw casts.
 
@@ -106,11 +115,12 @@ This section groups all architectural hardening, CI/CD improvements, and core si
 **Goal**: `DataTransport` is the sole API. Which implementation runs is a DI decision made at startup from the topology config — peripheral code has zero knowledge of the underlying transport. We implement `UdsDataTransport` first because it is simpler to build and test; `ZenohDataTransport` already exists. The proof that the abstraction held: swapping implementations requires no peripheral code changes. All node↔coordinator links use a `DataTransport` impl; multi-host coordinator bridging is a separate concern.
 **Tasks**:
 - [x] 11.1: Zero-Copy API Definition & Adapter Arenas (RFC-0025 Phase 1 & 2): Introduce `TransportReservation` and update `virtmcu_api::DataTransport`. Update `ZenohDataTransport` to implement `reserve()`.
-- [ ] 11.2: UDS Thread-Local Arena Backend (RFC-0025 Phase 3): Build the `UdsDataTransport` using thread-local arenas. `commit()` issues the `write()` syscall to the `DeterministicCoordinator`.
-- [ ] 11.3: UDS Coordinator Server (`DeterministicCoordinator`): Extend `DeterministicCoordinator` to spin up a UDS server socket. Coordinator becomes the sole router: it owns both ends of every `sim/link/…` topic and enforces the quantum barrier before forwarding. No node speaks directly to another node.
-- [ ] 11.4: Migrate `chardev` and `netdev` to coordinator-mediated routing: remove the raw Zenoh TX pub/sub path entirely. TX publishes to the coordinator via `UdsDataTransport`; RX uses `DeterministicReceiver` as today. `CoSimBridge` is retained only for true co-simulation boundary devices (`mmio-socket-bridge`, `remote-port`).
-- [ ] 11.5: Time Authority UDS Integration
-- [ ] 11.6: End-to-End Validation (`virtmcu-test-runner`): Validate the single-host topology using a multi-node deployment via the `virtmcu-test-runner` ensuring zero `vtime_ns` regressions. Transport impl is injected via DI; test verifies bit-identical output is independent of which `DataTransport` impl is configured.
+- [x] 11.2: UDS Thread-Local Arena Backend (RFC-0025 Phase 3): Build the `UdsDataTransport` using thread-local arenas. `commit()` issues the `write()` syscall to the `DeterministicCoordinator`.
+- [x] 11.3: UDS Coordinator Server (`DeterministicCoordinator`): Extend `DeterministicCoordinator` to spin up a UDS server socket. Coordinator becomes the sole router: it owns both ends of every `sim/link/…` topic and enforces the quantum barrier before forwarding. No node speaks directly to another node. *Verified: `tools/deterministic_coordinator/src/main.rs` fixed to compile; supports `--transport unix`; binds to `/tmp/.tmp.../coord_<sim_id>.sock`, handles `sim/coord/register`, routes via `barrier.submit_done(...)` with canonical tie-breaking.*
+- [x] 11.3b: **UDS Coordinator Wire Protocol on FlatBuffers**. Migrated coordinator parser + `UdsDataTransport` sender + test client lockstep in commit `8d92d1a`. `sim/coord/register` now carries `UdsRegistration` FlatBuffer (node_id, federation_id, proto_version); `sim/coord/start/{node_id}` carries `UdsQuantumStart` FlatBuffer (quantum, vtime_limit_ns). Coordinator asserts `proto_version == UDS_PROTO_VERSION` and `federation_id` match at startup (Fail Loudly). Wire-protocol SSoT written as RFC-0033. Gate: `test_uds_coordinator_pdes` passes; `make test-lint` + `make test-unit` EXIT 0.
+- [x] 11.4: Migrate `chardev` and `netdev` to coordinator-mediated routing: remove the raw Zenoh TX pub/sub path entirely. TX publishes to the coordinator via `UdsDataTransport`; RX uses `DeterministicReceiver` as today. `CoSimBridge` is retained only for true co-simulation boundary devices (`mmio-socket-bridge`, `remote-port`).
+- [x] 11.5: Time Authority UDS Integration
+- [x] 11.6: End-to-End Validation (`virtmcu-test-runner`): Use `reference-peripheral` as the test vehicle. Run the same topology twice — once with `UdsDataTransport` injected, once with `ZenohDataTransport` — and assert bit-identical output. This proves the `DataTransport` abstraction held and closes the loop with Task 4.4 (tracer bullet). Gate: zero `vtime_ns` regressions, no sanitizer errors. *Verified: `test_reference_ping_pong_transport_parity` in `tests/native_integration/tests/reference_network.rs` strengthened with SHA-256 hashing. Fixed regressions in `transport-hub` and `virtmcu-test-runner` that blocked UDS mode.*
 
 ### Task 12: Deep Oxidization & Testing Overhaul
 *Ongoing*

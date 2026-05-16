@@ -41,7 +41,10 @@ VirtMCU mandates the following synchronization patterns:
 > **Safety-by-Construction:** If your peripheral follows the `MmioDevice` trait and uses `DeterministicReceiver` for ingress, your state is automatically synchronized under the BQL, and you should rarely need manual Mutexes. Use Atomics for high-frequency status flags.
 
 ### Co-Simulation and BQL Discipline: `CoSimBridge`
-When a peripheral needs to block waiting for an external co-simulation response (like over a Remote Port Unix socket), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
+
+**Architectural Mandate:** `CoSimBridge` is strictly for the QEMU boundary to non-simulation infrastructure (test runners, the coordinator itself, HiL hardware). It MUST NOT be used for peripherals that participate in the simulation graph (e.g., sensors, actuators, radios, SPI). Simulation peripherals MUST route all traffic through the `DeterministicCoordinator` using `DeterministicReceiver` to respect the PDES quantum barrier.
+
+When a boundary peripheral needs to block waiting for an external infrastructure response (like over a Remote Port Unix socket or Chardev), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
 
 VirtMCU now uses an **Inversion of Control (IoC)** pattern via the `virtmcu_qom::cosim::CoSimBridge` framework primitive.
 
