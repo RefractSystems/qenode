@@ -68,6 +68,18 @@ Takes ownership of a `CoSimTransport`. Exposes a safe API to the peripheral's MM
 
 - QEMU's own `ChardevBackend` uses a similar pattern: the chardev layer owns the I/O thread, exposes event callbacks, and handles BQL coordination internally.
 
+## Known Implementation Pitfalls
+
+### UART / PL011 FIFO Backpressure
+
+When `CoSimBridge` is used for a UART chardev bridge (e.g., the LPUART test-runner bridge), the host chardev layer has a 32-byte PL011 FIFO. Ignoring backpressure causes silent byte drops:
+
+- **Before writing**: call `qemu_chr_be_can_write(chr)` and only send as many bytes as it returns. If 0, buffer the remainder in a backlog `VecDeque`.
+- **Draining the backlog**: implement `chr_accept_input` and drain from the backlog into the chardev on each call. The chardev layer calls this whenever space becomes available.
+- **Symptom of missing backpressure**: firmware receives garbled or truncated messages at high baud rates; the test runner sees `Ok(())` on every write but the guest drops bytes silently.
+
+This is distinct from `CoSimBridge`'s own drain (`VcpuDrain`) which handles teardown safety, not FIFO capacity.
+
 ## Unresolved Questions
 
 None.

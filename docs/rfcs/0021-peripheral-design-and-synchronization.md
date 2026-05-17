@@ -3,12 +3,6 @@
 ## Status
 Accepted (referenced as the "Gold Standard" mandate in `CLAUDE.md`/`AGENTS.md`)
 
-> Note: The utility table below predates RFC-0025 and RFC-0042. `SafePublisher` has
-> been replaced by the zero-copy `DataTransport::reserve_link(link_id)/commit()` API in
-> all peripheral code. The earlier topic-based `reserve(topic, size)` is `#[deprecated]`
-> (RFC-0042). The canonical egress API is `reserve_link()` as defined in RFC-0025 and
-> updated by RFC-0042.
-
 ## Context
 VirtMCU is a deterministic multi-node simulation framework. To achieve bit-identical results across runs while maintaining high execution speed, peripheral models must bridge the gap between the asynchronous host environment (network I/O, OS threads) and the synchronous guest environment (Virtual Time, CPU instructions).
 
