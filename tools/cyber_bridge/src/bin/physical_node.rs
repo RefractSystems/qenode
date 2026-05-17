@@ -9,7 +9,7 @@ use cyber_bridge::{
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
-use virtmcu_api::{
+use virtmcu_wire::{
     ClockAdvanceReq, PhysicalNodeTransport, UnixSocketPhysicalNodeTransport, CLOCK_ERROR_STALL,
 };
 use zenoh::Wait;
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
         std::sync::Arc::new(DummyVTimeProvider),
     );
     let args = Args::parse();
-    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
+    let federation_id = virtmcu_wire::FederationId(args.federation_id.clone());
 
     let mut zenoh_session: Option<Arc<zenoh::Session>> = None;
 
@@ -163,7 +163,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    let mut plant: Box<dyn virtmcu_api::PhysicalNode> = match args.plant {
+    let mut plant: Box<dyn virtmcu_wire::PhysicalNode> = match args.plant {
         PlantType::TickOnly => Box::new(TickOnlyPlant),
         PlantType::Embedded => Box::new(EmbeddedPlant::new(
             args.node_id,
@@ -172,7 +172,7 @@ async fn main() -> Result<()> {
             args.timeout_ms,
         )?),
         PlantType::Remote => {
-            let transport: Box<dyn virtmcu_api::PhysicsGatewayTransport> = match args
+            let transport: Box<dyn virtmcu_wire::PhysicsGatewayTransport> = match args
                 .gateway_transport
             {
                 TransportType::Unix => {
@@ -269,7 +269,7 @@ async fn main() -> Result<()> {
                     bytes.extend_from_slice(&v.to_le_bytes());
                 }
                 let vtime_end = absolute_vtime_ns + args.delta_ns;
-                let payload = virtmcu_api::encode_frame(vtime_end, 0, &bytes);
+                let payload = virtmcu_wire::encode_frame(vtime_end, 0, &bytes);
                 session
                     .put(&topic, payload)
                     .wait()

@@ -167,7 +167,7 @@ async fn main() -> Result<()> {
                 .arg("miri")
                 .arg("test")
                 .arg("-p")
-                .arg("virtmcu-api")
+                .arg("virtmcu-wire")
                 .arg("-p")
                 .arg("virtmcu-test-runner")
                 .arg("-p")

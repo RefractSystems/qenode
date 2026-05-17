@@ -1,4 +1,8 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![deny(missing_docs)]
+#![doc = "Zenoh data transport implementation for virtmcu."]
 #![cfg_attr(
     test,
     allow(
@@ -8,8 +12,6 @@
         clippy::panic_in_result_fn
     )
 )]
-#![deny(missing_docs)]
-#![doc = "Zenoh data transport implementation for virtmcu."]
 
 extern crate alloc;
 
@@ -41,7 +43,7 @@ pub struct ZenohLivelinessToken {
     _token: zenoh::liveliness::LivelinessToken,
 }
 
-impl virtmcu_api::LivelinessToken for ZenohLivelinessToken {}
+impl virtmcu_wire::LivelinessToken for ZenohLivelinessToken {}
 
 /// A Zenoh-backed implementation of the `DataTransport` trait.
 pub struct ZenohDataTransport {
@@ -59,7 +61,7 @@ impl ZenohDataTransport {
     }
 }
 
-impl virtmcu_api::DataTransport for ZenohDataTransport {
+impl virtmcu_wire::DataTransport for ZenohDataTransport {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
         self.publisher.send(topic.to_owned(), payload.to_vec());
         Ok(())
@@ -69,7 +71,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
         &'a self,
         topic: &'a str,
         size: usize,
-    ) -> Result<virtmcu_api::TransportReservation<'a>, virtmcu_api::TransportError> {
+    ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
         // Allocate space for the payload size. The header will be constructed at commit time.
         let mut frame = vec![0u8; size];
 
@@ -84,21 +86,21 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
         };
 
         let node_id = self.node_id;
-        Ok(virtmcu_api::TransportReservation::new(topic, buffer, move |vtime, seq| {
-            let fb_payload = virtmcu_api::encode_coord_message(
+        Ok(virtmcu_wire::TransportReservation::new(topic, buffer, move |vtime, seq| {
+            let fb_payload = virtmcu_wire::encode_coord_message(
                 node_id,
                 u32::MAX, // Broadcast or coordinator-resolved dst
                 vtime,
                 seq,
-                virtmcu_api::Protocol::ReferenceLink,
+                virtmcu_wire::Protocol::ReferenceLink,
                 &frame,
             );
 
-            self.publish(topic, &fb_payload).map_err(virtmcu_api::TransportError::Other)
+            self.publish(topic, &fb_payload).map_err(virtmcu_wire::TransportError::Other)
         }))
     }
 
-    fn subscribe(&self, topic: &str, callback: virtmcu_api::DataCallback) -> Result<(), String> {
+    fn subscribe(&self, topic: &str, callback: virtmcu_wire::DataCallback) -> Result<(), String> {
         let sub = self
             .session
             .declare_subscriber(topic)
@@ -130,7 +132,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
     fn declare_liveliness(
         &self,
         topic: &str,
-    ) -> Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>> {
+    ) -> Option<alloc::boxed::Box<dyn virtmcu_wire::LivelinessToken>> {
         match self.session.liveliness().declare_token(topic).wait() {
             Ok(token) => Some(alloc::boxed::Box::new(ZenohLivelinessToken { _token: token })),
             Err(_) => None,

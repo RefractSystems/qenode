@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Dedicated `InsnTrace` FlatBuffer schema for high-fidelity instruction tracing.
-- Canonical topic management in `virtmcu-api` for actuators, sensors, and telemetry.
+- Canonical topic management in `virtmcu-wire` for actuators, sensors, and telemetry.
 - Node-join validation in `DeterministicCoordinator` to prevent topology mismatches.
 - Federation-id support for multi-instance simulation traceability.
 

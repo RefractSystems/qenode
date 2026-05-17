@@ -14,7 +14,7 @@ serde_json = "1.0.149"
 tracing = "0.1.44"
 libc = "0.2.186"
 sha2 = "0.10"
-virtmcu-api = { version = "0.1.0", path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { version = "0.1.0", path = "../../hw/rust/common/virtmcu-wire" }
 cyber_bridge = { version = "0.1.0", path = "../../tools/cyber_bridge" }
 
 [build-dependencies]

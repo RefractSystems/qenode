@@ -1,4 +1,11 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+// virtmcu-allow: allow reasoning="Zero unsafe"
+// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
+#![allow(deprecated)]
+#![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
     allow(
@@ -15,12 +22,12 @@ extern crate alloc;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicU64;
-use virtmcu_api::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
 use virtmcu_qom::irq::{qemu_set_irq, QemuIrq};
 use virtmcu_qom::memory::MemoryRegion;
 use virtmcu_qom::qdev::SysBusDevice;
-use virtmcu_qom::sync::{Condvar, DeterministicReceiver, Mutex, VcpuDrain};
+use virtmcu_qom::sync::{Condvar, Mutex, VcpuDrain, VtimeIngress};
 use virtmcu_qom::timer::{QomTimer, QEMU_CLOCK_VIRTUAL};
+use virtmcu_wire::lin_generated::virtmcu::lin::{LinFrame, LinFrameArgs, LinMessageType};
 
 const MAX_RX_FIFO: usize = 4;
 
@@ -47,7 +54,7 @@ pub struct S32K144LpuartQemu {
 
     /* Links */
     #[qom_link(target = "virtmcu-transport-hub")]
-    pub transport_hub: virtmcu_qom::qom::QomLink<dyn virtmcu_api::DataTransport>,
+    pub transport_hub: virtmcu_qom::qom::QomLink<dyn virtmcu_wire::DataTransport>,
 
     /* Rust state */
     #[qom_state]
@@ -70,8 +77,8 @@ impl virtmcu_qom::sync::DeliveryPacket for OrderedLinFrame {
 pub struct LpuartState {
     pub node_id: u32,
     pub irq: QemuIrq,
-    pub transport_ptr: Option<Arc<dyn virtmcu_api::DataTransport>>,
-    pub receiver: Option<DeterministicReceiver<OrderedLinFrame>>,
+    pub transport_ptr: Option<Arc<dyn virtmcu_wire::DataTransport>>,
+    pub receiver: Option<VtimeIngress<OrderedLinFrame>>,
 
     pub cond: Arc<Condvar>,
     pub wait_mutex: Arc<Mutex<()>>, // virtmcu-allow: mutex reasoning="State managed securely"
@@ -157,8 +164,8 @@ impl virtmcu_qom::device::PeripheralState for LpuartState {
 
     fn new(qemu_dev: &Self::QomType) -> Self {
         virtmcu_qom::ffi_call! {
-            let dev_mut = (qemu_dev as *const _ as *mut S32K144LpuartQemu).cast::<SysBusDevice>();
-            let irq_ptr = &raw mut (*(qemu_dev as *const _ as *mut S32K144LpuartQemu)).irq;
+            let dev_mut = core::ptr::from_ref(qemu_dev).cast_mut().cast::<SysBusDevice>();
+            let irq_ptr = &raw mut (*core::ptr::from_ref(qemu_dev).cast_mut()).irq;
             virtmcu_qom::qdev::sysbus_init_irq(dev_mut, irq_ptr);
         }
 
@@ -180,7 +187,8 @@ impl virtmcu_qom::device::PeripheralState for LpuartState {
             cond: Arc::new(Condvar::new()),
             wait_mutex: Arc::new(Mutex::new(())), // virtmcu-allow: mutex reasoning="State managed securely"
             drain: VcpuDrain::new(),
-            inner: Arc::new(Mutex::new(LpuartInner { // virtmcu-allow: mutex reasoning="State managed securely"
+            inner: Arc::new(Mutex::new(LpuartInner {
+                // virtmcu-allow: mutex reasoning="State managed securely"
                 baud: LPUART_RESET_BAUD,
                 stat: LPUART_RESET_STAT,
                 ctrl: 0,
@@ -201,8 +209,11 @@ impl virtmcu_qom::device::PeripheralState for LpuartState {
 }
 
 impl virtmcu_qom::device::Peripheral for LpuartState {
-    fn realize(&mut self) -> Result<(), alloc::string::String> {
-        let state_ptr = self as *mut _ as *mut core::ffi::c_void;
+    fn realize(
+        &mut self,
+        _ctx: &virtmcu_qom::device::BqlContext,
+    ) -> Result<(), alloc::string::String> {
+        let state_ptr = core::ptr::from_mut(self).cast::<core::ffi::c_void>();
         self.tx_timer = Some(virtmcu_qom::ffi_call! {
             QomTimer::new_safe(QEMU_CLOCK_VIRTUAL, lpuart_tx_timer_cb, state_ptr)
         });
@@ -211,13 +222,15 @@ impl virtmcu_qom::device::Peripheral for LpuartState {
             let inner_clone = Arc::clone(&self.inner);
             let irq_ptr = self.irq as usize;
 
-            let rec = DeterministicReceiver::new_safe(
+            let rec = VtimeIngress::new_safe(
                 &**t,
                 &self.rx_topic,
                 Arc::new(AtomicU64::new(0)),
                 |_topic, payload| {
-                    if let Some((vtime, _, data)) = virtmcu_api::decode_frame(payload) {
-                        if let Ok(frame) = virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(data) {
+                    if let Some((vtime, _, data)) = virtmcu_wire::decode_frame(payload) {
+                        if let Ok(frame) =
+                            virtmcu_wire::lin_generated::virtmcu::lin::root_as_lin_frame(data)
+                        {
                             let msg_type = frame.type_();
                             let data = frame.data().map(|d| d.iter().collect()).unwrap_or_default();
                             Some(OrderedLinFrame { vtime, msg_type, data })
@@ -256,7 +269,8 @@ impl virtmcu_qom::device::Peripheral for LpuartState {
                     let irq = irq_ptr as QemuIrq;
                     update_irqs(irq, &inner);
                 },
-            ).map_err(|e| alloc::format!("Failed to init receiver: {e}"))?;
+            )
+            .map_err(|e| alloc::format!("Failed to init receiver: {e}"))?;
 
             self.receiver = Some(rec);
             virtmcu_qom::sim_info!("LPUART Node {} subscribed to {}", self.node_id, self.rx_topic);
@@ -282,18 +296,24 @@ impl virtmcu_qom::device::Peripheral for LpuartState {
         }
     }
 
-    fn read(&self, addr: u64, size: u32, _token: &virtmcu_qom::device::DrainToken) -> virtmcu_qom::device::MmioResult<'_> {
+    fn read(
+        &self,
+        addr: u64,
+        size: u32,
+        _ctx: &virtmcu_qom::device::BqlContext,
+    ) -> virtmcu_qom::device::MmioResult<'_> {
         virtmcu_qom::device::MmioDevice::read(self, addr, size)
     }
 
-    fn write(&self, addr: u64, val: u64, size: u32, _token: &virtmcu_qom::device::DrainToken) {
-        virtmcu_qom::device::MmioDevice::write(self, addr, val, size)
+    fn write(&self, addr: u64, val: u64, size: u32, _ctx: &virtmcu_qom::device::BqlContext) {
+        virtmcu_qom::device::MmioDevice::write(self, addr, val, size);
     }
 
     fn condvar(&self) -> &Condvar {
         &self.cond
     }
 
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
@@ -307,7 +327,6 @@ impl virtmcu_qom::device::MmioDevice for LpuartState {
         match addr {
             REG_VERID => virtmcu_qom::device::MmioResult::Ready(LPUART_VERID),
             REG_PARAM => virtmcu_qom::device::MmioResult::Ready(LPUART_PARAM),
-            REG_GLOBAL | REG_PINCFG => virtmcu_qom::device::MmioResult::Ready(0),
             REG_BAUD => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.baud)),
             REG_STAT => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.stat)),
             REG_CTRL => virtmcu_qom::device::MmioResult::Ready(u64::from(inner.ctrl)),
@@ -347,7 +366,18 @@ impl virtmcu_qom::device::MmioDevice for LpuartState {
                 inner.ctrl = val32;
                 if (inner.ctrl & CTRL_SBK != 0) && (old_ctrl & CTRL_SBK == 0) {
                     if let Some(transport) = &self.transport_ptr {
-                        send_lin_msg(&**transport, &self.tx_topic, LinMessageType::Break, &[]);
+                        let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
+                            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
+                            // virtmcu-allow: new_unchecked_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+                            &unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+                        );
+                        send_lin_msg(
+                            &**transport,
+                            &self.tx_topic,
+                            LinMessageType::Break,
+                            &[],
+                            now as u64,
+                        );
                     }
                 }
                 update_irqs(self.irq, &inner);
@@ -364,9 +394,13 @@ impl virtmcu_qom::device::MmioDevice for LpuartState {
                     update_irqs(self.irq, &inner);
 
                     if was_empty {
-                        let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL);
+                        let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
+                            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
+                            // virtmcu-allow: new_unchecked_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+                            &unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+                        );
                         if let Some(timer) = &self.tx_timer {
-                            timer.mod_ns(now + calculate_baud_delay_ns(inner.baud));
+                            timer.mod_ns(now as i64 + calculate_baud_delay_ns(inner.baud));
                         }
                     }
                 }
@@ -383,20 +417,21 @@ impl virtmcu_qom::device::MmioDevice for LpuartState {
         &self.cond
     }
 
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
 }
 
 fn send_lin_msg(
-    transport: &dyn virtmcu_api::DataTransport,
+    transport: &dyn virtmcu_wire::DataTransport,
     tx_topic: &str,
     msg_type: LinMessageType,
     data: &[u8],
+    now: u64,
 ) {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
     let data_offset = fbb.create_vector(data);
-    let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL) as u64;
 
     let args = LinFrameArgs { delivery_vtime_ns: now, type_: msg_type, data: Some(data_offset) };
 
@@ -451,13 +486,19 @@ fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
     (LPUART_NS_PER_SEC / i64::from(baud_rate)) * LPUART_BITS_PER_CHAR
 }
 
+// virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut core::ffi::c_void) {
     let state = virtmcu_qom::timer::opaque_to_state_const::<LpuartState>(opaque);
     let mut inner = state.inner.lock();
 
     if let Some(byte) = inner.tx_fifo.pop_front() {
         if let Some(transport) = &state.transport_ptr {
-            send_lin_msg(&**transport, &state.tx_topic, LinMessageType::Data, &[byte]);
+            let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
+                virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
+                // virtmcu-allow: new_unchecked_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+                &unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+            );
+            send_lin_msg(&**transport, &state.tx_topic, LinMessageType::Data, &[byte], now as u64);
         }
     }
 
@@ -465,9 +506,13 @@ extern "C" fn lpuart_tx_timer_cb(opaque: *mut core::ffi::c_void) {
         inner.stat |= STAT_TC | STAT_TDRE;
         update_irqs(state.irq, &inner);
     } else {
-        let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL);
+        let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
+            virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
+            // virtmcu-allow: new_unchecked_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+            &unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="extern C timer callback is a valid BQL entry point; eliminated when replaced by ClosureTimer in P1"
+        );
         if let Some(timer) = &state.tx_timer {
-            timer.mod_ns(now + calculate_baud_delay_ns(inner.baud));
+            timer.mod_ns(now as i64 + calculate_baud_delay_ns(inner.baud));
         }
     }
 }

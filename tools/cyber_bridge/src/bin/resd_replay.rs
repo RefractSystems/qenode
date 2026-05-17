@@ -1,5 +1,5 @@
 use std::env;
-use virtmcu_api::topics::sim_topic;
+use virtmcu_wire::topics::sim_topic;
 
 #[tokio::main]
 async fn main() {
@@ -59,7 +59,7 @@ async fn main() {
     // Simulate stepping until last_ts_ns
     while current_vtime_ns <= last_ts_ns {
         // Send clock advance query
-        use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt};
+        use virtmcu_wire::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt};
         let req = ClockAdvanceReq::new(delta_ns, current_vtime_ns, 0);
         let req_bytes = req.pack();
 
@@ -73,8 +73,8 @@ async fn main() {
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {
                 let payload = sample.payload().to_bytes();
-                if payload.len() == virtmcu_api::CLOCK_READY_RESP_SIZE {
-                    let mut arr = [0u8; virtmcu_api::CLOCK_READY_RESP_SIZE];
+                if payload.len() == virtmcu_wire::CLOCK_READY_RESP_SIZE {
+                    let mut arr = [0u8; virtmcu_wire::CLOCK_READY_RESP_SIZE];
                     arr.copy_from_slice(&payload);
                     let resp = ClockReadyResp::unpack_slice(&arr).expect("IO error during setup");
                     current_vtime_ns = resp.current_vtime_ns();
@@ -84,7 +84,7 @@ async fn main() {
                         "[RESD Replay] Node {}: Received invalid payload size: {} (expected {})",
                         node_id,
                         payload.len(),
-                        virtmcu_api::CLOCK_READY_RESP_SIZE
+                        virtmcu_wire::CLOCK_READY_RESP_SIZE
                     );
                 }
             }
@@ -107,7 +107,7 @@ async fn main() {
                 data_payload.extend_from_slice(&v.to_le_bytes());
             }
 
-            let payload = virtmcu_api::encode_frame(current_vtime_ns, 0, &data_payload);
+            let payload = virtmcu_wire::encode_frame(current_vtime_ns, 0, &data_payload);
             println!(
                 "[RESD Replay] Publishing sensor data to {} at vtime {}",
                 topic, current_vtime_ns

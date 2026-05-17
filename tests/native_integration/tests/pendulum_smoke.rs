@@ -1,7 +1,7 @@
 use anyhow::Result;
-use virtmcu_api::encode_frame;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::encode_frame;
+use virtmcu_wire::topics::sim_topic;
 
 // Validates the full peripheral stack without physics:
 // boot → UART → clock sync → sensor inject → actuator publish.

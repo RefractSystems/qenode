@@ -37,7 +37,8 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
             }
             let state = unsafe { &*state_ptr };
 
-            let mut res = virtmcu_qom::device::MmioDevice::read(state, offset, size as u32);
+            let ctx = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() };
+            let mut res = virtmcu_qom::device::Peripheral::read(state, offset, size as u32, &ctx);
             match res {
                 virtmcu_qom::device::MmioResult::Ready(val) => val,
                 virtmcu_qom::device::MmioResult::Wait { mut condition, mut ready_val, mut fallback_val } => {
@@ -53,8 +54,8 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
                             fallback_val()
                         }
                     } else {
-                        let condvar = virtmcu_qom::device::MmioDevice::condvar(state);
-                        let mutex = virtmcu_qom::device::MmioDevice::wait_mutex(state);
+                        let condvar = virtmcu_qom::device::Peripheral::condvar(state);
+                        let mutex = virtmcu_qom::device::Peripheral::wait_mutex(state);
                         let mut guard = mutex.lock();
                         while !condition() {
                             let (new_guard, _) = condvar.wait_yielding_bql(guard, BQL_YIELD_TIMEOUT_MS);
@@ -73,7 +74,8 @@ pub fn derive_mmio_device(input: TokenStream) -> TokenStream {
                 return;
             }
             let state = unsafe { &*state_ptr };
-            virtmcu_qom::device::MmioDevice::write(state, offset, value, size as u32);
+            let ctx = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() };
+            virtmcu_qom::device::Peripheral::write(state, offset, value, size as u32, &ctx);
         }
 
         pub static #ops_name: virtmcu_qom::memory::MemoryRegionOps = virtmcu_qom::memory::MemoryRegionOps {
@@ -302,7 +304,8 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             let mut state = Box::new(<#state_ty as virtmcu_qom::device::PeripheralState>::new(s));
 
-            if let Err(e) = virtmcu_qom::device::Peripheral::realize(&mut *state) {
+            let ctx = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() };
+            if let Err(e) = virtmcu_qom::device::Peripheral::realize(&mut *state, &ctx) {
                 virtmcu_qom::sim_err!("{}: realization failed: {}", #qom_name_lit, e);
             }
 
@@ -350,6 +353,12 @@ pub fn qom_device(attr: TokenStream, item: TokenStream) -> TokenStream {
             class_data: core::ptr::null(),
             interfaces: core::ptr::null(),
         };
+
+        impl virtmcu_qom::qom::QomDevice for #name {
+            // SAFETY: qom_name_c_lit is guaranteed null-terminated by this macro.
+            const QOM_TYPE_NAME: &'static core::ffi::CStr =
+                unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(#qom_name_c_lit) };
+        }
     };
 
     TokenStream::from(expanded)

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use deterministic_coordinator::barrier::{CoordMessage, QuantumBarrier};
 use deterministic_coordinator::topology::{self, Protocol};
-use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
+use virtmcu_wire::{FlatBufferStructExt, ZenohFrameHeader};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Deterministic Coordinator", long_about = None)]
@@ -79,12 +79,12 @@ fn serialize_protocol(p: &Protocol) -> u8 {
 }
 
 fn encode_message(msg: &CoordMessage) -> Vec<u8> {
-    virtmcu_api::encode_coord_message(
+    virtmcu_wire::encode_coord_message(
         msg.src_node_id,
         msg.dst_node_id,
         msg.delivery_vtime_ns,
         msg.sequence_number,
-        virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+        virtmcu_wire::Protocol(serialize_protocol(&msg.protocol)),
         &msg.payload,
     )
 }
@@ -137,9 +137,9 @@ async fn main() -> Result<()> {
         std::sync::Arc::new(DummyVTimeProvider),
     );
     let args = Args::parse();
-    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
+    let federation_id = virtmcu_wire::FederationId(args.federation_id.clone());
 
-    tracing::info!(federation = %federation_id, "DeterministicCoordinator starting...");
+    tracing::info!(federation = %federation_id, "Coordinator starting...");
 
     let topo_raw = if let Some(path) = &args.topology {
         match topology::TopologyGraph::from_yaml(std::path::Path::new(path)) {
@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
 
 async fn run_deterministic_coordinator(
     args: Args,
-    federation_id: virtmcu_api::FederationId,
+    federation_id: virtmcu_wire::FederationId,
     topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     barrier: Arc<QuantumBarrier>,
     mut pcap_log: Option<MessageLog>,
@@ -228,6 +228,7 @@ async fn run_deterministic_coordinator(
         explicit_topics.push(deterministic_coordinator::topics::templates::chardev_tx(
             node,
         ));
+        explicit_topics.push(deterministic_coordinator::topics::templates::reference_bus_tx(node));
         explicit_topics.push(format!("sim/systemc/frame/{}/tx", node));
         explicit_topics.push(deterministic_coordinator::topics::templates::sim_uart_tx(
             node,
@@ -390,7 +391,7 @@ async fn run_deterministic_coordinator(
                                     else if topic.contains("spi") { Protocol::Spi }
                                     else if topic.contains("rf/hci") { Protocol::RfHci }
                                     else if topic.contains("rf") { Protocol::Rf802154 }
-                                    else if topic.contains("chardev") { Protocol::ReferenceLink }
+                                    else if topic.contains("reference_bus") || topic.contains("chardev") { Protocol::ReferenceLink }
                                     else { Protocol::Ethernet };
                         let base = parts[..parts.len() - 2].join("/");
 
@@ -409,7 +410,7 @@ async fn run_deterministic_coordinator(
                              let hdr_slice = &payload[4..4 + sz];
                              let mut aligned = vec![0u8; hdr_slice.len()];
                              aligned.copy_from_slice(hdr_slice);
-                             if let Ok(hdr) = flatbuffers::root::<virtmcu_api::rf802154::Rf802154Frame>(&aligned) {
+                             if let Ok(hdr) = flatbuffers::root::<virtmcu_wire::rf802154::Rf802154Frame>(&aligned) {
                                  vtime = hdr.delivery_vtime_ns();
                                  seq = hdr.sequence_number();
                                  data_opt = Some(payload[4 + sz..].to_vec());
@@ -421,7 +422,7 @@ async fn run_deterministic_coordinator(
                     // (But only for protocols that use it!)
                     if data_opt.is_none() {
                         if let Some(header) = ZenohFrameHeader::unpack_slice(&payload) {
-                            let data_start = virtmcu_api::ZENOH_FRAME_HEADER_SIZE;
+                            let data_start = virtmcu_wire::ZENOH_FRAME_HEADER_SIZE;
                             if payload.len() >= data_start + header.size() as usize {
                                 vtime = header.delivery_vtime_ns();
                                 seq = header.sequence_number();
@@ -437,7 +438,7 @@ async fn run_deterministic_coordinator(
                     // 3. Last fallback: Raw payload (only for protocols we know are raw)
                     if data_opt.is_none() && (proto == Protocol::Lin || proto == Protocol::CanFd || proto == Protocol::FlexRay) {
                         if proto == Protocol::Lin {
-                             if let Ok(frame) = virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(&payload) {
+                             if let Ok(frame) = virtmcu_wire::lin_generated::virtmcu::lin::root_as_lin_frame(&payload) {
                                  vtime = frame.delivery_vtime_ns();
                              }
                         }
@@ -494,8 +495,8 @@ async fn run_deterministic_coordinator(
                         tracing::debug!("DONE payload (len {}): {:02x?}", payload.len(), &payload[..std::cmp::min(16, payload.len())]);
 
                         let is_legacy = payload.len() == 8 || payload.len() == 16;
-                        let (quantum, vtime_limit, mut batched_msgs) = if !is_legacy && flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).is_ok() {
-                            let req = flatbuffers::root_with_opts::<virtmcu_api::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).expect("test should succeed");
+                        let (quantum, vtime_limit, mut batched_msgs) = if !is_legacy && flatbuffers::root_with_opts::<virtmcu_wire::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).is_ok() {
+                            let req = flatbuffers::root_with_opts::<virtmcu_wire::CoordDoneReq>(&flatbuffers::VerifierOptions::default(), &payload).expect("test should succeed");
                             let mut msgs = Vec::new();
                             if let Some(fb_msgs) = req.messages() {
                                 for i in 0..fb_msgs.len() {
@@ -695,21 +696,20 @@ async fn deliver_message(
                     &target_node.to_string(),
                 ),
                 Protocol::ReferenceLink => {
-                    deterministic_coordinator::topics::templates::chardev_rx(
-                        &target_node.to_string(),
-                    )
+                    let base = msg.base_topic.as_deref().unwrap_or("sim/chardev");
+                    format!("{}/{}/rx", base, target_node)
                 }
                 _ => format!("sim/unknown/{}/rx", target_node),
             }
         };
         tracing::debug!("Legacy delivery to topic: {}", legacy_rx_topic);
 
-        let legacy_payload = virtmcu_api::encode_coord_message(
+        let legacy_payload = virtmcu_wire::encode_coord_message(
             msg.src_node_id,
             msg.dst_node_id,
             msg.delivery_vtime_ns,
             msg.sequence_number,
-            virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+            virtmcu_wire::Protocol(serialize_protocol(&msg.protocol)),
             &msg.payload,
         );
         let _ = session.put(&legacy_rx_topic, legacy_payload).await;
@@ -830,20 +830,19 @@ async fn uds_deliver_message(
                     &target_node.to_string(),
                 ),
                 Protocol::ReferenceLink => {
-                    deterministic_coordinator::topics::templates::chardev_rx(
-                        &target_node.to_string(),
-                    )
+                    let base = msg.base_topic.as_deref().unwrap_or("sim/chardev");
+                    format!("{}/{}/rx", base, target_node)
                 }
                 _ => format!("sim/unknown/{}/rx", target_node),
             }
         };
 
-        let legacy_payload = virtmcu_api::encode_coord_message(
+        let legacy_payload = virtmcu_wire::encode_coord_message(
             msg.src_node_id,
             msg.dst_node_id,
             msg.delivery_vtime_ns,
             msg.sequence_number,
-            virtmcu_api::Protocol(serialize_protocol(&msg.protocol)),
+            virtmcu_wire::Protocol(serialize_protocol(&msg.protocol)),
             &msg.payload,
         );
         if let Some(socks) = sockets.get(&target_node) {
@@ -856,7 +855,7 @@ async fn uds_deliver_message(
 
 async fn run_unix_coordinator(
     args: Args,
-    federation_id: virtmcu_api::FederationId,
+    federation_id: virtmcu_wire::FederationId,
     topo: Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     barrier: Arc<QuantumBarrier>,
     mut pcap_log: Option<MessageLog>,
@@ -923,15 +922,15 @@ async fn run_unix_coordinator(
 
                     if topic == "sim/coord/register" {
                         let (node_id, reg_fed_id, proto_version) =
-                            virtmcu_api::decode_uds_registration(&payload).expect(
+                            virtmcu_wire::decode_uds_registration(&payload).expect(
                                 "FATAL: invalid UdsRegistration frame on sim/coord/register",
                             );
-                        if proto_version != virtmcu_api::UDS_PROTO_VERSION {
+                        if proto_version != virtmcu_wire::UDS_PROTO_VERSION {
                             eprintln!(
                                 "FATAL: node proto_version {} != coordinator UDS_PROTO_VERSION {} \
                                  — rebuild the peripheral plugin to match the coordinator version",
                                 proto_version,
-                                virtmcu_api::UDS_PROTO_VERSION
+                                virtmcu_wire::UDS_PROTO_VERSION
                             );
                             std::process::abort();
                         }
@@ -1061,7 +1060,7 @@ async fn run_unix_coordinator(
                                 Protocol::RfHci
                             } else if topic.contains("rf") {
                                 Protocol::Rf802154
-                            } else if topic.contains("chardev") {
+                            } else if topic.contains("reference_bus") || topic.contains("chardev") {
                                 Protocol::ReferenceLink
                             } else {
                                 Protocol::Ethernet
@@ -1075,7 +1074,7 @@ async fn run_unix_coordinator(
                             let mut seq = 0;
 
                             if let Ok(msg) =
-                                flatbuffers::root::<virtmcu_api::CoordMessage>(&payload)
+                                flatbuffers::root::<virtmcu_wire::CoordMessage>(&payload)
                             {
                                 vtime = msg.delivery_vtime_ns();
                                 seq = msg.sequence_number();
@@ -1085,6 +1084,30 @@ async fn run_unix_coordinator(
                                         .bytes()
                                         .to_vec(),
                                 );
+                            } else {
+                                eprintln!(
+                                    "COORD: flatbuffers::root failed for {} len={}",
+                                    topic,
+                                    payload.len()
+                                );
+                            }
+
+                            // Fallback to ZenohFrameHeader if not already parsed
+                            if data_opt.is_none() {
+                                if let Some(header) = ZenohFrameHeader::unpack_slice(&payload) {
+                                    let data_start = virtmcu_wire::ZENOH_FRAME_HEADER_SIZE;
+                                    if payload.len() >= data_start + header.size() as usize {
+                                        vtime = header.delivery_vtime_ns();
+                                        seq = header.sequence_number();
+                                        data_opt = Some(
+                                            payload
+                                                [data_start..data_start + header.size() as usize]
+                                                .to_vec(),
+                                        );
+                                    } else {
+                                        tracing::debug!("Skipping malformed legacy frame: expected {} bytes, got {}", data_start + header.size() as usize, payload.len());
+                                    }
+                                }
                             }
 
                             if data_opt.is_none()
@@ -1101,7 +1124,7 @@ async fn run_unix_coordinator(
                                     let mut aligned = vec![0u8; hdr_slice.len()];
                                     aligned.copy_from_slice(hdr_slice);
                                     if let Ok(hdr) = flatbuffers::root::<
-                                        virtmcu_api::rf802154::Rf802154Frame,
+                                        virtmcu_wire::rf802154::Rf802154Frame,
                                     >(&aligned)
                                     {
                                         vtime = hdr.delivery_vtime_ns();
@@ -1118,7 +1141,7 @@ async fn run_unix_coordinator(
                             {
                                 if proto == Protocol::Lin {
                                     if let Ok(frame) =
-                                        virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(
+                                        virtmcu_wire::lin_generated::virtmcu::lin::root_as_lin_frame(
                                             &payload,
                                         )
                                     {
@@ -1163,7 +1186,7 @@ async fn run_unix_coordinator(
                         if let Ok(node_id) = parts[3].parse::<u32>() {
                             seen_nodes.insert(node_id);
 
-                            let req = flatbuffers::root::<virtmcu_api::CoordDoneReq>(&payload)
+                            let req = flatbuffers::root::<virtmcu_wire::CoordDoneReq>(&payload)
                                 .expect("FATAL: invalid CoordDoneReq on sim/coord/done");
                             let mut batched_msgs = Vec::new();
                             if let Some(fb_msgs) = req.messages() {
@@ -1226,7 +1249,7 @@ async fn run_unix_coordinator(
                                     current_quantum += 1;
                                     for (&id, socks) in sockets.iter() {
                                         let start_topic = deterministic_coordinator::topics::templates::clock_start(&id.to_string());
-                                        let start_payload = virtmcu_api::encode_uds_quantum_start(
+                                        let start_payload = virtmcu_wire::encode_uds_quantum_start(
                                             current_quantum,
                                             u64::MAX,
                                         );
@@ -1259,6 +1282,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[cfg_attr(miri, ignore)]
     #[should_panic(expected = "Unregistered packet received!")]
     async fn test_unregistered_packet_panics() {
         let topo = TopologyGraph::default();

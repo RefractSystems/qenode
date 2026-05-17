@@ -161,7 +161,7 @@ impl TopologyBuilder {
         info!("Spawning zenoh_coordinator from: {}", router_bin.display());
 
         let mut router_cmd = Command::new(&router_bin);
-        router_cmd.arg("--listen").arg(endpoint);
+        router_cmd.arg("--listen").arg(endpoint).kill_on_drop(true);
 
         let router_proc = router_cmd.spawn().map_err(|e| {
             let mut extra_hint = String::new();
@@ -251,7 +251,8 @@ impl TopologyBuilder {
                 .arg("--topology")
                 .arg(&topo_path_str)
                 .arg("--join-timeout-ms")
-                .arg("10000");
+                .arg("10000")
+                .kill_on_drop(true);
 
             let coord_proc = coord_cmd
                 .spawn()
@@ -794,35 +795,39 @@ impl ClockCoordinator for ZenohClockCoordinator {
         payload.extend_from_slice(&current_vtime.to_le_bytes()); // target
         payload.extend_from_slice(&quantum.to_le_bytes()); // quantum ignored by clock plugin or incremented
 
-        let replies = self
-            .session
-            .get(&advance_topic)
-            .payload(payload)
-            .await
-            .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let replies = self
+                .session
+                .get(&advance_topic)
+                .payload(payload)
+                .await
+                .map_err(|e| anyhow!("Zenoh query failed: {}", e))?;
 
-        let mut got_reply = false;
-        while let Ok(reply) = replies.recv_async().await {
-            if reply.result().is_ok() {
-                got_reply = true;
-                break;
+            let mut got_reply = false;
+            while let Ok(reply) = replies.recv_async().await {
+                if reply.result().is_ok() {
+                    got_reply = true;
+                    break;
+                }
             }
-        }
 
-        if !got_reply {
-            return Err(anyhow!(
-                "Failed to receive clock step reply for node {}",
-                node_id
-            ));
-        }
-        Ok(())
+            if !got_reply {
+                return Err(anyhow!(
+                    "Failed to receive clock step reply for node {}",
+                    node_id
+                ));
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow!("Zenoh clock step timeout for node {}", node_id)))
     }
 }
 
 pub struct UnixClockCoordinator {
     transports: std::collections::HashMap<
         usize,
-        std::sync::Arc<virtmcu_api::UnixSocketPhysicalNodeTransport>,
+        std::sync::Arc<virtmcu_wire::UnixSocketPhysicalNodeTransport>,
     >,
 }
 
@@ -840,7 +845,7 @@ impl UnixClockCoordinator {
     }
 
     pub fn add_node(&mut self, node_id: usize, path: &str) {
-        let transport = virtmcu_api::UnixSocketPhysicalNodeTransport::new(path)
+        let transport = virtmcu_wire::UnixSocketPhysicalNodeTransport::new(path)
             .expect("failed to bind UDS clock socket");
         self.transports
             .insert(node_id, std::sync::Arc::new(transport));
@@ -862,11 +867,11 @@ impl ClockCoordinator for UnixClockCoordinator {
             .ok_or_else(|| anyhow!("No clock transport for node {}", node_id))?
             .clone();
 
-        let req = virtmcu_api::ClockAdvanceReq::new(step_ns, current_vtime, quantum);
+        let req = virtmcu_wire::ClockAdvanceReq::new(step_ns, current_vtime, quantum);
 
         // Use spawn_blocking for the synchronous advance call
         tokio::task::spawn_blocking(move || {
-            use virtmcu_api::PhysicalNodeTransport;
+            use virtmcu_wire::PhysicalNodeTransport;
             match transport.advance(req, Duration::from_secs(10)) {
                 Some(resp) if resp.error_code() == 0 => Ok(()),
                 Some(resp) => Err(anyhow!("Clock error code: {}", resp.error_code())),
@@ -1051,7 +1056,7 @@ impl VirtmcuTestEnv {
             let uart_read = timeout(Duration::from_millis(50), async {
                 use tokio::io::AsyncReadExt;
                 let mut buf = [0u8; 1024];
-                uart_reader.get_mut().read(&mut buf).await.map(|n| (n, buf))
+                uart_reader.read(&mut buf).await.map(|n| (n, buf))
             })
             .await;
 
@@ -1148,7 +1153,7 @@ impl VirtmcuTestEnv {
             let uart_read = timeout(Duration::from_millis(5), async {
                 use tokio::io::AsyncReadExt;
                 let mut buf = [0u8; 1024];
-                uart_reader.get_mut().read(&mut buf).await.map(|n| (n, buf))
+                uart_reader.read(&mut buf).await.map(|n| (n, buf))
             })
             .await;
 
@@ -1215,6 +1220,13 @@ impl VirtmcuTestEnv {
         let res = std::panic::AssertUnwindSafe(test_func(&mut self))
             .catch_unwind()
             .await;
+
+        if !matches!(res, Ok(Ok(_))) {
+            for node_id in 0..self.qemu_children.len() {
+                let stderr_log = self.format_qemu_error(node_id, "Test failed").await;
+                eprintln!("{}", stderr_log);
+            }
+        }
 
         self.teardown().await;
 

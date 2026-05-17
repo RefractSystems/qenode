@@ -274,17 +274,17 @@ COPY tools/virtmcu-cli/ tools/virtmcu-cli/
 COPY tools/virtmcu-observability/ tools/virtmcu-observability/
 COPY tools/virtmcu-test-runner/ tools/virtmcu-test-runner/
 COPY hw/rust/common/ hw/rust/common/
-COPY hw/rust/yaml2qemu/ hw/rust/yaml2qemu/
+COPY tools/yaml2qemu/ tools/yaml2qemu/
 
 RUN sed -i '/^members = \[/,/^\]/d' Cargo.toml && \
     sed -i '/^\[workspace\]/a members = [\n\
     "tools/virtmcu-cli",\n\
     "tools/virtmcu-observability",\n\
     "tools/virtmcu-test-runner",\n\
-    "hw/rust/yaml2qemu",\n\
-    "hw/rust/common/reference-peripheral",\n\
-    "hw/rust/common/virtmcu-api",\n\
+    "tools/yaml2qemu",\n\
+    "hw/rust/common/virtmcu-wire",\n\
     "hw/rust/common/virtmcu-qom",\n\
+    "hw/rust/common/virtmcu-qom-macros",\n\
     "hw/rust/common/test-qom-device",\n\
     "hw/rust/common/virtmcu-test-devices",\n\
     "hw/rust/common/virtmcu-zenoh-config",\n\

@@ -24,7 +24,7 @@ virtmcu-test-runner tests/test_parser_fuzzing.py
 We use `proptest` to throw random byte arrays at our native Rust network header deserialization logic.
 Run the tests:
 ```bash
-cargo test --manifest-path hw/rust/common/virtmcu-api/Cargo.toml --test fuzz_network
+cargo test --manifest-path hw/rust/common/virtmcu-wire/Cargo.toml --test fuzz_network
 ```
 
 ## Conclusion

@@ -38,6 +38,7 @@ impl From<gen::Protocol> for Protocol {
             "lin" => Protocol::Lin,
             "rf802154" => Protocol::Rf802154,
             "rfhci" => Protocol::RfHci,
+            "reference-link" => Protocol::ReferenceLink,
             _ => Protocol::Control,
         }
     }

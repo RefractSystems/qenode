@@ -40,15 +40,52 @@ pub async fn run_sync_versions() -> Result<()> {
 pub async fn run_bootstrap() -> Result<()> {
     info!("==> Running bootstrap...");
 
+    let workspace_root = std::env::current_dir()?;
+    let third_party = workspace_root.join("third_party");
+    std::fs::create_dir_all(&third_party)?;
+
+    // 0. Check rustc version and invalidate caches if changed
+    if let Ok(output) = Command::new("rustc").arg("--version").output() {
+        let current_rustc_ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let version_cache_path = third_party.join(".rustc_version");
+        let cached_rustc_ver = std::fs::read_to_string(&version_cache_path).unwrap_or_default();
+
+        if !current_rustc_ver.is_empty() && current_rustc_ver != cached_rustc_ver {
+            if !cached_rustc_ver.is_empty() {
+                info!("Rust compiler version changed from '{}' to '{}'. Cleaning stale build caches...", cached_rustc_ver, current_rustc_ver);
+            } else {
+                info!("First time bootstrap with rustc '{}'.", current_rustc_ver);
+            }
+
+            let qemu_dir = third_party.join("qemu");
+            if qemu_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&qemu_dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(file_type) = entry.file_type() {
+                            if file_type.is_dir() {
+                                if let Some(file_name) = entry.file_name().to_str() {
+                                    if file_name.starts_with("build-") {
+                                        info!(
+                                            "  -> Removing stale cache: {}",
+                                            entry.path().display()
+                                        );
+                                        let _ = std::fs::remove_dir_all(entry.path());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::fs::write(version_cache_path, current_rustc_ver)?;
+        }
+    }
+
     // 1. Submodule update
     info!("  -> Updating submodules...");
     Command::new("git")
         .args(["submodule", "update", "--init", "--recursive"])
         .status()?;
-
-    let workspace_root = std::env::current_dir()?;
-    let third_party = workspace_root.join("third_party");
-    std::fs::create_dir_all(&third_party)?;
 
     let deps = get_build_deps();
 
@@ -101,8 +138,32 @@ pub async fn run_bootstrap() -> Result<()> {
     }
     configure_flatcc(&flatcc_dir).await?;
 
-    // 4. Patch QEMU
+    // 4. Ensure QEMU
     let qemu_dir = third_party.join("qemu");
+    if !qemu_dir.exists() {
+        let qemu_ver = deps
+            .get("QEMU_VERSION")
+            .map(|s| s.as_str())
+            .unwrap_or("11.0.0");
+        let branch = if qemu_ver.starts_with('v') {
+            qemu_ver.to_string()
+        } else {
+            format!("v{}", qemu_ver)
+        };
+        info!("  -> Cloning QEMU ({})", branch);
+        Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                &branch,
+                "https://gitlab.com/qemu-project/qemu.git",
+                qemu_dir.to_str().unwrap(),
+            ])
+            .status()?;
+    }
+
     if qemu_dir.exists() {
         run_patch_qemu(&qemu_dir).await?;
     } else {
@@ -191,6 +252,10 @@ async fn configure_zenoh_c(path: &Path) -> Result<()> {
         build_dir.to_str().unwrap().to_string(),
         "-DCMAKE_BUILD_TYPE=Release".to_string(),
         "-DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF".to_string(),
+        format!(
+            "-DCMAKE_INSTALL_PREFIX={}",
+            path.join("install").to_str().unwrap()
+        ),
     ];
 
     if use_asan {
@@ -225,6 +290,10 @@ async fn configure_flatcc(path: &Path) -> Result<()> {
             "-DFLATCC_INSTALL=ON",
             "-DCMAKE_BUILD_TYPE=Release",
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+            &format!(
+                "-DCMAKE_INSTALL_PREFIX={}",
+                path.join("install").to_str().unwrap()
+            ),
         ])
         .status()?;
     if !status.success() {

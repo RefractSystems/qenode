@@ -1,0 +1,20 @@
+[package]
+name = "reference_peripheral"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+
+
+[lints] 
+workspace = true 
+
+[dependencies]
+virtmcu-qom.workspace = true
+virtmcu-wire.workspace = true
+[package.metadata.cargo-machete]
+ignored = ["virtmcu-qom", "virtmcu-wire"]

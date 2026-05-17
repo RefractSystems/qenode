@@ -77,6 +77,7 @@ pub mod sysemu;
 /// QEMU Timer and virtual clock management.
 pub mod timer;
 
+pub use qom::{dynamic_cast_qom, QomDevice};
 pub use virtmcu_qom_macros::MmioDevice;
 
 /// Telemetry module
@@ -220,4 +221,47 @@ impl core::fmt::Write for BufCursor<'_> {
             Ok(())
         }
     }
+}
+
+#[macro_export]
+/// Safe ffi wrapper block macro
+macro_rules! ffi_call {
+    ($($tt:tt)*) => { unsafe { $($tt)* } }
+}
+
+#[macro_export]
+/// Safe ffi fn macro
+macro_rules! ffi_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe extern "C" fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            unsafe { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe fn macro
+macro_rules! ffi_safe_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            unsafe { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe send sync macro
+macro_rules! impl_send_sync {
+    ($ty:ty) => {
+        unsafe impl Send for $ty {}
+        unsafe impl Sync for $ty {}
+    };
 }

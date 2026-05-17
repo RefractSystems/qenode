@@ -183,7 +183,7 @@ correctness testing but not production throughput.
 ## 4. FlatBuffers Wire Protocol (TA ↔ Gateway)
 
 The Time Authority and the Physics Gateway exchange two message types, defined in
-`hw/rust/common/virtmcu-api/src/physics.fbs`.
+`hw/rust/common/virtmcu-wire/src/physics.fbs`.
 
 ### 4.1 `ActuatorSample`
 
@@ -234,7 +234,7 @@ A non-zero `status` is treated as a fatal simulation error by the PN.
 
 ## 5. Transport Abstraction
 
-The PN↔Gateway link is hidden behind two traits in `virtmcu-api`, following the same
+The PN↔Gateway link is hidden behind two traits in `virtmcu-wire`, following the same
 Dependency Injection pattern as `PhysicalNodeTransport` and `ClockSyncTransport`.
 
 ```rust

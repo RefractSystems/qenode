@@ -26,7 +26,7 @@ The crates are organized into logical subdirectories based on their role in the 
 - `mcu/`: MCU-specific peripheral implementations.
   - `s32k144-lpuart`: Specialized UART for NXP S32K144.
 - `common/`: Shared utilities and internal APIs.
-  - `virtmcu-api`: Central wire protocol and `DataTransport` traits.
+  - `virtmcu-wire`: Central wire protocol and `DataTransport` traits.
   - `virtmcu-qom`: Safe Rust wrappers for QEMU Object Model (QOM) FFI.
   - `reference-peripheral`: Template for new peripheral models.
 
@@ -35,4 +35,4 @@ The crates are organized into logical subdirectories based on their role in the 
 - **Binary Fidelity**: Plugins must behave exactly like the physical silicon they emulate.
 - **Determinism**: No local timers or wall-clock dependencies in the hot simulation loop.
 - **BQL Safety**: Always use the RAII guards from `virtmcu-qom::sync::Bql` when accessing shared state.
-- **Transport Agnostic**: Use the `DataTransport` trait in `virtmcu-api` for all emulated data plane traffic. Do not hardcode Zenoh-specific logic in peripheral crates.
+- **Transport Agnostic**: Use the `DataTransport` trait in `virtmcu-wire` for all emulated data plane traffic. Do not hardcode Zenoh-specific logic in peripheral crates.

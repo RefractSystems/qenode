@@ -10,9 +10,9 @@ crate-type = ["cdylib", "staticlib"]
 [lints] 
 workspace = true 
 [dependencies]
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true
 transport-zenoh.workspace = true
-transport-unix.workspace = true
+transport-uds.workspace = true
 crossbeam-channel.workspace = true
 flatbuffers.workspace = true
 tracing.workspace = true

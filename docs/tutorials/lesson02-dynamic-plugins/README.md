@@ -58,7 +58,7 @@ Look closely at the output. Under `/machine/peripheral-anon`, you should see a `
 
 ## Part 3: The Rust Interop Story (Hybrid C/Rust Plugins)
 
-While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust.  `virtmcu` provides a hybrid C/Rust template in `hw/rust/common/reference-peripheral/`.
+While C is the native language of QEMU, writing safe and complex peripheral models is often easier in Rust.  `virtmcu` provides a hybrid C/Rust template in `hw/rust/examples/reference-peripheral/`.
 
 ### Why not QEMU's native Rust support?
 
@@ -66,11 +66,11 @@ QEMU 10+ ships an official Meson+cargo pipeline for writing device models in Rus
 
 ### How the split works
 
-1. **The QOM Boilerplate (C)** — `hw/rust/common/reference-peripheral/reference-peripheral.c`
+1. **The QOM Boilerplate (C)** — `hw/rust/examples/reference-peripheral/reference-peripheral.c`
    - Registers the `TypeInfo`, initialises the `MemoryRegion`, and handles QEMU's object lifecycle.
    - Every MMIO access calls `reference_peripheral_read()` / `reference_peripheral_write()`, forwarding the device's private state pointer (`priv_state`) so Rust can access per-instance data.
 
-2. **The Device Logic (Rust)** — `hw/rust/common/reference-peripheral/src/lib.rs`
+2. **The Device Logic (Rust)** — `hw/rust/examples/reference-peripheral/src/lib.rs`
    - A `#[no_std]` crate exporting two `extern "C"` functions.
    - Receives `priv_state: *mut c_void` as its first argument.  In this demo it is `NULL` (stateless), but the template doc-comments show how to allocate Rust-owned state and pass it through.
 

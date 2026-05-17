@@ -1,6 +1,6 @@
 use anyhow::Result;
-use virtmcu_api::lin_generated::virtmcu::lin::LinMessageType;
 use virtmcu_test_runner::{monitors::LinMonitor, NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::lin_generated::virtmcu::lin::LinMessageType;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_lin_lpuart() -> Result<()> {

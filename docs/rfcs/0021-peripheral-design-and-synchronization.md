@@ -42,9 +42,9 @@ To simplify development, the framework provides the following "Golden Path" util
 
 | Utility | Purpose |
 | :--- | :--- |
-| **`QomTimer`** | The "Virtual Clock." Replaces sleep. Schedules callbacks at precise virtual timestamps. |
+| **`ClosureTimer`** | **Preferred for peripheral-owned timers.** Accepts an `FnMut(&BqlContext)` closure — no `extern "C"` callbacks, no raw pointer casting, correct drop ordering enforced by the framework. The `&BqlContext` passed to the closure enables compile-time proof that BQL is held (RFC-0041). Use `QomTimer` only inside `virtmcu-qom` framework code. |
 | **`DataTransport::reserve()/commit()`** | **Mandatory for Egress.** Zero-copy publication API (RFC-0025). Replaces the deprecated `SafePublisher` and `transport.publish(...)`. No `encode_frame` boilerplate in peripheral code. |
-| **`DeterministicReceiver`** | **Mandatory for Ingress.** Replaces the now-banned `SafeSubscription`. Automatically acquires the BQL, manages generation counters to prevent UAF, and uses `QomTimer` to sort and deliver packets at their correct Virtual Time, eliminating manual heap/timer boilerplate. |
+| **`VtimeIngress`** | **Mandatory for Ingress.** Replaces the now-banned `SafeSubscription`. Automatically acquires the BQL, manages generation counters to prevent UAF, and uses `QomTimer` to sort and deliver packets at their correct Virtual Time, eliminating manual heap/timer boilerplate. |
 | **`MmioResult::wait_for(...)`** | **Mandatory for blocking MMIO reads.** Framework-owned condvar wait. Replaces direct `Bql::temporary_unlock()` calls in peripheral code (RFC-0018 / RFC-0023). |
 | **`CoSimBridge`** | **For co-simulation bridges only** (`mmio-socket-bridge`, `remote-port`). Owns vCPU registration, BQL yielding, and RAII teardown. See RFC-0027. |
 | **`VcpuDrain`** | Ensures safe peripheral destruction by waiting for all active MMIO calls to finish. Inherently managed by the `Peripheral` trait wrapper (RFC-0023) to prevent developers from forgetting the lock guard. |
@@ -60,3 +60,4 @@ To simplify development, the framework provides the following "Golden Path" util
 - RFC-0011: Zenoh Federation Bus
 - RFC-0018: Safe Peripheral BQL Yielding
 - RFC-0023: Safe QOM Macros and Boilerplate Eradication
+- RFC-0041: Safe QOM Framework Boundaries via Type-State (`BqlContext`, `ClosureTimer`, `dynamic_cast_qom`)

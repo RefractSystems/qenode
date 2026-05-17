@@ -23,7 +23,7 @@ The Data Plane is fundamentally different from a standard network. Within the si
 To ensure binary fidelity across C, Rust, and Python, VirtMCU uses **FlatBuffers**. Unlike JSON or Protobuf, FlatBuffers allows for zero-copy access to data, which is critical for maintaining high-frequency simulation throughput.
 
 ### The Unified IDL
-Every packet on the simulation bus follows the definitions in `hw/rust/common/virtmcu-api/src/core.fbs`:
+Every packet on the simulation bus follows the definitions in `hw/rust/common/virtmcu-wire/src/core.fbs`:
 -   **Headers**: All emulated network traffic (Ethernet, UART, RF) is prefixed with a `ZenohFrameHeader` (24 bytes). This header encapsulates the `delivery_vtime_ns` and sequence numbers required for deterministic sorting.
 -   **Payloads**: High-speed signals like `MmioReq` and `ClockAdvanceReq` use strictly aligned FlatBuffer structs to ensure bit-identical layout on all architectures.
 

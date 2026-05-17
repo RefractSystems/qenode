@@ -1,6 +1,6 @@
 use anyhow::Result;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::topics::sim_topic;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_actuator_zenoh_publish() -> Result<()> {

@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use virtmcu_api::physics_proto;
-use virtmcu_api::PhysicsGatewayServer;
+use virtmcu_wire::physics_proto;
+use virtmcu_wire::PhysicsGatewayServer;
 use zenoh::Wait;
 
 #[derive(Parser, Debug)]
@@ -211,7 +211,7 @@ impl Drop for GatewayShm {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let federation_id = virtmcu_api::FederationId(args.federation_id.clone());
+    let federation_id = virtmcu_wire::FederationId(args.federation_id.clone());
     let timeout = std::time::Duration::from_millis(args.timeout_ms);
 
     let mut shm = GatewayShm::new(args.node_id, args.n_sensors, args.n_actuators)?;
@@ -287,8 +287,11 @@ async fn main() -> Result<()> {
                         let val_bytes = shm.sensor_bytes(i);
                         let topic =
                             format!("{}/{}/sensordata_{}", args.sensor_prefix, args.node_id, i);
-                        let payload =
-                            virtmcu_api::encode_frame(trigger.quantum_end_vtime_ns(), 0, val_bytes);
+                        let payload = virtmcu_wire::encode_frame(
+                            trigger.quantum_end_vtime_ns(),
+                            0,
+                            val_bytes,
+                        );
                         session
                             .put(&topic, payload)
                             .wait()

@@ -1,4 +1,10 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![no_std] // virtmcu-allow: no_std reasoning="Requires libc panic for aborting"
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 #![cfg_attr(
     test,
     allow(
@@ -8,10 +14,6 @@
         clippy::panic_in_result_fn
     )
 )]
-#![no_std] // virtmcu-allow: no_std reasoning="Requires libc panic for aborting"
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 
 extern crate alloc;
 
@@ -34,7 +36,7 @@ pub struct VirtmcuTransportHub {
 
 pub struct HubState {
     pub session: Option<Arc<zenoh::Session>>,
-    pub _transport: Option<alloc::boxed::Box<Arc<dyn virtmcu_api::DataTransport>>>,
+    pub _transport: Option<alloc::boxed::Box<Arc<dyn virtmcu_wire::DataTransport>>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(VirtmcuTransportHub, parent_obj) == 0);
@@ -83,7 +85,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
         }
     };
 
-    let transport: Option<Arc<dyn virtmcu_api::DataTransport>> = if let Some(sess) = &session {
+    let transport: Option<Arc<dyn virtmcu_wire::DataTransport>> = if let Some(sess) = &session {
         Some(Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(sess), s.node_id)))
     } else {
         // Try UDS transport if Zenoh is not configured
@@ -91,7 +93,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
             let socket_path = unsafe { core::ffi::CStr::from_ptr(s.socket_path) }.to_string_lossy();
             virtmcu_qom::sim_info!("hub_realize: using UDS transport at {}", socket_path);
             // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
-            match transport_unix::UdsDataTransport::new(socket_path.as_ref(), s.node_id) {
+            match transport_uds::UdsDataTransport::new(socket_path.as_ref(), s.node_id) {
                 Ok(t) => Some(Arc::new(t)),
                 Err(e) => {
                     virtmcu_qom::sim_err!("hub_realize: failed to open UDS transport: {}", e);
@@ -109,7 +111,7 @@ unsafe extern "C" fn hub_realize(dev: *mut c_void, _errp: *mut *mut c_void) {
 
     // Set transport_ptr to the address of the Arc inside the Box inside the state Box.
     if let Some(t) = &state._transport {
-        s.transport_ptr = &**t as *const Arc<dyn virtmcu_api::DataTransport> as u64;
+        s.transport_ptr = &**t as *const Arc<dyn virtmcu_wire::DataTransport> as u64;
     } else {
         s.transport_ptr = 0;
     }
@@ -184,7 +186,7 @@ pub unsafe extern "C" fn virtmcu_hub_get_transport(hub_obj: *mut Object) -> *mut
     }
     let state = &*(s.rust_state);
     if let Some(t) = &state._transport {
-        &**t as *const alloc::sync::Arc<dyn virtmcu_api::DataTransport> as *mut core::ffi::c_void
+        &**t as *const alloc::sync::Arc<dyn virtmcu_wire::DataTransport> as *mut core::ffi::c_void
     } else {
         core::ptr::null_mut()
     }

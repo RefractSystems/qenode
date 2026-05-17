@@ -13,7 +13,7 @@ default = []
 standalone = []
 
 [dependencies]
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true
 crossbeam-channel = { workspace = true }
 virtmcu-qom-macros = { path = "../virtmcu-qom-macros" }
 paste = "1.0"

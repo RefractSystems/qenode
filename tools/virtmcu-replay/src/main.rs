@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
-use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, ZenohFrameHeader};
+use virtmcu_wire::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, ZenohFrameHeader};
 use zenoh::query::Query;
 use zenoh::Wait as _;
 

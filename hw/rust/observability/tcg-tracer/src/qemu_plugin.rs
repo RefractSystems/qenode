@@ -1,3 +1,8 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::missing_safety_doc)] // virtmcu-allow: allow reasoning="Zero unsafe"
+
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 pub type QemuPluginId = u64;

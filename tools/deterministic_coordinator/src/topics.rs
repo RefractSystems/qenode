@@ -10,6 +10,7 @@ pub mod singleton {
 pub mod wildcard {
     pub const CAN_TX_WILDCARD: &str = "sim/can/*/tx";
     pub const CHARDEV_TX_WILDCARD: &str = "sim/chardev/*/tx";
+    pub const REFERENCE_BUS_TX_WILDCARD: &str = "sim/reference_bus/*/tx";
     pub const COORD_DONE_WILDCARD: &str = "sim/coord/*/done";
     pub const COORD_RX_WILDCARD: &str = "sim/coord/*/rx";
     pub const COORD_TX_WILDCARD: &str = "sim/coord/*/tx";
@@ -54,6 +55,12 @@ pub mod templates {
     }
     pub fn chardev_tx(node_id: &str) -> String {
         format!("sim/chardev/{}/tx", node_id)
+    }
+    pub fn reference_bus_rx(node_id: &str) -> String {
+        format!("sim/reference_bus/{}/rx", node_id)
+    }
+    pub fn reference_bus_tx(node_id: &str) -> String {
+        format!("sim/reference_bus/{}/tx", node_id)
     }
     pub fn clock_advance(node_id: &str) -> String {
         format!("sim/clock/advance/{}", node_id)
@@ -131,7 +138,7 @@ pub mod templates {
         format!("sim/spi/{}/{}", bus, node_id)
     }
     pub fn telemetry_trace(node_id: &str) -> String {
-        virtmcu_api::topics::sim_topic::telemetry_events(node_id)
+        virtmcu_wire::topics::sim_topic::telemetry_events(node_id)
     }
     pub fn test_probe(suffix: &str) -> String {
         format!("sim/test/probe/{}", suffix)

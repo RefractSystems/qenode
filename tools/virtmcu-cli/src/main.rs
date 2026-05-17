@@ -362,7 +362,7 @@ async fn run_debug_pcap_dump(
 
         // 1. Try decoding as CoordMessage
         if topic.contains("sim/coord/") {
-            if let Ok(msg) = flatbuffers::root::<virtmcu_api::CoordMessage>(&payload) {
+            if let Ok(msg) = flatbuffers::root::<virtmcu_wire::CoordMessage>(&payload) {
                 let vtime = msg.delivery_vtime_ns();
                 let src = msg.src_node_id();
                 let dst = msg.dst_node_id();
@@ -374,8 +374,8 @@ async fn run_debug_pcap_dump(
         }
 
         // 2. Try decoding as Legacy ZenohFrameHeader
-        if payload.len() >= virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
-            if let Some((vtime, _seq, data)) = virtmcu_api::decode_frame(&payload) {
+        if payload.len() >= virtmcu_wire::ZENOH_FRAME_HEADER_SIZE {
+            if let Some((vtime, _seq, data)) = virtmcu_wire::decode_frame(&payload) {
                 let mut node_id = 0;
                 let mut proto_id = 8; // Default to Control
 
@@ -710,7 +710,7 @@ async fn run_telemetry(node_id: u32, router: Option<String>) -> Result<()> {
     let session = zenoh::open(config)
         .await
         .map_err(|e| anyhow!("Zenoh open: {}", e))?;
-    let topic = virtmcu_api::topics::sim_topic::telemetry_events(&node_id.to_string());
+    let topic = virtmcu_wire::topics::sim_topic::telemetry_events(&node_id.to_string());
     info!("Listening on {}", topic);
 
     let subscriber = session
@@ -721,7 +721,7 @@ async fn run_telemetry(node_id: u32, router: Option<String>) -> Result<()> {
     while let Ok(sample) = subscriber.recv_async().await {
         let payload = sample.payload().to_bytes();
         if let Ok(ev) = flatbuffers::root::<
-            virtmcu_api::telemetry_generated::virtmcu::telemetry::TraceEvent,
+            virtmcu_wire::telemetry_generated::virtmcu::telemetry::TraceEvent,
         >(&payload)
         {
             let ts = ev.timestamp_ns();

@@ -1,6 +1,6 @@
 # RFC-0013: Language Selection Policy and Native Zenoh Migration
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-04-16
 
 ## Context

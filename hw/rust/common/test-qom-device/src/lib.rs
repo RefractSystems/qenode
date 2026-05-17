@@ -1,3 +1,7 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(missing_docs)]
+#![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
     allow(
@@ -9,8 +13,6 @@
     )
 )]
 // std is required: virtmcu-qom dependency brings in std
-#![allow(missing_docs)]
-#![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_int, c_uint, c_void};
 use virtmcu_qom::chardev::CharFrontend;

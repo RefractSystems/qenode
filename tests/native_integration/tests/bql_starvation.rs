@@ -28,7 +28,7 @@ async fn test_bql_starvation_avoided() -> Result<()> {
     // The reference-peripheral peripheral doesn't strictly parse a complex packet yet,
     // but sending to its transport topic should trigger its internal callbacks.
     let target_topic = "sim/chardev/0/rx";
-    let payload = virtmcu_api::encode_frame(env.vtime() + 10_000_000, 0, &[1, 2, 3, 4]);
+    let payload = virtmcu_wire::encode_frame(env.vtime() + 10_000_000, 0, &[1, 2, 3, 4]);
 
     env.session()
         .put(target_topic, payload)

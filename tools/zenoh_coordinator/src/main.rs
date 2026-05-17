@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use virtmcu_api::{FlatBufferStructExt, ZenohFrameHeader};
+use virtmcu_wire::{FlatBufferStructExt, ZenohFrameHeader};
 
 use zenoh::Wait;
 
@@ -221,7 +221,7 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
     let topic = format!("{}/{}/rx", msg.base_topic, msg.dst_node_id);
     let payload = match msg.protocol {
         Protocol::Spi => {
-            let hdr = virtmcu_api::ZenohSPIHeader::new(
+            let hdr = virtmcu_wire::ZenohSPIHeader::new(
                 msg.delivery_vtime_ns,
                 msg.sequence_number,
                 msg.payload.len() as u32,
@@ -229,7 +229,7 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
                 0,     // default CS index
                 0,     // padding
             );
-            let mut p = Vec::with_capacity(virtmcu_api::ZENOH_SPI_HEADER_SIZE + msg.payload.len());
+            let mut p = Vec::with_capacity(virtmcu_wire::ZENOH_SPI_HEADER_SIZE + msg.payload.len());
             p.extend_from_slice(hdr.pack());
             p.extend_from_slice(&msg.payload);
             p
@@ -241,7 +241,7 @@ async fn encode_protocol_msg(session: &zenoh::Session, msg: &CoordMessage) {
                 msg.payload.len() as u32,
             );
             let mut p =
-                Vec::with_capacity(virtmcu_api::ZENOH_FRAME_HEADER_SIZE + msg.payload.len());
+                Vec::with_capacity(virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + msg.payload.len());
             p.extend_from_slice(hdr.pack());
             p.extend_from_slice(&msg.payload);
             p
@@ -267,10 +267,10 @@ async fn handle_eth_msg(
         return out;
     }
     let h = ZenohFrameHeader::unpack_slice(&p).expect("Failed to unpack ZenohFrameHeader");
-    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
+    if p.len() < (virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
-    let data = p[20..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
+    let data = p[20..virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
 
     let mut dest_nodes = HashSet::new();
     if tg.is_explicit {
@@ -385,18 +385,18 @@ async fn handle_chardev_msg(
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
-    if p.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+    if p.len() < virtmcu_wire::ZENOH_FRAME_HEADER_SIZE {
         return out;
     }
-    let h = match virtmcu_api::ZenohFrameHeader::unpack_slice(&p) {
+    let h = match virtmcu_wire::ZenohFrameHeader::unpack_slice(&p) {
         Some(h) => h,
         None => return out,
     };
-    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
+    if p.len() < (virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
-    let data = p[virtmcu_api::ZENOH_FRAME_HEADER_SIZE
-        ..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
+    let data = p[virtmcu_wire::ZENOH_FRAME_HEADER_SIZE
+        ..virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
         .to_vec();
 
     let mut dest_nodes = HashSet::new();
@@ -517,10 +517,10 @@ async fn handle_uart_msg(
         return out;
     }
     let h = ZenohFrameHeader::unpack_slice(&p).expect("Failed to unpack ZenohFrameHeader");
-    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
+    if p.len() < (virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
-    let data = p[20..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
+    let data = p[20..virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize].to_vec();
 
     let mut dest_nodes = HashSet::new();
     if tg.is_explicit {
@@ -634,12 +634,12 @@ async fn handle_lin_msg(
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p_full = s.payload().to_bytes();
-    let pb = if let Some((_, _, data)) = virtmcu_api::decode_frame(&p_full) {
+    let pb = if let Some((_, _, data)) = virtmcu_wire::decode_frame(&p_full) {
         data
     } else {
         return out;
     };
-    let frame = match virtmcu_api::lin_generated::virtmcu::lin::root_as_lin_frame(pb) {
+    let frame = match virtmcu_wire::lin_generated::virtmcu::lin::root_as_lin_frame(pb) {
         Ok(f) => f,
         Err(_) => return out,
     };
@@ -717,12 +717,12 @@ async fn handle_lin_msg(
         };
         let mut fbb = flatbuffers::FlatBufferBuilder::new();
         let data = frame.data().map(|d| fbb.create_vector(d.bytes()));
-        let args = virtmcu_api::lin_generated::virtmcu::lin::LinFrameArgs {
+        let args = virtmcu_wire::lin_generated::virtmcu::lin::LinFrameArgs {
             delivery_vtime_ns: frame.delivery_vtime_ns().saturating_add(d),
             type_: frame.type_(),
             data,
         };
-        let f = virtmcu_api::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
+        let f = virtmcu_wire::lin_generated::virtmcu::lin::LinFrame::create(&mut fbb, &args);
         fbb.finish(f, None);
         out.push(CoordMessage {
             src_node_id: src.clone(),
@@ -749,18 +749,18 @@ async fn handle_sysc_msg(
     let px = String::new();
     known.entry(base.clone()).or_default().insert(src.clone());
     let p = s.payload().to_bytes();
-    if p.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+    if p.len() < virtmcu_wire::ZENOH_FRAME_HEADER_SIZE {
         return out;
     }
-    let h = match virtmcu_api::ZenohFrameHeader::unpack_slice(&p) {
+    let h = match virtmcu_wire::ZenohFrameHeader::unpack_slice(&p) {
         Some(h) => h,
         None => return out,
     };
-    if p.len() < (virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
+    if p.len() < (virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize) {
         return out;
     }
-    let data = p[virtmcu_api::ZENOH_FRAME_HEADER_SIZE
-        ..virtmcu_api::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
+    let data = p[virtmcu_wire::ZENOH_FRAME_HEADER_SIZE
+        ..virtmcu_wire::ZENOH_FRAME_HEADER_SIZE + h.size() as usize]
         .to_vec();
 
     let mut dest_nodes = HashSet::new();
@@ -859,7 +859,7 @@ async fn handle_rf_msg(
     known.entry(base.clone()).or_default().insert(src.clone());
     let p_full = s.payload().to_bytes();
     let p = if has_hdr {
-        if let Some((_, _, data)) = virtmcu_api::decode_frame(&p_full) {
+        if let Some((_, _, data)) = virtmcu_wire::decode_frame(&p_full) {
             data.to_vec()
         } else {
             p_full.to_vec()
@@ -868,13 +868,13 @@ async fn handle_rf_msg(
         p_full.to_vec()
     };
     let (vt, seq, payload, lqi, mhr) = if has_hdr {
-        match virtmcu_api::rf802154::size_prefixed_root_as_rf_802154_frame(&p) {
+        match virtmcu_wire::rf802154::size_prefixed_root_as_rf_802154_frame(&p) {
             Ok(f) => (
                 f.delivery_vtime_ns(),
                 f.sequence_number(),
                 f.data().map(|d| d.bytes().to_vec()).unwrap_or_default(),
                 f.lqi(),
-                virtmcu_api::Rf802154Mhr {
+                virtmcu_wire::Rf802154Mhr {
                     fcf: f.fcf(),
                     seq_num: f.mhr_seq_num(),
                     dest_pan: f.dest_pan(),
@@ -901,7 +901,7 @@ async fn handle_rf_msg(
             0,
             data,
             255u8,
-            virtmcu_api::Rf802154Mhr {
+            virtmcu_wire::Rf802154Mhr {
                 fcf: 0,
                 seq_num: 0,
                 dest_pan: 0xFFFF,
@@ -952,7 +952,7 @@ async fn handle_rf_msg(
         }
         let vt2 = vt.saturating_add(d);
         let p2 = if has_hdr {
-            virtmcu_api::encode_rf802154_frame(
+            virtmcu_wire::encode_rf802154_frame(
                 vt2,
                 seq,
                 &payload,

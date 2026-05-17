@@ -1,29 +1,29 @@
 [workspace]
 members = [
-    "hw/rust/common/reference-peripheral",
+    "hw/rust/examples/reference-peripheral",
     "hw/rust/observability/tcg-tracer",
     "hw/rust/backbone/transport-zenoh",
-    "hw/rust/backbone/transport-unix",
+    "hw/rust/backbone/transport-uds",
     "hw/rust/backbone/transport-hub",
-    "hw/rust/common/virtmcu-api",
+    "hw/rust/common/virtmcu-wire",
     "hw/rust/backbone/clock",
     "hw/rust/common/virtmcu-qom",
-    "hw/rust/comms/netdev",
-    "hw/rust/comms/chardev",
+    "hw/rust/buses/ethernet",
+    "hw/rust/bridges/uart",
     "hw/rust/observability/telemetry",
-    "hw/rust/observability/actuator",
-    "hw/rust/observability/sensor",
-    "hw/rust/comms/ieee802154",
+    "hw/rust/physics/actuator",
+    "hw/rust/physics/sensor",
+    "hw/rust/buses/ieee802154",
     "hw/rust/observability/ui",
-    "hw/rust/comms/flexray",
+    "hw/rust/buses/flexray",
     "hw/rust/common/test-qom-device",
     "hw/rust/common/virtmcu-test-devices",
-    "hw/rust/backbone/mmio-socket-bridge",
-    "hw/rust/backbone/remote-port",
-    "hw/rust/comms/canfd",
+    "hw/rust/bridges/mmio-socket-bridge",
+    "hw/rust/bridges/remote-port",
+    "hw/rust/buses/canfd",
     "hw/rust/mcu/s32k144-lpuart",
-    "hw/rust/comms/wifi",
-    "hw/rust/comms/spi",
+    "hw/rust/buses/wifi",
+    "hw/rust/buses/spi",
     "tools/cyber_bridge",
     "tools/zenoh_coordinator",
     "tools/deterministic_coordinator", "tools/stress_adapter", "hw/rust/common/virtmcu-zenoh-config",
@@ -34,6 +34,7 @@ members = [
     "tools/virtmcu-coverage",
     "tools/virtmcu-observability",
     "tools/benchmarks/clock_rtt_bench",
+    "tools/yaml2qemu",
     "tests/native_integration",
      "hw/rust/common/virtmcu-qom-macros",
 ]
@@ -57,12 +58,12 @@ zenoh = "1.9.0"
 flatbuffers = "25.12.19"
 crossbeam-channel = "0.5"
 byteorder = "1.5"
-virtmcu-api = { path = "hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "hw/rust/common/virtmcu-wire" }
 virtmcu-zenoh-config = { path = "hw/rust/common/virtmcu-zenoh-config" }
 virtmcu-qom = { path = "hw/rust/common/virtmcu-qom" }
 virtmcu-observability = { path = "tools/virtmcu-observability" }
 transport-zenoh = { path = "hw/rust/backbone/transport-zenoh" }
-transport-unix = { path = "hw/rust/backbone/transport-unix" }
+transport-uds = { path = "hw/rust/backbone/transport-uds" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry            = { version = "0.27", features = ["trace", "logs"] }

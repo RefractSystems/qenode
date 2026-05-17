@@ -1,7 +1,7 @@
 # RFC-0025: Zero-Copy Deterministic Transport API
 
 ## Status
-Accepted (all peripherals migrated to `reserve()/commit()`; zero `publish()` callers remain in `hw/rust/`)
+Accepted
 
 ## Context & Problem Statement
 VirtMCU currently relies on `DataTransport::publish(&self, topic, payload: &[u8])`. While this interface is simple, it forces a memory allocation and a memory copy for every single packet transmitted. When running high-density simulations (e.g., 50 nodes communicating over virtual CAN bus at 1Mbit/s), the overhead of allocating `Vec<u8>` for every frame becomes a significant bottleneck.
@@ -52,7 +52,7 @@ impl<'a> TransportReservation<'a> {
 ```rust
 // Old Pattern (1 memory allocation, 1 memory copy):
 let payload = val.to_le_bytes();
-let frame = virtmcu_api::encode_frame(0, 0, &payload); 
+let frame = virtmcu_wire::encode_frame(0, 0, &payload); 
 transport.publish(&topic, &frame);
 
 // New SOTA Pattern (Zero allocations, zero copies on the hot path):
@@ -61,11 +61,13 @@ reservation.buffer_mut().copy_from_slice(&val.to_le_bytes());
 reservation.commit(0, 0)?; // The frame header is written implicitly by the transport!
 ```
 
-## Architectural Synthesis: UDS + Thread-Local Arenas
+## Amendment: UDS + Thread-Local Arenas
 
-While this RFC initially proposed backing the Reservation API with Shared Memory (SHM) ring buffers for single-host simulation, analysis revealed critical robustness issues with SHM for event transport (e.g., "zombie node" deadlocks and manual routing complexity, see RFC-0019). 
+*Adopted after initial SHM prototype. Original proposal above is unchanged.*
 
-Instead, VirtMCU will adopt the **API design** of this RFC, but back it with the **Unix Domain Sockets (UDS)** implementation mandated by RFC-0019.
+While this RFC initially proposed backing the Reservation API with Shared Memory (SHM) ring buffers for single-host simulation, analysis revealed critical robustness issues with SHM for event transport (e.g., "zombie node" deadlocks and manual routing complexity, see RFC-0019).
+
+Instead, VirtMCU adopted the **API design** of this RFC, but backed it with the **Unix Domain Sockets (UDS)** implementation mandated by RFC-0019.
 
 **How it works:**
 1. **Thread-Local Arenas:** `reserve()` provides a mutable reference (`&mut [u8]`) to a thread-local, pre-allocated arena. Because each vCPU thread owns its arena, reservations are entirely lock-free (no Mutexes, no atomic CAS).

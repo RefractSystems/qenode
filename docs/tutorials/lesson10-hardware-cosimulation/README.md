@@ -36,7 +36,7 @@ Firmware gets read value
 ```
 
 The two sides of the socket speak the *virtmcu wire protocol*, defined in
-`hw/rust/common/virtmcu-api/src/core.fbs`. That FlatBuffers schema is the **single source of truth** for
+`hw/rust/common/virtmcu-wire/src/core.fbs`. That FlatBuffers schema is the **single source of truth** for
 both the QEMU device and the SystemC adapter — never duplicate or manually pack the structs.
 
 ---
@@ -80,7 +80,7 @@ exactly one response before returning to the firmware.
 
 ---
 
-## The QEMU side — `mmio-socket-bridge` QOM device (`hw/rust/backbone/mmio-socket-bridge/src/lib.rs`)
+## The QEMU side — `mmio-socket-bridge` QOM device (`hw/rust/bridges/mmio-socket-bridge/src/lib.rs`)
 
 The device registers a `MemoryRegion` of a configurable size. Every firmware
 `ld`/`str` to that region invokes `bridge_read()` or `bridge_write()`, which

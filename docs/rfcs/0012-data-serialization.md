@@ -16,7 +16,7 @@ We chose a **Hybrid Serialization Strategy** tailored to the synchronous vs. asy
 ### 1. Synchronous Hot Paths (MMIO & Clock)
 For blocking, high-frequency bridges where every nanosecond counts, we use **FlatBuffers Structs** (Strictly defined, fixed-size binary layouts).
 *   **Format**: FlatBuffers `struct` types within `core.fbs`.
-*   **Single Source of Truth**: `hw/rust/common/virtmcu-api/src/core.fbs` defines all payloads (`MmioReq`, `ClockAdvanceReq`, etc.).
+*   **Single Source of Truth**: `hw/rust/common/virtmcu-wire/src/core.fbs` defines all payloads (`MmioReq`, `ClockAdvanceReq`, etc.).
 *   **Handshake Safety**: Every connection must immediately send and verify a `VirtMCUHandshake` struct containing a `MAGIC` (0x564D4355) and an incrementing `VERSION`.
 *   **Downstream (Python)**: We use **FlatBuffers** Python bindings with a manual `@dataclass` wrapper (`tools/vproto.py`).
 *   **Downstream (C/C++)**: Legacy components use `hw/misc/virtmcu_proto.h` which is manually aligned with the FlatBuffers layout.
@@ -36,5 +36,5 @@ For high-volume, fire-and-forget telemetry events, we use **FlatBuffers**.
 
 ## Note for Downstream Consumers (e.g., Firmware Studio)
 
-*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `VirtMCU_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, add the `virtmcu-api` crate as a dependency and use the exported packed structs.
-*   **For Telemetry Consumption:** Subscribe to `sim/telemetry/trace/<node_id>`. If using Rust, consume the `virtmcu-api` crate to access the pre-generated FlatBuffers bindings rather than compiling `telemetry.fbs` manually.
+*   **For MMIO/Clock Control:** You **MUST** implement the 8-byte `VirtMCU_handshake` upon connecting to the socket or Zenoh queryable. If using Python, simply import `vproto.py`. If using Rust, add the `virtmcu-wire` crate as a dependency and use the exported packed structs.
+*   **For Telemetry Consumption:** Subscribe to `sim/telemetry/trace/<node_id>`. If using Rust, consume the `virtmcu-wire` crate to access the pre-generated FlatBuffers bindings rather than compiling `telemetry.fbs` manually.

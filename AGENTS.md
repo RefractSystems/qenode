@@ -26,6 +26,7 @@ If you are writing or modifying code in `hw/rust/`, `tools/deterministic_coordin
 | [RFC-0027](docs/rfcs/0027-cosim-bridge-raii-framework.md) | `CoSimBridge` — owns BQL yielding for bridges |
 | [RFC-0031](docs/rfcs/0031-di-and-raii-mandate.md) | No globals, RAII, DI mandate |
 | [RFC-0040](docs/rfcs/0040-testing-pyramid-and-emulation-verification.md) | Testing tiers and gate criteria |
+| [RFC-0041](docs/rfcs/0041-safe-qom-framework-boundaries.md) | `BqlContext` type-state token — compile-time BQL proof; `ClosureTimer`; `dynamic_cast_qom` |
 
 Full RFC index: [docs/rfcs/README.md](docs/rfcs/README.md).
 
@@ -99,13 +100,13 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 - In `--yolo` mode: only *increase* quality. Never suppress warnings (`#[allow(...)]`, `noqa`) or bypass the type system.
 
 ### 2. Peripherals
-- **Simulation vs Boundary (CoSimBridge vs DeterministicReceiver)**:
-  - If a peripheral participates in the simulation graph and respects virtual time (e.g., sensors, actuators, radios, SPI, wired buses), it MUST route all traffic through the `DeterministicCoordinator` using `DeterministicReceiver` (for ingress) and `reserve()/commit()` (for egress). Direct sockets bypass the PDES quantum barrier and are BANNED for simulation traffic.
+- **Simulation vs Boundary (CoSimBridge vs VtimeIngress)**:
+  - If a peripheral participates in the simulation graph and respects virtual time (e.g., sensors, actuators, radios, SPI, wired buses), it MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress` (for ingress) and `reserve()/commit()` (for egress). Direct sockets bypass the PDES quantum barrier and are BANNED for simulation traffic.
   - If a peripheral is an infrastructure boundary that talks to external, non-simulation processes (e.g., test runners via UART/chardev, hardware-in-the-loop, or the coordinator itself), it MUST use `CoSimBridge`. `CoSimBridge` provides blocking I/O and BQL yielding for external processes that have no concept of virtual time.
-- **Gold Standard**: All new peripherals MUST follow the `hw/rust/common/reference-peripheral` template exactly. This is the single source of truth for architectural patterns.
-- **Ingress**: Use `DeterministicReceiver` for all incoming simulation data. `SafeSubscription` is STRICTLY BANNED in peripheral code (only allowed internally within framework primitives like `DeterministicReceiver` and backbone devices like `virtmcu-clock`).
+- **Gold Standard**: All new peripherals MUST follow the `hw/rust/examples/reference-peripheral` template exactly. This is the single source of truth for architectural patterns.
+- **Ingress**: Use `VtimeIngress` for all incoming simulation data. `SafeSubscription` is STRICTLY BANNED in peripheral code (only allowed internally within framework primitives like `VtimeIngress` and backbone devices like `virtmcu-clock`).
 - **MMIO Safety**: Use `VcpuDrain` and `MmioResult::wait_for` for blocking MMIO. Manual `condvar.wait()` loops are discouraged.
-- **BQL (Big QEMU Lock)**: Agents MUST NOT manually acquire, release, or check the BQL. The framework (`virtmcu-qom`) handles BQL synchronization implicitly via `DeterministicReceiver` and `MmioDevice` traits. Direct calls to `bql_lock`, `bql_unlock`, or `virtmcu_is_bql_locked` are BANNED.
+- **BQL (Big QEMU Lock)**: Agents MUST NOT manually acquire, release, or check the BQL. The framework proves BQL ownership at compile time via `&BqlContext` passed into `Peripheral::read/write/realize` and `ClosureTimer` callbacks (RFC-0041). Peripheral code never needs to query BQL status — the token's presence in the call signature IS the proof. Direct calls to `bql_lock`, `bql_unlock`, or `virtmcu_is_bql_locked` in peripheral code are BANNED.
 
 ### 3. Safe Peripheral Teardown (Drain Pattern)
 
@@ -115,7 +116,7 @@ Mandatory integration:
 1. **`VcpuDrain`**: Every peripheral state MUST include a `drain: VcpuDrain`.
 2. **MMIO Guards**: Every `read`/`write` implementation MUST call `let _guard = self.drain.acquire();` at the very beginning.
 3. **Blocking Reads**: Use `MmioResult::wait_for(...)`. This internally checks the drain state and ensures the VCPU thread can be unblocked for teardown.
-4. **RAII Cleanup**: `DeterministicReceiver` and other resources MUST be stored in the state. Their `Drop` implementations handle unsubscription and cleanup automatically.
+4. **RAII Cleanup**: `VtimeIngress` and other resources MUST be stored in the state. Their `Drop` implementations handle unsubscription and cleanup automatically.
 
 - **BANNED**: Manual `running` flags, manual thread joining in `Drop`, and bounded spinloops.
 - Every new peripheral needs a shutdown integration test (teardown during blocked MMIO, no sanitizer errors).
@@ -124,8 +125,8 @@ Mandatory integration:
 
 - **DSO Boundary Isolation Trap**: Never use Rust `static` or `static mut` (like `lazy_static!`, `Mutex`, `Atomic`) for state if peripherals might be compiled into separate `.so` files. Shared state must live in the QEMU main binary and be exported via `VIRTMCU_EXPORT`.
 - **Single-Slot Global Callbacks**: Avoid single-slot function pointers (e.g., `void (*hook)(...)`). Always use chained arrays (e.g., `hook[8]`) or DI.
-- **PDES Tie-Breaking**: Direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator`. Use `DeterministicReceiver` for all ingress.
-- **BQL Usage**: Manual BQL management is BANNED. If you think you need it, you are violating the `MmioDevice`/`DeterministicReceiver` architecture.
+- **PDES Tie-Breaking**: Direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator`. Use `VtimeIngress` for all ingress.
+- **BQL Usage**: Manual BQL management is BANNED. If you think you need it, you are violating the `Peripheral`/`BqlContext`/`VtimeIngress` architecture. The `&BqlContext` token is compile-time proof that BQL is held; accessing QEMU globals without one is a type error (RFC-0041).
 - **Atomic State Transitions**: Use a single `AtomicU8` enum + `compare_exchange`. Multiple boolean flags allow illegal states.
 - **Zenoh Executor Deadlocks**: Never block a Zenoh async thread. Offload to a background thread via `crossbeam_channel`.
 - **UART FIFO Backpressure**: PL011 FIFO is 32 bytes. Check `qemu_chr_be_can_write`, buffer overflow in backlog, drain via `chr_accept_input`.
@@ -186,8 +187,15 @@ Use this checklist every time you port or create a peripheral in `hw/rust/`.
   ```
 
 ### Simulation vs Boundary
-- [ ] Traffic that participates in virtual time (sensors, actuators, buses) routes through `DeterministicCoordinator` via `DeterministicReceiver` / `reserve()+commit()`.
+- [ ] Traffic that participates in virtual time (sensors, actuators, buses) routes through `DeterministicCoordinator` via `VtimeIngress` / `reserve()+commit()`.
 - [ ] Infrastructure boundaries (UART test runner, HIL) use `CoSimBridge`.
+
+### BQL Context and Timers (RFC-0041)
+- [ ] `read`, `write`, and `realize` signatures accept `ctx: &BqlContext` — never the old `token: &DrainToken`.
+- [ ] Pass `ctx` to every `BqlGuarded::get(ctx)` / `get_mut(ctx)` call — not doing so is a compile error.
+- [ ] Pass `ctx` to `qemu_clock_get_ns_safe(clock_type, ctx)` and `qemu_set_irq_safe(irq, level, ctx)`.
+- [ ] Peripheral-owned timers use `ClosureTimer::new(clock_type, move |ctx| { ... })`. Never write standalone `extern "C"` timer callbacks or call `QomTimer::new_safe` directly from peripheral code.
+- [ ] QOM pointer casts use `dynamic_cast_qom::<T>(ptr).expect("FATAL: QOM type mismatch")` — never `deref_qom_ptr` or `opaque_to_state`.
 
 ### Teardown
 - [ ] `drain: VcpuDrain` in state struct.

@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::sleep;
-use transport_unix::UdsDataTransport;
-use virtmcu_api::{decode_coord_message, encode_coord_done_req, DataTransport};
+use transport_uds::UdsDataTransport;
+use virtmcu_wire::{decode_coord_message, encode_coord_done_req, DataTransport};
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_uds_coordinator_pdes() {
     let federation_id = "test_uds_pdes";
@@ -77,10 +78,10 @@ topology:
     sleep(Duration::from_millis(500)).await;
 
     // Send TX messages. We use sim/chardev/0/tx which parses ZenohFrameHeader (24 bytes).
-    let payload0 = virtmcu_api::encode_frame(10, 2, b"hello from 0");
+    let payload0 = virtmcu_wire::encode_frame(10, 2, b"hello from 0");
     t0.publish("sim/chardev/0/tx", &payload0).unwrap();
 
-    let payload1 = virtmcu_api::encode_frame(5, 1, b"hello from 1");
+    let payload1 = virtmcu_wire::encode_frame(5, 1, b"hello from 1");
     t1.publish("sim/chardev/1/tx", &payload1).unwrap();
 
     // Now send DONE messages for quantum 0
@@ -111,6 +112,7 @@ topology:
     coord.kill().await.unwrap();
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_uds_multi_socket() {
     let federation_id = "test_uds_multi";

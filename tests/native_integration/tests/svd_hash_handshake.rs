@@ -2,10 +2,10 @@ use anyhow::Result;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixListener;
-use virtmcu_api::{
+use virtmcu_test_runner::{NodeConfig, TestContext, VirtmcuTestEnv};
+use virtmcu_wire::{
     FlatBufferStructExt, VirtmcuHandshake, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
 };
-use virtmcu_test_runner::{NodeConfig, TestContext, VirtmcuTestEnv};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_svd_hash_handshake_rejection() -> Result<()> {
@@ -50,7 +50,7 @@ peripherals:
     let test_task = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
 
-        let mut buf = [0u8; virtmcu_api::VIRTMCU_HANDSHAKE_SIZE];
+        let mut buf = [0u8; virtmcu_wire::VIRTMCU_HANDSHAKE_SIZE];
         stream.read_exact(&mut buf).await.unwrap();
         let client_hs = VirtmcuHandshake::unpack_slice(&buf).unwrap();
 

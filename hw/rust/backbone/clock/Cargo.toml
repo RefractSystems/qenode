@@ -12,11 +12,11 @@ crate-type = ["staticlib"]
 workspace = true 
 
 [dependencies]
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 transport-zenoh.workspace = true
-transport-unix = { path = "../../backbone/transport-unix" }
+transport-uds = { path = "../../backbone/transport-uds" }
 crossbeam-channel.workspace = true
 
 [dev-dependencies]

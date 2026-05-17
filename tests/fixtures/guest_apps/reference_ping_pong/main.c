@@ -24,29 +24,29 @@ void uart_puts(const char *s) {
 
 int main() {
   if (NODE_ID == 0) {
-    uart_puts("Node 0: Pinger starting\n");
+    uart_puts("N0:start\n");
 
     // Send Ping
     REFERENCE_PERIPHERAL->TX = 0x50494E47; // "PING"
-    uart_puts("Node 0: Ping sent, waiting for Pong...\n");
+    uart_puts("N0:ping\n");
 
     // Wait for Pong (Tests Yield-on-Read / BQL safety)
     while ((REFERENCE_PERIPHERAL->STATUS & STATUS_DATA_READY) == 0) {
     }
 
-    uart_puts("Node 0: Pong received! Test complete.\n");
+    uart_puts("N0:pong rx\n");
 
   } else if (NODE_ID == 1) {
-    uart_puts("Node 1: Ponger starting\n");
+    uart_puts("N1:start\n");
 
     // Wait for Ping (Tests Yield-on-Read / BQL safety)
     while ((REFERENCE_PERIPHERAL->STATUS & STATUS_DATA_READY) == 0) {
     }
-    uart_puts("Node 1: Ping received!\n");
+    uart_puts("N1:ping rx\n");
 
     // Send Pong
     REFERENCE_PERIPHERAL->TX = 0x504F4E47; // "PONG"
-    uart_puts("Node 1: Pong sent! Test complete.\n");
+    uart_puts("N1:pong\n");
   }
 
   while (1) {

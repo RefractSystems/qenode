@@ -1,8 +1,8 @@
 use anyhow::Result;
 use tokio::time::Duration;
 use tracing::info;
-use virtmcu_api::{FlatBufferStructExt, SyscMsg, SYSC_MSG_RESP};
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::{FlatBufferStructExt, SyscMsg, SYSC_MSG_RESP};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_reconnect() -> Result<()> {

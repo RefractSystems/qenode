@@ -19,9 +19,9 @@ The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator
 
 ### The Two-Stage Delivery Pipeline
 
-Because network delivery acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME`), its execution is non-deterministic relative to the guest. VirtMCU enforces a **Two-Stage Delivery Pipeline** via the `DeterministicReceiver` utility to ensure bit-identical results:
+Because network delivery acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME`), its execution is non-deterministic relative to the guest. VirtMCU enforces a **Two-Stage Delivery Pipeline** via the `VtimeIngress` utility to ensure bit-identical results:
 
-1. **Stage 1 (Host Ingress)**: The `DeterministicReceiver` receives a packet from the transport, decodes the `delivery_vtime_ns`, and places it into a virtual-time-sorted priority queue. It does NOT touch guest registers or raise IRQs.
+1. **Stage 1 (Host Ingress)**: The `VtimeIngress` receives a packet from the transport, decodes the `delivery_vtime_ns`, and places it into a virtual-time-sorted priority queue. It does NOT touch guest registers or raise IRQs.
 2. **Stage 2 (Virtual Time Delivery)**: A `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) fires at exactly `delivery_vtime_ns`. It drains the queue and invokes the peripheral's delivery callback under the BQL. **This** is the only safe context for mutating guest-visible state or signaling vCPUs.
 
 > [!MANDATE]
@@ -35,14 +35,14 @@ In standard Rust, shared state is protected by `std::sync::Mutex<T>`. **`std::sy
 VirtMCU mandates the following synchronization patterns:
 1. **Atomics (`AtomicBool`, `AtomicU64`)**: Use for simple flags and status registers. This is the "Gold Standard" for performance and determinism.
 2. **`virtmcu_qom::sync::Mutex<T>`**: A QEMU-backed mutex compatible with the BQL. Use this for complex state that requires locking (e.g., a `VecDeque` backlog) and for guarding `QemuCond` wait loops.
-3. **`BqlGuarded<T>` (DEPRECATED)**: Historically used to enforce BQL-only access. This is being phased out in favor of the `MmioDevice` trait and `DeterministicReceiver`, which handle implicit synchronization via the BQL and `DrainToken` exchanges.
+3. **`BqlGuarded<T>`**: Enforces BQL-only access with compile-time proof. `get(ctx)` and `get_mut(ctx)` require a `&BqlContext` token (RFC-0041), making BQL violations a compile error rather than a runtime assertion. Also maintains a runtime re-entrancy borrow count to catch aliased borrows when the BQL is temporarily yielded mid-callback.
 
 > [!TIP]
-> **Safety-by-Construction:** If your peripheral follows the `MmioDevice` trait and uses `DeterministicReceiver` for ingress, your state is automatically synchronized under the BQL, and you should rarely need manual Mutexes. Use Atomics for high-frequency status flags.
+> **Safety-by-Construction:** If your peripheral follows the `Peripheral` trait and uses `VtimeIngress` for ingress, your state is automatically synchronized under the BQL. The `&BqlContext` token threaded through `read`/`write`/`realize` makes off-thread QEMU access a compile error. Use Atomics for high-frequency status flags that background threads also read.
 
 ### Co-Simulation and BQL Discipline: `CoSimBridge`
 
-**Architectural Mandate:** `CoSimBridge` is strictly for the QEMU boundary to non-simulation infrastructure (test runners, the coordinator itself, HiL hardware). It MUST NOT be used for peripherals that participate in the simulation graph (e.g., sensors, actuators, radios, SPI). Simulation peripherals MUST route all traffic through the `DeterministicCoordinator` using `DeterministicReceiver` to respect the PDES quantum barrier.
+**Architectural Mandate:** `CoSimBridge` is strictly for the QEMU boundary to non-simulation infrastructure (test runners, the coordinator itself, HiL hardware). It MUST NOT be used for peripherals that participate in the simulation graph (e.g., sensors, actuators, radios, SPI). Simulation peripherals MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress` to respect the PDES quantum barrier.
 
 When a boundary peripheral needs to block waiting for an external infrastructure response (like over a Remote Port Unix socket or Chardev), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
 

@@ -593,11 +593,10 @@ impl<T> BqlGuarded<T> {
 
     /// Returns a shared reference guard.
     ///
-    /// Debug-asserts that BQL is held. Panics if already mutably borrowed.
+    /// Panics if already mutably borrowed.
     #[inline]
     #[track_caller]
-    pub fn get(&self) -> BqlReadGuard<'_, T> {
-        debug_assert!(Bql::is_held(), "BqlGuarded::get() called without BQL");
+    pub fn get<'a>(&'a self, _ctx: &'a crate::device::BqlContext) -> BqlReadGuard<'a, T> {
         loop {
             let b = self.borrow_count.load(core::sync::atomic::Ordering::Acquire);
             assert!(b >= 0, "BqlGuarded: already mutably borrowed!");
@@ -619,11 +618,10 @@ impl<T> BqlGuarded<T> {
 
     /// Returns a mutable reference guard.
     ///
-    /// Debug-asserts that BQL is held. Panics if already borrowed.
+    /// Panics if already borrowed.
     #[inline]
     #[track_caller]
-    pub fn get_mut(&self) -> BqlWriteGuard<'_, T> {
-        debug_assert!(Bql::is_held(), "BqlGuarded::get_mut() called without BQL");
+    pub fn get_mut<'a>(&'a self, _ctx: &'a crate::device::BqlContext) -> BqlWriteGuard<'a, T> {
         assert!(
             self.borrow_count
                 .compare_exchange(
@@ -642,7 +640,7 @@ impl<T> BqlGuarded<T> {
 use crate::timer::QomTimer;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crossbeam_channel::{unbounded, Receiver};
-use virtmcu_api::{DataCallback, DataTransport};
+use virtmcu_wire::{DataCallback, DataTransport};
 
 struct SubscriptionInternal {
     callback: DataCallback,
@@ -1113,13 +1111,13 @@ impl Drop for VcpuDrainGuard<'_> {
     }
 }
 
-/// Trait for packets delivered by a DeterministicReceiver.
+/// Trait for packets delivered by a VtimeIngress.
 pub trait DeliveryPacket: Ord + Send + 'static {
     /// Returns the virtual time in nanoseconds when this packet should be delivered.
     fn delivery_vtime_ns(&self) -> u64;
 }
 
-/// Internal state for DeterministicReceiver.
+/// Internal state for VtimeIngress.
 pub struct ReceiverInternal<T: DeliveryPacket> {
     queue: BqlGuarded<alloc::collections::BinaryHeap<core::cmp::Reverse<T>>>,
     deliver_cb: BqlGuarded<alloc::boxed::Box<dyn FnMut(T) + Send + Sync + 'static>>,
@@ -1132,15 +1130,15 @@ unsafe impl<T: DeliveryPacket> Send for ReceiverInternal<T> {}
 unsafe impl<T: DeliveryPacket> Sync for ReceiverInternal<T> {}
 
 /// A generic receiver that queues Zenoh packets and delivers them at the correct virtual time.
-pub struct DeterministicReceiver<T: DeliveryPacket> {
+pub struct VtimeIngress<T: DeliveryPacket> {
     internal: alloc::sync::Arc<ReceiverInternal<T>>,
     _subscription: SafeSubscription,
     _timer: alloc::sync::Arc<crate::timer::QomTimer>,
 }
 
-impl<T: DeliveryPacket> DeterministicReceiver<T> {
-    /// Creates a new `DeterministicReceiver` (Legacy API).
-    pub fn new<TR: virtmcu_api::DataTransport + ?Sized>(
+impl<T: DeliveryPacket> VtimeIngress<T> {
+    /// Creates a new `VtimeIngress` (Legacy API).
+    pub fn new<TR: virtmcu_wire::DataTransport + ?Sized>(
         transport: &TR,
         topic: &str,
         generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
@@ -1170,8 +1168,8 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
         )
     }
 
-    /// Creates a new `DeterministicReceiver` safely using closures.
-    pub fn new_safe<TR: virtmcu_api::DataTransport + ?Sized, FDecode, FDeliver>(
+    /// Creates a new `VtimeIngress` safely using closures.
+    pub fn new_safe<TR: virtmcu_wire::DataTransport + ?Sized, FDecode, FDeliver>(
         transport: &TR,
         topic: &str,
         generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
@@ -1192,7 +1190,7 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
         let timer = alloc::sync::Arc::new(unsafe {
             crate::timer::QomTimer::new(
                 crate::timer::QEMU_CLOCK_VIRTUAL,
-                deterministic_receiver_timer_cb::<T>,
+                vtime_ingress_timer_cb::<T>,
                 alloc::sync::Arc::into_raw(timer_internal) as *mut core::ffi::c_void,
             )
         });
@@ -1204,10 +1202,12 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
 
         let sub_internal = alloc::sync::Arc::clone(&internal);
         let sub_timer = alloc::sync::Arc::clone(&timer);
-        let callback: virtmcu_api::DataCallback =
+        let callback: virtmcu_wire::DataCallback =
             alloc::boxed::Box::new(move |topic_str: &str, payload: &[u8]| {
                 if let Some(packet) = decode_cb(topic_str, payload) {
-                    let mut queue = sub_internal.queue.get_mut();
+                    // SAFETY: This closure is only called from safe_subscription_timer_cb, which runs under BQL.
+                    let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+                    let mut queue = sub_internal.queue.get_mut(&ctx);
                     queue.push(core::cmp::Reverse(packet));
                     if let Some(core::cmp::Reverse(first)) = queue.peek() {
                         sub_timer.mod_ns(first.delivery_vtime_ns() as i64);
@@ -1223,8 +1223,8 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
     }
 
     /// Pushes a new packet into the priority queue and updates the virtual timer.
-    pub fn push(&self, packet: T) {
-        let mut queue = self.internal.queue.get_mut();
+    pub fn push(&self, packet: T, ctx: &crate::device::BqlContext) {
+        let mut queue = self.internal.queue.get_mut(ctx);
         queue.push(core::cmp::Reverse(packet));
         if let Some(core::cmp::Reverse(first)) = queue.peek() {
             let timer_ptr = self.internal.timer_ptr.load(core::sync::atomic::Ordering::Acquire)
@@ -1236,17 +1236,19 @@ impl<T: DeliveryPacket> DeterministicReceiver<T> {
     }
 }
 
-extern "C" fn deterministic_receiver_timer_cb<T: DeliveryPacket>(opaque: *mut core::ffi::c_void) {
+extern "C" fn vtime_ingress_timer_cb<T: DeliveryPacket>(opaque: *mut core::ffi::c_void) {
+    // SAFETY: QEMU fires timer callbacks with BQL held.
+    let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
     let internal = unsafe { &*(opaque as *const ReceiverInternal<T>) };
     let now = unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_VIRTUAL) } as u64;
 
     loop {
-        let mut queue = internal.queue.get_mut();
+        let mut queue = internal.queue.get_mut(&ctx);
         if let Some(core::cmp::Reverse(first)) = queue.peek() {
             if first.delivery_vtime_ns() <= now {
                 let core::cmp::Reverse(packet) = queue.pop().expect("queue is not empty");
                 drop(queue);
-                let mut cb = internal.deliver_cb.get_mut();
+                let mut cb = internal.deliver_cb.get_mut(&ctx);
                 (*cb)(packet);
                 continue;
             }
@@ -1264,7 +1266,7 @@ extern "C" fn deterministic_receiver_timer_cb<T: DeliveryPacket>(opaque: *mut co
     }
 }
 
-impl<T: DeliveryPacket> Drop for DeterministicReceiver<T> {
+impl<T: DeliveryPacket> Drop for VtimeIngress<T> {
     fn drop(&mut self) {
         // Disconnect the timer
         self.internal.timer_ptr.store(0, core::sync::atomic::Ordering::Release);
@@ -1272,7 +1274,7 @@ impl<T: DeliveryPacket> Drop for DeterministicReceiver<T> {
 
         // Recover the leaked Arc from the timer callback opaque pointer.
         // It's safe to do this here because SafeSubscription has already been dropped
-        // before we drop the DeterministicReceiver (assuming correct destruction order),
+        // before we drop the VtimeIngress (assuming correct destruction order),
         // and the QEMU timer is deleted so no more callbacks will run.
         let timer_opaque = alloc::sync::Arc::as_ptr(&self.internal).cast_mut();
         unsafe {
@@ -1281,6 +1283,10 @@ impl<T: DeliveryPacket> Drop for DeterministicReceiver<T> {
         }
     }
 }
+
+/// Deprecated alias for [`VtimeIngress`].
+#[deprecated(since = "0.2.0", note = "renamed to VtimeIngress")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
+pub type DeterministicReceiver<T> = VtimeIngress<T>;
 
 #[cfg(test)]
 mod tests {
@@ -1405,7 +1411,8 @@ mod tests {
     fn test_bql_guarded_get_returns_value() {
         let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        assert_eq!(*guarded.get(), TEST_VAL);
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        assert_eq!(*guarded.get(&ctx), TEST_VAL);
     }
 
     const UPDATE_VAL: u64 = 99;
@@ -1414,8 +1421,9 @@ mod tests {
     fn test_bql_guarded_get_mut_mutates_value() {
         let guarded = BqlGuarded::new(0u64);
         let _bql = Bql::lock();
-        *guarded.get_mut() = UPDATE_VAL;
-        assert_eq!(*guarded.get(), UPDATE_VAL);
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        *guarded.get_mut(&ctx) = UPDATE_VAL;
+        assert_eq!(*guarded.get(&ctx), UPDATE_VAL);
     }
 
     #[test]
@@ -1427,30 +1435,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "BqlGuarded::get() called without BQL")]
-    fn test_bql_guarded_panics_on_get_without_bql() {
-        let guarded = BqlGuarded::new(0u32);
-        // BQL is NOT held — debug_assert must fire.
-        let _ = guarded.get();
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "BqlGuarded::get_mut() called without BQL")]
-    fn test_bql_guarded_panics_on_get_mut_without_bql() {
-        let guarded = BqlGuarded::new(0u32);
-        // BQL is NOT held — debug_assert must fire.
-        let _ = guarded.get_mut();
-    }
-
-    #[test]
     #[should_panic(expected = "already mutably borrowed")]
     fn test_bql_guarded_read_after_write() {
         let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        let _write = guarded.get_mut();
-        let _read = guarded.get(); // Panics dynamically
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        let _write = guarded.get_mut(&ctx);
+        let _read = guarded.get(&ctx); // Panics dynamically
     }
 
     #[test]
@@ -1458,8 +1449,9 @@ mod tests {
     fn test_bql_guarded_write_after_read() {
         let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        let _read = guarded.get();
-        let _write = guarded.get_mut(); // Panics dynamically
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        let _read = guarded.get(&ctx);
+        let _write = guarded.get_mut(&ctx); // Panics dynamically
     }
 
     #[test]
@@ -1482,6 +1474,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     #[should_panic(expected = "VcpuDrain timed out")]
     fn test_vcpu_drain_wait_timeout() {
         const DRAIN_TIMEOUT_MS: u32 = 10;

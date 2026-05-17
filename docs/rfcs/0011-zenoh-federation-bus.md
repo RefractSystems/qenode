@@ -41,7 +41,7 @@ By routing all traffic through Zenoh, we can embed **virtual timestamps** (`deli
 ## Implementation Notes for Junior Developers
 If you are reading the code in `hw/rust/`:
 - **`clock`** uses Zenoh's **Queryable** API. QEMU issues a `GET` request to ask the `Physical Node` to advance time. It blocks until the reply is received.
-- **`netdev` and `chardev`** use Zenoh's **Pub/Sub** API, but **Direct Pub/Sub between simulation nodes is STRICTLY BANNED** for data-plane traffic. To preserve PDES tie-breaking and per-quantum barrier synchronization, all outbound bytes are published to the `DeterministicCoordinator`. The Coordinator buffers, sorts, and forwards the packets. The peripheral's subscriber callback (via `DeterministicReceiver`) places the inbound data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
+- **`netdev` and `chardev`** use Zenoh's **Pub/Sub** API, but **Direct Pub/Sub between simulation nodes is STRICTLY BANNED** for data-plane traffic. To preserve PDES tie-breaking and per-quantum barrier synchronization, all outbound bytes are published to the `DeterministicCoordinator`. The Coordinator buffers, sorts, and forwards the packets. The peripheral's subscriber callback (via `VtimeIngress`) places the inbound data in a queue, and a `QEMUTimer` is responsible for popping the queue when virtual time matches the packet's timestamp.
 
 ## External References
 * For a complete mapping of all active Zenoh topics in the system, see [Zenoh Topic Map](ZENOH_TOPIC_MAP.md).

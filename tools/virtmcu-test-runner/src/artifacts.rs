@@ -79,7 +79,7 @@ impl ArtifactCache {
             return Err(anyhow!("Failed to compile DTB"));
         }
 
-        let _ = std::fs::remove_file(tmp_dts);
+        // let _ = std::fs::remove_file(tmp_dts);
 
         Ok(dtb_path)
     }

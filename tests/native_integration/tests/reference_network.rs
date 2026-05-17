@@ -14,27 +14,28 @@ async fn run_ping_pong_test(transport: &str) -> Result<Vec<String>> {
         .add_node(
             NodeConfig::new(0)
                 .with_firmware_path("tests/fixtures/guest_apps/reference_ping_pong/pinger.elf")
-                .with_yaml_path("worlds/reference_ping_pong.yml"),
+                .with_yaml_path("worlds/reference_ping_pong.yml")
+                .add_qemu_arg("-icount")
+                .add_qemu_arg("shift=0,align=off,sleep=off"),
         )
         .add_node(
             NodeConfig::new(1)
                 .with_firmware_path("tests/fixtures/guest_apps/reference_ping_pong/ponger.elf")
-                .with_yaml_path("worlds/reference_ping_pong.yml"),
+                .with_yaml_path("worlds/reference_ping_pong.yml")
+                .add_qemu_arg("-icount")
+                .add_qemu_arg("shift=0,align=off,sleep=off"),
         )
         .with_timeout(60)
         .run_test(move |env| {
             Box::pin(async move {
-                env.wait_for_output(0, "Node 0: Pinger starting").await?;
-                env.wait_for_output(0, "Node 0: Ping sent, waiting for Pong...")
-                    .await?;
-                env.wait_for_output(1, "Node 1: Ponger starting").await?;
+                env.wait_for_output(0, "N0:start").await?;
+                env.wait_for_output(0, "N0:ping").await?;
+                env.wait_for_output(1, "N1:start").await?;
                 env.step_clock(50_000_000, 10_000_000).await?;
 
-                env.wait_for_output(1, "Node 1: Ping received!").await?;
-                env.wait_for_output(0, "Node 0: Pong received! Test complete.")
-                    .await?;
-                env.wait_for_output(1, "Node 1: Pong sent! Test complete.")
-                    .await?;
+                env.wait_for_output(1, "N1:ping rx").await?;
+                env.wait_for_output(0, "N0:pong rx").await?;
+                env.wait_for_output(1, "N1:pong").await?;
 
                 let out0 = env.uart_buffer(0).await;
                 let out1 = env.uart_buffer(1).await;

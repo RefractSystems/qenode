@@ -7,7 +7,7 @@ Accepted
 VirtMCU needs to integrate seamlessly with existing EDA and hardware co-simulation tools, most notably SystemC and Verilator. These ecosystems often use the Xilinx Remote Port (libremoteport) protocol for bridging simulation environments.
 
 ## Decision
-We implement a `remote-port` backbone module (`hw/rust/backbone/remote-port`). This module acts as a QEMU device that translates VirtMCU's internal MMIO accesses into the standard Remote Port protocol over Unix sockets or TCP.
+We implement a `remote-port` bridge module (`hw/rust/bridges/remote-port`). This module acts as a QEMU device that translates VirtMCU's internal MMIO accesses into the standard Remote Port protocol over Unix sockets or TCP.
 
 ## Reference-level explanation
 - **Integration**: Plugs into the `CoSimBridge` container to handle vCPU suspension and RAII teardown cleanly.

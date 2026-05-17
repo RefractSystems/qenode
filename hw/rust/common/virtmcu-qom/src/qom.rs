@@ -381,3 +381,48 @@ macro_rules! declare_device_type {
         };
     };
 }
+
+/// Compile-time marker for QOM device types. Implemented automatically by
+/// `#[qom_device]` — do not implement manually in peripheral code.
+pub trait QomDevice {
+    /// The canonical QOM type name for this device, represented as a null-terminated C string.
+    const QOM_TYPE_NAME: &'static core::ffi::CStr;
+}
+
+/// Downcasts a raw QOM pointer using QEMU's dynamic type system.
+/// Returns `None` on null input or type mismatch; never blindly reinterprets memory.
+///
+/// The caller must still write `unsafe { ptr.as_mut() }` to dereference —
+/// lifetime binding is the caller's responsibility.
+pub fn dynamic_cast_qom<T: QomDevice>(
+    ptr: *mut core::ffi::c_void,
+) -> Option<core::ptr::NonNull<T>> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is non-null; object_dynamic_cast validates the type chain in QEMU.
+    let result = unsafe { object_dynamic_cast(ptr as *mut Object, T::QOM_TYPE_NAME.as_ptr()) };
+    core::ptr::NonNull::new(result as *mut T)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeDevice;
+    impl QomDevice for FakeDevice {
+        const QOM_TYPE_NAME: &'static core::ffi::CStr = c"fake-device";
+    }
+
+    #[test]
+    fn test_dynamic_cast_qom_null_returns_none() {
+        let result = dynamic_cast_qom::<FakeDevice>(core::ptr::null_mut());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_qom_type_name_constant() {
+        // Compile-time: verify the constant is accessible and correct.
+        assert_eq!(FakeDevice::QOM_TYPE_NAME.to_bytes(), b"fake-device");
+    }
+}

@@ -3,8 +3,8 @@ pub mod physics_transport;
 pub mod resd_parser;
 
 use std::sync::Arc;
-use virtmcu_api::topics::sim_topic;
-use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, PhysicalNodeTransport};
+use virtmcu_wire::topics::sim_topic;
+use virtmcu_wire::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, PhysicalNodeTransport};
 use zenoh::{Session, Wait};
 
 /// A Zenoh-backed implementation of the `PhysicalNodeTransport` trait.
@@ -48,7 +48,7 @@ impl PhysicalNodeTransport for ZenohPhysicalNodeTransport {
         None
     }
 }
-pub use virtmcu_api::ActuatorMap;
+pub use virtmcu_wire::ActuatorMap;
 
 pub struct ZenohActuatorSink {
     buffer: Arc<std::sync::Mutex<ActuatorMap>>,
@@ -64,10 +64,10 @@ impl ZenohActuatorSink {
             .declare_subscriber(filter)
             .callback(move |sample| {
                 let raw = sample.payload().to_bytes();
-                if raw.len() < virtmcu_api::ZENOH_FRAME_HEADER_SIZE {
+                if raw.len() < virtmcu_wire::ZENOH_FRAME_HEADER_SIZE {
                     return;
                 }
-                let Some((vtime, _, data_bytes)) = virtmcu_api::decode_frame(&raw) else {
+                let Some((vtime, _, data_bytes)) = virtmcu_wire::decode_frame(&raw) else {
                     return;
                 };
                 let topic = sample.key_expr().as_str();
@@ -111,7 +111,7 @@ impl ZenohActuatorSink {
 mod tests {
     use super::*;
     use std::time::Duration;
-    use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, CLOCK_ERROR_OK};
+    use virtmcu_wire::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, CLOCK_ERROR_OK};
     use zenoh::Wait;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -179,7 +179,7 @@ mod tests {
         for val in &vals {
             data_payload.extend_from_slice(&val.to_le_bytes());
         }
-        let payload = virtmcu_api::encode_frame(1000, 0, &data_payload);
+        let payload = virtmcu_wire::encode_frame(1000, 0, &data_payload);
 
         session.put(&topic, payload).wait().unwrap();
 

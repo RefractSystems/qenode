@@ -1,7 +1,7 @@
 # RFC-0003: Rust Idioms and Community Alignment
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 VirtMCU is a Rust-based framework built on top of a massive legacy C application (QEMU). While our primary goal is to follow standard Rust community guidelines to ensure maintainability and developer familiarity, the unique constraints of hardware simulation and C-FFI boundaries force us to make intentional architectural compromises.
@@ -13,7 +13,7 @@ To ensure transparency for new contributors and community reviewers, this RFC fo
 ### 1. Adoption of Standard Idioms (Alignment)
 VirtMCU explicitly adopts and enforces the following "Standard Rust" patterns:
 *   **RAII (Resource Acquisition Is Initialization):** All resources (sessions, timers, memory) must be managed via Rust's ownership and `Drop` semantics. Manual `init`/`deinit` calls are banned.
-*   **The Typestate Pattern:** We use the type system to enforce valid program states (e.g., `DrainToken` required for MMIO access).
+*   **The Typestate Pattern:** We use the type system to enforce valid program states (e.g., `BqlContext` required for all QEMU state access — a `!Send` zero-sized token that proves BQL ownership at compile time, per RFC-0041).
 *   **Dependency Injection (DI):** Component dependencies must be passed explicitly (via `Arc<dyn Trait>`) to ensure testability and parallel simulation safety. Global mutable state is strictly forbidden.
 *   **Strict Tooling:** We adhere to the 2021/2024 edition standards and enforce strict `rustfmt` and `clippy` rules.
 
@@ -43,3 +43,4 @@ Where we drift from standard community guidelines, we do so for deterministic co
 - RFC-0013: Rust as the Primary Language
 - RFC-0022: Fail Loudly vs Linting Policy
 - RFC-0023: Safe QOM Macros
+- RFC-0041: Safe QOM Framework Boundaries via Type-State (`BqlContext` typestate design)

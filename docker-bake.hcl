@@ -46,9 +46,15 @@ variable "VIRTMCU_USE_ASAN" {
 
 # Content-addressed QEMU cache tag: set by CI to "${QEMU_VERSION}-${patches_hash}".
 # Defaults to "latest" for local builds where the exact tag does not matter.
-variable "VIRTMCU_IMAGE_REGISTRY" {}
-variable "VIRTMCU_DEVENV_IMAGE" {}
-variable "VIRTMCU_CI_IMAGE" {}
+variable "VIRTMCU_IMAGE_REGISTRY" {
+  default = "ghcr.io/refractsystems/virtmcu"
+}
+variable "VIRTMCU_DEVENV_IMAGE" {
+  default = "virtmcu-devenv"
+}
+variable "VIRTMCU_CI_IMAGE" {
+  default = "virtmcu-ci"
+}
 
 variable "THIRD_PARTY_CACHE_TAG" {
   default = "latest"

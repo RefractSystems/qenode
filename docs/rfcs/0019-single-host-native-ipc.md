@@ -15,7 +15,7 @@ For single-host deployments, VirtMCU will utilize a **Hybrid Native IPC Architec
 
 To achieve State-of-the-Art (SOTA) performance and minimize memory allocations on the hot path, the UDS event transport implements the **Transport-Agnostic Reservation API** defined in **RFC-0025 (canonical)**. RFC-0025 owns the trait/API surface; this RFC owns only the UDS *backend* — thread-local arenas, kernel framing, and lifecycle (`EOF`-on-crash semantics).
 
-The on-the-wire framing, registration handshake (`UdsRegistration`), and quantum-start signalling (`UdsQuantumStart`) are specified in **RFC-0033 (UDS Coordinator Wire Protocol)**. FlatBuffers schemas live in `hw/rust/common/virtmcu-api/src/core.fbs`.
+The on-the-wire framing, registration handshake (`UdsRegistration`), and quantum-start signalling (`UdsQuantumStart`) are specified in **RFC-0033 (UDS Coordinator Wire Protocol)**. FlatBuffers schemas live in `hw/rust/common/virtmcu-wire/src/core.fbs`.
 
 ### The Single-Host Hybrid Architecture
 

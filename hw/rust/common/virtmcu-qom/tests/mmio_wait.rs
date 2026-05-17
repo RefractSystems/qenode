@@ -1,7 +1,7 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 
 use std::sync::Mutex as StdMutex;
-use virtmcu_qom::device::{DrainToken, MmioDevice, MmioResult, Peripheral, PeripheralState};
+use virtmcu_qom::device::{BqlContext, MmioDevice, MmioResult, Peripheral, PeripheralState};
 use virtmcu_qom::sync::{Bql, Condvar, Mutex};
 use virtmcu_qom_macros::{qom_device, MmioDevice};
 
@@ -20,17 +20,20 @@ impl PeripheralState for MockState {
 }
 
 impl Peripheral for MockState {
-    fn read(&self, _offset: u64, _size: u32, _token: &DrainToken) -> MmioResult<'_> {
-        MmioResult::Ready(0)
+    fn read(&self, offset: u64, size: u32, _ctx: &BqlContext) -> MmioResult<'_> {
+        MmioDevice::read(self, offset, size)
     }
 
-    fn write(&self, _offset: u64, _value: u64, _size: u32, _token: &DrainToken) {}
+    fn write(&self, offset: u64, value: u64, size: u32, _ctx: &BqlContext) {
+        MmioDevice::write(self, offset, value, size);
+    }
 
     fn condvar(&self) -> &Condvar {
         &self.condvar
     }
 
-    fn wait_mutex(&self) -> &Mutex<()> {
+    #[rustfmt::skip]
+    fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
 }
@@ -62,7 +65,8 @@ impl MmioDevice for MockState {
         &self.condvar
     }
 
-    fn wait_mutex(&self) -> &Mutex<()> {
+    #[rustfmt::skip]
+    fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
 }

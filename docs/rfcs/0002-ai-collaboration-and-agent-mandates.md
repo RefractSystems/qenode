@@ -1,47 +1,39 @@
 # RFC-0002: Human-AI Collaboration and Agent Mandates
 
+## Status
+
+**Superseded by `AGENTS.md` (canonical) / `CLAUDE.md` / `GEMINI.md`.**
+
+The agent behavioral mandates described here have been extracted into the workspace instruction files (`AGENTS.md` and its symlinks) that every tool loads automatically. That file is the authoritative, live-updated source; this RFC records the original rationale for the decision to formalize those mandates.
+
 ## Summary
-This RFC formalizes the engineering standards and behavioral constraints for AI agents (like Gemini CLI) operating within the VirtMCU workspace. It ensures that AI-assisted development preserves "Enterprise SOTA" quality and safety.
+
+This RFC establishes the decision to treat AI-agent behavior in the VirtMCU workspace as an enforceable architectural constraint rather than advisory guidance. The mandates themselves live in `AGENTS.md`; this document records *why* that decision was made and what alternatives were rejected.
 
 ## Motivation
-VirtMCU is a high-integrity, deterministic simulation framework where a single "lazy" code change (e.g., using `.unwrap()` or skipping a test) can invalidate the results of a multi-million-dollar firmware verification campaign. As AI agents become primary contributors to the codebase, we must move their behavioral rules from "helpful hints" to "architectural mandates."
 
-## The Agent Mandates
+VirtMCU is a high-integrity, deterministic simulation framework where a single "lazy" change — using `.unwrap()`, suppressing a lint, or skipping a test — can invalidate a multi-million-dollar firmware verification campaign. As AI agents become primary contributors, their failure modes differ from human developers: hallucination, over-optimization of local context, and pattern-matching shortcuts that look correct but violate deep invariants.
 
-### 1. The "Quality-Only" Yolo Rule
-When operating in autonomous (`--yolo`) mode, an agent's primary goal is to **increase quality**.
-- **No Suppression**: Agents are PROHIBITED from suppressing warnings (e.g., adding `#[allow(...)]`) or bypassing types (e.g., using `as` casts or `unsafe`) simply to fix a build error. They must find the idiomatic, type-safe solution.
-- **No Hacks**: Agents must not use reflection, "hidden" logic, or global state to bypass architectural constraints like the DI mandate (RFC-0031).
+Moving agent rules from "helpful hints in a README" to "machine-readable mandates loaded by the tool on every invocation" converts a process risk into an architectural guarantee. A tool that reads `AGENTS.md` at startup cannot miss the rules; a developer who might skip reading docs might.
 
-### 2. Empirical Verification
-An agent is not finished with a task until it has empirically proven that the change works.
-- **Reproduction**: For bug fixes, the agent MUST first create a failing test case or reproduction script.
-- **Verification**: The agent MUST run the full relevant test tier (`make test-check` or `make test-integration`) and verify that all linters pass before declaring victory.
+## Decision
 
-### 3. Absolute Context Fidelity
-- **Read-Before-Write**: Agents must never assume the contents of a file or the state of the project. They must use `grep_search` and `read_file` to validate assumptions before applying a `replace`.
-- **Atomic Edits**: Agents should prefer surgical `replace` calls over full-file `write_file` calls to preserve unrelated comments, formatting, and surrounding context.
+Agent behavioral rules are encoded in `AGENTS.md` (and its symlinks `CLAUDE.md`, `GEMINI.md`) rather than in a standalone RFC. The key properties of this encoding:
 
-### 4. Documentation Responsibility
-If an agent makes an architectural decision not covered by an existing RFC, it must:
-1. Flag the decision to the human user.
-2. Propose a new RFC draft (as demonstrated by the creation of this document).
+1. **Quality-Only Autonomous Mode**: In `--yolo` mode, agents may only increase quality — suppressing warnings, bypassing types, or using `unsafe` to fix a build is prohibited.
+2. **Empirical Verification Gate**: An agent declares work done only after the relevant `make test-check` tier passes. Bug fixes require a failing test before the fix.
+3. **Context Fidelity**: Agents read files before editing them; surgical edits over full-file rewrites.
+4. **Documentation Responsibility**: Agents flag architectural decisions not covered by an RFC and propose a draft.
 
-## Guide-level explanation
-If you are a human developer reviewing an AI's PR:
-- Look for the **Validation Gate** in their plan. Did they run `make test-check`?
-- Check for `virtmcu-allow` comments. Did the AI justify why it needed to suppress a lint?
-- If the AI used `.unwrap()`, reject the PR immediately. It violated the "Fail Loudly" mandate (RFC-0022).
+## Drawbacks
 
-## Reference-level explanation
-These mandates are enforced via:
-- **`GEMINI.md`**: The source of truth for agent instructions.
-- **Custom Linters**: The `virtmcu-test-runner` includes lints that catch "lazy AI" patterns (e.g., banning `thread::sleep` and `unwrap`).
-- **CI Gates**: The PR pipeline will reject any change that violates these mandates, regardless of whether it was authored by a human or an AI.
+- Agent instruction files must be kept in sync with the RFC corpus as new design decisions are made. The `AGENTS.md` SSoT mandate mitigates this by making `AGENTS.md` the single file to update.
 
-## Rationale and alternatives
-We could treat AI agents as standard developers. However, agents have different failure modes (hallucination, over-optimization of context, laziness). Specific mandates counteract these tendencies and ensure the AI acts as a "Senior Staff Engineer" rather than a "Junior Intern."
+## Alternatives
 
-## Unresolved questions
-- How do we handle agents with smaller context windows that cannot read the entire RFC library? (Proposed: Use `update_topic` to maintain a "summarized architectural state" in the session history).
-- Should we implement automated "Agent Grading" in CI?
+- **Enforce mandates via CI lints only**: Catches violations after the fact. Rejected — the goal is to prevent generation of non-conforming code, not just reject PRs.
+- **Per-agent configuration files**: Fragmented maintenance. A single `AGENTS.md` loaded by all tools is simpler.
+
+## Unresolved Questions
+
+None. The resolution is `AGENTS.md`.

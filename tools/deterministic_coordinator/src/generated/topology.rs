@@ -642,6 +642,9 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///    "renode_type": {
 ///      "type": "string"
 ///    },
+///    "replay_trace": {
+///      "type": "string"
+///    },
 ///    "size": {
 ///      "$ref": "#/$defs/Address"
 ///    },
@@ -668,6 +671,8 @@ pub struct Resource {
     pub properties: ::std::option::Option<RecordUnknown>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub renode_type: ::std::option::Option<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub replay_trace: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub size: ::std::option::Option<Address>,
     #[serde(
@@ -1454,6 +1459,10 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        replay_trace: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         size: ::std::result::Result<::std::option::Option<super::Address>, ::std::string::String>,
         type_: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -1470,6 +1479,7 @@ pub mod builder {
                 parent: Ok(Default::default()),
                 properties: Ok(Default::default()),
                 renode_type: Ok(Default::default()),
+                replay_trace: Ok(Default::default()),
                 size: Ok(Default::default()),
                 type_: Ok(Default::default()),
             }
@@ -1546,6 +1556,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for renode_type: {e}"));
             self
         }
+        pub fn replay_trace<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.replay_trace = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for replay_trace: {e}"));
+            self
+        }
         pub fn size<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<super::Address>>,
@@ -1578,6 +1598,7 @@ pub mod builder {
                 parent: value.parent?,
                 properties: value.properties?,
                 renode_type: value.renode_type?,
+                replay_trace: value.replay_trace?,
                 size: value.size?,
                 type_: value.type_?,
             })
@@ -1593,6 +1614,7 @@ pub mod builder {
                 parent: Ok(value.parent),
                 properties: Ok(value.properties),
                 renode_type: Ok(value.renode_type),
+                replay_trace: Ok(value.replay_trace),
                 size: Ok(value.size),
                 type_: Ok(value.type_),
             }

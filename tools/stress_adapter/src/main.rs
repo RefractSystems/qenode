@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
-use virtmcu_api::{
+use virtmcu_wire::{
     FlatBufferStructExt, MmioReq, SyscMsg, VirtmcuHandshake, SYSC_MSG_RESP, VIRTMCU_PROTO_MAGIC,
     VIRTMCU_PROTO_VERSION,
 };

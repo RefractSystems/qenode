@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use virtmcu_api::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt};
+use virtmcu_wire::{ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Simulation Frequency Ceiling Benchmark", long_about = None)]

@@ -11,7 +11,7 @@ camino = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-virtmcu-api = { workspace = true }
+virtmcu-wire = { workspace = true }
 virtmcu-zenoh-config = { workspace = true }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
@@ -25,7 +25,7 @@ ignored = [
     "clap",
     "tracing",
     "tracing-subscriber",
-    "virtmcu-api",
+    "virtmcu-wire",
     "virtmcu-zenoh-config",
     "tokio",
     "anyhow",

@@ -23,6 +23,12 @@ extern "C" {
     pub fn qemu_set_irq(irq: QemuIrq, level: i32);
 }
 
+/// Safely sets an IRQ level.
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="Safe wrapper for zero-unsafe peripherals"
+pub fn qemu_set_irq_safe(irq: QemuIrq, level: i32, _ctx: &crate::device::BqlContext) {
+    unsafe { qemu_set_irq(irq, level) }
+}
+
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 extern "C" {
     /// A setter

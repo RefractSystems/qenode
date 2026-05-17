@@ -1,4 +1,8 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::missing_safety_doc)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![cfg_attr(
     test,
     allow(
@@ -16,10 +20,10 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::collections::HashMap;
 
-use virtmcu_api::{DataTransport, LivelinessToken};
 use virtmcu_qom::memory::MemoryRegion;
 use virtmcu_qom::qdev::SysBusDevice;
-use virtmcu_qom::sync::{Condvar, DeliveryPacket, DeterministicReceiver, Mutex, VcpuDrain};
+use virtmcu_qom::sync::{Condvar, DeliveryPacket, Mutex, VcpuDrain, VtimeIngress};
+use virtmcu_wire::{DataTransport, LivelinessToken};
 
 const REG_LED_ID: u64 = 0x00;
 const REG_LED_STATE: u64 = 0x04;
@@ -73,7 +77,7 @@ pub struct ZenohUiQEMU {
 
 pub struct ButtonInfo {
     pub pressed: Arc<AtomicBool>,
-    pub receiver: DeterministicReceiver<ButtonPacket>,
+    pub receiver: VtimeIngress<ButtonPacket>,
 }
 
 pub struct ZenohUiState {
@@ -123,7 +127,10 @@ impl virtmcu_qom::device::PeripheralState for ZenohUiState {
 }
 
 impl virtmcu_qom::device::Peripheral for ZenohUiState {
-    fn realize(&mut self) -> Result<(), alloc::string::String> {
+    fn realize(
+        &mut self,
+        _ctx: &virtmcu_qom::device::BqlContext,
+    ) -> Result<(), alloc::string::String> {
         Ok(())
     }
 
@@ -131,12 +138,12 @@ impl virtmcu_qom::device::Peripheral for ZenohUiState {
         &self,
         addr: u64,
         size: u32,
-        _token: &virtmcu_qom::device::DrainToken,
+        _token: &virtmcu_qom::device::BqlContext,
     ) -> virtmcu_qom::device::MmioResult<'_> {
         virtmcu_qom::device::MmioDevice::read(self, addr, size)
     }
 
-    fn write(&self, addr: u64, val: u64, size: u32, _token: &virtmcu_qom::device::DrainToken) {
+    fn write(&self, addr: u64, val: u64, size: u32, _token: &virtmcu_qom::device::BqlContext) {
         virtmcu_qom::device::MmioDevice::write(self, addr, val, size);
     }
 
@@ -144,6 +151,7 @@ impl virtmcu_qom::device::Peripheral for ZenohUiState {
         &self.cond
     }
 
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }
@@ -157,12 +165,17 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
         }
 
         match addr {
-            REG_LED_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(self.active_led_id.load(Ordering::Relaxed))),
-            REG_BTN_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(self.active_btn_id.load(Ordering::Relaxed))),
+            REG_LED_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(
+                self.active_led_id.load(Ordering::Relaxed),
+            )),
+            REG_BTN_ID => virtmcu_qom::device::MmioResult::Ready(u64::from(
+                self.active_btn_id.load(Ordering::Relaxed),
+            )),
             REG_BTN_STATE => {
                 let btn_id = self.active_btn_id.load(Ordering::Relaxed);
                 let btns = self.buttons.lock();
-                let pressed = btns.get(&btn_id).is_some_and(|info| info.pressed.load(Ordering::Relaxed));
+                let pressed =
+                    btns.get(&btn_id).is_some_and(|info| info.pressed.load(Ordering::Relaxed));
                 virtmcu_qom::device::MmioResult::Ready(u64::from(pressed))
             }
             _ => virtmcu_qom::device::MmioResult::Ready(0),
@@ -187,9 +200,15 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
                     match t.reserve(&topic, payload.len()) {
                         Ok(mut reservation) => {
                             reservation.buffer_mut().copy_from_slice(&payload);
-                            reservation.commit(vtime, seq).expect("FATAL: UI failed to commit transport reservation");
+                            reservation
+                                .commit(vtime, seq)
+                                .expect("FATAL: UI failed to commit transport reservation");
                         }
-                        Err(e) => virtmcu_qom::sim_err!("UI: Failed to reserve transport for topic {}: {:?}", topic, e),
+                        Err(e) => virtmcu_qom::sim_err!(
+                            "UI: Failed to reserve transport for topic {}: {:?}",
+                            topic,
+                            e
+                        ),
                     };
                 }
             }
@@ -212,13 +231,13 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
 
                     if let Some(t) = &self.transport {
                         let generation_clone = Arc::clone(&self.generation);
-                        let rec = DeterministicReceiver::new_safe(
+                        let rec = VtimeIngress::new_safe(
                             &**t,
                             &topic,
                             generation_clone,
                             |topic_name, payload| {
                                 virtmcu_qom::sim_debug!("UI: Rx callback on topic {} (len={})", topic_name, payload.len());
-                                if let Some((vtime, _seq, data)) = virtmcu_api::decode_frame(payload) {
+                                if let Some((vtime, _seq, data)) = virtmcu_wire::decode_frame(payload) {
                                     let pressed_val = data.first().is_some_and(|&b| b != 0);
                                     Some(ButtonPacket { vtime, pressed: pressed_val })
                                 } else {
@@ -229,8 +248,7 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
                             move |packet| {
                                 pressed_clone.store(packet.pressed, Ordering::Relaxed);
                                 // SAFETY: irq_ptr is a valid QemuIrq initialized by sysbus_get_connected_irq.
-                                virtmcu_qom::irq::qemu_set_irq_safe((irq_ptr as virtmcu_qom::irq::QemuIrq, i32::from(packet.pressed));
-                                }
+                                virtmcu_qom::ffi_call! { virtmcu_qom::irq::qemu_set_irq(irq_ptr as virtmcu_qom::irq::QemuIrq, i32::from(packet.pressed)) };
                             },
                         ).expect("Failed to init receiver");
 
@@ -246,6 +264,7 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
         &self.cond
     }
 
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()> { // virtmcu-allow: mutex reasoning="State managed securely"
         &self.wait_mutex
     }

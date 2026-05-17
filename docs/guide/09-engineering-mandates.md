@@ -41,7 +41,7 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Protocol Serialization
 - **No Manual Struct Packing**: BANNED: manual packing/unpacking of bytes.
-- **Schema-First**: REQUIRED: Use `virtmcu-api` (FlatBuffers) for all core simulation protocols (see RFC-0012).
+- **Schema-First**: REQUIRED: Use `virtmcu-wire` (FlatBuffers) for all core simulation protocols (see RFC-0012).
 
 ### No Polling / Sleep Avoidance
 - **BANNED**: `std::thread::sleep`, `tokio::time::sleep`, or `time.sleep()` in hot paths, MMIO, or tests.
@@ -61,15 +61,15 @@ This chapter serves as the immutable law for all developers—human or agent—c
 ## 4. Concurrency & Safety Mandates
 
 ### Safe Big QEMU Lock (BQL) Usage
-- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer. `DeterministicReceiver` (RFC-0021) handles this pattern automatically for ingress.
+- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer. `VtimeIngress` (RFC-0021) handles this pattern automatically for ingress.
 - **MMIO vCPU threads**: Yield BQL via `Bql::temporary_unlock()` when blocking on external I/O (see RFC-0018).
 - **Bql API**: Use the RAII `Bql::lock()` and `QemuCond::wait_yielding_bql`.
 - **Lock Order**: BQL → peripheral mutex → condvar wait.
 
 ### Two-Stage Delivery Pipeline
 - **Never mutate guest-visible state or wake a suspended vCPU directly inside a transport callback.**
-- **Stage 1 (Host Ingress)**: Use `DeterministicReceiver` to queue payloads by `delivery_vtime_ns` in a virtual-time-sorted priority queue.
-- **Stage 2 (Virtual Time Delivery)**: The `DeterministicReceiver` schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) that fires at `delivery_vtime_ns`. The delivery callback performs the register mutation or signals IRQs under the BQL.
+- **Stage 1 (Host Ingress)**: Use `VtimeIngress` to queue payloads by `delivery_vtime_ns` in a virtual-time-sorted priority queue.
+- **Stage 2 (Virtual Time Delivery)**: The `VtimeIngress` schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) that fires at `delivery_vtime_ns`. The delivery callback performs the register mutation or signals IRQs under the BQL.
 
 ### Safe Peripheral Teardown
 - **No Bounded Spinloops**: BANNED: `while attempts < N`. This leads to time-bomb Use-After-Free (UAF) bugs.
@@ -92,4 +92,4 @@ This chapter serves as the immutable law for all developers—human or agent—c
 2.  **Hardcoded Paths**: Never use `/tmp/out.dtb`. Use `virtmcu-test-runner` `tmp_path`.
 3.  **Manual Process Management**: Never spawn daemons in test bodies. Use `virtmcu-test-runner` fixtures.
 4.  **Stale Processes**: Always run `make clean-sim` if a test fails; orphaned QEMUs hold ports.
-5.  **DSO TLS Trap**: Never call QEMU TLS macros (like `bql_locked()`) from a plugin DSO. Use the `virtmcu_is_bql_locked()` export from the main binary.
+5.  **DSO TLS Trap**: Never call QEMU TLS macros (like `bql_locked()`) from a plugin DSO. Peripheral code never needs to query BQL status at all — the framework passes `&BqlContext` as compile-time proof. Only `virtmcu-qom` framework internals may use `Bql::is_held()` (which wraps `virtmcu_is_bql_locked()` from the main binary export). If you think you need to check BQL status in peripheral code, you are writing framework code and it belongs in `virtmcu-qom`.

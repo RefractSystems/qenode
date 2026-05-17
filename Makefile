@@ -85,7 +85,7 @@ VIRTMCU_DOCKER_RUN_CI = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_IMG)
 VIRTMCU_DOCKER_RUN_CI_ASAN = $(VIRTMCU_DOCKER_RUN_CI_IMG) $(VIRTMCU_CI_ASAN_IMG)
 
 .PHONY: all build run clean clean-sim delete-profraw clean-debug distclean fmt-all fmt-rust fmt-c fmt-meson fmt-yaml lint build-test-artifacts install-git-hooks sync-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-ci docker-ci-asan tag ensure-ci-image ensure-ci-asan-image
-.PHONY: test-unit ci-unit test-integration ci-integration test-integration-asan ci-integration-asan test-unit-miri ci-unit-miri test-unit-coverage ci-unit-coverage test-integration-coverage ci-integration-coverage test-peripheral-coverage ci-peripheral-coverage test-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan build-test-runner
+.PHONY: test-unit ci-unit test-integration ci-integration test-integration-asan ci-integration-asan test-unit-miri ci-unit-miri test-unit-coverage ci-unit-coverage test-integration-coverage ci-integration-coverage test-peripheral-coverage ci-peripheral-coverage test-lint ci-lint ci-local ci-check ci-full ci-build-third-party ci-build-third-party-asan build-test-runner test-reference-peripheral
 
 # Automatically determine the number of parallel jobs for make
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
@@ -297,13 +297,15 @@ test-integration: build-test-artifacts build-test-runner
 test-integration-coverage: build-test-artifacts build-test-runner
 	@$(RUNNER_BIN) coverage --integration
 
-# --- End-to-End Tests ---
-test-e2e  :
-	@echo "==> Running E2E tests..."
-	@for script in tests/e2e/*.sh; do \
-		echo "==> Running $$script"; \
-		bash "$$script" || exit 1; \
-	done
+# --- Reference Peripheral Tests ---
+test-reference-peripheral: build-test-artifacts build-test-runner
+	@echo "==> 1. Running Reference Peripheral Unit Tests..."
+	@VIRTMCU_UNIT_TEST=1 RUSTFLAGS="$(RUSTFLAGS) -C link-arg=-Wl,--unresolved-symbols=ignore-all" $(CARGO_CMD) test $(CARGO_OPTS) -p reference_peripheral
+	@echo "==> 2. Running Reference Peripheral Integration Tests (reference_network)..."
+	@$(RUNNER_BIN) run --tier integration --domain reference_network
+	@echo "==> 3. Running Reference Peripheral Integration Tests (shutdown_safety)..."
+	@$(RUNNER_BIN) run --tier integration --domain shutdown_safety
+	@echo "✓ All reference peripheral tests passed!"
 
 test-integration-asan: build-test-artifacts build-test-runner
 	@$(RUNNER_BIN) run --tier integration --asan $(if $(DOMAIN),--domain $(DOMAIN))

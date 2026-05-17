@@ -11,9 +11,9 @@ tracing.workspace = true
 virtmcu-observability.workspace = true
 tokio = { version = "1.37.0", features = ["full", "net"] }
 zenoh = "1.9.0"
-virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "../../hw/rust/common/virtmcu-wire" }
 virtmcu-test-runner = { path = "../virtmcu-test-runner" }
-yaml2qemu = { path = "../../hw/rust/yaml2qemu" }
+yaml2qemu = { path = "../yaml2qemu" }
 serde_json = "1.0"
 serde_yaml = "0.9"
 svd-parser = "0.14.9"

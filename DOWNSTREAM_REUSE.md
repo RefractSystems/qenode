@@ -14,14 +14,14 @@ If your downstream project needs to keep QEMU virtual time locked to another sim
     The standalone Rust binary that enforces the per-quantum barrier synchronization. If you are orchestrating manually, launch this binary and provide it with the world topology YAML.
 *   `tools/virtmcu-cli`: 
     The unified developer utility. It provides `virtmcu-cli qmp` for asynchronous QEMU Machine Protocol (QMP) interactions (querying CPU state, injecting faults) and `virtmcu-cli telemetry` for live inspection.
-*   `tools/virtmcu-api` & `tools/virtmcu-run`: 
+*   `tools/virtmcu-wire` & `tools/virtmcu-run`: 
     Native Rust APIs for interfacing with the simulation transport, allowing your physical simulation to inject sensor data (via Zenoh) directly into the simulated MCU's memory space.
 
 ## 2. World Topology & Configuration
 
 VirtMCU uses a strict YAML topology format. You do not need to parse this manually or figure out how to translate it to QEMU arguments.
 
-*   `hw/rust/yaml2qemu`: 
+*   `tools/yaml2qemu`: 
     **Core Engine**. Takes a `.yaml` or `.yml` world definition, automatically infers addresses via SVD (System View Description), generates and validates the Device Tree Blob (DTB), and constructs the exact `qemu-system-arm` command-line arguments. It is available as a reusable Rust crate.
 *   `schema/` and `scripts/generate_schemas.sh`: 
     If your downstream project adds new fields to the `.tsp` schemas, use our schema generators to compile TypeSpec into JSON Schemas and FlatBuffer bindings.

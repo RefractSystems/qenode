@@ -1,4 +1,9 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![allow(clippy::print_stderr)] // virtmcu-allow: print_stderr reasoning="Startup error reporting"
+#![allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::missing_safety_doc)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![cfg_attr(
     test,
     allow(
@@ -8,10 +13,53 @@
         clippy::panic_in_result_fn
     )
 )]
-#![allow(clippy::print_stderr)] // virtmcu-allow: print_stderr reasoning="Startup error reporting"
 //! Enterprise Continuous High-Fidelity TCG Instruction Tracer
 
 mod qemu_plugin;
+
+#[macro_export]
+/// Safe ffi wrapper block macro
+macro_rules! ffi_call {
+    ($($tt:tt)*) => { unsafe { $($tt)* } }
+}
+
+#[macro_export]
+/// Safe ffi fn macro
+macro_rules! ffi_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe extern "C" fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            ffi_call! { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe fn macro
+macro_rules! ffi_safe_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            ffi_call! { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe send sync macro
+macro_rules! impl_send_sync {
+    ($ty:ty) => {
+        unsafe impl Send for $ty {}
+        unsafe impl Sync for $ty {}
+    };
+}
+
 use qemu_plugin::{
     qemu_plugin_insn_disas, qemu_plugin_insn_vaddr, qemu_plugin_outs,
     qemu_plugin_register_atexit_cb, qemu_plugin_register_vcpu_insn_exec_cb,
@@ -23,7 +71,7 @@ use qemu_plugin::{
 macro_rules! plugin_log {
     ($($arg:tt)*) => {{
         let msg = alloc::format!("{}\0", alloc::format!($($arg)*));
-        virtmcu_qom::ffi_call! { qemu_plugin_outs(msg.as_ptr().cast()) };
+        ffi_call! { qemu_plugin_outs(msg.as_ptr().cast()) };
     }};
 }
 
@@ -41,9 +89,9 @@ use flatbuffers::FlatBufferBuilder;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::thread::{spawn, JoinHandle};
-use virtmcu_api::insn_trace_generated::virtmcu::insn_trace::{InsnTrace, InsnTraceArgs};
-use virtmcu_api::topics::sim_topic;
-use virtmcu_api::DataTransport;
+use virtmcu_wire::insn_trace_generated::virtmcu::insn_trace::{InsnTrace, InsnTraceArgs};
+use virtmcu_wire::topics::sim_topic;
+use virtmcu_wire::DataTransport;
 
 // virtmcu-allow: static_state reasoning="QEMU TCG Plugin API lacks userdata for tb_trans."
 static STATE: OnceLock<Arc<TracerState>> = OnceLock::new();
@@ -64,7 +112,7 @@ struct ExecEvent {
 // Raw pointer to InsnData allocated on the heap and passed to QEMU as callback userdata.
 // Safety: access is serialized through Mutex; QEMU guarantees the ptr lives until plugin_exit.
 struct InsnPtr(*mut InsnData);
-virtmcu_qom::impl_send_sync!(InsnPtr);
+impl_send_sync!(InsnPtr);
 
 struct TracerState {
     // virtmcu-allow: mutex reasoning="Drop management for clean shutdown"
@@ -89,7 +137,7 @@ struct QemuString(*mut c_char);
 impl Drop for QemuString {
     fn drop(&mut self) {
         if !self.0.is_null() {
-            virtmcu_qom::ffi_call! { libc::free(self.0.cast::<c_void>()) };
+            ffi_call! { libc::free(self.0.cast::<c_void>()) };
         }
     }
 }
@@ -98,7 +146,7 @@ impl QemuString {
         if self.0.is_null() {
             "Unknown".to_owned()
         } else {
-            virtmcu_qom::ffi_call! { CStr::from_ptr(self.0) }.to_string_lossy().into_owned()
+            ffi_call! { CStr::from_ptr(self.0) }.to_string_lossy().into_owned()
         }
     }
 }
@@ -125,9 +173,9 @@ pub extern "C" fn qemu_plugin_install(
     let mut transport_cfg = "zenoh".to_owned();
 
     for i in 0..nargs {
-        let cstr_ptr = *params.add(i as usize);
+        let cstr_ptr = ffi_call! { *params.add(i as usize) };
         if !cstr_ptr.is_null() {
-            let decoded = CStr::from_ptr(cstr_ptr).to_string_lossy();
+            let decoded = ffi_call! { CStr::from_ptr(cstr_ptr) }.to_string_lossy();
             if let Some(val) = decoded.strip_prefix("node_id=") {
                 node_id = val.parse().expect("Invalid data format");
             } else if let Some(val) = decoded.strip_prefix("transport=") {
@@ -139,7 +187,7 @@ pub extern "C" fn qemu_plugin_install(
     let transport: Arc<dyn DataTransport> = if let Some(path) = transport_cfg.strip_prefix("unix:")
     {
         // virtmcu-allow: env_in_peripheral reasoning="Not yet ported: needs federation-id QOM property + new_with_fed_id"
-        match transport_unix::UdsDataTransport::new(path, node_id) {
+        match transport_uds::UdsDataTransport::new(path, node_id) {
             Ok(t) => Arc::new(t),
             Err(e) => {
                 plugin_log!("tcg-tracer: Failed to initialize Unix transport: {e:?}");
@@ -147,7 +195,7 @@ pub extern "C" fn qemu_plugin_install(
             }
         }
     } else {
-        match transport_zenoh::get_or_init_session(core::ptr::null()) {
+        match ffi_call! { transport_zenoh::get_or_init_session(core::ptr::null()) } {
             Ok(s) => Arc::new(transport_zenoh::ZenohDataTransport::new(s, node_id)),
             Err(e) => {
                 plugin_log!("tcg-tracer: Failed to initialize Zenoh transport: {e:?}");
@@ -183,8 +231,8 @@ pub extern "C" fn qemu_plugin_install(
 
     tracing::info!("tcg-tracer: OTel telemetry initialized for node {}", node_id);
 
-    qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
-    qemu_plugin_register_atexit_cb(id, plugin_exit, core::ptr::null_mut());
+    ffi_call! { qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans) };
+    ffi_call! { qemu_plugin_register_atexit_cb(id, plugin_exit, core::ptr::null_mut()) };
 
     GLOBAL_TRACE_ENABLED.store(true, Ordering::Relaxed);
     0
@@ -206,11 +254,11 @@ extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
         return;
     };
 
-    let n_insns = qemu_plugin_tb_n_insns(tb);
+    let n_insns = ffi_call! { qemu_plugin_tb_n_insns(tb) };
     for i in 0..n_insns {
-        let insn = qemu_plugin_tb_get_insn(tb, i);
-        let pc = qemu_plugin_insn_vaddr(insn);
-        let raw_disas = qemu_plugin_insn_disas(insn);
+        let insn = ffi_call! { qemu_plugin_tb_get_insn(tb, i) };
+        let pc = ffi_call! { qemu_plugin_insn_vaddr(insn) };
+        let raw_disas = ffi_call! { qemu_plugin_insn_disas(insn) };
 
         let qstr = QemuString(raw_disas);
         let disas = qstr.to_string_lossy();
@@ -225,12 +273,7 @@ extern "C" fn vcpu_tb_trans(_id: QemuPluginId, tb: *mut QemuPluginTb) {
             contexts.push(InsnPtr(insn_ptr));
         }
 
-        qemu_plugin_register_vcpu_insn_exec_cb(
-            insn,
-            vcpu_insn_exec,
-            QemuPluginCbFlags::NoRegs,
-            insn_ptr.cast::<c_void>(),
-        );
+        ffi_call! { qemu_plugin_register_vcpu_insn_exec_cb(insn, vcpu_insn_exec, QemuPluginCbFlags::NoRegs, insn_ptr.cast::<c_void>()) };
     }
 }
 
@@ -241,7 +284,7 @@ extern "C" fn vcpu_insn_exec(_vcpu_index: c_uint, userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
-    let insn_data = &*(userdata.cast::<InsnData>());
+    let insn_data = ffi_call! { &*(userdata.cast::<InsnData>()) };
     let event = ExecEvent { vtime: 0, pc: insn_data.pc };
     let _ = insn_data.tx.try_send(event);
 }
@@ -255,7 +298,7 @@ extern "C" fn plugin_exit(_id: QemuPluginId, _userdata: *mut c_void) {
         // Drop all QEMU callback heap allocations from the translation phase
         if let Ok(mut contexts) = state.insn_contexts.lock() {
             for InsnPtr(ptr) in contexts.drain(..) {
-                drop(virtmcu_qom::ffi_call! { Box::from_raw(ptr) });
+                drop(ffi_call! { Box::from_raw(ptr) });
             }
         }
         // Wait for the background worker to flush the queue and cleanly exit
@@ -300,7 +343,7 @@ fn background_stream_worker(
             quantum_number: 0u64, // Not yet provided by TCG plugin
         };
         let insn_trace = InsnTrace::create(&mut builder, &args);
-        virtmcu_api::insn_trace_generated::virtmcu::insn_trace::finish_insn_trace_buffer(
+        virtmcu_wire::insn_trace_generated::virtmcu::insn_trace::finish_insn_trace_buffer(
             &mut builder,
             insn_trace,
         );

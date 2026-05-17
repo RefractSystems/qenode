@@ -29,7 +29,7 @@ zenoh = "1.9.0"
 virtmcu-zenoh-config.workspace = true
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 byteorder = "1.5"
-virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "../../hw/rust/common/virtmcu-wire" }
 anyhow = "1.0"
 memmap2 = "0.9"
 libc = "0.2"

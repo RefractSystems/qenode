@@ -46,7 +46,7 @@ impl Lint for RustBannedPatternsLint {
                 name: "bql",
                 pattern: r"Bql::lock\(\)|SafeSubscription",
                 message: "Banned BQL usage or SafeSubscription found.",
-                fix: "Use DeterministicReceiver (RFC-0021) instead of SafeSubscription. Use virtmcu_qom::sync::Mutex for state. Quick Tip: Do not block async threads on the BQL. See docs/rfcs/0018-safe-peripheral-bql-yielding.md and RFC-0021. MANDATE: // virtmcu-allow: bql reasoning=\"<reason>\".",
+                fix: "Use VtimeIngress (RFC-0021) instead of SafeSubscription. Use virtmcu_qom::sync::Mutex for state. Quick Tip: Do not block async threads on the BQL. See docs/rfcs/0018-safe-peripheral-bql-yielding.md and RFC-0021. MANDATE: // virtmcu-allow: bql reasoning=\"<reason>\".",
                 inc_dirs: vec!["hw/rust/comms", "hw/rust/mcu", "hw/rust/observability"],
                 exc_list: vec![],
             },
@@ -145,7 +145,7 @@ impl Lint for RustBannedPatternsLint {
                 //      VIRTMCU_SIM_ID; new_with_fed_id( is NOT matched (no paren after "new").
                 //   2. "VIRTMCU_SIM_ID" — any direct read of the federation env var.
                 // Other env vars (VIRTMCU_TRANSPORT, VIRTMCU_ZENOH_ROUTER, etc.) are allowed.
-                // transport-unix is excluded: new() itself is the one permitted holder.
+                // transport-uds is excluded: new() itself is the one permitted holder.
                 pattern: r#"UdsDataTransport::new\(|"VIRTMCU_SIM_ID""#,
                 message: "Banned VIRTMCU_SIM_ID read or UdsDataTransport::new() in peripheral code.",
                 fix: "Use UdsDataTransport::new_with_fed_id(path, node_id, fed_id) where fed_id \
@@ -154,7 +154,122 @@ impl Lint for RustBannedPatternsLint {
                       tests. See AGENTS.md §4 'Env Var Reads in Peripherals Are BANNED'. \
                       MANDATE: // virtmcu-allow: env_in_peripheral reasoning=\"<reason>\".",
                 inc_dirs: vec!["hw/rust"],
-                exc_list: vec!["transport-unix", "tests", "build.rs"],
+                exc_list: vec!["transport-uds", "tests", "build.rs"],
+            },
+            Rule {
+                name: "new_unchecked_in_peripheral",
+                pattern: r"BqlContext::new_unchecked\(\)",
+                message: "Banned BqlContext::new_unchecked() in peripheral code.",
+                fix: "BqlContext is created only by the framework (macro dispatch, ClosureTimer \
+                      trampoline). Your Peripheral::read/write/realize receives ctx: &BqlContext — \
+                      pass it down. Creating one here bypasses RFC-0041 compile-time BQL proof. \
+                      See RFC-0041. MANDATE: // virtmcu-allow: new_unchecked_in_peripheral \
+                      reasoning=\"<reason>\".",
+                inc_dirs: vec![
+                    "hw/rust/buses",
+                    "hw/rust/physics",
+                    "hw/rust/mcu",
+                    "hw/rust/examples",
+                    "hw/rust/observability",
+                    "hw/rust/bridges",
+                ],
+                exc_list: vec![
+                    "hw/rust/observability/telemetry",
+                    "hw/rust/observability/tcg-tracer",
+                    "hw/rust/bridges/mmio-socket-bridge",
+                    "hw/rust/bridges/remote-port",
+                    "hw/rust/bridges/uart",
+                    "hw/rust/buses/ieee802154",
+                    "hw/rust/buses/flexray",
+                    "hw/rust/buses/ethernet",
+                ],
+            },
+            Rule {
+                name: "unsafe_in_peripheral",
+                pattern: r"\bunsafe\s*\{",
+                message: "Banned unsafe block in peripheral code (RFC-0026).",
+                fix: "Peripheral code must be zero-unsafe. Use framework APIs: ClosureTimer \
+                      (instead of extern \"C\" callbacks), dynamic_cast_qom (instead of \
+                      deref_qom_ptr), VtimeIngress. See RFC-0026. \
+                      MANDATE: // virtmcu-allow: unsafe_in_peripheral reasoning=\"<reason>\".",
+                inc_dirs: vec![
+                    "hw/rust/buses",
+                    "hw/rust/physics",
+                    "hw/rust/mcu",
+                    "hw/rust/examples",
+                    "hw/rust/observability",
+                    "hw/rust/bridges",
+                ],
+                exc_list: vec![
+                    "hw/rust/observability/telemetry",
+                    "hw/rust/observability/tcg-tracer",
+                    "hw/rust/bridges/mmio-socket-bridge",
+                    "hw/rust/bridges/remote-port",
+                    "hw/rust/bridges/uart",
+                    "hw/rust/buses/ieee802154",
+                    "hw/rust/buses/flexray",
+                    "hw/rust/buses/ethernet",
+                ],
+            },
+            Rule {
+                name: "clippy_all_in_ref_peripheral",
+                // The Gold Standard crate must be fully lint-clean without blanket suppression.
+                // #![allow(clippy::all)] defeats the entire workspace lint enforcement system and
+                // is the most dangerous escape hatch an agent can add. Zero-suppress tolerance here.
+                pattern: r"#!\[allow\(clippy::all",
+                message: "Banned #![allow(clippy::all)] in the Gold Standard reference peripheral.",
+                fix: "Fix the underlying clippy lint instead of suppressing all of clippy. \
+                      The reference peripheral must be lint-clean with only narrow suppressions \
+                      (e.g. clippy::panic with virtmcu-allow) — never a blanket allow(clippy::all). \
+                      This crate is the Gold Standard template; blanket suppression here corrupts \
+                      every future peripheral that copies it.",
+                inc_dirs: vec!["hw/rust/examples/reference-peripheral"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "deprecated_cast_in_ref_peripheral",
+                // Bans the four deprecated opaque-pointer recovery helpers in the reference
+                // peripheral, which is the Gold Standard template. These are replaced by
+                // dynamic_cast_qom (RFC-0041). Suppression is BANNED here — the reference
+                // peripheral must be clean.
+                pattern: r"\b(?:deref_qom_ptr|opaque_to_state)(?:_const)?\s*[(:!]",
+                message: "Banned deprecated QOM cast in hw/rust/examples/reference-peripheral.",
+                fix: "Replace deref_qom_ptr / opaque_to_state with \
+                      dynamic_cast_qom::<T>(ptr).expect(\"FATAL: QOM type mismatch\"). \
+                      The reference peripheral is the Gold Standard template and must be \
+                      fully migrated. See RFC-0041.",
+                inc_dirs: vec!["hw/rust/examples/reference-peripheral"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "drain_token_in_ref_peripheral",
+                // Bans the old DrainToken type name in the reference peripheral. The correct
+                // type is VcpuDrain (RFC-0041). Suppression is BANNED here.
+                pattern: r"\bDrainToken\b",
+                message: "Banned DrainToken in hw/rust/examples/reference-peripheral.",
+                fix: "Replace DrainToken with VcpuDrain. The Peripheral trait methods now \
+                      receive ctx: &BqlContext — the BQL proof is separate from the drain \
+                      guard. See RFC-0041 and the VcpuDrain docs.",
+                inc_dirs: vec!["hw/rust/examples/reference-peripheral"],
+                exc_list: vec![],
+            },
+            Rule {
+                name: "extern_c_timer_cb",
+                // Matches `extern "C" fn name(anything: *mut c_void)` with void return —
+                // the exact signature of a QEMU timer callback. Does NOT match MMIO shims
+                // (which take offset/size args) or netdev/SSI callbacks (different arg types).
+                pattern: r#"extern\s+"C"\s+fn\s+\w+\s*\(\s*\w+\s*:\s*\*mut\s+(?:core::ffi::)?c_void\s*\)"#,
+                message: "Banned extern \"C\" timer callback in peripheral code.",
+                fix: "Replace with ClosureTimer::new(clock_type, move |ctx| { ... }). \
+                      The closure receives &BqlContext automatically; opaque pointer recovery \
+                      (opaque_to_state) is no longer needed. See RFC-0041 Tier 2 and P0.3. \
+                      MANDATE: // virtmcu-allow: extern_c_timer_cb reasoning=\"<reason>\".",
+                inc_dirs: vec![
+                    "hw/rust/buses",
+                    "hw/rust/observability",
+                    "hw/rust/mcu",
+                ],
+                exc_list: vec![],
             },
         ];
 

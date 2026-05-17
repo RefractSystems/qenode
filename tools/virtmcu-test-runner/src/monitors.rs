@@ -2,17 +2,17 @@ use anyhow::{anyhow, Result};
 use std::sync::{Arc, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::info;
-use virtmcu_api::telemetry_generated::virtmcu::telemetry::root_as_trace_event;
-use virtmcu_api::{FlatBufferStructExt, ZenohSPIHeader, ZENOH_SPI_HEADER_SIZE};
+use virtmcu_wire::telemetry_generated::virtmcu::telemetry::root_as_trace_event;
+use virtmcu_wire::{FlatBufferStructExt, ZenohSPIHeader, ZENOH_SPI_HEADER_SIZE};
 use zenoh::sample::Sample;
 use zenoh::Session;
 use zenoh::Wait;
 
 use flatbuffers::FlatBufferBuilder;
-use virtmcu_api::flexray_generated::virtmcu::flexray::{
+use virtmcu_wire::flexray_generated::virtmcu::flexray::{
     root_as_flex_ray_frame, FlexRayFrame, FlexRayFrameArgs,
 };
-use virtmcu_api::lin_generated::virtmcu::lin::{
+use virtmcu_wire::lin_generated::virtmcu::lin::{
     root_as_lin_frame, LinFrame, LinFrameArgs, LinMessageType,
 };
 
@@ -84,7 +84,7 @@ impl ActuatorMonitor {
                 .callback(move |sample: Sample| {
                     let payload = sample.payload().to_bytes();
                     if let Some((vtime, _seq, inner_payload)) =
-                        virtmcu_api::decode_coord_message(&payload)
+                        virtmcu_wire::decode_coord_message(&payload)
                     {
                         let mut vals = Vec::new();
                         for chunk in inner_payload.chunks_exact(8) {
@@ -142,7 +142,7 @@ impl ChardevMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_api::decode_coord_message(&payload)
+                    virtmcu_wire::decode_coord_message(&payload)
                 {
                     let text = String::from_utf8_lossy(inner_payload);
                     tracing::debug!("Chardev RX: {:?}", text);
@@ -195,12 +195,12 @@ impl ChardevMonitor {
             String::from_utf8_lossy(data)
         );
 
-        let coord_msg = virtmcu_api::encode_coord_message(
+        let coord_msg = virtmcu_wire::encode_coord_message(
             0,
             0,
             vtime_ns,
             0,
-            virtmcu_api::core_generated::virtmcu::core::Protocol::Uart,
+            virtmcu_wire::core_generated::virtmcu::core::Protocol::Uart,
             data,
         );
 
@@ -212,7 +212,7 @@ impl ChardevMonitor {
     }
 }
 
-use virtmcu_api::topics::sim_topic;
+use virtmcu_wire::topics::sim_topic;
 
 pub struct TelemetryMonitor {
     pub captured_traces: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -318,7 +318,7 @@ impl LinMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_api::decode_coord_message(&payload)
+                    virtmcu_wire::decode_coord_message(&payload)
                 {
                     if let Ok(frame) = root_as_lin_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
@@ -378,12 +378,12 @@ impl LinMonitor {
         let frame = LinFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
-        let coord_msg = virtmcu_api::encode_coord_message(
+        let coord_msg = virtmcu_wire::encode_coord_message(
             0,
             0,
             vtime_ns,
             0,
-            virtmcu_api::core_generated::virtmcu::core::Protocol::Lin,
+            virtmcu_wire::core_generated::virtmcu::core::Protocol::Lin,
             builder.finished_data(),
         );
 
@@ -413,7 +413,7 @@ impl FlexRayMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_api::decode_coord_message(&payload)
+                    virtmcu_wire::decode_coord_message(&payload)
                 {
                     if let Ok(frame) = root_as_flex_ray_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
@@ -473,12 +473,12 @@ impl FlexRayMonitor {
         let frame = FlexRayFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
-        let coord_msg = virtmcu_api::encode_coord_message(
+        let coord_msg = virtmcu_wire::encode_coord_message(
             0,
             0,
             vtime_ns,
             0,
-            virtmcu_api::core_generated::virtmcu::core::Protocol::FlexRay,
+            virtmcu_wire::core_generated::virtmcu::core::Protocol::FlexRay,
             builder.finished_data(),
         );
 

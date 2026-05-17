@@ -7,9 +7,9 @@ license = "Apache-2.0 OR MIT"
 
 [dependencies]
 virtmcu-qom.workspace = true
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true
 transport-zenoh.workspace = true
-transport-unix.workspace = true
+transport-uds.workspace = true
 zenoh.workspace = true
 
 [lib]

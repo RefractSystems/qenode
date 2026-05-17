@@ -1,9 +1,9 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;
-use virtmcu_api::insn_trace_generated::virtmcu::insn_trace::root_as_insn_trace;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::insn_trace_generated::virtmcu::insn_trace::root_as_insn_trace;
+use virtmcu_wire::topics::sim_topic;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_tcg_tracer_loads_and_streams() -> Result<()> {

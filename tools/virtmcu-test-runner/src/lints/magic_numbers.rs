@@ -86,6 +86,7 @@ impl Lint for RustMagicNumbersLint {
                 if const_re.is_match(line_no_comment)
                     || enum_re.is_match(line_no_comment)
                     || line_no_comment.contains("align(")
+                    || line.contains("virtmcu-allow: magic_numbers")
                 {
                     continue;
                 }

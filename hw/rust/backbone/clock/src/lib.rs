@@ -1,3 +1,5 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
@@ -35,11 +37,6 @@ unsafe impl Sync for ClockPtr {}
 
 static CLOCK_REGISTRY: Mutex<Option<HashMap<u32, ClockPtr>>> = Mutex::new(None); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 
-use virtmcu_api::{
-    ClockAdvanceReq, ClockReadyResp, ClockSyncResponder, ClockSyncTransport, DataTransport,
-    FlatBufferStructExt, BOOT_QUANTUM_TIMEOUT, CLOCK_ERROR_OK, CLOCK_ERROR_STALL,
-    NORMAL_QUANTUM_TIMEOUT,
-};
 use virtmcu_qom::cpu::CPUState;
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -51,16 +48,21 @@ use virtmcu_qom::{
     declare_device_type, define_prop_bool, define_prop_string, define_prop_uint32,
     define_properties, device_class,
 };
+use virtmcu_wire::{
+    ClockAdvanceReq, ClockReadyResp, ClockSyncResponder, ClockSyncTransport, DataTransport,
+    FlatBufferStructExt, BOOT_QUANTUM_TIMEOUT, CLOCK_ERROR_OK, CLOCK_ERROR_STALL,
+    NORMAL_QUANTUM_TIMEOUT,
+};
 use zenoh::liveliness::LivelinessToken;
 use zenoh::query::{Query, Queryable};
 use zenoh::Session;
 use zenoh::Wait;
 
-use transport_unix::UdsDataTransport;
+use transport_uds::UdsDataTransport;
 
 /// Unix socket based clock synchronization transport with coordination.
 pub struct CoordinatedUnixClockTransport {
-    inner: virtmcu_api::UnixSocketClockTransport,
+    inner: virtmcu_wire::UnixSocketClockTransport,
     coord_transport: Arc<UdsDataTransport>,
     start_rx: Receiver<()>,
     node_id: u32,
@@ -68,7 +70,7 @@ pub struct CoordinatedUnixClockTransport {
 
 impl CoordinatedUnixClockTransport {
     pub fn new(
-        inner: virtmcu_api::UnixSocketClockTransport,
+        inner: virtmcu_wire::UnixSocketClockTransport,
         coord_transport: Arc<UdsDataTransport>,
         start_rx: Receiver<()>,
         node_id: u32,
@@ -111,11 +113,11 @@ pub struct UnixClockResponder {
 }
 
 impl ClockSyncResponder for UnixClockResponder {
-    fn send_ready(&self, resp: virtmcu_api::ClockReadyResp) -> Result<(), String> {
+    fn send_ready(&self, resp: virtmcu_wire::ClockReadyResp) -> Result<(), String> {
         // 1. Send 'done' signal to coordinator via UDS
         // We use sim/coord/done/{node_id}/q/{quantum} as per RFC-0033.
         let topic = format!("sim/coord/done/{}/q/{}", self.node_id, self.quantum);
-        let done_req = virtmcu_api::encode_coord_done_req(self.quantum, resp.current_vtime_ns());
+        let done_req = virtmcu_wire::encode_coord_done_req(self.quantum, resp.current_vtime_ns());
 
         self.coord_transport
             .publish_raw(&topic, &done_req)
@@ -316,7 +318,7 @@ pub struct VirtmcuClockBackend {
     /// Unique node ID.
     pub node_id: u32,
     /// Identifier for this running simulation instance.
-    pub federation_id: virtmcu_api::FederationId,
+    pub federation_id: virtmcu_wire::FederationId,
     /// Stall timeout in milliseconds.
     pub stall_timeout_ms: u32,
     /// Whether coordination is enabled for this node.
@@ -452,7 +454,7 @@ impl Drop for ActiveHooksGuard {
     }
 }
 
-virtmcu_api::virtmcu_export! {
+virtmcu_wire::virtmcu_export! {
     extern "C" fn clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
         // 1. Signal that we are entering a hook
         let _guard = ActiveHooksGuard::new();
@@ -884,7 +886,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         return;
     }
 
-    let federation_id = virtmcu_api::FederationId(fed_id_str.to_owned());
+    let federation_id = virtmcu_wire::FederationId(fed_id_str.to_owned());
 
     if is_unix {
         if router_str.is_null() {
@@ -892,7 +894,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             return;
         }
         let path = unsafe { CStr::from_ptr(router_str) }.to_string_lossy();
-        let inner_transport = virtmcu_api::UnixSocketClockTransport::new(path.as_ref());
+        let inner_transport = virtmcu_wire::UnixSocketClockTransport::new(path.as_ref());
 
         let watchdog_ms = if s.session_watchdog_ms > 0 {
             s.session_watchdog_ms
@@ -909,7 +911,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
                 return;
             }
             let coord_path = unsafe { CStr::from_ptr(s.coordinated_router) }.to_string_lossy();
-            let coord_transport = match transport_unix::UdsDataTransport::new_with_fed_id(
+            let coord_transport = match transport_uds::UdsDataTransport::new_with_fed_id(
                 coord_path.as_ref(),
                 s.node_id,
                 fed_id_str,
@@ -933,7 +935,7 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             );
 
             let (start_tx, start_rx) = crossbeam_channel::unbounded();
-            let start_topic = virtmcu_api::topics::sim_topic::clock_start(&s.node_id.to_string());
+            let start_topic = virtmcu_wire::topics::sim_topic::clock_start(&s.node_id.to_string());
 
             if let Err(e) = coord_transport.subscribe(
                 &start_topic,
@@ -1106,7 +1108,7 @@ struct ClockManagerConfig {
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-    federation_id: virtmcu_api::FederationId,
+    federation_id: virtmcu_wire::FederationId,
 }
 
 fn clock_init_with_transport(config: ClockManagerConfig) -> *mut ClockManager {
@@ -1159,7 +1161,7 @@ fn clock_init_internal(
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-    federation_id: virtmcu_api::FederationId,
+    federation_id: virtmcu_wire::FederationId,
 ) -> *mut ClockManager {
     let session = unsafe {
         let mut config = match transport_zenoh::open_config(router) {

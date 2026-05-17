@@ -12,7 +12,7 @@ clap = { version = "4.4", features = ["derive"] }
 tempfile = "3.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
-virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "../../hw/rust/common/virtmcu-wire" }
 tracing.workspace = true
 virtmcu-observability.workspace = true
 shellexpand = "3.1.2"
@@ -24,7 +24,7 @@ flatbuffers.workspace = true
 walkdir = "2.5.0"
 async-trait = "0.1.89"
 futures = "0.3.32"
-yaml2qemu = { version = "0.1.0", path = "../../hw/rust/yaml2qemu" }
+yaml2qemu = { version = "0.1.0", path = "../yaml2qemu" }
 syn = { version = "2.0", features = ["full", "visit"] }
 ignore = "0.4.25"
 quote = "1.0"

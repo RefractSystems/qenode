@@ -49,13 +49,13 @@ async fn test_complex_board_wireless() -> Result<()> {
 
     // Create a Zenoh packet with header. Use a future vtime to ensure it's processed.
     let now_vtime = 0;
-    let payload = virtmcu_api::encode_rf802154_frame(
+    let payload = virtmcu_wire::encode_rf802154_frame(
         now_vtime,
         0,
         &dummy_packet,
         -50, // rssi
         255, // lqi
-        virtmcu_api::Rf802154Mhr::parse(&dummy_packet),
+        virtmcu_wire::Rf802154Mhr::parse(&dummy_packet),
     );
     println!("Payload size: {}", payload.len());
 

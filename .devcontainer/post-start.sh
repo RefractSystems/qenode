@@ -50,3 +50,8 @@ if command -v docker >/dev/null 2>&1; then
         echo "✓ Docker daemon is already running."
     fi
 fi
+
+echo "==> Ensuring bootstrap is up to date in the background..."
+nohup make bootstrap > /workspace/bootstrap.log 2>&1 &
+echo "    Check /workspace/bootstrap.log for progress."
+

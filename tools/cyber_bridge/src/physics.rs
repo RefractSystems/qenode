@@ -29,15 +29,15 @@ pub const SHM_HEADER_SIZE: usize = 24;
 /// Use for pure cyber-node testing and nodes with no actuators or sensors.
 pub struct TickOnlyPlant;
 
-impl virtmcu_api::PhysicalNode for TickOnlyPlant {
+impl virtmcu_wire::PhysicalNode for TickOnlyPlant {
     fn step(
         &mut self,
         _quantum_ns: u64,
-        _actuators: &virtmcu_api::ActuatorMap,
-    ) -> Result<virtmcu_api::PlantState, String> {
-        Ok(virtmcu_api::PlantState {
+        _actuators: &virtmcu_wire::ActuatorMap,
+    ) -> Result<virtmcu_wire::PlantState, String> {
+        Ok(virtmcu_wire::PlantState {
             vtime_ns: 0, // caller tracks absolute vtime; this field unused for TickOnly
-            sensors: virtmcu_api::SensorMap::new(),
+            sensors: virtmcu_wire::SensorMap::new(),
         })
     }
 }
@@ -48,14 +48,14 @@ impl virtmcu_api::PhysicalNode for TickOnlyPlant {
 /// is received. The gateway publishes sensor data directly to Zenoh; this struct
 /// returns an empty `sensors` map.
 pub struct RemotePlant {
-    transport: Box<dyn virtmcu_api::PhysicsGatewayTransport>,
+    transport: Box<dyn virtmcu_wire::PhysicsGatewayTransport>,
     timeout: std::time::Duration,
     quantum_number: u64, // tracked here so the trigger matches ClockAdvanceReq
 }
 
 impl RemotePlant {
     /// Creates a new `RemotePlant`.
-    pub fn new(transport: Box<dyn virtmcu_api::PhysicsGatewayTransport>, timeout_ms: u64) -> Self {
+    pub fn new(transport: Box<dyn virtmcu_wire::PhysicsGatewayTransport>, timeout_ms: u64) -> Self {
         Self {
             transport,
             timeout: std::time::Duration::from_millis(timeout_ms),
@@ -64,21 +64,21 @@ impl RemotePlant {
     }
 }
 
-impl virtmcu_api::PhysicalNode for RemotePlant {
+impl virtmcu_wire::PhysicalNode for RemotePlant {
     fn step(
         &mut self,
         _quantum_ns: u64,
-        actuators: &virtmcu_api::ActuatorMap,
-    ) -> Result<virtmcu_api::PlantState, String> {
+        actuators: &virtmcu_wire::ActuatorMap,
+    ) -> Result<virtmcu_wire::PlantState, String> {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
 
         let mut samples = Vec::new();
         for (&vtime, id_map) in actuators {
             for (&id, vals) in id_map {
                 let v_offset = builder.create_vector(vals);
-                let sample = virtmcu_api::physics_proto::ActuatorSample::create(
+                let sample = virtmcu_wire::physics_proto::ActuatorSample::create(
                     &mut builder,
-                    &virtmcu_api::physics_proto::ActuatorSampleArgs {
+                    &virtmcu_wire::physics_proto::ActuatorSampleArgs {
                         delivery_vtime_ns: vtime,
                         actuator_id: id,
                         values: Some(v_offset),
@@ -89,9 +89,9 @@ impl virtmcu_api::PhysicalNode for RemotePlant {
         }
 
         let samples_offset = builder.create_vector(&samples);
-        let trigger = virtmcu_api::physics_proto::PhysicsTrigger::create(
+        let trigger = virtmcu_wire::physics_proto::PhysicsTrigger::create(
             &mut builder,
-            &virtmcu_api::physics_proto::PhysicsTriggerArgs {
+            &virtmcu_wire::physics_proto::PhysicsTriggerArgs {
                 quantum_number: self.quantum_number,
                 quantum_end_vtime_ns: 0, // binary tracks vtime; field unused by gateway for RemotePlant
                 actuators: Some(samples_offset),
@@ -106,9 +106,9 @@ impl virtmcu_api::PhysicalNode for RemotePlant {
 
         self.quantum_number += 1;
 
-        Ok(virtmcu_api::PlantState {
+        Ok(virtmcu_wire::PlantState {
             vtime_ns: 0,
-            sensors: virtmcu_api::SensorMap::new(),
+            sensors: virtmcu_wire::SensorMap::new(),
         })
     }
 }
@@ -179,12 +179,12 @@ impl Drop for EmbeddedPlant {
     }
 }
 
-impl virtmcu_api::PhysicalNode for EmbeddedPlant {
+impl virtmcu_wire::PhysicalNode for EmbeddedPlant {
     fn step(
         &mut self,
         _quantum_ns: u64,
-        actuators: &virtmcu_api::ActuatorMap,
-    ) -> Result<virtmcu_api::PlantState, String> {
+        actuators: &virtmcu_wire::ActuatorMap,
+    ) -> Result<virtmcu_wire::PlantState, String> {
         // EmbeddedPlant takes the last value per actuator_id from the full map:
         let mut ctrl_values: std::collections::BTreeMap<u32, f64> =
             std::collections::BTreeMap::new();
@@ -271,7 +271,7 @@ impl virtmcu_api::PhysicalNode for EmbeddedPlant {
         }
 
         // 4. Read sensor values from SHM and return them in PlantState
-        let mut sensors = virtmcu_api::SensorMap::new();
+        let mut sensors = virtmcu_wire::SensorMap::new();
         for i in 0..self.n_sensors {
             let offset = SHM_DATA_OFFSET + (i as usize) * 8;
             let val = f64::from_le_bytes(
@@ -281,7 +281,7 @@ impl virtmcu_api::PhysicalNode for EmbeddedPlant {
             );
             sensors.insert(i, vec![val]);
         }
-        Ok(virtmcu_api::PlantState {
+        Ok(virtmcu_wire::PlantState {
             vtime_ns: 0, // binary tracks vtime; field unused by main loop for EmbeddedPlant
             sensors,
         })

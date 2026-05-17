@@ -18,14 +18,14 @@ We move away from "black box magic" toward a **Hybrid Macro Approach**. The goal
 We will design our macros to mirror the impending official `qemu/rust` API. This ensures that moving to upstream QEMU in the future is a simple namespace migration rather than a structural refactor.
 
 ### 2. Type-State Synchronization (Explicit Safety)
-Instead of hiding the `VcpuDrain` lock, we make it visible in the type system. The generated FFI shim will acquire the lock and pass an explicit `DrainToken` to the safe Rust methods. This prevents deadlocks and enforces explicit reasoning about simulation state.
+Instead of hiding the `VcpuDrain` lock, we make BQL ownership visible in the type system. The generated FFI shim acquires the drain lock and passes a `BqlContext` token to the safe Rust methods. `BqlContext` is a zero-sized, `!Send` proof token that is non-constructible outside the framework — it physically cannot be moved into a background thread. This turns illegal cross-thread QEMU calls into compile errors rather than runtime races. See RFC-0041 for the full type-state design.
 
 ### 3. Debugging Transparency (Explicit Traits)
 Macros will generate implementations of safe Rust traits (`Peripheral`, `QomLifecycle`) rather than opaque, hidden functions. This allows GDB/LLDB to point directly to safe Rust code during crashes.
 
 ```rust
 use virtmcu_qom::macros::{qom_device, qom_property, qom_link};
-use virtmcu_qom::device::{MmioResult, DrainToken};
+use virtmcu_qom::device::{MmioResult, BqlContext};
 
 #[qom_device(name = "reference-peripheral", parent = "sys-bus-device")]
 pub struct ReferencePeripheral {
@@ -41,14 +41,15 @@ pub struct ReferencePeripheral {
 }
 
 impl virtmcu_qom::Peripheral for ReferencePeripheral {
-    fn realize(&mut self) -> Result<()> {
+    fn realize(&mut self, ctx: &BqlContext) -> Result<()> {
         let transport = self.transport.get().ok_or("Transport link missing")?;
-        self.state.receiver = DeterministicReceiver::new(transport, ...);
+        self.state.receiver = VtimeIngress::new(transport, ...);
         Ok(())
     }
 
-    // Explicit DrainToken prevents accidental lock omission or nested deadlocks
-    fn read(&self, addr: u64, size: u32, token: &DrainToken) -> MmioResult<'_> {
+    // BqlContext is compile-time proof that BQL is held — !Send, so it cannot
+    // be captured in a background-thread closure
+    fn read(&self, addr: u64, size: u32, ctx: &BqlContext) -> MmioResult<'_> {
         match addr {
             REG_STATUS => MmioResult::wait_for(
                 || self.state.has_data.load(),
@@ -70,4 +71,5 @@ virtmcu_qom::register_peripheral!(ReferencePeripheral);
 *   **Positive:** Guaranteed memory safety at the QOM/Rust boundary.
 *   **Positive:** Minimal technical debt vs. upstream QEMU.
 *   **Positive:** Retains full system transparency for systems-level debugging.
-*   **Negative:** Developers must still understand the concept of "Tokens" for synchronization, though this is considered a standard Rust safety pattern.
+*   **Positive (RFC-0041 extension):** `BqlContext` elevates thread-safety from runtime assertions to compile-time errors. Calling `qemu_clock_get_ns_safe` or `qemu_set_irq_safe` from a background thread is a type error, not a debug-build assertion.
+*   **Negative:** Developers must understand the `BqlContext` token as a synchronization proof — this is standard Rust typestate and considered good practice.

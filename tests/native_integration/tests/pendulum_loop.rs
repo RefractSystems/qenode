@@ -1,8 +1,8 @@
 use anyhow::Result;
 use cyber_bridge::resd_parser::ResdParser;
 use std::path::PathBuf;
-use virtmcu_api::topics::sim_topic;
 use virtmcu_test_runner::{monitors::ActuatorMonitor, NodeConfig, VirtmcuTestEnv};
+use virtmcu_wire::topics::sim_topic;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_pendulum_closed_loop() -> Result<()> {
@@ -58,7 +58,7 @@ async fn test_pendulum_closed_loop() -> Result<()> {
             for v in vals {
                 data_payload.extend_from_slice(&v.to_le_bytes());
             }
-            let payload = virtmcu_api::encode_frame(current_vtime_ns, 0, &data_payload);
+            let payload = virtmcu_wire::encode_frame(current_vtime_ns, 0, &data_payload);
             session
                 .put(&topic, payload)
                 .await

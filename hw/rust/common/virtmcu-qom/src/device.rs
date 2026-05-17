@@ -34,19 +34,21 @@ impl<'a> MmioResult<'a> {
     }
 }
 
-/// A zero-cost token proving that the VcpuDrain lock is held.
-/// This prevents developers from accidentally calling MMIO methods
-/// without acquiring the drain guard, or from nested deadlocks.
-pub struct DrainToken {
-    _private: (),
+/// A zero-sized type that serves as compile-time proof that the BQL is held.
+/// It cannot be sent or shared across threads (`!Send`, `!Sync`).
+pub struct BqlContext {
+    _not_send: core::marker::PhantomData<*mut ()>,
 }
 
-impl DrainToken {
-    /// Internal: Create a new token. This must only be called by the framework
-    /// after acquiring a VcpuDrain guard.
+impl BqlContext {
+    /// Creates a new `BqlContext`.
+    ///
+    /// # Safety
+    /// The caller must ensure that the Big QEMU Lock (BQL) is currently held.
+    /// Valid call sites: `#[qom_device]` macro dispatch shims and `ClosureTimer` trampoline.
     #[doc(hidden)]
     pub unsafe fn new_unchecked() -> Self {
-        Self { _private: () }
+        Self { _not_send: core::marker::PhantomData }
     }
 }
 
@@ -68,17 +70,17 @@ pub trait PeripheralState {
 pub trait Peripheral {
     /// Called during QEMU's realize phase.
     /// Use this to initialize subscriptions, timers, and dependencies.
-    fn realize(&mut self) -> Result<(), alloc::string::String> {
+    fn realize(&mut self, _ctx: &BqlContext) -> Result<(), alloc::string::String> {
         Ok(())
     }
 
     /// Handles an MMIO read request.
-    /// The presence of the `DrainToken` proves the BQL and VcpuDrain are correctly held.
-    fn read(&self, offset: u64, size: u32, token: &DrainToken) -> MmioResult<'_>;
+    /// The presence of `ctx: &BqlContext` proves the BQL is held at compile time (RFC-0041).
+    fn read(&self, offset: u64, size: u32, ctx: &BqlContext) -> MmioResult<'_>;
 
     /// Handles an MMIO write request.
-    /// The presence of the `DrainToken` proves the BQL and VcpuDrain are correctly held.
-    fn write(&self, offset: u64, value: u64, size: u32, token: &DrainToken);
+    /// The presence of `ctx: &BqlContext` proves the BQL is held at compile time (RFC-0041).
+    fn write(&self, offset: u64, value: u64, size: u32, ctx: &BqlContext);
 
     /// Called during QEMU machine reset.
     fn reset(&mut self) {}
@@ -87,6 +89,7 @@ pub trait Peripheral {
     fn condvar(&self) -> &Condvar;
 
     /// Returns the mutex guarding the condition variable wait.
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()>;
 }
 
@@ -103,5 +106,6 @@ pub trait MmioDevice {
     fn condvar(&self) -> &Condvar;
 
     /// Returns the mutex guarding the condition variable wait.
+    #[rustfmt::skip]
     fn wait_mutex(&self) -> &Mutex<()>;
 }

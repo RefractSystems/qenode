@@ -19,13 +19,21 @@
   "forwardPorts": [8080],
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
+  "remoteEnv": {
+    "RUSTUP_TOOLCHAIN": "nightly",
+    "CARGO_UNSTABLE_BINDEPS": "true"
+  },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "postStartCommand": "bash .devcontainer/post-start.sh",
   "customizations": {
     "vscode": {
       "settings": {
         "terminal.integrated.defaultProfile.linux": "zsh",
-        "rust-analyzer.check.command": "clippy"
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.server.extraEnv": {
+          "RUSTUP_TOOLCHAIN": "nightly",
+          "CARGO_UNSTABLE_BINDEPS": "true"
+        }
       },
       "extensions": [
         "ms-vscode.cpptools-extension-pack",

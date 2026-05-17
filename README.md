@@ -111,7 +111,7 @@ virtmcu/
 │   │   ├── comms/              # Netdev, CAN, SPI, UART (chardev), ieee802154, wifi
 │   │   ├── observability/      # Actuator, Telemetry, UI
 │   │   ├── mcu/                # MCU-specific peripherals (S32K144, etc.)
-│   │   └── common/             # Shared APIs (virtmcu-api, virtmcu-qom)
+│   │   └── common/             # Shared APIs (virtmcu-wire, virtmcu-qom)
 │   └── meson.build             # Integrates hw/ into QEMU's module build
 │
 ├── tools/                      # Assorted offline utilities and debugging helpers

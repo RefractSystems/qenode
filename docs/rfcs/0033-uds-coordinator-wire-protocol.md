@@ -39,7 +39,7 @@ Every message — in both directions — is serialized as:
 - A zero-length payload is valid; a `payload_len = 0` frame carries no bytes after the length field.
 
 **Implementation references:**
-- `hw/rust/backbone/transport-unix/src/lib.rs` — `write_framed()` (node side, sync)
+- `hw/rust/backbone/transport-uds/src/lib.rs` — `write_framed()` (node side, sync)
 - `tools/deterministic_coordinator/src/main.rs` — `uds_write_framed()` (coordinator side, async)
 
 ---
@@ -62,7 +62,7 @@ Every message — in both directions — is serialized as:
 pub const UDS_PROTO_VERSION: u32 = 1;
 ```
 
-Defined in `hw/rust/common/virtmcu-api/src/lib.rs`. Nodes embed this constant in every `UdsRegistration` message. The coordinator asserts that the received `proto_version` equals `UDS_PROTO_VERSION` at startup; a mismatch is a **fatal panic** (Fail Loudly, RFC-0022).
+Defined in `hw/rust/common/virtmcu-wire/src/lib.rs`. Nodes embed this constant in every `UdsRegistration` message. The coordinator asserts that the received `proto_version` equals `UDS_PROTO_VERSION` at startup; a mismatch is a **fatal panic** (Fail Loudly, RFC-0022).
 
 Version increments require a matching change to this RFC and a bump of `UDS_PROTO_VERSION`. Backward compatibility is not required; simulations are always compiled and run together.
 
@@ -77,7 +77,7 @@ Version increments require a matching change to this RFC and a bump of `UDS_PROT
 **Payload**: `UdsRegistration` FlatBuffer root
 
 ```fbs
-/// hw/rust/common/virtmcu-api/src/core.fbs
+/// hw/rust/common/virtmcu-wire/src/core.fbs
 table UdsRegistration {
     node_id:       uint32;
     federation_id: string (required);
@@ -86,12 +86,12 @@ table UdsRegistration {
 ```
 
 **Coordinator behaviour:**
-1. Parse with `virtmcu_api::decode_uds_registration()`.
+1. Parse with `virtmcu_wire::decode_uds_registration()`.
 2. Assert `proto_version == UDS_PROTO_VERSION` — panics on mismatch.
 3. Assert `federation_id == coordinator_federation_id` — panics on mismatch (prevents cross-federation socket confusion).
 4. Emit `WorkerEvent::Register(node_id, write_half)` to the coordinator state machine.
 
-**Node behaviour (encode):** call `virtmcu_api::encode_uds_registration(node_id, federation_id)`.
+**Node behaviour (encode):** call `virtmcu_wire::encode_uds_registration(node_id, federation_id)`.
 
 ---
 
@@ -102,7 +102,7 @@ table UdsRegistration {
 **Payload**: `UdsQuantumStart` FlatBuffer root
 
 ```fbs
-/// hw/rust/common/virtmcu-api/src/core.fbs
+/// hw/rust/common/virtmcu-wire/src/core.fbs
 table UdsQuantumStart {
     quantum:        uint64;
     vtime_limit_ns: uint64;
@@ -112,8 +112,8 @@ table UdsQuantumStart {
 - `quantum` is the 0-based quantum number the node is being released to execute.
 - `vtime_limit_ns` is the upper bound on `delivery_vtime_ns` for any frame the node may include in its DONE signal for this quantum. Frames with `delivery_vtime_ns > vtime_limit_ns` must be deferred to a later quantum. Currently always `u64::MAX` (no bound enforced), reserved for future sub-quantum flow control.
 
-**Coordinator behaviour (encode):** call `virtmcu_api::encode_uds_quantum_start(quantum, u64::MAX)`.  
-**Node behaviour (decode):** call `virtmcu_api::decode_uds_quantum_start(bytes)`.
+**Coordinator behaviour (encode):** call `virtmcu_wire::encode_uds_quantum_start(quantum, u64::MAX)`.  
+**Node behaviour (decode):** call `virtmcu_wire::decode_uds_quantum_start(bytes)`.
 
 ---
 
@@ -134,7 +134,7 @@ table UdsQuantumStart {
 **Payload**: 24-byte `ZenohFrameHeader` struct followed by raw network bytes
 
 ```fbs
-/// hw/rust/common/virtmcu-api/src/core.fbs
+/// hw/rust/common/virtmcu-wire/src/core.fbs
 struct ZenohFrameHeader {
     delivery_vtime_ns: uint64;
     sequence_number:   uint64;
@@ -197,8 +197,8 @@ Node 0                   Coordinator              Node 1
 ## FlatBuffers Schema Location
 
 ```
-hw/rust/common/virtmcu-api/src/core.fbs        # source of truth
-hw/rust/common/virtmcu-api/src/core_generated.rs # generated — do not edit
+hw/rust/common/virtmcu-wire/src/core.fbs        # source of truth
+hw/rust/common/virtmcu-wire/src/core_generated.rs # generated — do not edit
 ```
 
 Regenerate with:

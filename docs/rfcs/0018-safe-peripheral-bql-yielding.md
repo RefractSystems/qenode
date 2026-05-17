@@ -1,52 +1,69 @@
-# RFC-0018: Safe Peripheral BQL Yielding via MmioDevice Trait
+# RFC-0018: Safe Peripheral BQL Yielding
 
 ## Status
-Accepted. **Partially superseded by RFC-0027** (`CoSimBridge` now owns BQL
-yielding and `VcpuDrain` for bridges). The `MmioResult::wait_for(...)` closure
-pattern below is still authoritative for peripheral MMIO handlers. Direct
-calls to `Bql::temporary_unlock()` from peripheral code are BANNED per
-`CLAUDE.md`; the framework wraps them.
+
+Accepted. **Partially superseded:**
+- `CoSimBridge` (RFC-0027) now owns BQL yielding and `VcpuDrain` for boundary peripherals (UART bridges, HiL, remote-port).
+- `#[qom_device]` (RFC-0023) replaced the `#[derive(MmioDevice)]` macro proposed here — peripheral authors use the `Peripheral` trait directly.
+- `MmioResult::wait_for(...)` remains authoritative for simulation peripheral MMIO handlers.
+- Direct calls to `Bql::temporary_unlock()` from peripheral code are BANNED per `CLAUDE.md`; the framework wraps them.
+- `BqlContext` (RFC-0041) provides compile-time proof that BQL is held in MMIO handlers and timer callbacks.
 
 ## Context
-VirtMCU ensures fidelity by running unmodified firmware that was originally written for bare-metal silicon. Bare-metal firmware frequently utilizes tight polling loops (e.g., `while(!REG_STATUS_READY);`) rather than `WFI` (Wait For Interrupt) to check peripheral states. 
 
-In a QEMU-based hypervisor, executing an MMIO read acquires the Big QEMU Lock (BQL). If a guest vCPU tight-polls an MMIO register, it rapidly locks and unlocks the BQL without yielding to the host OS scheduler. This aggressive contention starves the QEMU main loop thread, preventing it from acquiring the BQL to process incoming network packets (e.g., Zenoh messages), leading to a system-wide simulation deadlock (livelock).
+VirtMCU ensures fidelity by running unmodified firmware written for bare-metal silicon. Bare-metal firmware frequently uses tight polling loops (e.g., `while(!REG_STATUS_READY);`) rather than `WFI` to check peripheral state.
 
-Our initial mitigation involved developers manually inserting `Bql::temporary_unlock()` and `std::thread::yield_now()` into the `unsafe extern "C"` MMIO callbacks. However, this is suboptimal:
-1. **Busy-Yielding:** `yield_now()` is a spin-yield. The vCPU thread re-enters the OS scheduler and may immediately wake up to re-contend for the lock, wasting CPU cycles and relying on scheduler luck.
-2. **Fragility & Boilerplate:** Peripheral developers must manually write unsafe C-FFI callbacks and remember to suppress linter errors (`// virtmcu-allow: yield`). A missed yield silently re-introduces the starvation bug.
+In a QEMU-based hypervisor, executing an MMIO read acquires the Big QEMU Lock (BQL). A vCPU that tight-polls an MMIO register rapidly locks and unlocks the BQL without yielding to the host OS scheduler. This aggressive contention starves the QEMU main loop thread, preventing it from acquiring the BQL to process incoming messages — producing a simulation livelock.
+
+The initial mitigation required developers to manually insert `Bql::temporary_unlock()` and `std::thread::yield_now()` into `unsafe extern "C"` MMIO callbacks. This was fragile: a missed yield silently reintroduced the starvation bug, and `yield_now()` is a spin-yield that may immediately re-contend for the lock.
 
 ## Decision
-We will eliminate manual BQL management in peripheral development by transitioning to a structurally safe, closure-based polling pattern enforced via a new `MmioDevice` trait and proc-macro.
+
+We eliminate manual BQL management in peripheral development via two mechanisms:
 
 ### 1. True Blocking (`wait_yielding_bql`)
-Instead of `yield_now()`, peripherals waiting on asynchronous data must suspend the vCPU using QEMU condition variables (`QemuCond::wait_yielding_bql`). This explicitly removes the vCPU from the host OS run queue until the peripheral's Zenoh background thread signals the condvar, eliminating CPU waste and guaranteeing deterministic wakeup latency.
 
-### 2. The `wait_for` Closure Pattern
-To make the starvation bug unrepresentable, peripheral logic will no longer return primitive integers or use simple enums for status. Instead, they will use a framework-owned closure pattern:
+Instead of `yield_now()`, peripherals waiting on asynchronous data suspend the vCPU using QEMU condition variables (`QemuCond::wait_yielding_bql`). This removes the vCPU from the host OS run queue until the peripheral's background thread signals the condvar — eliminating CPU waste and guaranteeing deterministic wakeup latency.
+
+### 2. The `MmioResult::wait_for` Closure Pattern
+
+Peripheral MMIO handlers do not manage the yield loop. They declare a condition and a result value; the framework owns the yield/wait loop:
 
 ```rust
-fn read_status(state: &State, offset: u64) -> MmioResult {
-    match offset {
-        REG_STATUS => MmioResult::wait_for(
-            || state.has_data,        // condition — framework polls this
-            || STATUS_RX_PENDING,     // value when ready
-        ),
-        _ => MmioResult::Ready(0),
+// Current Peripheral trait (RFC-0041 updated signatures):
+impl Peripheral for MyState {
+    fn read(&self, offset: u64, _size: u32, ctx: &BqlContext) -> MmioResult<'_> {
+        match offset {
+            REG_STATUS => MmioResult::wait_for(
+                || self.data.get(ctx).has_data,   // condition — framework polls this
+                || STATUS_RX_PENDING,              // value returned when ready
+            ),
+            _ => MmioResult::Ready(0),
+        }
     }
 }
 ```
-The framework takes ownership of the yield/wait loop. The developer declares the condition and the value, completely removing BQL knowledge from the peripheral business logic.
 
-### 3. `#[derive(MmioDevice)]` Macro
-All `unsafe extern "C"` MMIO boilerplate across all peripherals (sensor, radio, actuator, etc.) will be eliminated. A procedural macro will generate the `MemoryRegionOps`, the FFI shims, and the BQL dispatch logic, consuming the safe `MmioDevice` trait implementation.
+The `ctx: &BqlContext` parameter is the compile-time proof (RFC-0041) that this code executes with BQL held. The developer declares intent; the framework handles synchronization.
 
-## Consequences
-- **Positive:** BQL starvation bugs become impossible to express in peripheral code.
-- **Positive:** Zero CPU waste during bare-metal polling loops, improving simulation scalability.
-- **Positive:** Peripheral development becomes entirely safe Rust, free of FFI and lock-management boilerplate.
-- **Negative:** Increased complexity in the `virtmcu-qom` framework to handle closure lifetimes across the `wait_yielding_bql` boundary.
+### 3. `#[qom_device]` Macro
+
+The `#[qom_device]` macro (RFC-0023) generates the `MemoryRegionOps`, FFI shims, and BQL dispatch, consuming the `Peripheral` trait implementation. Peripheral authors write no `extern "C"` callbacks.
+
+## Drawbacks
+
+- Increased complexity in `virtmcu-qom` to handle closure lifetimes across the `wait_yielding_bql` boundary.
+- The yield loop is invisible to the peripheral author, which can make debugging MMIO stalls harder without framework-level tracing.
+
+## Rationale and Alternatives
+
+**Alternative: Manual `yield_now()` per peripheral**: the prior art. Produced BQL starvation bugs when developers forgot to call it. Rejected.
+
+**Alternative: `std::thread::sleep` in MMIO handlers**: banned — halts the simulation and breaks Virtual Time. Rejected.
 
 ## Related
+
 - RFC-0006: Binary Fidelity
-- `virtmcu-test-runner` lints (`banned_patterns.rs`)
+- RFC-0023: Safe QOM Macros (`#[qom_device]` replaces `#[derive(MmioDevice)]`)
+- RFC-0027: CoSimBridge RAII Framework (supersedes this RFC for boundary peripherals)
+- RFC-0041: Safe QOM Framework Boundaries (`BqlContext` token; `ctx` in MMIO handler signatures)

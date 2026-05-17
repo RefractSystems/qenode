@@ -25,7 +25,7 @@ serde_yaml = "0.9"
 rand = "0.8"
 rand_chacha = "0.3.1"
 anyhow = "1.0"
-virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "../../hw/rust/common/virtmcu-wire" }
 flatbuffers = "25.12.19"
 typify = "0.6.2"
 schemars = "0.8.21"
@@ -33,7 +33,7 @@ regress = "0.11.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-transport-unix = { path = "../../hw/rust/backbone/transport-unix" }
+transport-uds = { path = "../../hw/rust/backbone/transport-uds" }
 
 [package.metadata.cargo-machete]
 ignored = ["rand", "rand_chacha", "schemars", "typify"]

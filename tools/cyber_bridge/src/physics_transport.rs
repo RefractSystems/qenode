@@ -4,7 +4,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use virtmcu_api::{physics_proto, PhysicsGatewayServer, PhysicsGatewayTransport};
+use virtmcu_wire::{physics_proto, PhysicsGatewayServer, PhysicsGatewayTransport};
 use zenoh::{Session, Wait};
 
 // --- Unix Socket Transport ---
@@ -133,7 +133,7 @@ impl PhysicsGatewayTransport for ZenohPhysicsTransport {
     fn trigger_and_wait(&self, trigger_bytes: &[u8], timeout: Duration) -> Result<(), String> {
         let replies = self
             .session
-            .get(virtmcu_api::topics::sim_topic::PHYSICS_TRIGGER)
+            .get(virtmcu_wire::topics::sim_topic::PHYSICS_TRIGGER)
             .payload(trigger_bytes)
             .timeout(timeout)
             .wait()

@@ -41,7 +41,7 @@ To serve the target audience, any future RFC or architecture change MUST adhere 
 **The Constraint:**
 - Warnings for broken internal invariants are banned. If a state is invalid, the simulation must crash (`panic!` or `.expect()`) to prevent silent divergence.
 - Resource management must use RAII. 
-- Thread deadlocks (especially involving the BQL) must be prevented by design (e.g., using the `MmioDevice` trait and Yield-on-Read patterns) rather than "retry" loops.
+- Thread deadlocks (especially involving the BQL) must be prevented by design (e.g., using the `Peripheral` trait, `MmioResult::wait_for`, and Yield-on-Read patterns from RFC-0018) rather than "retry" loops.
 
 ### 4. Multi-Tier Single Source of Truth (SSOT)
 **What it is:** To prevent "Ghost Mismatches" (where firmware, emulators, and UI disagree on hardware layout), no hardware parameter can ever be defined twice. Every data point must have a single authoritative origin and flow unidirectionally into generated artifacts.
@@ -53,7 +53,7 @@ To serve the target audience, any future RFC or architecture change MUST adhere 
 | :--- | :--- | :--- | :--- |
 | **Micro-Architecture** | **CMSIS-SVD (`.svd`)** | Register offsets, bitfields, base addresses. | `virtmcu-cli svd2header` & `svd2schema` |
 | **Macro-Architecture** | **Topology YAML (`.yaml`)** | Node connectivity, peripheral instantiation. | `yaml2qemu` -> DeviceTree (`.dtb`) |
-| **Wire Protocol** | **FlatBuffers (`.fbs`)** | Payload layouts for Zenoh/UDS messages. | `flatcc` / `virtmcu-api` crate |
+| **Wire Protocol** | **FlatBuffers (`.fbs`)** | Payload layouts for Zenoh/UDS messages. | `flatcc` / `virtmcu-wire` crate |
 
 **Data Flow Mandate (Where things come from and go):**
 1. **SVDs** (from Silicon Vendors) -> Generate `robot_io.h` (for Firmware) and `svd_constants.rs` (for Emulator backend).
