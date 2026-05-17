@@ -157,6 +157,28 @@ impl Lint for RustBannedPatternsLint {
                 exc_list: vec!["transport-uds", "tests", "build.rs"],
             },
             Rule {
+                name: "topic_qom_property",
+                pattern: r#"(?:pub\s+topic\s*:\s*(?:QomString|virtmcu_qom::qom::QomString)|define_prop_\w+\s*!\s*\(\s*"topic")"#,
+                message: "Banned `topic` QOM property declaration in peripheral code (RFC-0042).",
+                fix: "Replace `topic` with `link-name` (a QomString property). In realize(), call \
+                      transport.register_link(node_id, &link_name, protocol, LinkRole::Both) to obtain \
+                      a link_id. Use VtimeIngress::new_for_link(link_id, …) for ingress and \
+                      transport.reserve_link(link_id, size) for egress. The deprecated \
+                      DataTransport::reserve(topic, size) and VtimeIngress::new(topic, …) APIs must \
+                      not appear in new code. See RFC-0042 and hw/rust/examples/reference-peripheral \
+                      for the Gold Standard pattern. \
+                      MANDATE: // virtmcu-allow: topic_qom_property reasoning=\"<reason>\".",
+                inc_dirs: vec![
+                    "hw/rust/buses",
+                    "hw/rust/bridges",
+                    "hw/rust/physics",
+                    "hw/rust/mcu",
+                    "hw/rust/examples",
+                    "hw/rust/observability",
+                ],
+                exc_list: vec![],
+            },
+            Rule {
                 name: "new_unchecked_in_peripheral",
                 pattern: r"BqlContext::new_unchecked\(\)",
                 message: "Banned BqlContext::new_unchecked() in peripheral code.",

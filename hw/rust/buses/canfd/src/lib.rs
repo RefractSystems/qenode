@@ -105,6 +105,7 @@ pub struct VirtmcuCanHostQEMU {
     #[qom_property]
     pub router: virtmcu_qom::qom::QomString,
     #[qom_property]
+    // virtmcu-allow: topic_qom_property reasoning="S2 migration in progress"
     pub topic: virtmcu_qom::qom::QomString,
 
     #[qom_link(target = "virtmcu-transport-hub")]
