@@ -1,8 +1,8 @@
 # reference-peripheral — VirtMCU Peripheral Gold Standard Template
 
 A minimal, fully-functional QOM peripheral demonstrating the patterns mandated by
-RFC-0021, RFC-0023, RFC-0025, RFC-0026, and RFC-0031.  Copy this crate when
-creating a new peripheral.
+RFC-0021, RFC-0023, RFC-0025, RFC-0026, RFC-0031, and RFC-0042.  Copy this crate
+when creating a new peripheral.
 
 ## Architecture
 
@@ -20,21 +20,29 @@ hw/rust/common/reference-peripheral/
 |---|---|
 | `#[qom_device]` zero-unsafe QOM registration | `ReferencePeripheralQEMU` struct |
 | `#[qom_link]` transport hub dependency injection | `transport` field |
-| `#[qom_property]` for node_id, topic, debug | fields on `ReferencePeripheralQEMU` |
+| `#[qom_property]` for node_id, link_name, debug | fields on `ReferencePeripheralQEMU` |
 | `PeripheralState::new()` — DI constructor | `impl PeripheralState for ReferencePeripheralState` |
 | `VcpuDrain` teardown safety | `drain` field + `drain.acquire()` in every read/write |
-| `VtimeIngress` ingress (RFC-0025) | `realize()` |
-| `reserve()/commit()` zero-copy egress (RFC-0025) | `MmioDevice::write()` |
+| `transport.register_link()` → `link_id` (RFC-0042) | `realize()` |
+| `VtimeIngress::new_for_link(link_id, …)` ingress (RFC-0042) | `realize()` |
+| `reserve_link(link_id)/commit()` zero-copy egress (RFC-0025/0042) | `MmioDevice::write()` |
 | Fail-loudly on unknown writes (RFC-0022) | `_ => panic!(...)` in `write()` |
 | Fail-loudly on commit failure (RFC-0022) | `.expect()` on `commit()` result |
 
-### Topic routing
+### Link routing (RFC-0042)
 
-Topics follow the pattern `sim/{topic}/{node_id}/{rx|tx}`.  The `topic` QOM
-property (default: `"chardev"`) sets the namespace.  The default `"chardev"`
-matches the coordinator's `ReferenceLink` legacy routing
-(`sim/chardev/{n}/rx`).  New peripherals should set their own namespace
-(e.g. `topic=uart`, `topic=can`).
+This peripheral uses the **topic-free coordinator protocol**.  There is no `topic`
+QOM property.  Instead, `yaml2qemu` injects a `link-name` property from the
+topology YAML (`topology.links[].name`).  During `realize()` the peripheral
+calls `transport.register_link(node_id, &link_name, protocol, LinkRole::Both)` and
+receives a `link_id` — a stable `u32` assigned by the coordinator at startup.
+
+All ingress uses `VtimeIngress::new_for_link(link_id, …)` and all egress uses
+`transport.reserve_link(link_id, size)`.  No topic strings appear after `realize()`.
+
+The coordinator routes frames by `link_id`; no substring matching, no wildcards.
+Adding a new link requires only a `name:` entry in the topology YAML — no changes
+to coordinator source code.
 
 ### MMIO register map
 
@@ -47,9 +55,10 @@ matches the coordinator's `ReferenceLink` legacy routing
 ## Usage
 
 ```bash
-# Load from the QEMU command line via the transport hub:
+# Load from the QEMU command line via the transport hub.
+# 'link-name' is injected by yaml2qemu from topology.links[name=ref_bus].
 -device virtmcu-transport-hub,node=0,socket-path=/tmp/coord.sock,id=hub0
--device reference-peripheral,node_id=0,transport.hub=hub0
+-device reference-peripheral,node-id=0,link-name=ref_bus,transport.hub=hub0
 ```
 
 ## Extending this template
@@ -57,6 +66,10 @@ matches the coordinator's `ReferenceLink` legacy routing
 1. Copy this crate to `hw/rust/comms/<your-peripheral>/`.
 2. Replace `ReferencePacket` with your protocol's packet type.
 3. Adjust MMIO register constants and match arms.
-4. Update the `topic` default to match your coordinator routing.
-5. Add a `federation-id` QOM property and use `UdsDataTransport::new_with_fed_id()`
-   if the peripheral manages its own UDS connection (rather than using the hub).
+4. Add a `name:` entry under `topology.links` in the world YAML; `yaml2qemu`
+   injects `link-name` automatically — do **not** add a `topic` property.
+5. In `realize()`, call `transport.register_link(node_id, &link_name, protocol, role)`
+   to obtain `link_id`, then pass it to `VtimeIngress::new_for_link` and
+   `transport.reserve_link`.
+6. If the peripheral manages its own UDS connection (rather than using the hub),
+   add a `federation-id` QOM property and use `UdsDataTransport::new_with_fed_id()`.

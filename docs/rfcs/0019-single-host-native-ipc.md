@@ -25,7 +25,7 @@ The on-the-wire framing, registration handshake (`UdsRegistration`), and quantum
 
 2. **Event & Control Plane (QEMU ↔ Time Authority ↔ Coordinator): UDS + Thread-Local Arenas**
    - **Mechanism:** Direct, point-to-point Unix Domain Socket connections.
-   - **Zero-Allocation API:** Peripherals use a `reserve()`/`commit()` API (RFC-0025) backed by thread-local arenas. `reserve()` provides a lock-free, zero-allocation mutable slice. `commit()` performs a single `write()` system call to push the arena buffer down the UDS socket.
+   - **Zero-Allocation API:** Peripherals use a `reserve_link(link_id)`/`commit()` API (RFC-0025, updated by RFC-0042) backed by thread-local arenas. `reserve_link()` provides a lock-free, zero-allocation mutable slice keyed by `link_id` (not a topic string). `commit()` performs a single `write()` system call to push the arena buffer down the UDS socket. The earlier topic-based `reserve(topic, size)` is `#[deprecated]`.
    - **Data Plane (Networking):** Instead of publishing Ethernet/UART frames to Zenoh, QEMU nodes write them to a UDS connected to the `DeterministicCoordinator`. The Coordinator buffers these frames.
    - **PDES Barrier:** At the end of a quantum, QEMU nodes send a `CoordDoneReq` over UDS. The Coordinator waits for all sockets to report done, sorts the buffered network frames by `vtime_ns`, and pushes them down the destination UDS pipes.
 

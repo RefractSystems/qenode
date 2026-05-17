@@ -99,7 +99,7 @@ enum DebugCommands {
 
 #[derive(Subcommand, Debug)]
 enum PlatformCommands {
-    /// Generate DTB and CLI arguments from a VirtMCU YAML platform description
+    /// Generate CLI arguments and DTB from a VirtMCU YAML platform description
     Generate {
         /// Input YAML file
         input: PathBuf,
@@ -118,6 +118,14 @@ enum PlatformCommands {
         /// Node ID (default: 0)
         #[arg(long, default_value = "0")]
         node_id: u32,
+    },
+    /// Migrate existing topology files to include link names
+    MigrateLinkNames {
+        /// Input YAML file
+        input: PathBuf,
+        /// In-place edit (overwrites input file)
+        #[arg(short, long)]
+        in_place: bool,
     },
     /// Generate C++ address maps from OpenUSD-aligned YAML
     GenerateHeader {
@@ -211,6 +219,9 @@ async fn main() -> Result<()> {
             SchemaCommands::GenerateTopics => run_schema_generate_topics().await?,
         },
         Commands::Platform { cmd } => match cmd {
+            PlatformCommands::MigrateLinkNames { input, in_place } => {
+                run_migrate_link_names(&input, in_place).await?;
+            }
             PlatformCommands::Generate {
                 input,
                 out_dtb,
@@ -632,6 +643,80 @@ async fn run_platform_svd2rust_skeleton(input: PathBuf, output: Option<PathBuf>)
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(out_path, out)?;
+    } else {
+        println!("{}", out);
+    }
+
+    Ok(())
+}
+
+async fn run_migrate_link_names(input: &std::path::Path, in_place: bool) -> Result<()> {
+    let content = tokio::fs::read_to_string(input).await?;
+    let mut out = String::new();
+    let mut in_links = false;
+    let mut link_counter = 0;
+
+    let mut lines = content.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.trim_start() == "links:" {
+            in_links = true;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+        if in_links && !trimmed.is_empty() && !line.starts_with(' ') {
+            in_links = false;
+        }
+
+        if in_links && trimmed.starts_with("- ") {
+            let indent = line.len() - trimmed.len();
+            // Check if it already has 'name:' on the same line (e.g. - name: foo)
+            if trimmed.starts_with("- name:") || trimmed.starts_with("-  name:") {
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+
+            // Check if the next line is name:
+            let mut has_name = false;
+            let lines_clone = lines.clone();
+            for peek_line in lines_clone {
+                let peek_trimmed = peek_line.trim_start();
+                if peek_trimmed.is_empty() {
+                    continue;
+                }
+                if peek_trimmed.starts_with("- ") {
+                    break;
+                }
+                if peek_trimmed.starts_with("name:") {
+                    has_name = true;
+                    break;
+                }
+            }
+
+            out.push_str(line);
+            out.push('\n');
+            if !has_name {
+                out.push_str(&format!(
+                    "{:width$}name: auto_link_{}\n",
+                    "",
+                    link_counter,
+                    width = indent + 2
+                ));
+                link_counter += 1;
+            }
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if in_place {
+        tokio::fs::write(input, out).await?;
+        info!("Migrated links in-place for {:?}", input);
     } else {
         println!("{}", out);
     }

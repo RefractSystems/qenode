@@ -114,6 +114,7 @@ fn decode_batch(payload: &[u8]) -> Vec<CoordMessage> {
                         protocol: parse_protocol(pr),
                         payload: data,
                         base_topic: None,
+                        link_id: None,
                     });
                 }
             }
@@ -454,6 +455,7 @@ async fn run_deterministic_coordinator(
                             protocol: proto,
                             payload: data,
                             base_topic: Some(base),
+                            link_id: None,
                         };
 
                         if no_pdes {
@@ -509,6 +511,7 @@ async fn run_deterministic_coordinator(
                                         protocol: parse_protocol(m.protocol().0),
                                         payload: m.payload().map(|p| p.bytes().to_vec()).unwrap_or_default(),
                                         base_topic: None,
+            link_id: None,
                                     });
                                 }
                             }
@@ -727,6 +730,7 @@ async fn uds_deliver_message(
     topo: &Arc<tokio::sync::RwLock<topology::TopologyGraph>>,
     pcap_log: &mut Option<MessageLog>,
     msg: &mut CoordMessage,
+    rx_map: Option<&std::collections::HashMap<u32, Vec<u32>>>,
 ) {
     let t = topo.read().await;
     let mut target_nodes = Vec::new();
@@ -735,7 +739,17 @@ async fn uds_deliver_message(
         panic!("Unregistered packet received!");
     });
 
-    if msg.dst_node_id == u32::MAX {
+    if let Some(link_id) = msg.link_id {
+        if let Some(map) = rx_map {
+            if let Some(nodes) = map.get(&link_id) {
+                for &tid in nodes {
+                    if tid != msg.src_node_id {
+                        target_nodes.push(tid);
+                    }
+                }
+            }
+        }
+    } else if msg.dst_node_id == u32::MAX {
         for target_str in allowed_targets {
             if let Ok(tid) = target_str.parse::<u32>() {
                 target_nodes.push(tid);
@@ -750,7 +764,7 @@ async fn uds_deliver_message(
         }
     }
 
-    if target_nodes.is_empty() && msg.dst_node_id != u32::MAX {
+    if target_nodes.is_empty() && msg.dst_node_id != u32::MAX && msg.link_id.is_none() {
         return;
     }
 
@@ -766,8 +780,11 @@ async fn uds_deliver_message(
             let _ = log.write_message(&logged_msg);
         }
 
-        let rx_topic =
-            deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string());
+        let rx_topic = if let Some(link_id) = msg.link_id {
+            format!("sim/ch/{}/rx", link_id)
+        } else {
+            deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string())
+        };
         let mut out_msg = msg.clone();
         out_msg.dst_node_id = target_node;
         let out_payload = encode_message(&out_msg);
@@ -777,7 +794,9 @@ async fn uds_deliver_message(
             }
         }
 
-        let legacy_rx_topic = if let Some(base) = &msg.base_topic {
+        let legacy_rx_topic = if msg.link_id.is_some() {
+            rx_topic.clone()
+        } else if let Some(base) = &msg.base_topic {
             format!("{}/{}/rx", base, target_node)
         } else {
             match msg.protocol {
@@ -1119,11 +1138,18 @@ async fn run_unix_coordinator(
                                     protocol: proto,
                                     payload: data,
                                     base_topic: Some(base),
+                                    link_id: None,
                                 };
 
                                 if no_pdes {
-                                    uds_deliver_message(&sockets, &topo, &mut pcap_log, &mut msg)
-                                        .await;
+                                    uds_deliver_message(
+                                        &sockets,
+                                        &topo,
+                                        &mut pcap_log,
+                                        &mut msg,
+                                        None,
+                                    )
+                                    .await;
                                 } else {
                                     node_batches
                                         .entry(node_id)
@@ -1156,6 +1182,7 @@ async fn run_unix_coordinator(
                                             .map(|p| p.bytes().to_vec())
                                             .unwrap_or_default(),
                                         base_topic: None,
+                                        link_id: None,
                                     });
                                 }
                             }
@@ -1191,6 +1218,7 @@ async fn run_unix_coordinator(
                                             &topo,
                                             &mut pcap_log,
                                             &mut msg,
+                                            None,
                                         )
                                         .await;
                                     }
@@ -1248,6 +1276,7 @@ mod tests {
             protocol: Protocol::Ethernet,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         };
         let dummy_session = zenoh::config::Config::default();
         let session = zenoh::open(dummy_session).await.unwrap();

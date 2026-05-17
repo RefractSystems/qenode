@@ -67,6 +67,7 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         Ok(())
     }
 
+    #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
     fn reserve<'a>(
         &'a self,
         topic: &'a str,
@@ -98,6 +99,25 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
 
             self.publish(topic, &fb_payload).map_err(virtmcu_wire::TransportError::Other)
         }))
+    }
+
+    fn register_link(
+        &self,
+        _node_id: u32,
+        _link_name: &str,
+        _protocol: virtmcu_wire::Protocol,
+        _role: virtmcu_wire::LinkRole,
+    ) -> Result<u32, virtmcu_wire::TransportError> {
+        Ok(0) // Stage 1 stub
+    }
+
+    fn reserve_link(
+        &self,
+        _link_id: u32,
+        size: usize,
+    ) -> Result<virtmcu_wire::TransportReservation<'_>, virtmcu_wire::TransportError> {
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
+        self.reserve("sim/ch/0/tx", size)
     }
 
     fn subscribe(&self, topic: &str, callback: virtmcu_wire::DataCallback) -> Result<(), String> {

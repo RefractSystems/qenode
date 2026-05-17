@@ -245,7 +245,7 @@ pub use core_generated::virtmcu::core::*;
 
 /// Wire protocol version for UDS coordinator connections.
 /// Coordinator panics if a connecting node sends a different version.
-pub const UDS_PROTO_VERSION: u32 = 1;
+pub const UDS_PROTO_VERSION: u32 = 2;
 
 const UDS_REGISTRATION_CAPACITY: usize = 128;
 const UDS_QUANTUM_START_CAPACITY: usize = 64;
@@ -952,9 +952,26 @@ pub trait DataTransport: Send + Sync {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String>;
 
     /// Requests a zero-copy buffer from the transport layer.
+    #[deprecated(since = "0.3.0", note = "use reserve_link() instead")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
     fn reserve<'a>(
         &'a self,
         topic: &'a str,
+        size: usize,
+    ) -> Result<TransportReservation<'a>, TransportError>;
+
+    /// Register a link and obtain its coordinator-assigned link_id.
+    fn register_link(
+        &self,
+        node_id: u32,
+        link_name: &str,
+        protocol: crate::Protocol,
+        role: crate::LinkRole,
+    ) -> Result<u32, TransportError>;
+
+    /// Reserve a zero-copy buffer for a TX frame on this link.
+    fn reserve_link<'a>(
+        &'a self,
+        link_id: u32,
         size: usize,
     ) -> Result<TransportReservation<'a>, TransportError>;
 

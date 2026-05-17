@@ -197,6 +197,7 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
                     let vtime = virtmcu_qom::telemetry::get_global_vtime();
                     let seq = 0;
 
+                    #[allow(deprecated)] // virtmcu-allow: allow reasoning="S2.1 migration"
                     match t.reserve(&topic, payload.len()) {
                         Ok(mut reservation) => {
                             reservation.buffer_mut().copy_from_slice(&payload);
@@ -231,6 +232,7 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
 
                     if let Some(t) = &self.transport {
                         let generation_clone = Arc::clone(&self.generation);
+                        #[allow(deprecated)] // virtmcu-allow: allow reasoning="S2.1 migration"
                         let rec = VtimeIngress::new_safe(
                             &**t,
                             &topic,

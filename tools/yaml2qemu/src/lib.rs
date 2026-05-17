@@ -444,6 +444,44 @@ pub fn parse_yaml(
         },
     };
 
+    let mut parsed_links = Vec::new();
+    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(yaml_content) {
+        if let Some(topo) = value.get("topology") {
+            if let Some(links) = topo.get("links") {
+                if let Some(links_seq) = links.as_sequence() {
+                    let mut names = std::collections::HashSet::new();
+                    for (i, link) in links_seq.iter().enumerate() {
+                        let name = link.get("name").and_then(|n| n.as_str());
+                        if name.is_none() {
+                            return Err(anyhow::anyhow!(
+                                "Topology link at index {} is missing 'name' field",
+                                i
+                            ));
+                        }
+                        let name = name.unwrap();
+                        if !names.insert(name) {
+                            return Err(anyhow::anyhow!(
+                                "Duplicate topology link name found: {}",
+                                name
+                            ));
+                        }
+
+                        let protocol = link.get("type").and_then(|t| t.as_str()).unwrap_or("eth");
+                        let mut nodes = Vec::new();
+                        if let Some(nodes_seq) = link.get("nodes").and_then(|n| n.as_sequence()) {
+                            for n in nodes_seq {
+                                if let Some(id) = n.as_u64() {
+                                    nodes.push(id as u32);
+                                }
+                            }
+                        }
+                        parsed_links.push((name.to_string(), protocol.to_string(), nodes));
+                    }
+                }
+            }
+        }
+    }
+
     // If world is empty, try to parse as a multi-node topology
     if world.machine.is_none() && world.peripherals.is_empty() {
         #[derive(Debug, Deserialize)]
@@ -453,6 +491,17 @@ pub fn parse_yaml(
         if let Ok(topo) = serde_yaml::from_str::<Topology>(yaml_content) {
             if let Some(node_world) = topo.nodes.get(node_id as usize) {
                 world = node_world.clone();
+            }
+        } else {
+            // Also tolerate root topology wrapping
+            #[derive(Debug, Deserialize)]
+            struct RootTopo {
+                topology: Topology,
+            }
+            if let Ok(root) = serde_yaml::from_str::<RootTopo>(yaml_content) {
+                if let Some(node_world) = root.topology.nodes.get(node_id as usize) {
+                    world = node_world.clone();
+                }
             }
         }
     }
@@ -529,6 +578,9 @@ pub fn parse_yaml(
 
     if has_native {
         let transport = std::env::var("VIRTMCU_TRANSPORT").unwrap_or_else(|_| "zenoh".to_string());
+        if transport == "zenoh" {
+            eprintln!("DEPRECATION: Zenoh transport is deprecated for peripheral data plane. Use unix transport instead.");
+        }
         // Inject hub0
         dts.push_str("    hub0 {\n");
         dts.push_str("        compatible = \"virtmcu-transport-hub\";\n");
@@ -547,6 +599,64 @@ pub fn parse_yaml(
     // Pass 1: Assign phandles, bucket children, and apply SVD augmentation
     let mut children_by_parent: HashMap<String, Vec<Peripheral>> = HashMap::new();
     let mut augmented_peripherals = world.peripherals.clone();
+
+    for p in &mut augmented_peripherals {
+        if let Some(props) = &mut p.properties {
+            if props.contains_key("topic") {
+                return Err(anyhow::anyhow!(
+                    "Lint Error: Peripheral '{}' uses deprecated 'topic:' property. Use topology links and 'link-name' instead.",
+                    p.name
+                ));
+            }
+        }
+
+        let p_type = p.periph_type.as_deref().unwrap_or("");
+        let protocol = match p_type {
+            "zenoh-wifi" | "wifi" => "wifi",
+            "canfd" => "canfd",
+            "flexray" => "flexray",
+            "lin" => "lin",
+            "telemetry" => "eth",
+            "reference-peripheral" => "reference-link",
+            "SPI.ZenohBridge" => "spi",
+            _ => "",
+        };
+
+        if !protocol.is_empty() {
+            let mut matched_link = None;
+            let mut possible_links = 0;
+            for (link_name, link_proto, link_nodes) in &parsed_links {
+                if link_proto == protocol && link_nodes.contains(&node_id) {
+                    matched_link = Some(link_name.clone());
+                    possible_links += 1;
+                }
+            }
+
+            if possible_links == 1 {
+                if p.properties.is_none() {
+                    p.properties = Some(HashMap::new());
+                }
+                let props = p.properties.as_mut().unwrap();
+                if !props.contains_key("link-name") {
+                    props.insert(
+                        "link-name".to_string(),
+                        serde_yaml::Value::String(matched_link.unwrap()),
+                    );
+                }
+            } else if possible_links > 1 {
+                let has_link_name = p
+                    .properties
+                    .as_ref()
+                    .is_some_and(|props| props.contains_key("link-name"));
+                if !has_link_name {
+                    return Err(anyhow::anyhow!(
+                        "Peripheral '{}' needs explicit 'link-name' because node {} participates in multiple '{}' links",
+                        p.name, node_id, protocol
+                    ));
+                }
+            }
+        }
+    }
 
     // SVD Augmentation
     for p in &mut augmented_peripherals {

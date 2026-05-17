@@ -73,11 +73,9 @@ pub struct ReferencePeripheralQEMU {
     pub debug: bool,
     #[qom_property]
     pub node_id: u32,
-    /// Topic namespace for this peripheral's sim topics (e.g. "chardev", "uart", "can").
-    /// Produces topics: sim/{topic}/{node_id}/rx  and  sim/{topic}/{node_id}/tx.
-    /// Default "chardev" matches the coordinator's ReferenceLink legacy routing.
-    #[qom_property]
-    pub topic: virtmcu_qom::qom::QomString,
+    /// The topology link name for routing (e.g. "my_link").
+    #[qom_property(name = "link-name")]
+    pub link_name: virtmcu_qom::qom::QomString,
 
     #[qom_link(target = "virtmcu-transport-hub")]
     pub transport: virtmcu_qom::qom::QomLink<dyn DataTransport>,
@@ -88,8 +86,8 @@ pub struct ReferencePeripheralQEMU {
 
 pub struct ReferencePeripheralState {
     pub node_id: u32,
-    /// Topic namespace from the QOM property; drives sim topic construction.
-    pub topic: String,
+    pub link_name: String,
+    pub link_id: u32,
     pub drain: VcpuDrain,
     pub cond: Arc<Condvar>,
     pub wait_mutex: Arc<Mutex<()>>,
@@ -110,16 +108,17 @@ impl virtmcu_qom::device::PeripheralState for ReferencePeripheralState {
             ">>> HELLO FROM REFERENCE PERIPHERAL NEW! Node {}",
             qemu_dev.node_id
         );
-        let topic = if qemu_dev.topic.is_null() {
+        let link_name = if qemu_dev.link_name.is_null() {
             // "chardev" matches coordinator's ReferenceLink routing (sim/chardev/{n}/rx).
             String::from("chardev")
         } else {
-            qemu_dev.topic.as_string()
+            qemu_dev.link_name.as_string()
         };
 
         Self {
             node_id: qemu_dev.node_id,
-            topic,
+            link_name,
+            link_id: 0,
             drain: VcpuDrain::new(),
             cond: Arc::new(Condvar::new()),
             wait_mutex: Arc::new(Mutex::new(())),
@@ -137,15 +136,23 @@ impl virtmcu_qom::device::PeripheralState for ReferencePeripheralState {
 impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
     fn realize(&mut self, ctx: &virtmcu_qom::device::BqlContext) -> Result<(), String> {
         if let Some(t) = &self.transport {
-            let rx_topic = format!("sim/{}/{}/rx", self.topic, self.node_id);
+            self.link_id = t
+                .register_link(
+                    self.node_id,
+                    &self.link_name,
+                    virtmcu_wire::Protocol::ReferenceLink,
+                    virtmcu_wire::LinkRole::Peer,
+                )
+                .map_err(|e| format!("Failed to register link: {e:?}"))?;
+
             let generation_clone = Arc::clone(&self.generation);
             let has_data_clone = Arc::clone(&self.has_data);
             let rx_data_clone = Arc::clone(&self.rx_data);
             let cond_clone = Arc::clone(&self.cond);
 
-            let rec = VtimeIngress::new_safe(
+            let rec = VtimeIngress::new_for_link(
                 &**t,
-                &rx_topic,
+                self.link_id,
                 generation_clone,
                 |topic, payload| {
                     virtmcu_qom::sim_debug!(
@@ -199,7 +206,11 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                 ) + 1_000_000,
             );
 
-            virtmcu_qom::sim_info!("Reference: Node {} subscribed to {}", self.node_id, rx_topic);
+            virtmcu_qom::sim_info!(
+                "Reference: Node {} subscribed to link_id {}",
+                self.node_id,
+                self.link_id
+            );
         } else {
             virtmcu_qom::sim_info!(
                 "Reference: Node {} initialized without transport (standalone mode)",
@@ -242,7 +253,6 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                     virtmcu_qom::sim_info!("Reference: Write to TX but NO transport!");
                     return;
                 };
-                let tx_topic = format!("sim/{}/{}/tx", self.topic, self.node_id);
                 // Use qemu_clock_get_ns_safe with BqlContext instead of get_global_vtime
                 let vtime = virtmcu_qom::timer::qemu_clock_get_ns_safe(
                     virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
@@ -257,7 +267,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                     val
                 };
 
-                match transport.reserve(&tx_topic, REFERENCE_TX_SIZE) {
+                match transport.reserve_link(self.link_id, REFERENCE_TX_SIZE) {
                     Ok(mut reservation) => {
                         reservation.buffer_mut().copy_from_slice(&val.to_le_bytes());
                         reservation
@@ -265,7 +275,8 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                             .expect("FATAL: Reference failed to commit transport reservation");
                     }
                     Err(e) => panic!(
-                        "FATAL: Reference failed to reserve transport for topic {tx_topic}: {e:?}",
+                        "FATAL: Reference failed to reserve transport for link {}: {:?}",
+                        self.link_id, e
                     ),
                 };
             }
@@ -340,13 +351,14 @@ mod tests {
         qemu_dev.base_addr = 0x1000;
         qemu_dev.debug = false;
         qemu_dev.node_id = 1;
-        qemu_dev.topic = virtmcu_qom::qom::QomString::default();
+        qemu_dev.link_name = virtmcu_qom::qom::QomString::default();
 
         let state =
             <ReferencePeripheralState as virtmcu_qom::device::PeripheralState>::new(&qemu_dev);
 
         assert_eq!(state.node_id, 1);
-        assert_eq!(state.topic, "chardev");
+        assert_eq!(state.link_name, "chardev");
+        assert_eq!(state.link_id, 0);
         assert!(!state.has_data.load(Ordering::SeqCst));
 
         state.has_data.store(true, Ordering::SeqCst);

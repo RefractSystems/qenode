@@ -27,7 +27,7 @@ All three bugs are prevented by construction when the bridge delegates to `CoSim
 
 We introduce `CoSimBridge<T: CoSimTransport>` and the `CoSimTransport` trait inside `virtmcu-qom`. `CoSimBridge` owns vCPU registration, BQL yielding via `Bql::temporary_unlock()`, and RAII teardown of both the transport and the associated threads.
 
-**Simulation vs. Boundary boundary (enforced by CLAUDE.md):** `CoSimBridge` is exclusively for boundary peripherals. Simulation peripherals MUST use `VtimeIngress` + `reserve()/commit()`. Using `CoSimBridge` for simulation traffic bypasses the PDES quantum barrier — no compile error prevents this, so the distinction is enforced by CLAUDE.md and code review.
+**Simulation vs. Boundary boundary (enforced by CLAUDE.md):** `CoSimBridge` is exclusively for boundary peripherals. Simulation peripherals MUST use `VtimeIngress::new_for_link(link_id, …)` + `reserve_link(link_id)/commit()` (RFC-0042). Using `CoSimBridge` for simulation traffic bypasses the PDES quantum barrier — no compile error prevents this, so the distinction is enforced by CLAUDE.md and code review.
 
 ## Detailed Design
 

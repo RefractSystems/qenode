@@ -163,6 +163,7 @@ impl DataTransport for UdsDataTransport {
         self.publish_raw(topic, payload)
     }
 
+    #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
     fn reserve<'a>(
         &'a self,
         topic: &'a str,
@@ -201,6 +202,25 @@ impl DataTransport for UdsDataTransport {
                     .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
             }))
         })
+    }
+
+    fn register_link(
+        &self,
+        _node_id: u32,
+        _link_name: &str,
+        _protocol: virtmcu_wire::Protocol,
+        _role: virtmcu_wire::LinkRole,
+    ) -> Result<u32, virtmcu_wire::TransportError> {
+        Ok(0) // Stage 1 stub
+    }
+
+    fn reserve_link<'a>(
+        &'a self,
+        _link_id: u32,
+        size: usize,
+    ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
+        self.reserve("sim/ch/0/tx", size)
     }
 
     fn subscribe(&self, topic: &str, callback: DataCallback) -> Result<(), String> {

@@ -14,6 +14,7 @@ pub struct CoordMessage {
     pub protocol: Protocol,
     pub payload: Vec<u8>,
     pub base_topic: Option<String>,
+    pub link_id: Option<u32>,
 }
 
 impl PartialOrd for CoordMessage {
@@ -247,6 +248,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         }
     }
 
@@ -531,6 +533,7 @@ pub mod extra_tests {
                     protocol: Protocol::Uart,
                     payload: vec![1, 2, 3],
                     base_topic: None,
+                    link_id: None,
                 };
                 barrier_clone
                     .submit_done(node_id as u32, 0, 0, vec![msg])

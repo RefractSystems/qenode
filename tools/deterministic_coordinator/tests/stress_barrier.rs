@@ -28,6 +28,7 @@ fn stress_barrier() {
                         protocol: Protocol::Uart,
                         payload: vec![m as u8],
                         base_topic: None,
+                        link_id: None,
                     });
                 }
                 barrier_clone

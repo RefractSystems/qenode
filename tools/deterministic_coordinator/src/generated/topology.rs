@@ -885,6 +885,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TopologyTransport {
 ///  "$id": "WireLink.json",
 ///  "type": "object",
 ///  "required": [
+///    "name",
 ///    "nodes",
 ///    "type"
 ///  ],
@@ -893,6 +894,9 @@ impl ::std::convert::TryFrom<::std::string::String> for TopologyTransport {
 ///      "type": "integer",
 ///      "maximum": 4294967295.0,
 ///      "minimum": 0.0
+///    },
+///    "name": {
+///      "type": "string"
 ///    },
 ///    "nodes": {
 ///      "type": "array",
@@ -913,6 +917,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TopologyTransport {
 pub struct WireLink {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub baud: ::std::option::Option<u32>,
+    pub name: ::std::string::String,
     pub nodes: ::std::vec::Vec<NodeId>,
     #[serde(rename = "type")]
     pub type_: Protocol,
@@ -1721,6 +1726,7 @@ pub mod builder {
     #[derive(Clone, Debug)]
     pub struct WireLink {
         baud: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
         nodes: ::std::result::Result<::std::vec::Vec<super::NodeId>, ::std::string::String>,
         type_: ::std::result::Result<super::Protocol, ::std::string::String>,
     }
@@ -1728,6 +1734,7 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 baud: Ok(Default::default()),
+                name: Err("no value supplied for name".to_string()),
                 nodes: Err("no value supplied for nodes".to_string()),
                 type_: Err("no value supplied for type_".to_string()),
             }
@@ -1742,6 +1749,16 @@ pub mod builder {
             self.baud = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for baud: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
             self
         }
         pub fn nodes<T>(mut self, value: T) -> Self
@@ -1770,6 +1787,7 @@ pub mod builder {
         fn try_from(value: WireLink) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 baud: value.baud?,
+                name: value.name?,
                 nodes: value.nodes?,
                 type_: value.type_?,
             })
@@ -1779,6 +1797,7 @@ pub mod builder {
         fn from(value: super::WireLink) -> Self {
             Self {
                 baud: Ok(value.baud),
+                name: Ok(value.name),
                 nodes: Ok(value.nodes),
                 type_: Ok(value.type_),
             }

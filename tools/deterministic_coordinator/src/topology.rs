@@ -63,6 +63,7 @@ impl From<gen::TopologyTransport> for Transport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireLink {
+    pub name: String,
     #[serde(rename = "type")]
     pub protocol: Protocol,
     pub nodes: Vec<u32>,
@@ -120,7 +121,7 @@ pub struct TopologyGraph {
     pub max_messages_per_node_per_quantum: usize,
     pub global_seed: u64,
     pub transport: Transport,
-    wire_links: Vec<WireLink>,
+    pub wire_links: Vec<WireLink>,
     wireless_medium: Option<WirelessMedium>,
     node_positions: HashMap<u32, [f64; 3]>,
     max_wireless_range_m: f64,
@@ -236,6 +237,7 @@ impl TopologyGraph {
                     }
                 }
                 wire_links.push(WireLink {
+                    name: link.name.clone(),
                     protocol: Protocol::from(link.type_.clone()),
                     nodes,
                     baud: link.baud,

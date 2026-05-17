@@ -17,6 +17,7 @@ async fn test_tx_done_ordering() {
         protocol: Protocol::Uart,
         payload: vec![1, 2, 3],
         base_topic: None,
+        link_id: None,
     };
 
     let msg2 = CoordMessage {
@@ -27,6 +28,7 @@ async fn test_tx_done_ordering() {
         protocol: Protocol::Uart,
         payload: vec![4, 5, 6],
         base_topic: None,
+        link_id: None,
     };
 
     let msg3 = CoordMessage {
@@ -37,6 +39,7 @@ async fn test_tx_done_ordering() {
         protocol: Protocol::Uart,
         payload: vec![7, 8, 9],
         base_topic: None,
+        link_id: None,
     };
 
     let b_clone1 = barrier.clone();

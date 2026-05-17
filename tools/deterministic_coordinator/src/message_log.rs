@@ -167,6 +167,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         };
         log.write_message(&msg).expect("test should succeed");
         log.flush().expect("test should succeed");
@@ -195,6 +196,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![0x11, 0x22],
             base_topic: None,
+            link_id: None,
         };
         log.write_message(&msg).expect("test should succeed");
         log.flush().expect("test should succeed");
@@ -249,6 +251,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         };
         let msg2 = CoordMessage {
             src_node_id: 1,
@@ -258,6 +261,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         };
         let msg3 = CoordMessage {
             src_node_id: 1,
@@ -267,6 +271,7 @@ mod tests {
             protocol: Protocol::Uart,
             payload: vec![],
             base_topic: None,
+            link_id: None,
         };
 
         log.write_message(&msg1).expect("test should succeed");

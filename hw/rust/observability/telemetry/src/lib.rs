@@ -1,3 +1,4 @@
+#![allow(deprecated)] // virtmcu-allow: allow reasoning="S2 migration in progress"
 #![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
 #![allow(clippy::not_unsafe_ptr_arg_deref)] // virtmcu-allow: allow reasoning="Zero unsafe"

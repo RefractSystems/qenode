@@ -3,10 +3,11 @@
 ## Status
 Accepted (referenced as the "Gold Standard" mandate in `CLAUDE.md`/`AGENTS.md`)
 
-> Note: The utility table below predates RFC-0025. `SafePublisher` has been
-> replaced by the zero-copy `DataTransport::reserve()/commit()` API in all
-> peripheral code. Treat the row below as historical; the canonical egress
-> API is defined in RFC-0025.
+> Note: The utility table below predates RFC-0025 and RFC-0042. `SafePublisher` has
+> been replaced by the zero-copy `DataTransport::reserve_link(link_id)/commit()` API in
+> all peripheral code. The earlier topic-based `reserve(topic, size)` is `#[deprecated]`
+> (RFC-0042). The canonical egress API is `reserve_link()` as defined in RFC-0025 and
+> updated by RFC-0042.
 
 ## Context
 VirtMCU is a deterministic multi-node simulation framework. To achieve bit-identical results across runs while maintaining high execution speed, peripheral models must bridge the gap between the asynchronous host environment (network I/O, OS threads) and the synchronous guest environment (Virtual Time, CPU instructions).
@@ -43,8 +44,8 @@ To simplify development, the framework provides the following "Golden Path" util
 | Utility | Purpose |
 | :--- | :--- |
 | **`ClosureTimer`** | **Preferred for peripheral-owned timers.** Accepts an `FnMut(&BqlContext)` closure — no `extern "C"` callbacks, no raw pointer casting, correct drop ordering enforced by the framework. The `&BqlContext` passed to the closure enables compile-time proof that BQL is held (RFC-0041). Use `QomTimer` only inside `virtmcu-qom` framework code. |
-| **`DataTransport::reserve()/commit()`** | **Mandatory for Egress.** Zero-copy publication API (RFC-0025). Replaces the deprecated `SafePublisher` and `transport.publish(...)`. No `encode_frame` boilerplate in peripheral code. |
-| **`VtimeIngress`** | **Mandatory for Ingress.** Replaces the now-banned `SafeSubscription`. Automatically acquires the BQL, manages generation counters to prevent UAF, and uses `QomTimer` to sort and deliver packets at their correct Virtual Time, eliminating manual heap/timer boilerplate. |
+| **`DataTransport::reserve_link(link_id)/commit()`** | **Mandatory for Egress.** Zero-copy publication API (RFC-0025, updated by RFC-0042). `link_id` is obtained from `register_link()` in `realize()`. Replaces the deprecated `reserve(topic, size)`, `SafePublisher`, and `transport.publish(...)`. No `encode_frame` boilerplate in peripheral code. |
+| **`VtimeIngress::new_for_link(link_id, …)`** | **Mandatory for Ingress.** Replaces the deprecated `VtimeIngress::new(topic, …)` and the now-banned `SafeSubscription`. Automatically acquires the BQL, manages generation counters to prevent UAF, and uses `QomTimer` to sort and deliver packets at their correct Virtual Time. |
 | **`MmioResult::wait_for(...)`** | **Mandatory for blocking MMIO reads.** Framework-owned condvar wait. Replaces direct `Bql::temporary_unlock()` calls in peripheral code (RFC-0018 / RFC-0023). |
 | **`CoSimBridge`** | **For co-simulation bridges only** (`mmio-socket-bridge`, `remote-port`). Owns vCPU registration, BQL yielding, and RAII teardown. See RFC-0027. |
 | **`VcpuDrain`** | Ensures safe peripheral destruction by waiting for all active MMIO calls to finish. Inherently managed by the `Peripheral` trait wrapper (RFC-0023) to prevent developers from forgetting the lock guard. |
@@ -61,3 +62,4 @@ To simplify development, the framework provides the following "Golden Path" util
 - RFC-0018: Safe Peripheral BQL Yielding
 - RFC-0023: Safe QOM Macros and Boilerplate Eradication
 - RFC-0041: Safe QOM Framework Boundaries via Type-State (`BqlContext`, `ClosureTimer`, `dynamic_cast_qom`)
+- RFC-0042: Topic-Free Coordinator Protocol (`register_link()`, `reserve_link()`, `VtimeIngress::new_for_link()`)

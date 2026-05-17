@@ -98,3 +98,20 @@ table UdsQuantumStart {
     quantum:        uint64;
     vtime_limit_ns: uint64;
 }
+
+enum LinkRole : uint8 {
+    Peer = 0,
+    Subscriber = 1,
+    Publisher = 2
+}
+
+table LinkRegistration {
+    node_id: uint32;
+    link_name: string (required);
+    protocol: Protocol;
+    role: LinkRole;
+}
+
+table LinkAck {
+    link_id: uint32;
+}

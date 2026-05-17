@@ -85,6 +85,18 @@ This hybrid approach eliminates memory allocations in the peripheral while lever
 * **Positive:** Future-proofs peripheral models. If SHM is ever required, only the transport backend changes.
 * **Negative:** The `reserve()` call can fail (e.g., if the UDS socket is closed), forcing peripheral developers to handle `TransportError` (enforcing Fail Loudly).
 
+## Amendment: RFC-0042 — reserve() Deprecated
+
+*Adopted after RFC-0042 (Topic-Free Coordinator Protocol).*
+
+`DataTransport::reserve(topic: &str, size: usize)` is now `#[deprecated(since = "0.3.0")]`.
+All new peripheral code must use `reserve_link(link_id: u32, size: usize)` instead.
+The `link_id` is obtained from `transport.register_link(node_id, &link_name, protocol, role)`
+during `realize()`. Topic strings are no longer a valid routing key on the UDS data path.
+
+The Zenoh transport retains `reserve()` until a follow-on RFC migrates cross-host routing.
+
 ## Related
 * RFC-0023: Safe QOM Macros
 * RFC-0024: Assertion-Based Deterministic Routing
+* RFC-0042: Topic-Free Coordinator Protocol (introduces `reserve_link()`, deprecates `reserve()`)

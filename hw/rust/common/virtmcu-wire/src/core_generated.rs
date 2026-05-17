@@ -134,6 +134,98 @@ pub mod virtmcu {
         }
 
         impl ::flatbuffers::SimpleToVerifyInSlice for Protocol {}
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        pub const ENUM_MIN_LINK_ROLE: u8 = 0;
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        pub const ENUM_MAX_LINK_ROLE: u8 = 2;
+        #[deprecated(
+            since = "2.0.0",
+            note = "Use associated constants instead. This will no longer be generated in 2021."
+        )]
+        #[allow(non_camel_case_types)]
+        pub const ENUM_VALUES_LINK_ROLE: [LinkRole; 3] =
+            [LinkRole::Peer, LinkRole::Subscriber, LinkRole::Publisher];
+
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+        #[repr(transparent)]
+        pub struct LinkRole(pub u8);
+        #[allow(non_upper_case_globals)]
+        impl LinkRole {
+            pub const Peer: Self = Self(0);
+            pub const Subscriber: Self = Self(1);
+            pub const Publisher: Self = Self(2);
+
+            pub const ENUM_MIN: u8 = 0;
+            pub const ENUM_MAX: u8 = 2;
+            pub const ENUM_VALUES: &'static [Self] =
+                &[Self::Peer, Self::Subscriber, Self::Publisher];
+            /// Returns the variant's name or "" if unknown.
+            pub fn variant_name(self) -> Option<&'static str> {
+                match self {
+                    Self::Peer => Some("Peer"),
+                    Self::Subscriber => Some("Subscriber"),
+                    Self::Publisher => Some("Publisher"),
+                    _ => None,
+                }
+            }
+        }
+        impl ::core::fmt::Debug for LinkRole {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                if let Some(name) = self.variant_name() {
+                    f.write_str(name)
+                } else {
+                    f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+                }
+            }
+        }
+        impl<'a> ::flatbuffers::Follow<'a> for LinkRole {
+            type Inner = Self;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+                Self(b)
+            }
+        }
+
+        impl ::flatbuffers::Push for LinkRole {
+            type Output = LinkRole;
+            #[inline]
+            unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+                unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+            }
+        }
+
+        impl ::flatbuffers::EndianScalar for LinkRole {
+            type Scalar = u8;
+            #[inline]
+            fn to_little_endian(self) -> u8 {
+                self.0.to_le()
+            }
+            #[inline]
+            #[allow(clippy::wrong_self_convention)]
+            fn from_little_endian(v: u8) -> Self {
+                let b = u8::from_le(v);
+                Self(b)
+            }
+        }
+
+        impl<'a> ::flatbuffers::Verifiable for LinkRole {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                u8::run_verifier(v, pos)
+            }
+        }
+
+        impl ::flatbuffers::SimpleToVerifyInSlice for LinkRole {}
         // struct VirtmcuHandshake, aligned to 8
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq)]
@@ -2223,6 +2315,284 @@ pub mod virtmcu {
                 let mut ds = f.debug_struct("UdsQuantumStart");
                 ds.field("quantum", &self.quantum());
                 ds.field("vtime_limit_ns", &self.vtime_limit_ns());
+                ds.finish()
+            }
+        }
+        pub enum LinkRegistrationOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        pub struct LinkRegistration<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for LinkRegistration<'a> {
+            type Inner = LinkRegistration<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> LinkRegistration<'a> {
+            pub const VT_NODE_ID: ::flatbuffers::VOffsetT = 4;
+            pub const VT_LINK_NAME: ::flatbuffers::VOffsetT = 6;
+            pub const VT_PROTOCOL: ::flatbuffers::VOffsetT = 8;
+            pub const VT_ROLE: ::flatbuffers::VOffsetT = 10;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                LinkRegistration { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args LinkRegistrationArgs<'args>,
+            ) -> ::flatbuffers::WIPOffset<LinkRegistration<'bldr>> {
+                let mut builder = LinkRegistrationBuilder::new(_fbb);
+                if let Some(x) = args.link_name {
+                    builder.add_link_name(x);
+                }
+                builder.add_node_id(args.node_id);
+                builder.add_role(args.role);
+                builder.add_protocol(args.protocol);
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn node_id(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(LinkRegistration::VT_NODE_ID, Some(0)).unwrap() }
+            }
+            #[inline]
+            pub fn link_name(&self) -> &'a str {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<::flatbuffers::ForwardsUOffset<&str>>(
+                            LinkRegistration::VT_LINK_NAME,
+                            None,
+                        )
+                        .unwrap()
+                }
+            }
+            #[inline]
+            pub fn protocol(&self) -> Protocol {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<Protocol>(LinkRegistration::VT_PROTOCOL, Some(Protocol::Ethernet))
+                        .unwrap()
+                }
+            }
+            #[inline]
+            pub fn role(&self) -> LinkRole {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<LinkRole>(LinkRegistration::VT_ROLE, Some(LinkRole::Peer))
+                        .unwrap()
+                }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for LinkRegistration<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u32>("node_id", Self::VT_NODE_ID, false)?
+                    .visit_field::<::flatbuffers::ForwardsUOffset<&str>>(
+                        "link_name",
+                        Self::VT_LINK_NAME,
+                        true,
+                    )?
+                    .visit_field::<Protocol>("protocol", Self::VT_PROTOCOL, false)?
+                    .visit_field::<LinkRole>("role", Self::VT_ROLE, false)?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct LinkRegistrationArgs<'a> {
+            pub node_id: u32,
+            pub link_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+            pub protocol: Protocol,
+            pub role: LinkRole,
+        }
+        impl<'a> Default for LinkRegistrationArgs<'a> {
+            #[inline]
+            fn default() -> Self {
+                LinkRegistrationArgs {
+                    node_id: 0,
+                    link_name: None, // required field
+                    protocol: Protocol::Ethernet,
+                    role: LinkRole::Peer,
+                }
+            }
+        }
+
+        pub struct LinkRegistrationBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> LinkRegistrationBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_node_id(&mut self, node_id: u32) {
+                self.fbb_.push_slot::<u32>(LinkRegistration::VT_NODE_ID, node_id, 0);
+            }
+            #[inline]
+            pub fn add_link_name(&mut self, link_name: ::flatbuffers::WIPOffset<&'b str>) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    LinkRegistration::VT_LINK_NAME,
+                    link_name,
+                );
+            }
+            #[inline]
+            pub fn add_protocol(&mut self, protocol: Protocol) {
+                self.fbb_.push_slot::<Protocol>(
+                    LinkRegistration::VT_PROTOCOL,
+                    protocol,
+                    Protocol::Ethernet,
+                );
+            }
+            #[inline]
+            pub fn add_role(&mut self, role: LinkRole) {
+                self.fbb_.push_slot::<LinkRole>(LinkRegistration::VT_ROLE, role, LinkRole::Peer);
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> LinkRegistrationBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                LinkRegistrationBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<LinkRegistration<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                self.fbb_.required(o, LinkRegistration::VT_LINK_NAME, "link_name");
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for LinkRegistration<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("LinkRegistration");
+                ds.field("node_id", &self.node_id());
+                ds.field("link_name", &self.link_name());
+                ds.field("protocol", &self.protocol());
+                ds.field("role", &self.role());
+                ds.finish()
+            }
+        }
+        pub enum LinkAckOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        pub struct LinkAck<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for LinkAck<'a> {
+            type Inner = LinkAck<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+            }
+        }
+
+        impl<'a> LinkAck<'a> {
+            pub const VT_LINK_ID: ::flatbuffers::VOffsetT = 4;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                LinkAck { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args LinkAckArgs,
+            ) -> ::flatbuffers::WIPOffset<LinkAck<'bldr>> {
+                let mut builder = LinkAckBuilder::new(_fbb);
+                builder.add_link_id(args.link_id);
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn link_id(&self) -> u32 {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe { self._tab.get::<u32>(LinkAck::VT_LINK_ID, Some(0)).unwrap() }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for LinkAck<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+                    .visit_field::<u32>("link_id", Self::VT_LINK_ID, false)?
+                    .finish();
+                Ok(())
+            }
+        }
+        pub struct LinkAckArgs {
+            pub link_id: u32,
+        }
+        impl<'a> Default for LinkAckArgs {
+            #[inline]
+            fn default() -> Self {
+                LinkAckArgs { link_id: 0 }
+            }
+        }
+
+        pub struct LinkAckBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> LinkAckBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_link_id(&mut self, link_id: u32) {
+                self.fbb_.push_slot::<u32>(LinkAck::VT_LINK_ID, link_id, 0);
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> LinkAckBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                LinkAckBuilder { fbb_: _fbb, start_: start }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<LinkAck<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for LinkAck<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("LinkAck");
+                ds.field("link_id", &self.link_id());
                 ds.finish()
             }
         }

@@ -1,6 +1,7 @@
 topology:
   links:
-  - type: lin
+  - name: lin0
+    type: lin
     nodes:
     - '0'
     - '1'

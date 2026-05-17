@@ -1137,7 +1137,25 @@ pub struct VtimeIngress<T: DeliveryPacket> {
 }
 
 impl<T: DeliveryPacket> VtimeIngress<T> {
+    /// Creates a new `VtimeIngress` safely using closures, bound to a specific link ID.
+    pub fn new_for_link<TR: virtmcu_wire::DataTransport + ?Sized, FDecode, FDeliver>(
+        transport: &TR,
+        link_id: u32,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        decode_cb: FDecode,
+        deliver_cb: FDeliver,
+    ) -> Result<Self, alloc::string::String>
+    where
+        FDecode: Fn(&str, &[u8]) -> Option<T> + Send + Sync + 'static,
+        FDeliver: FnMut(T) + Send + Sync + 'static,
+    {
+        let topic = alloc::format!("sim/ch/{link_id}");
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
+        Self::new_safe(transport, &topic, generation, decode_cb, deliver_cb)
+    }
+
     /// Creates a new `VtimeIngress` (Legacy API).
+    #[deprecated(since = "0.3.0", note = "use new_for_link() instead")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
     pub fn new<TR: virtmcu_wire::DataTransport + ?Sized>(
         transport: &TR,
         topic: &str,
@@ -1159,6 +1177,7 @@ impl<T: DeliveryPacket> VtimeIngress<T> {
         let decode_opaque = SyncPtr(opaque);
         let deliver_opaque = SyncPtr(opaque);
 
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
         Self::new_safe(
             transport,
             topic,
@@ -1169,6 +1188,7 @@ impl<T: DeliveryPacket> VtimeIngress<T> {
     }
 
     /// Creates a new `VtimeIngress` safely using closures.
+    #[deprecated(since = "0.3.0", note = "use new_for_link() instead")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
     pub fn new_safe<TR: virtmcu_wire::DataTransport + ?Sized, FDecode, FDeliver>(
         transport: &TR,
         topic: &str,

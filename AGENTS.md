@@ -21,12 +21,13 @@ If you are writing or modifying code in `hw/rust/`, `tools/deterministic_coordin
 | [RFC-0022](docs/rfcs/0022-fail-loudly-and-panic-linting.md) | Fail Loudly + linting reconciliation (`.expect`, `virtmcu-allow`) |
 | [RFC-0023](docs/rfcs/0023-safe-qom-macros.md) | `#[qom_device]` — every peripheral uses it |
 | [RFC-0024](docs/rfcs/0024-deterministic-routing-and-flow-control.md) | Assertion-based routing — unregistered packets panic |
-| [RFC-0025](docs/rfcs/0025-zero-copy-transport.md) | `DataTransport::reserve()/commit()` zero-copy API |
+| [RFC-0025](docs/rfcs/0025-zero-copy-transport.md) | `DataTransport::reserve_link(link_id)/commit()` zero-copy API; topic-based `reserve()` is `#[deprecated]` |
 | [RFC-0026](docs/rfcs/0026-zero-unsafe-qom-peripherals.md) | Zero unsafe in peripheral code |
 | [RFC-0027](docs/rfcs/0027-cosim-bridge-raii-framework.md) | `CoSimBridge` — owns BQL yielding for bridges |
 | [RFC-0031](docs/rfcs/0031-di-and-raii-mandate.md) | No globals, RAII, DI mandate |
 | [RFC-0040](docs/rfcs/0040-testing-pyramid-and-emulation-verification.md) | Testing tiers and gate criteria |
 | [RFC-0041](docs/rfcs/0041-safe-qom-framework-boundaries.md) | `BqlContext` type-state token — compile-time BQL proof; `ClosureTimer`; `dynamic_cast_qom` |
+| [RFC-0042](docs/rfcs/0042-topic-free-coordinator-protocol.md) | Topic-free coordinator protocol — `link_id` routing, `link-name` QOM property, `register_link()`/`reserve_link()`/`VtimeIngress::new_for_link()` |
 
 Full RFC index: [docs/rfcs/README.md](docs/rfcs/README.md).
 
@@ -101,7 +102,7 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 
 ### 2. Peripherals
 - **Simulation vs Boundary (CoSimBridge vs VtimeIngress)**:
-  - If a peripheral participates in the simulation graph and respects virtual time (e.g., sensors, actuators, radios, SPI, wired buses), it MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress` (for ingress) and `reserve()/commit()` (for egress). Direct sockets bypass the PDES quantum barrier and are BANNED for simulation traffic.
+  - If a peripheral participates in the simulation graph and respects virtual time (e.g., sensors, actuators, radios, SPI, wired buses), it MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress::new_for_link(link_id, …)` (for ingress) and `reserve_link(link_id)/commit()` (for egress). Direct sockets bypass the PDES quantum barrier and are BANNED for simulation traffic.
   - If a peripheral is an infrastructure boundary that talks to external, non-simulation processes (e.g., test runners via UART/chardev, hardware-in-the-loop, or the coordinator itself), it MUST use `CoSimBridge`. `CoSimBridge` provides blocking I/O and BQL yielding for external processes that have no concept of virtual time.
 - **Gold Standard**: All new peripherals MUST follow the `hw/rust/examples/reference-peripheral` template exactly. This is the single source of truth for architectural patterns.
 - **Ingress**: Use `VtimeIngress` for all incoming simulation data. `SafeSubscription` is STRICTLY BANNED in peripheral code (only allowed internally within framework primitives like `VtimeIngress` and backbone devices like `virtmcu-clock`).
@@ -135,6 +136,7 @@ Mandatory integration:
 - **Tokio Task Panics Are Silent**: `assert!` inside `tokio::spawn` kills the task, not the process. The write half of the connection is never stored; downstream code silently stalls waiting for a message that never arrives. Use `std::process::abort()` for invariant violations inside spawned coordinator tasks.
 - **Quantum Pre-Increment Deadlock**: The PDES barrier protocol is `capture quantum → step_clock(quantum) → increment`. Pre-incrementing before `step_clock()` sends `quantum = current + 1`; the barrier's lookahead path silently buffers it and returns `Ok(None)` — no error, no log, no `sim/clock/start`. All nodes deadlock waiting for a release that never comes. The barrier now warns when all nodes land in lookahead simultaneously.
 - **Env Var Reads in Peripherals Are BANNED**: Peripherals MUST NOT read `VIRTMCU_SIM_ID`. Pass the federation_id via a `federation-id` QOM property and call `UdsDataTransport::new_with_fed_id()`. `UdsDataTransport::new()` (env-var wrapper) is reserved for the production QEMU process where the parent sets the env. Reading env vars from peripheral code breaks concurrent tests and violates the DI mandate.
+- **`topic` QOM Property Is BANNED**: Do not add a `topic` property to any peripheral. Use `link-name` (injected by `yaml2qemu` from the topology). `yaml2qemu` hard-errors on any `topic:` key in YAML. The `DataTransport::reserve(topic, size)` method is `#[deprecated]`; use `reserve_link(link_id, size)` instead. `VtimeIngress::new(topic, …)` is `#[deprecated]`; use `VtimeIngress::new_for_link(link_id, …)` instead. (RFC-0042)
 
 ### 5. The "Fail Loudly" Principle (Crash-Only Design)
 - **No Silent Failures**: Never catch an exception or `Result` just to log a warning and continue. If an internal invariant is violated, crash immediately.
@@ -187,8 +189,15 @@ Use this checklist every time you port or create a peripheral in `hw/rust/`.
   ```
 
 ### Simulation vs Boundary
-- [ ] Traffic that participates in virtual time (sensors, actuators, buses) routes through `DeterministicCoordinator` via `VtimeIngress` / `reserve()+commit()`.
+- [ ] Traffic that participates in virtual time (sensors, actuators, buses) routes through `DeterministicCoordinator` via `VtimeIngress::new_for_link(link_id, …)` / `reserve_link(link_id)+commit()`.
 - [ ] Infrastructure boundaries (UART test runner, HIL) use `CoSimBridge`.
+
+### Link Registration (RFC-0042)
+- [ ] Do **not** add a `topic` QOM property. Use `link-name` (a `QomString` property injected by `yaml2qemu`). `yaml2qemu` hard-errors on any `topic:` key in YAML.
+- [ ] In `realize()`, call `transport.register_link(node_id, &link_name, protocol, LinkRole::Both)` to obtain `link_id` before creating `VtimeIngress` or calling `reserve_link`.
+- [ ] Use `VtimeIngress::new_for_link(link_id, …)` for ingress — the deprecated `VtimeIngress::new(topic, …)` must not appear in new code.
+- [ ] Use `transport.reserve_link(link_id, size)` for egress — the deprecated `reserve(topic, size)` must not appear in new code.
+- [ ] Every `(node_id, link_name)` pair listed in the topology YAML **must** call `register_link()` before the coordinator's 30 s pre-flight timeout expires; missing registrations cause an immediate coordinator panic with the full list of missing pairs.
 
 ### BQL Context and Timers (RFC-0041)
 - [ ] `read`, `write`, and `realize` signatures accept `ctx: &BqlContext` — never the old `token: &DrainToken`.
@@ -210,3 +219,4 @@ When you see a stall, check in order:
 3. **Barrier warning**: look for "ALL N nodes submitted quantum=X as LOOKAHEAD" — quantum pre-increment bug in test runner.
 4. **Coordinator task death**: look for absence of "node N registered" log — the connection handler task panicked silently.
 5. **Timeout race**: `sim/clock/start` never arrives because the coordinator never received all `sim/coord/done` signals — check topology YAML matches the node count passed to `--nodes`.
+6. **Link registration timeout** (RFC-0042): coordinator panics after 30 s with "FATAL: link registration timeout" and lists missing `(node_id, link_name)` pairs. Causes: (a) `link-name` QOM property not injected by `yaml2qemu` — check topology has a `name:` on every link; (b) `realize()` never called `register_link()`; (c) peripheral was not listed in `topology.links` for that node.

@@ -21,7 +21,8 @@ topology:
     - name: '0'
     - name: '1'
   links:
-    - type: Ethernet
+    - name: eth0
+      type: Ethernet
       nodes: ['0', '1']
 "#;
     let topo_path = "/tmp/test_uds_topo.yaml";
