@@ -4,8 +4,6 @@
 #![allow(clippy::if_not_else)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -204,7 +202,11 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuSPIState {
 /// This function is called by QEMU when an SPI transfer happens.
 #[no_mangle]
 pub extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSPIQEMU>(dev as *mut core::ffi::c_void);
+    let mut cast_ptr = virtmcu_qom::qom::dynamic_cast_qom::<VirtmcuSPIQEMU>(
+        dev as *mut core::ffi::c_void as *mut core::ffi::c_void,
+    )
+    .expect("FATAL: QOM type mismatch");
+    let s = unsafe { cast_ptr.as_mut() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.state.is_null() {
         return 0;
     }
@@ -242,7 +244,11 @@ pub extern "C" fn spi_transfer(dev: *mut SSIPeripheral, val: u32) -> u32 {
 /// This function is called by QEMU when Chip Select state changes.
 #[no_mangle]
 pub extern "C" fn spi_set_cs(dev: *mut SSIPeripheral, select: bool) -> c_int {
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSPIQEMU>(dev as *mut core::ffi::c_void);
+    let mut cast_ptr = virtmcu_qom::qom::dynamic_cast_qom::<VirtmcuSPIQEMU>(
+        dev as *mut core::ffi::c_void as *mut core::ffi::c_void,
+    )
+    .expect("FATAL: QOM type mismatch");
+    let s = unsafe { cast_ptr.as_mut() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.state.is_null() {
         return 0;
     }

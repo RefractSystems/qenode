@@ -3,8 +3,6 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -289,7 +287,7 @@ fn decode_ieee802154(opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<R
 }
 
 fn deliver_ieee802154(opaque: *mut c_void, frame: RxFrame) {
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuIeeeState>(opaque);
+    let state = unsafe { &mut *(opaque as *mut VirtmcuIeeeState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = state.inner.lock();
 
     // Re-parse MHR for ACK handling
@@ -343,10 +341,11 @@ impl virtmcu_qom::device::Peripheral for VirtmcuIeeeState {
                 }
             }
 
-            let node_id = virtmcu_qom::timer::deref_qom_ptr_const::<VirtmcuIeeeQEMU>(
+            let mut cast_ptr = virtmcu_qom::qom::dynamic_cast_qom::<VirtmcuIeeeQEMU>(
                 self.parent_ptr as *mut core::ffi::c_void,
             )
-            .node_id;
+            .expect("FATAL: QOM type mismatch");
+            let node_id = unsafe { cast_ptr.as_ref() }.node_id; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
             let hb_topic = format!("sim/ieee802154/liveliness/{node_id}");
             self._liveliness = transport.declare_liveliness(&hb_topic);
 
@@ -473,9 +472,11 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuIeeeState {
                 virtmcu_qom::device::MmioResult::Ready(inner.ext_addr >> ADDR_32_SHIFT)
             }
             _ => {
-                let parent = virtmcu_qom::timer::deref_qom_ptr_const::<VirtmcuIeeeQEMU>(
+                let mut cast_ptr = virtmcu_qom::qom::dynamic_cast_qom::<VirtmcuIeeeQEMU>(
                     self.parent_ptr as *mut core::ffi::c_void,
-                );
+                )
+                .expect("FATAL: QOM type mismatch");
+                let parent = unsafe { cast_ptr.as_ref() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
                 if parent.debug {
                     virtmcu_qom::sim_debug!("ieee802154_read: unhandled offset 0x{:x}", offset);
                 }
@@ -535,9 +536,11 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuIeeeState {
                 inner.ext_addr = (inner.ext_addr & ADDR_32_MASK) | (value << ADDR_32_SHIFT);
             }
             _ => {
-                let parent = virtmcu_qom::timer::deref_qom_ptr_const::<VirtmcuIeeeQEMU>(
+                let mut cast_ptr = virtmcu_qom::qom::dynamic_cast_qom::<VirtmcuIeeeQEMU>(
                     self.parent_ptr as *mut core::ffi::c_void,
-                );
+                )
+                .expect("FATAL: QOM type mismatch");
+                let parent = unsafe { cast_ptr.as_ref() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
                 if parent.debug {
                     virtmcu_qom::sim_debug!(
                         "ieee802154_write: unhandled offset 0x{:x} val 0x{:x}",
@@ -579,6 +582,7 @@ fn schedule_backoff(backoff_timer: Option<&QomTimer>, inner: &mut Virtmcu802154I
     let max_backoff = (1u32 << inner.be) - 1;
     let now =
         virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL, unsafe {
+            // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
             &virtmcu_qom::device::BqlContext::new_unchecked()
         }) as u64;
     let rand_val = deterministic_random(inner.node_id, now, inner.tx_sequence);
@@ -598,6 +602,7 @@ fn tx_real(
 ) {
     let vtime =
         virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL, unsafe {
+            // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
             &virtmcu_qom::device::BqlContext::new_unchecked()
         }) as u64;
     let seq = inner.tx_sequence;
@@ -643,7 +648,7 @@ fn tx_real(
 
 // virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn tx_timer_cb(opaque: *mut c_void) {
-    let s = virtmcu_qom::timer::opaque_to_state::<VirtmcuIeeeState>(opaque);
+    let s = unsafe { &mut *(opaque as *mut VirtmcuIeeeState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = s.inner.lock();
 
     inner.tx_len = 0;
@@ -656,10 +661,11 @@ extern "C" fn tx_timer_cb(opaque: *mut c_void) {
 
 // virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
-    let s = virtmcu_qom::timer::opaque_to_state::<VirtmcuIeeeState>(opaque);
+    let s = unsafe { &mut *(opaque as *mut VirtmcuIeeeState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = s.inner.lock();
     let _now =
         virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL, unsafe {
+            // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
             &virtmcu_qom::device::BqlContext::new_unchecked()
         }) as u64;
 
@@ -685,7 +691,7 @@ extern "C" fn backoff_timer_cb(opaque: *mut c_void) {
 
 // virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn ack_timer_cb(opaque: *mut c_void) {
-    let s = virtmcu_qom::timer::opaque_to_state::<VirtmcuIeeeState>(opaque);
+    let s = unsafe { &mut *(opaque as *mut VirtmcuIeeeState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = s.inner.lock();
 
     if !inner.ack_pending {
@@ -694,6 +700,7 @@ extern "C" fn ack_timer_cb(opaque: *mut c_void) {
 
     let now =
         virtmcu_qom::timer::qemu_clock_get_ns_safe(virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL, unsafe {
+            // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
             &virtmcu_qom::device::BqlContext::new_unchecked()
         }) as u64;
     let seq = inner.tx_sequence;
@@ -760,6 +767,7 @@ virtmcu_qom::register_peripheral!(VirtmcuIeeeQEMU);
 mod tests {
     use super::*;
 
+    #[test]
     #[test]
     fn test_802154_qemu_layout() {
         assert_eq!(

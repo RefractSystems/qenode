@@ -39,9 +39,9 @@ P0.1–P0.5 are complete: `BqlContext` token, `BqlGuarded` upgrade, `ClosureTime
 
 ### Task 2 — Mass Migration to RFC-0041 APIs
 **Goal**: Apply the same mechanical migration performed on reference-peripheral to all peripherals.
-- [ ] 2.1: Apply RFC-0041 migration checklist to each peripheral (`DrainToken` → `BqlContext`, `BqlGuarded` ctx, `ClosureTimer`, `dynamic_cast_qom`).
-- [ ] 2.2: Each migrated peripheral must pass its tests before the next peripheral is started.
-- [ ] 2.3: Remove `deref_qom_ptr` and `opaque_to_state` from `timer.rs` once all callers are migrated.
+- [x] 2.1: Apply RFC-0041 migration checklist to each peripheral (`DrainToken` → `BqlContext`, `BqlGuarded` ctx, `ClosureTimer`, `dynamic_cast_qom`).
+- [x] 2.2: Each migrated peripheral must pass its tests before the next peripheral is started.
+- [x] 2.3: Remove `deref_qom_ptr` and `opaque_to_state` from `timer.rs` once all callers are migrated.
 
 **Gate**: `grep -r "DrainToken\|deref_qom_ptr\|opaque_to_state" hw/rust/` returns zero matches.
 
@@ -72,14 +72,14 @@ P0.1–P0.5 are complete: `BqlContext` token, `BqlGuarded` upgrade, `ClosureTime
 **Thesis**: The coordinator routes data frames by substring-matching topic strings (`topic.contains("chardev")`). Every new peripheral or protocol rename touches five files and the silent `else { Protocol::Ethernet }` fallback violates RFC-0022. RFC-0042 replaces this with a **hub-and-spoke model**: each node has one UDS socket (already the case); each link in the topology YAML gets one `u32 link_id`; the coordinator routes `(link_id, payload)` to all other participants. Connections grow O(N), link IDs grow O(M), multi-cast requires zero special cases.
 
 ### Stage 1 — Foundation (Flag-Day)
-- [ ] S1.1: Add `name:` field to all topology link declarations; `yaml2qemu` hard-errors on missing or duplicate names; provide `yaml2qemu migrate-link-names` to auto-generate names for existing files.
-- [ ] S1.2: `yaml2qemu` injects `link-name` QOM property into each participating peripheral; hard lint error if `topic:` property is present; emits build-time deprecation warning when Zenoh transport is selected.
-- [ ] S1.3: Add `LinkRole` enum + `LinkRegistration` + `LinkAck` FlatBuffer tables to `hw/rust/common/virtmcu-wire/src/core.fbs`; regenerate via `cargo xtask flatc`; bump `UDS_PROTO_VERSION`.
-- [ ] S1.4: Coordinator startup: build `link_ids: HashMap<link_name, link_id>` and `rx_map: HashMap<link_id, Vec<node_id>>` (all participants; sender excluded at delivery). O(M) entries regardless of node count or broadcast topology.
-- [ ] S1.5: Coordinator: handle `sim/coord/link/register`; validate `(node_id, link_name, protocol)` against topology; respond with `LinkAck { link_id }` — same `link_id` for all participants of the same link; panic with named diagnostics on mismatch.
-- [ ] S1.6: Pre-flight barrier: block `sim/coord/start` until all `(node_id, link_name)` pairs from topology have registered; 30 s timeout; panic names every missing pair.
-- [ ] S1.7: Coordinator dual-mode: accept both legacy `sim/chardev/{n}/tx` topics AND new `sim/ch/{link_id}` topics; route `sim/ch/*` by `rx_map` lookup and hub fan-out to all other participants' sockets; panic on unknown link_id.
-- [ ] S1.8: `DataTransport` trait: add `register_link() -> u32` (returns `link_id`) and `reserve_link(link_id, …)`; mark `reserve(topic, …)` `#[deprecated]`.
+- [x] S1.1: Add `name:` field to all topology link declarations; `yaml2qemu` hard-errors on missing or duplicate names; provide `yaml2qemu migrate-link-names` to auto-generate names for existing files.
+- [x] S1.2: `yaml2qemu` injects `link-name` QOM property into each participating peripheral; hard lint error if `topic:` property is present; emits build-time deprecation warning when Zenoh transport is selected.
+- [x] S1.3: Add `LinkRole` enum + `LinkRegistration` + `LinkAck` FlatBuffer tables to `hw/rust/common/virtmcu-wire/src/core.fbs`; regenerate via `cargo xtask flatc`; bump `UDS_PROTO_VERSION`.
+- [x] S1.4: Coordinator startup: build `link_ids: HashMap<link_name, link_id>` and `rx_map: HashMap<link_id, Vec<node_id>>` (all participants; sender excluded at delivery). O(M) entries regardless of node count or broadcast topology.
+- [x] S1.5: Coordinator: handle `sim/coord/link/register`; validate `(node_id, link_name, protocol)` against topology; respond with `LinkAck { link_id }` — same `link_id` for all participants of the same link; panic with named diagnostics on mismatch.
+- [x] S1.6: Pre-flight barrier: block `sim/coord/start` until all `(node_id, link_name)` pairs from topology have registered; 30 s timeout; panic names every missing pair.
+- [x] S1.7: Coordinator dual-mode: accept both legacy `sim/chardev/{n}/tx` topics AND new `sim/ch/{link_id}` topics; route `sim/ch/*` by `rx_map` lookup and hub fan-out to all other participants' sockets; panic on unknown link_id.
+- [x] S1.8: `DataTransport` trait: add `register_link() -> u32` (returns `link_id`) and `reserve_link(link_id, …)`; mark `reserve(topic, …)` `#[deprecated]`.
 
 **Gate**: `make test-check` green. Coordinator accepts both legacy and link-ID frames. Multi-cast (CAN, RF) requires zero coordinator code changes vs. point-to-point.
 

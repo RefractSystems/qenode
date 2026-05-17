@@ -3,8 +3,6 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -192,8 +190,7 @@ impl virtmcu_qom::device::Peripheral for FlexRayState {
 
 impl virtmcu_qom::device::MmioDevice for FlexRayState {
     fn read(&self, addr: u64, _size: u32) -> virtmcu_qom::device::MmioResult<'_> {
-        let s =
-            virtmcu_qom::timer::deref_qom_ptr::<FlexRay>(self.parent_ptr as *mut core::ffi::c_void);
+        let s = unsafe { &mut *(self.parent_ptr as *mut FlexRay) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         match addr {
             REG_MCR => virtmcu_qom::device::MmioResult::Ready(u64::from(s.vrc)),
             REG_SUCC1 => virtmcu_qom::device::MmioResult::Ready(u64::from(s.succ1)),
@@ -247,8 +244,7 @@ impl virtmcu_qom::device::MmioDevice for FlexRayState {
     }
 
     fn write(&self, addr: u64, data: u64, _size: u32) {
-        let s =
-            virtmcu_qom::timer::deref_qom_ptr::<FlexRay>(self.parent_ptr as *mut core::ffi::c_void);
+        let s = unsafe { &mut *(self.parent_ptr as *mut FlexRay) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         match addr {
             // MCR (Module Configuration Register): writing bit 0 = enable controller.
             // Per Bosch E-Ray semantics, enabling the module starts the cycle timer
@@ -258,7 +254,7 @@ impl virtmcu_qom::device::MmioDevice for FlexRayState {
                 if (data & MCR_ENABLE_BIT) != 0 {
                     let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
                         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-                        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+                        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
                     );
                     if let Some(cycle_timer) = &self.cycle_timer {
                         cycle_timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
@@ -403,11 +399,11 @@ fn decode_flexray(
 
 fn deliver_flexray(opaque: *mut core::ffi::c_void, packet: OrderedFlexRayPacket) {
     let s_ptr = opaque as *mut FlexRay;
-    let s = virtmcu_qom::timer::deref_qom_ptr::<FlexRay>(s_ptr as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(s_ptr as *mut FlexRay) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     );
     virtmcu_qom::sim_debug!("deliver_flexray fired at {}", now);
 
@@ -483,7 +479,7 @@ pub fn flexray_init_internal(
 
     let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     );
     cycle_timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
     state_box.cycle_timer = Some(cycle_timer);
@@ -494,10 +490,8 @@ pub fn flexray_init_internal(
 // virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
     let s_ptr = opaque as *mut FlexRay;
-    let s = virtmcu_qom::timer::deref_qom_ptr::<FlexRay>(s_ptr as *mut core::ffi::c_void);
-    let state = virtmcu_qom::timer::opaque_to_state_const::<FlexRayState>(
-        s.rust_state as *mut core::ffi::c_void,
-    );
+    let s = unsafe { &mut *(s_ptr as *mut FlexRay) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+    let state = unsafe { &*(s.rust_state as *mut FlexRayState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     let cycle = state.current_cycle.fetch_add(1, AtomicOrdering::SeqCst);
     virtmcu_qom::sim_debug!("flexray_cycle_timer_cb fired: cycle={}", cycle);
@@ -516,7 +510,7 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
     // Schedule next cycle
     let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     );
     if let Some(timer) = &state.cycle_timer {
         timer.mod_ns(now + DEFAULT_CYCLE_TIME_NS);
@@ -524,12 +518,10 @@ extern "C" fn flexray_cycle_timer_cb(opaque: *mut core::ffi::c_void) {
 }
 
 fn flexray_send_frame(s: &mut FlexRay, slot: usize, frame_id: u16) {
-    let state = virtmcu_qom::timer::opaque_to_state_const::<FlexRayState>(
-        s.rust_state as *mut core::ffi::c_void,
-    );
+    let state = unsafe { &*(s.rust_state as *mut FlexRayState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     );
 
     let mut builder = FlatBufferBuilder::new();

@@ -36,30 +36,6 @@ extern "C" {
     pub fn qemu_clock_run_all_timers();
 }
 
-/// Safely casts a timer opaque pointer to a mutable state reference.
-#[deprecated(note = "Use dynamic_cast_qom::<T>(ptr).expect(\"...\") from virtmcu_qom::qom instead")]
-pub fn opaque_to_state<'a, T>(opaque: *mut core::ffi::c_void) -> &'a mut T {
-    unsafe { &mut *(opaque as *mut T) }
-}
-
-/// Safely casts a timer opaque pointer to a const state reference.
-#[deprecated(note = "Use dynamic_cast_qom::<T>(ptr).expect(\"...\") from virtmcu_qom::qom instead")]
-pub fn opaque_to_state_const<'a, T>(opaque: *mut core::ffi::c_void) -> &'a T {
-    unsafe { &*(opaque as *const T) }
-}
-
-/// Safely casts a QOM device pointer to a mutable reference.
-#[deprecated(note = "Use dynamic_cast_qom::<T>(ptr).expect(\"...\") from virtmcu_qom::qom instead")]
-pub fn deref_qom_ptr<'a, T>(dev: *mut core::ffi::c_void) -> &'a mut T {
-    unsafe { &mut *(dev as *mut T) }
-}
-
-/// Safely casts a QOM device pointer to a const reference.
-#[deprecated(note = "Use dynamic_cast_qom::<T>(ptr).expect(\"...\") from virtmcu_qom::qom instead")]
-pub fn deref_qom_ptr_const<'a, T>(dev: *mut core::ffi::c_void) -> &'a T {
-    unsafe { &*(dev as *const T) }
-}
-
 /// A safe wrapper for `qemu_clock_get_ns`.
 pub fn qemu_clock_get_ns_safe(clock_type: i32, _ctx: &crate::device::BqlContext) -> i64 {
     unsafe { qemu_clock_get_ns(clock_type) }

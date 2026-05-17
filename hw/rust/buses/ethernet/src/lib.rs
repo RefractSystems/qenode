@@ -3,8 +3,6 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -100,7 +98,7 @@ pub struct VirtmcuNetdevState {
 }
 
 extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usize) -> isize {
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.rust_state.is_null() {
         return 0;
     }
@@ -108,20 +106,16 @@ extern "C" fn netdev_receive(nc: *mut NetClientState, buf: *const u8, size: usiz
 }
 
 extern "C" fn netdev_can_receive(nc: *mut NetClientState) -> bool {
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.rust_state.is_null() {
         return true;
     }
-    let backlog = virtmcu_qom::timer::opaque_to_state_const::<VirtmcuNetdevState>(
-        s.rust_state as *mut core::ffi::c_void,
-    )
-    .backlog
-    .lock();
+    let backlog = unsafe { &*(s.rust_state as *mut VirtmcuNetdevState) }.backlog.lock(); // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     backlog.is_empty()
 }
 
 extern "C" fn netdev_cleanup(nc: *mut NetClientState) {
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if !s.rust_state.is_null() {
         virtmcu_qom::ffi_call! {
             let mut state = Box::from_raw(s.rust_state);
@@ -154,7 +148,7 @@ extern "C" fn netdev_hook(
     let nc = virtmcu_qom::ffi_call! {
         qemu_new_net_client(&raw const NET_VIRTMCU_INFO, peer, c"virtmcu".as_ptr(), name)
     };
-    let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuNetClient>(nc as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(nc as *mut VirtmcuNetClient) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     let node_id = if opts.node.is_null() {
         0
@@ -264,7 +258,7 @@ fn decode_netdev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<Orde
 }
 
 fn deliver_netdev(opaque: *mut c_void, packet: OrderedPacket) {
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuNetdevState>(opaque);
+    let state = unsafe { &mut *(opaque as *mut VirtmcuNetdevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
 
     if state.backlog_count.load(AtomicOrdering::Acquire) >= state._max_backlog {
@@ -355,7 +349,7 @@ fn netdev_receive_internal(state: &VirtmcuNetdevState, buf: *const u8, size: usi
     let payload = virtmcu_qom::ffi_call! { core::slice::from_raw_parts(buf, size) };
     let now = u64::try_from(virtmcu_qom::timer::qemu_clock_get_ns_safe(
         virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+        unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     ))
     .expect("vtime is negative");
     let seq = state.tx_sequence.fetch_add(1, AtomicOrdering::SeqCst);

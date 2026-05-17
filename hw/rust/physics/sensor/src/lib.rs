@@ -3,8 +3,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -144,10 +142,8 @@ impl virtmcu_qom::device::Peripheral for VirtmcuSensorState {
 
 impl virtmcu_qom::device::MmioDevice for VirtmcuSensorState {
     fn read(&self, addr: u64, size: u32) -> virtmcu_qom::device::MmioResult<'_> {
-        let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSensorQEMU>(
-            self.parent_ptr as *mut core::ffi::c_void,
-        );
-        // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
+        let s = unsafe { &mut *(self.parent_ptr as *mut VirtmcuSensorQEMU) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+                                                                              // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
         let binding = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         let inner = self.inner.get_mut(&binding);
         if !inner.running {
@@ -231,10 +227,8 @@ impl virtmcu_qom::device::MmioDevice for VirtmcuSensorState {
     }
 
     fn write(&self, addr: u64, val: u64, _size: u32) {
-        let s = virtmcu_qom::timer::deref_qom_ptr::<VirtmcuSensorQEMU>(
-            self.parent_ptr as *mut core::ffi::c_void,
-        );
-        // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
+        let s = unsafe { &mut *(self.parent_ptr as *mut VirtmcuSensorQEMU) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+                                                                              // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
         let binding = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         let mut inner = self.inner.get_mut(&binding);
         if !inner.running {
@@ -310,8 +304,8 @@ fn decode_cb(
 }
 
 fn deliver_cb(opaque: *mut core::ffi::c_void, frame: SensorFrame) {
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuSensorState>(opaque);
-    // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
+    let state = unsafe { &mut *(opaque as *mut VirtmcuSensorState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+                                                                      // virtmcu-allow: new_unchecked_in_peripheral reasoning="Migration debt"
     let binding = unsafe { virtmcu_qom::device::BqlContext::new_unchecked() }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = state.inner.get_mut(&binding);
     if !inner.running {

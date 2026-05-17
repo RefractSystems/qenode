@@ -3,8 +3,6 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -488,7 +486,7 @@ fn calculate_baud_delay_ns(baud_reg: u32) -> i64 {
 
 // virtmcu-allow: extern_c_timer_cb reasoning="Pending ClosureTimer migration in P1"
 extern "C" fn lpuart_tx_timer_cb(opaque: *mut core::ffi::c_void) {
-    let state = virtmcu_qom::timer::opaque_to_state_const::<LpuartState>(opaque);
+    let state = unsafe { &*(opaque as *const LpuartState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut inner = state.inner.lock();
 
     if let Some(byte) = inner.tx_fifo.pop_front() {

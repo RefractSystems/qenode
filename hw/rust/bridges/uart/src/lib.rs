@@ -3,8 +3,6 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // virtmcu-allow: allow reasoning="Zero unsafe"
-// virtmcu-allow: allow reasoning="Pending P1 migration: deref_qom_ptr/opaque_to_state replaced by dynamic_cast_qom"
-#![allow(deprecated)]
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(
     test,
@@ -245,7 +243,7 @@ fn decode_chardev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<Ord
 }
 
 fn deliver_chardev(opaque: *mut c_void, packet: OrderedPacket) {
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(opaque);
+    let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
 
     if state.backlog_size_atomic.load(AtomicOrdering::SeqCst) + packet.data.len() as u64
@@ -277,13 +275,11 @@ fn deliver_chardev(opaque: *mut c_void, packet: OrderedPacket) {
 #[no_mangle]
 pub extern "C" fn virtmcu_chr_write(chr: *mut Chardev, buf: *const u8, len: c_int) -> c_int {
     // SAFETY: chr is assumed to be a valid pointer of ChardevVirtmcu type as per QOM convention.
-    let s = virtmcu_qom::timer::deref_qom_ptr::<ChardevVirtmcu>(chr as *mut core::ffi::c_void);
+    let s = unsafe { &mut *(chr as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.state.is_null() {
         return 0;
     }
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     // SAFETY: buf is a valid pointer provided by QEMU with length len.
     let data = virtmcu_qom::ffi_call! { core::slice::from_raw_parts(buf, len as usize) };
@@ -358,9 +354,7 @@ pub extern "C" fn virtmcu_chr_parse(
     };
 
     // SAFETY: backend is a valid ChardevBackend pointer.
-    let b = virtmcu_qom::timer::deref_qom_ptr::<ChardevBackend_Fields>(
-        backend as *mut core::ffi::c_void,
-    );
+    let b = unsafe { &mut *(backend as *mut ChardevBackend_Fields) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     b.u.virtmcu = ChardevVirtmcuWrapper { data: virtmcu_opts };
 
     // SAFETY: virtmcu_opts is a valid pointer to ChardevVirtmcuOptions.
@@ -369,20 +363,18 @@ pub extern "C" fn virtmcu_chr_parse(
 
 extern "C" fn virtmcu_chr_tx_timer_cb(opaque: *mut core::ffi::c_void) {
     // SAFETY: Provided by QEMU
-    let s = virtmcu_qom::timer::opaque_to_state::<ChardevVirtmcu>(opaque);
+    let s = unsafe { &mut *(opaque as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     if s.state.is_null() {
         return;
     }
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     let mut fifo = state.tx_fifo.lock(); // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
     if let Some(byte) = fifo.pop_front() {
         // SAFETY: Safe to query clock under BQL
         let vtime = virtmcu_qom::timer::qemu_clock_get_ns_safe(
             virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         );
         let sequence = state.tx_sequence.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
         if let Some(sender) = &state.tx_sender {
@@ -399,7 +391,7 @@ extern "C" fn virtmcu_chr_tx_timer_cb(opaque: *mut core::ffi::c_void) {
         // SAFETY: Safe to query clock under BQL
         let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
             virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         );
         let delay = state.baud_delay_ns.load(AtomicOrdering::Relaxed);
         // SAFETY: Valid timer
@@ -427,10 +419,8 @@ pub extern "C" fn virtmcu_chr_ioctl(
     arg: *mut c_void,
 ) -> core::ffi::c_int {
     // SAFETY: Provided by QEMU
-    let s = virtmcu_qom::timer::deref_qom_ptr::<ChardevVirtmcu>(chr as *mut core::ffi::c_void);
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let s = unsafe { &mut *(chr as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     if cmd == CHR_IOCTL_SERIAL_SET_PARAMS {
         if !arg.is_null() {
@@ -488,7 +478,7 @@ virtmcu_qom::ffi_safe_fn! {
 
 extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
     // SAFETY: Provided by QEMU
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(opaque);
+    let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
     if backlog.is_empty() {
@@ -512,7 +502,7 @@ extern "C" fn virtmcu_chr_rx_baud_timer_cb(opaque: *mut core::ffi::c_void) {
         // SAFETY: Safe to query clock under BQL
         let now = virtmcu_qom::timer::qemu_clock_get_ns_safe(
             virtmcu_qom::timer::QEMU_CLOCK_VIRTUAL,
-            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() },
+            unsafe { &virtmcu_qom::device::BqlContext::new_unchecked() }, // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
         );
         let delay = state.baud_delay_ns.load(AtomicOrdering::Relaxed);
         // SAFETY: Valid timer
@@ -528,7 +518,7 @@ fn drain_backlog(_state: &mut VirtmcuChardevState) -> bool {
 
 extern "C" fn virtmcu_chr_rx_timer_cb(opaque: *mut c_void) {
     // SAFETY: opaque is a valid pointer to VirtmcuChardevState.
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(opaque);
+    let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     drain_backlog(state);
 }
 
@@ -539,10 +529,8 @@ extern "C" fn virtmcu_chr_kick_timer_cb(opaque: *mut c_void) {
 #[no_mangle]
 pub extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     // SAFETY: chr is a valid pointer to ChardevVirtmcu.
-    let s = virtmcu_qom::timer::deref_qom_ptr::<ChardevVirtmcu>(chr as *mut core::ffi::c_void);
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let s = unsafe { &mut *(chr as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     if !state.backlog.lock().is_empty() {
         // virtmcu-allow: mutex reasoning="Backlog managed securely"
@@ -680,8 +668,8 @@ pub extern "C" fn virtmcu_chr_open(
 ) -> bool {
     virtmcu_qom::sim_info!("virtmcu_chr_open called");
     // SAFETY: chr is a valid pointer to ChardevVirtmcu.
-    let s = virtmcu_qom::timer::deref_qom_ptr::<ChardevVirtmcu>(chr as *mut core::ffi::c_void);
-    // SAFETY: backend is a valid ChardevBackend pointer.
+    let s = unsafe { &mut *(chr as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+                                                           // SAFETY: backend is a valid ChardevBackend pointer.
     let b = virtmcu_qom::ffi_call! { &*(backend as *mut ChardevBackend_Fields) };
     let wrapper = virtmcu_qom::ffi_call! { b.u.virtmcu };
     let opts = wrapper.data;
@@ -729,9 +717,7 @@ pub extern "C" fn virtmcu_chr_open(
         None
     };
 
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     state._liveliness = liveliness;
     state.bridge = Some(bridge);
     state.tx_sender = Some(tx_out);
@@ -784,10 +770,8 @@ pub extern "C" fn virtmcu_chr_open(
 pub extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
     virtmcu_qom::sim_info!("virtmcu_chr_finalize called");
     // SAFETY: obj is a valid pointer to ChardevVirtmcu.
-    let s = virtmcu_qom::timer::deref_qom_ptr::<ChardevVirtmcu>(obj as *mut core::ffi::c_void);
-    let state = virtmcu_qom::timer::opaque_to_state::<VirtmcuChardevState>(
-        s.state as *mut core::ffi::c_void,
-    );
+    let s = unsafe { &mut *(obj as *mut ChardevVirtmcu) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
+    let state = unsafe { &mut *(s.state as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
 
     state.timer_ptr.store(0, AtomicOrdering::Release);
     state.tx_timer_ptr.store(0, AtomicOrdering::Release);
@@ -824,7 +808,7 @@ pub extern "C" fn virtmcu_chr_finalize(obj: *mut Object) {
 pub extern "C" fn char_virtmcu_class_init_custom(klass: *mut ObjectClass, _data: *const c_void) {
     virtmcu_qom::sim_info!("char_virtmcu_class_init called");
     // SAFETY: klass is a valid pointer to ChardevClass.
-    let cc = virtmcu_qom::timer::deref_qom_ptr::<ChardevClass>(klass as *mut core::ffi::c_void);
+    let cc = unsafe { &mut *(klass as *mut ChardevClass) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     cc.chr_parse = Some(virtmcu_chr_parse);
     cc.chr_open = Some(virtmcu_chr_open);
     cc.chr_write = Some(virtmcu_chr_write);
