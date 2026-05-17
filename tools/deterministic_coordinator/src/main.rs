@@ -542,7 +542,7 @@ async fn run_deterministic_coordinator(
                         );
 
                         let msgs = node_batches.remove(&node_id).unwrap_or_default();
-                        let (mut current_msgs, future_msgs): (Vec<CoordMessage>, Vec<CoordMessage>) = msgs.into_iter().partition(|m| m.delivery_vtime_ns <= vtime_limit);
+                        let (mut current_msgs, future_msgs): (Vec<CoordMessage>, Vec<CoordMessage>) = msgs.into_iter().partition(|m| m.delivery_vtime_ns <= vtime_limit + args.delay_ns);
 
                         if !future_msgs.is_empty() {
                             node_batches.insert(node_id, future_msgs);
@@ -615,23 +615,12 @@ async fn deliver_message(
         panic!("Unregistered packet received!");
     });
 
-    eprintln!(
-        "COORD: routing msg from {} to dst {} (len={})",
-        msg.src_node_id,
-        msg.dst_node_id,
-        msg.payload.len()
-    );
-
     if msg.dst_node_id == u32::MAX {
         for target_str in allowed_targets {
             if let Ok(tid) = target_str.parse::<u32>() {
                 target_nodes.push(tid);
             }
         }
-        eprintln!(
-            "COORD: broadcast msg resolved to targets: {:?}",
-            target_nodes
-        );
     } else {
         let dst_str = msg.dst_node_id.to_string();
         if allowed_targets.contains(&dst_str) {
@@ -746,23 +735,12 @@ async fn uds_deliver_message(
         panic!("Unregistered packet received!");
     });
 
-    eprintln!(
-        "COORD: routing msg from {} to dst {} (len={})",
-        msg.src_node_id,
-        msg.dst_node_id,
-        msg.payload.len()
-    );
-
     if msg.dst_node_id == u32::MAX {
         for target_str in allowed_targets {
             if let Ok(tid) = target_str.parse::<u32>() {
                 target_nodes.push(tid);
             }
         }
-        eprintln!(
-            "COORD: broadcast msg resolved to targets: {:?}",
-            target_nodes
-        );
     } else {
         let dst_str = msg.dst_node_id.to_string();
         if allowed_targets.contains(&dst_str) {
@@ -926,21 +904,9 @@ async fn run_unix_coordinator(
                                 "FATAL: invalid UdsRegistration frame on sim/coord/register",
                             );
                         if proto_version != virtmcu_wire::UDS_PROTO_VERSION {
-                            eprintln!(
-                                "FATAL: node proto_version {} != coordinator UDS_PROTO_VERSION {} \
-                                 — rebuild the peripheral plugin to match the coordinator version",
-                                proto_version,
-                                virtmcu_wire::UDS_PROTO_VERSION
-                            );
                             std::process::abort();
                         }
                         if reg_fed_id != fed_id_check {
-                            eprintln!(
-                                "FATAL: node registered with federation_id='{}' but coordinator \
-                                 federation_id='{}' — check that the federation-id QOM property \
-                                 is set with a hyphen (not underscore) in the -device argument",
-                                reg_fed_id, fed_id_check
-                            );
                             std::process::abort();
                         }
                         let _ = worker_tx
@@ -975,7 +941,6 @@ async fn run_unix_coordinator(
                         let _ = worker_tx
                             .send(WorkerEvent::Message(topic.clone(), payload.clone()))
                             .await;
-                        eprintln!("COORD: sent WorkerEvent::Message for {}", topic);
                     }
                 });
             }
@@ -1084,12 +1049,6 @@ async fn run_unix_coordinator(
                                         .bytes()
                                         .to_vec(),
                                 );
-                            } else {
-                                eprintln!(
-                                    "COORD: flatbuffers::root failed for {} len={}",
-                                    topic,
-                                    payload.len()
-                                );
                             }
 
                             // Fallback to ZenohFrameHeader if not already parsed
@@ -1162,10 +1121,6 @@ async fn run_unix_coordinator(
                                     base_topic: Some(base),
                                 };
 
-                                eprintln!(
-                                    "COORD: adding legacy msg to node_batches: {:?}",
-                                    msg.protocol
-                                );
                                 if no_pdes {
                                     uds_deliver_message(&sockets, &topo, &mut pcap_log, &mut msg)
                                         .await;
@@ -1175,8 +1130,6 @@ async fn run_unix_coordinator(
                                         .or_insert_with(Vec::new)
                                         .push(msg);
                                 }
-                            } else {
-                                eprintln!("COORD: Failed to parse legacy fallback or decode CoordMessage from topic {} (len={})", topic, payload.len());
                             }
                         }
                     }
@@ -1215,7 +1168,7 @@ async fn run_unix_coordinator(
                                 Vec<CoordMessage>,
                             ) = msgs
                                 .into_iter()
-                                .partition(|m| m.delivery_vtime_ns <= vtime_limit);
+                                .partition(|m| m.delivery_vtime_ns <= vtime_limit + args.delay_ns);
 
                             if !future_msgs.is_empty() {
                                 node_batches.insert(node_id, future_msgs);

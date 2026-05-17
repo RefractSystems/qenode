@@ -360,6 +360,9 @@ pub struct VirtmcuClockBackend {
     /// Whether a stall was detected by the vCPU thread while waiting for a request.
     pub pending_stall: AtomicBool,
 
+    /// Whether the VCPU is syncing for the first time.
+    pub is_first_sync: AtomicBool,
+
     /* Lifecycle */
     /// Whether the backend is shutting down.
     pub shutdown: Arc<AtomicBool>,
@@ -498,7 +501,10 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     virtmcu_qom::telemetry::update_global_vtime(u64::try_from(now).expect("vtime is negative"));
 
-    if now >= s.next_quantum_ns || halted {
+    let is_running = virtmcu_qom::sysemu::runstate_is_running();
+    let should_wait = is_running && (now >= s.next_quantum_ns || halted);
+
+    if should_wait {
         if s.rust_state.is_null() {
             return;
         }
@@ -582,6 +588,23 @@ fn clock_quantum_wait_internal(
             "BQL held entering quantum_wait — would deadlock. Skipping sync."
         );
         return QUANTUM_WAIT_STALL_SENTINEL;
+    }
+
+    if backend.is_first_sync.swap(false, Ordering::SeqCst) {
+        // Fast-path: Just wait for Executing (the TA's start signal) without signaling Waiting
+        // because we haven't executed a quantum yet.
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return 0;
+            }
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(CLOCK_WAIT_TIMEOUT_MS))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
+        }
+        return backend.delta_ns.load(Ordering::SeqCst);
     }
 
     let n_vcpus = backend.n_vcpus.load(Ordering::SeqCst);
@@ -1143,6 +1166,7 @@ fn clock_init_with_transport(config: ClockManagerConfig) -> *mut ClockManager {
         start_time: Instant::now(),
         is_first_quantum: AtomicBool::new(true),
         pending_stall: AtomicBool::new(false),
+        is_first_sync: AtomicBool::new(true),
         shutdown: Arc::clone(&shutdown),
     });
 

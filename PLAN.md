@@ -32,8 +32,8 @@ P0.1–P0.5 are complete: `BqlContext` token, `BqlGuarded` upgrade, `ClosureTime
 
 ### Task 1 — Peripheral Coverage Audit
 **Goal**: Before mass migration, enumerate every peripheral and classify its test coverage. No peripheral migrates without a pre-existing test.
-- [ ] 1.1: Enumerate all `DrainToken`, `deref_qom_ptr`, `opaque_to_state`, and standalone `extern "C"` timer callbacks across `hw/rust/buses`, `bridges`, `physics`, `mcu`, `observability`.
-- [ ] 1.2: For each peripheral with no test: write a minimal smoke test before migration.
+- [x] 1.1: Enumerate all `DrainToken`, `deref_qom_ptr`, `opaque_to_state`, and standalone `extern "C"` timer callbacks across `hw/rust/buses`, `bridges`, `physics`, `mcu`, `observability`.
+- [x] 1.2: For each peripheral with no test: write a minimal smoke test before migration.
 
 **Gate**: Every peripheral has at least one test. Coverage matrix documented.
 

@@ -252,11 +252,22 @@ impl TopologyBuilder {
                 .arg(&topo_path_str)
                 .arg("--join-timeout-ms")
                 .arg("10000")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .kill_on_drop(true);
 
-            let coord_proc = coord_cmd
+            let mut coord_proc = coord_cmd
                 .spawn()
                 .context("Failed to spawn deterministic_coordinator")?;
+
+            let coord_stderr = coord_proc.stderr.take().unwrap();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(coord_stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    eprintln!("[COORD] {}", line);
+                }
+            });
+
             // Give it time to bind the socket
             tokio::time::sleep(Duration::from_millis(1000)).await;
             (Some(coord_proc), endpoint)
@@ -711,6 +722,11 @@ impl TopologyBuilder {
             info!("VTA Sync passed. Unfreezing all coordinated QEMUs via QMP...");
         }
 
+        let mut current_quantum = 0;
+        if !coordinated_nodes.is_empty() {
+            current_quantum = 1;
+        }
+
         for (idx, qmp) in qmp_clients.iter_mut().enumerate() {
             // Only issue cont if it was spawned with -S (coordinated)
             if self.nodes[idx].is_coordinated {
@@ -736,7 +752,7 @@ impl TopologyBuilder {
             external_children: Vec::new(),
             is_coordinated: is_coordinated_flags,
             current_vtime: 0,
-            current_quantum: 0,
+            current_quantum,
             recent_qemu_stderr,
         })
     }

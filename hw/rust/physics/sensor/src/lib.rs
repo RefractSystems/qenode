@@ -397,3 +397,17 @@ virtmcu_qom::define_properties!(
         define_prop_bool!(c"debug".as_ptr(), VirtmcuSensorQEMU, debug, false),
     ]
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sensor_layout() {
+        assert_eq!(
+            core::mem::offset_of!(VirtmcuSensorQEMU, parent_obj),
+            0,
+            "SysBusDevice must be the first field"
+        );
+    }
+}

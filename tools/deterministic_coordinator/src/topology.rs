@@ -511,4 +511,13 @@ peripherals:
         let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
         assert!(!graph.is_explicit);
     }
+
+    #[test]
+    fn test_ping_pong_parse() {
+        let content = std::fs::read_to_string("../../worlds/reference_ping_pong.yml").unwrap();
+        let mut file = NamedTempFile::new().expect("test should succeed");
+        writeln!(file, "{}", content).expect("test should succeed");
+        let graph = TopologyGraph::from_yaml(file.path()).expect("test should succeed");
+        println!("MAP IS: {:?}", graph.routing_map.map);
+    }
 }

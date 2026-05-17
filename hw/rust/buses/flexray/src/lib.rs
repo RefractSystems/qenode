@@ -559,3 +559,17 @@ fn flexray_send_frame(s: &mut FlexRay, slot: usize, frame_id: u16) {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flexray_layout() {
+        assert_eq!(
+            core::mem::offset_of!(FlexRay, parent_obj),
+            0,
+            "SysBusDevice must be the first field"
+        );
+    }
+}

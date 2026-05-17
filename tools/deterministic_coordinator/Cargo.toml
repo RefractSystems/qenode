@@ -33,6 +33,7 @@ regress = "0.11.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tokio = "1.37.0"
 transport-uds = { path = "../../hw/rust/backbone/transport-uds" }
 
 [package.metadata.cargo-machete]
