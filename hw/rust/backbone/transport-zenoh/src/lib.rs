@@ -73,7 +73,7 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         _topic: &'a str,
         _size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        todo!("Use reserve_link")
+        Err(virtmcu_wire::TransportError::Other("Use reserve_link".to_owned()))
     }
 
     fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
@@ -137,16 +137,20 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
                 payload[VTIME_OFFSET..SEQ_OFFSET].copy_from_slice(&vtime.to_le_bytes());
                 payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
 
-                self.publish(&zenoh_topic, payload)
-                    .map_err(virtmcu_wire::TransportError::Other)
+                self.publish(&zenoh_topic, payload).map_err(virtmcu_wire::TransportError::Other)
             },
         ))
     }
 
     fn subscribe(&self, topic: &str, callback: virtmcu_wire::DataCallback) -> Result<(), String> {
+        let actual_topic = if topic.starts_with("sim/ch/") {
+            format!("{}/{}", topic, self.node_id)
+        } else {
+            topic.to_string()
+        };
         let sub = self
             .session
-            .declare_subscriber(topic)
+            .declare_subscriber(&actual_topic)
             .callback(move |sample| {
                 callback(sample.key_expr().as_str(), sample.payload().to_bytes().as_ref());
             })

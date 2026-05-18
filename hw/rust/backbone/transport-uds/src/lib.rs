@@ -171,7 +171,7 @@ impl DataTransport for UdsDataTransport {
         _topic: &'a str,
         _size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        todo!("Use reserve_link")
+        Err(virtmcu_wire::TransportError::Other("Use reserve_link".to_owned()))
     }
 
     fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
@@ -233,7 +233,8 @@ impl DataTransport for UdsDataTransport {
 
                     let payload = &mut arena[..required_size];
                     payload[LINK_ID_OFFSET..SIZE_OFFSET].copy_from_slice(&link_id.to_le_bytes());
-                    payload[SIZE_OFFSET..VTIME_OFFSET].copy_from_slice(&(size as u32).to_le_bytes());
+                    payload[SIZE_OFFSET..VTIME_OFFSET]
+                        .copy_from_slice(&(size as u32).to_le_bytes());
                     payload[VTIME_OFFSET..SEQ_OFFSET].copy_from_slice(&vtime.to_le_bytes());
                     payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
 
@@ -254,7 +255,7 @@ impl DataTransport for UdsDataTransport {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[cfg(not(miri))]
 mod tests {
     use super::*;

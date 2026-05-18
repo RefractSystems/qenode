@@ -13,7 +13,7 @@ pub mod virtmcu {
             since = "2.0.0",
             note = "Use associated constants instead. This will no longer be generated in 2021."
         )]
-                // struct VirtmcuHandshake, aligned to 8
+        // struct VirtmcuHandshake, aligned to 8
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq)]
         pub struct VirtmcuHandshake(pub [u8; 16]);

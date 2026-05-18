@@ -185,8 +185,8 @@ build-test-artifacts: $(GUEST_APP_TARGETS)
 	@if [ "$$CI" = "true" ] && command -v deterministic_coordinator >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
-		echo "==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)..."; \
-		$(CARGO_CMD) build --release $(CARGO_OPTS) -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter; \
+		echo "==> Building test tools (deterministic_coordinator)..."; \
+		$(CARGO_CMD) build --release $(CARGO_OPTS) -p deterministic_coordinator; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.

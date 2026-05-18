@@ -15,14 +15,15 @@ use virtmcu_wire::lin_generated::virtmcu::lin::{
     root_as_lin_frame, LinFrame, LinFrameArgs, LinMessageType,
 };
 
-
 fn decode_inline_frame(payload: &[u8]) -> Option<(u64, u64, &[u8])> {
-    if payload.len() < 24 { return None; }
+    if payload.len() < 24 {
+        return None;
+    }
     let vtime = u64::from_le_bytes(payload[8..16].try_into().unwrap());
     let seq = u64::from_le_bytes(payload[16..24].try_into().unwrap());
     let len = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
     if payload.len() >= 24 + len {
-        Some((vtime, seq, &payload[24..24+len]))
+        Some((vtime, seq, &payload[24..24 + len]))
     } else {
         None
     }
@@ -105,9 +106,7 @@ impl ActuatorMonitor {
                 .declare_subscriber(topic.to_string())
                 .callback(move |sample: Sample| {
                     let payload = sample.payload().to_bytes();
-                    if let Some((vtime, _seq, inner_payload)) =
-                        decode_inline_frame(&payload)
-                    {
+                    if let Some((vtime, _seq, inner_payload)) = decode_inline_frame(&payload) {
                         let mut vals = Vec::new();
                         for chunk in inner_payload.chunks_exact(8) {
                             let val = f64::from_le_bytes(chunk.try_into().unwrap());
@@ -163,9 +162,7 @@ impl ChardevMonitor {
             .declare_subscriber(topic.to_string())
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if let Some((_vtime, _seq, inner_payload)) =
-                    decode_inline_frame(&payload)
-                {
+                if let Some((_vtime, _seq, inner_payload)) = decode_inline_frame(&payload) {
                     let text = String::from_utf8_lossy(inner_payload);
                     tracing::debug!("Chardev RX: {:?}", text);
                     let mut buf = captured_text_clone.lock().unwrap();
@@ -325,9 +322,7 @@ impl LinMonitor {
             .declare_subscriber(topic)
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if let Some((_vtime, _seq, inner_payload)) =
-                    decode_inline_frame(&payload)
-                {
+                if let Some((_vtime, _seq, inner_payload)) = decode_inline_frame(&payload) {
                     if let Ok(frame) = root_as_lin_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
                         let mut msgs = captured_messages_clone.lock().unwrap();
@@ -413,9 +408,7 @@ impl FlexRayMonitor {
             .declare_subscriber(topic)
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
-                if let Some((_vtime, _seq, inner_payload)) =
-                    decode_inline_frame(&payload)
-                {
+                if let Some((_vtime, _seq, inner_payload)) = decode_inline_frame(&payload) {
                     if let Ok(frame) = root_as_flex_ray_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
                         let mut msgs = captured_messages_clone.lock().unwrap();

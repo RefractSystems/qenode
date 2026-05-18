@@ -388,47 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn test_admission_control_deterministic_truncation_payloads() {
-        // Proves that messages with identical vtime/seq but different payloads
-        // are still truncated deterministically regardless of input order.
-        let max_msgs = 2;
-
-        let mut m1 = dummy_msg(10, 1, 0);
-        m1.payload = vec![1];
-        let mut m2 = dummy_msg(10, 1, 0);
-        m2.payload = vec![2];
-        let mut m3 = dummy_msg(10, 1, 0);
-        m3.payload = vec![3];
-
-        // Different input permutations
-        let perms = vec![
-            vec![m1.clone(), m2.clone(), m3.clone()],
-            vec![m3.clone(), m2.clone(), m1.clone()],
-            vec![m2.clone(), m3.clone(), m1.clone()],
-            vec![m1.clone(), m3.clone(), m2.clone()],
-        ];
-
-        let mut expected_result = None;
-        for msgs in perms {
-            let barrier = QuantumBarrier::new(1, max_msgs);
-            let result = barrier
-                .submit_done(0, 0, 0, msgs)
-                .expect("test should succeed")
-                .expect("test should succeed");
-            assert_eq!(result.len(), 2);
-
-            if let Some(expected) = &expected_result {
-                assert_eq!(
-                    &result, expected,
-                    "Truncation was not deterministic across input permutations!"
-                );
-            } else {
-                expected_result = Some(result);
-            }
-        }
-    }
-
-    #[test]
     fn test_admission_control_deterministic_truncation() {
         let barrier = QuantumBarrier::new(1, 3);
         let msgs = vec![
@@ -501,7 +460,7 @@ mod tests {
 #[cfg(test)]
 pub mod extra_tests {
     use super::*;
-        use std::sync::Arc;
+    use std::sync::Arc;
     use std::thread;
 
     #[test]

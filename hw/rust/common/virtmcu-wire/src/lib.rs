@@ -291,7 +291,6 @@ pub fn decode_uds_quantum_start(bytes: &[u8]) -> Result<(u64, u64), String> {
     Ok((qs.quantum(), qs.vtime_limit_ns()))
 }
 
-
 /// Encode link registration
 pub fn encode_link_registration(link_name: &str) -> Vec<u8> {
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
@@ -802,10 +801,27 @@ pub const VIRTMCU_HANDSHAKE_SIZE: usize = core::mem::size_of::<VirtmcuHandshake>
 // Format: [vtime_ns:8 LE][seq_num:8 LE][payload_len:8 LE][payload:N]
 // 8 peripheral crates still call decode_frame; do NOT add new callers.
 
-#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC-0042)")]
+/// Header size of a legacy encode_frame / decode_frame buffer. **Deprecated**.
+#[deprecated(note = "Use decode_frame() directly; this constant will be removed with the shim")]
+pub const ZENOH_FRAME_HEADER_SIZE: usize = 24;
+
+/// Encode a `sim/coord/done/{node_id}/q/{quantum}` payload.
+/// Format: `[quantum: u64 LE][current_vtime_ns: u64 LE]`.
+#[must_use]
+pub fn encode_coord_done_req(quantum: u64, current_vtime_ns: u64) -> Vec<u8> {
+    const DONE_REQ_SIZE: usize = 16;
+    let mut buf = Vec::with_capacity(DONE_REQ_SIZE);
+    buf.extend_from_slice(&quantum.to_le_bytes());
+    buf.extend_from_slice(&current_vtime_ns.to_le_bytes());
+    buf
+}
+
+/// Encode a legacy frame. **Deprecated** — port callers to `reserve_link` (RFC-0042).
+#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC)")]
 #[must_use]
 pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(24 + payload.len());
+    const HEADER_SIZE: usize = 24;
+    let mut buf = Vec::with_capacity(HEADER_SIZE + payload.len());
     buf.extend_from_slice(&delivery_vtime_ns.to_le_bytes());
     buf.extend_from_slice(&sequence_number.to_le_bytes());
     buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
@@ -813,18 +829,27 @@ pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]
     buf
 }
 
-#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC-0042)")]
+/// Decode a legacy frame. **Deprecated** — port callers to `VtimeIngress::new_for_link` (RFC-0042).
+#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC)")]
 pub fn decode_frame(data: &[u8]) -> Option<(u64, u64, &[u8])> {
-    if data.len() < 24 {
+    const HEADER_SIZE: usize = 24;
+    const VTIME_START: usize = 0;
+    const VTIME_END: usize = 8;
+    const SEQ_START: usize = 8;
+    const SEQ_END: usize = 16;
+    const LEN_START: usize = 16;
+    const LEN_END: usize = 24;
+
+    if data.len() < HEADER_SIZE {
         return None;
     }
-    let vtime = u64::from_le_bytes(data[0..8].try_into().ok()?);
-    let seq = u64::from_le_bytes(data[8..16].try_into().ok()?);
-    let len = u64::from_le_bytes(data[16..24].try_into().ok()?) as usize;
-    if data.len() < 24 + len {
+    let vtime = u64::from_le_bytes(data[VTIME_START..VTIME_END].try_into().ok()?);
+    let seq = u64::from_le_bytes(data[SEQ_START..SEQ_END].try_into().ok()?);
+    let len = u64::from_le_bytes(data[LEN_START..LEN_END].try_into().ok()?) as usize;
+    if data.len() < HEADER_SIZE + len {
         return None;
     }
-    Some((vtime, seq, &data[24..24 + len]))
+    Some((vtime, seq, &data[HEADER_SIZE..HEADER_SIZE + len]))
 }
 
 /// Size of SyscMsg in bytes.
@@ -1011,6 +1036,8 @@ mod tests {
     const TEST_PATTERN_U64_MMIO_2: u64 = 0x1020304050607080;
     const TEST_LE_PATTERN_ALT: [u8; 8] = [0x11, 0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A];
     const NODE_ID_3: &str = "3";
+    const SLICE_0_8: core::ops::Range<usize> = 0..8;
+    const SLICE_16_24: core::ops::Range<usize> = 16..24;
     #[rustfmt::skip]
     const EXPECTED_MMIO_BYTES: [u8; 32] = [0x01, 0x04, 0x34, 0x12, 0xBC, 0x9A, 0x78, 0x56, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99, 0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
 
@@ -1317,10 +1344,6 @@ mod tests {
         assert_eq!({ hs2.svd_hash() }, TEST_SVD_HASH);
     }
 
-
-
-
-
     #[test]
     fn test_virtmcu_handshake_unpack_error() {
         const INVALID_DATA: &[u8] = b"1234";
@@ -1347,8 +1370,6 @@ mod tests {
     fn test_clock_ready_resp_unpack_error() {
         assert!(ClockReadyResp::unpack_slice(b"wrongsize").is_none());
     }
-
-
 
     #[cfg(all(test, feature = "tokio"))]
     // virtmcu-allow: allow reasoning="Tests require specific magic numbers"
@@ -1435,5 +1456,14 @@ mod timeout_tests {
     #[test]
     fn test_boot_exceeds_normal() {
         assert!(BOOT_QUANTUM_TIMEOUT > NORMAL_QUANTUM_TIMEOUT);
+    }
+
+    #[test]
+    fn test_uds_registration_proto_version() {
+        let payload = crate::encode_uds_registration(123, "test_fed");
+        let (node_id, fed_id, proto) = crate::decode_uds_registration(&payload).unwrap();
+        assert_eq!(node_id, 123);
+        assert_eq!(fed_id, "test_fed");
+        assert_eq!(proto, crate::UDS_PROTO_VERSION);
     }
 }

@@ -682,24 +682,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cyber_bridge"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "clap",
- "flatbuffers",
- "libc",
- "memmap2",
- "tokio",
- "tracing",
- "virtmcu-observability",
- "virtmcu-wire",
- "virtmcu-zenoh-config",
- "zenoh",
-]
-
-[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1841,15 +1823,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "memmap2"
-version = "0.9.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1904,17 +1877,10 @@ name = "native-integration"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cyber_bridge",
- "fnv",
- "libc",
- "serde_json",
  "sha2",
- "stress_adapter",
  "tokio",
- "tracing",
  "tracing-subscriber",
  "virtmcu-test-runner",
- "virtmcu-wire",
 ]
 
 [[package]]
@@ -3455,13 +3421,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "stress_adapter"
-version = "0.1.0"
-dependencies = [
- "virtmcu-wire",
-]
-
-[[package]]
 name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4166,14 +4125,6 @@ dependencies = [
  "rand 0.8.6",
  "serde",
  "spin 0.10.0",
-]
-
-[[package]]
-name = "ui"
-version = "0.1.0"
-dependencies = [
- "virtmcu-qom",
- "virtmcu-wire",
 ]
 
 [[package]]

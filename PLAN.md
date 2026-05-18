@@ -125,9 +125,39 @@ Per-peripheral checklist (RFC-0041 + RFC-0042):
 
 ---
 
+## [P1.5] Firmware Studio Delivery — Robot Controller Peripherals
+
+*Blocked on P0.3 (reference peripheral fully green). Must land before P2.*
+
+**Context**: Firmware Studio needs a stable VirtMCU build where a controller can drive
+target positions and sense robot state from the physics environment. The sensor and
+actuator peripherals are the critical path.
+
+Priority order (highest to lowest):
+
+1. **`sensor`** — physics → firmware (position / force / IMU sensing)
+   - Port to RFC-0041 + RFC-0042 (VtimeIngress::new_for_link)
+   - Existing smoke test must pass
+   - Integration test: sensor data from physics gateway reaches firmware register
+
+2. **`actuator`** — firmware → physics (motor drive commands)
+   - Port to RFC-0041 + RFC-0042
+   - Integration test: MMIO write drives coordinator delivery to physics gateway
+
+3. **`uart`** — firmware ↔ Firmware Studio debug channel (CoSimBridge path)
+   - Port to RFC-0041; verify CoSimBridge teardown is clean
+
+4. Remaining buses (`canfd`, `flexray`, `ethernet`, `ieee802154`, `ui`, `s32k144-lpuart`)
+   — after sensor + actuator + uart are green.
+
+**Gate**: `make test-sensor test-actuator test-uart` green. Firmware Studio can connect,
+send actuator commands, and receive sensor readings in a deterministic simulation run.
+
+---
+
 ## [P2] Hardware Expansion
 
-*Blocked on P1 (all peripherals migrated to RFC-0041 + RFC-0042).*
+*Blocked on P1.5 (sensor + actuator + uart green).*
 
 | Task | Description |
 |---|---|

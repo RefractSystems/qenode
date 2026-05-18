@@ -8,11 +8,25 @@ pub mod wildcard {
 }
 
 pub mod templates {
-    pub fn clock_start(node_id: &str) -> String { format!("sim/clock/start/{}", node_id) }
-    pub fn clock_advance(node_id: &str) -> String { format!("sim/clock/advance/{}", node_id) }
-    pub fn clock_heartbeat(node_id: &str) -> String { format!("sim/clock/heartbeat/{}", node_id) }
-    pub fn clock_liveliness(node_id: &str) -> String { format!("sim/clock/liveliness/{}", node_id) }
-    pub fn clock_vtime(node_id: &str) -> String { format!("sim/clock/vtime/{}", node_id) }
-    pub fn clock_unique_prefix(node_id: &str) -> String { format!("sim/clock/unique/{}", node_id) }
-    pub fn coord_done(node_id: &str) -> String { format!("sim/coord/done/{}", node_id) }
+    pub fn clock_start(node_id: &str) -> String {
+        format!("sim/clock/start/{}", node_id)
+    }
+    pub fn clock_advance(node_id: &str) -> String {
+        format!("sim/clock/advance/{}", node_id)
+    }
+    pub fn clock_heartbeat(node_id: &str) -> String {
+        format!("sim/clock/heartbeat/{}", node_id)
+    }
+    pub fn clock_liveliness(node_id: &str) -> String {
+        format!("sim/clock/liveliness/{}", node_id)
+    }
+    pub fn clock_vtime(node_id: &str) -> String {
+        format!("sim/clock/vtime/{}", node_id)
+    }
+    pub fn clock_unique_prefix(node_id: &str) -> String {
+        format!("sim/clock/unique/{}", node_id)
+    }
+    pub fn coord_done(node_id: &str) -> String {
+        format!("sim/coord/done/{}", node_id)
+    }
 }

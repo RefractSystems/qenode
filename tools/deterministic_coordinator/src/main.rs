@@ -1,20 +1,21 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![deny(unsafe_code)]
 use anyhow::{anyhow, bail, Result};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, WriteBytesExt};
 use clap::Parser;
 use deterministic_coordinator::message_log::MessageLog;
-use std::io::Cursor;
 use std::sync::Arc;
 
 use deterministic_coordinator::barrier::{CoordMessage, QuantumBarrier};
 use deterministic_coordinator::topology;
 
+#[derive(Debug)]
 struct DummyVTimeProvider;
 impl virtmcu_observability::processors::VTimeProvider for DummyVTimeProvider {
-    fn vtime_ns(&self) -> u64 { 0 }
+    fn current_vtime_ns(&self) -> u64 {
+        0
+    }
 }
-
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Deterministic Coordinator", long_about = None)]
@@ -51,9 +52,6 @@ struct Args {
     #[arg(long, env = "VIRTMCU_RUN_DIR", default_value = "/run/virtmcu")]
     run_dir: String,
 }
-
-
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -147,7 +145,7 @@ async fn run_deterministic_coordinator(
         }
     }
     drop(topo_guard);
-    
+
     let mut _subs = Vec::new();
 
     let explicit_topics = vec![
@@ -409,7 +407,7 @@ async fn run_deterministic_coordinator(
                                     "Quantum complete"
                                 );
 
-                                for mut msg in sorted_msgs {
+                                for msg in sorted_msgs {
                                     zenoh_deliver_message(&session, &default_rx_map, &mut pcap_log, &msg).await;
                                 }
 
@@ -455,7 +453,9 @@ async fn zenoh_deliver_message(
     pcap_log: &mut Option<MessageLog>,
     msg: &CoordMessage,
 ) {
-    let targets = rx_map.get(&msg.link_id).expect("FATAL: link_id not in rx_map");
+    let targets = rx_map
+        .get(&msg.link_id)
+        .expect("FATAL: link_id not in rx_map");
     let mut frame = Vec::with_capacity(28 + msg.payload.len());
     frame.extend_from_slice(&msg.link_id.to_le_bytes());
     frame.extend_from_slice(&msg.src_node_id.to_le_bytes());
@@ -464,8 +464,12 @@ async fn zenoh_deliver_message(
     frame.extend_from_slice(&(msg.payload.len() as u32).to_le_bytes());
     frame.extend_from_slice(&msg.payload);
     for &target_node in targets {
-        if target_node == msg.src_node_id { continue; }
-        if let Some(log) = pcap_log { let _ = log.write_message(&msg); }
+        if target_node == msg.src_node_id {
+            continue;
+        }
+        if let Some(log) = pcap_log {
+            let _ = log.write_message(msg);
+        }
         let rx_topic = format!("sim/ch/{}/{}", msg.link_id, target_node);
         let _ = session.put(&rx_topic, frame.clone()).await;
     }
@@ -486,12 +490,17 @@ async fn uds_write_framed(
 }
 
 async fn uds_deliver_message(
-    sockets: &std::collections::HashMap<u32, Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>>,
+    sockets: &std::collections::HashMap<
+        u32,
+        Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>,
+    >,
     rx_map: &std::collections::HashMap<u32, Vec<u32>>,
     pcap_log: &mut Option<MessageLog>,
     msg: &CoordMessage,
 ) {
-    let targets = rx_map.get(&msg.link_id).expect("FATAL: link_id not in rx_map");
+    let targets = rx_map
+        .get(&msg.link_id)
+        .expect("FATAL: link_id not in rx_map");
     let mut frame = Vec::with_capacity(28 + msg.payload.len());
     frame.extend_from_slice(&msg.link_id.to_le_bytes());
     frame.extend_from_slice(&msg.src_node_id.to_le_bytes());
@@ -501,8 +510,12 @@ async fn uds_deliver_message(
     frame.extend_from_slice(&msg.payload);
     let rx_topic = format!("sim/ch/{}", msg.link_id);
     for &target_node in targets {
-        if target_node == msg.src_node_id { continue; }
-        if let Some(log) = pcap_log { let _ = log.write_message(&msg); }
+        if target_node == msg.src_node_id {
+            continue;
+        }
+        if let Some(log) = pcap_log {
+            let _ = log.write_message(msg);
+        }
         if let Some(socks) = sockets.get(&target_node) {
             for sock in socks {
                 uds_write_framed(sock, &rx_topic, &frame).await;
@@ -584,12 +597,28 @@ async fn run_unix_coordinator(
                             virtmcu_wire::decode_uds_registration(&payload).expect(
                                 "FATAL: invalid UdsRegistration frame on sim/coord/register",
                             );
+                        use std::io::Write;
+                        let mut f = std::fs::OpenOptions::new().append(true).create(true).open("/tmp/coord_debug.log").unwrap();
+                        writeln!(f, "decode_uds_registration: payload={:?} node_id={} fed_id={} proto={}", payload, node_id, reg_fed_id, proto_version).unwrap();
                         if proto_version != virtmcu_wire::UDS_PROTO_VERSION {
-                            std::fs::write("/tmp/coord_abort.log", format!("abort proto: {} != {}", proto_version, virtmcu_wire::UDS_PROTO_VERSION)).unwrap();
+                            writeln!(f, "ABORTING! {} != {}", proto_version, virtmcu_wire::UDS_PROTO_VERSION).unwrap();
+                            std::fs::write(
+                                "/tmp/coord_abort.log",
+                                format!(
+                                    "abort proto: {} != {}",
+                                    proto_version,
+                                    virtmcu_wire::UDS_PROTO_VERSION
+                                ),
+                            )
+                            .unwrap();
                             std::process::abort();
                         }
                         if reg_fed_id != fed_id_check {
-                            std::fs::write("/tmp/coord_abort.log", format!("abort fed: {} != {}", reg_fed_id, fed_id_check)).unwrap();
+                            std::fs::write(
+                                "/tmp/coord_abort.log",
+                                format!("abort fed: {} != {}", reg_fed_id, fed_id_check),
+                            )
+                            .unwrap();
                             std::process::abort();
                         }
                         let _ = worker_tx
@@ -754,26 +783,36 @@ async fn run_unix_coordinator(
                 );
             }
             WorkerEvent::Message(msg_node_id, topic, payload) => {
-
                 if topic.starts_with("sim/ch/") && topic.split('/').count() == 3 {
                     let parts: Vec<&str> = topic.split('/').collect();
                     if let Ok(link_id) = parts[2].parse::<u32>() {
                         if !default_rx_map.contains_key(&link_id) {
-                            std::fs::write("/tmp/coord_abort.log", format!("abort rx_map no link_id: {}", link_id)).unwrap();
+                            std::fs::write(
+                                "/tmp/coord_abort.log",
+                                format!("abort rx_map no link_id: {}", link_id),
+                            )
+                            .unwrap();
                             std::process::abort();
                         }
                         if payload.len() >= 24 {
                             let parsed_link_id =
                                 u32::from_le_bytes(payload[0..4].try_into().unwrap());
                             if parsed_link_id != link_id {
-                                std::fs::write("/tmp/coord_abort.log", format!("abort parsed_link_id != link_id: {} != {}", parsed_link_id, link_id)).unwrap();
+                                std::fs::write(
+                                    "/tmp/coord_abort.log",
+                                    format!(
+                                        "abort parsed_link_id != link_id: {} != {}",
+                                        parsed_link_id, link_id
+                                    ),
+                                )
+                                .unwrap();
                                 std::process::abort();
                             }
                             let payload_len =
                                 u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
                             let vtime_ns = u64::from_le_bytes(payload[8..16].try_into().unwrap());
                             let seq_num = u64::from_le_bytes(payload[16..24].try_into().unwrap());
-                            
+
                             if payload.len() >= 24 + payload_len {
                                 let raw_payload = &payload[24..24 + payload_len];
 
@@ -789,7 +828,13 @@ async fn run_unix_coordinator(
                                 };
 
                                 if no_pdes {
-                                    uds_deliver_message(&sockets, &default_rx_map, &mut pcap_log, &msg).await;
+                                    uds_deliver_message(
+                                        &sockets,
+                                        &default_rx_map,
+                                        &mut pcap_log,
+                                        &msg,
+                                    )
+                                    .await;
                                 } else {
                                     node_batches
                                         .entry(msg_node_id)
@@ -799,15 +844,19 @@ async fn run_unix_coordinator(
                             }
                         }
                     }
-} else if topic.starts_with("sim/coord/done/") {
+                } else if topic.starts_with("sim/coord/done/") {
                     let parts: Vec<&str> = topic.split('/').collect();
                     if parts.len() >= 4 {
                         if let Ok(node_id) = parts[3].parse::<u32>() {
                             seen_nodes.insert(node_id);
 
-                            if payload.len() < 16 { std::process::abort(); }
-                            let quantum = u64::from_le_bytes(payload[0..8].try_into().expect("FATAL"));
-                            let vtime_limit = u64::from_le_bytes(payload[8..16].try_into().expect("FATAL"));
+                            if payload.len() < 16 {
+                                std::process::abort();
+                            }
+                            let quantum =
+                                u64::from_le_bytes(payload[0..8].try_into().expect("FATAL"));
+                            let vtime_limit =
+                                u64::from_le_bytes(payload[8..16].try_into().expect("FATAL"));
                             let mut batched_msgs = Vec::new();
 
                             let msgs = node_batches.remove(&node_id).unwrap_or_default();
@@ -833,8 +882,14 @@ async fn run_unix_coordinator(
                                 Ok(Some(mut sorted_msgs)) => {
                                     sorted_msgs.sort();
 
-                                    for mut msg in sorted_msgs {
-                                        uds_deliver_message(&sockets, &default_rx_map, &mut pcap_log, &msg).await;
+                                    for msg in sorted_msgs {
+                                        uds_deliver_message(
+                                            &sockets,
+                                            &default_rx_map,
+                                            &mut pcap_log,
+                                            &msg,
+                                        )
+                                        .await;
                                     }
 
                                     if let Some(log) = &mut pcap_log {
@@ -867,15 +922,10 @@ async fn run_unix_coordinator(
     }
     Ok(())
 }
-
 #[cfg(test)]
+#[cfg(not(miri))]
 mod tests {
-    use super::*;
-    use deterministic_coordinator::barrier::CoordMessage;
-    use deterministic_coordinator::topology::{Protocol, TopologyGraph};
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
+    use deterministic_coordinator::topology::TopologyGraph;
 
     #[test]
     fn test_broadcast_sorting_determinism() {

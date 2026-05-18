@@ -14,7 +14,7 @@ members = [
     "hw/rust/physics/actuator",
     "hw/rust/physics/sensor",
     "hw/rust/buses/ieee802154",
-    "hw/rust/observability/ui",
+    # "hw/rust/observability/ui",
     "hw/rust/buses/flexray",
     "hw/rust/common/test-qom-device",
     "hw/rust/common/virtmcu-test-devices",

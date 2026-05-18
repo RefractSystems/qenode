@@ -377,14 +377,14 @@ async fn run_debug_pcap_dump(
 
         // 2. Try decoding as RFC-0042 Zenoh Frame
         if payload.len() >= 24 {
-            let link_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+            let _link_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
             let src = u32::from_le_bytes(payload[4..8].try_into().unwrap());
             let vtime = u64::from_le_bytes(payload[8..16].try_into().unwrap());
             let _seq = u64::from_le_bytes(payload[16..24].try_into().unwrap());
-            
+
             let proto_id = 8; // Default to Control
             let data = &payload[24..];
-            
+
             dumper.write_packet(vtime, src, u32::MAX, proto_id, data)?;
             continue;
         }

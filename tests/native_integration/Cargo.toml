@@ -8,14 +8,7 @@ license = "Apache-2.0"
 virtmcu-test-runner = { path = "../../tools/virtmcu-test-runner" }
 tokio = { version = "1.37.0", features = ["full"] }
 anyhow = "1.0"
-fnv = "1.0"
 tracing-subscriber = "0.3"
-serde_json = "1.0.149"
-tracing = "0.1.44"
-libc = "0.2.186"
 sha2 = "0.10"
-virtmcu-wire = { version = "0.1.0", path = "../../hw/rust/common/virtmcu-wire" }
-cyber_bridge = { version = "0.1.0", path = "../../tools/cyber_bridge" }
 
 [build-dependencies]
-stress_adapter = { path = "../../tools/stress_adapter", artifact = "bin" }

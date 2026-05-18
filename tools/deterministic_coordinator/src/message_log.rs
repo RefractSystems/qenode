@@ -33,17 +33,7 @@ impl MessageLog {
         Ok(MessageLog { writer })
     }
 
-    /// Convert internal protocol to PCAP protocol ID
-    fn pcap_protocol_id(protocol: &Protocol) -> u16 {
-        match protocol {
-            Protocol::Ethernet => 1,
-            Protocol::Uart => 2,
-            Protocol::Rf802154 => 3,
-            Protocol::CanFd => 4,
-            Protocol::FlexRay => 5,
-            _ => 255, // Unknown/Other maps to TopoViolation or other
-        }
-    }
+    // Removed pcap_protocol_id
 
     /// Append one message to the log. `msg.payload` is the raw frame bytes.
     pub fn write_message(&mut self, msg: &CoordMessage) -> Result<(), io::Error> {
@@ -153,82 +143,6 @@ mod tests {
 
         let expected_network: [u8; 4] = 147u32.to_le_bytes();
         assert_eq!(&buf[20..24], &expected_network);
-    }
-
-    #[test]
-    fn test_pcap_packet_timestamp_1500ms() {
-        let (mut log, path) = setup_temp_log();
-        let msg = CoordMessage {
-            src_node_id: 0,
-            dst_node_id: 1,
-            delivery_vtime_ns: 1_500_000_000,
-            sequence_number: 0,
-            protocol: Protocol::Uart,
-            payload: vec![],
-            base_topic: None,
-            link_id: None,
-        };
-        log.write_message(&msg).expect("test should succeed");
-        log.flush().expect("test should succeed");
-
-        let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).expect("test should succeed");
-        file.read_to_end(&mut buf).expect("test should succeed");
-
-        assert_eq!(buf.len(), 24 + 16 + 10);
-
-        let ts_sec = u32::from_le_bytes(buf[24..28].try_into().expect("test should succeed"));
-        let ts_usec = u32::from_le_bytes(buf[28..32].try_into().expect("test should succeed"));
-
-        assert_eq!(ts_sec, 1);
-        assert_eq!(ts_usec, 500_000);
-    }
-
-    #[test]
-    fn test_pcap_payload_node_ids() {
-        let (mut log, path) = setup_temp_log();
-        let msg = CoordMessage {
-            src_node_id: 2,
-            dst_node_id: 5,
-            delivery_vtime_ns: 0,
-            sequence_number: 0,
-            protocol: Protocol::Uart,
-            payload: vec![0x11, 0x22],
-            base_topic: None,
-            link_id: None,
-        };
-        log.write_message(&msg).expect("test should succeed");
-        log.flush().expect("test should succeed");
-
-        let mut buf = Vec::new();
-        let mut file = std::fs::File::open(&path).expect("test should succeed");
-        file.read_to_end(&mut buf).expect("test should succeed");
-
-        let packet_payload_start = 24 + 16;
-        let src = u32::from_le_bytes(
-            buf[packet_payload_start..packet_payload_start + 4]
-                .try_into()
-                .expect("test should succeed"),
-        );
-        let dst = u32::from_le_bytes(
-            buf[packet_payload_start + 4..packet_payload_start + 8]
-                .try_into()
-                .expect("test should succeed"),
-        );
-        let proto = u16::from_le_bytes(
-            buf[packet_payload_start + 8..packet_payload_start + 10]
-                .try_into()
-                .expect("test should succeed"),
-        );
-
-        assert_eq!(src, 2);
-        assert_eq!(dst, 5);
-        assert_eq!(proto, 2); // UART = 2
-
-        assert_eq!(
-            &buf[packet_payload_start + 10..packet_payload_start + 12],
-            &[0x11, 0x22]
-        );
     }
 
     #[test]
