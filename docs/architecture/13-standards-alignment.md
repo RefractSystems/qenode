@@ -31,12 +31,12 @@ past can arrive.
 | CMB Concept | VirtMCU Equivalent |
 |---|---|
 | Logical Process (LP) | QEMU cyber node |
-| Null Message | `CoordDoneReq` — signals "I have no message before T+delta" |
+| Null Message | `ClockReadyResp` — signals "I have no message before T+delta" |
 | Conservative barrier | `DeterministicCoordinator` per-quantum barrier |
 | Lookahead value | Quantum size (`delta_ns`) |
 | Simultaneous-event tie-breaking | Canonical `(delivery_vtime_ns, node_id, seq)` ordering |
 
-The `DeterministicCoordinator` accumulates `CoordDoneReq` signals from every node. Once
+The `DeterministicCoordinator` accumulates `ClockReadyResp` signals from every node. Once
 all nodes have signalled "quantum Q complete", it releases all buffered messages for Q and
 grants advancement to Q+1. This is the CMB barrier condition: *no node will produce a
 message timestamped ≤ Q's upper bound*.

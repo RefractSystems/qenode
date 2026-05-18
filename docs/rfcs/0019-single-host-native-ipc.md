@@ -27,7 +27,7 @@ The on-the-wire framing, registration handshake (`UdsRegistration`), and quantum
    - **Mechanism:** Direct, point-to-point Unix Domain Socket connections.
    - **Zero-Allocation API:** Peripherals use a `reserve_link(link_id)`/`commit()` API (RFC-0025, updated by RFC-0042) backed by thread-local arenas. `reserve_link()` provides a lock-free, zero-allocation mutable slice keyed by `link_id` (not a topic string). `commit()` performs a single `write()` system call to push the arena buffer down the UDS socket. The earlier topic-based `reserve(topic, size)` is `#[deprecated]`.
    - **Data Plane (Networking):** Instead of publishing Ethernet/UART frames to Zenoh, QEMU nodes write them to a UDS connected to the `DeterministicCoordinator`. The Coordinator buffers these frames.
-   - **PDES Barrier:** At the end of a quantum, QEMU nodes send a `CoordDoneReq` over UDS. The Coordinator waits for all sockets to report done, sorts the buffered network frames by `vtime_ns`, and pushes them down the destination UDS pipes.
+   - **PDES Barrier:** At the end of a quantum, QEMU nodes send a `ClockReadyResp` over UDS. The Coordinator waits for all sockets to report done, sorts the buffered network frames by `vtime_ns`, and pushes them down the destination UDS pipes.
 
 3. **User Interface (NextJS Frontend): WebSockets / Observability**
    - **Mechanism:** The UI connects as a read-only observer to the simulation's telemetry streams (via WebSockets or by querying the OpenTelemetry/Loki/Tempo stack).
@@ -54,8 +54,8 @@ graph TD
         UI["NextJS UI"]
         OBS["Observability / OTel"]
 
-        Q0 <-->|TCP/SHM: pub/sub (ZenohFrameHeader)<br/>firmware/control/**| Z
-        Q1 <-->|TCP/SHM: pub/sub (ZenohFrameHeader)<br/>firmware/control/**| Z
+        Q0 <-->|TCP/SHM: pub/sub (Routing Header)<br/>firmware/control/**| Z
+        Q1 <-->|TCP/SHM: pub/sub (Routing Header)<br/>firmware/control/**| Z
         
         Z <-->|TCP/SHM: req/rep<br/>sim/clock/**| TA
         Z <-->|TCP/SHM: pub/sub<br/>sim/coord/**| DC
@@ -71,7 +71,7 @@ graph TD
 
 **Key Characteristics (Zenoh):**
 *   **Routing:** Asynchronous Publisher/Subscriber model. The broker (Zenoh Router) handles all message routing based on String topics (e.g., `firmware/control/0`).
-*   **Serialization:** High overhead. Payloads are wrapped in `ZenohFrameHeader` and FlatBuffers, then serialized for network transport even when processes share the same host.
+*   **Serialization:** High overhead. Payloads are wrapped in a Routing Header and FlatBuffers, then serialized for network transport even when processes share the same host.
 *   **Physics Loop:** The Time Authority uses Zenoh pub/sub to send `PhysicsTrigger` (FlatBuffer) to the Gateway, adding broker latency to the critical path.
 *   **Race Conditions:** Because delivery is asynchronous, complex software barriers (like `ensure_session_routing()`) must be implemented to prevent packets from dropping before subscribers are ready.
 
@@ -92,8 +92,8 @@ graph TD
         TA <-->|UDS: ClockAdvanceReq| Q0
         TA <-->|UDS: ClockAdvanceReq| Q1
         
-        Q0 <-->|UDS: CoordDoneReq / Net Frames| DC
-        Q1 <-->|UDS: CoordDoneReq / Net Frames| DC
+        Q0 <-->|UDS: ClockReadyResp / Net Frames| DC
+        Q1 <-->|UDS: ClockReadyResp / Net Frames| DC
 
         TA <-->|UDS: PhysicsTrigger (FlatBuffers)| PG
         

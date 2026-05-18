@@ -11,8 +11,7 @@ model** backed by **named links** in the topology YAML. Each QEMU node has exact
 one UDS socket to the coordinator. Each link in the topology is assigned a single
 `u32 link_id`. Nodes send minimal frames tagged with `link_id`; the coordinator
 derives all routing metadata from connection identity and topology, then fans out to
-all other participants of that link. The `CoordMessage` FlatBuffer is **eliminated
-from the data path** — replaced by a three-field binary frame. The coordinator is
+all other participants of that link. The coordinator is
 the sole routing and timestamping authority.
 
 ## Self-Critique Log (Design Iterations)
@@ -31,10 +30,8 @@ the sole routing and timestamping authority.
 | Draft 2 | Separate TX/RX channel pools multiply IDs by 2N per link | **Eliminated** — single `link_id` per link shared by all participants |
 | Draft 2 | `rx_map` mapped `tx_channel_id → [rx_channel_ids]` — O(N·M) IDs | `rx_map: HashMap<link_id, Vec<node_id>>` — O(M) entries |
 | Draft 2 | Multi-cast required `LinkAck` to return a list of `rx_channel_ids` | `LinkAck` returns one scalar `link_id`; coordinator handles fan-out |
-| Draft 3 | `dst_node_id` in `CoordMessage` forces peripheral to know routing | **Eliminated** — coordinator routes entirely from topology; peripheral never specifies a destination |
 | Draft 3 | `delivery_vtime_ns` in TX frame forces peripheral to compute delivery time | **Eliminated from TX wire format** — coordinator assigns `quantum_vtime + topology.propagation_delay(link_id)`; peripheral models hardware, not scheduling |
 | Draft 3 | `src_node_id` in TX frame is redundant with connection identity | **Eliminated from TX wire format** — coordinator derives from the socket that delivered the frame; prevents node-ID spoofing |
-| Draft 3 | `CoordMessage` FlatBuffer carries only deducible fields after the above removals | **`CoordMessage` eliminated from the data path** — replaced by a 3-field binary frame: `[link_id: u32][payload_len: u32][payload: bytes]` |
 | Draft 3 | `register_link(node_id, link_name, protocol, role)` leaks node_id and protocol into the peripheral API | `node_id` derived from connection; `protocol` validated by coordinator from topology; `role` removed (coordinator routes all participants symmetrically) — API becomes `register_link(link_name: &str) -> Result<u32>` |
 | Draft 3 | `sequence_number` in TX frame requires peripheral to maintain a counter | **Eliminated from TX frame** — coordinator assigns sequence from FIFO socket receive order, which is deterministic on UDS; peripheral has no ordering responsibility |
 
@@ -56,12 +53,6 @@ let proto = if topic.contains("eth") { Protocol::Ethernet }
 The concrete failure: `worlds/reference_ping_pong.yml` used `topic: 'reference_bus'`
 but the coordinator only subscribed to `sim/chardev/*/tx`. Node 1 hung forever. The
 patch added another alias. Every new peripheral or renamed topic repeats the cycle.
-
-The Stage 1/2 stubs (`register_link → Ok(0)`, `reserve_link → sim/ch/0/tx`) exposed
-a deeper problem: even with `link_id` in the topic, the coordinator could not route
-correctly because `CoordMessage` still required the peripheral to supply `src_node_id`,
-`dst_node_id`, `delivery_vtime_ns`, and `sequence_number` — metadata the peripheral
-neither owns nor should compute.
 
 ### The Correct Mental Model
 
@@ -245,8 +236,6 @@ Only after all registrations are received does the coordinator issue
 
 ### Phase 4 — Data Frame Format (Peripheral → Coordinator)
 
-**The `CoordMessage` FlatBuffer is not used for data frames.** The wire format is:
-
 ```
 Topic (RFC-0033 framed): "sim/ch/{link_id}"
 
@@ -367,12 +356,9 @@ channel map at federation startup.
 
 | Stage | Coordinator | Peripherals | `DataTransport` | Gate |
 |---|---|---|---|---|
-| **1** | Handle `sim/coord/link/register`; build `rx_map`/`delay_map` from topology; route `sim/ch/{link_id}` frames via minimal binary format; remove `CoordMessage` decode from data path; `yaml2qemu` injects `link-name` | No change | `register_link(link_name)` + `reserve_link(link_id)` added; stubs replaced with real implementations; `reserve()` deprecated | `make test-check` green; `test_reference_ping_pong_*` pass |
+| **1** | Handle `sim/coord/link/register`; build `rx_map`/`delay_map` from topology; route `sim/ch/{link_id}` frames via minimal binary format; `yaml2qemu` injects `link-name` | No change | `register_link(link_name)` + `reserve_link(link_id)` added; stubs replaced with real implementations; `reserve()` deprecated | `make test-check` green; `test_reference_ping_pong_*` pass |
 | **2** | Legacy topic path (`sim/chardev/…`, `sim/eth/…`, etc.) still accepted in parallel | Migrate one peripheral at a time; `VtimeIngress::new_for_link()`; no new `topic` QOM properties | `reserve()` `#[deprecated]`; `#![allow(deprecated)]` stubs removed per peripheral | All integration tests green |
-| **3** | Delete substring routing, wildcard constants, topic template functions | `topic` property removed from all peripheral structs and world YAMLs | `reserve()` removed; `CoordMessage`/`ZenohFrameHeader`/`encode_frame`/`decode_frame` deleted | `make ci-full` green |
-
-**Stage 1 is the only flag-day** (wire protocol version bump + minimal binary frame
-replaces `CoordMessage`). Stages 2 and 3 are mechanical.
+| **3** | Delete substring routing, wildcard constants, topic template functions | `topic` property removed from all peripheral structs and world YAMLs | `reserve()` removed; `ZenohFrameHeader`/`encode_frame`/`decode_frame` deleted | `make ci-full` green |
 
 ---
 
@@ -397,7 +383,6 @@ replaces `CoordMessage`). Stages 2 and 3 are mechanical.
 | All wildcard constants (`CHARDEV_TX_WILDCARD`, …) | No wildcards — link_id is exact |
 | All topic template functions (`chardev_tx`, …) | No topic templates |
 | `topic.contains(…)` chain with silent Ethernet fallback | `rx_map.get(&link_id)` — abort on miss |
-| `base_topic: Option<String>` in `CoordMessage` | Eliminated |
 | Per-node per-protocol Zenoh subscriptions | Zero Zenoh data subscriptions in UDS mode |
 | Nested FlatBuffer decode fallback chain | One binary frame read, zero fallbacks |
 
@@ -453,12 +438,6 @@ timestamp source. This is an advanced opt-in; behavioral simulation is unaffecte
 
 ## Alternatives
 
-**Alt A: Keep `CoordMessage` FlatBuffer, just add `link_id` field.**
-Retains all the eliminated fields (`dst_node_id`, `delivery_vtime_ns`,
-`src_node_id`, `sequence_number`). The peripheral must supply metadata it does not
-own; binary fidelity is violated in spirit. Rejected: the fields are not just
-redundant, they are wrong responsibilities.
-
 **Alt B: Use protocol headers (Ethernet MAC, CAN arbitration ID) as routing keys.**
 Works for point-to-point protocols; fails for bus protocols (CAN, FlexRay, LIN)
 which are inherently broadcast with no destination address. The coordinator would
@@ -495,7 +474,7 @@ Two tables in `hw/rust/common/virtmcu-wire/src/core.fbs`:
 1. **`LinkRegistration`** — node → coordinator at realize time (`link_name` only)
 2. **`LinkAck`** — coordinator → node, carries `link_id`
 
-`ZenohFrameHeader`, `CoordMessage`, `CoordDoneReq`, and all existing tables are
+`ZenohFrameHeader`, `CoordDoneReq`, and all existing tables are
 **deleted** in Stage 3. The data path no longer uses FlatBuffers.
 
 The quantum barrier signal (`sim/coord/done`) is a bare `u64` quantum number.

@@ -395,7 +395,7 @@ void RegisterFile::b_transport(tlm::tlm_generic_payload &trans,
 
 // --- Educational CAN-lite Model ---
 
-struct ZenohFrameHeaderFB {
+struct RoutingHeaderFB {
   uint64_t delivery_vtime_ns;
   uint64_t sequence_number;
   uint32_t size;
@@ -403,7 +403,7 @@ struct ZenohFrameHeaderFB {
 } __attribute__((packed));
 
 struct CanWireFrame {
-  ZenohFrameHeaderFB header;
+  RoutingHeaderFB header;
   uint32_t can_id;
   uint32_t can_data;
 } __attribute__((packed));

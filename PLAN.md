@@ -219,6 +219,5 @@ Each task: implement → write integration test → gate passes before next.
 |---|---|---|
 | R1 | QEMU patch drift | Pinned; all changes via `virtmcu-cli setup patch-qemu` |
 | R2 | `decode_frame` shim format mismatch | Shim is documented as transitional; removed after L2 |
-| R3 | `CoordMessage` FlatBuffer ghost references | Deleted from core.fbs; `grep CoordMessage hw/rust/` must stay 0 |
 | R4 | Stale `.so` plugin | Rebuild after any source change: `ninja -C .../build-virtmcu install` |
 | R5 | `icount` performance | `slaved-icount` only for sub-quantum precision; `slaved-suspend` is default |

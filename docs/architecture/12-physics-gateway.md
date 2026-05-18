@@ -79,7 +79,7 @@ graph TD
     PE -->|"SHM write + futex_wake(physics_seq)"| GW
     GW -->|"Zenoh: sim/sensor/**"| FW
     GW -->|"PhysicsTransport: PhysicsDone{Q}"| PN
-    FW -->|"Zenoh: CoordDoneReq{Q}"| COORD
+    FW -->|"Zenoh: ClockAdvanceReq{Q}"| COORD
     COORD -.->|"Releases buffered messages"| FW
 ```
 
@@ -293,7 +293,7 @@ sequenceDiagram
     FW->>FW: Execute instructions for delta_ns
     FW->>PN: (actuator MMIO) publish firmware/control/** via Zenoh
     PN->>PN: ZenohActuatorSink buffers {vtime → {id → values}}
-    FW->>CO: CoordDoneReq {quantum=N, messages=[…]}
+    FW->>CO: ClockReadyResp {quantum=N, messages=[…]}
     FW->>PN: ClockReadyResp {quantum=N}
 
     Note over FW,CO: ── Quantum N boundary ──
@@ -477,12 +477,12 @@ services:
 
 | Topic pattern | Direction | Payload | Description |
 |---|---|---|---|
-| `firmware/control/{node}/{id}` | QEMU → TA | `ZenohFrameHeader` + f64[] | Actuator command from firmware MMIO |
-| `sim/sensor/{node}/sensordata_{i}` | Gateway → QEMU | `ZenohFrameHeader` + f64 | Sensor reading published after physics step |
+| `firmware/control/{node}/{id}` | QEMU → TA | Routing Header + f64[] | Actuator command from firmware MMIO |
+| `sim/sensor/{node}/sensordata_{i}` | Gateway → QEMU | Routing Header + f64 | Sensor reading published after physics step |
 | `sim/physics/trigger` | TA → Gateway | FlatBuffer `PhysicsTrigger` | Quantum actuator bundle (Zenoh transport only) |
 | `sim/physics/done` | Gateway → TA | FlatBuffer `PhysicsDone` | Physics step acknowledgment (Zenoh transport only) |
 | `sim/clock/advance/{node}` | TA → QEMU | `ClockAdvanceReq` (24 B struct) | Grant virtual time quantum |
-| `sim/coord/{node}/done` | QEMU → Coordinator | `CoordDoneReq` FlatBuffer | PDES barrier signal |
+| `sim/coord/{node}/done` | QEMU → Coordinator | `ClockReadyResp` FlatBuffer | PDES barrier signal |
 
 When `--gateway-transport unix` is in use, the `sim/physics/trigger` and
 `sim/physics/done` Zenoh topics are not used; the trigger and done messages travel over
@@ -527,7 +527,7 @@ discrepancies are configuration errors, not runtime errors.
   protocol that gates physics steps.
 - **[Transport Layer](./03-transport-layer.md)**: Unix socket and Zenoh transport
   implementations.
-- **[Communication Protocols](./04-communication-protocols.md)**: `ZenohFrameHeader`
+- **[Communication Protocols](./04-communication-protocols.md)**: Routing Headers
   wire format used on `firmware/control/**` and `sim/sensor/**`.
 - **[FlatBuffers and Wire Protocols](../fundamentals/09-flatbuffers-and-wire-protocols.md)**:
   How `physics.fbs` fits into the schema hierarchy.

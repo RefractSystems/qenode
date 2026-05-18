@@ -24,7 +24,7 @@ To ensure binary fidelity across C, Rust, and Python, VirtMCU uses **FlatBuffers
 
 ### The Unified IDL
 Every packet on the simulation bus follows the definitions in `hw/rust/common/virtmcu-wire/src/core.fbs`:
--   **Headers**: All emulated network traffic (Ethernet, UART, RF) is prefixed with a `ZenohFrameHeader` (24 bytes). This header encapsulates the `delivery_vtime_ns` and sequence numbers required for deterministic sorting.
+-   **Headers**: All emulated network traffic (Ethernet, UART, RF) is prefixed with a routing header. This header encapsulates the `delivery_vtime_ns` and sequence numbers required for deterministic sorting.
 -   **Payloads**: High-speed signals like `MmioReq` and `ClockAdvanceReq` use strictly aligned FlatBuffer structs to ensure bit-identical layout on all architectures.
 
 ---
