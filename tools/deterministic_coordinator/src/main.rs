@@ -1452,34 +1452,3 @@ mod tests {
         );
     }
 }
-efault();
-        let session = zenoh::open(dummy_session).await.unwrap();
-        let seen_nodes = std::collections::HashSet::new();
-        let mut pcap = None;
-        deliver_message(&session, &arc_topo, &seen_nodes, &mut pcap, &mut msg).await;
-    }
-
-    #[test]
-    fn test_broadcast_sorting_determinism() {
-        // Create a HashMap with multiple nodes inserted in a non-sorted order
-        let mut sockets = std::collections::HashMap::new();
-        sockets.insert(3, vec![1, 2]);
-        sockets.insert(1, vec![3]);
-        sockets.insert(5, vec![4, 5]);
-        sockets.insert(2, vec![6]);
-
-        // Simulate the exact loop logic from the coordinator broadcast
-        let mut sorted_sockets: Vec<_> = sockets.iter().collect();
-        sorted_sockets.sort_by_key(|(&id, _)| id);
-
-        // Extract the sorted node IDs
-        let sorted_ids: Vec<u32> = sorted_sockets.iter().map(|(&id, _)| id).collect();
-
-        // Verify that the node IDs are always processed in ascending order
-        assert_eq!(
-            sorted_ids,
-            vec![1, 2, 3, 5],
-            "Broadcast sockets must be sorted by node_id for determinism"
-        );
-    }
-}
