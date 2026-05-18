@@ -3,15 +3,6 @@ pub mod sim_topic {
     use alloc::format;
     use alloc::string::String;
 
-    /// Generates the RX topic for a given character device.
-    pub fn chardev_rx(node_id: &str) -> String {
-        format!("sim/chardev/{node_id}/rx")
-    }
-    /// Generates the TX topic for a given character device.
-    pub fn chardev_tx(node_id: &str) -> String {
-        format!("sim/chardev/{node_id}/tx")
-    }
-
     /// Generates the clock advance topic for a node.
     pub fn clock_advance(node_id: &str) -> String {
         format!("sim/clock/advance/{node_id}")
@@ -149,26 +140,6 @@ mod tests {
     const NODE_255: &str = "255";
 
     #[test]
-    fn test_chardev_rx_topic_node0() {
-        assert_eq!(chardev_rx("0"), "sim/chardev/0/rx");
-    }
-
-    #[test]
-    fn test_chardev_tx_topic_node0() {
-        assert_eq!(chardev_tx("0"), "sim/chardev/0/tx");
-    }
-
-    #[test]
-    fn test_chardev_rx_tx_distinct() {
-        assert_ne!(chardev_rx("0"), chardev_tx("0"));
-    }
-
-    #[test]
-    fn test_chardev_multi_node_isolation() {
-        assert_ne!(chardev_rx("0"), chardev_rx("1"));
-    }
-
-    #[test]
     fn test_clock_advance_topic() {
         assert_eq!(clock_advance("0"), "sim/clock/advance/0");
         assert_eq!(clock_advance(NODE_ID_3), format!("sim/clock/advance/{}", NODE_ID_3));
@@ -239,20 +210,9 @@ mod tests {
 
     #[test]
     fn test_topic_no_trailing_slash() {
-        let topics =
-            [chardev_rx("0"), chardev_tx("0"), clock_advance("0"), coord_tx("0"), eth_rx("0")];
+        let topics = [clock_advance("0"), coord_tx("0"), eth_rx("0")];
         for topic in topics {
             assert!(!topic.ends_with('/'), "topic has trailing slash: {}", topic);
         }
-    }
-
-    #[test]
-    fn test_node_id_int_or_str_accepted() {
-        let test_nodes = ["0", "1", NODE_15, NODE_255];
-        for node in test_nodes {
-            let topic = chardev_rx(node);
-            assert!(topic.contains(&format!("/{}/", node)));
-        }
-        assert_eq!(chardev_rx("alpha"), "sim/chardev/alpha/rx");
     }
 }

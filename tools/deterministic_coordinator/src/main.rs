@@ -34,6 +34,9 @@ struct Args {
     #[arg(short, long)]
     connect: Option<String>,
 
+    #[arg(short, long)]
+    listen: Option<String>,
+
     #[arg(long)]
     topology: Option<String>,
 
@@ -115,9 +118,18 @@ async fn run_deterministic_coordinator(
 ) -> Result<()> {
     let no_pdes = args.no_pdes;
     let mut config = virtmcu_zenoh_config::default_config();
-    config
-        .insert_json5("mode", "\"client\"")
-        .map_err(|e| anyhow!("Invalid Zenoh mode: {}", e))?;
+    if let Some(ref l) = args.listen {
+        config
+            .insert_json5("listen/endpoints", &format!("[\"{}\"]", l))
+            .map_err(|e| anyhow!("Invalid Zenoh listen endpoint: {}", e))?;
+        config
+            .insert_json5("mode", "\"router\"")
+            .map_err(|e| anyhow!("Invalid Zenoh mode: {}", e))?;
+    } else {
+        config
+            .insert_json5("mode", "\"client\"")
+            .map_err(|e| anyhow!("Invalid Zenoh mode: {}", e))?;
+    }
 
     let _ = config.insert_json5(
         "metadata/federation_id",
@@ -166,12 +178,12 @@ async fn run_deterministic_coordinator(
         _subs.push(sub);
     }
     let sub_done = session
-        .declare_subscriber(deterministic_coordinator::topics::wildcard::COORD_DONE_WILDCARD)
+        .declare_subscriber("sim/coord/done/*")
         .await
         .map_err(|e| anyhow!("Failed to declare done subscriber: {}", e))?;
 
     let sub_ctrl = session
-        .declare_subscriber(deterministic_coordinator::topics::singleton::NETWORK_CONTROL)
+        .declare_subscriber("sim/network/control")
         .await
         .map_err(|e| anyhow!("Failed to declare control subscriber: {}", e))?;
 
@@ -272,7 +284,7 @@ async fn run_deterministic_coordinator(
     }
     tracing::info!(federation = %federation_id, "All {} nodes have joined.", expected_nodes.len());
 
-    let liveliness_topic = deterministic_coordinator::topics::singleton::COORD_ALIVE;
+    let liveliness_topic = "sim/coord/alive";
     let _liveliness = session
         .liveliness()
         .declare_token(liveliness_topic)
@@ -417,10 +429,7 @@ async fn run_deterministic_coordinator(
 
                                 current_quantum += 1;
                                 for i in 0..args.nodes {
-                                    let start_topic =
-                                        deterministic_coordinator::topics::templates::clock_start(
-                                            &i.to_string(),
-                                        );
+                                    let start_topic = format!("sim/clock/start/{}", i);
                                     let mut start_payload = Vec::new();
                                     start_payload
                                         .write_u64::<LittleEndian>(current_quantum)
@@ -598,10 +607,25 @@ async fn run_unix_coordinator(
                                 "FATAL: invalid UdsRegistration frame on sim/coord/register",
                             );
                         use std::io::Write;
-                        let mut f = std::fs::OpenOptions::new().append(true).create(true).open("/tmp/coord_debug.log").unwrap();
-                        writeln!(f, "decode_uds_registration: payload={:?} node_id={} fed_id={} proto={}", payload, node_id, reg_fed_id, proto_version).unwrap();
+                        let mut f = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open("/tmp/coord_debug.log")
+                            .unwrap();
+                        writeln!(
+                            f,
+                            "decode_uds_registration: payload={:?} node_id={} fed_id={} proto={}",
+                            payload, node_id, reg_fed_id, proto_version
+                        )
+                        .unwrap();
                         if proto_version != virtmcu_wire::UDS_PROTO_VERSION {
-                            writeln!(f, "ABORTING! {} != {}", proto_version, virtmcu_wire::UDS_PROTO_VERSION).unwrap();
+                            writeln!(
+                                f,
+                                "ABORTING! {} != {}",
+                                proto_version,
+                                virtmcu_wire::UDS_PROTO_VERSION
+                            )
+                            .unwrap();
                             std::fs::write(
                                 "/tmp/coord_abort.log",
                                 format!(
@@ -749,8 +773,7 @@ async fn run_unix_coordinator(
 
     // Issue initial start to unblock nodes.
     for (&id, socks) in sockets.iter() {
-        let start_topic =
-            deterministic_coordinator::topics::templates::clock_start(&id.to_string());
+        let start_topic = format!("sim/clock/start/{}", id);
         let start_payload = virtmcu_wire::encode_uds_quantum_start(0, u64::MAX);
         for sock in socks {
             uds_write_framed(sock, &start_topic, &start_payload).await;
@@ -898,7 +921,7 @@ async fn run_unix_coordinator(
 
                                     current_quantum += 1;
                                     for (&id, socks) in sockets.iter() {
-                                        let start_topic = deterministic_coordinator::topics::templates::clock_start(&id.to_string());
+                                        let start_topic = format!("sim/clock/start/{}", id);
                                         let start_payload = virtmcu_wire::encode_uds_quantum_start(
                                             current_quantum,
                                             u64::MAX,

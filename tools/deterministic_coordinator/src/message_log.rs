@@ -1,5 +1,4 @@
 use crate::barrier::CoordMessage;
-use crate::topology::Protocol;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
@@ -63,7 +62,6 @@ impl MessageLog {
         src_node_id: u32,
         dst_node_id: u32,
         delivery_vtime_ns: u64,
-        _protocol: &Protocol,
         payload: &[u8],
     ) -> Result<(), io::Error> {
         let ts_sec = (delivery_vtime_ns / 1_000_000_000) as u32;

@@ -189,7 +189,9 @@ impl DataTransport for UdsDataTransport {
         self.publish("sim/coord/link/register", &payload)
             .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
+        virtmcu_qom::sim_info!("UdsDataTransport: Waiting for ack for link {}", link_name);
         let ack_payload = rx.recv().map_err(|_| virtmcu_wire::TransportError::Closed)?;
+        virtmcu_qom::sim_info!("UdsDataTransport: Received ack for link {}", link_name);
 
         if let Ok((link_id, status, _err)) = virtmcu_wire::decode_link_ack(&ack_payload) {
             if status != 0 {

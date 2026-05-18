@@ -146,7 +146,7 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         let actual_topic = if topic.starts_with("sim/ch/") {
             format!("{}/{}", topic, self.node_id)
         } else {
-            topic.to_string()
+            topic.to_owned()
         };
         let sub = self
             .session

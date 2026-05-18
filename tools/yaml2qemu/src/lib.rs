@@ -472,6 +472,10 @@ pub fn parse_yaml(
                             for n in nodes_seq {
                                 if let Some(id) = n.as_u64() {
                                     nodes.push(id as u32);
+                                } else if let Some(s) = n.as_str() {
+                                    if let Ok(id) = s.parse::<u32>() {
+                                        nodes.push(id);
+                                    }
                                 }
                             }
                         }

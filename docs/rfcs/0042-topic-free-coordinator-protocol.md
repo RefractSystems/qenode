@@ -408,30 +408,30 @@ replaces `CoordMessage`). Stages 2 and 3 are mechanical.
 ```
 Node 0 peripheral              Coordinator              Node 1 peripheral
        │                            │                          │
-       │──sim/coord/register──►     │  ◄──sim/coord/register───│
+       ├── sim/coord/register ───-─►│◄── sim/coord/register ─-─┤
        │                            │  builds: connection→node_id map
-       │                            │  (barrier: wait N nodes)
-       │                            │
-       │──sim/coord/link/register──►│  ◄──sim/coord/link/register──│
-       │  {link_name="ref_bus"}     │     {link_name="ref_bus"}
+       │                            │  (barrier: wait N nodes) │
+       │                            │                          │
+       ├── sim/coord/link/register-►│◄─sim/coord/link/register-┤
+       │   {link_name="ref_bus"}    │   {link_name="ref_bus"}  │
        │                            │  derives: src=0 from connection
        │                            │  validates: "ref_bus" ∈ topology
-       │                            │  assigns:   link_id=1
-       │  ◄──sim/coord/link/ack──   │──sim/coord/link/ack──────────►│
-       │    {link_id=1, status=0}   │     {link_id=1, status=0}
-       │                            │
-       │                            │  (pre-flight: all (node,link) pairs registered)
-       │  ◄──sim/coord/start──      │──sim/coord/start─────────────►│
-       │                            │
-       │──sim/ch/1──────────────►   │   [link_id=1][len=4][0x50494e47]
+       │                            │  assigns:   link_id=1    │
+       │◄──── sim/coord/link/ack ──┤├─-─ sim/coord/link/ack ──►│
+       │    {link_id=1, status=0}   │    {link_id=1, status=0} │
+       │                            │                          │
+       │                            │  (pre-flight: all pairs registered)
+       │◄────── sim/coord/start ───┤├─── sim/coord/start ─────►│
+       │                            │                          │
+       ├── sim/ch/1 ───────────-───►│   [link_id=1][len=4][0x50494e47]
        │                            │  derives: src=0 (connection)
        │                            │  computes: delivery_vtime=quantum+delay[1]
        │                            │  routes:   rx_map[1]=[0,1] → deliver to 1
-       │──sim/coord/done/q/0──►     │  ◄──sim/coord/done/q/0────────│
-       │                            │  (PDES barrier)
-       │                            │──sim/ch/1────────────────────►│
+       ├── sim/coord/done/q/0 ──-──►│◄── sim/coord/done/q/1 ─-─┤
+       │                            │  (PDES barrier)          │
+       │                            │├── sim/ch/1 ────────────►│
        │                            │  [link_id=1][src=0][vtime][seq][len][payload]
-       │  ◄──sim/coord/start──      │──sim/coord/start─────────────►│
+       │◄────── sim/coord/start ───┤├─── sim/coord/start ─────►│
 ```
 
 ## Drawbacks

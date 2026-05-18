@@ -347,7 +347,6 @@ fn main() -> Result<()> {
             // because they reference types deleted from virtmcu-wire.
             const EXCLUDED_TOOLS: &[&str] = &[
                 "deterministic_coordinator",
-                "zenoh_coordinator",
                 "cyber_bridge",
                 "virtmcu-physical-node",
                 "virtmcu-physics-gateway",
@@ -489,7 +488,7 @@ fn main() -> Result<()> {
                 let _host_cxxflags = sh.push_env("HOST_CXXFLAGS", "");
                 let target_dir = format!("target{}", build_suffix);
                 let _cargo_target_dir = sh.push_env("CARGO_TARGET_DIR", &target_dir);
-                cmd!(sh, "cargo build --release -j{jobs} -p zenoh_coordinator -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target {triple}").run()?;
+                cmd!(sh, "cargo build --release -j{jobs} -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target {triple}").run()?;
             }
         }
 

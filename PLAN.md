@@ -12,19 +12,19 @@ peripheral work begins.
 
 ---
 
-## [PRE-0] Restore Basic Compilation — BLOCKED: everything else depends on this
+## [x] [PRE-0] Restore Basic Compilation — BLOCKED: everything else depends on this
 
 > `cargo build --workspace` currently fails. Nothing can be tested until this is fixed.
 
-- [ ] PRE-0.1: **Fix `deterministic_coordinator` main.rs**
+- [x] PRE-0.1: **Fix `deterministic_coordinator` main.rs**
   - Add `DummyVTimeProvider` struct + `VTimeProvider` impl (copy pattern from `virtmcu-cli`)
   - Fix `wire_link.destinations` → `wire_link.nodes` (field was renamed in topology.rs)
   - Fix `wire_link.link_id` → derive link_id from iterator index (WireLink has no link_id field)
-- [ ] PRE-0.2: **Add `decode_frame` / `encode_frame` shims to `virtmcu-wire`**
+- [x] PRE-0.2: **Add `decode_frame` / `encode_frame` shims to `virtmcu-wire`**
   - 8 peripheral crates call these; they were deleted in a prior session without porting callers
   - Format: `[vtime_ns: u64 LE][seq_num: u64 LE][payload_len: u64 LE][payload: N bytes]`
   - Mark both `#[deprecated]` — they exist only to keep the workspace compiling during migration
-- [ ] PRE-0.3: **Fix `xtask build-rust-modules` package naming**
+- [x] PRE-0.3: **Fix `xtask build-rust-modules` package naming**
   - Current `-p` loop applies `replace('-', "_")` which breaks `mmio-socket-bridge`
   - Fix: use `--workspace --exclude` for each non-QEMU-plugin tool package instead
 
@@ -38,13 +38,13 @@ peripheral work begins.
 > Do NOT begin P0 peripheral work until this is done — legacy paths confuse agents and hide bugs.
 
 ### L1 — Coordinator legacy cleanup
-- [ ] L1.1: Delete all legacy topic-string routing from coordinator
+- [x] L1.1: Delete all legacy topic-string routing from coordinator
   (`sim/chardev/*`, `sim/spi/*`, `sim/wifi/*` substring matching)
-- [ ] L1.2: Simplify or delete `topics.rs` — only 4 RFC-0042 topics remain:
+- [x] L1.2: Simplify or delete `topics.rs` — only 4 RFC-0042 topics remain:
   `sim/ch/**`, `sim/coord/*/done`, `sim/coord/link/register/*`, `sim/network/control`
-- [ ] L1.3: Simplify `message_log.rs` — remove `Protocol`-based pcap dispatch;
+- [x] L1.3: Simplify `message_log.rs` — remove `Protocol`-based pcap dispatch;
   log by `link_id` only (KISS: link_id is all the coordinator knows)
-- [ ] L1.4: Audit `zenoh_coordinator` — if it duplicates `deterministic_coordinator` logic,
+- [x] L1.4: Audit `zenoh_coordinator` — if it duplicates `deterministic_coordinator` logic,
   consolidate or delete it
 
 ### L2 — Port all `decode_frame` callers to RFC-0042 VtimeIngress

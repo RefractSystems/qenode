@@ -1142,41 +1142,12 @@ mod tests {
     // ── Zenoh topic naming conventions ────────────────────────────────────────
 
     #[test]
-    fn test_chardev_rx_topic() {
-        let base = "sim/chardev";
-        assert_eq!(format!("{base}/0/rx"), "sim/chardev/0/rx");
-        assert_eq!(format!("{base}/1/rx"), "sim/chardev/1/rx");
-    }
-
-    #[test]
-    fn test_chardev_tx_topic() {
-        let base = "sim/chardev";
-        assert_eq!(format!("{base}/0/tx"), "sim/chardev/0/tx");
-    }
-
-    #[test]
-    fn test_chardev_rx_tx_topics_distinct() {
-        let base = "sim/chardev";
-        let rx = format!("{base}/0/rx");
-        let tx = format!("{base}/0/tx");
-        assert_ne!(rx, tx);
-    }
-
-    #[test]
     fn test_clock_topic_format() {
         assert_eq!(format!("sim/clock/advance/{}", 0), "sim/clock/advance/0");
         assert_eq!(
             format!("sim/clock/advance/{}", NODE_ID_3),
             format!("sim/clock/advance/{}", NODE_ID_3)
         );
-    }
-
-    #[test]
-    fn test_multi_node_chardev_isolation() {
-        let base = "sim/chardev";
-        let rx0 = format!("{base}/0/rx");
-        let rx1 = format!("{base}/1/rx");
-        assert_ne!(rx0, rx1, "node 0 and node 1 must use different topics");
     }
 
     // ── Struct size assertions ────────────────────────────────────────────────

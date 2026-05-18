@@ -153,15 +153,25 @@ impl TopologyBuilder {
         self
     }
 
-    async fn spawn_zenoh_coordinator(
+    async fn spawn_router(
         ctx: &TestContext,
         endpoint: &str,
+        federation_id: &str,
     ) -> Result<tokio::process::Child> {
-        let router_bin = ctx.find_binary("zenoh_coordinator")?;
-        info!("Spawning zenoh_coordinator from: {}", router_bin.display());
+        let router_bin = ctx.find_binary("deterministic_coordinator")?;
+        info!(
+            "Spawning deterministic_coordinator as router from: {}",
+            router_bin.display()
+        );
 
         let mut router_cmd = Command::new(&router_bin);
-        router_cmd.arg("--listen").arg(endpoint).kill_on_drop(true);
+        router_cmd
+            .arg("--listen")
+            .arg(endpoint)
+            .arg("--no-pdes")
+            .arg("--federation-id")
+            .arg(federation_id)
+            .kill_on_drop(true);
 
         let router_proc = router_cmd.spawn().map_err(|e| {
             let mut extra_hint = String::new();
@@ -169,13 +179,13 @@ impl TopologyBuilder {
                 extra_hint = format!(
                     "\nNote: Binary exists at {} but spawn failed with 'Not Found'. \
                      This often means the binary was built for a different architecture (e.g. x86_64 vs aarch64) \
-                     or its dynamic linker is missing. Try running 'cargo build -p zenoh_coordinator' in this environment.",
+                     or its dynamic linker is missing. Try running 'cargo build -p deterministic_coordinator' in this environment.",
                     router_bin.display()
                 );
             }
             anyhow!(
-                "Failed to spawn native zenoh_coordinator at {}: {}. {}. \n\
-                Hint: Ensure zenoh_coordinator is built for the current architecture and its dependencies are available.",
+                "Failed to spawn native deterministic_coordinator at {}: {}. {}. \n\
+                Hint: Ensure deterministic_coordinator is built for the current architecture and its dependencies are available.",
                 router_bin.display(),
                 e,
                 extra_hint
@@ -267,7 +277,14 @@ impl TopologyBuilder {
         } else {
             let endpoint = ctx.variables.get("ROUTER_ENDPOINT").unwrap().clone();
             (
-                Some(Self::spawn_zenoh_coordinator(&ctx, &endpoint).await?),
+                Some(
+                    Self::spawn_router(
+                        &ctx,
+                        &endpoint,
+                        self.federation_id.as_deref().unwrap_or("default-fed"),
+                    )
+                    .await?,
+                ),
                 endpoint,
             )
         };

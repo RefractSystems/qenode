@@ -237,12 +237,6 @@ extern "C" {
     pub fn qemu_chr_be_can_write(s: *mut Chardev) -> c_int;
 }
 
-fn decode_chardev(_opaque: *mut c_void, _topic: &str, data: &[u8]) -> Option<OrderedPacket> {
-    let (vtime, sequence, payload) = virtmcu_wire::decode_frame(data)?;
-
-    Some(OrderedPacket { vtime, sequence, data: payload.to_vec() })
-}
-
 fn deliver_chardev(opaque: *mut c_void, packet: OrderedPacket) {
     let state = unsafe { &mut *(opaque as *mut VirtmcuChardevState) }; // virtmcu-allow: unsafe_in_peripheral reasoning="Migration debt"
     let mut backlog = state.backlog.lock(); // virtmcu-allow: mutex reasoning="Backlog managed securely"
@@ -543,8 +537,8 @@ pub extern "C" fn virtmcu_chr_accept_input(chr: *mut Chardev) {
     }
 }
 
-fn send_packet(transport: &dyn virtmcu_wire::DataTransport, topic: &str, packet: TxPacket) {
-    match transport.reserve(topic, packet.data.len()) {
+fn send_packet(transport: &dyn virtmcu_wire::DataTransport, link_id: u32, packet: TxPacket) {
+    match transport.reserve_link(link_id, packet.data.len()) {
         Ok(mut reservation) => {
             reservation.buffer_mut().copy_from_slice(&packet.data);
             let _ = reservation.commit(packet.vtime, packet.sequence);
@@ -683,8 +677,16 @@ pub extern "C" fn virtmcu_chr_open(
         None => return false,
     };
 
-    let rx_topic = format!("{base_topic}/{node}/rx");
-    let tx_topic = format!("{base_topic}/{node}/tx");
+    let link_id = match transport.register_link(&base_topic) {
+        Ok(id) => id,
+        Err(e) => {
+            let msg = format!("chardev: virtmcu: failed to register link: {e}");
+            if let Ok(c_msg) = CString::new(msg) {
+                virtmcu_qom::ffi_call! { virtmcu_error_setg(errp as *mut *mut _, c_msg.as_ptr()) };
+            }
+            return false;
+        }
+    };
 
     let timer_ptr = Arc::new(AtomicUsize::new(0));
     let earliest_vtime = Arc::new(AtomicU64::new(u64::MAX));
@@ -698,7 +700,7 @@ pub extern "C" fn virtmcu_chr_open(
 
     let transport_impl = ChardevTransport {
         transport: Arc::clone(&transport),
-        topic: tx_topic,
+        link_id,
         rx_out,
         tx_fifo: Arc::clone(&tx_fifo),
         baud_delay_ns: Arc::clone(&baud_delay_ns_arc),
@@ -739,13 +741,14 @@ pub extern "C" fn virtmcu_chr_open(
     let state_ptr =
         core::ptr::from_mut::<VirtmcuChardevState>(virtmcu_qom::ffi_call! { &mut *s.state });
 
-    match virtmcu_qom::sync::VtimeIngress::new(
+    match virtmcu_qom::sync::VtimeIngress::new_for_link(
         &*transport,
-        &rx_topic,
+        link_id,
         generation,
-        state_ptr as *mut c_void,
-        decode_chardev,
-        deliver_chardev,
+        |_, vtime, sequence, payload| {
+            Some(OrderedPacket { vtime, sequence, data: payload.to_vec() })
+        },
+        move |packet| deliver_chardev(state_ptr as *mut c_void, packet),
     ) {
         Ok(receiver) => {
             state.receiver = Some(receiver);
@@ -821,7 +824,7 @@ virtmcu_qom::register_peripheral!(ChardevVirtmcu);
 
 pub struct ChardevTransport {
     pub transport: Arc<dyn virtmcu_wire::DataTransport>,
-    pub topic: String,
+    pub link_id: u32,
     pub rx_out: Receiver<TxPacket>,
     pub tx_fifo: Arc<virtmcu_qom::sync::Mutex<VecDeque<u8>>>, // virtmcu-allow: mutex reasoning="TX FIFO managed securely"
     pub baud_delay_ns: Arc<AtomicU64>,
@@ -853,7 +856,7 @@ impl CoSimTransport for ChardevTransport {
                     {
                         send_packet(
                             &*self.transport,
-                            &self.topic,
+                            self.link_id,
                             TxPacket {
                                 vtime: first_vtime,
                                 sequence: first_seq,
@@ -868,7 +871,7 @@ impl CoSimTransport for ChardevTransport {
                     if !buffer.is_empty() {
                         send_packet(
                             &*self.transport,
-                            &self.topic,
+                            self.link_id,
                             TxPacket {
                                 vtime: first_vtime,
                                 sequence: first_seq,
