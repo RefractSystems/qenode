@@ -237,9 +237,8 @@ impl DataTransport for UdsDataTransport {
         link_id: u32,
         size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        const HEADER_SIZE: usize = 8;
-        const LINK_ID_SIZE: usize = 4;
-        let required_size = size + HEADER_SIZE; // 4 bytes for link_id, 4 bytes for payload_len
+        const HEADER_SIZE: usize = 24;
+        let required_size = size + HEADER_SIZE;
 
         ARENA.with(|arena_cell| {
             let arena = unsafe { &mut *arena_cell.get() };
@@ -257,16 +256,14 @@ impl DataTransport for UdsDataTransport {
             Ok(virtmcu_wire::TransportReservation::new(
                 Box::leak(topic.into_boxed_str()),
                 buffer,
-                move |_, _| {
-                    // Prepend header: [link_id: u32 LE][payload_len: u32 LE]
+                move |vtime, seq| {
                     let payload = &mut arena[..required_size];
-                    payload[0..LINK_ID_SIZE].copy_from_slice(&link_id.to_le_bytes());
-                    payload[LINK_ID_SIZE..HEADER_SIZE]
-                        .copy_from_slice(&(size as u32).to_le_bytes());
+                    payload[0..4].copy_from_slice(&link_id.to_le_bytes());
+                    payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
+                    payload[8..16].copy_from_slice(&vtime.to_le_bytes());
+                    payload[16..24].copy_from_slice(&seq.to_le_bytes());
 
                     let mut stream = stream_clone.lock().expect("unix transport error");
-                    // The topic is leaked, but we don't have lifetime on `topic` anymore.
-                    // Wait, TransportReservation::new takes topic: &'a str.
                     write_framed(&mut stream, &format!("sim/ch/{}", link_id), payload)
                         .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
                 },

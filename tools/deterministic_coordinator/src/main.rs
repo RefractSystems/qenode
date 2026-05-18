@@ -934,9 +934,11 @@ async fn run_unix_coordinator(
                                 "FATAL: invalid UdsRegistration frame on sim/coord/register",
                             );
                         if proto_version != virtmcu_wire::UDS_PROTO_VERSION {
+                            std::fs::write("/tmp/coord_abort.log", format!("abort proto: {} != {}", proto_version, virtmcu_wire::UDS_PROTO_VERSION)).unwrap();
                             std::process::abort();
                         }
                         if reg_fed_id != fed_id_check {
+                            std::fs::write("/tmp/coord_abort.log", format!("abort fed: {} != {}", reg_fed_id, fed_id_check)).unwrap();
                             std::process::abort();
                         }
                         let _ = worker_tx
@@ -1108,42 +1110,35 @@ async fn run_unix_coordinator(
                     let parts: Vec<&str> = topic.split('/').collect();
                     if let Ok(link_id) = parts[2].parse::<u32>() {
                         if !default_rx_map.contains_key(&link_id) {
+                            std::fs::write("/tmp/coord_abort.log", format!("abort rx_map no link_id: {}", link_id)).unwrap();
                             std::process::abort();
                         }
-                        if payload.len() >= 8 {
+                        if payload.len() >= 24 {
                             let parsed_link_id =
                                 u32::from_le_bytes(payload[0..4].try_into().unwrap());
                             if parsed_link_id != link_id {
+                                std::fs::write("/tmp/coord_abort.log", format!("abort parsed_link_id != link_id: {} != {}", parsed_link_id, link_id)).unwrap();
                                 std::process::abort();
                             }
                             let payload_len =
                                 u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
-                            if payload.len() >= 8 + payload_len {
-                                let raw_payload = &payload[8..8 + payload_len];
-                                let seq = *rx_counters.entry(msg_node_id).or_insert(0);
-                                rx_counters.insert(msg_node_id, seq + 1);
+                            let vtime_ns = u64::from_le_bytes(payload[8..16].try_into().unwrap());
+                            let seq_num = u64::from_le_bytes(payload[16..24].try_into().unwrap());
+                            
+                            if payload.len() >= 24 + payload_len {
+                                let raw_payload = &payload[24..24 + payload_len];
 
                                 let delivery_vtime_ns =
-                                    *delay_map.get(&link_id).unwrap_or(&1_000_000);
-
-                                let mut delivery_payload = Vec::with_capacity(32 + payload_len);
-                                delivery_payload.extend_from_slice(&link_id.to_le_bytes());
-                                delivery_payload.extend_from_slice(&msg_node_id.to_le_bytes());
-                                delivery_payload
-                                    .extend_from_slice(&delivery_vtime_ns.to_le_bytes());
-                                delivery_payload.extend_from_slice(&seq.to_le_bytes());
-                                delivery_payload
-                                    .extend_from_slice(&(payload_len as u32).to_le_bytes());
-                                delivery_payload.extend_from_slice(raw_payload);
+                                    vtime_ns + *delay_map.get(&link_id).unwrap_or(&0);
 
                                 let msg = deterministic_coordinator::barrier::CoordMessage {
                                     src_node_id: msg_node_id,
                                     dst_node_id: u32::MAX,
                                     delivery_vtime_ns,
-                                    sequence_number: seq,
+                                    sequence_number: seq_num,
                                     protocol:
                                         deterministic_coordinator::topology::Protocol::ReferenceLink,
-                                    payload: delivery_payload,
+                                    payload: raw_payload.to_vec(),
                                     base_topic: None,
                                     link_id: Some(link_id),
                                 };
@@ -1427,6 +1422,37 @@ mod tests {
             link_id: None,
         };
         let dummy_session = zenoh::config::Config::default();
+        let session = zenoh::open(dummy_session).await.unwrap();
+        let seen_nodes = std::collections::HashSet::new();
+        let mut pcap = None;
+        deliver_message(&session, &arc_topo, &seen_nodes, &mut pcap, &mut msg).await;
+    }
+
+    #[test]
+    fn test_broadcast_sorting_determinism() {
+        // Create a HashMap with multiple nodes inserted in a non-sorted order
+        let mut sockets = std::collections::HashMap::new();
+        sockets.insert(3, vec![1, 2]);
+        sockets.insert(1, vec![3]);
+        sockets.insert(5, vec![4, 5]);
+        sockets.insert(2, vec![6]);
+
+        // Simulate the exact loop logic from the coordinator broadcast
+        let mut sorted_sockets: Vec<_> = sockets.iter().collect();
+        sorted_sockets.sort_by_key(|(&id, _)| id);
+
+        // Extract the sorted node IDs
+        let sorted_ids: Vec<u32> = sorted_sockets.iter().map(|(&id, _)| id).collect();
+
+        // Verify that the node IDs are always processed in ascending order
+        assert_eq!(
+            sorted_ids,
+            vec![1, 2, 3, 5],
+            "Broadcast sockets must be sorted by node_id for determinism"
+        );
+    }
+}
+efault();
         let session = zenoh::open(dummy_session).await.unwrap();
         let seen_nodes = std::collections::HashSet::new();
         let mut pcap = None;

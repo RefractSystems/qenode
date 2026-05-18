@@ -132,9 +132,8 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         link_id: u32,
         size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'_>, virtmcu_wire::TransportError> {
-        const HEADER_SIZE: usize = 8;
-        const LINK_ID_SIZE: usize = 4;
-        let required_size = size + HEADER_SIZE; // 4 bytes for link_id, 4 bytes for payload_len
+        const HEADER_SIZE: usize = 24;
+        let required_size = size + HEADER_SIZE;
         let mut frame = vec![0u8; required_size];
 
         let payload_ptr = frame.as_mut_ptr();
@@ -145,16 +144,19 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         };
 
         let topic = format!("sim/ch/{link_id}");
+        let zenoh_topic = format!("sim/ch/{}/{}", link_id, self.node_id);
 
         Ok(virtmcu_wire::TransportReservation::new(
             Box::leak(topic.into_boxed_str()),
             buffer,
-            move |_, _| {
+            move |vtime, seq| {
                 let payload = &mut frame[..required_size];
-                payload[0..LINK_ID_SIZE].copy_from_slice(&link_id.to_le_bytes());
-                payload[LINK_ID_SIZE..HEADER_SIZE].copy_from_slice(&(size as u32).to_le_bytes());
+                payload[0..4].copy_from_slice(&link_id.to_le_bytes());
+                payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
+                payload[8..16].copy_from_slice(&vtime.to_le_bytes());
+                payload[16..24].copy_from_slice(&seq.to_le_bytes());
 
-                self.publish(&format!("sim/ch/{link_id}"), payload)
+                self.publish(&zenoh_topic, payload)
                     .map_err(virtmcu_wire::TransportError::Other)
             },
         ))

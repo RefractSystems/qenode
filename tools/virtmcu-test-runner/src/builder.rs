@@ -238,6 +238,7 @@ impl TopologyBuilder {
                 coordinator_bin.display()
             );
 
+            let log_file = std::fs::File::create("/tmp/coord_crash.log").unwrap();
             let mut coord_cmd = Command::new(&coordinator_bin);
             coord_cmd
                 .arg("--transport")
@@ -252,21 +253,13 @@ impl TopologyBuilder {
                 .arg(&topo_path_str)
                 .arg("--join-timeout-ms")
                 .arg("10000")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stdout(log_file.try_clone().unwrap())
+                .stderr(log_file)
                 .kill_on_drop(true);
 
             let mut coord_proc = coord_cmd
                 .spawn()
                 .context("Failed to spawn deterministic_coordinator")?;
-
-            let coord_stderr = coord_proc.stderr.take().unwrap();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(coord_stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[COORD] {}", line);
-                }
-            });
 
             // Give it time to bind the socket
             tokio::time::sleep(Duration::from_millis(1000)).await;
