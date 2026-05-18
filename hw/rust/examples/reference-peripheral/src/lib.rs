@@ -135,6 +135,7 @@ impl virtmcu_qom::device::PeripheralState for ReferencePeripheralState {
 
 impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
     fn realize(&mut self, ctx: &virtmcu_qom::device::BqlContext) -> Result<(), String> {
+        virtmcu_qom::sim_info!(">>> HELLO FROM REFERENCE PERIPHERAL REALIZE! Node {}, link {}", self.node_id, self.link_name);
         if let Some(t) = &self.transport {
             self.link_id = t
                 .register_link(&self.link_name)
@@ -219,6 +220,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
         let _guard = self.drain.acquire();
         match addr {
             REFERENCE_REG_STATUS => {
+                virtmcu_qom::sim_info!("Reference: Read from STATUS. icount={}", virtmcu_qom::icount::icount_enabled());
                 let has_data_clone = Arc::clone(&self.has_data);
                 virtmcu_qom::device::MmioResult::wait_for(
                     move || has_data_clone.load(Ordering::Acquire),
@@ -239,6 +241,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
         let _guard = self.drain.acquire();
         match addr {
             REFERENCE_REG_TX => {
+                virtmcu_qom::sim_info!("Reference: Write to TX: {}", val);
                 let Some(transport) = &self.transport else {
                     virtmcu_qom::sim_info!("Reference: Write to TX but NO transport!");
                     return;

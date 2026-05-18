@@ -246,6 +246,29 @@ async fn run_deterministic_coordinator(
 
     let mut joined_nodes = std::collections::HashSet::new();
     while start_time.elapsed() < timeout_duration {
+        // Drain any pending link registrations to prevent deadlock
+        while let Ok(sample) = rx_chan.try_recv() {
+            let topic = sample.key_expr().as_str();
+            let payload = sample.payload().to_bytes();
+
+            if topic.starts_with("sim/coord/link/register/") {
+                let parts: Vec<&str> = topic.split('/').collect();
+                if parts.len() == 5 {
+                    if let Ok(msg_node_id) = parts[4].parse::<u32>() {
+                        if let Ok(reg) = flatbuffers::root::<virtmcu_wire::LinkRegistration>(&payload) {
+                            let link_name = reg.link_name();
+                            let t = topo.read().await;
+                            if let Some((link_id, _)) = t.wire_links.iter().enumerate().find(|(_, l)| l.name == link_name) {
+                                let ack_payload = virtmcu_wire::encode_link_ack(link_id as u32, 0, "");
+                                let ack_topic = format!("sim/coord/link/ack/{}", msg_node_id);
+                                let _ = session.put(&ack_topic, ack_payload).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let mut all_joined = true;
         for node_id in &expected_nodes {
             if !joined_nodes.contains(node_id) {
@@ -697,16 +720,23 @@ async fn run_unix_coordinator(
 
     tracing::info!(federation = %federation_id, "Waiting up to {}ms for {} nodes to join...", args.join_timeout_ms, expected_nodes);
 
+    let mut early_messages = Vec::new();
+
     while sockets.len() < expected_nodes {
         tokio::select! {
             _ = tokio::time::sleep(timeout_duration.saturating_sub(start_time.elapsed())) => {
                 bail!("Federation {}: Not all nodes joined within {}ms", federation_id.as_str(), args.join_timeout_ms);
             }
             evt = rx_chan.recv() => {
-                if let Some(WorkerEvent::Register(node_id, write_half)) = evt {
-                    sockets.entry(node_id).or_default().push(write_half);
-                    let len = sockets.get(&node_id).map(|v| v.len()).expect("FATAL: socket entry missing");
-                    tracing::info!("Node {} registered (total sockets for node: {})", node_id, len);
+                if let Some(evt) = evt {
+                    match evt {
+                        WorkerEvent::Register(node_id, write_half) => {
+                            sockets.entry(node_id).or_default().push(write_half);
+                            let len = sockets.get(&node_id).map(|v| v.len()).expect("FATAL: socket entry missing");
+                            tracing::info!("Node {} registered (total sockets for node: {})", node_id, len);
+                        }
+                        msg => early_messages.push(msg),
+                    }
                 }
             }
         }
@@ -738,6 +768,28 @@ async fn run_unix_coordinator(
         "Waiting for {} link registrations...",
         expected_link_pairs.len()
     );
+
+    for evt in early_messages {
+        if let WorkerEvent::Message(msg_node_id, topic, payload) = evt {
+            if topic == "sim/coord/link/register" {
+                if let Ok(reg) = flatbuffers::root::<virtmcu_wire::LinkRegistration>(&payload) {
+                    let link_name = reg.link_name();
+                    if expected_link_pairs.remove(&(msg_node_id, link_name.to_string())) {
+                        if let Some(&link_id) = link_ids.get(link_name) {
+                            let ack_payload = virtmcu_wire::encode_link_ack(link_id, 0, "");
+                            if let Some(socks) = sockets.get(&msg_node_id) {
+                                for sock in socks {
+                                    uds_write_framed(sock, "sim/coord/link/ack", &ack_payload).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let WorkerEvent::Register(node_id, write_half) = evt {
+            sockets.entry(node_id).or_default().push(write_half);
+        }
+    }
 
     while !expected_link_pairs.is_empty() {
         tokio::select! {
@@ -780,6 +832,8 @@ async fn run_unix_coordinator(
         }
     }
 
+    let mut initial_start_sent = true;
+
     #[allow(unused_mut)]
     #[allow(unused_variables)]
     let mut rx_counters: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
@@ -794,6 +848,7 @@ async fn run_unix_coordinator(
     while let Some(evt) = rx_chan.recv().await {
         match evt {
             WorkerEvent::Register(node_id, write_half) => {
+                let write_arc = Arc::clone(&write_half);
                 sockets.entry(node_id).or_default().push(write_half);
                 let len = sockets
                     .get(&node_id)
@@ -804,8 +859,17 @@ async fn run_unix_coordinator(
                     node_id,
                     len
                 );
+
+                if initial_start_sent {
+                    let start_topic = format!("sim/clock/start/{}", node_id);
+                    let start_payload = virtmcu_wire::encode_uds_quantum_start(current_quantum, u64::MAX);
+                    tokio::spawn(async move {
+                        uds_write_framed(&write_arc, &start_topic, &start_payload).await;
+                    });
+                }
             }
             WorkerEvent::Message(msg_node_id, topic, payload) => {
+                tracing::info!("Coordinator received message on topic '{}' from node {}", topic, msg_node_id);
                 if topic.starts_with("sim/ch/") && topic.split('/').count() == 3 {
                     let parts: Vec<&str> = topic.split('/').collect();
                     if let Ok(link_id) = parts[2].parse::<u32>() {
@@ -849,6 +913,13 @@ async fn run_unix_coordinator(
                                     sequence_number: seq_num,
                                     payload: raw_payload.to_vec(),
                                 };
+
+                                tracing::info!(
+                                    "Routed msg from node {} on link {} (len={})",
+                                    msg_node_id,
+                                    link_id,
+                                    raw_payload.len()
+                                );
 
                                 if no_pdes {
                                     uds_deliver_message(

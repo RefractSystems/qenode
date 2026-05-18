@@ -186,6 +186,7 @@ impl DataTransport for UdsDataTransport {
         .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
         let payload = virtmcu_wire::encode_link_registration(link_name);
+        virtmcu_qom::sim_info!("UdsDataTransport: Publishing sim/coord/link/register for link {}", link_name);
         self.publish("sim/coord/link/register", &payload)
             .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
@@ -241,7 +242,7 @@ impl DataTransport for UdsDataTransport {
                     payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
 
                     let mut stream = stream_clone.lock().expect("unix transport error");
-                    write_framed(&mut stream, &format!("sim/ch/{}", link_id), payload)
+                    write_framed(&mut stream, &alloc::format!("sim/ch/{}", link_id), payload)
                         .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
                 },
             ))

@@ -105,6 +105,7 @@ fn emit_device(
     dts: &mut String,
     cli_args: &mut Vec<String>,
     endpoint: Option<&str>,
+    transport_override: &str,
 ) {
     let addr = if let Some(a) = &p.address {
         parse_addr(a)
@@ -146,7 +147,7 @@ fn emit_device(
             "".to_string()
         };
 
-        let transport = std::env::var("VIRTMCU_TRANSPORT").unwrap_or_else(|_| "zenoh".to_string());
+        let transport = transport_override.to_string();
         let router_arg = if let Some(ep) = endpoint {
             if transport == "zenoh" {
                 format!(",router={}", ep)
@@ -420,6 +421,7 @@ fn emit_device(
                 dts,
                 cli_args,
                 endpoint,
+                transport_override,
             );
         }
     }
@@ -435,6 +437,7 @@ pub fn parse_yaml(
     yaml_content: &str,
     endpoint: Option<&str>,
     node_id: u32,
+    transport_env: Option<&str>,
 ) -> Result<(YamlPlatform, World)> {
     let mut world: World = match serde_yaml::from_str(yaml_content) {
         Ok(w) => w,
@@ -581,8 +584,10 @@ pub fn parse_yaml(
     }
 
     if has_native {
-        let transport = std::env::var("VIRTMCU_TRANSPORT").unwrap_or_else(|_| "zenoh".to_string());
-        if transport == "zenoh" {
+        let transport_override = transport_env.unwrap_or_else(|| {
+            "zenoh"
+        }).to_string();
+        if transport_override == "zenoh" {
             eprintln!("DEPRECATION: Zenoh transport is deprecated for peripheral data plane. Use unix transport instead.");
         }
         // Inject hub0
@@ -590,7 +595,7 @@ pub fn parse_yaml(
         dts.push_str("        compatible = \"virtmcu-transport-hub\";\n");
         dts.push_str(&format!("        phandle = <{}>;\n", HUB_PHANDLE));
         if let Some(ep) = endpoint {
-            if transport == "zenoh" {
+            if transport_override == "zenoh" {
                 dts.push_str(&format!("        router = \"{}\";\n", ep));
             } else {
                 dts.push_str(&format!("        socket-path = \"{}\";\n", ep));
@@ -765,6 +770,10 @@ pub fn parse_yaml(
     }
 
     // Pass 2: Emit root peripherals
+    let transport_override = transport_env.unwrap_or_else(|| {
+        "zenoh"
+    }).to_string();
+        
     for p in &augmented_peripherals {
         if p.parent.is_none() {
             emit_device(
@@ -775,6 +784,7 @@ pub fn parse_yaml(
                 &mut dts,
                 &mut cli_args,
                 endpoint,
+                &transport_override,
             );
         }
     }
@@ -812,7 +822,7 @@ peripherals:
 "#,
             EXAMPLE_UART_ADDR, EXAMPLE_UART_IRQ
         );
-        let result = parse_yaml(&yaml, Some(EXAMPLE_ROUTER_ENDPOINT), EXAMPLE_NODE_ID);
+        let result = parse_yaml(&yaml, Some(EXAMPLE_ROUTER_ENDPOINT), EXAMPLE_NODE_ID, None);
         assert!(result.is_ok());
         let (platform, _world) = result.unwrap();
         assert!(platform.dts_content.contains("cpu0"));
@@ -838,7 +848,7 @@ peripherals:
     type: clock
     address: none
 "#;
-        let result = parse_yaml(yaml, None, 0);
+        let result = parse_yaml(yaml, None, 0, None);
         assert!(result.is_ok());
         let (platform, _) = result.unwrap();
         assert!(platform.has_clock);
@@ -863,7 +873,7 @@ peripherals:
     properties:
       MACAddress: "00:11:22:33:44:55"
 "#;
-        let result = parse_yaml(yaml, None, 0);
+        let result = parse_yaml(yaml, None, 0, None);
         assert!(result.is_ok());
         let (platform, _) = result.unwrap();
         println!("Generated DTS:\n{}", platform.dts_content); // virtmcu-allow: print reasoning="CLI output"
@@ -874,7 +884,7 @@ peripherals:
         let yaml_path =
             std::path::Path::new("../../tests/fixtures/guest_apps/mismatched_svd/board.yaml");
         let yaml = std::fs::read_to_string(yaml_path).expect("Failed to read fixture");
-        let result = parse_yaml(&yaml, None, 0);
+        let result = parse_yaml(&yaml, None, 0, None);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Lint Error: Peripheral 'actuator0' has hardcoded address 0xb000000 which differs from SVD baseAddress 0xa000000. Use 'address: none' to follow SOTA SSoT pattern."));

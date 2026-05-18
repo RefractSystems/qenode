@@ -32,6 +32,36 @@ peripheral work begins.
 
 ---
 
+## [PHASE 0] Coordinator Sans-I/O Refactoring
+
+> Refactor the central simulation coordinator into an Enterprise SOTA "Sans-I/O" state machine to eliminate asynchronous deadlocks and enable purely synchronous, standalone unit testing. 
+
+### 0.1 — RFC
+- [x] Write `docs/rfcs/0043-coordinator-sans-io-architecture.md`
+
+### 0.2 — State Machine Core & Unit Tests (TDD)
+- [ ] Define `CoordinatorEvent`, `CoordinatorAction`, `CoordinatorPhase`, and `CoordinatorConfig`.
+- [ ] Write exhaustive synchronous unit tests for the handshake FIRST: NodeJoined x N -> LinkRegister x M -> QuantumDone x N -> assert BroadcastClockStart.
+- [ ] Create `CoordinatorState::new(config)` and `CoordinatorState::apply(event) -> Vec<Action>` containing pure business logic.
+- [ ] Extract `BarrierState` from `QuantumBarrier` into `CoordinatorState` as plain data; delete the Mutex/Condvar/wait_for_all/reset wrappers since `apply()` is single-threaded.
+
+### 0.2.5 — Pure-Rust Integration Test
+- [ ] Write a single-threaded integration test in pure Rust that constructs a `CoordinatorState`, feeds it a complete two-node protocol exchange (join -> link register -> 3 quantum cycles) via in-process byte slices, and asserts on the exact `Vec<CoordinatorAction>` at each step. No QEMU, no sockets.
+
+### 0.3 — I/O Boundary Wiring
+- [ ] Refactor `main.rs` to wrap `CoordinatorState` within the `tokio` I/O loop.
+- [ ] Map Unix socket / Zenoh inputs to `CoordinatorEvent`s.
+- [ ] Execute returned `CoordinatorAction`s via socket / Zenoh outputs.
+- [ ] DRY: Extract `build_delivery_frame(msg: &CoordMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
+
+**Gate**: `cargo test -p deterministic_coordinator` passes. `make test-reference-peripheral` completes in under 15 seconds.
+
+### 0.4 — Rename
+- [ ] Rename `deterministic_coordinator` crate and directories to `virtmcu-coord`.
+- [ ] Update `Cargo.toml`, `xtask`, `virtmcu-test-runner`, and `Makefile` references to use `virtmcu-coord`.
+
+---
+
 ## [PRE-1] Hard Prune: Legacy Code Elimination (KISS / YAGNI)
 
 > Remove dead code paths so future agents work on one coherent architecture.
@@ -77,16 +107,18 @@ peripheral work begins.
 > Reference: `hw/rust/examples/reference-peripheral/`
 
 ### P0.1 — Unit Tests
-- [ ] P0.1.1: `cargo test -p reference_peripheral` — all unit tests pass
-- [ ] P0.1.2: `cargo test -p virtmcu-wire` — all wire protocol tests pass
-- [ ] P0.1.3: `cargo test -p virtmcu-qom` — BqlContext, ClosureTimer, drain teardown tests pass
+- [x] P0.1.1: `cargo test -p reference_peripheral` — all unit tests pass
+- [x] P0.1.2: `cargo test -p virtmcu-wire` — all wire protocol tests pass
+- [x] P0.1.3: `cargo test -p virtmcu-qom` — BqlContext, ClosureTimer, drain teardown tests pass
 
 **Gate**: `make test-unit` exits 0 for the three packages above.
 
-### P0.2 — Integration Test: Unix Transport
-- [ ] P0.2.1: `test_reference_ping_pong_unix` passes
-  (coordinator UDS + QEMU with rebuilt `.so` plugin)
-- [ ] P0.2.2: `test_shutdown_safety` passes — teardown during blocked MMIO, no sanitizer errors
+### P0.2 — Integration Test: Progressive Milestones
+- [ ] P0.2.1: **Milestone 1: 1 Node + Coordinator (Clock Only)**. Create a test to verify base coordinator clock sync without RFC-0042 data plane getting in the way.
+- [ ] P0.2.2: **Milestone 2: 1 Node + Coordinator + 1 Peripheral**. Create `reference_standalone.yml` to verify `register_link` works in isolation without inter-node deadlock.
+- [ ] P0.2.3: **Milestone 3: 2 Nodes + Coordinator (No Peripherals)**. Verify multi-node clock sync barrier logic.
+- [ ] P0.2.4: **Milestone 4: The Full 2-Node Ping-Pong** (`test_reference_ping_pong_unix` passes).
+- [ ] P0.2.5: `test_shutdown_safety` passes — teardown during blocked MMIO, no sanitizer errors
 
 **Gate**: `make test-reference-peripheral` exits 0 (unix transport path).
 

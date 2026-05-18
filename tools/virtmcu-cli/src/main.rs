@@ -683,7 +683,7 @@ async fn run_platform_generate(
     node_id: u32,
 ) -> Result<()> {
     let yaml_content = std::fs::read_to_string(&input)?;
-    let (platform, world) = yaml2qemu::parse_yaml(&yaml_content, router.as_deref(), node_id)?;
+    let (platform, world) = yaml2qemu::parse_yaml(&yaml_content, router.as_deref(), node_id, None)?;
 
     if let Some(dtb_path) = out_dtb {
         // We need to compile DTS to DTB. Use dtc.

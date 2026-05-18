@@ -741,6 +741,15 @@ pub extern "C" fn virtmcu_chr_open(
     let state_ptr =
         core::ptr::from_mut::<VirtmcuChardevState>(virtmcu_qom::ffi_call! { &mut *s.state });
 
+    #[derive(Copy, Clone)]
+    struct SyncPtr(*mut core::ffi::c_void);
+    unsafe impl Send for SyncPtr {}
+    unsafe impl Sync for SyncPtr {}
+    impl SyncPtr {
+        fn get(self) -> *mut core::ffi::c_void { self.0 }
+    }
+    let sync_state_ptr = SyncPtr(state_ptr as *mut c_void);
+
     match virtmcu_qom::sync::VtimeIngress::new_for_link(
         &*transport,
         link_id,
@@ -748,7 +757,9 @@ pub extern "C" fn virtmcu_chr_open(
         |_, vtime, sequence, payload| {
             Some(OrderedPacket { vtime, sequence, data: payload.to_vec() })
         },
-        move |packet| deliver_chardev(state_ptr as *mut c_void, packet),
+        move |packet| {
+            deliver_chardev(sync_state_ptr.get(), packet)
+        },
     ) {
         Ok(receiver) => {
             state.receiver = Some(receiver);

@@ -157,6 +157,7 @@ impl TopologyBuilder {
         ctx: &TestContext,
         endpoint: &str,
         federation_id: &str,
+        num_nodes: usize,
     ) -> Result<tokio::process::Child> {
         let router_bin = ctx.find_binary("deterministic_coordinator")?;
         info!(
@@ -169,6 +170,8 @@ impl TopologyBuilder {
             .arg("--listen")
             .arg(endpoint)
             .arg("--no-pdes")
+            .arg("--nodes")
+            .arg(num_nodes.to_string())
             .arg("--federation-id")
             .arg(federation_id)
             .kill_on_drop(true);
@@ -282,6 +285,7 @@ impl TopologyBuilder {
                         &ctx,
                         &endpoint,
                         self.federation_id.as_deref().unwrap_or("default-fed"),
+                        self.nodes.len(),
                     )
                     .await?,
                 ),
@@ -301,6 +305,7 @@ impl TopologyBuilder {
         let mut pgids = Vec::new();
         let mut is_coordinated_flags = Vec::new();
         let mut recent_qemu_stderr = Vec::new();
+        let mut spawn_infos = Vec::new();
 
         let qmp_socket_paths: Vec<PathBuf> = self
             .nodes
@@ -368,7 +373,7 @@ impl TopologyBuilder {
                 std::env::set_var("VIRTMCU_WORKSPACE", &ctx.workspace_root);
                 std::env::set_var("VIRTMCU_TRANSPORT", transport);
                 let (platform, world) =
-                    yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id)?;
+                    yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id, Some(transport))?;
 
                 yaml_cli_args.clear();
                 yaml_cli_args = platform.cli_args;
@@ -574,6 +579,19 @@ impl TopologyBuilder {
                 }
             });
 
+            qemu_procs.push(qemu);
+            
+            // Store variables needed for connection loop
+            spawn_infos.push((
+                node.id,
+                uart_sock_path,
+                qmp_sock_path,
+                recent_stderr,
+            ));
+        }
+
+        // Now connect to all UARTs first so all QEMUs can unblock from wait=on
+        for (node_id_for_log, uart_sock_path, _, recent_stderr) in &spawn_infos {
             // Connect to UART
             let mut found = false;
             for _ in 0..50 {
@@ -602,7 +620,10 @@ impl TopologyBuilder {
                 }
             };
             uart_readers.push(BufReader::new(uart_stream));
+        }
 
+        // Then connect to all QMPs
+        for (node_id_for_log, _, qmp_sock_path, recent_stderr) in &spawn_infos {
             // Connect to QMP
             let mut found = false;
             for _ in 0..50 {
@@ -637,8 +658,6 @@ impl TopologyBuilder {
                 }
             };
             qmp_clients.push(qmp);
-
-            qemu_procs.push(qemu);
         }
 
         let mut session_opt = None;

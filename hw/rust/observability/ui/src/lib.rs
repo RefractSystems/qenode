@@ -197,8 +197,11 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
                     let vtime = virtmcu_qom::telemetry::get_global_vtime();
                     let seq = 0;
 
-                    #[allow(deprecated)] // virtmcu-allow: allow reasoning="S2.1 migration"
-                    match t.reserve(&topic, payload.len()) {
+                    let link_id = t
+                        .register_link(&topic)
+                        .expect("FATAL: UI failed to register link");
+
+                    match t.reserve_link(link_id, payload.len()) {
                         Ok(mut reservation) => {
                             reservation.buffer_mut().copy_from_slice(&payload);
                             reservation
@@ -206,7 +209,7 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
                                 .expect("FATAL: UI failed to commit transport reservation");
                         }
                         Err(e) => virtmcu_qom::sim_err!(
-                            "UI: Failed to reserve transport for topic {}: {:?}",
+                            "UI: Failed to reserve link for topic {}: {:?}",
                             topic,
                             e
                         ),
@@ -232,20 +235,18 @@ impl virtmcu_qom::device::MmioDevice for ZenohUiState {
 
                     if let Some(t) = &self.transport {
                         let generation_clone = Arc::clone(&self.generation);
-                        #[allow(deprecated)] // virtmcu-allow: allow reasoning="S2.1 migration"
-                        let rec = VtimeIngress::new_safe(
+                        let link_id = t
+                            .register_link(&topic)
+                            .expect("FATAL: UI failed to register link");
+
+                        let rec = VtimeIngress::new_for_link(
                             &**t,
-                            &topic,
+                            link_id,
                             generation_clone,
-                            |topic_name, payload| {
-                                virtmcu_qom::sim_debug!("UI: Rx callback on topic {} (len={})", topic_name, payload.len());
-                                if let Some((vtime, _seq, data)) = virtmcu_wire::decode_frame(payload) {
-                                    let pressed_val = data.first().is_some_and(|&b| b != 0);
-                                    Some(ButtonPacket { vtime, pressed: pressed_val })
-                                } else {
-                                    virtmcu_qom::sim_err!("UI: failed to decode frame on {}!", topic_name);
-                                    None
-                                }
+                            |link_id, vtime, _seq, data| {
+                                virtmcu_qom::sim_debug!("UI: Rx callback on link {} (len={})", link_id, data.len());
+                                let pressed_val = data.first().is_some_and(|&b| b != 0);
+                                Some(ButtonPacket { vtime, pressed: pressed_val })
                             },
                             move |packet| {
                                 pressed_clone.store(packet.pressed, Ordering::Relaxed);

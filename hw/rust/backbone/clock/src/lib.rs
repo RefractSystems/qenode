@@ -212,7 +212,7 @@ pub struct ZenohClockResponder {
 
 const CLOCK_RESP_PAYLOAD_SIZE: usize = 16;
 const DRAIN_WAIT_TIMEOUT_MS: u64 = 100;
-const CLOCK_EXECUTING_TIMEOUT_MS: u64 = 100;
+const CLOCK_EXECUTING_TIMEOUT_MS: u64 = 5000;
 const CLOCK_DEFAULT_WATCHDOG_THRESHOLD: u64 = 3;
 
 impl ClockSyncResponder for ZenohClockResponder {
