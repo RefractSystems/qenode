@@ -1152,12 +1152,15 @@ impl<T: DeliveryPacket> VtimeIngress<T> {
         let topic = alloc::format!("sim/ch/{link_id}");
         #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
         Self::new_safe(transport, &topic, generation, move |t, p| {
-            if p.len() >= 32 {
+            // Binary delivery frame: [link_id:4][src_node_id:4][vtime:8][seq:8][payload_len:4][payload:N]
+            // Header is exactly 28 bytes; payload starts at offset 28.
+            const HDR: usize = 28;
+            if p.len() >= HDR {
                 let vtime = u64::from_le_bytes(p[8..16].try_into().unwrap());
-                let seq = u64::from_le_bytes(p[16..24].try_into().unwrap());
-                let len = u32::from_le_bytes(p[24..28].try_into().unwrap()) as usize;
-                if p.len() >= 32 + len {
-                    return decode_cb(t, vtime, seq, &p[32..32+len]);
+                let seq   = u64::from_le_bytes(p[16..24].try_into().unwrap());
+                let len   = u32::from_le_bytes(p[24..28].try_into().unwrap()) as usize;
+                if p.len() >= HDR + len {
+                    return decode_cb(t, vtime, seq, &p[HDR..HDR + len]);
                 }
             }
             None

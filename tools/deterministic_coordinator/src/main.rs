@@ -781,71 +781,80 @@ async fn uds_deliver_message(
             let _ = log.write_message(&logged_msg);
         }
 
-        let rx_topic = if let Some(link_id) = msg.link_id {
-            format!("sim/ch/{}/rx", link_id)
-        } else {
-            deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string())
-        };
-        let mut out_msg = msg.clone();
-        out_msg.dst_node_id = target_node;
-        let out_payload = encode_message(&out_msg);
-        if let Some(socks) = sockets.get(&target_node) {
-            for sock in socks {
-                uds_write_framed(sock, &rx_topic, &out_payload).await;
+        if let Some(link_id) = msg.link_id {
+            // RFC-0042 binary delivery path: msg.payload is already the 6-field binary frame.
+            // Send it directly on sim/ch/{link_id} — no CoordMessage wrapper, no legacy copy.
+            let rx_topic = format!("sim/ch/{link_id}");
+            if let Some(socks) = sockets.get(&target_node) {
+                for sock in socks {
+                    uds_write_framed(sock, &rx_topic, &msg.payload).await;
+                }
             }
-        }
-
-        let legacy_rx_topic = if msg.link_id.is_some() {
-            rx_topic.clone()
-        } else if let Some(base) = &msg.base_topic {
-            format!("{}/{}/rx", base, target_node)
         } else {
-            match msg.protocol {
-                Protocol::Ethernet => {
-                    deterministic_coordinator::topics::templates::eth_rx(&target_node.to_string())
+            // Legacy path: wrap in CoordMessage FlatBuffer and also send protocol-specific topic.
+            let rx_topic =
+                deterministic_coordinator::topics::templates::coord_rx(&target_node.to_string());
+            let mut out_msg = msg.clone();
+            out_msg.dst_node_id = target_node;
+            let out_payload = encode_message(&out_msg);
+            if let Some(socks) = sockets.get(&target_node) {
+                for sock in socks {
+                    uds_write_framed(sock, &rx_topic, &out_payload).await;
                 }
-                Protocol::Uart => {
-                    deterministic_coordinator::topics::templates::uart_rx(&target_node.to_string())
-                }
-                Protocol::CanFd => {
-                    deterministic_coordinator::topics::templates::can_rx(&target_node.to_string())
-                }
-                Protocol::Lin => {
-                    deterministic_coordinator::topics::templates::lin_rx(&target_node.to_string())
-                }
-                Protocol::Spi => {
-                    deterministic_coordinator::topics::templates::spi_base(
-                        "default",
-                        &target_node.to_string(),
-                    ) + "/rx"
-                }
-                Protocol::Rf802154 => {
-                    deterministic_coordinator::topics::templates::rf_ieee802154_rx(
-                        &target_node.to_string(),
-                    )
-                }
-                Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
-                    &target_node.to_string(),
-                ),
-                Protocol::ReferenceLink => {
-                    let base = msg.base_topic.as_deref().unwrap_or("sim/chardev");
-                    format!("{}/{}/rx", base, target_node)
-                }
-                _ => format!("sim/unknown/{}/rx", target_node),
             }
-        };
 
-        let legacy_payload = virtmcu_wire::encode_coord_message(
-            msg.src_node_id,
-            msg.dst_node_id,
-            msg.delivery_vtime_ns,
-            msg.sequence_number,
-            virtmcu_wire::Protocol(serialize_protocol(&msg.protocol)),
-            &msg.payload,
-        );
-        if let Some(socks) = sockets.get(&target_node) {
-            for sock in socks {
-                uds_write_framed(sock, &legacy_rx_topic, &legacy_payload).await;
+            let legacy_rx_topic = if let Some(base) = &msg.base_topic {
+                format!("{}/{}/rx", base, target_node)
+            } else {
+                match msg.protocol {
+                    Protocol::Ethernet => {
+                        deterministic_coordinator::topics::templates::eth_rx(
+                            &target_node.to_string(),
+                        )
+                    }
+                    Protocol::Uart => deterministic_coordinator::topics::templates::uart_rx(
+                        &target_node.to_string(),
+                    ),
+                    Protocol::CanFd => deterministic_coordinator::topics::templates::can_rx(
+                        &target_node.to_string(),
+                    ),
+                    Protocol::Lin => deterministic_coordinator::topics::templates::lin_rx(
+                        &target_node.to_string(),
+                    ),
+                    Protocol::Spi => {
+                        deterministic_coordinator::topics::templates::spi_base(
+                            "default",
+                            &target_node.to_string(),
+                        ) + "/rx"
+                    }
+                    Protocol::Rf802154 => {
+                        deterministic_coordinator::topics::templates::rf_ieee802154_rx(
+                            &target_node.to_string(),
+                        )
+                    }
+                    Protocol::RfHci => deterministic_coordinator::topics::templates::rf_hci_rx(
+                        &target_node.to_string(),
+                    ),
+                    Protocol::ReferenceLink => {
+                        let base = msg.base_topic.as_deref().unwrap_or("sim/chardev");
+                        format!("{}/{}/rx", base, target_node)
+                    }
+                    _ => format!("sim/unknown/{}/rx", target_node),
+                }
+            };
+
+            let legacy_payload = virtmcu_wire::encode_coord_message(
+                msg.src_node_id,
+                msg.dst_node_id,
+                msg.delivery_vtime_ns,
+                msg.sequence_number,
+                virtmcu_wire::Protocol(serialize_protocol(&msg.protocol)),
+                &msg.payload,
+            );
+            if let Some(socks) = sockets.get(&target_node) {
+                for sock in socks {
+                    uds_write_framed(sock, &legacy_rx_topic, &legacy_payload).await;
+                }
             }
         }
     }
