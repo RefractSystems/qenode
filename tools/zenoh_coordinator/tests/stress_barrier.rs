@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::thread;
-use zenoh_coordinator::barrier::{CoordMessage, QuantumBarrier};
+use zenoh_coordinator::barrier::{QuantumBarrier};
 use zenoh_coordinator::topology::Protocol;
 
 #[test]

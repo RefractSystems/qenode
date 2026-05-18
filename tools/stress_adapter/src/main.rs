@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;

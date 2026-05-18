@@ -168,42 +168,10 @@ impl DataTransport for UdsDataTransport {
     #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
     fn reserve<'a>(
         &'a self,
-        topic: &'a str,
-        size: usize,
+        _topic: &'a str,
+        _size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        let required_size = size; // We only reserve payload space in the arena
-
-        ARENA.with(|arena_cell| {
-            // SAFETY: The arena is thread-local and lives for the duration of the thread.
-            // No two reservations can be active simultaneously on the same thread.
-            let arena = unsafe { &mut *arena_cell.get() };
-            let _ =
-                arena.get(..required_size).expect("FATAL: reserve size exceeds TLS arena capacity");
-
-            let payload_ptr = arena.as_mut_ptr();
-            let b = unsafe { core::slice::from_raw_parts_mut(payload_ptr, size) };
-            let buffer = unsafe { core::mem::transmute::<&mut [u8], &'a mut [u8]>(b) };
-
-            let stream_clone = Arc::clone(&self.stream);
-            let node_id = self.node_id;
-
-            Ok(virtmcu_wire::TransportReservation::new(topic, buffer, move |vtime, seq| {
-                // Now build the flatbuffer
-                let payload = &arena[..size];
-                let fb_payload = virtmcu_wire::encode_coord_message(
-                    node_id,
-                    u32::MAX, // Broadcast or coordinator-resolved dst
-                    vtime,
-                    seq,
-                    virtmcu_wire::Protocol::ReferenceLink, // Note: Currently everything via UDS is hardcoded as ReferenceLink.
-                    payload,
-                );
-
-                let mut stream = stream_clone.lock().expect("unix transport error");
-                write_framed(&mut stream, topic, &fb_payload)
-                    .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
-            }))
-        })
+        todo!("Use reserve_link")
     }
 
     fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
@@ -257,11 +225,17 @@ impl DataTransport for UdsDataTransport {
                 Box::leak(topic.into_boxed_str()),
                 buffer,
                 move |vtime, seq| {
+                    const LINK_ID_OFFSET: usize = 0;
+                    const SIZE_OFFSET: usize = 4;
+                    const VTIME_OFFSET: usize = 8;
+                    const SEQ_OFFSET: usize = 16;
+                    const HEADER_END: usize = 24;
+
                     let payload = &mut arena[..required_size];
-                    payload[0..4].copy_from_slice(&link_id.to_le_bytes());
-                    payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
-                    payload[8..16].copy_from_slice(&vtime.to_le_bytes());
-                    payload[16..24].copy_from_slice(&seq.to_le_bytes());
+                    payload[LINK_ID_OFFSET..SIZE_OFFSET].copy_from_slice(&link_id.to_le_bytes());
+                    payload[SIZE_OFFSET..VTIME_OFFSET].copy_from_slice(&(size as u32).to_le_bytes());
+                    payload[VTIME_OFFSET..SEQ_OFFSET].copy_from_slice(&vtime.to_le_bytes());
+                    payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
 
                     let mut stream = stream_clone.lock().expect("unix transport error");
                     write_framed(&mut stream, &format!("sim/ch/{}", link_id), payload)

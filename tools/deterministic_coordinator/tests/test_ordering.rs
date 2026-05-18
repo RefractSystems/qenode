@@ -1,5 +1,5 @@
 use deterministic_coordinator::{
-    barrier::{CoordMessage, QuantumBarrier},
+    barrier::{QuantumBarrier},
     topology::Protocol,
 };
 use std::sync::Arc;
@@ -9,38 +9,7 @@ use tokio::task;
 async fn test_tx_done_ordering() {
     let barrier = Arc::new(QuantumBarrier::new(3, 100));
 
-    let msg1 = CoordMessage {
-        src_node_id: 0,
-        dst_node_id: 1,
-        delivery_vtime_ns: 50,
-        sequence_number: 1,
-        protocol: Protocol::Uart,
-        payload: vec![1, 2, 3],
-        base_topic: None,
-        link_id: None,
-    };
-
-    let msg2 = CoordMessage {
-        src_node_id: 0,
-        dst_node_id: 2,
-        delivery_vtime_ns: 100,
-        sequence_number: 2,
-        protocol: Protocol::Uart,
-        payload: vec![4, 5, 6],
-        base_topic: None,
-        link_id: None,
-    };
-
-    let msg3 = CoordMessage {
-        src_node_id: 1,
-        dst_node_id: 0,
-        delivery_vtime_ns: 75,
-        sequence_number: 1,
-        protocol: Protocol::Uart,
-        payload: vec![7, 8, 9],
-        base_topic: None,
-        link_id: None,
-    };
+  
 
     let b_clone1 = barrier.clone();
     let b_clone2 = barrier.clone();

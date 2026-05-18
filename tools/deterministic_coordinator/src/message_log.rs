@@ -49,7 +49,7 @@ impl MessageLog {
     pub fn write_message(&mut self, msg: &CoordMessage) -> Result<(), io::Error> {
         let ts_sec = (msg.delivery_vtime_ns / 1_000_000_000) as u32;
         let ts_usec = ((msg.delivery_vtime_ns % 1_000_000_000) / 1000) as u32;
-        let incl_len = (msg.payload.len() + 10) as u32; // 4 (src) + 4 (dst) + 2 (protocol) + payload
+        let incl_len = (msg.payload.len() + 10) as u32; // 4 (src) + 4 (link_id) + 2 (protocol dummy) + payload
         let orig_len = incl_len;
 
         self.writer.write_all(&ts_sec.to_le_bytes())?;
@@ -58,10 +58,9 @@ impl MessageLog {
         self.writer.write_all(&orig_len.to_le_bytes())?;
 
         self.writer.write_all(&msg.src_node_id.to_le_bytes())?;
-        self.writer.write_all(&msg.dst_node_id.to_le_bytes())?;
+        self.writer.write_all(&msg.link_id.to_le_bytes())?;
 
-        let pcap_proto_id = Self::pcap_protocol_id(&msg.protocol);
-        self.writer.write_all(&pcap_proto_id.to_le_bytes())?;
+        self.writer.write_all(&0u16.to_le_bytes())?;
 
         self.writer.write_all(&msg.payload)?;
 
@@ -245,33 +244,24 @@ mod tests {
         let (mut log, path) = setup_temp_log();
         let msg1 = CoordMessage {
             src_node_id: 1,
-            dst_node_id: 2,
+            link_id: 0,
             delivery_vtime_ns: 10_000_000,
             sequence_number: 0,
-            protocol: Protocol::Uart,
             payload: vec![],
-            base_topic: None,
-            link_id: None,
         };
         let msg2 = CoordMessage {
             src_node_id: 1,
-            dst_node_id: 2,
+            link_id: 0,
             delivery_vtime_ns: 20_000_000,
             sequence_number: 1,
-            protocol: Protocol::Uart,
             payload: vec![],
-            base_topic: None,
-            link_id: None,
         };
         let msg3 = CoordMessage {
             src_node_id: 1,
-            dst_node_id: 2,
+            link_id: 0,
             delivery_vtime_ns: 30_000_000,
             sequence_number: 2,
-            protocol: Protocol::Uart,
             payload: vec![],
-            base_topic: None,
-            link_id: None,
         };
 
         log.write_message(&msg1).expect("test should succeed");

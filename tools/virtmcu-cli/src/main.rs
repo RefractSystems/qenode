@@ -371,72 +371,22 @@ async fn run_debug_pcap_dump(
         let topic = sample.key_expr().to_string();
         let payload = sample.payload().to_bytes();
 
-        // 1. Try decoding as CoordMessage
         if topic.contains("sim/coord/") {
-            if let Ok(msg) = flatbuffers::root::<virtmcu_wire::CoordMessage>(&payload) {
-                let vtime = msg.delivery_vtime_ns();
-                let src = msg.src_node_id();
-                let dst = msg.dst_node_id();
-                let proto = msg.protocol().0 as u16;
-                let data = msg.payload().map(|v| v.bytes()).unwrap_or(&[]);
-                dumper.write_packet(vtime, src, dst, proto, data)?;
-                continue;
-            }
+            continue;
         }
 
-        // 2. Try decoding as Legacy ZenohFrameHeader
-        if payload.len() >= virtmcu_wire::ZENOH_FRAME_HEADER_SIZE {
-            if let Some((vtime, _seq, data)) = virtmcu_wire::decode_frame(&payload) {
-                let mut node_id = 0;
-                let mut proto_id = 8; // Default to Control
-
-                let parts: Vec<&str> = topic.split('/').collect();
-                for (i, part) in parts.iter().enumerate() {
-                    match *part {
-                        "eth" => {
-                            proto_id = 0;
-                            if let Some(n) = parts.get(i + 2) {
-                                node_id = n.parse().expect("Invalid data format");
-                            }
-                            break;
-                        }
-                        "uart" => {
-                            proto_id = 1;
-                            if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().expect("Invalid data format");
-                            }
-                            break;
-                        }
-                        "can" => {
-                            proto_id = 3;
-                            if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().expect("Invalid data format");
-                            }
-                            break;
-                        }
-                        "lin" => {
-                            proto_id = 5;
-                            if let Some(n) = parts.get(i + 1) {
-                                node_id = n.parse().expect("Invalid data format");
-                            }
-                            break;
-                        }
-                        "spi" => {
-                            proto_id = 2;
-                            if let Some(n) = parts.get(i + 2) {
-                                node_id = n.parse().expect("Invalid data format");
-                            }
-                            break;
-                        }
-                        p if p.contains("rf") => {
-                            proto_id = 6;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                dumper.write_packet(vtime, 0, node_id, proto_id, data)?;
-            }
+        // 2. Try decoding as RFC-0042 Zenoh Frame
+        if payload.len() >= 24 {
+            let link_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+            let src = u32::from_le_bytes(payload[4..8].try_into().unwrap());
+            let vtime = u64::from_le_bytes(payload[8..16].try_into().unwrap());
+            let _seq = u64::from_le_bytes(payload[16..24].try_into().unwrap());
+            
+            let proto_id = 8; // Default to Control
+            let data = &payload[24..];
+            
+            dumper.write_packet(vtime, src, u32::MAX, proto_id, data)?;
+            continue;
         }
     }
 

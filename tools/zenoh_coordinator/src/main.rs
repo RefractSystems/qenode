@@ -6,7 +6,7 @@
  * This Rust daemon replaces the concept of a traditional "WirelessMedium" or
  * central network switch found in other emulation frameworks (like Renode).
  */
-use zenoh_coordinator::barrier::{CoordMessage, QuantumBarrier};
+use zenoh_coordinator::barrier::{QuantumBarrier};
 use zenoh_coordinator::topology::{self, Protocol};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};

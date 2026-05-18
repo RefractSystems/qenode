@@ -1,5 +1,4 @@
 #![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
-use crate::topology::Protocol;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use core::time::Duration;
@@ -8,13 +7,10 @@ use std::sync::{Condvar, Mutex};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordMessage {
     pub src_node_id: u32,
-    pub dst_node_id: u32,
+    pub link_id: u32,
     pub delivery_vtime_ns: u64,
     pub sequence_number: u64,
-    pub protocol: Protocol,
     pub payload: Vec<u8>,
-    pub base_topic: Option<String>,
-    pub link_id: Option<u32>,
 }
 
 impl PartialOrd for CoordMessage {
@@ -28,11 +24,7 @@ impl Ord for CoordMessage {
         self.delivery_vtime_ns
             .cmp(&other.delivery_vtime_ns)
             .then_with(|| self.src_node_id.cmp(&other.src_node_id))
-            .then_with(|| self.dst_node_id.cmp(&other.dst_node_id))
             .then_with(|| self.sequence_number.cmp(&other.sequence_number))
-            .then_with(|| self.protocol.cmp(&other.protocol))
-            .then_with(|| self.base_topic.cmp(&other.base_topic))
-            .then_with(|| self.payload.cmp(&other.payload))
     }
 }
 
@@ -241,14 +233,11 @@ mod tests {
 
     fn dummy_msg(vtime: u64, seq: u64, src: u32) -> CoordMessage {
         CoordMessage {
-            delivery_vtime_ns: vtime,
             src_node_id: src,
-            dst_node_id: 1,
+            link_id: 0,
+            delivery_vtime_ns: vtime,
             sequence_number: seq,
-            protocol: Protocol::Uart,
             payload: vec![],
-            base_topic: None,
-            link_id: None,
         }
     }
 
@@ -512,8 +501,7 @@ mod tests {
 #[cfg(test)]
 pub mod extra_tests {
     use super::*;
-    use crate::topology::Protocol;
-    use std::sync::Arc;
+        use std::sync::Arc;
     use std::thread;
 
     #[test]
@@ -527,13 +515,10 @@ pub mod extra_tests {
             handles.push(thread::spawn(move || {
                 let msg = CoordMessage {
                     src_node_id: node_id as u32,
-                    dst_node_id: 0,
+                    link_id: 0,
                     delivery_vtime_ns: 10,
                     sequence_number: 1,
-                    protocol: Protocol::Uart,
                     payload: vec![1, 2, 3],
-                    base_topic: None,
-                    link_id: None,
                 };
                 barrier_clone
                     .submit_done(node_id as u32, 0, 0, vec![msg])

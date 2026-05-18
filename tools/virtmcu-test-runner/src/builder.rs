@@ -257,7 +257,7 @@ impl TopologyBuilder {
                 .stderr(log_file)
                 .kill_on_drop(true);
 
-            let mut coord_proc = coord_cmd
+            let coord_proc = coord_cmd
                 .spawn()
                 .context("Failed to spawn deterministic_coordinator")?;
 

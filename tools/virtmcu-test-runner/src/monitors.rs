@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::info;
 use virtmcu_wire::telemetry_generated::virtmcu::telemetry::root_as_trace_event;
-use virtmcu_wire::{FlatBufferStructExt, ZenohSPIHeader, ZENOH_SPI_HEADER_SIZE};
 use zenoh::sample::Sample;
 use zenoh::Session;
 use zenoh::Wait;
@@ -15,6 +14,29 @@ use virtmcu_wire::flexray_generated::virtmcu::flexray::{
 use virtmcu_wire::lin_generated::virtmcu::lin::{
     root_as_lin_frame, LinFrame, LinFrameArgs, LinMessageType,
 };
+
+
+fn decode_inline_frame(payload: &[u8]) -> Option<(u64, u64, &[u8])> {
+    if payload.len() < 24 { return None; }
+    let vtime = u64::from_le_bytes(payload[8..16].try_into().unwrap());
+    let seq = u64::from_le_bytes(payload[16..24].try_into().unwrap());
+    let len = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
+    if payload.len() >= 24 + len {
+        Some((vtime, seq, &payload[24..24+len]))
+    } else {
+        None
+    }
+}
+
+fn encode_inline_frame(vtime_ns: u64, data: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(24 + data.len());
+    frame.extend_from_slice(&0u32.to_le_bytes()); // link_id
+    frame.extend_from_slice(&(data.len() as u32).to_le_bytes()); // len
+    frame.extend_from_slice(&vtime_ns.to_le_bytes()); // vtime
+    frame.extend_from_slice(&0u64.to_le_bytes()); // seq
+    frame.extend_from_slice(data);
+    frame
+}
 
 #[derive(Clone)]
 pub struct AsyncMessageBuffer<T> {
@@ -84,7 +106,7 @@ impl ActuatorMonitor {
                 .callback(move |sample: Sample| {
                     let payload = sample.payload().to_bytes();
                     if let Some((vtime, _seq, inner_payload)) =
-                        virtmcu_wire::decode_coord_message(&payload)
+                        decode_inline_frame(&payload)
                     {
                         let mut vals = Vec::new();
                         for chunk in inner_payload.chunks_exact(8) {
@@ -142,7 +164,7 @@ impl ChardevMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_wire::decode_coord_message(&payload)
+                    decode_inline_frame(&payload)
                 {
                     let text = String::from_utf8_lossy(inner_payload);
                     tracing::debug!("Chardev RX: {:?}", text);
@@ -195,14 +217,7 @@ impl ChardevMonitor {
             String::from_utf8_lossy(data)
         );
 
-        let coord_msg = virtmcu_wire::encode_coord_message(
-            0,
-            0,
-            vtime_ns,
-            0,
-            virtmcu_wire::core_generated::virtmcu::core::Protocol::Uart,
-            data,
-        );
+        let coord_msg = encode_inline_frame(vtime_ns, data);
 
         self.session
             .put(topic, coord_msg)
@@ -283,14 +298,7 @@ impl SpiEchoMonitor {
             .callback(move |query: zenoh::query::Query| {
                 if let Some(payload) = query.payload() {
                     let data_bytes = payload.to_bytes();
-                    if data_bytes.len() >= ZENOH_SPI_HEADER_SIZE + 4 {
-                        // Unpack header to validate, but we just echo the 4 data bytes back
-                        let _header = ZenohSPIHeader::unpack(
-                            data_bytes[..ZENOH_SPI_HEADER_SIZE].try_into().unwrap(),
-                        );
-                        let data = &data_bytes[ZENOH_SPI_HEADER_SIZE..ZENOH_SPI_HEADER_SIZE + 4];
-                        let _ = query.reply(query.key_expr().clone(), data.to_vec()).wait();
-                    }
+                    let _ = query.reply(query.key_expr().clone(), data_bytes).wait();
                 }
             })
             .await
@@ -318,7 +326,7 @@ impl LinMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_wire::decode_coord_message(&payload)
+                    decode_inline_frame(&payload)
                 {
                     if let Ok(frame) = root_as_lin_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
@@ -378,14 +386,7 @@ impl LinMonitor {
         let frame = LinFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
-        let coord_msg = virtmcu_wire::encode_coord_message(
-            0,
-            0,
-            vtime_ns,
-            0,
-            virtmcu_wire::core_generated::virtmcu::core::Protocol::Lin,
-            builder.finished_data(),
-        );
+        let coord_msg = encode_inline_frame(vtime_ns, builder.finished_data());
 
         self.session
             .put(topic, coord_msg)
@@ -413,7 +414,7 @@ impl FlexRayMonitor {
             .callback(move |sample: Sample| {
                 let payload = sample.payload().to_bytes();
                 if let Some((_vtime, _seq, inner_payload)) =
-                    virtmcu_wire::decode_coord_message(&payload)
+                    decode_inline_frame(&payload)
                 {
                     if let Ok(frame) = root_as_flex_ray_frame(inner_payload) {
                         let data_vec = frame.data().map(|d| d.bytes().to_vec()).unwrap_or_default();
@@ -473,14 +474,7 @@ impl FlexRayMonitor {
         let frame = FlexRayFrame::create(&mut builder, &frame_args);
         builder.finish(frame, None);
 
-        let coord_msg = virtmcu_wire::encode_coord_message(
-            0,
-            0,
-            vtime_ns,
-            0,
-            virtmcu_wire::core_generated::virtmcu::core::Protocol::FlexRay,
-            builder.finished_data(),
-        );
+        let coord_msg = encode_inline_frame(vtime_ns, builder.finished_data());
 
         self.session
             .put(topic, coord_msg)

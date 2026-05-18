@@ -70,35 +70,10 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
     #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
     fn reserve<'a>(
         &'a self,
-        topic: &'a str,
-        size: usize,
+        _topic: &'a str,
+        _size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        // Allocate space for the payload size. The header will be constructed at commit time.
-        let mut frame = vec![0u8; size];
-
-        let payload_ptr = frame.as_mut_ptr();
-
-        // SAFETY: We move `frame` into the closure which is owned by the TransportReservation.
-        // Since Vec's heap memory is stable, the pointer remains valid for the lifetime of
-        // the TransportReservation. We transmute to extend the lifetime of the slice.
-        let buffer = unsafe {
-            let b = core::slice::from_raw_parts_mut(payload_ptr, size);
-            core::mem::transmute::<&mut [u8], &mut [u8]>(b)
-        };
-
-        let node_id = self.node_id;
-        Ok(virtmcu_wire::TransportReservation::new(topic, buffer, move |vtime, seq| {
-            let fb_payload = virtmcu_wire::encode_coord_message(
-                node_id,
-                u32::MAX, // Broadcast or coordinator-resolved dst
-                vtime,
-                seq,
-                virtmcu_wire::Protocol::ReferenceLink,
-                &frame,
-            );
-
-            self.publish(topic, &fb_payload).map_err(virtmcu_wire::TransportError::Other)
-        }))
+        todo!("Use reserve_link")
     }
 
     fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
@@ -150,11 +125,17 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
             Box::leak(topic.into_boxed_str()),
             buffer,
             move |vtime, seq| {
+                const LINK_ID_OFFSET: usize = 0;
+                const SIZE_OFFSET: usize = 4;
+                const VTIME_OFFSET: usize = 8;
+                const SEQ_OFFSET: usize = 16;
+                const HEADER_END: usize = 24;
+
                 let payload = &mut frame[..required_size];
-                payload[0..4].copy_from_slice(&link_id.to_le_bytes());
-                payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
-                payload[8..16].copy_from_slice(&vtime.to_le_bytes());
-                payload[16..24].copy_from_slice(&seq.to_le_bytes());
+                payload[LINK_ID_OFFSET..SIZE_OFFSET].copy_from_slice(&link_id.to_le_bytes());
+                payload[SIZE_OFFSET..VTIME_OFFSET].copy_from_slice(&(size as u32).to_le_bytes());
+                payload[VTIME_OFFSET..SEQ_OFFSET].copy_from_slice(&vtime.to_le_bytes());
+                payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
 
                 self.publish(&zenoh_topic, payload)
                     .map_err(virtmcu_wire::TransportError::Other)

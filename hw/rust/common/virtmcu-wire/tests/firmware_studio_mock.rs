@@ -3,7 +3,7 @@ use flatbuffers::FlatBufferBuilder;
 use virtmcu_wire::{
     telemetry_generated::virtmcu::telemetry::{TraceEvent, TraceEventArgs, TraceEventType},
     ClockAdvanceReq, ClockReadyResp, FlatBufferStructExt, MmioReq, SyscMsg, VirtmcuHandshake,
-    ZenohFrameHeader, VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
+    VIRTMCU_PROTO_MAGIC, VIRTMCU_PROTO_VERSION,
 };
 
 #[test]
@@ -15,7 +15,6 @@ fn test_firmware_studio_struct_sizes() {
     assert_eq!(size_of::<SyscMsg>(), 16);
     assert_eq!(size_of::<ClockAdvanceReq>(), 24);
     assert_eq!(size_of::<ClockReadyResp>(), 24);
-    assert_eq!(size_of::<ZenohFrameHeader>(), 24);
 }
 
 #[test]

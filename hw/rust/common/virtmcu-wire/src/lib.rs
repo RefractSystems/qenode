@@ -1,3 +1,4 @@
+#![allow(deprecated)] // virtmcu-allow: allow reasoning="Flatbuffers generated struct"
 #![cfg_attr(
     test,
     allow(
@@ -290,33 +291,6 @@ pub fn decode_uds_quantum_start(bytes: &[u8]) -> Result<(u64, u64), String> {
     Ok((qs.quantum(), qs.vtime_limit_ns()))
 }
 
-const COORD_MSG_BUILDER_CAPACITY: usize = 64;
-const COORD_DONE_REQ_BUILDER_CAPACITY: usize = 64;
-
-/// Build a `CoordMessage` FlatBuffer payload.
-pub fn encode_coord_message(
-    src_node_id: u32,
-    dst_node_id: u32,
-    delivery_vtime_ns: u64,
-    sequence_number: u64,
-    protocol: Protocol,
-    payload: &[u8],
-) -> Vec<u8> {
-    let mut builder =
-        flatbuffers::FlatBufferBuilder::with_capacity(payload.len() + COORD_MSG_BUILDER_CAPACITY);
-    let data = builder.create_vector(payload);
-    let args = CoordMessageArgs {
-        src_node_id,
-        dst_node_id,
-        delivery_vtime_ns,
-        sequence_number,
-        protocol,
-        payload: Some(data),
-    };
-    let root = CoordMessage::create(&mut builder, &args);
-    builder.finish(root, None);
-    builder.finished_data().to_vec()
-}
 
 /// Encode link registration
 pub fn encode_link_registration(link_name: &str) -> Vec<u8> {
@@ -347,16 +321,6 @@ pub fn encode_link_ack(link_id: u32, status: u8, error_msg: &str) -> Vec<u8> {
 pub fn decode_link_ack(buf: &[u8]) -> Result<(u32, u8, String), flatbuffers::InvalidFlatbuffer> {
     let ack = flatbuffers::root::<crate::core_generated::virtmcu::core::LinkAck>(buf)?;
     Ok((ack.link_id(), ack.status(), ack.error_msg().map(|s| s.to_string()).unwrap_or_default()))
-}
-
-/// Build a `CoordDoneReq` FlatBuffer payload.
-pub fn encode_coord_done_req(quantum: u64, vtime_limit: u64) -> Vec<u8> {
-    let mut builder =
-        flatbuffers::FlatBufferBuilder::with_capacity(COORD_DONE_REQ_BUILDER_CAPACITY);
-    let args = CoordDoneReqArgs { quantum, vtime_limit, messages: None };
-    let root = CoordDoneReq::create(&mut builder, &args);
-    builder.finish(root, None);
-    builder.finished_data().to_vec()
 }
 
 /// Mock expected SVD hash for consistency checks
@@ -479,22 +443,6 @@ impl FlatBufferStructExt for ClockAdvanceReq {
     }
 }
 impl FlatBufferStructExt for ClockReadyResp {
-    fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
-    }
-    fn pack(&self) -> &[u8] {
-        &self.0
-    }
-}
-impl FlatBufferStructExt for ZenohFrameHeader {
-    fn unpack_slice(b: &[u8]) -> Option<Self> {
-        b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
-    }
-    fn pack(&self) -> &[u8] {
-        &self.0
-    }
-}
-impl FlatBufferStructExt for ZenohSPIHeader {
     fn unpack_slice(b: &[u8]) -> Option<Self> {
         b.get(0..core::mem::size_of::<Self>())?.try_into().ok().map(Self)
     }
@@ -846,35 +794,41 @@ pub const CLOCK_ERROR_ZENOH: u32 = 2;
 pub const CLOCK_ADVANCE_REQ_SIZE: usize = core::mem::size_of::<ClockAdvanceReq>();
 /// Exact byte size for a `ClockReadyResp` message.
 pub const CLOCK_READY_RESP_SIZE: usize = core::mem::size_of::<ClockReadyResp>();
-/// Exact byte size for a `ZenohFrameHeader`.
-pub const ZENOH_FRAME_HEADER_SIZE: usize = core::mem::size_of::<ZenohFrameHeader>();
-
-/// Size of ZenohSPIHeader in bytes.
-pub const ZENOH_SPI_HEADER_SIZE: usize = core::mem::size_of::<ZenohSPIHeader>();
 
 /// Size of VirtmcuHandshake in bytes.
 pub const VIRTMCU_HANDSHAKE_SIZE: usize = core::mem::size_of::<VirtmcuHandshake>();
 
+// ── Legacy frame shims — remove after all callers port to RFC-0042 VtimeIngress ──
+// Format: [vtime_ns:8 LE][seq_num:8 LE][payload_len:8 LE][payload:N]
+// 8 peripheral crates still call decode_frame; do NOT add new callers.
+
+#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC-0042)")]
+#[must_use]
+pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(24 + payload.len());
+    buf.extend_from_slice(&delivery_vtime_ns.to_le_bytes());
+    buf.extend_from_slice(&sequence_number.to_le_bytes());
+    buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    buf.extend_from_slice(payload);
+    buf
+}
+
+#[deprecated(note = "Port to VtimeIngress::new_for_link / reserve_link (RFC-0042)")]
+pub fn decode_frame(data: &[u8]) -> Option<(u64, u64, &[u8])> {
+    if data.len() < 24 {
+        return None;
+    }
+    let vtime = u64::from_le_bytes(data[0..8].try_into().ok()?);
+    let seq = u64::from_le_bytes(data[8..16].try_into().ok()?);
+    let len = u64::from_le_bytes(data[16..24].try_into().ok()?) as usize;
+    if data.len() < 24 + len {
+        return None;
+    }
+    Some((vtime, seq, &data[24..24 + len]))
+}
+
 /// Size of SyscMsg in bytes.
 pub const SYSC_MSG_SIZE: usize = core::mem::size_of::<SyscMsg>();
-
-/// Decode a `CoordMessage` FlatBuffer payload.
-/// Returns `(vtime, seq, payload_slice)`.
-pub fn decode_coord_message(bytes: &[u8]) -> Option<(u64, u64, &[u8])> {
-    let msg = flatbuffers::root::<CoordMessage>(bytes).ok()?;
-    let payload = msg.payload()?.bytes();
-    Some((msg.delivery_vtime_ns(), msg.sequence_number(), payload))
-}
-
-/// Encode a frame with a `CoordMessage` FlatBuffer (Legacy API wrapper).
-pub fn encode_frame(delivery_vtime_ns: u64, sequence_number: u64, payload: &[u8]) -> Vec<u8> {
-    encode_coord_message(0, 0, delivery_vtime_ns, sequence_number, Protocol::ReferenceLink, payload)
-}
-
-/// Decode a `CoordMessage` from `data`.
-pub fn decode_frame(data: &[u8]) -> Option<(u64, u64, &[u8])> {
-    decode_coord_message(data)
-}
 
 /// Encode an `Rf802154Frame` (including payload) into a byte vector (little-endian, size-prefixed).
 pub fn encode_rf802154_frame(
@@ -1202,97 +1156,6 @@ mod tests {
 
     // Removed hardcoded FFI size tests as they are dynamic via flatc
 
-    // ── Wire format: ZenohFrameHeader ────────────────────────────────────────
-
-    #[test]
-    fn test_encode_decode_round_trip() -> Result<(), String> {
-        let payload = b"hello";
-        let frame = encode_frame(TEST_VTIME_LONG, TEST_SEQ_42, payload);
-
-        let (vtime, seq, rest) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!(vtime, TEST_VTIME_LONG);
-        assert_eq!(seq, TEST_SEQ_42);
-        assert_eq!(rest, payload);
-        Ok(())
-    }
-
-    #[test]
-    fn test_encode_empty_payload() -> Result<(), String> {
-        let frame = encode_frame(0, 0, b"");
-        let (vtime, seq, rest) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!(vtime, 0u64);
-        assert_eq!(seq, 0u64);
-        assert_eq!(rest, b"");
-        Ok(())
-    }
-
-    #[test]
-    fn test_encode_vtime_zero() -> Result<(), String> {
-        let frame = encode_frame(0, 0, b"X");
-        let (vtime, _, _) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!(vtime, 0u64);
-        Ok(())
-    }
-
-    #[test]
-    fn test_encode_vtime_max_u64() -> Result<(), String> {
-        let max = u64::MAX;
-        let frame = encode_frame(max, 0, b"X");
-        let (vtime, _, _) = decode_frame(&frame).ok_or("Decode failed")?;
-        assert_eq!(vtime, max);
-        Ok(())
-    }
-
-    #[test]
-    fn test_decode_rejects_short_data() {
-        assert!(decode_frame(&[]).is_none());
-        assert!(decode_frame(&[0u8; 23]).is_none());
-    }
-
-    #[test]
-    fn test_decode_accepts_exact_header() {
-        let frame = encode_frame(1, 0, b"");
-        assert!(decode_frame(&frame).is_some());
-    }
-
-    const SLICE_0_8: core::ops::Range<usize> = 0..8;
-    const SLICE_16_24: core::ops::Range<usize> = 16..24;
-
-    #[test]
-    fn test_vtime_ordering() -> Result<(), String> {
-        let earlier = encode_frame(1_000_000, 0, b"A");
-        let later = encode_frame(2_000_000, 0, b"A");
-        let (vtime1, _, _) = decode_frame(&earlier).ok_or("Decode failed")?;
-        let (vtime2, _, _) = decode_frame(&later).ok_or("Decode failed")?;
-        assert!(vtime1 < vtime2);
-        Ok(())
-    }
-
-    #[test]
-    fn test_10mbps_baud_interval_ns() {
-        // 10 Mbps = 1_250_000 bytes/s → 800 ns/byte
-        const DIVISOR: u64 = 1_250_000;
-        const BAUD_10MBPS_NS: u64 = 1_000_000_000 / DIVISOR;
-        const TEST_VTIME_800: u64 = 800;
-        assert_eq!(BAUD_10MBPS_NS, TEST_VTIME_800);
-    }
-
-    #[test]
-    fn test_encode_decode_sequence_monotonic() -> Result<(), String> {
-        const TEST_VTIME_800: u64 = 800;
-        const N: u64 = 1_000;
-        const START: u64 = 10_000_000;
-        for i in 0..N {
-            let vtime = START + i * TEST_VTIME_800;
-            let frame = encode_frame(vtime, 0, b"X");
-            let (vtime_out, seq_out, payload) = decode_frame(&frame).ok_or("Decode failed")?;
-            assert_eq!(vtime_out, vtime, "frame {i} vtime mismatch");
-            assert_eq!(seq_out, 0);
-            assert_eq!(payload, b"X");
-        }
-        Ok(())
-    }
-
     // ── Wire format: ClockAdvanceReq ─────────────────────────────────────────
     // NOTE: repr(C, packed) fields must be copied out before comparison to
     // avoid creating misaligned references (Rust E0793).  Use `{ s.field }`.
@@ -1454,57 +1317,9 @@ mod tests {
         assert_eq!({ hs2.svd_hash() }, TEST_SVD_HASH);
     }
 
-    #[test]
-    fn test_header_roundtrip() {
-        const TEST_VTIME: u64 = 12345;
-        const TEST_SEQ: u64 = 7;
-        const TEST_SIZE: u64 = 100;
-        let h = ZenohFrameHeader::new(TEST_VTIME, TEST_SEQ, TEST_SIZE.try_into().unwrap());
-        let bytes = h.pack();
-        let h2 = ZenohFrameHeader::unpack_slice(bytes).expect("API conversion failed");
-        assert_eq!({ h.delivery_vtime_ns() }, { h2.delivery_vtime_ns() });
-        assert_eq!({ h.sequence_number() }, { h2.sequence_number() });
-        assert_eq!({ h.size() }, { h2.size() });
-    }
 
-    #[test]
-    fn test_zenoh_frame_header_size() {
-        const HDR_TOTAL_SIZE: usize = 24;
-        assert_eq!(core::mem::size_of::<ZenohFrameHeader>(), HDR_TOTAL_SIZE);
-        assert_eq!(ZENOH_FRAME_HEADER_SIZE, HDR_TOTAL_SIZE);
-    }
 
-    #[test]
-    fn test_header_le_bytes() {
-        let h = ZenohFrameHeader::new(1, 0, 0);
-        let bytes = h.pack();
-        assert_eq!(bytes[0], 1);
-        assert_eq!(bytes[1], 0);
-    }
 
-    #[test]
-    fn test_header_seq_ordering() {
-        const TEST_VTIME: u64 = 100;
-        const SEQ0: u64 = 0;
-        const SEQ1: u64 = 1;
-        const SEQ2: u64 = 2;
-        const SEQ3: u64 = 3;
-        const SEQ4: u64 = 4;
-        let mut frames = alloc::vec![
-            ZenohFrameHeader::new(TEST_VTIME, SEQ4, 0),
-            ZenohFrameHeader::new(TEST_VTIME, SEQ2, 0),
-            ZenohFrameHeader::new(TEST_VTIME, SEQ0, 0),
-            ZenohFrameHeader::new(TEST_VTIME, SEQ3, 0),
-            ZenohFrameHeader::new(TEST_VTIME, SEQ1, 0),
-        ];
-        frames.sort_by_key(super::core_generated::virtmcu::core::ZenohFrameHeader::sequence_number);
-        let seqs: alloc::vec::Vec<u64> = frames
-            .iter()
-            .map(super::core_generated::virtmcu::core::ZenohFrameHeader::sequence_number)
-            .collect();
-        const EXPECTED_SEQS: [u64; 5] = [SEQ0, SEQ1, SEQ2, SEQ3, SEQ4];
-        assert_eq!(seqs, EXPECTED_SEQS);
-    }
 
     #[test]
     fn test_virtmcu_handshake_unpack_error() {
@@ -1533,15 +1348,7 @@ mod tests {
         assert!(ClockReadyResp::unpack_slice(b"wrongsize").is_none());
     }
 
-    #[test]
-    fn test_zenoh_frame_header_unpack_error() {
-        assert!(ZenohFrameHeader::unpack_slice(b"short").is_none());
-    }
 
-    #[test]
-    fn test_zenoh_spi_header_unpack_error() {
-        assert!(ZenohSPIHeader::unpack_slice(b"short").is_none());
-    }
 
     #[cfg(all(test, feature = "tokio"))]
     // virtmcu-allow: allow reasoning="Tests require specific magic numbers"

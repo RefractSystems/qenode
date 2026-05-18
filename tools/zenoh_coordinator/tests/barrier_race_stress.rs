@@ -1,19 +1,8 @@
 use std::sync::Arc;
 use std::thread;
-use zenoh_coordinator::barrier::{CoordMessage, QuantumBarrier};
+use zenoh_coordinator::barrier::{QuantumBarrier};
 use zenoh_coordinator::topology::Protocol;
 
-fn dummy_msg(vtime: u64, seq: u64, src: &str) -> CoordMessage {
-    CoordMessage {
-        delivery_vtime_ns: vtime,
-        src_node_id: src.to_owned(),
-        dst_node_id: "dst".to_owned(),
-        base_topic: "virtmcu/uart".to_owned(),
-        sequence_number: seq,
-        protocol: Protocol::Uart,
-        payload: vec![],
-    }
-}
 
 #[test]
 fn stress_barrier_quantum_transitions() {
@@ -105,11 +94,11 @@ fn stress_barrier_fast_node_overlap() {
 }
 
 trait QuantumBarrierExt {
-    fn submit_nowait(&self, node_id: String, q: u64, current: u64, msgs: Vec<CoordMessage>);
+    fn submit_nowait(&self, node_id: String, q: u64, current: u64);
 }
 
 impl QuantumBarrierExt for QuantumBarrier {
-    fn submit_nowait(&self, node_id: String, q: u64, current: u64, msgs: Vec<CoordMessage>) {
+    fn submit_nowait(&self, node_id: String, q: u64, current: u64) {
         loop {
             match self.submit_done(node_id.clone(), q, current, msgs.clone()) {
                 Ok(_) => break,

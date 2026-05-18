@@ -5,35 +5,6 @@ use core::time::Duration;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Condvar, Mutex};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoordMessage {
-    pub src_node_id: String,
-    pub dst_node_id: String,
-    pub base_topic: String,
-    pub delivery_vtime_ns: u64,
-    pub sequence_number: u64,
-    pub protocol: Protocol,
-    pub payload: Vec<u8>,
-}
-
-impl PartialOrd for CoordMessage {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for CoordMessage {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.delivery_vtime_ns
-            .cmp(&other.delivery_vtime_ns)
-            .then_with(|| self.src_node_id.cmp(&other.src_node_id))
-            .then_with(|| self.dst_node_id.cmp(&other.dst_node_id))
-            .then_with(|| self.sequence_number.cmp(&other.sequence_number))
-            .then_with(|| self.base_topic.cmp(&other.base_topic))
-            .then_with(|| self.protocol.cmp(&other.protocol))
-            .then_with(|| self.payload.cmp(&other.payload))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarrierError {

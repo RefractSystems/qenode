@@ -387,5 +387,4 @@ cargo xtask flatc
 - **Schema evolution**: adding a new optional FlatBuffer field does not require a
   version bump. Removing or changing a field type does.
 - **Binary data path**: `sim/ch/{link_id}` uses a fixed binary layout, not
-  FlatBuffers. This eliminates the nested decode fallback chain previously required
-  to handle `CoordMessage` → `ZenohFrameHeader` → `Rf802154Frame` variants.
+  FlatBuffers.

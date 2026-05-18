@@ -339,7 +339,21 @@ fn main() -> Result<()> {
             sh.set_var("CARGO_UNSTABLE_BINDEPS", "true");
             sh.set_var("RUSTC_BOOTSTRAP", "1");
 
-            let mut cargo_cmd = cmd!(sh, "cargo build --release --workspace --target-dir {final_target_dir} --jobs {num_jobs}");
+            // Build only the peripheral crates needed by QEMU, not the full workspace.
+            // Coordinator tools (deterministic_coordinator, zenoh_coordinator, etc.) are
+            // built separately by `make build-test-artifacts` and must not be included here
+            // because they have different dependency sets than the QEMU plugin crates.
+            // Artifact keys use hyphens (e.g. "reference-peripheral") but Cargo package
+            // names use underscores (e.g. "reference_peripheral"). Normalize to underscore.
+            let peripheral_packages: Vec<String> = artifacts
+                .iter()
+                .filter_map(|pair| pair.split(':').next())
+                .map(|s| s.replace('-', "_"))
+                .collect();
+            let mut cargo_cmd = cmd!(sh, "cargo build --release --target-dir {final_target_dir} --jobs {num_jobs}");
+            for pkg in &peripheral_packages {
+                cargo_cmd = cargo_cmd.args(["-p", pkg.as_str()]);
+            }
             if let Some(t) = &build_target {
                 cargo_cmd = cargo_cmd.args(["--target", t]);
             }
