@@ -12,6 +12,8 @@
 )]
 pub mod router;
 
+extern crate alloc;
+
 use std::cell::UnsafeCell;
 use std::io::{IoSlice, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -204,21 +206,23 @@ impl DataTransport for UdsDataTransport {
         })
     }
 
-    fn register_link(
-        &self,
-        link_name: &str,
-    ) -> Result<u32, virtmcu_wire::TransportError> {
+    fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let tx = std::sync::Arc::new(std::sync::Mutex::new(tx));
-        self.subscribe("sim/coord/link/ack", Box::new(move |_topic, payload| {
-            let _ = tx.lock().unwrap().send(payload.to_vec());
-        })).map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+        let tx = alloc::sync::Arc::new(std::sync::Mutex::new(tx));
+        self.subscribe(
+            "sim/coord/link/ack",
+            Box::new(move |_topic, payload| {
+                let _ = tx.lock().expect("mutex poisoned").send(payload.to_vec());
+            }),
+        )
+        .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
         let payload = virtmcu_wire::encode_link_registration(link_name);
-        self.publish("sim/coord/link/register", &payload).map_err(|e| virtmcu_wire::TransportError::Other(e))?;
-        
+        self.publish("sim/coord/link/register", &payload)
+            .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+
         let ack_payload = rx.recv().map_err(|_| virtmcu_wire::TransportError::Closed)?;
-        
+
         if let Ok((link_id, status, _err)) = virtmcu_wire::decode_link_ack(&ack_payload) {
             if status != 0 {
                 std::process::abort();
@@ -233,32 +237,40 @@ impl DataTransport for UdsDataTransport {
         link_id: u32,
         size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
-        let required_size = size + 8; // 4 bytes for link_id, 4 bytes for payload_len
+        const HEADER_SIZE: usize = 8;
+        const LINK_ID_SIZE: usize = 4;
+        let required_size = size + HEADER_SIZE; // 4 bytes for link_id, 4 bytes for payload_len
 
         ARENA.with(|arena_cell| {
             let arena = unsafe { &mut *arena_cell.get() };
-            let _ = arena.get(..required_size).expect("FATAL: reserve size exceeds TLS arena capacity");
+            let _ =
+                arena.get(..required_size).expect("FATAL: reserve size exceeds TLS arena capacity");
 
             let payload_ptr = arena.as_mut_ptr();
-            // The peripheral will write to the slice starting at offset 8.
-            let b = unsafe { core::slice::from_raw_parts_mut(payload_ptr.add(8), size) };
+            // The peripheral will write to the slice starting at offset HEADER_SIZE.
+            let b = unsafe { core::slice::from_raw_parts_mut(payload_ptr.add(HEADER_SIZE), size) };
             let buffer = unsafe { core::mem::transmute::<&mut [u8], &'a mut [u8]>(b) };
 
             let stream_clone = Arc::clone(&self.stream);
-            let topic = format!("sim/ch/{}", link_id);
+            let topic = format!("sim/ch/{link_id}");
 
-            Ok(virtmcu_wire::TransportReservation::new(Box::leak(topic.into_boxed_str()), buffer, move |_, _| {
-                // Prepend header: [link_id: u32 LE][payload_len: u32 LE]
-                let payload = &mut arena[..required_size];
-                payload[0..4].copy_from_slice(&link_id.to_le_bytes());
-                payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
+            Ok(virtmcu_wire::TransportReservation::new(
+                Box::leak(topic.into_boxed_str()),
+                buffer,
+                move |_, _| {
+                    // Prepend header: [link_id: u32 LE][payload_len: u32 LE]
+                    let payload = &mut arena[..required_size];
+                    payload[0..LINK_ID_SIZE].copy_from_slice(&link_id.to_le_bytes());
+                    payload[LINK_ID_SIZE..HEADER_SIZE]
+                        .copy_from_slice(&(size as u32).to_le_bytes());
 
-                let mut stream = stream_clone.lock().expect("unix transport error");
-                // The topic is leaked, but we don't have lifetime on `topic` anymore.
-                // Wait, TransportReservation::new takes topic: &'a str.
-                write_framed(&mut stream, &format!("sim/ch/{}", link_id), payload)
-                    .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
-            }))
+                    let mut stream = stream_clone.lock().expect("unix transport error");
+                    // The topic is leaked, but we don't have lifetime on `topic` anymore.
+                    // Wait, TransportReservation::new takes topic: &'a str.
+                    write_framed(&mut stream, &format!("sim/ch/{}", link_id), payload)
+                        .map_err(|e| virtmcu_wire::TransportError::Other(e.to_string()))
+                },
+            ))
         })
     }
 

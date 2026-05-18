@@ -48,13 +48,7 @@ mod tests {
             }))
         }
 
-        fn register_link(
-            &self,
-            _node_id: u32,
-            _link_name: &str,
-            _protocol: virtmcu_wire::Protocol,
-            _role: virtmcu_wire::LinkRole,
-        ) -> Result<u32, TransportError> {
+        fn register_link(&self, _link_name: &str) -> Result<u32, TransportError> {
             Ok(0)
         }
 
@@ -63,8 +57,9 @@ mod tests {
             _link_id: u32,
             size: usize,
         ) -> Result<TransportReservation<'a>, TransportError> {
-            #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
-            self.reserve("sim/ch/0/tx", size)
+            #[allow(deprecated)]
+            // virtmcu-allow: allow reasoning="test-only mock; not production code"
+            self.reserve("", size)
         }
 
         fn subscribe(&self, _topic: &str, _callback: DataCallback) -> Result<(), String> {

@@ -101,21 +101,23 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         }))
     }
 
-    fn register_link(
-        &self,
-        link_name: &str,
-    ) -> Result<u32, virtmcu_wire::TransportError> {
+    fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let tx = std::sync::Arc::new(std::sync::Mutex::new(tx));
-        self.subscribe("sim/coord/link/ack", Box::new(move |_topic, payload| {
-            let _ = tx.lock().unwrap().send(payload.to_vec());
-        })).map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+        let tx = alloc::sync::Arc::new(std::sync::Mutex::new(tx));
+        self.subscribe(
+            "sim/coord/link/ack",
+            Box::new(move |_topic, payload| {
+                let _ = tx.lock().expect("mutex poisoned").send(payload.to_vec());
+            }),
+        )
+        .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
         let payload = virtmcu_wire::encode_link_registration(link_name);
-        self.publish("sim/coord/link/register", &payload).map_err(|e| virtmcu_wire::TransportError::Other(e))?;
-        
+        self.publish("sim/coord/link/register", &payload)
+            .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+
         let ack_payload = rx.recv().map_err(|_| virtmcu_wire::TransportError::Closed)?;
-        
+
         if let Ok((link_id, status, _err)) = virtmcu_wire::decode_link_ack(&ack_payload) {
             if status != 0 {
                 std::process::abort();
@@ -130,25 +132,32 @@ impl virtmcu_wire::DataTransport for ZenohDataTransport {
         link_id: u32,
         size: usize,
     ) -> Result<virtmcu_wire::TransportReservation<'_>, virtmcu_wire::TransportError> {
-        let required_size = size + 8; // 4 bytes for link_id, 4 bytes for payload_len
+        const HEADER_SIZE: usize = 8;
+        const LINK_ID_SIZE: usize = 4;
+        let required_size = size + HEADER_SIZE; // 4 bytes for link_id, 4 bytes for payload_len
         let mut frame = vec![0u8; required_size];
-        
+
         let payload_ptr = frame.as_mut_ptr();
-        // The peripheral will write to the slice starting at offset 8.
+        // The peripheral will write to the slice starting at offset HEADER_SIZE.
         let buffer = unsafe {
-            let b = core::slice::from_raw_parts_mut(payload_ptr.add(8), size);
+            let b = core::slice::from_raw_parts_mut(payload_ptr.add(HEADER_SIZE), size);
             core::mem::transmute::<&mut [u8], &mut [u8]>(b)
         };
 
-        let topic = format!("sim/ch/{}", link_id);
+        let topic = format!("sim/ch/{link_id}");
 
-        Ok(virtmcu_wire::TransportReservation::new(Box::leak(topic.into_boxed_str()), buffer, move |_, _| {
-            let payload = &mut frame[..required_size];
-            payload[0..4].copy_from_slice(&link_id.to_le_bytes());
-            payload[4..8].copy_from_slice(&(size as u32).to_le_bytes());
+        Ok(virtmcu_wire::TransportReservation::new(
+            Box::leak(topic.into_boxed_str()),
+            buffer,
+            move |_, _| {
+                let payload = &mut frame[..required_size];
+                payload[0..LINK_ID_SIZE].copy_from_slice(&link_id.to_le_bytes());
+                payload[LINK_ID_SIZE..HEADER_SIZE].copy_from_slice(&(size as u32).to_le_bytes());
 
-            self.publish(&format!("sim/ch/{}", link_id), payload).map_err(virtmcu_wire::TransportError::Other)
-        }))
+                self.publish(&format!("sim/ch/{link_id}"), payload)
+                    .map_err(virtmcu_wire::TransportError::Other)
+            },
+        ))
     }
 
     fn subscribe(&self, topic: &str, callback: virtmcu_wire::DataCallback) -> Result<(), String> {

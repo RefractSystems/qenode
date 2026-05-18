@@ -34,7 +34,7 @@ hw/rust/common/reference-peripheral/
 This peripheral uses the **topic-free coordinator protocol**.  There is no `topic`
 QOM property.  Instead, `yaml2qemu` injects a `link-name` property from the
 topology YAML (`topology.links[].name`).  During `realize()` the peripheral
-calls `transport.register_link(node_id, &link_name, protocol, LinkRole::Both)` and
+calls `transport.register_link(&link_name)` and
 receives a `link_id` — a stable `u32` assigned by the coordinator at startup.
 
 All ingress uses `VtimeIngress::new_for_link(link_id, …)` and all egress uses
@@ -68,7 +68,7 @@ to coordinator source code.
 3. Adjust MMIO register constants and match arms.
 4. Add a `name:` entry under `topology.links` in the world YAML; `yaml2qemu`
    injects `link-name` automatically — do **not** add a `topic` property.
-5. In `realize()`, call `transport.register_link(node_id, &link_name, protocol, role)`
+5. In `realize()`, call `transport.register_link(&link_name)`
    to obtain `link_id`, then pass it to `VtimeIngress::new_for_link` and
    `transport.reserve_link`.
 6. If the peripheral manages its own UDS connection (rather than using the hub),

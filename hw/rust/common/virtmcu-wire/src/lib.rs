@@ -322,7 +322,8 @@ pub fn encode_coord_message(
 pub fn encode_link_registration(link_name: &str) -> Vec<u8> {
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
     let name_offset = builder.create_string(link_name);
-    let mut reg_builder = crate::core_generated::virtmcu::core::LinkRegistrationBuilder::new(&mut builder);
+    let mut reg_builder =
+        crate::core_generated::virtmcu::core::LinkRegistrationBuilder::new(&mut builder);
     reg_builder.add_link_name(name_offset);
     let reg = reg_builder.finish();
     builder.finish(reg, None);
@@ -990,10 +991,7 @@ pub trait DataTransport: Send + Sync {
     ) -> Result<TransportReservation<'a>, TransportError>;
 
     /// Register a link and obtain its coordinator-assigned link_id.
-    fn register_link(
-        &self,
-        link_name: &str,
-    ) -> Result<u32, TransportError>;
+    fn register_link(&self, link_name: &str) -> Result<u32, TransportError>;
 
     /// Reserve a zero-copy buffer for a TX frame on this link.
     fn reserve_link<'a>(

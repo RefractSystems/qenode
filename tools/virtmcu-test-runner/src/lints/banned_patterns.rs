@@ -161,7 +161,7 @@ impl Lint for RustBannedPatternsLint {
                 pattern: r#"(?:pub\s+topic\s*:\s*(?:QomString|virtmcu_qom::qom::QomString)|define_prop_\w+\s*!\s*\(\s*"topic")"#,
                 message: "Banned `topic` QOM property declaration in peripheral code (RFC-0042).",
                 fix: "Replace `topic` with `link-name` (a QomString property). In realize(), call \
-                      transport.register_link(node_id, &link_name, protocol, LinkRole::Both) to obtain \
+                      transport.register_link(&link_name) to obtain \
                       a link_id. Use VtimeIngress::new_for_link(link_id, …) for ingress and \
                       transport.reserve_link(link_id, size) for egress. The deprecated \
                       DataTransport::reserve(topic, size) and VtimeIngress::new(topic, …) APIs must \

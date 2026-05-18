@@ -362,6 +362,8 @@ async fn run_deterministic_coordinator(
         .await
         .map_err(|e| anyhow!("Failed to declare liveliness token: {}", e))?;
 
+    #[allow(unused_mut)]
+    #[allow(unused_variables)]
     let mut rx_counters: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
@@ -807,11 +809,9 @@ async fn uds_deliver_message(
                 format!("{}/{}/rx", base, target_node)
             } else {
                 match msg.protocol {
-                    Protocol::Ethernet => {
-                        deterministic_coordinator::topics::templates::eth_rx(
-                            &target_node.to_string(),
-                        )
-                    }
+                    Protocol::Ethernet => deterministic_coordinator::topics::templates::eth_rx(
+                        &target_node.to_string(),
+                    ),
                     Protocol::Uart => deterministic_coordinator::topics::templates::uart_rx(
                         &target_node.to_string(),
                     ),
@@ -970,7 +970,11 @@ async fn run_unix_coordinator(
                         }
 
                         let _ = worker_tx
-                            .send(WorkerEvent::Message(current_node_id, topic.clone(), payload.clone()))
+                            .send(WorkerEvent::Message(
+                                current_node_id,
+                                topic.clone(),
+                                payload.clone(),
+                            ))
                             .await;
                     }
                 });
@@ -1008,7 +1012,7 @@ async fn run_unix_coordinator(
     let mut default_rx_map = std::collections::HashMap::new();
     let mut delay_map = std::collections::HashMap::new();
     let mut expected_link_pairs = std::collections::HashSet::new();
-    
+
     {
         let t = topo.read().await;
         for (i, link) in t.wire_links.iter().enumerate() {
@@ -1024,8 +1028,11 @@ async fn run_unix_coordinator(
 
     let preflight_start = tokio::time::Instant::now();
     let preflight_timeout = tokio::time::Duration::from_secs(30);
-    tracing::info!("Waiting for {} link registrations...", expected_link_pairs.len());
-    
+    tracing::info!(
+        "Waiting for {} link registrations...",
+        expected_link_pairs.len()
+    );
+
     while !expected_link_pairs.is_empty() {
         tokio::select! {
             _ = tokio::time::sleep(preflight_timeout.saturating_sub(preflight_start.elapsed())) => {
@@ -1060,13 +1067,16 @@ async fn run_unix_coordinator(
 
     // Issue initial start to unblock nodes.
     for (&id, socks) in sockets.iter() {
-        let start_topic = deterministic_coordinator::topics::templates::clock_start(&id.to_string());
+        let start_topic =
+            deterministic_coordinator::topics::templates::clock_start(&id.to_string());
         let start_payload = virtmcu_wire::encode_uds_quantum_start(0, u64::MAX);
         for sock in socks {
             uds_write_framed(sock, &start_topic, &start_payload).await;
         }
     }
 
+    #[allow(unused_mut)]
+    #[allow(unused_variables)]
     let mut rx_counters: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
@@ -1101,24 +1111,29 @@ async fn run_unix_coordinator(
                             std::process::abort();
                         }
                         if payload.len() >= 8 {
-                            let parsed_link_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                            let parsed_link_id =
+                                u32::from_le_bytes(payload[0..4].try_into().unwrap());
                             if parsed_link_id != link_id {
                                 std::process::abort();
                             }
-                            let payload_len = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
+                            let payload_len =
+                                u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
                             if payload.len() >= 8 + payload_len {
-                                let raw_payload = &payload[8..8+payload_len];
+                                let raw_payload = &payload[8..8 + payload_len];
                                 let seq = *rx_counters.entry(msg_node_id).or_insert(0);
                                 rx_counters.insert(msg_node_id, seq + 1);
-                                
-                                let delivery_vtime_ns = *delay_map.get(&link_id).unwrap_or(&1_000_000);
+
+                                let delivery_vtime_ns =
+                                    *delay_map.get(&link_id).unwrap_or(&1_000_000);
 
                                 let mut delivery_payload = Vec::with_capacity(32 + payload_len);
                                 delivery_payload.extend_from_slice(&link_id.to_le_bytes());
                                 delivery_payload.extend_from_slice(&msg_node_id.to_le_bytes());
-                                delivery_payload.extend_from_slice(&delivery_vtime_ns.to_le_bytes());
+                                delivery_payload
+                                    .extend_from_slice(&delivery_vtime_ns.to_le_bytes());
                                 delivery_payload.extend_from_slice(&seq.to_le_bytes());
-                                delivery_payload.extend_from_slice(&(payload_len as u32).to_le_bytes());
+                                delivery_payload
+                                    .extend_from_slice(&(payload_len as u32).to_le_bytes());
                                 delivery_payload.extend_from_slice(raw_payload);
 
                                 let msg = deterministic_coordinator::barrier::CoordMessage {
@@ -1126,7 +1141,8 @@ async fn run_unix_coordinator(
                                     dst_node_id: u32::MAX,
                                     delivery_vtime_ns,
                                     sequence_number: seq,
-                                    protocol: deterministic_coordinator::topology::Protocol::ReferenceLink,
+                                    protocol:
+                                        deterministic_coordinator::topology::Protocol::ReferenceLink,
                                     payload: delivery_payload,
                                     base_topic: None,
                                     link_id: Some(link_id),

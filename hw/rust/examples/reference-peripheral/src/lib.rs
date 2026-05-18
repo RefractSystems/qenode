@@ -137,9 +137,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
     fn realize(&mut self, ctx: &virtmcu_qom::device::BqlContext) -> Result<(), String> {
         if let Some(t) = &self.transport {
             self.link_id = t
-                .register_link(
-                    &self.link_name,
-                )
+                .register_link(&self.link_name)
                 .map_err(|e| format!("Failed to register link: {e:?}"))?;
 
             let generation_clone = Arc::clone(&self.generation);
