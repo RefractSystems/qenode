@@ -18,7 +18,7 @@ nodes:
           size: 0x1000
       - name: reference_peripheral
         type: reference-peripheral
-        address: none
+        address: '0x09005000'
         properties:
           svd: hw/defs/reference.svd
           size: 0x1000
@@ -44,7 +44,7 @@ nodes:
           size: 0x1000
       - name: reference_peripheral
         type: reference-peripheral
-        address: none
+        address: '0x09005000'
         properties:
           svd: hw/defs/reference.svd
           node-id: 1
