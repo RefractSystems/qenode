@@ -122,6 +122,14 @@ export VIRTMCU_CLI := $(CARGO_CMD) run $(CARGO_OPTS) --manifest-path $(CURDIR)/C
 # By default, perform an incremental build
 all: test-all  
 
+# --- Standard Developer Ergonomics Aliases ---
+.PHONY: lint check test fmt format
+lint: test-lint
+check: test-check
+test: test-all
+fmt: fmt-all
+format: fmt-all
+
 # ------------------------------------------------------------------------------
 # Version Management
 # ------------------------------------------------------------------------------
