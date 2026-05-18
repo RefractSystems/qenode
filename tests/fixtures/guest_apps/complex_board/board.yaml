@@ -27,6 +27,7 @@ peripherals:
     address: 0x09001000
     properties:
       node: 0
+      debug: true
 
   - name: ble0
     type: chardev
@@ -34,6 +35,8 @@ peripherals:
       node: "0"
       topic: "sim/rf/hci/0"
       id: "hci0"
+      transport: "hub0"
+      serial: false
 
 topology:
   links: []

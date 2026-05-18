@@ -1,6 +1,6 @@
 # SHA256 checksums for binary fidelity reference firmware.
 #
-# Rules (see ADR-006):
+# Rules (see RFC-0006):
 # - Do NOT update a checksum without re-validating the binary on real hardware first.
 # - Each ELF must be built with a standard cross-compiler; no VirtMCU-specific flags.
 # - When adding a new binary: sha256sum path/to/fw.elf >> tests/firmware/SHA256SUMS

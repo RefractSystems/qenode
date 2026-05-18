@@ -17,13 +17,34 @@ The Big QEMU Lock (BQL) is the primary synchronization mechanism in the emulator
 
 **Crucial Invariant**: Only ONE thread can hold the BQL at any time. MMIO handlers and QEMUTimer callbacks are invoked by QEMU with the BQL **already held**.
 
-### `BqlGuarded<T>` vs. `Mutex<T>`
-In standard Rust, shared state is protected by `std::sync::Mutex<T>`. However, because most peripheral code runs under the BQL, a `Mutex` is redundant and risky—it can lead to deadlocks if not managed carefully.
+### The Two-Stage Delivery Pipeline
 
-VirtMCU mandates the use of `BqlGuarded<T>` for state accessed from MMIO handlers, timers, and `SafeSubscriber` callbacks. It uses `UnsafeCell<T>` internally and debug-asserts that the BQL is held at every access point.
+Because network delivery acts as a host-level bridge (running on `QEMU_CLOCK_REALTIME`), its execution is non-deterministic relative to the guest. VirtMCU enforces a **Two-Stage Delivery Pipeline** via the `VtimeIngress` utility to ensure bit-identical results:
+
+1. **Stage 1 (Host Ingress)**: The `VtimeIngress` receives a packet from the transport, decodes the `delivery_vtime_ns`, and places it into a virtual-time-sorted priority queue. It does NOT touch guest registers or raise IRQs.
+2. **Stage 2 (Virtual Time Delivery)**: A `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) fires at exactly `delivery_vtime_ns`. It drains the queue and invokes the peripheral's delivery callback under the BQL. **This** is the only safe context for mutating guest-visible state or signaling vCPUs.
+
+> [!MANDATE]
+> **Never mutate guest-visible state or wake a suspended vCPU directly inside a transport callback.** Always route through Stage 2.
+
+If you attempt to bypass this pipeline and write directly to state in Stage 1, the guest may see data "from the future" or experience non-deterministic execution paths based on host OS scheduling jitter.
+
+### `virtmcu_qom::sync::Mutex<T>` vs. Atomics
+In standard Rust, shared state is protected by `std::sync::Mutex<T>`. **`std::sync::Mutex<T>` is BANNED in VirtMCU peripherals** because it deadlocks with the BQL.
+
+VirtMCU mandates the following synchronization patterns:
+1. **Atomics (`AtomicBool`, `AtomicU64`)**: Use for simple flags and status registers. This is the "Gold Standard" for performance and determinism.
+2. **`virtmcu_qom::sync::Mutex<T>`**: A QEMU-backed mutex compatible with the BQL. Use this for complex state that requires locking (e.g., a `VecDeque` backlog) and for guarding `QemuCond` wait loops.
+3. **`BqlGuarded<T>`**: Enforces BQL-only access with compile-time proof. `get(ctx)` and `get_mut(ctx)` require a `&BqlContext` token (RFC-0041), making BQL violations a compile error rather than a runtime assertion. Also maintains a runtime re-entrancy borrow count to catch aliased borrows when the BQL is temporarily yielded mid-callback.
+
+> [!TIP]
+> **Safety-by-Construction:** If your peripheral follows the `Peripheral` trait and uses `VtimeIngress` for ingress, your state is automatically synchronized under the BQL. The `&BqlContext` token threaded through `read`/`write`/`realize` makes off-thread QEMU access a compile error. Use Atomics for high-frequency status flags that background threads also read.
 
 ### Co-Simulation and BQL Discipline: `CoSimBridge`
-When a peripheral needs to block waiting for an external co-simulation response (like over a Remote Port Unix socket), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
+
+**Architectural Mandate:** `CoSimBridge` is strictly for the QEMU boundary to non-simulation infrastructure (test runners, the coordinator itself, HiL hardware). It MUST NOT be used for peripherals that participate in the simulation graph (e.g., sensors, actuators, radios, SPI). Simulation peripherals MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress` to respect the PDES quantum barrier.
+
+When a boundary peripheral needs to block waiting for an external infrastructure response (like over a Remote Port Unix socket or Chardev), it must yield the BQL to prevent main loop deadlocks. Historically, developers had to manually orchestrate a complex 4-step unlock/wait/relock sequence, which was prone to Lock-Order Inversion deadlocks and Use-After-Free bugs during teardown.
 
 VirtMCU now uses an **Inversion of Control (IoC)** pattern via the `virtmcu_qom::cosim::CoSimBridge` framework primitive.
 
@@ -52,7 +73,7 @@ To ensure enterprise-grade reliability and binary fidelity, every peripheral mus
 ### 1. The FFI Gate (Layout Verification)
 QEMU is written in C; VirtMCU peripherals are written in Rust. The boundary between them is a set of shared `struct` layouts. If these layouts drift (e.g., after a QEMU version bump), the result is a catastrophic segfault.
 - **Mandatory Asserts**: All core QOM structs in Rust MUST contain `assert!` checks for `size_of` and `offset_of` within their `TypeInit`.
-- **The Gate**: Before any build is promoted, `./scripts/check-ffi.py` must be executed to verify ground truth against the QEMU binary. Use `--fix` to auto-sync Rust layouts to C.
+- **The Gate**: Before any build is promoted, `./cargo run -p virtmcu-test-runner -- lint` must be executed to verify ground truth against the QEMU binary. Use `--fix` to auto-sync Rust layouts to C.
 
 ### 2. MMIO Relative Offsets
 The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute guest addresses. 

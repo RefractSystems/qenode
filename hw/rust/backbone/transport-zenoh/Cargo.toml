@@ -16,5 +16,5 @@ standalone = ["virtmcu-qom/standalone"]
 zenoh.workspace = true
 virtmcu-zenoh-config.workspace = true
 virtmcu-qom.workspace = true
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true
 crossbeam-channel.workspace = true

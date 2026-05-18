@@ -46,7 +46,29 @@ The Cyber Node acts as a compliant participant in federated simulation environme
 ## 4. Simulation Modes
 
 ### Integrated Mode (Live Physics)
-The Cyber Node connects live to a Physical Node. The Transport Layer (using zero-copy shared memory or high-speed Zenoh links) allows actuator outputs to be applied to the physical model before each physics step (`mj_step`), ensuring immediate physical consequences for firmware actions.
 
-### Standalone Mode (RESD)
-For CI/CD, the Cyber Node can run without a live Physical Node by replaying sensor values from **Renode Sensor Data (RESD)** files. This allows for deterministic testing of control logic against recorded "golden" physical traces.
+The Cyber Node connects live to a Physics Engine via the **Physics Gateway**
+(`virtmcu-physics-gateway`). The gateway is a dedicated process that sits between the
+Physical Node and the physics engine:
+
+- The Physical Node collects all actuator commands for a completed quantum, serialises
+  them as a `PhysicsTrigger` FlatBuffer, and forwards them to the gateway.
+- The gateway writes actuator values to a shared-memory region (`/dev/shm`) and signals
+  the physics engine via a Linux futex doorbell.
+- The physics engine runs one time-step, writes updated sensor values back to SHM, and
+  acknowledges via the same futex mechanism.
+- The gateway reads the sensor values, publishes them to Zenoh, and returns
+  `PhysicsDone` to the Physical Node.
+
+The Physical Node does not issue the next `ClockAdvanceReq` until `PhysicsDone` is
+received, ensuring strict causal ordering across every quantum.
+
+For architecture details, SHM layout, wire protocol, and deployment topology, see
+[Physics Gateway](./12-physics-gateway.md).
+
+### Standalone Mode (MCAP)
+For CI/CD, the Cyber Node can run without a live Physics Engine by replaying sensor
+values from **MCAP** files (aligned with RFC-0017). This allows for deterministic 
+testing of control logic against recorded "golden" physical traces. The legacy 
+Renode Sensor Data (RESD) format is deprecated but remains supported for 
+backward compatibility in specific educational workloads.

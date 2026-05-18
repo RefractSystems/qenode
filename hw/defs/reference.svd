@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device schemaVersion="1.1" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
+  <name>ReferencePeripheral</name>
+  <version>1.0</version>
+  <description>VirtMCU Golden Standard Reference Peripheral</description>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <size>32</size>
+  <access>read-write</access>
+
+  <peripherals>
+    <peripheral>
+      <name>REFERENCE_PERIPHERAL</name>
+      <baseAddress>0x09005000</baseAddress>
+      <groupName>REFERENCE</groupName>
+      <description>Reference Peripheral Instance</description>
+      <registers>
+        <register>
+          <name>STATUS</name>
+          <description>Status register. Bit 0 indicates data ready.</description>
+          <addressOffset>0x00</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>DATA_READY</name>
+              <description>Set to 1 when data is available to read.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX</name>
+          <description>Transmit register. Write to send data.</description>
+          <addressOffset>0x04</addressOffset>
+          <access>write-only</access>
+        </register>
+        <register>
+          <name>RX</name>
+          <description>Receive register. Read to consume data.</description>
+          <addressOffset>0x08</addressOffset>
+          <access>read-only</access>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

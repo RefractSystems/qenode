@@ -56,4 +56,4 @@ jobs:
 
       - name: Run cargo miri test
         run: |
-          bash scripts/testing/run-unit-miri.sh
+          make test-unit-miri

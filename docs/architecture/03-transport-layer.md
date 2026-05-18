@@ -32,7 +32,7 @@ One of the most significant challenges in distributed simulation is ensuring tha
 When a VirtMCU node starts, the `transport-zenoh` layer blocks initialization until it receives a **Liveliness Event** from the Zenoh router. This ensures that the local router is reachable and its topology tables are ready to accept traffic.
 
 ### Orchestrator Sequencing
-The simulation orchestrator (e.g., Python `VirtualTimeAuthority`) is responsible for establishing all subscribers **before** launching the emulator nodes. This "Subscriber-First" policy ensures that when a guest peripheral emits its first packet, the routing fabric is already primed to deliver it.
+The simulation orchestrator (e.g., Python `VirtualPhysicalNode`) is responsible for establishing all subscribers **before** launching the emulator nodes. This "Subscriber-First" policy ensures that when a guest peripheral emits its first packet, the routing fabric is already primed to deliver it.
 
 ### Routing Synchronization (`ensure_session_routing`)
 Declaring a subscriber in Zenoh is an asynchronous operation. To prevent races where the first virtual-time packet is dropped because the router has not yet fully propagated the declaration, VirtMCU provides the `ensure_session_routing(session)` helper.
@@ -46,6 +46,48 @@ Declaring a subscriber in Zenoh is an asynchronous operation. To prevent races w
 VirtMCU assumes a reliable underlying transport. If a Zenoh router or Unix socket disconnects during a simulation:
 - **Immediate Failure**: The node will typically panic or report a catastrophic `TRANSPORT_ERROR`.
 - **No Silent Drops**: We prioritize stopping the simulation over continuing with potentially corrupt or missing data, ensuring that every result is either perfectly deterministic or explicitly failed.
+
+---
+
+## 4. Inter-Node Packet Delivery and PDES Barrier
+
+The `DeterministicCoordinator` sits in the Data Plane and acts as a central router and synchronizer. Direct node-to-node communication is banned to preserve PDES determinism.
+
+### Inter-Node Data Flow
+
+```mermaid
+sequenceDiagram
+    participant NodeA as Cyber Node A
+    participant DC as DeterministicCoordinator
+    participant NodeB as Cyber Node B
+
+    Note over NodeA, NodeB: Quantum Q Execution Phase
+    NodeA->>DC: Send Ethernet Frame (vtime: 1200ns)
+    NodeB->>DC: Send UART Byte (vtime: 1400ns)
+    Note over DC: Packets buffered. NOT routed immediately.
+```
+
+### The PDES Barrier Synchronization
+
+To satisfy Pillar 3 (Causal Ordering), the coordinator waits for all nodes to signal the end of the quantum before delivering any messages.
+
+```mermaid
+sequenceDiagram
+    participant NodeA as Cyber Node A
+    participant DC as DeterministicCoordinator
+    participant NodeB as Cyber Node B
+
+    NodeA->>DC: Signal Quantum Q Complete
+    NodeB->>DC: Signal Quantum Q Complete
+    
+    Note over DC: PDES Barrier Reached
+    Note over DC: Sort buffered messages by (vtime, source, seq)
+    
+    DC-->>NodeB: Deliver Ethernet Frame (vtime: 1200ns)
+    DC-->>NodeA: Deliver UART Byte (vtime: 1400ns)
+    
+    Note over NodeA, NodeB: All nodes synced. Ready for Quantum Q+1.
+```
 
 ---
 

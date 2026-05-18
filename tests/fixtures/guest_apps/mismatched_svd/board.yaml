@@ -1,0 +1,6 @@
+peripherals:
+  - name: actuator0
+    type: actuator
+    address: 0x0B000000
+    properties:
+      svd: hw/defs/actuator.svd

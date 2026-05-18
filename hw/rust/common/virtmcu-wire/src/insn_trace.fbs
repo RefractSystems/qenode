@@ -1,0 +1,14 @@
+namespace Virtmcu.InsnTrace;
+
+table InsnTrace {
+  /// Virtual timestamp in nanoseconds since simulation start.
+  timestamp_ns: uint64;
+  /// Program counter of the executed instruction.
+  pc: uint64;
+  /// Disassembly string (e.g. "mov r0, #1"). May be empty when disassembly is disabled.
+  disassembly: string;
+  /// Quantum number in which this instruction executed.
+  quantum_number: uint64;
+}
+
+root_type InsnTrace;

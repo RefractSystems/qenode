@@ -7,7 +7,7 @@ third_party
 test-results
 tools/cyber_bridge/build
 tools/systemc_adapter/build
-tools/deterministic_coordinator/target
+tools/virtmcu-coord/target
 target/
 **/target/
 *.pyc

@@ -1,0 +1,72 @@
+namespace virtmcu.core;
+
+struct VirtmcuHandshake {
+    magic: uint32;
+    version: uint32;
+    svd_hash: uint64;
+}
+
+struct MmioReq {
+    type_: uint8;
+    size: uint8;
+    reserved1: uint16;
+    reserved2: uint32;
+    vtime_ns: uint64;
+    addr: uint64;
+    data: uint64;
+}
+
+struct SyscMsg {
+    type_: uint32;
+    irq_num: uint32;
+    data: uint64;
+}
+
+struct ClockAdvanceReq {
+    delta_ns: uint64;
+    absolute_vtime_ns: uint64;
+    quantum_number: uint64;
+}
+
+struct ClockReadyResp {
+    /// Current virtual time in nanoseconds.
+    current_vtime_ns: uint64;
+    /// Number of outbound frames bundled in this response.
+    n_frames: uint32;
+    /// Error code (0 = OK, 1 = STALL).
+    error_code: uint32;
+    /// Global quantum sequence number.
+    quantum_number: uint64;
+}
+
+
+
+
+
+
+/// Sent by each node as the first framed message after connecting to the coordinator UDS socket.
+/// Topic: "sim/coord/register"
+/// The coordinator panics if federation_id doesn't match topology or proto_version is unknown.
+table UdsRegistration {
+    node_id:       uint32;
+    federation_id: string (required);
+    proto_version: uint32;
+}
+
+/// Sent by the coordinator to each node to advance to the next quantum.
+/// Topic: "sim/coord/start/{node_id}"
+/// Nodes must not deliver messages with delivery_vtime_ns > vtime_limit_ns in their DONE signal.
+table UdsQuantumStart {
+    quantum:        uint64;
+    vtime_limit_ns: uint64;
+}
+
+table LinkRegistration {
+    link_name: string (required);
+}
+
+table LinkAck {
+    link_id: uint32;
+    status: uint8;
+    error_msg: string;
+}

@@ -63,6 +63,7 @@ model Node {
 }
 
 model WireLink {
+  name: string;
   @extension("alias", "type")
   type: Protocol;
   nodes: NodeID[];

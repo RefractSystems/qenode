@@ -1,8 +1,11 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 //! Enterprise Lock-Free Telemetry System.
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use alloc::format;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::AtomicU32;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+use core::sync::atomic::Ordering;
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use crossbeam_channel::{bounded, Sender};
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
@@ -10,12 +13,55 @@ use std::sync::OnceLock;
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 use std::thread;
 
-/// Global Node ID for this QEMU process.
-pub static GLOBAL_NODE_ID: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Safely exported singleton"
-/// Global Virtual Time in nanoseconds.
-pub static GLOBAL_VTIME: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static_state reasoning="Safely exported singleton"
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+extern "C" {
+    static mut virtmcu_global_node_id: u32;
+    static mut virtmcu_global_vtime_ns: u64;
+}
+
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
+/// Global node ID for telemetry. Provided as a stub in tests.
+pub static mut virtmcu_global_node_id: u32 = 0; // virtmcu-allow: static_state reasoning="Stub provided for native unit tests"
+
+#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+#[no_mangle]
+/// Global virtual time for telemetry. Provided as a stub in tests.
+pub static mut virtmcu_global_vtime_ns: u64 = 0; // virtmcu-allow: static_state reasoning="Stub provided for native unit tests"
+
+/// Updates the global virtual time.
+pub fn update_global_vtime(vtime_ns: u64) {
+    unsafe {
+        core::ptr::write_volatile(&raw mut virtmcu_global_vtime_ns, vtime_ns);
+    }
+}
+
+/// Updates the global node ID.
+pub fn update_global_node_id(node_id: u32) {
+    unsafe {
+        core::ptr::write_volatile(&raw mut virtmcu_global_node_id, node_id);
+    }
+}
+
+/// Returns the current global virtual time in nanoseconds.
+pub fn get_global_vtime() -> u64 {
+    unsafe { core::ptr::read_volatile(&raw const virtmcu_global_vtime_ns) }
+}
+
+/// Returns the current global node ID.
+pub fn get_global_node_id() -> u32 {
+    unsafe { core::ptr::read_volatile(&raw const virtmcu_global_node_id) }
+}
+
 /// Number of logs dropped due to queue overflow.
 pub static DROPPED_LOGS: AtomicU32 = AtomicU32::new(0); // virtmcu-allow: static_state reasoning="Global metric accumulator"
+
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+const LOG_QUEUE_SIZE: usize = 4096;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+const VTIME_WIDTH: usize = 10;
+#[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
+const VTIME_PRECISION: usize = 2;
 
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 static LOG_CHANNEL: OnceLock<Sender<LogEntry>> = OnceLock::new(); // virtmcu-allow: static_state reasoning="Safely exported channel"
@@ -105,28 +151,18 @@ macro_rules! sim_trace {
     }};
 }
 
-/// Updates the global virtual time.
-pub fn update_global_vtime(vtime_ns: u64) {
-    GLOBAL_VTIME.store(vtime_ns, Ordering::Release);
-}
-
-/// Updates the global node ID.
-pub fn update_global_node_id(node_id: u32) {
-    let _ = GLOBAL_NODE_ID.compare_exchange(0, node_id, Ordering::Relaxed, Ordering::Relaxed);
-}
-
 #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
 fn init_logger_thread() -> Sender<LogEntry> {
-    let (tx, rx) = bounded::<LogEntry>(4096);
+    let (tx, rx) = bounded::<LogEntry>(LOG_QUEUE_SIZE);
     thread::Builder::new()
         .name("virtmcu-logger".into())
         .spawn(move || {
             while let Ok(entry) = rx.recv() {
                 let dropped = DROPPED_LOGS.swap(0, Ordering::Relaxed);
                 if dropped > 0 {
-                    // Use sim_warn! to log overflow. In the logger thread, this will
+                    // Use sim_debug! to log overflow. In the logger thread, this will
                     // add a message to the queue we are currently draining.
-                    sim_warn!("Logger queue overflow: dropped {dropped} messages");
+                    sim_debug!("Logger queue overflow: dropped {dropped} messages");
                 }
 
                 let msg_str = entry.msg.get(..entry.msg_len).map_or("<missing msg>", |b| {
@@ -136,66 +172,49 @@ fn init_logger_thread() -> Sender<LogEntry> {
                 let vtime_ms = entry.vtime as f64 / 1_000_000.0;
 
                 let formatted = format!(
-                    "[VTime: {:>10.2} ms] [Node: {}] [{}] [{}] {}\n\0",
+                    "[VTime: {:>width$.prec$ } ms] [Node: {}] [{}] [{}] {}\n",
                     vtime_ms,
                     entry.node_id,
                     entry.level.as_str(),
                     entry.module,
-                    msg_str
+                    msg_str,
+                    width = VTIME_WIDTH,
+                    prec = VTIME_PRECISION
                 );
-
-                // SAFETY: formatted is null-terminated and valid for the duration of the call.
                 unsafe {
                     crate::virtmcu_log(formatted.as_ptr() as *const _);
                 }
             }
         })
-        .unwrap_or_else(|_| std::process::abort());
+        .expect("failed to spawn logger thread");
     tx
 }
 
-#[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
-#[allow(clippy::print_stderr)] // virtmcu-allow: allow reasoning="Miri and standalone require direct printing as FFI is unavailable"
-fn standalone_output(
-    node_id: u32,
-    level: LogLevel,
-    module: &'static str,
-    args: core::fmt::Arguments,
-) {
-    use std::eprintln; // Add this to import the macro from std
-                       // In Miri and standalone, we use eprintln! directly as FFI is unavailable.
-                       // But to satisfy the lint, we add the exception comment.
-    eprintln!("[Node: {}] [{}] [{}] {}", node_id, level.as_str(), module, args);
-    // virtmcu-allow: print reasoning="Miri/standalone require direct printing as FFI is unavailable"
-}
-
-#[doc(hidden)]
+/// Primary entry point for simulation logging.
 pub fn sim_log(level: LogLevel, module: &'static str, args: core::fmt::Arguments) {
     #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
     {
-        let node_id = GLOBAL_NODE_ID.load(Ordering::Relaxed);
-        standalone_output(node_id, level, module, args);
+        let _ = (level, module, args);
     }
 
     #[cfg(not(any(test, miri, feature = "standalone", virtmcu_unit_test)))]
     {
-        use core::fmt::Write;
         let tx = LOG_CHANNEL.get_or_init(init_logger_thread);
 
         let mut entry = LogEntry {
-            vtime: GLOBAL_VTIME.load(Ordering::Acquire),
-            node_id: GLOBAL_NODE_ID.load(Ordering::Relaxed),
+            vtime: get_global_vtime(),
+            node_id: get_global_node_id(),
             level,
             module,
-            msg: [0; 512],
+            msg: [0u8; 512],
             msg_len: 0,
         };
 
         let mut cursor = crate::BufCursor::new(&mut entry.msg);
-        let _ = write!(cursor, "{args}");
+        let _ = core::fmt::write(&mut cursor, args);
         entry.msg_len = cursor.pos();
 
-        if tx.try_send(entry).is_err() {
+        if let Err(crossbeam_channel::TrySendError::Full(_)) = tx.try_send(entry) {
             DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
         }
     }

@@ -12,5 +12,11 @@ peripherals:
     type: UART.PL011
     address: 0x09000000
 
+  - name: telemetry
+    type: telemetry
+    address: 0x100
+    properties:
+      node: 0
+
 topology:
   links: []

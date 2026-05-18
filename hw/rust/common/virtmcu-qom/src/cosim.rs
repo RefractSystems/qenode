@@ -1,3 +1,4 @@
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 //! Framework for building Co-Simulation Bridges.
 //!
 //! Provides the `CoSimBridge` IoC container and `CoSimTransport` trait to safely
@@ -62,7 +63,7 @@ impl<Resp> CoSimContext<Resp> {
         let _ = self
             .inner
             .connected_cond
-            .wait_timeout(guard, u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX));
+            .wait_timeout(guard, u32::try_from(timeout.as_millis()).expect("Invalid data format"));
     }
 
     /// Delivers a received response to the blocked vCPU thread.
@@ -182,7 +183,7 @@ impl<T: CoSimTransport + 'static> CoSimBridge<T> {
             let remaining_ms = u32::try_from(
                 timeout_duration.checked_sub(elapsed).unwrap_or_default().as_millis(),
             )
-            .unwrap_or(u32::MAX);
+            .expect("Invalid data format");
 
             // ENTERPRISE SAFETY: Atomically yield BQL, wait, and re-acquire BQL without Lock Inversion.
             let (new_guard, result) = self.inner.resp_cond.wait_yielding_bql(guard, remaining_ms);
@@ -211,7 +212,7 @@ impl<T: CoSimTransport + 'static> CoSimBridge<T> {
             let remaining_ms = u32::try_from(
                 timeout_duration.checked_sub(elapsed).unwrap_or_default().as_millis(),
             )
-            .unwrap_or(u32::MAX);
+            .expect("Invalid data format");
             let (new_guard, _result) =
                 self.inner.connected_cond.wait_yielding_bql(guard, remaining_ms);
             guard = new_guard;

@@ -63,12 +63,14 @@ struct sysc_msg {
 struct clock_advance_req {
   uint64_t delta_ns;
   uint64_t absolute_vtime_ns;
+  uint64_t quantum_number;
 } __attribute__((packed));
 
 struct clock_ready_resp {
   uint64_t current_vtime_ns;
   uint32_t n_frames;
-  uint32_t error_code; /* 0=OK, 1=STALL */
+  uint32_t error_code; /* 0=OK, 1=STALL, 2=ZENOH_ERROR */
+  uint64_t quantum_number;
 } __attribute__((packed));
 
 #endif /* VIRTMCU_PROTO_H */

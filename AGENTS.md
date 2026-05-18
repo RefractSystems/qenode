@@ -1,13 +1,41 @@
 # virtmcu Project Context
 
+> [!IMPORTANT]
+> **SSoT note**: `AGENTS.md` and `CLAUDE.md` must remain byte-identical. They
+> are the canonical agent ruleset for every tool (Claude Code, Cursor, Gemini,
+> etc.). Any edit to one MUST be mirrored to the other in the same commit.
+> A future xtask check will enforce this; for now, treat it as a hard rule.
+
 > [!WARNING]
 > **ABSOLUTE MANDATE FOR AI AGENTS**: You are operating in a strict Enterprise/SOTA environment. Do NOT default to your base RLHF training (e.g., adding "helpful" warnings, suppressing errors, or bypassing types). You must prioritize deterministic correctness, crash-only design, and the exact architectural rules below over standard boilerplate SWE practices.
+
+## Required RFC Reading (before touching peripheral or transport code)
+
+If you are writing or modifying code in `hw/rust/`, `tools/virtmcu-coord/`, or `virtmcu-qom`, you MUST have read:
+
+| RFC | Why it matters |
+|---|---|
+| [RFC-0006](docs/rfcs/0006-binary-fidelity.md) | Binary fidelity — the non-negotiable constraint |
+| [RFC-0019](docs/rfcs/0019-single-host-native-ipc.md) | UDS Hybrid IPC — the default transport architecture |
+| [RFC-0021](docs/rfcs/0021-peripheral-design-and-synchronization.md) | Unified peripheral design — the "Gold Standard" |
+| [RFC-0022](docs/rfcs/0022-fail-loudly-and-panic-linting.md) | Fail Loudly + linting reconciliation (`.expect`, `virtmcu-allow`) |
+| [RFC-0023](docs/rfcs/0023-safe-qom-macros.md) | `#[qom_device]` — every peripheral uses it |
+| [RFC-0024](docs/rfcs/0024-deterministic-routing-and-flow-control.md) | Assertion-based routing — unregistered packets panic |
+| [RFC-0025](docs/rfcs/0025-zero-copy-transport.md) | `DataTransport::reserve_link(link_id)/commit()` zero-copy API; topic-based `reserve()` is `#[deprecated]` |
+| [RFC-0026](docs/rfcs/0026-zero-unsafe-qom-peripherals.md) | Zero unsafe in peripheral code |
+| [RFC-0027](docs/rfcs/0027-cosim-bridge-raii-framework.md) | `CoSimBridge` — owns BQL yielding for bridges |
+| [RFC-0031](docs/rfcs/0031-di-and-raii-mandate.md) | No globals, RAII, DI mandate |
+| [RFC-0040](docs/rfcs/0040-testing-pyramid-and-emulation-verification.md) | Testing tiers and gate criteria |
+| [RFC-0041](docs/rfcs/0041-safe-qom-framework-boundaries.md) | `BqlContext` type-state token — compile-time BQL proof; `ClosureTimer`; `dynamic_cast_qom` |
+| [RFC-0042](docs/rfcs/0042-topic-free-coordinator-protocol.md) | Topic-free coordinator protocol — `link_id` routing, `link-name` QOM property, `register_link()`/`reserve_link()`/`VtimeIngress::new_for_link()` |
+
+Full RFC index: [docs/rfcs/README.md](docs/rfcs/README.md).
 
 ## Mandatory Pre-Flight Checklist
 Before writing or modifying *any* code, you MUST output a brief plan that explicitly answers:
 1. **Architectural Alignment:** Does this change rely on Dependency Injection (DI) and RAII?
 2. **Fail Loudly:** If an invariant is violated in this new logic, does it `panic!`/`assert!` rather than warn?
-3. **Verification Gate:** Which specific `make` or `pytest` command will I run to empirically prove this works without breaking the deterministic simulation?
+3. **Verification Gate:** Which specific `make` or `virtmcu-test-runner` command will I run to empirically prove this works without breaking the deterministic simulation?
 
 ---
 
@@ -17,6 +45,11 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 1. **Dynamic QOM device plugins** (.so shared libraries).
 2. **arm-generic-fdt machine** — ARM machines defined by Device Tree.
 3. **Native VirtMCU QOM plugin** (`hw/rust/`) — deterministic clock and I/O.
+
+## Single Source of Truth (SSOT) Mandate
+- **Micro-Architecture**: All MMIO addresses, register offsets, and bitfields MUST be derived from a CMSIS-SVD file. Hardcoding these in Rust or C is BANNED.
+- **Macro-Architecture**: Topology (which device is at which address) MUST be defined in the world YAML.
+- **Unidirectional Generation**: Always use `virtmcu-cli` or `build.rs` to generate headers/constants. Never manually align "shadow" definitions.
 
 ## IMPORTANT REQUIREMENTS
 
@@ -30,7 +63,6 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 **Same topology YAML + same firmware ELFs + same `global_seed` → bit-identical output on every run.**
 
 - **Topology declared, not discovered**: full network graph in world YAML, loaded by `DeterministicCoordinator` at startup. Runtime Zenoh peer-mode scouting is BANNED.
-- **Zenoh Session Isolation**: All Zenoh sessions in Python tests MUST use `make_client_config()` or the `zenoh_session` fixture. Raw `zenoh.open()` is BANNED to prevent parallel test cross-talk (scouting=false, mode=client).
 - **Canonical tie-breaking**: same-vtime messages delivered in order `(delivery_vtime_ns, source_node_id, sequence_number)` by the coordinator — never by OS scheduling.
 - **Per-quantum barrier**: coordinator withholds quantum-Q messages until ALL nodes signal "quantum Q complete" (PDES barrier pattern).
 - **Automated Synchronization (SOTA)**: The framework implicitly injects the `-S` flag to launch QEMU frozen, handles routing synchronization internally (`ensure_session_routing`), and issues `cont` via QMP. Do not manually call `ensure_session_routing` in tests.
@@ -59,7 +91,6 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 ## Language Selection Policy
 
 - We use Rust as the primarily programming language.
-- Do not use Python in the critical paths (MMIO/Clock/Netdev). Python may be only used for high-level test orchestration
 
 ---
 
@@ -69,49 +100,53 @@ Before writing or modifying *any* code, you MUST output a brief plan that explic
 - Agents MUST NOT lower lint strictness, coverage, or security gates without explicit written human consent.
 - In `--yolo` mode: only *increase* quality. Never suppress warnings (`#[allow(...)]`, `noqa`) or bypass the type system.
 
-### 2. Safe Big QEMU Lock (BQL) Usage
+### 2. Peripherals
+- **Simulation vs Boundary (CoSimBridge vs VtimeIngress)**:
+  - If a peripheral participates in the simulation graph and respects virtual time (e.g., sensors, actuators, radios, SPI, wired buses), it MUST route all traffic through the `DeterministicCoordinator` using `VtimeIngress::new_for_link(link_id, …)` (for ingress) and `reserve_link(link_id)/commit()` (for egress). Direct sockets bypass the PDES quantum barrier and are BANNED for simulation traffic.
+  - If a peripheral is an infrastructure boundary that talks to external, non-simulation processes (e.g., test runners via UART/chardev, hardware-in-the-loop, or the coordinator itself), it MUST use `CoSimBridge`. `CoSimBridge` provides blocking I/O and BQL yielding for external processes that have no concept of virtual time.
+- **Gold Standard**: All new peripherals MUST follow the `hw/rust/examples/reference-peripheral` template exactly. This is the single source of truth for architectural patterns.
+- **Ingress**: Use `VtimeIngress` for all incoming simulation data. `SafeSubscription` is STRICTLY BANNED in peripheral code (only allowed internally within framework primitives like `VtimeIngress` and backbone devices like `virtmcu-clock`).
+- **MMIO Safety**: Use `VcpuDrain` and `MmioResult::wait_for` for blocking MMIO. Manual `condvar.wait()` loops are discouraged.
+- **BQL (Big QEMU Lock)**: Agents MUST NOT manually acquire, release, or check the BQL. The framework proves BQL ownership at compile time via `&BqlContext` passed into `Peripheral::read/write/realize` and `ClosureTimer` callbacks (RFC-0041). Peripheral code never needs to query BQL status — the token's presence in the call signature IS the proof. Direct calls to `bql_lock`, `bql_unlock`, or `virtmcu_is_bql_locked` in peripheral code are BANNED.
 
-- **Async threads** (Transport subscribers): MUST NOT block waiting for BQL. Push to `crossbeam_channel::unbounded`; a QEMU timer (holding BQL) drains the queue. `SafeSubscription` handles this pattern automatically.
-- **MMIO vCPU threads**: yield BQL via `Bql::temporary_unlock()` when blocking.
-- **Bql API**: `Bql::lock()` (RAII), `Bql::lock_forget()` (ownership transfer to C), `Bql::temporary_unlock()` (safe yield), `QemuCond::wait_yielding_bql(guard, timeout_ms)` (only approved vCPU-wait pattern).
-- BANNED: raw `virtmcu_bql_unlock/lock()` or `virtmcu_mutex_lock/unlock()` outside `virtmcu-qom/src/sync.rs`; `std::mem::forget(Bql::lock())`; mixing `std::sync::Mutex` with `*mut QemuMutex` in one device.
-- **Lock order (canonical)**: BQL → peripheral mutex → condvar wait. Document in module-level comment.
+### 3. Safe Peripheral Teardown (Drain Pattern)
 
-### 3. New Peripherals
-- All new peripherals in Rust using `hw/rust/common/rust-dummy` template.
-- One legacy C model (`hw/misc/educational-dummy.c`, `dummy-device`) kept for compatibility; tested in dynamic_plugin.
+VirtMCU uses a **Drain Pattern** to ensure that no VCPUs are executing MMIO handlers when a peripheral is being destroyed (DSO unloading).
 
-### 4. Safe Peripheral Teardown
+Mandatory integration:
+1. **`VcpuDrain`**: Every peripheral state MUST include a `drain: VcpuDrain`.
+2. **MMIO Guards**: Every `read`/`write` implementation MUST call `let _guard = self.drain.acquire();` at the very beginning.
+3. **Blocking Reads**: Use `MmioResult::wait_for(...)`. This internally checks the drain state and ensures the VCPU thread can be unblocked for teardown.
+4. **RAII Cleanup**: `VtimeIngress` and other resources MUST be stored in the state. Their `Drop` implementations handle unsubscription and cleanup automatically.
 
-Mandatory shutdown sequence:
-1. Set `running = false` (holding state lock).
-2. Broadcast all condvars so blocked threads wake and check `running`.
-3. Wait via `drain_cond` until `active_vcpu_count == 0` — **no bounded spinloops**.
-4. Join background thread.
-5. Drop `Arc<SharedState>`.
-
-- BANNED: bounded spinloops (`while count > 0 && attempts < N`) — time-bomb UAF when bound exhausted.
-- **Drain pattern**: `drain_cond: Arc<(Mutex<()>, Condvar)>`; callback calls `notify_all()` after decrement; Drop: `while active_count > 0 { guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner()); }`.
+- **BANNED**: Manual `running` flags, manual thread joining in `Drop`, and bounded spinloops.
 - Every new peripheral needs a shutdown integration test (teardown during blocked MMIO, no sanitizer errors).
 
-### 5. Lessons Learned (Anti-Patterns — Do Not Repeat)
+### 4. Lessons Learned (Anti-Patterns — Do Not Repeat)
 
 - **DSO Boundary Isolation Trap**: Never use Rust `static` or `static mut` (like `lazy_static!`, `Mutex`, `Atomic`) for state if peripherals might be compiled into separate `.so` files. Shared state must live in the QEMU main binary and be exported via `VIRTMCU_EXPORT`.
 - **Single-Slot Global Callbacks**: Avoid single-slot function pointers (e.g., `void (*hook)(...)`). Always use chained arrays (e.g., `hook[8]`) or DI.
-- **PDES Tie-Breaking**: Direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator`.
-- **DSO TLS Trap**: Never call QEMU TLS macros (e.g., `bql_locked()`) from a plugin DSO — use `virtmcu_is_bql_locked()`.
+- **PDES Tie-Breaking**: Direct pub/sub between nodes is BANNED. All inter-node traffic routes through `DeterministicCoordinator`. Use `VtimeIngress` for all ingress.
+- **BQL Usage**: Manual BQL management is BANNED. If you think you need it, you are violating the `Peripheral`/`BqlContext`/`VtimeIngress` architecture. The `&BqlContext` token is compile-time proof that BQL is held; accessing QEMU globals without one is a type error (RFC-0041).
 - **Atomic State Transitions**: Use a single `AtomicU8` enum + `compare_exchange`. Multiple boolean flags allow illegal states.
 - **Zenoh Executor Deadlocks**: Never block a Zenoh async thread. Offload to a background thread via `crossbeam_channel`.
 - **UART FIFO Backpressure**: PL011 FIFO is 32 bytes. Check `qemu_chr_be_can_write`, buffer overflow in backlog, drain via `chr_accept_input`.
-- **QEMU Patch Automation**: Never hand-edit `third_party/qemu`. All changes via `scripts/apply-qemu-patches.sh` or `apply_zenoh_hook.py`. This is enforced by a CI lint that rejects any modifications to `third_party` submodules unless corresponding changes exist in the `patches/` directory.
+- **QEMU Patch Automation**: Never hand-edit `third_party/qemu`. All changes via `cargo run -p virtmcu-cli -- setup patch-qemu` or `apply_zenoh_hook.py`. This is enforced by a CI lint that rejects any modifications to `third_party` submodules unless corresponding changes exist in the `patches/` directory.
+- **QOM Property Hyphens**: QEMU property names use **hyphens**, not underscores (e.g. `federation-id`, `coordinated-router`, `stall-timeout`). Underscores are silently ignored — the field stays null/default and the failure appears 30+ seconds later as `CLOCK_ERROR_STALL` or a coordinator federation_id mismatch. The test runner QEMU stderr monitor logs "UNKNOWN QOM PROPERTY DETECTED" when this happens, but the root fix is: always use hyphens in `-device` arguments and in `define_prop_*` registration strings.
+- **Tokio Task Panics Are Silent**: `assert!` inside `tokio::spawn` kills the task, not the process. The write half of the connection is never stored; downstream code silently stalls waiting for a message that never arrives. Use `std::process::abort()` for invariant violations inside spawned coordinator tasks.
+- **Quantum Pre-Increment Deadlock**: The PDES barrier protocol is `capture quantum → step_clock(quantum) → increment`. Pre-incrementing before `step_clock()` sends `quantum = current + 1`; the barrier's lookahead path silently buffers it and returns `Ok(None)` — no error, no log, no `sim/clock/start`. All nodes deadlock waiting for a release that never comes. The barrier now warns when all nodes land in lookahead simultaneously.
+- **Env Var Reads in Peripherals Are BANNED**: Peripherals MUST NOT read `VIRTMCU_SIM_ID`. Pass the federation_id via a `federation-id` QOM property and call `UdsDataTransport::new_with_fed_id()`. `UdsDataTransport::new()` (env-var wrapper) is reserved for the production QEMU process where the parent sets the env. Reading env vars from peripheral code breaks concurrent tests and violates the DI mandate.
+- **`topic` QOM Property Is BANNED**: Do not add a `topic` property to any peripheral. Use `link-name` (injected by `yaml2qemu` from the topology). `yaml2qemu` hard-errors on any `topic:` key in YAML. The `DataTransport::reserve(topic, size)` method is `#[deprecated]`; use `reserve_link(link_id, size)` instead. `VtimeIngress::new(topic, …)` is `#[deprecated]`; use `VtimeIngress::new_for_link(link_id, …)` instead. (RFC-0042)
 
-### 6. The "Fail Loudly" Principle (Crash-Only Design)
+### 5. The "Fail Loudly" Principle (Crash-Only Design)
 - **No Silent Failures**: Never catch an exception or `Result` just to log a warning and continue. If an internal invariant is violated, crash immediately.
-- **Developer Errors**: Use `assert!`, `unreachable!`, or `.expect("reason")` for logic bugs (e.g., unexpected enum variants, layout mismatches).
+- **Developer Errors vs Linting**: The codebase denies `clippy::panic` and `clippy::unwrap_used` but mandates crashing on invalid states. You MUST navigate this conflict as follows:
+  - Prefer `.expect("reason")` for `Option`/`Result` since `clippy::expect_used` is explicitly allowed. NEVER use `.unwrap()`.
+  - For `assert!`, `unreachable!`, or explicit `panic!` (e.g., unexpected enum variants, layout mismatches), you MUST add `#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"` to the top of the file.
 - **User/Config Errors**: Return `Result::Err` or raise specific Exceptions for bad inputs, allowing the CLI boundary to print actionable help before exiting with `exit(1)`.
 - **Warnings are Code Smell**: If a state is invalid enough to warrant a warning, it is invalid enough to be an error.
 
-### 7. Architectural Patterns (RAII & Dependency Injection)
+### 6. Architectural Patterns (RAII & Dependency Injection)
 - **RAII (Resource Acquisition Is Initialization)**: All resources (memory, locks, file handles, Zenoh sessions) MUST be managed via RAII. Explicit `init()` and `deinit()`/`cleanup()` calls are BANNED for resource management; use constructors/destructors (Rust `Drop`, C++ destructors, Python context managers).
 - **Dependency Injection (DI)**: Components MUST NOT hardcode or globally discover their dependencies (e.g., transports, coordinators, configs). Pass dependencies via constructors or factories. This is critical for deterministic testing and parallel safety.
 
@@ -120,12 +155,68 @@ Mandatory shutdown sequence:
 ## Before Every Commit — Mandatory Lint Gate
 
 ```bash
-make dev-check    # Fast-path: dev-lint + dev-unit (runs natively)
-make ci-local     # Safe-path: dev-check inside isolated CI container
+make test-check    # Fast-path: test-lint + test-unit (runs natively)
 ```
 
 `[workspace.lints.clippy] all = "deny"` — every clippy warning is a build failure. `#[allow(clippy::...)]`, `#[allow(static_mut_refs)]`, and `#[allow(clippy::too_many_lines)]` are all BANNED in production code.
 
-**Git hooks** (`pre-commit` + `pre-push`): run `make dev-lint` (pre-commit) and `make dev-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. Skip (WIP only): `git commit --no-verify` / `git push --no-verify`.
+**Git hooks** (`pre-commit` + `pre-push`): run `make test-lint` (pre-commit) and `make test-unit` (pre-push) directly in the devcontainer shell. Install: `make install-git-hooks`. **Agents are PROHIBITED from skipping git hooks (`--no-verify` is disabled) during commit and push, unless explicitly permitted by a human.**
 
-**Full CI parity before PR:** `make ci-local`. Complete pre-merge validation: `make ci-full`.
+**Full CI parity before PR:** `make ci-check`. Complete pre-merge validation: `make ci-full`.
+
+---
+
+## Peripheral Porting Checklist
+
+Use this checklist every time you port or create a peripheral in `hw/rust/`.
+
+### QOM Properties
+- [ ] All `define_prop_*` registration strings use **hyphens** (`federation-id`, `stall-timeout`), never underscores. QEMU silently ignores unknown property names.
+- [ ] Every property that is required in a given mode is validated in `realize()` with `error_setg!` + `return` — never a later null-deref.
+- [ ] Log the actual values used at startup via `virtmcu_qom::sim_info!("peripheral: node={} fed='{}'", ...)`. Log what you *used*, not what you configured.
+
+### UDS Transport / federation_id
+- [ ] Do **not** read `VIRTMCU_SIM_ID` in peripheral code. Use `UdsDataTransport::new_with_fed_id(path, node_id, fed_id_str)` where `fed_id_str` comes from the `federation-id` QOM property.
+- [ ] Tests always use `new_with_fed_id()` with an explicit string — never `new()` + `std::env::set_var` in concurrent test contexts.
+
+### Coordinator / PDES
+- [ ] Invariant violations in `tokio::spawn` handlers use `std::process::abort()`, not `assert!` or `panic!`. A panicking detached task is a silent failure.
+- [ ] `step_clock()` is called with `current_quantum` **before** incrementing. The counter increments **after** `try_join_all()` returns.
+  ```rust
+  let q = self.current_quantum;          // capture first
+  try_join_all(nodes.map(|n| cc.step_clock(n, advance, vtime, q))).await?;
+  self.current_quantum += 1;             // then increment
+  ```
+
+### Simulation vs Boundary
+- [ ] Traffic that participates in virtual time (sensors, actuators, buses) routes through `DeterministicCoordinator` via `VtimeIngress::new_for_link(link_id, …)` / `reserve_link(link_id)+commit()`.
+- [ ] Infrastructure boundaries (UART test runner, HIL) use `CoSimBridge`.
+
+### Link Registration (RFC-0042)
+- [ ] Do **not** add a `topic` QOM property. Use `link-name` (a `QomString` property injected by `yaml2qemu`). `yaml2qemu` hard-errors on any `topic:` key in YAML.
+- [ ] In `realize()`, call `transport.register_link(node_id, &link_name, protocol, LinkRole::Both)` to obtain `link_id` before creating `VtimeIngress` or calling `reserve_link`.
+- [ ] Use `VtimeIngress::new_for_link(link_id, …)` for ingress — the deprecated `VtimeIngress::new(topic, …)` must not appear in new code.
+- [ ] Use `transport.reserve_link(link_id, size)` for egress — the deprecated `reserve(topic, size)` must not appear in new code.
+- [ ] Every `(node_id, link_name)` pair listed in the topology YAML **must** call `register_link()` before the coordinator's 30 s pre-flight timeout expires; missing registrations cause an immediate coordinator panic with the full list of missing pairs.
+
+### BQL Context and Timers (RFC-0041)
+- [ ] `read`, `write`, and `realize` signatures accept `ctx: &BqlContext` — never the old `token: &DrainToken`.
+- [ ] Pass `ctx` to every `BqlGuarded::get(ctx)` / `get_mut(ctx)` call — not doing so is a compile error.
+- [ ] Pass `ctx` to `qemu_clock_get_ns_safe(clock_type, ctx)` and `qemu_set_irq_safe(irq, level, ctx)`.
+- [ ] Peripheral-owned timers use `ClosureTimer::new(clock_type, move |ctx| { ... })`. Never write standalone `extern "C"` timer callbacks or call `QomTimer::new_safe` directly from peripheral code.
+- [ ] QOM pointer casts use `dynamic_cast_qom::<T>(ptr).expect("FATAL: QOM type mismatch")` — never `deref_qom_ptr` or `opaque_to_state`.
+
+### Teardown
+- [ ] `drain: VcpuDrain` in state struct.
+- [ ] `let _guard = self.drain.acquire();` at the top of every `read`/`write` handler.
+- [ ] Blocking MMIO uses `MmioResult::wait_for(...)`.
+- [ ] No manual `running` flags, no manual thread joins in `Drop`.
+
+### Debugging stalls (`CLOCK_ERROR_STALL`)
+When you see a stall, check in order:
+1. **QEMU stderr**: look for "UNKNOWN QOM PROPERTY DETECTED" — underscore in property name.
+2. **Coordinator stdout**: look for "FATAL: node federation_id" — federation-id mismatch (check property name hyphenation and that `new_with_fed_id` is used).
+3. **Barrier warning**: look for "ALL N nodes submitted quantum=X as LOOKAHEAD" — quantum pre-increment bug in test runner.
+4. **Coordinator task death**: look for absence of "node N registered" log — the connection handler task panicked silently.
+5. **Timeout race**: `sim/clock/start` never arrives because the coordinator never received all `sim/coord/done` signals — check topology YAML matches the node count passed to `--nodes`.
+6. **Link registration timeout** (RFC-0042): coordinator panics after 30 s with "FATAL: link registration timeout" and lists missing `(node_id, link_name)` pairs. Causes: (a) `link-name` QOM property not injected by `yaml2qemu` — check topology has a `name:` on every link; (b) `realize()` never called `register_link()`; (c) peripheral was not listed in `topology.links` for that node.

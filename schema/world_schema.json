@@ -1,311 +1,23 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "virtmcu_world.schema.json",
   "$defs": {
-    "World": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "World.json",
-      "type": "object",
-      "properties": {
-        "machine": {
-          "$ref": "#/$defs/Machine"
-        },
-        "peripherals": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Resource"
-          }
-        },
-        "memory": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Resource"
-          }
-        },
-        "topology": {
-          "$ref": "#/$defs/Topology"
-        },
-        "nodes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Node"
-          }
-        }
-      }
-    },
-    "Machine": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Machine.json",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string"
-        },
-        "cpus": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Cpu"
-          }
-        }
-      }
-    },
-    "Cpu": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Cpu.json",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string"
-        },
-        "memory": {
-          "type": "string"
-        },
-        "isa": {
-          "type": "string"
-        },
-        "mmu_type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "type"
-      ]
-    },
-    "Resource": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Resource.json",
-      "type": "object",
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/NodeID"
-        },
-        "type": {
-          "type": "string"
-        },
-        "renode_type": {
-          "type": "string"
-        },
-        "address": {
-          "$ref": "#/$defs/Address"
-        },
-        "size": {
-          "$ref": "#/$defs/Address"
-        },
-        "parent": {
-          "type": "string"
-        },
-        "container": {
-          "type": "string"
-        },
-        "interrupts": {
-          "type": "array",
-          "items": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              }
-            ]
-          }
-        },
-        "properties": {
-          "$ref": "#/$defs/RecordUnknown"
-        }
-      },
-      "required": [
-        "name"
-      ]
-    },
-    "NodeID": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "NodeID.json",
-      "type": "string",
-      "oneOf": [
-        {
-          "type": "integer",
-          "minimum": 0
-        },
-        {
-          "type": "string"
-        }
-      ]
-    },
     "Address": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "Address.json",
-      "type": "string",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
         {
-          "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         {
-          "type": "string",
-          "pattern": "^(0x[0-9a-fA-F]+|none|sysbus)$"
-        }
-      ]
-    },
-    "RecordUnknown": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "RecordUnknown.json",
-      "type": "object",
-      "properties": {},
-      "unevaluatedProperties": {}
-    },
-    "Topology": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Topology.json",
-      "type": "object",
-      "properties": {
-        "nodes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Node"
-          }
-        },
-        "links": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WireLink"
-          }
-        },
-        "wireless": {
-          "$ref": "#/$defs/WirelessMedium"
-        },
-        "global_seed": {
+          "pattern": "^(0x[0-9a-fA-F]+|none|sysbus)$",
           "type": "string"
-        },
-        "transport": {
-          "anyOf": [
-            {
-              "type": "string",
-              "const": "zenoh"
-            },
-            {
-              "type": "string",
-              "const": "unix"
-            }
-          ]
-        },
-        "max_messages_per_node_per_quantum": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
         }
-      }
-    },
-    "Node": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Node.json",
-      "type": "object",
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/NodeID"
-        },
-        "role": {
-          "anyOf": [
-            {
-              "type": "string",
-              "const": "Cyber"
-            },
-            {
-              "type": "string",
-              "const": "Physics"
-            }
-          ]
-        }
-      },
-      "required": [
-        "name"
-      ]
-    },
-    "WireLink": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "WireLink.json",
-      "type": "object",
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/Protocol",
-          "alias": "type"
-        },
-        "nodes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/NodeID"
-          }
-        },
-        "baud": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        }
-      },
-      "required": [
-        "type",
-        "nodes"
-      ]
-    },
-    "Protocol": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "Protocol.json",
-      "type": "string",
-      "description": "Supported inter-node communication protocols.",
-      "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$"
-    },
-    "WirelessMedium": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "WirelessMedium.json",
-      "type": "object",
-      "properties": {
-        "medium": {
-          "type": "string"
-        },
-        "max_range_m": {
-          "type": "number"
-        },
-        "nodes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WirelessNode"
-          }
-        }
-      },
-      "required": [
-        "medium",
-        "max_range_m",
-        "nodes"
-      ]
-    },
-    "WirelessNode": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "WirelessNode.json",
-      "type": "object",
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/NodeID"
-        },
-        "initial_position": {
-          "$ref": "#/$defs/Coordinate"
-        }
-      },
-      "required": [
-        "name",
-        "initial_position"
-      ]
+      ],
+      "type": "string"
     },
     "Coordinate": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "Coordinate.json",
-      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "x": {
           "type": "number"
@@ -321,38 +33,330 @@
         "x",
         "y",
         "z"
-      ]
+      ],
+      "type": "object"
     },
-    "WorldSchema": {
+    "Cpu": {
+      "$id": "Cpu.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "WorldSchema.json",
+      "properties": {
+        "isa": {
+          "type": "string"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "mmu_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Machine": {
+      "$id": "Machine.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cpus": {
+          "items": {
+            "$ref": "#/$defs/Cpu"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Node": {
+      "$id": "Node.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/NodeID"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "const": "Cyber",
+              "type": "string"
+            },
+            {
+              "const": "Physics",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "NodeID": {
+      "$id": "NodeID.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "type": "string"
+    },
+    "Protocol": {
+      "$id": "Protocol.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Supported inter-node communication protocols.",
+      "pattern": "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet|reference-link)$",
+      "type": "string"
+    },
+    "RecordUnknown": {
+      "$id": "RecordUnknown.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
       "type": "object",
+      "unevaluatedProperties": {}
+    },
+    "Resource": {
+      "$id": "Resource.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Address"
+        },
+        "container": {
+          "type": "string"
+        },
+        "interrupts": {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/NodeID"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "properties": {
+          "$ref": "#/$defs/RecordUnknown"
+        },
+        "renode_type": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/$defs/Address"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Topology": {
+      "$id": "Topology.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "global_seed": {
+          "type": "string"
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/WireLink"
+          },
+          "type": "array"
+        },
+        "max_messages_per_node_per_quantum": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "array"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "const": "zenoh",
+              "type": "string"
+            },
+            {
+              "const": "unix",
+              "type": "string"
+            }
+          ]
+        },
+        "wireless": {
+          "$ref": "#/$defs/WirelessMedium"
+        }
+      },
+      "type": "object"
+    },
+    "WireLink": {
+      "$id": "WireLink.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "baud": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeID"
+          },
+          "type": "array"
+        },
+        "type": {
+          "$ref": "#/$defs/Protocol",
+          "alias": "type"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "WirelessMedium": {
+      "$id": "WirelessMedium.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "max_range_m": {
+          "type": "number"
+        },
+        "medium": {
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/WirelessNode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "medium",
+        "max_range_m",
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "WirelessNode": {
+      "$id": "WirelessNode.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "initial_position": {
+          "$ref": "#/$defs/Coordinate"
+        },
+        "name": {
+          "$ref": "#/$defs/NodeID"
+        }
+      },
+      "required": [
+        "name",
+        "initial_position"
+      ],
+      "type": "object"
+    },
+    "World": {
+      "$id": "World.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "machine": {
           "$ref": "#/$defs/Machine"
         },
-        "peripherals": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Resource"
-          }
-        },
         "memory": {
-          "type": "array",
           "items": {
             "$ref": "#/$defs/Resource"
-          }
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "array"
+        },
+        "peripherals": {
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
         },
         "topology": {
           "$ref": "#/$defs/Topology"
+        }
+      },
+      "type": "object"
+    },
+    "WorldSchema": {
+      "$id": "WorldSchema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/Machine"
+        },
+        "memory": {
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
         },
         "nodes": {
-          "type": "array",
           "items": {
             "$ref": "#/$defs/Node"
-          }
+          },
+          "type": "array"
+        },
+        "peripherals": {
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
+        },
+        "topology": {
+          "$ref": "#/$defs/Topology"
         }
-      }
+      },
+      "type": "object"
     }
-  }
+  },
+  "$id": "virtmcu_world.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

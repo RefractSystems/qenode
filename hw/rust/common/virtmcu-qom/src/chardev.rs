@@ -104,8 +104,11 @@ pub struct ChardevClass {
     pub chr_disconnect: Option<unsafe extern "C" fn(chr: *mut Chardev)>, // 192
     /// A struct field
     pub chr_accept_input: Option<unsafe extern "C" fn(chr: *mut Chardev)>, // 200
-    _opaque: [u8; 256 - 208],
+    _opaque: [u8; QEMU_CHARDEV_CLASS_SIZE - CHARDEV_CLASS_LAST_OFFSET],
 }
+
+const QEMU_CHARDEV_CLASS_SIZE: usize = 256;
+const CHARDEV_CLASS_LAST_OFFSET: usize = 208;
 
 extern "C" {
     /// A function
@@ -140,7 +143,7 @@ extern "C" {
 
 const _: () = assert!(core::mem::size_of::<CharFrontend>() == 56);
 const _: () = assert!(core::mem::size_of::<Chardev>() == 160);
-const _: () = assert!(core::mem::size_of::<ChardevClass>() == 256);
+const _: () = assert!(core::mem::size_of::<ChardevClass>() == QEMU_CHARDEV_CLASS_SIZE);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_write) == 120);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_accept_input) == 200);
 const _: () = assert!(core::mem::offset_of!(ChardevClass, chr_parse) == 104);

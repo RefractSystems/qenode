@@ -1,5 +1,10 @@
-#[allow(clippy::too_many_lines, clippy::std_instead_of_core)]
+#[allow(clippy::too_many_lines, clippy::std_instead_of_core)] // virtmcu-allow: allow reasoning="Build script requires standard library and is naturally long"
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=VIRTMCU_UNIT_TEST"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=VIRTMCU_USE_ASAN"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=QEMU_SRC_DIR"); // virtmcu-allow: print reasoning="cargo build script protocol"
+    println!("cargo:rerun-if-env-changed=QEMU_BUILD_DIR"); // virtmcu-allow: print reasoning="cargo build script protocol"
+
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_present)"); // virtmcu-allow: print reasoning="cargo build script protocol"
     println!("cargo:rustc-check-cfg=cfg(qemu_headers_missing)"); // virtmcu-allow: print reasoning="cargo build script protocol"
     println!("cargo:rustc-check-cfg=cfg(virtmcu_unit_test)"); // virtmcu-allow: print reasoning="cargo build script protocol"
@@ -26,7 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check if QEMU headers are present
     let osdep_h = std::path::Path::new(&qemu_dir).join("include/qemu/osdep.h");
-    let has_headers = osdep_h.exists();
+    let config_host_h = std::path::Path::new(&qemu_build_dir).join("config-host.h");
+    let has_headers = osdep_h.exists() && config_host_h.exists();
 
     if has_headers {
         println!("cargo:rustc-cfg=qemu_headers_present"); // virtmcu-allow: print reasoning="cargo build script protocol"
@@ -94,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bindings_file = out_path.join("bindings.rs");
 
     let bindings = bindgen::Builder::default()
+        .use_core()
         .header("wrapper.h")
         .clang_arg(format!("-I{qemu_dir}/include"))
         .clang_arg(format!("-I{qemu_build_dir}"))

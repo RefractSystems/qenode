@@ -1,0 +1,32 @@
+# worlds/pendulum_smoke.yml
+# PURPOSE: Infrastructure smoke test. Boots the pendulum controller firmware,
+# advances the clock, and validates UART + actuator output using pre-recorded
+# sensor replay. No physics engine required.
+# Run: docker compose -f docker/docker-compose.yml -f worlds/pendulum_smoke.yml up
+services:
+  cyber-node:
+    command: [
+      "/app/target/release/virtmcu-run",
+      "--yaml", "/app/tests/fixtures/guest_apps/pendulum_controller/board.yaml",
+      "-kernel", "/app/tests/fixtures/guest_apps/pendulum_controller/controller.elf",
+      "-global", "actuator.transport=hub0",
+      "-global", "sensor.transport=hub0",
+      "-device", "virtmcu-clock,mode=suspend,node=0,coordinated=true,router=tcp/zenoh-router:7447,federation_id=smoke"
+    ]
+
+  physical-node:
+    command: [
+      "/app/target/release/virtmcu-physical-node",
+      "--transport", "zenoh", "--connect", "tcp/zenoh-router:7447",
+      "--node-id", "0", "--delta-ns", "10000000",
+      "--plant", "tick-only"   # advances clock, no sensor data
+    ]
+
+  sensor-replay:                # feeds static angle so firmware doesn't WFI-block forever
+    command: [
+      "/app/target/release/resd-replay",
+      "--connect", "tcp/zenoh-router:7447",
+      "--node-id", "0",
+      "--resd", "/app/tests/fixtures/guest_apps/pendulum_controller/pendulum_angles.resd",
+      "--loop"
+    ]

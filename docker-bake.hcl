@@ -13,7 +13,6 @@ variable "MDBOOK_MERMAID_VERSION" {}
 variable "MDBOOK_PDF_VERSION" {}
 variable "DEBIAN_CODENAME" {}
 variable "NODE_VERSION" {}
-variable "PYTHON_VERSION" {}
 variable "ARM_TOOLCHAIN_VERSION" {}
 variable "QEMU_VERSION" {}
 variable "ZENOH_VERSION" {}
@@ -21,8 +20,8 @@ variable "CMAKE_VERSION" {}
 variable "RUST_VERSION" {}
 variable "FLATBUFFERS_VERSION" {}
 variable "FLATCC_VERSION" {}
-variable "UV_VERSION" {}
 variable "CARGO_BINSTALL_VERSION" {}
+variable "CARGO_TARPAULIN_VERSION" {}
 
 # Architecture handling
 variable "ARCH" {
@@ -47,9 +46,15 @@ variable "VIRTMCU_USE_ASAN" {
 
 # Content-addressed QEMU cache tag: set by CI to "${QEMU_VERSION}-${patches_hash}".
 # Defaults to "latest" for local builds where the exact tag does not matter.
-variable "VIRTMCU_IMAGE_REGISTRY" {}
-variable "VIRTMCU_DEVENV_IMAGE" {}
-variable "VIRTMCU_CI_IMAGE" {}
+variable "VIRTMCU_IMAGE_REGISTRY" {
+  default = "ghcr.io/refractsystems/virtmcu"
+}
+variable "VIRTMCU_DEVENV_IMAGE" {
+  default = "virtmcu-devenv"
+}
+variable "VIRTMCU_CI_IMAGE" {
+  default = "virtmcu-ci"
+}
 
 variable "THIRD_PARTY_CACHE_TAG" {
   default = "latest"
@@ -62,7 +67,7 @@ group "default" {
 }
 
 group "all" {
-  targets = ["base", "rust-builder", "toolchain", "devenv", "flatcc-builder", "third-party-base", "third-party-base-asan", "ci", "ci-asan"]
+  targets = ["base", "rust-builder", "toolchain", "devenv", "flatcc-builder", "cli-builder", "third-party-base", "third-party-base-asan", "ci", "ci-asan"]
 }
 
 # ── Common Configuration ──────────────────────────────────────────────────────
@@ -81,17 +86,17 @@ target "_common" {
     MDBOOK_PDF_VERSION     = MDBOOK_PDF_VERSION
     DEBIAN_CODENAME       = DEBIAN_CODENAME
     NODE_VERSION          = NODE_VERSION
-    PYTHON_VERSION        = PYTHON_VERSION
     ARM_TOOLCHAIN_VERSION = ARM_TOOLCHAIN_VERSION
     QEMU_REF              = "v${QEMU_VERSION}"
     ZENOH_C_REF           = ZENOH_VERSION
     CMAKE_VERSION         = CMAKE_VERSION
     RUST_VERSION          = RUST_VERSION
     FLATBUFFERS_VERSION   = FLATBUFFERS_VERSION
-    FLATCC_VERSION        = FLATCC_VERSION
-    UV_VERSION            = UV_VERSION
+    FLATCC_VERSION         = FLATCC_VERSION
     CARGO_BINSTALL_VERSION= CARGO_BINSTALL_VERSION
+    CARGO_TARPAULIN_VERSION= CARGO_TARPAULIN_VERSION
     USE_CCACHE            = USE_CCACHE
+
     VIRTMCU_USE_ASAN      = "${VIRTMCU_USE_ASAN}"
   }
 }
@@ -157,7 +162,10 @@ target "toolchain" {
 target "devenv" {
   inherits = ["_common"]
   target   = "devenv"
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:${IMAGE_TAG}"
+  ]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
@@ -200,12 +208,84 @@ target "flatcc-builder" {
   ) : []
 }
 
+target "cli-builder" {
+  inherits = ["_common"]
+  target   = "cli-builder"
+  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/cli-builder:${IMAGE_TAG}-${ARCH}"]
+  cache-from = [
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:rust-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:toolchain-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:base-${ARCH}",
+    "type=gha,scope=virtmcu-cli-builder-${ARCH}"
+  ]
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-cli-builder-${ARCH},mode=max"
+    ]
+  ) : []
+}
+
+
+target "qemu-base-builder" {
+  inherits = ["_common"]
+  target   = "qemu-base-builder"
+  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-${ARCH}"]
+  cache-from = [
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:flatcc-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:rust-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:toolchain-${ARCH}",
+    "type=gha,scope=virtmcu-qemu-base-builder-${QEMU_VERSION}-${ARCH}"
+  ]
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-qemu-base-builder-${ARCH},mode=max"
+    ]
+  ) : []
+}
+
+target "qemu-base-builder-asan" {
+  inherits = ["_common"]
+  target   = "qemu-base-builder"
+  args = {
+    VIRTMCU_USE_ASAN = "1"
+  }
+  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-asan-${ARCH}"]
+  cache-from = [
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-asan-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:flatcc-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:rust-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:toolchain-${ARCH}",
+    "type=gha,scope=virtmcu-qemu-base-builder-${QEMU_VERSION}-asan-${ARCH}"
+  ]
+  cache-to = CI == "true" ? (
+    PUSH_CACHE == "true" ? [
+      "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-asan-${ARCH},mode=max"
+    ] : [
+      "type=gha,scope=virtmcu-qemu-base-builder-asan-${ARCH},mode=max"
+    ]
+  ) : []
+}
+
 target "third-party-base" {
   inherits = ["_common"]
   target   = "third-party-builder"
   tags     = ["${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-${ARCH}"]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:flatcc-builder-${ARCH}",
@@ -225,10 +305,14 @@ target "third-party-base" {
 target "ci" {
   inherits = ["_common"]
   target   = "ci"
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}"
+  ]
   cache-from = [
     # Frozen QEMU core — a cache hit here skips the 40-minute QEMU compile.
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_CI_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
@@ -257,6 +341,8 @@ target "third-party-base-asan" {
   tags     = ["${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-asan-${ARCH}"]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-asan-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/qemu-base-builder:${QEMU_VERSION}-asan-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:flatcc-builder-${ARCH}",
@@ -279,9 +365,13 @@ target "ci-asan" {
   args = {
     VIRTMCU_USE_ASAN = "1"
   }
-  tags     = ["${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan-${ARCH}"]
+  tags     = [
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan-${ARCH}",
+    "${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_CI_IMAGE}:${IMAGE_TAG}-asan"
+  ]
   cache-from = [
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/third-party-base:${THIRD_PARTY_CACHE_TAG}-asan-${ARCH}",
+    "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:cli-builder-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_CI_IMAGE}-asan-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/build-cache:${VIRTMCU_DEVENV_IMAGE}-${ARCH}",
     "type=registry,ref=${VIRTMCU_IMAGE_REGISTRY}/${VIRTMCU_DEVENV_IMAGE}:latest-${ARCH}",

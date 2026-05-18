@@ -7,5 +7,5 @@ namespace VirtMcu.World;
 /**
  * Supported inter-node communication protocols.
  */
-@extension("pattern", "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet)$")
+@extension("pattern", "^(Ethernet|Uart|CanFd|Spi|FlexRay|Lin|Rf802154|RfHci|eth|uart|canfd|spi|flexray|lin|rf802154|rfhci|ethernet|reference-link)$")
 scalar Protocol extends string;

@@ -1,0 +1,23 @@
+[package]
+name = "ethernet"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[lints] 
+workspace = true 
+
+[dependencies]
+virtmcu-wire.workspace = true
+transport-uds.workspace = true
+zenoh.workspace = true
+virtmcu-qom.workspace = true
+transport-zenoh.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["zenoh", "transport-zenoh", "transport-uds", "serde", "serde_json", "tracing", "virtmcu-qom"]
+

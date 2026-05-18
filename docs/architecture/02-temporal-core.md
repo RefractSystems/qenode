@@ -10,7 +10,7 @@ After this chapter, you can:
 
 In a standard emulator, time is an afterthought. The emulator typically runs as fast as possible, using the host's wall-clock to drive its internal timers. In the VirtMCU digital twin ecosystem, this is unacceptable. The firmware in the **Cyber Node** interacts with a physical world (simulated by the **Physical Node**, such as a drone in MuJoCo) governed by continuous differential equations. If the Cyber Node runs free, the firmware's control loops will desynchronize from the physics.
 
-**The Golden Rule of VirtMCU**: The Physical Node (acting as the TimeAuthority) owns the clock. Virtual time inside the Cyber Node only advances when the external authority explicitly grants a "quantum" of time over the Transport Layer.
+**The Golden Rule of VirtMCU**: The Physical Node owns the clock. Virtual time inside the Cyber Node only advances when the Physical Node explicitly grants a "quantum" of time over the Transport Layer.
 
 ---
 
@@ -29,7 +29,7 @@ VirtMCU (our QEMU-based Cyber Node implementation) provides three distinct clock
 
 ## 1.1 Clock Transport Modes
 
-The `mode` parameter also determines which transport layer is used to communicate with the `TimeAuthority`.
+The `mode` parameter also determines which transport layer is used to communicate with the Physical Node.
 
 | `mode` parameter   | Transport                    | `sim/clock/start` needed? |
 |--------------------|------------------------------|---------------------------|
@@ -44,22 +44,24 @@ The `sim/clock/start` Zenoh topic is only relevant when `is_coordinated=true` AN
 
 ## 2. The Wire Protocol (Formal Specification)
 
-The `clock` device communicates with the `TimeAuthority` via the **Control Plane**. This is a strictly 1:1, low-latency RPC channel.
+The `clock` device communicates with the Physical Node via the **Control Plane**. This is a strictly 1:1, low-latency RPC channel.
 
-### Request: TimeAuthority → Node
+### Request: Physical Node → Node
 **Topic**: `sim/clock/advance/{node_id}`
-**Payload** (16-byte FlatBuffer struct):
+**Payload** (24-byte FlatBuffer struct):
 - `delta_ns` (uint64): The size of the quantum to execute in virtual nanoseconds.
 - `absolute_vtime_ns` (uint64): The current absolute time in the physics world.
+- `quantum_number` (uint64): Global sequence number for the current quantum.
 
-### Reply: Node → TimeAuthority
-**Payload** (16-byte FlatBuffer struct):
+### Reply: Node → Physical Node
+**Payload** (24-byte FlatBuffer struct):
 - `current_vtime_ns` (uint64): The actual virtual time reached by QEMU.
 - `n_frames` (uint32): Count of pending Ethernet frames (informational).
 - `error_code` (uint32):
     - **`0 (OK)`**: Success. Quantum completed.
     - **`1 (STALL)`**: STALL DETECTED. QEMU failed to reach the TB boundary within the wall-clock timeout. QEMU stays alive for debugging.
     - **`2 (ZENOH_ERROR)`**: Transport layer or protocol failure.
+- `quantum_number` (uint64): The sequence number of the quantum being acknowledged.
 
 ### The Stall-Timeout Contract
 To prevent deadlocks in CI, every quantum has a wall-clock `stall-timeout`. 
@@ -75,6 +77,29 @@ To achieve deterministic pauses, VirtMCU hooks into the heart of the QEMU execut
 
 ### The TCG Quantum Hook
 We inject a function pointer into `accel/tcg/cpu-exec.c`. At the end of every Translation Block (TB), QEMU calls the VirtMCU hook. If the requested quantum has expired, the hook pauses the vCPU and waits for the next command.
+
+```mermaid
+sequenceDiagram
+    participant vCPU as QEMU vCPU Thread
+    participant TCG as TCG Engine
+    participant Hook as VirtMCU Hook
+    participant BGL as BQL Mutex
+    participant Clock as Clock Transport
+
+    loop Every Translation Block (TB)
+        vCPU->>TCG: Execute TB
+        TCG->>Hook: End of TB Callback
+        Hook->>Hook: Check if virtual_time >= quantum_end
+        alt Quantum Expired
+            Hook->>Clock: Send Reply (Quantum Complete)
+            Hook->>BGL: Bql::temporary_unlock()
+            Note over Hook, BGL: vCPU yields BQL to allow QMP/GDB
+            Hook->>Clock: Wait for next Request
+            Clock-->>Hook: Receive next Quantum size
+            Hook->>BGL: Re-acquire BQL
+        end
+    end
+```
 
 ### The BQL "Unlock-and-Park" Pattern
 QEMU uses the **Big QEMU Lock (BQL)** to protect hardware state. VirtMCU uses a safe RAII pattern to avoid deadlocks:

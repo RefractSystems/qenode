@@ -1,0 +1,15 @@
+[package]
+name = "mmio-socket-bridge"
+publish = false
+version = "0.1.0"
+edition = "2021"
+
+[lints] 
+workspace = true 
+
+[dependencies]
+virtmcu-qom.workspace = true
+virtmcu-wire.workspace = true
+
+[lib]
+crate-type = ["staticlib"]

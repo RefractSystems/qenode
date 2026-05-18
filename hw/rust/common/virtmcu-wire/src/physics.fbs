@@ -1,0 +1,39 @@
+namespace virtmcu.physics;
+
+/// A single actuator command from one firmware node for one quantum.
+/// Carried inside PhysicsTrigger; not used on the Zenoh actuator bus directly.
+table ActuatorSample {
+    /// Virtual time (ns) at which the firmware issued this command.
+    delivery_vtime_ns: uint64;
+    /// Actuator index as defined in the board topology.
+    actuator_id:       uint32;
+    /// Actuator values (length = data_size declared in board YAML).
+    values:            [float64];
+}
+
+/// Sent by the Physical Node to the Physics Gateway once per quantum.
+/// Contains the complete, causally-ordered set of actuator commands for
+/// the completed quantum.  The gateway MUST NOT step the physics engine
+/// until it receives this message.
+table PhysicsTrigger {
+    /// Monotonically increasing quantum counter (matches ClockAdvanceReq.quantum_number).
+    quantum_number:       uint64;
+    /// Virtual time (ns) at the END of the completed quantum
+    /// (= absolute_vtime_ns + delta_ns from ClockAdvanceReq).
+    quantum_end_vtime_ns: uint64;
+    /// All actuator commands collected during this quantum, ordered by
+    /// (delivery_vtime_ns, actuator_id).
+    actuators:            [ActuatorSample];
+}
+
+/// Sent by the Physics Gateway back to the Physical Node after each step.
+struct PhysicsDone {
+    /// Must match the quantum_number in the corresponding PhysicsTrigger.
+    quantum_number: uint64;
+    /// 0 = OK, 1 = physics engine error (simulation will abort).
+    status:         uint32;
+    /// Reserved — must be zero.
+    reserved:       uint32;
+}
+
+root_type PhysicsTrigger;

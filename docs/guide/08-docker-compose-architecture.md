@@ -6,11 +6,11 @@ This guide clarifies how VirtMCU's communication layers are orchestrated within 
 
 When deploying VirtMCU natively or within containers, the network traffic must be routed efficiently while maintaining deterministic isolation. The framework offers two primary physical transport layers: **Zenoh** and **Unix Sockets**.
 
-### 1. The Python Testing Abstraction (Local Execution)
+### 1. Integration Testing (Local Execution)
 
-In the Python `pytest` suites (`tests/integration/*`), the transport layer is abstracted by the `SimulationTransport` interface. 
-- **Unix Sockets** are frequently used here because tests typically run locally on a single machine. Unix Sockets bypass the TCP/IP stack entirely, offering maximum IPC performance and lower CPU overhead for local regression suites.
-- In these tests, a local python-based coordinator or temporary hub routes the unix socket traffic.
+In the Rust `native-integration` suites (`tests/native_integration/`), the transport layer is managed by the `VirtmcuTestEnv`. 
+- **Zenoh** is used as the default transport even for local tests to ensure parity with the containerized environment.
+- The `VirtmcuTestEnv` automatically spawns a local Zenoh router (if needed) or connects to a provided endpoint, ensuring that every test run is isolated from others.
 
 ### 2. The Docker Compose Reality (Containerized Execution)
 
@@ -26,7 +26,7 @@ A common question is: *Should Docker Compose start Zenoh directly, or should it 
 
 The abstraction you are looking for—preventing every single peripheral within a QEMU instance from opening its own transport connection—**already exists inside the QEMU guest**. 
 
-It is the **`virtmcu-transport-hub` QOM device** (`hw/rust/backbone/transport_hub`).
+It is the **`virtmcu-transport-hub` QOM device** (`hw/rust/backbone/transport-hub`).
 
 **The Architecture:**
 1. **Infrastructure Level:** Docker Compose spins up the `zenoh-router` (the physical network switch).

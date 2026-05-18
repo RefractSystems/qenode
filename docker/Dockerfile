@@ -14,6 +14,7 @@ ARG QEMU_REF=v11.0.0
 ARG ZENOH_C_REF=1.9.0
 ARG CMAKE_VERSION=4.3.1
 ARG MESON_VERSION=1.8.0
+ARG YAMLLINT_VERSION=1.37.1
 ARG RUST_VERSION=1.95.0
 ARG BINDGEN_VERSION=0.72.1
 ARG CARGO_BINSTALL_VERSION=1.10.4
@@ -25,6 +26,7 @@ ARG ACTIONLINT_VERSION=1.7.12
 ARG MDBOOK_VERSION=0.4.52
 ARG MDBOOK_MERMAID_VERSION=0.17.0
 ARG MDBOOK_PDF_VERSION=0.1.13
+ARG CARGO_TARPAULIN_VERSION=0.35.4
 ARG DEBIAN_CODENAME=trixie
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
@@ -40,6 +42,7 @@ ARG BINDGEN_VERSION
 ARG MDBOOK_VERSION
 ARG MDBOOK_MERMAID_VERSION
 ARG MDBOOK_PDF_VERSION
+ARG CARGO_TARPAULIN_VERSION
 ARG RUST_VERSION
 ARG CARGO_BINSTALL_VERSION
 ENV CARGO_HOME=/usr/local/cargo \
@@ -52,15 +55,15 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     && curl -fsSL -o /tmp/binstall.tgz "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz" \
     && tar -xzf /tmp/binstall.tgz -C /usr/local/cargo/bin \
     && rm /tmp/binstall.tgz \
-    && rustup toolchain install stable --profile minimal \
+    && rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-analyzer \
     && rustup default stable \
-    && rustup toolchain install nightly --profile minimal --component miri \
-    && rustup component add rustfmt clippy rust-analyzer \
+    && rustup toolchain install nightly --profile minimal --component miri --component rustfmt --component clippy \
     && GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || echo "") && export GITHUB_TOKEN \
     && cargo install bindgen-cli --version "${BINDGEN_VERSION}" \
     && cargo binstall -y cargo-audit \
     && cargo binstall -y cargo-deny \
     && cargo binstall -y cargo-machete \
+    && cargo binstall -y cargo-tarpaulin@"${CARGO_TARPAULIN_VERSION}" \
     && cargo binstall -y mdbook@"${MDBOOK_VERSION}" \
     && cargo binstall -y mdbook-mermaid@"${MDBOOK_MERMAID_VERSION}" \
     && curl -sSL "https://github.com/HollowMan6/mdbook-pdf/releases/download/v${MDBOOK_PDF_VERSION}/mdbook-pdf-v${MDBOOK_PDF_VERSION}-$(uname -m)-unknown-linux-gnu" -o /usr/local/cargo/bin/mdbook-pdf \
@@ -144,13 +147,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y --no-install-recommends \
-    build-essential meson ninja-build python3 python3-venv python3-dev pkg-config \
+    build-essential cmake meson ninja-build python3 python3-venv python3-dev pkg-config \
     libglib2.0-dev libpixman-1-dev flex bison device-tree-compiler \
     libslirp-dev libclang-dev libssl-dev libstdc++6 b4 gdb gdb-multiarch strace \
     lcov gcovr patchelf clang-format clang ccache dwarves \
     gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     lld cppcheck codespell libsystemc-dev \
     libasan8 libubsan1 libtsan2 \
+    yamllint \
     && rm -rf /var/lib/apt/lists/*
 
 ARG ARM_TOOLCHAIN_VERSION
@@ -165,7 +169,6 @@ RUN case "${TARGETARCH}" in \
     && curl -fsSL "${_URL}/${_FILE}.tar.xz" | tar -xJ -C /opt \
     && ln -sf /opt/arm-gnu-toolchain-*/bin/* /usr/local/bin/
 
-ARG PYTHON_VERSION
 ARG ACTIONLINT_VERSION
 ARG HADOLINT_VERSION
 
@@ -178,8 +181,6 @@ RUN curl -fsSL --retry 3 "https://raw.githubusercontent.com/rhysd/actionlint/mai
     && curl -fsSL --retry 3 "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADO_ARCH}" -o /usr/local/bin/hadolint \
     && chmod +x /usr/local/bin/hadolint
 
-RUN uv python install ${PYTHON_VERSION}
-
 ARG FLATBUFFERS_VERSION
 RUN curl -fsSL --retry 3 -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
     && unzip /tmp/flatc.zip -d /usr/local/bin \
@@ -188,8 +189,9 @@ RUN curl -fsSL --retry 3 -o /tmp/flatc.zip "https://github.com/google/flatbuffer
 
 ARG CMAKE_VERSION
 ARG MESON_VERSION
+ARG YAMLLINT_VERSION
 ENV UV_LINK_MODE=copy
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} --break-system-packages
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system cmake==${CMAKE_VERSION} meson==${MESON_VERSION} yamllint==${YAMLLINT_VERSION} --break-system-packages
 
 # ── Stage 3: devenv ──────────────────────────────────────────────────────
 FROM toolchain AS devenv
@@ -199,11 +201,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install Chromium for mdbook-pdf headless rendering
 # hadolint ignore=DL3008
 RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*
-
-# Pre-install Python dependencies for the simulation tools
-COPY pyproject.toml requirements.txt /tmp/
-ENV UV_LINK_MODE=copy
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system --break-system-packages -r /tmp/pyproject.toml -r /tmp/requirements.txt
 
 ARG NODE_VERSION
 ARG TARGETARCH
@@ -225,6 +222,7 @@ COPY --from=rust-builder /usr/local/cargo/bin/bindgen /usr/local/bin/bindgen
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-audit /usr/local/bin/cargo-audit
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-deny /usr/local/bin/cargo-deny
 COPY --from=rust-builder /usr/local/cargo/bin/cargo-machete /usr/local/bin/cargo-machete
+COPY --from=rust-builder /usr/local/cargo/bin/cargo-tarpaulin /usr/local/bin/cargo-tarpaulin
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 COPY --from=rust-builder /usr/local/cargo/bin/mdbook-pdf /usr/local/bin/mdbook-pdf
@@ -262,11 +260,50 @@ RUN git clone --depth=1 --branch v${FLATCC_VERSION} https://github.com/dvidelabs
     -DCMAKE_C_FLAGS="-w" \
     && cmake --build build --target install
 
-# ── Stage 5: third-party-builder ─────────────────────────────────────────────────────
-FROM devenv AS third-party-builder
+# ── Stage 5: cli-builder ─────────────────────────────────────────────────────
+# This stage builds the virtmcu-cli utility used for patching QEMU.
+# It uses a dedicated cache mount for the Cargo target directory to ensure
+# that workspace changes only trigger fast incremental builds.
+FROM devenv AS cli-builder
+ARG TARGETARCH
+WORKDIR /workspace
+
+# Copy only the files needed for virtmcu-cli to avoid invalidating this stage on unrelated changes.
+COPY Cargo.toml Cargo.lock ./
+COPY tools/virtmcu-cli/ tools/virtmcu-cli/
+COPY tools/virtmcu-observability/ tools/virtmcu-observability/
+COPY tools/virtmcu-test-runner/ tools/virtmcu-test-runner/
+COPY hw/rust/common/ hw/rust/common/
+COPY tools/yaml2qemu/ tools/yaml2qemu/
+
+RUN sed -i '/^members = \[/,/^\]/d' Cargo.toml && \
+    sed -i '/^\[workspace\]/a members = [\n\
+    "tools/virtmcu-cli",\n\
+    "tools/virtmcu-observability",\n\
+    "tools/virtmcu-test-runner",\n\
+    "tools/yaml2qemu",\n\
+    "hw/rust/common/virtmcu-wire",\n\
+    "hw/rust/common/virtmcu-qom",\n\
+    "hw/rust/common/virtmcu-qom-macros",\n\
+    "hw/rust/common/test-qom-device",\n\
+    "hw/rust/common/virtmcu-test-devices",\n\
+    "hw/rust/common/virtmcu-zenoh-config",\n\
+]' Cargo.toml
+
+RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-target-cli-${TARGETARCH},target=/workspace/target \
+    CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build -p virtmcu-cli --release \
+    && cp target/release/virtmcu-cli /usr/local/bin/virtmcu-cli
+
+# ── Stage 6: qemu-base-builder ─────────────────────────────────────────────────────
+FROM devenv AS qemu-base-builder
+
+ARG TARGETARCH
+ENV ARCH=arm
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# 1. External dependencies (highly cached, independent of workspace changes)
 COPY --from=flatcc-builder /usr/local/bin/flatcc /usr/local/bin/
 COPY --from=flatcc-builder /usr/local/include/flatcc /usr/local/include/flatcc
 COPY --from=flatcc-builder /usr/local/lib/libflatcc* /usr/local/lib/
@@ -303,24 +340,12 @@ fi; \
 
 ARG QEMU_REPO
 ARG QEMU_REF
-ARG TARGETARCH
-ARG VIRTMCU_USE_ASAN=0
-
-ENV ARCH=arm
 WORKDIR /build
 RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
-COPY patches/ /build/patches/
-COPY BUILD_DEPS /build/
-RUN mkdir -p /build/scripts
-COPY scripts/apply-qemu-patches.sh scripts/common.sh /build/scripts/
-
-# Apply all patches using the centralized script
-RUN bash /build/scripts/apply-qemu-patches.sh /build/qemu
-
 # Pre-configure with a dummy virtmcu directory to cache the core build.
 # This ensures that changing files in hw/ only triggers a module rebuild.
-RUN mkdir -p qemu/hw/virtmcu \
+RUN rm -rf qemu/hw/virtmcu && mkdir -p qemu/hw/virtmcu \
     && echo "hw_virtmcu_modules = {}" > qemu/hw/virtmcu/meson.build \
     && echo "modules += {'hw-virtmcu': hw_virtmcu_modules}" >> qemu/hw/virtmcu/meson.build
 
@@ -355,20 +380,39 @@ RUN QEMU_CONF_FLAGS=( \
     fi
 RUN --mount=type=cache,target=/var/cache/ccache \
     VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
-# ── Stage 6: ci ──────────────────────────────────────────────────────────────
+
+# ── Stage 7: third-party-builder ─────────────────────────────────────────────────────
+FROM qemu-base-builder AS third-party-builder
+
+# 2. Project-specific tools and patches (The invalidation point for subsequent layers)
+COPY --from=cli-builder /usr/local/bin/virtmcu-cli /usr/local/bin/virtmcu-cli
+COPY patches/ /build/patches/
+COPY BUILD_DEPS /build/
+
+# 3. Patch and incrementally build QEMU
+WORKDIR /build
+RUN virtmcu-cli setup patch-qemu /build/qemu
+
+WORKDIR /build/qemu/build-virtmcu
+RUN --mount=type=cache,target=/var/cache/ccache \
+    VIRTMCU_USE_ASAN=${VIRTMCU_USE_ASAN} make -j"$(nproc)"
+
+# ── Stage 8: ci ──────────────────────────────────────────────────────────────
 FROM third-party-builder AS ci
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV PATH="/build/qemu/build-virtmcu/install/bin:${PATH}"
+ENV GCOV_PREFIX=/tmp
 
 COPY Cargo.toml Cargo.lock /build/virtmcu/
 COPY hw/ /build/virtmcu/hw/
 COPY tools/ /build/virtmcu/tools/
+COPY tests/ /build/virtmcu/tests/
+COPY schema/ /build/virtmcu/schema/
 RUN rm -rf /build/qemu/hw/virtmcu && ln -sf /build/virtmcu/hw /build/qemu/hw/virtmcu \
     && ln -sf /build/virtmcu/Cargo.toml /build/qemu/hw/Cargo.toml \
-    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock \
-    && touch /build/virtmcu/hw/meson.build /build/virtmcu/hw/rust/build.sh /build/virtmcu/hw/gen_trigger.sh
+    && ln -sf /build/virtmcu/Cargo.lock /build/qemu/hw/Cargo.lock
 WORKDIR /build/qemu/build-virtmcu
 ARG VIRTMCU_USE_ASAN=0
 ARG TARGETARCH
@@ -394,10 +438,11 @@ RUN --mount=type=cache,target=/var/cache/ccache \
     else \
         SRC_SUBDIR=""; \
     fi \
-    && cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
+    && CARGO_UNSTABLE_BINDEPS=true RUSTC_BOOTSTRAP=1 cargo build --release --manifest-path /build/virtmcu/Cargo.toml -p deterministic_coordinator -p cyber_bridge --target-dir /build/qemu/build-virtmcu/hw/virtmcu/target ${CARGO_BUILD_TARGET:+--target "$CARGO_BUILD_TARGET"} \
     && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/deterministic_coordinator" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/mujoco_bridge" /usr/local/bin/ \
-    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/resd_replay" /usr/local/bin/
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physical-node" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-physics-gateway" /usr/local/bin/ \
+    && cp "/build/qemu/build-virtmcu/hw/virtmcu/target/${SRC_SUBDIR}release/virtmcu-resd-replay" /usr/local/bin/
 
 # hadolint ignore=SC2016
 RUN mkdir -p /usr/local/lib/qemu/plugins \

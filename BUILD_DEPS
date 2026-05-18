@@ -34,8 +34,6 @@ FLATCC_VERSION=0.6.1
 SYSTEMC_VERSION=2.3.3
 LIBSYSTEMCTLM_SOC_COMMIT=7aba4f60e382581060c982976010674c33bdc442
 
-# Python requirements are managed in requirements.txt (must match ZENOH_VERSION)
-
 # Debian base image codename — single-line upgrade path
 DEBIAN_CODENAME=trixie
 
@@ -43,27 +41,19 @@ DEBIAN_CODENAME=trixie
 NODE_VERSION=24
 NPM_VERSION=11.14.1
 
-# Python version — pinned via uv, independent of OS default
-PYTHON_VERSION=3.13
-
 # ARM GNU Toolchain — downloaded from developer.arm.com official releases
 # Pinned independently of Debian apt to guarantee cross-compiler reproducibility.
-# Binary fidelity (ADR-006) requires the toolchain to be bit-for-bit stable.
+# Binary fidelity (RFC-0006) requires the toolchain to be bit-for-bit stable.
 ARM_TOOLCHAIN_VERSION=13.3.rel1
 
 # CI Tooling
 HADOLINT_VERSION=2.14.0
 ACTIONLINT_VERSION=1.7.12
+YAMLLINT_VERSION=1.37.1
 MDBOOK_VERSION=0.4.52
 MDBOOK_MERMAID_VERSION=0.17.0
 MDBOOK_PDF_VERSION=0.1.13
-
-# Python Testing Framework
-PYTEST_VERSION=8.3.4
-PYTEST_ASYNCIO_VERSION=1.3.0
-
-# Python package manager (pinned for deterministic environment resolution)
-UV_VERSION=0.11.10
+CARGO_TARPAULIN_VERSION=0.35.4
 
 # Cargo binary installer (pinned to prevent silent installer updates)
 CARGO_BINSTALL_VERSION=1.10.4

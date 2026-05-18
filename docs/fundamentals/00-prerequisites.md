@@ -18,9 +18,9 @@ The core of the VirtMCU peripheral subsystem is migrating to Rust. You will be w
 You must understand what a process, a thread, and a mutex are. VirtMCU relies heavily on multi-threaded execution and synchronization.
 *   **Canonical Reference:** *Operating Systems: Three Easy Pieces* (OSTEP) by Arpaci-Dusseau. Read §1–§5 (Virtualization and Concurrency).
 
-### Python & Scripting
-Our orchestration, testing, and tooling layers are built in Python.
-*   **Baseline:** Familiarity with `asyncio`, `pytest`, and basic data manipulation.
+### Rust & Orchestration
+Our orchestration, testing, and tooling layers are built in Rust.
+*   **Baseline:** Familiarity with `tokio`, `virtmcu-test-runner` library, and Cargo workspace management.
 
 ### Toolchain & Version Control
 We use `git`, `make`, `meson`, and `ninja`.
@@ -36,7 +36,7 @@ If you are coming from:
 ## 0.3 Exercises
 
 ### Exercise 0.1: Environment Check
-Run `make setup` in your devcontainer. Ensure you can build the project and run `make dev-check`. If this fails, revisit the Laboratory Setup guide.
+Run `make setup` in your devcontainer. Ensure you can build the project and run `make test-check`. If this fails, revisit the Laboratory Setup guide.
 
 ### Exercise 0.2: C Pointer Review
 Write a small C program that simulates a simple vtable: a struct `Device` containing a function pointer `write`. Instantiate two "objects" with different `write` implementations.

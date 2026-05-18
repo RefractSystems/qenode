@@ -94,16 +94,19 @@ allow-workspace = false
 deny = [
     { name = "lz4_flex", wrappers = ["zenoh-transport"] },
     { name = "rsa", wrappers = ["zenoh-transport"] },
-    { name = "paste", wrappers = ["token-cell"] },
+    { name = "paste", wrappers = ["token-cell", "virtmcu-qom", "reference_peripheral", "mcap"] },
     { name = "rustls-pemfile", wrappers = ["zenoh-link-commons", "zenoh-link-tls"] }
 ]
 skip = [
     { name = "strsim" },
+    { name = "bit-vec" },
     { name = "foldhash" },
     { name = "getrandom" },
     { name = "hashbrown" },
+    { name = "indexmap" },
     { name = "itertools" },
     { name = "r-efi" },
+    { name = "nix" },
     { name = "rand" },
     { name = "rand_chacha" },
     { name = "rand_core" },
@@ -115,6 +118,7 @@ skip = [
     { name = "syn" },
     { name = "thiserror" },
     { name = "thiserror-impl" },
+    { name = "tower" },
     { name = "windows-sys" },
     { name = "windows-targets" },
     { name = "windows_aarch64_gnullvm" },
@@ -126,6 +130,9 @@ skip = [
     { name = "windows_x86_64_gnullvm" },
     { name = "windows_x86_64_msvc" },
     { name = "wit-bindgen" },
+    { name = "darling" },
+    { name = "darling_core" },
+    { name = "darling_macro" },
 ]
 skip-tree = []
 

@@ -1,0 +1,20 @@
+[package]
+name = "transport-uds"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+standalone = ["virtmcu-qom/standalone"]
+
+[dependencies]
+virtmcu-wire.workspace = true
+virtmcu-qom.workspace = true
+
+[dev-dependencies]
+tempfile = "3.3"
+
+[package.metadata.cargo-machete]
+ignored = ["zenoh", "transport-zenoh", "transport-uds", "serde", "serde_json", "tracing", "virtmcu-qom"]

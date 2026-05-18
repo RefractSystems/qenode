@@ -13,9 +13,8 @@ workspace = true
 zenoh.workspace = true
 virtmcu-qom.workspace = true
 transport-zenoh.workspace = true
-transport-unix.workspace = true
-virtmcu-api.workspace = true
+transport-uds.workspace = true
+virtmcu-wire.workspace = true
 flatbuffers = { workspace = true }
-crossbeam-channel = "0.5"
 [package.metadata.cargo-machete]
-ignored = ["zenoh", "transport-zenoh", "transport-unix", "serde", "serde_json", "tracing", "virtmcu-qom"]
+ignored = ["zenoh", "transport-zenoh", "transport-uds", "serde", "serde_json", "tracing", "virtmcu-qom"]

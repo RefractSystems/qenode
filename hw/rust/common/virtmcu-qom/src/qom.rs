@@ -1,7 +1,114 @@
+use alloc::string::String;
 use core::ffi::{c_char, c_int, c_void};
+
+/// A safe wrapper for QOM string properties, encapsulating raw UTF-8 C strings.
+#[repr(transparent)]
+pub struct QomString(pub *mut c_char);
+
+impl Default for QomString {
+    fn default() -> Self {
+        Self(core::ptr::null_mut())
+    }
+}
+
+impl From<&'static core::ffi::CStr> for QomString {
+    fn from(s: &'static core::ffi::CStr) -> Self {
+        Self(s.as_ptr().cast_mut())
+    }
+}
+
+impl QomString {
+    /// Safely converts the QOM string to a Rust String.
+    /// Returns an empty string if the underlying pointer is null.
+    pub fn as_string(&self) -> String {
+        if self.0.is_null() {
+            String::new()
+        } else {
+            let mut len = 0;
+            while unsafe { *self.0.add(len) } != 0 {
+                len += 1;
+            }
+            let slice = unsafe { core::slice::from_raw_parts(self.0.cast::<u8>(), len) };
+            // Enforce crash-only design on invalid UTF encoding (Fail Loudly mandate)
+            alloc::string::String::from_utf8(slice.to_vec())
+                .expect("QOM property string contains invalid UTF encoding")
+        }
+    }
+
+    /// Safely returns the QOM string as a borrowed string slice.
+    /// Returns an empty string slice if the underlying pointer is null.
+    pub fn as_str(&self) -> &str {
+        if self.0.is_null() {
+            ""
+        } else {
+            let mut len = 0;
+            while unsafe { *self.0.add(len) } != 0 {
+                len += 1;
+            }
+            let slice = unsafe { core::slice::from_raw_parts(self.0.cast::<u8>(), len) };
+            // Enforce crash-only design on invalid UTF encoding (Fail Loudly mandate)
+            core::str::from_utf8(slice).expect("QOM property string contains invalid UTF encoding")
+        }
+    }
+
+    /// Checks if the underlying string is null.
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+}
+
+// SAFETY: QomString wraps a property pointer initialized by QEMU.
+unsafe impl Send for QomString {}
+unsafe impl Sync for QomString {}
 
 /// A constant
 pub const LOG_UNIMP: i32 = 0x400;
+
+use alloc::sync::Arc;
+use core::marker::PhantomData;
+
+/// A safe wrapper for a QOM Link property (Dependency Injection).
+/// This replaces manual pointer management and unsafe casts.
+#[repr(transparent)]
+pub struct QomLink<T: ?Sized> {
+    /// The underlying QOM object pointer.
+    pub obj: *mut Object,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: ?Sized> QomLink<T> {
+    /// Returns the linked object as a safe Rust trait reference.
+    /// This assumes the linked object is a VirtMCU hub that exposes a pointer to the trait.
+    pub fn get(&self) -> Option<Arc<T>> {
+        if self.obj.is_null() {
+            return None;
+        }
+
+        // Standard VirtMCU pattern: Hubs expose a 'transport_ptr' or similar.
+        // Note: RFC-0023 proposes generalizing this. For Step 2, we encapsulate
+        // the existing 'transport_ptr' logic used by the transport-hub.
+        let mut err: *mut crate::error::Error = core::ptr::null_mut();
+        let ptr_u64 =
+            unsafe { object_property_get_uint(self.obj, c"transport_ptr".as_ptr(), &mut err) };
+
+        if ptr_u64 == 0 {
+            return None;
+        }
+
+        // SAFETY: We trust the Hub that it put a valid Arc<T> at this address.
+        // This is still internally unsafe but encapsulated within the framework.
+        let trait_ref = unsafe { &*(ptr_u64 as *const Arc<T>) };
+        Some(Arc::clone(trait_ref))
+    }
+
+    /// Returns true if the link is not null.
+    pub fn is_linked(&self) -> bool {
+        !self.obj.is_null()
+    }
+}
+
+unsafe impl<T: ?Sized> Send for QomLink<T> {}
+unsafe impl<T: ?Sized> Sync for QomLink<T> {}
 
 extern "C" {
     /// A function
@@ -273,4 +380,49 @@ macro_rules! declare_device_type {
             wrapper
         };
     };
+}
+
+/// Compile-time marker for QOM device types. Implemented automatically by
+/// `#[qom_device]` — do not implement manually in peripheral code.
+pub trait QomDevice {
+    /// The canonical QOM type name for this device, represented as a null-terminated C string.
+    const QOM_TYPE_NAME: &'static core::ffi::CStr;
+}
+
+/// Downcasts a raw QOM pointer using QEMU's dynamic type system.
+/// Returns `None` on null input or type mismatch; never blindly reinterprets memory.
+///
+/// The caller must still write `unsafe { ptr.as_mut() }` to dereference —
+/// lifetime binding is the caller's responsibility.
+pub fn dynamic_cast_qom<T: QomDevice>(
+    ptr: *mut core::ffi::c_void,
+) -> Option<core::ptr::NonNull<T>> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is non-null; object_dynamic_cast validates the type chain in QEMU.
+    let result = unsafe { object_dynamic_cast(ptr as *mut Object, T::QOM_TYPE_NAME.as_ptr()) };
+    core::ptr::NonNull::new(result as *mut T)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeDevice;
+    impl QomDevice for FakeDevice {
+        const QOM_TYPE_NAME: &'static core::ffi::CStr = c"fake-device";
+    }
+
+    #[test]
+    fn test_dynamic_cast_qom_null_returns_none() {
+        let result = dynamic_cast_qom::<FakeDevice>(core::ptr::null_mut());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_qom_type_name_constant() {
+        // Compile-time: verify the constant is accessible and correct.
+        assert_eq!(FakeDevice::QOM_TYPE_NAME.to_bytes(), b"fake-device");
+    }
 }

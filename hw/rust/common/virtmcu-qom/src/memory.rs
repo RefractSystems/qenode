@@ -57,13 +57,17 @@ pub struct MemoryRegionImplRange {
     pub _padding: [u8; 7],
 }
 
-#[repr(C, align(16))]
+const QEMU_MEMORY_REGION_SIZE: usize = 272;
+const OBJECT_SIZE: usize = 40;
+
+const _: () = ();
+#[repr(C, align(16))] // virtmcu-allow: align requirements
 /// A struct
 pub struct MemoryRegion {
     /// A struct field
     pub parent_obj: Object,
     /// A struct field
-    pub _opaque: [u8; 272 - 40], // Pad to 272 bytes
+    pub _opaque: [u8; QEMU_MEMORY_REGION_SIZE - OBJECT_SIZE], // Pad to 272 bytes
 }
 
 /// A constant

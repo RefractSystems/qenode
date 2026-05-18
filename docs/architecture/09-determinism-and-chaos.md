@@ -28,14 +28,14 @@ This ensures that even if Node A's messages arrive at the host CPU before Node B
 
 To maintain causal integrity, VirtMCU uses the **synchronization barrier protocol** (first introduced in the Temporal Core) that prevents "clock drift" between the physics engine and the emulated nodes.
 
-1.  **TA Advance**: TimeAuthority (TA) requests a clock advance.
+1.  **PN Advance**: Physical Node (PN) requests a clock advance.
 2.  **Execution**: Nodes run their firmware for the requested quantum $Q$.
 3.  **Completion**: Nodes send outbound messages and a `done` signal to the coordinator.
 4.  **Barrier Wait**: The coordinator waits for all nodes to finish quantum $Q$.
 5.  **Delivery**: The coordinator sorts and delivers all buffered messages.
 6.  **Release**: The coordinator signals `start` for the next quantum $Q+1$.
-7.  **Clock Ack**: The node's clock device releases the reply back to the TA.
-8.  **Progression**: The TA advances the simulation to $Q+1$.
+7.  **Clock Ack**: The node's clock device releases the reply back to the PN.
+8.  **Progression**: The PN advances the simulation to $Q+1$.
 
 This barrier ensures that firmware in quantum $Q+1$ **always** sees all messages sent by its peers in quantum $Q$.
 

@@ -6,7 +6,7 @@
 #
 # Usage:
 #   docker compose -f docker/docker-compose.yml up
-#   docker compose -f docker/docker-compose.yml -f worlds/pendulum.yml up
+#   docker compose -f docker/docker-compose.yml -f worlds/pendulum_controller.yml up
 
 services:
 
@@ -20,7 +20,7 @@ services:
     networks:
       - virtmcu-net
     healthcheck:
-      test: ["CMD", "sh", "-c", "echo > /dev/tcp/localhost/7447"]
+      test: ["CMD", "nc", "-z", "localhost", "7447"]
       interval: 2s
       timeout: 3s
       retries: 10
@@ -37,12 +37,16 @@ services:
     environment:
       ZENOH_ROUTER: tcp/zenoh-router:7447
       NODE_ID: "0"
+      VIRTMCU_USE_PREBUILT_QEMU: "1"
+      RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
     volumes:
       # Mount firmware from outside if needed:
       # - ../firmware:/app/firmware:ro
       # Mount tools for live development:
       - ../tools:/app/tools:ro
-      - ../test:/app/test:ro
+      - ../tests:/app/tests:ro
+      - ../target:/app/target:ro
       - ../scripts:/app/scripts:ro
     depends_on:
       zenoh-router:
@@ -51,8 +55,65 @@ services:
     # has no meaningful firmware; the clock hook fires at the first TB
     # boundary and blocks the vCPU waiting for a clock advance. Overlays (like
     # pendulum.yml) should override this command to supply a -kernel.
-    command: ["/app/scripts/run.sh", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "clock,mode=suspend,node=0"]
+    command: ["/app/target/release/virtmcu-run", "--dtb", "/app/tests/fixtures/guest_apps/boot_arm/minimal.dtb", "-device", "virtmcu-clock,mode=suspend,node=0,router=tcp/zenoh-router:7447,federation_id=compose-run"]
     tty: true
+
+  # ── 3. Deterministic Coordinator ──────────────────────────────────────────
+  deterministic-coordinator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    networks:
+      - virtmcu-net
+    environment:
+      ZENOH_CONNECT: tcp/zenoh-router:7447
+      RUST_LOG: info
+      VIRTMCU_FEDERATION_ID: "compose-run"
+    volumes:
+      - ../target:/app/target:ro
+    command: ["/app/target/release/virtmcu-coord", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]
+    depends_on:
+      zenoh-router:
+        condition: service_healthy
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+    networks:
+      - virtmcu-net
+    depends_on:
+      - loki
+      - tempo
+
+  loki:
+    image: grafana/loki:3.0.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    networks:
+      - virtmcu-net
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    networks:
+      - virtmcu-net
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    networks:
+      - virtmcu-net
+    depends_on:
+      - loki
+      - tempo
 
 networks:
   virtmcu-net:

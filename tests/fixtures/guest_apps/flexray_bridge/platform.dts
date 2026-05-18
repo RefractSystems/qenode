@@ -24,9 +24,16 @@
             memory = <0x01>;
         };
     };
+    hub0: virtmcu-transport-hub {
+        compatible = "virtmcu-transport-hub";
+        router = "{ROUTER_ENDPOINT}";
+    };
     flexray@9003000 {
         compatible = "flexray";
         reg = <0x0 0x09003000 0x0 0x4000>;
+        transport = <&hub0>;
+        topic = "{FLEXRAY_TOPIC}";
+        debug = <1>;
         container = <1>;
     };
     pl011@9000000 {

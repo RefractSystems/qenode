@@ -25,7 +25,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  PYTHON_VERSION: "3.13"
   VIRTMCU_STALL_TIMEOUT_MS: "120000"
   CI: "true"
 
@@ -178,19 +177,17 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
+            -e VIRTMCU_CI_IMAGE \
+            -e VIRTMCU_DEVENV_IMAGE \
             ${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }} \
             bash -c '
               set -e
               echo "::group::Static Analysis (Lint)"
-              make dev-lint
-              echo "::endgroup::"
-
-              echo "::group::Build Packaging Tools"
-              make build-tools
+              make test-lint
               echo "::endgroup::"
 
               echo "::group::Unit Tests"
-              make dev-unit
+              make test-unit
               echo "::endgroup::"
             '
 
@@ -205,8 +202,10 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e USER=vscode \
             -e CARGO_TARGET_DIR=/tmp/ci-target \
+            -e VIRTMCU_CI_IMAGE \
+            -e VIRTMCU_DEVENV_IMAGE \
             ${{ env.VIRTMCU_DEVENV_IMAGE }}:${{ github.sha }} \
-            make dev-unit-coverage
+            make test-unit-coverage
 
       - name: Upload Unit Coverage
         uses: actions/upload-artifact@v4
@@ -335,8 +334,14 @@ jobs:
       - name: Create and push manifest — rust-builder
         run: |
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
+          ANNOTATIONS=()
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              ANNOTATIONS+=("--annotation" "index:$line")
+            fi
+          done <<< "${{ steps.meta.outputs.labels }}"
           # shellcheck disable=SC2086
-          docker buildx imagetools create ${TAGS} \
+          docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-amd64 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/rust-builder:sha-${{ github.sha }}-arm64
 
@@ -376,8 +381,14 @@ jobs:
       - name: Create and push manifest — flatcc-builder
         run: |
           TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
+          ANNOTATIONS=()
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              ANNOTATIONS+=("--annotation" "index:$line")
+            fi
+          done <<< "${{ steps.meta.outputs.labels }}"
           # shellcheck disable=SC2086
-          docker buildx imagetools create ${TAGS} \
+          docker buildx imagetools create ${TAGS} "${ANNOTATIONS[@]}" \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-amd64 \
             ${{ env.VIRTMCU_IMAGE_REGISTRY }}/flatcc-builder:sha-${{ github.sha }}-arm64
 
@@ -436,10 +447,9 @@ jobs:
           PUSH_CACHE: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           THIRD_PARTY_CACHE_TAG: ${{ env.THIRD_PARTY_CACHE_TAG }}
+          QEMU_VERSION: ${{ env.QEMU_VERSION }}
         with:
-          targets: |
-            ${{ matrix.sanitizer == 'standard' && 'third-party-base' || 'third-party-base-asan' }}
-            ${{ matrix.sanitizer == 'standard' && 'ci' || 'ci-asan' }}
+          targets: ${{ matrix.sanitizer == 'standard' && 'qemu-base-builder,third-party-base,ci' || 'qemu-base-builder-asan,third-party-base-asan,ci-asan' }}
           push: true
           files: |
             docker-bake.hcl
@@ -704,7 +714,7 @@ jobs:
             -e GCOV_PREFIX=/workspace/coverage-data \
             -e GCOV_PREFIX_STRIP=3 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-integration.sh ${{ matrix.domain }}
+            make test-integration DOMAIN=${{ matrix.domain }}
 
       - name: Upload results and coverage
         uses: actions/upload-artifact@v4
@@ -763,7 +773,7 @@ jobs:
             -e USER=vscode \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-peripheral-coverage.sh
+            make test-peripheral-coverage
 
       - name: Upload peripheral coverage results
         uses: actions/upload-artifact@v4
@@ -809,10 +819,9 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -e GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
-            -e PYTHONPATH=/workspace:/workspace/generated \
             -e VIRTMCU_STALL_TIMEOUT_MS \
             -e VIRTMCU_USE_PREBUILT_QEMU=1 \
             ${{ env.VIRTMCU_CI_IMAGE }}:${{ github.sha }} \
-            bash scripts/testing/run-integration-coverage.sh
+            make test-integration-coverage
 
 # ── Tier 6: Publish Runtime (after validation) ──────────────────────────────

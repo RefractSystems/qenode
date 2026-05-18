@@ -1,4 +1,6 @@
-#[repr(C, align(8))]
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+const _: () = ();
+#[repr(C, align(8))] // virtmcu-allow: align requirements
 /// A struct
 pub struct QemuMutex {
     _opaque: [u8; 64],
@@ -8,7 +10,8 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 
-#[repr(C, align(8))]
+const _: () = ();
+#[repr(C, align(8))] // virtmcu-allow: align requirements
 /// A struct
 pub struct QemuCond {
     _opaque: [u8; 56],
@@ -62,6 +65,7 @@ extern "C" {
 
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
 mod mock {
+    #![allow(clippy::wildcard_imports)] // virtmcu-allow: allow reasoning="Mocking framework requires wildcard imports for test setup"
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Condvar, Mutex};
@@ -589,11 +593,10 @@ impl<T> BqlGuarded<T> {
 
     /// Returns a shared reference guard.
     ///
-    /// Debug-asserts that BQL is held. Panics if already mutably borrowed.
+    /// Panics if already mutably borrowed.
     #[inline]
     #[track_caller]
-    pub fn get(&self) -> BqlReadGuard<'_, T> {
-        debug_assert!(Bql::is_held(), "BqlGuarded::get() called without BQL");
+    pub fn get<'a>(&'a self, _ctx: &'a crate::device::BqlContext) -> BqlReadGuard<'a, T> {
         loop {
             let b = self.borrow_count.load(core::sync::atomic::Ordering::Acquire);
             assert!(b >= 0, "BqlGuarded: already mutably borrowed!");
@@ -615,11 +618,10 @@ impl<T> BqlGuarded<T> {
 
     /// Returns a mutable reference guard.
     ///
-    /// Debug-asserts that BQL is held. Panics if already borrowed.
+    /// Panics if already borrowed.
     #[inline]
     #[track_caller]
-    pub fn get_mut(&self) -> BqlWriteGuard<'_, T> {
-        debug_assert!(Bql::is_held(), "BqlGuarded::get_mut() called without BQL");
+    pub fn get_mut<'a>(&'a self, _ctx: &'a crate::device::BqlContext) -> BqlWriteGuard<'a, T> {
         assert!(
             self.borrow_count
                 .compare_exchange(
@@ -635,14 +637,14 @@ impl<T> BqlGuarded<T> {
     }
 }
 
-use crate::timer::{QomTimer, QEMU_CLOCK_REALTIME};
+use crate::timer::QomTimer;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crossbeam_channel::{unbounded, Receiver};
-use virtmcu_api::{DataCallback, DataTransport};
+use virtmcu_wire::{DataCallback, DataTransport};
 
 struct SubscriptionInternal {
     callback: DataCallback,
-    rx: Receiver<alloc::vec::Vec<u8>>,
+    rx: Receiver<(String, alloc::vec::Vec<u8>)>,
     is_valid: Arc<AtomicBool>,
     active_count: Arc<AtomicUsize>,
     drain_cond: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
@@ -660,12 +662,13 @@ extern "C" fn safe_subscription_timer_cb(opaque: *mut core::ffi::c_void) {
         // We do NOT acquire it here to avoid premature unlocking when the guard is dropped.
 
         // Drain the queue
-        while let Ok(payload) = internal.rx.try_recv() {
+        while let Ok((topic, payload)) = internal.rx.try_recv() {
             // Re-check validity.
             if internal.is_valid.load(Ordering::Acquire)
                 && internal.generation.load(Ordering::Acquire) == internal.expected_generation
             {
-                (internal.callback)(&payload);
+                crate::vlog!("[SafeSubscription] Calling callback for topic: {}\n", topic);
+                (internal.callback)(&topic, &payload);
             }
         }
     }
@@ -724,7 +727,7 @@ impl SafeSubscription {
         // SAFETY: We are creating a timer during device realization/init which holds BQL.
         let timer = unsafe {
             QomTimer::new(
-                QEMU_CLOCK_REALTIME,
+                crate::timer::QEMU_CLOCK_REALTIME,
                 safe_subscription_timer_cb,
                 Arc::as_ptr(&timer_internal) as *mut core::ffi::c_void,
             )
@@ -733,8 +736,11 @@ impl SafeSubscription {
         let timer_clone = Arc::new(timer);
         let timer_kick = Arc::clone(&timer_clone);
         let valid_clone = Arc::clone(&is_valid);
-        let wrapper_callback: DataCallback = Box::new(move |payload| {
-            if valid_clone.load(Ordering::Acquire) && tx.send(payload.to_vec()).is_ok() {
+        let wrapper_callback: DataCallback = Box::new(move |topic: &str, payload: &[u8]| {
+            crate::vlog!("[SafeSubscription] Received Zenoh message on topic: {}\n", topic);
+            if valid_clone.load(Ordering::Acquire)
+                && tx.send((topic.to_owned(), payload.to_vec())).is_ok()
+            {
                 timer_kick.kick();
             }
         });
@@ -1068,17 +1074,16 @@ impl VcpuDrain {
             )
             .unwrap_or(i64::MAX);
             let elapsed_ns = now_ns.saturating_sub(start_ns);
-            if elapsed_ns >= limit_ns {
-                crate::sim_err!(
-                    "VcpuDrain timed out after {} ms with {} vCPUs still active",
-                    timeout_ms,
-                    *count
-                );
-                break;
-            }
+            assert!(
+                elapsed_ns < limit_ns,
+                "VcpuDrain timed out after {} ms with {} vCPUs still active — \
+                 peripheral teardown is unsafe, aborting",
+                timeout_ms,
+                *count
+            );
 
             let remaining_ms =
-                u32::try_from((limit_ns - elapsed_ns) / 1_000_000).unwrap_or(u32::MAX);
+                u32::try_from((limit_ns - elapsed_ns) / 1_000_000).expect("Invalid data format");
             let (new_count, _) = self.cond.wait_yielding_bql(count, remaining_ms);
             count = new_count;
         }
@@ -1105,6 +1110,231 @@ impl Drop for VcpuDrainGuard<'_> {
         }
     }
 }
+
+/// Trait for packets delivered by a VtimeIngress.
+pub trait DeliveryPacket: Ord + Send + 'static {
+    /// Returns the virtual time in nanoseconds when this packet should be delivered.
+    fn delivery_vtime_ns(&self) -> u64;
+}
+
+/// Internal state for VtimeIngress.
+pub struct ReceiverInternal<T: DeliveryPacket> {
+    queue: BqlGuarded<alloc::collections::BinaryHeap<core::cmp::Reverse<T>>>,
+    deliver_cb: BqlGuarded<alloc::boxed::Box<dyn FnMut(T) + Send + Sync + 'static>>,
+    timer_ptr: core::sync::atomic::AtomicUsize,
+}
+
+// SAFETY: ReceiverInternal is only used under BQL for queue mutation (via BqlGuarded)
+// and deliver_cb executes under BQL.
+unsafe impl<T: DeliveryPacket> Send for ReceiverInternal<T> {}
+unsafe impl<T: DeliveryPacket> Sync for ReceiverInternal<T> {}
+
+/// A generic receiver that queues Zenoh packets and delivers them at the correct virtual time.
+pub struct VtimeIngress<T: DeliveryPacket> {
+    internal: alloc::sync::Arc<ReceiverInternal<T>>,
+    _subscription: SafeSubscription,
+    _timer: alloc::sync::Arc<crate::timer::QomTimer>,
+}
+
+impl<T: DeliveryPacket> VtimeIngress<T> {
+    /// Creates a new `VtimeIngress` safely using closures, bound to a specific link ID.
+    pub fn new_for_link<TR: virtmcu_wire::DataTransport + ?Sized, FDecode, FDeliver>(
+        transport: &TR,
+        link_id: u32,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        decode_cb: FDecode,
+        deliver_cb: FDeliver,
+    ) -> Result<Self, alloc::string::String>
+    where
+        FDecode: Fn(&str, u64, u64, &[u8]) -> Option<T> + Send + Sync + 'static,
+        FDeliver: FnMut(T) + Send + Sync + 'static,
+    {
+        let topic = alloc::format!("sim/ch/{link_id}");
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
+        Self::new_safe(
+            transport,
+            &topic,
+            generation,
+            move |t, p| {
+                // Binary delivery frame: [link_id:4][src_node_id:4][vtime:8][seq:8][payload_len:4][payload:N]
+                // Header is exactly 28 bytes; payload starts at offset 28.
+                const HDR: usize = 28;
+                const VTIME_OFFSET: usize = 8;
+                const SEQ_OFFSET: usize = 16;
+                const LEN_OFFSET: usize = 24;
+                if p.len() >= HDR {
+                    let vtime = u64::from_le_bytes(
+                        p[VTIME_OFFSET..SEQ_OFFSET].try_into().expect("frame size mismatch"),
+                    );
+                    let seq = u64::from_le_bytes(
+                        p[SEQ_OFFSET..LEN_OFFSET].try_into().expect("frame size mismatch"),
+                    );
+                    let len = u32::from_le_bytes(
+                        p[LEN_OFFSET..HDR].try_into().expect("frame size mismatch"),
+                    ) as usize;
+                    if p.len() >= HDR + len {
+                        return decode_cb(t, vtime, seq, &p[HDR..HDR + len]);
+                    }
+                }
+                None
+            },
+            deliver_cb,
+        )
+    }
+
+    /// Creates a new `VtimeIngress` (Legacy API).
+    #[deprecated(since = "0.3.0", note = "use new_for_link() instead")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
+    pub fn new<TR: virtmcu_wire::DataTransport + ?Sized>(
+        transport: &TR,
+        topic: &str,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        opaque: *mut core::ffi::c_void,
+        decode_cb: fn(*mut core::ffi::c_void, &str, &[u8]) -> Option<T>,
+        deliver_cb: fn(*mut core::ffi::c_void, T),
+    ) -> Result<Self, alloc::string::String> {
+        #[derive(Copy, Clone)]
+        struct SyncPtr(*mut core::ffi::c_void);
+        unsafe impl Send for SyncPtr {}
+        unsafe impl Sync for SyncPtr {}
+        impl SyncPtr {
+            fn get(self) -> *mut core::ffi::c_void {
+                self.0
+            }
+        }
+
+        let decode_opaque = SyncPtr(opaque);
+        let deliver_opaque = SyncPtr(opaque);
+
+        #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
+        Self::new_safe(
+            transport,
+            topic,
+            generation,
+            move |t, p| decode_cb(decode_opaque.get(), t, p),
+            move |packet| deliver_cb(deliver_opaque.get(), packet),
+        )
+    }
+
+    /// Creates a new `VtimeIngress` safely using closures.
+    #[deprecated(since = "0.3.0", note = "use new_for_link() instead")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
+    pub fn new_safe<TR: virtmcu_wire::DataTransport + ?Sized, FDecode, FDeliver>(
+        transport: &TR,
+        topic: &str,
+        generation: alloc::sync::Arc<core::sync::atomic::AtomicU64>,
+        decode_cb: FDecode,
+        deliver_cb: FDeliver,
+    ) -> Result<Self, alloc::string::String>
+    where
+        FDecode: Fn(&str, &[u8]) -> Option<T> + Send + Sync + 'static,
+        FDeliver: FnMut(T) + Send + Sync + 'static,
+    {
+        let internal = alloc::sync::Arc::new(ReceiverInternal {
+            queue: BqlGuarded::new(alloc::collections::BinaryHeap::new()),
+            deliver_cb: BqlGuarded::new(alloc::boxed::Box::new(deliver_cb)),
+            timer_ptr: core::sync::atomic::AtomicUsize::new(0),
+        });
+
+        let timer_internal = alloc::sync::Arc::clone(&internal);
+        let timer = alloc::sync::Arc::new(unsafe {
+            crate::timer::QomTimer::new(
+                crate::timer::QEMU_CLOCK_VIRTUAL,
+                vtime_ingress_timer_cb::<T>,
+                alloc::sync::Arc::into_raw(timer_internal) as *mut core::ffi::c_void,
+            )
+        });
+
+        internal.timer_ptr.store(
+            alloc::sync::Arc::as_ptr(&timer) as usize,
+            core::sync::atomic::Ordering::Release,
+        );
+
+        let sub_internal = alloc::sync::Arc::clone(&internal);
+        let sub_timer = alloc::sync::Arc::clone(&timer);
+        let callback: virtmcu_wire::DataCallback =
+            alloc::boxed::Box::new(move |topic_str: &str, payload: &[u8]| {
+                if let Some(packet) = decode_cb(topic_str, payload) {
+                    // SAFETY: This closure is only called from safe_subscription_timer_cb, which runs under BQL.
+                    let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+                    let mut queue = sub_internal.queue.get_mut(&ctx);
+                    queue.push(core::cmp::Reverse(packet));
+                    if let Some(core::cmp::Reverse(first)) = queue.peek() {
+                        sub_timer.mod_ns(first.delivery_vtime_ns() as i64);
+                    }
+                }
+            });
+
+        // virtmcu-allow: bql reasoning="Safe Zenoh integration via SafeSubscription"
+        let subscription = SafeSubscription::new(transport, topic, generation, callback)?;
+
+        // Fields are dropped in declaration order: _subscription, then _timer.
+        Ok(Self { internal, _subscription: subscription, _timer: timer })
+    }
+
+    /// Pushes a new packet into the priority queue and updates the virtual timer.
+    pub fn push(&self, packet: T, ctx: &crate::device::BqlContext) {
+        let mut queue = self.internal.queue.get_mut(ctx);
+        queue.push(core::cmp::Reverse(packet));
+        if let Some(core::cmp::Reverse(first)) = queue.peek() {
+            let timer_ptr = self.internal.timer_ptr.load(core::sync::atomic::Ordering::Acquire)
+                as *const crate::timer::QomTimer;
+            if !timer_ptr.is_null() {
+                unsafe { (*timer_ptr).mod_ns(first.delivery_vtime_ns() as i64) };
+            }
+        }
+    }
+}
+
+extern "C" fn vtime_ingress_timer_cb<T: DeliveryPacket>(opaque: *mut core::ffi::c_void) {
+    // SAFETY: QEMU fires timer callbacks with BQL held.
+    let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+    let internal = unsafe { &*(opaque as *const ReceiverInternal<T>) };
+    let now = unsafe { crate::timer::qemu_clock_get_ns(crate::timer::QEMU_CLOCK_VIRTUAL) } as u64;
+
+    loop {
+        let mut queue = internal.queue.get_mut(&ctx);
+        if let Some(core::cmp::Reverse(first)) = queue.peek() {
+            if first.delivery_vtime_ns() <= now {
+                let core::cmp::Reverse(packet) = queue.pop().expect("queue is not empty");
+                drop(queue);
+                let mut cb = internal.deliver_cb.get_mut(&ctx);
+                (*cb)(packet);
+                continue;
+            }
+
+            let next_vtime = first.delivery_vtime_ns();
+            drop(queue);
+            let timer_ptr = internal.timer_ptr.load(core::sync::atomic::Ordering::Acquire)
+                as *const crate::timer::QomTimer;
+            if !timer_ptr.is_null() {
+                unsafe { (*timer_ptr).mod_ns(next_vtime as i64) };
+            }
+            break;
+        }
+        break;
+    }
+}
+
+impl<T: DeliveryPacket> Drop for VtimeIngress<T> {
+    fn drop(&mut self) {
+        // Disconnect the timer
+        self.internal.timer_ptr.store(0, core::sync::atomic::Ordering::Release);
+        self._timer.del();
+
+        // Recover the leaked Arc from the timer callback opaque pointer.
+        // It's safe to do this here because SafeSubscription has already been dropped
+        // before we drop the VtimeIngress (assuming correct destruction order),
+        // and the QEMU timer is deleted so no more callbacks will run.
+        let timer_opaque = alloc::sync::Arc::as_ptr(&self.internal).cast_mut();
+        unsafe {
+            // Drop the reference held by the timer callback
+            let _ = alloc::sync::Arc::from_raw(timer_opaque);
+        }
+    }
+}
+
+/// Deprecated alias for [`VtimeIngress`].
+#[deprecated(since = "0.2.0", note = "renamed to VtimeIngress")] // virtmcu-allow: magic_numbers reasoning="Version string in deprecation attribute"
+pub type DeterministicReceiver<T> = VtimeIngress<T>;
 
 #[cfg(test)]
 mod tests {
@@ -1223,19 +1453,25 @@ mod tests {
 
     // ── BqlGuarded tests ────────────────────────────────────────────────
 
+    const TEST_VAL: u32 = 42;
+
     #[test]
     fn test_bql_guarded_get_returns_value() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        assert_eq!(*guarded.get(), 42);
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        assert_eq!(*guarded.get(&ctx), TEST_VAL);
     }
+
+    const UPDATE_VAL: u64 = 99;
 
     #[test]
     fn test_bql_guarded_get_mut_mutates_value() {
         let guarded = BqlGuarded::new(0u64);
         let _bql = Bql::lock();
-        *guarded.get_mut() = 99;
-        assert_eq!(*guarded.get(), 99);
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        *guarded.get_mut(&ctx) = UPDATE_VAL;
+        assert_eq!(*guarded.get(&ctx), UPDATE_VAL);
     }
 
     #[test]
@@ -1247,43 +1483,28 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "BqlGuarded::get() called without BQL")]
-    fn test_bql_guarded_panics_on_get_without_bql() {
-        let guarded = BqlGuarded::new(0u32);
-        // BQL is NOT held — debug_assert must fire.
-        let _ = guarded.get();
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "BqlGuarded::get_mut() called without BQL")]
-    fn test_bql_guarded_panics_on_get_mut_without_bql() {
-        let guarded = BqlGuarded::new(0u32);
-        // BQL is NOT held — debug_assert must fire.
-        let _ = guarded.get_mut();
-    }
-
-    #[test]
     #[should_panic(expected = "already mutably borrowed")]
     fn test_bql_guarded_read_after_write() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        let _write = guarded.get_mut();
-        let _read = guarded.get(); // Panics dynamically
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        let _write = guarded.get_mut(&ctx);
+        let _read = guarded.get(&ctx); // Panics dynamically
     }
 
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_bql_guarded_write_after_read() {
-        let guarded = BqlGuarded::new(42u32);
+        let guarded = BqlGuarded::new(TEST_VAL);
         let _bql = Bql::lock();
-        let _read = guarded.get();
-        let _write = guarded.get_mut(); // Panics dynamically
+        let ctx = unsafe { crate::device::BqlContext::new_unchecked() };
+        let _read = guarded.get(&ctx);
+        let _write = guarded.get_mut(&ctx); // Panics dynamically
     }
 
     #[test]
     fn test_vcpu_drain() {
+        const TEST_COUNT: usize = 2;
         let drain = VcpuDrain::new();
         assert_eq!(*drain.count.lock(), 0);
 
@@ -1291,7 +1512,7 @@ mod tests {
         assert_eq!(*drain.count.lock(), 1);
 
         let guard2 = drain.acquire();
-        assert_eq!(*drain.count.lock(), 2);
+        assert_eq!(*drain.count.lock(), TEST_COUNT);
 
         drop(guard1);
         assert_eq!(*drain.count.lock(), 1);
@@ -1301,16 +1522,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
+    #[should_panic(expected = "VcpuDrain timed out")]
     fn test_vcpu_drain_wait_timeout() {
+        const DRAIN_TIMEOUT_MS: u32 = 10;
         let drain = VcpuDrain::new();
         let _guard = drain.acquire();
 
         let _bql = Bql::lock();
         let start = std::time::Instant::now();
         // This should timeout since we hold the guard
-        drain.wait_for_drain(10);
+        drain.wait_for_drain(DRAIN_TIMEOUT_MS);
         let elapsed = start.elapsed();
 
-        assert!(elapsed.as_millis() >= 10);
+        assert!(elapsed.as_millis() >= DRAIN_TIMEOUT_MS as u128);
     }
 }

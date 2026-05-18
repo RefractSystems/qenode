@@ -13,17 +13,13 @@ Every level of our pipeline is reproducible locally. We do not rely on "magic" G
 ### Level 0: Git Hooks
 *   **Command**: `make install-git-hooks`
 *   **Enforcement**: 
-    *   **Pre-commit**: Runs `make dev-lint`. Prevents committing broken formatting or lint errors.
-    *   **Pre-push**: Runs `make dev-unit`. Ensures all logic tests pass before code leaves your machine.
+    *   **Pre-commit**: Runs `make test-lint`. Prevents committing broken formatting or lint errors.
+    *   **Pre-push**: Runs `make test-unit`. Ensures all logic tests pass before code leaves your machine.
     *   This is the fastest feedback loop and is **strongly recommended** for all contributors.
 
-### Level 1: `make dev-check`
+### Level 1: `make test-check`
 *   **Purpose**: The "Fast Path" developer check.
-*   **Mechanism**: Runs `dev-lint` and `dev-unit` natively in your current environment. Use this frequently during iteration.
-
-### Level 2: `make ci-local`
-*   **Purpose**: The "Safe Path" before pushing.
-*   **Mechanism**: Executed inside the **isolated `devenv` Docker container**. This guarantees 1:1 parity with GitHub's Tier 1 checks. It mounts a persistent `.ci-target/` directory to ensure Rust builds remain fast across runs.
+*   **Mechanism**: Runs `test-lint` and `test-unit` natively in your current environment. Use this frequently during iteration.
 
 ### Level 3: `make ci-full`
 *   **Purpose**: Authoritative parity with the cloud.
@@ -33,22 +29,22 @@ Every level of our pipeline is reproducible locally. We do not rely on "magic" G
 
 ## 2. Build & Test Target Parity
 
-To ensure seamless transitions between local development and CI troubleshooting, VirtMCU maintains strict 1:1 parity between `dev-` (local) and `ci-` (containerized) targets.
+To ensure seamless transitions between local development and CI troubleshooting, VirtMCU maintains strict 1:1 parity between `test-` (local) and `ci-` (containerized) targets.
 
-| Domain | Local (`dev-`) | Container (`ci-`) | GitHub CI Equivalent |
+| Domain | Local (`test-`) | Container (`ci-`) | GitHub CI Equivalent |
 | :--- | :--- | :--- | :--- |
-| **All-in-one** | `make dev-check` | `make ci-local` | `tier-checks` |
-| **Linting** | `make dev-lint` | `make ci-lint` | `tier-checks` (lint) |
-| **Unit Tests** | `make dev-unit` | `make ci-unit` | `tier-checks` (unit) |
-| **Miri (UB)** | `make dev-unit-miri` | `make ci-unit-miri` | `unit-miri` |
-| **Integration** | `make dev-integration` | `make ci-integration` | `integration` |
-| **ASan/UBSan** | `make dev-integration-asan` | `make ci-integration-asan` | `integration` (asan) |
-| **Coverage** | `make dev-unit-coverage` | `make ci-unit-coverage` | `unit-coverage` |
+| **All-in-one** | `make test-check` | `make ci-check` | `tier-checks` |
+| **Linting** | `make test-lint` | `make ci-lint` | `tier-checks` (lint) |
+| **Unit Tests** | `make test-unit` | `make ci-unit` | `tier-checks` (unit) |
+| **Miri (UB)** | `make test-unit-miri` | `make ci-unit-miri` | `unit-miri` |
+| **Integration** | `make test-integration` | `make ci-integration` | `integration` |
+| **ASan/UBSan** | `make test-integration-asan` | `make ci-integration-asan` | `integration` (asan) |
+| **Coverage** | `make test-unit-coverage` | `make ci-unit-coverage` | `unit-coverage` |
 
 ### SOTA Developer Pro-Tips
 *   **Persistent Caching**: Containerized targets (`ci-*`) now mount host directories (`.ci-target/`, `.cargo-cache/`) to avoid full rebuilds. If you experience mysterious build errors, run `make distclean` to wipe these caches.
 *   **Dynamic Identity**: All local Docker runs automatically map your host `UID` and `GID` (via `HOST_UID`/`HOST_GID` environment variables). This prevents the common "root-owned files in workspace" bug.
-*   **Targeted Integration**: Use `make dev-integration DOMAIN=boot_arm` to run only a specific test domain and save time.
+*   **Targeted Integration**: Use `make test-integration DOMAIN=boot_arm` to run only a specific test domain and save time.
 *   **Fast Setup**: New to the project? Run `make setup-dev` to handle dependency installation, version synchronization, and the initial build in one command.
 
 ---
@@ -58,11 +54,11 @@ To ensure seamless transitions between local development and CI troubleshooting,
 VirtMCU uses a multi-stage Docker strategy to optimize build times and minimize production image size.
 
 1.  **`base`**: Debian slim + standard utilities.
-2.  **`toolchain`**: Adds ARM/RISC-V compilers, Python, and CMake.
+2.  **`toolchain`**: Adds ARM/RISC-V compilers and CMake.
 3.  **`devenv`**: Adds Rust, Node.js, and protocol schemas. Used for checks.
 4.  **`builder`**: Compiles the patched QEMU core and all `.so` plugins. 
 5.  **`devenv`**: The developer image (Base + pre-built QEMU from Builder).
-6.  **`runtime`**: A lean production image containing only QEMU and Python orchestration tools.
+6.  **`runtime`**: A lean production image containing only QEMU and native Rust orchestration tools.
 
 ---
 
@@ -78,11 +74,11 @@ To avoid the 40-minute QEMU compilation on every run, we use a three-layer cache
 
 ## 4. Version Management
 
-All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a single source of truth: the **`BUILD_DEPS`** file at the repository root.
+All dependency versions (QEMU, Zenoh, compilers) are centralized in a single source of truth: the **`BUILD_DEPS`** file at the repository root.
 
 **To bump a version**:
 1.  Edit `BUILD_DEPS`.
-2.  Run `make sync-versions` to propagate the change to Dockerfiles, `pyproject.toml`, and GitHub workflows.
+2.  Run `make sync-versions` to propagate the change to Dockerfiles and GitHub workflows.
 3.  Run `make check-versions` (enforced in CI lint) to verify consistency.
 
 ---
@@ -92,7 +88,7 @@ All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a si
 | Symptom | Cause | Action |
 |---|---|---|
 | `CLOCK STALL` | ASan overhead or deadlock | Check QEMU stderr; system scales to 300s timeout under ASan. |
-| `FFI Layout Mismatch` | C/Rust struct drift | Run `scripts/check-ffi.py --fix` and commit the updated offsets. |
+| `FFI Layout Mismatch` | C/Rust struct drift | Run `cargo run -p virtmcu-test-runner -- lint --fix` and commit the updated offsets. |
 | `can't find crate` | Cargo cache corruption | Run `docker volume rm ci-cargo-registry`. |
 | `SIGSEGV` in plugin | Unmangled symbols | Ensure FFI hooks are wrapped in `VirtMCU_export!`. |
 
@@ -102,7 +98,7 @@ All dependency versions (QEMU, Zenoh, compilers, Python) are centralized in a si
 
 When making changes to `docker/Dockerfile`, you should verify them locally before pushing to GitHub to avoid breaking the CI pipeline (such as the `EOFError` crashes caused by missing configure flags).
 
-1.  **Syntax Check**: Run `make dev-lint-docker` to use `hadolint` for basic syntax and best-practice checks.
+1.  **Syntax Check**: Run `make test-lint-docker` to use `hadolint` for basic syntax and best-practice checks.
 2.  **Version Drift Check**: Run `make check-versions` to ensure all `ARG` versions in the Dockerfile match the single source of truth in `BUILD_DEPS`.
 3.  **Fast Smoke Test**: Run `make docker-dev`. This builds the `base`, `toolchain`, and `devenv` stages and executes bash smoke tests to ensure essential tools (compilers, python, etc.) are actually installed and functional. This is much faster than a full build.
 4.  **Full Parity Build**: If you touch critical QEMU flags or SystemC dependencies, run `make ci-full` to execute the full test matrix inside the newly built Docker image.

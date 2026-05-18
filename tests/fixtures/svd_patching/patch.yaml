@@ -1,0 +1,5 @@
+peripherals:
+  ACTUATOR:
+    registers:
+      GO:
+        resetValue: 0x1

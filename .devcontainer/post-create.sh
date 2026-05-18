@@ -58,6 +58,10 @@ if ! command -v gemini &>/dev/null; then
     sudo npm install -g @google/gemini-cli@latest
 fi
 
+echo "==> Configuring Docker daemon to skip iptables..."
+sudo mkdir -p /etc/docker
+echo '{"iptables": false}' | sudo tee /etc/docker/daemon.json > /dev/null
+
 echo "==> Fixing Docker volume permissions..."
 # Docker creates volumes as root by default. Fix permissions for Cargo caches.
 sudo chown -R vscode:vscode /usr/local/cargo/registry /workspace/target 2>/dev/null || true
@@ -73,6 +77,8 @@ for RC_FILE in ~/.zshrc ~/.bashrc; do
         
         grep -q "export PATH.*.local/bin" "$RC_FILE" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC_FILE"
         grep -q "export PAGER=less" "$RC_FILE" || echo 'export PAGER=less' >> "$RC_FILE"
+        grep -q "export RUSTUP_TOOLCHAIN=" "$RC_FILE" || echo 'export RUSTUP_TOOLCHAIN=nightly' >> "$RC_FILE"
+        grep -q "export CARGO_UNSTABLE_BINDEPS=" "$RC_FILE" || echo 'export CARGO_UNSTABLE_BINDEPS=true' >> "$RC_FILE"
     fi
 done
 
@@ -85,12 +91,10 @@ echo "==> Initializing Workspace Dependencies..."
 # and to keep container-specific paths out of the host's configuration.
 sudo git config --system --replace-all safe.directory /workspace
 # Since we use devenv, make bootstrap is explicitly required for the first run.
-# We do not block container startup, but we warn the developer if it fails.
-if ! make bootstrap; then
-    echo "⚠️  WARNING: Initial setup (make bootstrap) failed or was interrupted."
-    echo "    You MUST run 'make bootstrap' manually before running tests or simulations."
-    echo ""
-fi
+# We run it in the background so it does not block container startup.
+echo "==> Starting 'make bootstrap' in the background..."
+nohup make bootstrap > /workspace/bootstrap.log 2>&1 &
+echo "    Check /workspace/bootstrap.log for progress."
 
 
 echo "✓ DevContainer initialization complete."

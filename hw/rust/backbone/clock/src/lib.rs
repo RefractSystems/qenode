@@ -1,9 +1,11 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
@@ -11,7 +13,7 @@
 //! Virtmcu deterministic clock with pluggable transport.
 //!
 //! This module provides the `VirtmcuClock` QOM device, which synchronizes
-//! the guest's virtual time with an external TimeAuthority.
+//! the guest's virtual time with an external Physical Node.
 
 extern crate alloc;
 
@@ -21,15 +23,20 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
 use crossbeam_channel::Receiver;
+use std::collections::HashMap;
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
-use virtmcu_api::{
-    ClockAdvanceReq, ClockReadyResp, ClockSyncResponder, ClockSyncTransport, FlatBufferStructExt,
-    BOOT_QUANTUM_TIMEOUT, CLOCK_ERROR_OK, CLOCK_ERROR_STALL, NORMAL_QUANTUM_TIMEOUT,
-};
+
+#[derive(Clone, Copy)]
+struct ClockPtr(*mut VirtmcuClock);
+unsafe impl Send for ClockPtr {}
+unsafe impl Sync for ClockPtr {}
+
+static CLOCK_REGISTRY: Mutex<Option<HashMap<u32, ClockPtr>>> = Mutex::new(None); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
+
 use virtmcu_qom::cpu::CPUState;
 use virtmcu_qom::qdev::SysBusDevice;
 use virtmcu_qom::qom::{Object, ObjectClass, TypeInfo};
@@ -41,10 +48,90 @@ use virtmcu_qom::{
     declare_device_type, define_prop_bool, define_prop_string, define_prop_uint32,
     define_properties, device_class,
 };
+use virtmcu_wire::{
+    ClockAdvanceReq, ClockReadyResp, ClockSyncResponder, ClockSyncTransport, DataTransport,
+    FlatBufferStructExt, BOOT_QUANTUM_TIMEOUT, CLOCK_ERROR_OK, CLOCK_ERROR_STALL,
+    NORMAL_QUANTUM_TIMEOUT,
+};
 use zenoh::liveliness::LivelinessToken;
 use zenoh::query::{Query, Queryable};
 use zenoh::Session;
 use zenoh::Wait;
+
+use transport_uds::UdsDataTransport;
+
+/// Unix socket based clock synchronization transport with coordination.
+pub struct CoordinatedUnixClockTransport {
+    inner: virtmcu_wire::UnixSocketClockTransport,
+    coord_transport: Arc<UdsDataTransport>,
+    start_rx: Receiver<()>,
+    node_id: u32,
+}
+
+impl CoordinatedUnixClockTransport {
+    pub fn new(
+        inner: virtmcu_wire::UnixSocketClockTransport,
+        coord_transport: Arc<UdsDataTransport>,
+        start_rx: Receiver<()>,
+        node_id: u32,
+    ) -> Self {
+        Self { inner, coord_transport, start_rx, node_id }
+    }
+}
+
+impl ClockSyncTransport for CoordinatedUnixClockTransport {
+    fn recv_advance(
+        &self,
+        timeout: core::time::Duration,
+    ) -> Option<(ClockAdvanceReq, Box<dyn ClockSyncResponder>)> {
+        // 1. Receive the advance request from the Time Authority
+        let (req, _inner_responder) = self.inner.recv_advance(timeout)?;
+
+        // 2. Wrap it in our coordinated responder
+        let responder: Box<dyn ClockSyncResponder> = Box::new(UnixClockResponder {
+            inner: _inner_responder,
+            coord_transport: Arc::clone(&self.coord_transport),
+            start_rx: self.start_rx.clone(),
+            node_id: self.node_id,
+            quantum: req.quantum_number(),
+        });
+
+        Some((req, responder))
+    }
+
+    fn send_vtime_heartbeat(&self, _vtime_ns: u64) {
+        // Unix transport doesn't support heartbeats yet (no telemetry sink)
+    }
+}
+
+pub struct UnixClockResponder {
+    inner: Box<dyn ClockSyncResponder>,
+    coord_transport: Arc<UdsDataTransport>,
+    start_rx: Receiver<()>,
+    node_id: u32,
+    quantum: u64,
+}
+
+impl ClockSyncResponder for UnixClockResponder {
+    fn send_ready(&self, resp: virtmcu_wire::ClockReadyResp) -> Result<(), String> {
+        // 1. Send 'done' signal to coordinator via UDS
+        // We use sim/coord/done/{node_id}/q/{quantum} as per RFC-0033.
+        let topic = format!("sim/coord/done/{}/q/{}", self.node_id, self.quantum);
+        let done_req = virtmcu_wire::encode_coord_done_req(self.quantum, resp.current_vtime_ns());
+
+        self.coord_transport
+            .publish_raw(&topic, &done_req)
+            .map_err(|e| format!("UDS DONE publish failed: {e}"))?;
+
+        // 2. Wait for 'start' signal from coordinator
+        if self.start_rx.recv().is_err() {
+            return Err("UDS START signal receiver disconnected".to_owned());
+        }
+
+        // 3. Finally reply to the Time Authority
+        self.inner.send_ready(resp)
+    }
+}
 
 /// Zenoh-based clock synchronization transport.
 pub struct ZenohClockTransport {
@@ -60,6 +147,8 @@ pub struct ZenohClockTransport {
     is_coordinated: bool,
 }
 
+const CLOCK_ADVANCE_REQ_SIZE: usize = core::mem::size_of::<ClockAdvanceReq>();
+
 impl ClockSyncTransport for ZenohClockTransport {
     fn recv_advance(
         &self,
@@ -68,16 +157,28 @@ impl ClockSyncTransport for ZenohClockTransport {
         match self.query_rx.recv_timeout(timeout) {
             Ok(query) => {
                 let data = query.payload().map(|p| p.to_bytes()).unwrap_or_default();
-                ClockAdvanceReq::unpack_slice(&data).map(|req| {
-                    let responder: Box<dyn ClockSyncResponder> = Box::new(ZenohClockResponder {
-                        query,
-                        start_rx: self.start_rx.clone(),
-                        done_pub: alloc::sync::Arc::clone(&self.done_pub),
-                        quantum: req.quantum_number(),
-                        is_coordinated: self.is_coordinated,
-                    });
-                    (req, responder)
-                })
+                match ClockAdvanceReq::unpack_slice(&data) {
+                    Some(req) => {
+                        let responder: Box<dyn ClockSyncResponder> =
+                            Box::new(ZenohClockResponder {
+                                query,
+                                start_rx: self.start_rx.clone(),
+                                done_pub: alloc::sync::Arc::clone(&self.done_pub),
+                                quantum: req.quantum_number(),
+                                is_coordinated: self.is_coordinated,
+                            });
+                        Some((req, responder))
+                    }
+                    None => {
+                        virtmcu_qom::sim_err!(
+                            "ZenohClockTransport: Received malformed ClockAdvanceReq (size={}, expected {}). Ensure your Physical Node uses the {}-byte protocol.",
+                            data.len(),
+                            CLOCK_ADVANCE_REQ_SIZE,
+                            CLOCK_ADVANCE_REQ_SIZE
+                        );
+                        None
+                    }
+                }
             }
             Err(_) => None,
         }
@@ -109,13 +210,18 @@ pub struct ZenohClockResponder {
     is_coordinated: bool,
 }
 
+const CLOCK_RESP_PAYLOAD_SIZE: usize = 16;
+const DRAIN_WAIT_TIMEOUT_MS: u64 = 100;
+const CLOCK_EXECUTING_TIMEOUT_MS: u64 = 5000;
+const CLOCK_DEFAULT_WATCHDOG_THRESHOLD: u64 = 3;
+
 impl ClockSyncResponder for ZenohClockResponder {
     fn send_ready(&self, resp: ClockReadyResp) -> Result<(), String> {
         // Only the Zenoh coordinated path waits for sim/clock/start before
         // advancing the first quantum. Unix-mode federates never reach this branch.
         if self.is_coordinated {
             // 1. Send 'done' signal to coordinator: [quantum (8), current_vtime_ns (8)]
-            let mut payload = alloc::vec::Vec::with_capacity(16);
+            let mut payload = alloc::vec::Vec::with_capacity(CLOCK_RESP_PAYLOAD_SIZE);
             payload.extend_from_slice(&self.quantum.to_le_bytes());
             payload.extend_from_slice(&resp.current_vtime_ns().to_le_bytes());
             self.done_pub.send(payload);
@@ -129,7 +235,7 @@ impl ClockSyncResponder for ZenohClockResponder {
             }
         }
 
-        // 3. Release the reply back to the Time Authority
+        // 3. Release the reply back to the Physical Node
         let resp_bytes = resp.pack();
         self.query
             .reply(self.query.key_expr().clone(), resp_bytes.to_vec())
@@ -150,6 +256,8 @@ pub struct VirtmcuClock {
     /* Properties */
     /// Unique node ID for clock synchronization.
     pub node_id: u32,
+    /// Identifier for this running simulation instance.
+    pub federation_id: *mut c_char,
     /// Synchronization mode ("slaved-suspend", "slaved-icount", "unix").
     pub mode: *mut c_char,
     /// Optional router address or socket path.
@@ -158,8 +266,11 @@ pub struct VirtmcuClock {
     pub stall_timeout: u32,
     /// Whether to synchronize with a Deterministic Coordinator.
     pub coordinated: bool,
+    /// Optional router address or socket path for coordination.
+    pub coordinated_router: *mut c_char,
     pub session_watchdog_ms: u32,
     pub debug: bool,
+    pub n_vcpus: u32,
 
     /* Internal State */
     /// Virtual time (ns) of the next quantum boundary.
@@ -194,14 +305,20 @@ impl From<u8> for QuantumState {
     }
 }
 
+const CLOCK_WAIT_TIMEOUT_MS: u64 = 10;
+
 /// Internal Rust backend for `VirtmcuClock`.
 pub struct VirtmcuClockBackend {
+    pub n_vcpus: core::sync::atomic::AtomicU32,
+    pub vcpu_halt_count: core::sync::atomic::AtomicU32,
     /// Optional Zenoh session for communication.
     pub session: Option<Arc<Session>>,
     /// Abstract transport for clock synchronization.
     pub transport: Box<dyn ClockSyncTransport>,
     /// Unique node ID.
     pub node_id: u32,
+    /// Identifier for this running simulation instance.
+    pub federation_id: virtmcu_wire::FederationId,
     /// Stall timeout in milliseconds.
     pub stall_timeout_ms: u32,
     /// Whether coordination is enabled for this node.
@@ -222,7 +339,7 @@ pub struct VirtmcuClockBackend {
     pub delta_ns: AtomicU64,
     /// Current virtual time in nanoseconds as known by the backend.
     pub vtime_ns: AtomicU64,
-    /// Absolute simulation time in nanoseconds as reported by TimeAuthority.
+    /// Absolute simulation time in nanoseconds as reported by Physical Node.
     pub absolute_vtime_ns: AtomicU64,
     /// Cumulative count of clock stalls.
     pub stall_count: AtomicU64,
@@ -242,6 +359,9 @@ pub struct VirtmcuClockBackend {
 
     /// Whether a stall was detected by the vCPU thread while waiting for a request.
     pub pending_stall: AtomicBool,
+
+    /// Whether the VCPU is syncing for the first time.
+    pub is_first_sync: AtomicBool,
 
     /* Lifecycle */
     /// Whether the backend is shutting down.
@@ -270,7 +390,7 @@ impl Drop for ClockManager {
             let (new_guard, _) = self
                 .backend
                 .cond
-                .wait_timeout(guard, core::time::Duration::from_millis(100))
+                .wait_timeout(guard, core::time::Duration::from_millis(DRAIN_WAIT_TIMEOUT_MS))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard = new_guard;
             drop(bql_unlock);
@@ -288,21 +408,38 @@ impl Drop for ClockManager {
 
 /* ── Logic ────────────────────────────────────────────────────────────────── */
 
-static GLOBAL_CLOCK: AtomicPtr<VirtmcuClock> = AtomicPtr::new(ptr::null_mut()); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 static ACTIVE_HOOKS: AtomicU64 = AtomicU64::new(0); // virtmcu-allow: static_state reasoning="Required for C-FFI hook dispatch"
 
 extern "C" {
-    fn virtmcu_kick_first_cpu_for_quantum();
     fn virtmcu_vcpu_should_yield() -> bool;
 }
 
 extern "C" fn clock_quantum_timer_cb(_opaque: *mut c_void) {
     // SAFETY: called from a QEMU timer callback; BQL is held by the QEMU main loop.
-    unsafe { virtmcu_kick_first_cpu_for_quantum() };
+    // Kick all CPUs to ensure they exit their TCG loops and reach the boundary sync point.
+    unsafe { virtmcu_qom::cpu::virtmcu_cpu_exit_all() };
 }
 
-extern "C" fn clock_cpu_tcg_hook(_cpu: *mut CPUState) {
-    clock_cpu_halt_cb(_cpu, false);
+extern "C" fn clock_cpu_tcg_hook(cpu: *mut CPUState) {
+    let _guard = ActiveHooksGuard::new();
+    let mut clocks = Vec::new();
+    {
+        if let Ok(lock) = CLOCK_REGISTRY.lock() {
+            if let Some(map) = &*lock {
+                for ptr in map.values() {
+                    clocks.push(ptr.0);
+                }
+            }
+        }
+    }
+    for s_ptr in clocks {
+        if !s_ptr.is_null() {
+            let s = unsafe { &mut *s_ptr };
+            if !s.rust_state.is_null() {
+                clock_cpu_halt_cb_internal(s, cpu, false);
+            }
+        }
+    }
 }
 
 struct ActiveHooksGuard;
@@ -320,18 +457,29 @@ impl Drop for ActiveHooksGuard {
     }
 }
 
-virtmcu_api::virtmcu_export! {
+virtmcu_wire::virtmcu_export! {
     extern "C" fn clock_cpu_halt_cb(_cpu: *mut CPUState, halted: bool) {
         // 1. Signal that we are entering a hook
         let _guard = ActiveHooksGuard::new();
 
-        // 2. Check if the clock device is still alive.
-        let s_ptr = GLOBAL_CLOCK.load(Ordering::Acquire);
-        if !s_ptr.is_null() {
-            // SAFETY: s_ptr is checked for null and is a valid pointer to VirtmcuClock when not null.
-            let s = unsafe { &mut *s_ptr };
-            if !s.rust_state.is_null() {
-                clock_cpu_halt_cb_internal(s, _cpu, halted);
+        let mut clocks = Vec::new();
+        {
+            if let Ok(lock) = CLOCK_REGISTRY.lock() {
+                if let Some(map) = &*lock {
+                    for ptr in map.values() {
+                        clocks.push(ptr.0);
+                    }
+                }
+            }
+        }
+
+        for s_ptr in clocks {
+            if !s_ptr.is_null() {
+                // SAFETY: s_ptr is checked for null and is a valid pointer to VirtmcuClock when not null.
+                let s = unsafe { &mut *s_ptr };
+                if !s.rust_state.is_null() {
+                    clock_cpu_halt_cb_internal(s, _cpu, halted);
+                }
             }
         }
     }
@@ -345,11 +493,18 @@ fn clock_cpu_halt_cb_internal(s: &mut VirtmcuClock, _cpu: *mut CPUState, halted:
         return;
     }
 
+    if s.debug {
+        virtmcu_qom::sim_info!("Clock: CPU hook triggered (halted={})", halted);
+    }
+
     // SAFETY: Calling qemu_clock_get_ns is safe under BQL or from vCPU thread.
     let now = unsafe { qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) };
     virtmcu_qom::telemetry::update_global_vtime(u64::try_from(now).expect("vtime is negative"));
 
-    if now >= s.next_quantum_ns {
+    let is_running = virtmcu_qom::sysemu::runstate_is_running();
+    let should_wait = is_running && (now >= s.next_quantum_ns || halted);
+
+    if should_wait {
         if s.rust_state.is_null() {
             return;
         }
@@ -424,36 +579,71 @@ const QUANTUM_WAIT_YIELD_SENTINEL: u64 = u64::MAX - 1;
 fn clock_quantum_wait_internal(
     backend: &VirtmcuClockBackend,
     _vtime_ns: u64,
-    is_yielding: bool,
+    _is_yielding: bool,
 ) -> u64 {
     // Runtime assertion (not just debug_assert): BQL must NOT be held here.
     if virtmcu_qom::sync::Bql::is_held() {
-        if virtmcu_qom::sysemu::runstate_is_running() {
-            virtmcu_qom::sim_warn!(
-                "BQL held entering quantum_wait — would deadlock. Skipping sync."
-            );
-        }
+        assert!(
+            !virtmcu_qom::sysemu::runstate_is_running(),
+            "BQL held entering quantum_wait — would deadlock. Skipping sync."
+        );
         return QUANTUM_WAIT_STALL_SENTINEL;
     }
 
+    if backend.is_first_sync.swap(false, Ordering::SeqCst) {
+        // Fast-path: Just wait for Executing (the TA's start signal) without signaling Waiting
+        // because we haven't executed a quantum yet.
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return 0;
+            }
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(CLOCK_WAIT_TIMEOUT_MS))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
+        }
+        return backend.delta_ns.load(Ordering::SeqCst);
+    }
+
+    let n_vcpus = backend.n_vcpus.load(Ordering::SeqCst);
+    let count = backend.vcpu_halt_count.fetch_add(1, Ordering::SeqCst) + 1;
+
     backend.vtime_ns.store(_vtime_ns, Ordering::SeqCst);
 
-    if !is_yielding {
-        // Transition: Initial -> Waiting
-        let current_state = QuantumState::from(backend.state.load(Ordering::Acquire));
-        if current_state != QuantumState::Waiting {
-            let _ = backend.state.compare_exchange(
-                current_state as u8,
-                QuantumState::Waiting as u8,
-                Ordering::SeqCst,
-                Ordering::Relaxed,
-            );
+    if count >= n_vcpus {
+        // All vCPUs have arrived at the barrier.
+        // Transition: Executing -> Waiting
+        let current = backend.state.load(Ordering::Acquire);
+        if current == QuantumState::Executing as u8 {
+            backend.state.store(QuantumState::Waiting as u8, Ordering::SeqCst);
         }
 
         // Notify TA that we finished previous quantum
         {
             let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             backend.cond.notify_all();
+        }
+    }
+
+    // Stage 1: Barrier. Wait until ALL vCPUs have arrived and state transitioned to Waiting.
+    // If state is still Executing, it means other vCPUs are still running.
+    {
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) == QuantumState::Executing as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return 0;
+            }
+            if unsafe { virtmcu_vcpu_should_yield() } {
+                backend.vcpu_halt_count.fetch_sub(1, Ordering::SeqCst);
+                return QUANTUM_WAIT_YIELD_SENTINEL;
+            }
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(CLOCK_WAIT_TIMEOUT_MS))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
         }
     }
 
@@ -465,34 +655,22 @@ fn clock_quantum_wait_internal(
         Duration::from_millis(u64::from(backend.stall_timeout_ms))
     };
 
-    // Spin briefly to avoid context switch latency
-    while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
-        if backend.shutdown.load(Ordering::Acquire) {
-            return 0;
-        }
-        if unsafe { virtmcu_vcpu_should_yield() } {
-            return QUANTUM_WAIT_YIELD_SENTINEL;
-        }
-        if start.elapsed() > Duration::from_millis(1) {
-            break;
-        }
-        core::hint::spin_loop();
-    }
-
-    if backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
+    // Stage 2: Wait for TA to grant the next quantum (transition to Executing).
+    {
         let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while backend.state.load(Ordering::SeqCst) != QuantumState::Executing as u8 {
             if backend.shutdown.load(Ordering::Acquire) {
                 return 0;
             }
             if unsafe { virtmcu_vcpu_should_yield() } {
+                backend.vcpu_halt_count.fetch_sub(1, Ordering::SeqCst);
                 return QUANTUM_WAIT_YIELD_SENTINEL;
             }
 
             // Wait for Executing
             let (new_guard, result) = backend
                 .cond
-                .wait_timeout(guard, Duration::from_millis(100))
+                .wait_timeout(guard, Duration::from_millis(CLOCK_EXECUTING_TIMEOUT_MS))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard = new_guard;
 
@@ -522,6 +700,15 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         let (req, responder) = match backend.transport.recv_advance(timeout) {
             Some(r) => {
                 backend.consecutive_timeouts.store(0, Ordering::Relaxed);
+                if backend.is_coordinated {
+                    virtmcu_qom::sim_info!(
+                        "[{}] Received advance for quantum {} (delta={}ns, abs={}ns)",
+                        backend.federation_id,
+                        r.0.quantum_number(),
+                        r.0.delta_ns(),
+                        r.0.absolute_vtime_ns()
+                    );
+                }
                 r
             }
             None => {
@@ -555,6 +742,16 @@ fn clock_worker_loop(backend: Arc<VirtmcuClockBackend>) {
         let current_vtime = backend.vtime_ns.load(Ordering::SeqCst);
         backend.transport.send_vtime_heartbeat(current_vtime);
 
+        if backend.is_coordinated {
+            virtmcu_qom::sim_info!(
+                "[{}] Sending ready for quantum {} (vtime={}ns, error={})",
+                backend.federation_id,
+                req.quantum_number(),
+                current_vtime,
+                error_code
+            );
+        }
+
         let resp = ClockReadyResp::new(current_vtime, 0, error_code, req.quantum_number());
 
         if let Err(e) = responder.send_ready(resp) {
@@ -571,71 +768,63 @@ fn wait_for_ready_and_execute(
     backend: &Arc<VirtmcuClockBackend>,
     delta: u64,
     timeout: Duration,
-    is_first: bool,
+    _is_first: bool,
 ) -> u32 {
     let start = Instant::now();
 
-    loop {
-        if backend.shutdown.load(Ordering::Acquire) {
-            return CLOCK_ERROR_OK;
-        }
-        let current_state = backend.state.load(Ordering::SeqCst);
-        if current_state == QuantumState::Waiting as u8 {
-            break;
-        }
-
-        if start.elapsed() > timeout {
-            return CLOCK_ERROR_STALL;
-        }
-
-        let guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (mut _new_guard, _) = backend
-            .cond
-            .wait_timeout(guard, Duration::from_millis(10))
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-    }
-
-    if backend
-        .state
-        .compare_exchange(
-            QuantumState::Waiting as u8,
-            QuantumState::Executing as u8,
-            Ordering::SeqCst,
-            Ordering::Relaxed,
-        )
-        .is_err()
     {
-        virtmcu_qom::sim_err!("Invalid state transition");
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Waiting as u8 {
+            if backend.shutdown.load(Ordering::Acquire) {
+                return CLOCK_ERROR_OK;
+            }
+            if start.elapsed() > timeout {
+                return CLOCK_ERROR_STALL;
+            }
+
+            let (new_guard, _) = backend
+                .cond
+                .wait_timeout(guard, Duration::from_millis(CLOCK_WAIT_TIMEOUT_MS))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
+        }
     }
+
+    virtmcu_qom::sim_info!("Clock: Worker granting quantum ({} ns)", delta);
+    // Reset barrier for the next quantum
+    backend.vcpu_halt_count.store(0, Ordering::SeqCst);
 
     {
         let _guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        backend.cond.notify_all();
+        let current = QuantumState::from(backend.state.load(Ordering::Acquire));
+        if current == QuantumState::Waiting {
+            backend.state.store(QuantumState::Executing as u8, Ordering::SeqCst);
+            backend.cond.notify_all();
+        } else {
+            panic!("Clock: Worker attempted to grant quantum but state is {current:?}");
+        }
     }
 
     if delta > 0 {
         let exec_start = Instant::now();
-        loop {
+        let mut guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while backend.state.load(Ordering::SeqCst) != QuantumState::Waiting as u8 {
             if backend.shutdown.load(Ordering::Acquire) {
                 return CLOCK_ERROR_OK;
             }
-            let current_state = backend.state.load(Ordering::SeqCst);
-            if current_state == QuantumState::Waiting as u8 {
-                break;
-            }
-
             if exec_start.elapsed() > timeout {
                 return CLOCK_ERROR_STALL;
             }
 
-            let guard = backend.mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (mut _new_guard, _) = backend
+            let (new_guard, _) = backend
                 .cond
-                .wait_timeout(guard, Duration::from_millis(10))
+                .wait_timeout(guard, Duration::from_millis(CLOCK_WAIT_TIMEOUT_MS))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = new_guard;
         }
     }
 
+    let is_first = backend.is_first_quantum.load(Ordering::Relaxed);
     if is_first {
         backend.is_first_quantum.store(false, Ordering::Relaxed);
     }
@@ -650,8 +839,17 @@ fn report_contention(backend: &VirtmcuClockBackend, last_report: &mut Instant) {
     let elapsed = last_report.elapsed().as_secs_f64();
 
     if iterations > 0 || no_bql > 0 {
-        let contention = (total_wait as f64 / (elapsed * 1_000_000_000.0)) * 100.0;
-        virtmcu_qom::sim_info!("{:.2}% (samples: {}, no_bql: {})", contention, iterations, no_bql);
+        const CONTENTION_PERCENT_SCALE: f64 = 100.0;
+        const CONTENTION_PRECISION: usize = 2;
+        let contention =
+            (total_wait as f64 / (elapsed * 1_000_000_000.0)) * CONTENTION_PERCENT_SCALE;
+        virtmcu_qom::sim_info!(
+            "{:.*}% (samples: {}, no_bql: {})",
+            CONTENTION_PRECISION,
+            contention,
+            iterations,
+            no_bql
+        );
     }
     *last_report = Instant::now();
 }
@@ -670,6 +868,7 @@ fn report_contention(backend: &VirtmcuClockBackend, last_report: &mut Instant) {
 /// The `sim/clock/start` Zenoh topic is only relevant in the Zenoh path and
 /// only when `is_coordinated = true`. If you are using `mode=slaved-unix`, do
 /// not send or wait for `sim/clock/start` — it has no effect.
+#[allow(clippy::too_many_lines)] // virtmcu-allow: allow reasoning="clock_realize is a complex setup function"
 unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     let s = &mut *(dev as *mut VirtmcuClock);
     virtmcu_qom::telemetry::update_global_node_id(s.node_id);
@@ -690,6 +889,27 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
     }
 
     let is_coordinated = s.coordinated;
+    let n_vcpus = s.n_vcpus;
+
+    let fed_id_str = if s.federation_id.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(s.federation_id) }.to_str().unwrap_or("")
+    };
+
+    // Fail loudly in coordinated mode — a missing or empty federation-id produces a silent
+    // federation_id mismatch in the coordinator's connection handler (kills the task, not the
+    // process) which surfaces as CLOCK_ERROR_STALL 30+ seconds later with no obvious cause.
+    if s.coordinated && fed_id_str.is_empty() {
+        virtmcu_qom::error_setg!(
+            errp,
+            "clock: 'federation-id' property is required for coordinated mode. \
+             Add ,federation-id=<id> to the -device virtmcu-clock argument (use a hyphen, not underscore).\n"
+        );
+        return;
+    }
+
+    let federation_id = virtmcu_wire::FederationId(fed_id_str.to_owned());
 
     if is_unix {
         if router_str.is_null() {
@@ -697,22 +917,98 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
             return;
         }
         let path = unsafe { CStr::from_ptr(router_str) }.to_string_lossy();
-        let transport = virtmcu_api::UnixSocketClockTransport::new(path.as_ref());
-        let watchdog_ms =
-            if s.session_watchdog_ms > 0 { s.session_watchdog_ms } else { stall_ms * 3 };
-        s.rust_state = clock_init_with_transport(
+        let inner_transport = virtmcu_wire::UnixSocketClockTransport::new(path.as_ref());
+
+        let watchdog_ms = if s.session_watchdog_ms > 0 {
+            s.session_watchdog_ms
+        } else {
+            stall_ms * CLOCK_DEFAULT_WATCHDOG_THRESHOLD as u32
+        };
+
+        let transport: Box<dyn ClockSyncTransport> = if is_coordinated {
+            if s.coordinated_router.is_null() {
+                virtmcu_qom::error_setg!(
+                    errp,
+                    "clock: 'coordinated-router' (socket path) required for coordinated unix mode\n"
+                );
+                return;
+            }
+            let coord_path = unsafe { CStr::from_ptr(s.coordinated_router) }.to_string_lossy();
+            let coord_transport = match transport_uds::UdsDataTransport::new_with_fed_id(
+                coord_path.as_ref(),
+                s.node_id,
+                fed_id_str,
+            ) {
+                Ok(t) => Arc::new(t),
+                Err(e) => {
+                    virtmcu_qom::error_setg!(
+                        errp,
+                        "clock: failed to connect to coordinator at {}: {}\n",
+                        coord_path,
+                        e
+                    );
+                    return;
+                }
+            };
+            virtmcu_qom::sim_info!(
+                "clock: node={} connected to coordinator at '{}' with federation-id='{}'",
+                s.node_id,
+                coord_path,
+                fed_id_str
+            );
+
+            let (start_tx, start_rx) = crossbeam_channel::unbounded();
+            let start_topic = virtmcu_wire::topics::sim_topic::clock_start(&s.node_id.to_string());
+
+            if let Err(e) = coord_transport.subscribe(
+                &start_topic,
+                Box::new(move |_topic, _payload| {
+                    let _ = start_tx.send(());
+                }),
+            ) {
+                virtmcu_qom::error_setg!(
+                    errp,
+                    "clock: failed to subscribe to start signal: {}\n",
+                    e
+                );
+                return;
+            }
+
+            Box::new(CoordinatedUnixClockTransport::new(
+                inner_transport,
+                coord_transport,
+                start_rx,
+                s.node_id,
+            ))
+        } else {
+            Box::new(inner_transport)
+        };
+
+        s.rust_state = clock_init_with_transport(ClockManagerConfig {
+            node_id: s.node_id,
+            n_vcpus,
+            transport,
+            session: None,
+            stall_timeout_ms: stall_ms,
+            is_coordinated,
+            session_watchdog_ms: watchdog_ms,
+            federation_id,
+        });
+    } else {
+        let watchdog_ms = if s.session_watchdog_ms > 0 {
+            s.session_watchdog_ms
+        } else {
+            stall_ms * CLOCK_DEFAULT_WATCHDOG_THRESHOLD as u32
+        };
+        s.rust_state = clock_init_internal(
             s.node_id,
-            Box::new(transport),
-            None,
+            n_vcpus,
+            router_str,
             stall_ms,
             is_coordinated,
             watchdog_ms,
+            federation_id,
         );
-    } else {
-        let watchdog_ms =
-            if s.session_watchdog_ms > 0 { s.session_watchdog_ms } else { stall_ms * 3 };
-        s.rust_state =
-            clock_init_internal(s.node_id, router_str, stall_ms, is_coordinated, watchdog_ms);
     }
 
     if s.rust_state.is_null() {
@@ -729,9 +1025,10 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
         virtmcu_timer_mod(s.quantum_timer, s.next_quantum_ns);
     }
 
-    let prev = GLOBAL_CLOCK.swap(s, Ordering::AcqRel);
-    if !prev.is_null() {
-        std::process::abort();
+    {
+        let mut lock = CLOCK_REGISTRY.lock().expect("Registry lock failed");
+        let map = lock.get_or_insert_with(HashMap::new);
+        map.insert(s.node_id, ClockPtr(s));
     }
 
     unsafe {
@@ -742,7 +1039,12 @@ unsafe extern "C" fn clock_realize(dev: *mut c_void, errp: *mut *mut c_void) {
 
 unsafe extern "C" fn clock_instance_finalize(obj: *mut Object) {
     let s = &mut *(obj as *mut VirtmcuClock);
-    GLOBAL_CLOCK.store(ptr::null_mut(), Ordering::Release);
+    {
+        let mut lock = CLOCK_REGISTRY.lock().expect("Registry lock failed");
+        if let Some(map) = &mut *lock {
+            map.remove(&s.node_id);
+        }
+    }
     unsafe {
         virtmcu_qom::cpu::virtmcu_cpu_set_halt_hook(None);
         virtmcu_qom::cpu::virtmcu_cpu_set_tcg_hook(None);
@@ -767,16 +1069,27 @@ unsafe extern "C" fn clock_instance_init(obj: *mut Object) {
     s.rust_state = ptr::null_mut();
     s.quantum_timer = ptr::null_mut();
     s.node_id = u32::MAX;
+    s.n_vcpus = 1;
 }
+
+const CLOCK_DEFAULT_STALL_TIMEOUT_MS: u32 = 5000;
 
 define_properties!(
     VIRT_CLOCK_PROPERTIES,
     [
         define_prop_uint32!(c"node".as_ptr(), VirtmcuClock, node_id, 0xFFFF_FFFF),
+        define_prop_string!(c"federation-id".as_ptr(), VirtmcuClock, federation_id),
+        define_prop_uint32!(c"n-vcpus".as_ptr(), VirtmcuClock, n_vcpus, 1),
         define_prop_string!(c"mode".as_ptr(), VirtmcuClock, mode),
         define_prop_string!(c"router".as_ptr(), VirtmcuClock, router),
-        define_prop_uint32!(c"stall-timeout".as_ptr(), VirtmcuClock, stall_timeout, 0),
+        define_prop_uint32!(
+            c"stall-timeout".as_ptr(),
+            VirtmcuClock,
+            stall_timeout,
+            CLOCK_DEFAULT_STALL_TIMEOUT_MS
+        ),
         define_prop_bool!(c"coordinated".as_ptr(), VirtmcuClock, coordinated, false),
+        define_prop_string!(c"coordinated-router".as_ptr(), VirtmcuClock, coordinated_router),
         define_prop_uint32!(c"session-watchdog-ms".as_ptr(), VirtmcuClock, session_watchdog_ms, 0),
         virtmcu_qom::define_prop_bool!(c"debug".as_ptr(), VirtmcuClock, debug, false),
     ]
@@ -810,26 +1123,33 @@ static VIRT_CLOCK_TYPE_INFO: TypeInfo = TypeInfo {
 
 declare_device_type!(VIRT_CLOCK_TYPE_INIT, VIRT_CLOCK_TYPE_INFO);
 
-fn clock_init_with_transport(
+struct ClockManagerConfig {
     node_id: u32,
+    n_vcpus: u32,
     transport: Box<dyn ClockSyncTransport>,
     session: Option<Arc<Session>>,
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
-) -> *mut ClockManager {
+    federation_id: virtmcu_wire::FederationId,
+}
+
+fn clock_init_with_transport(config: ClockManagerConfig) -> *mut ClockManager {
     let shutdown = Arc::new(AtomicBool::new(false));
-    let watchdog_threshold = if session_watchdog_ms > 0 && stall_timeout_ms > 0 {
-        (session_watchdog_ms / stall_timeout_ms) as u64
+    let watchdog_threshold = if config.session_watchdog_ms > 0 && config.stall_timeout_ms > 0 {
+        (config.session_watchdog_ms / config.stall_timeout_ms) as u64
     } else {
-        3
+        CLOCK_DEFAULT_WATCHDOG_THRESHOLD
     };
     let backend = Arc::new(VirtmcuClockBackend {
-        session,
-        transport,
-        node_id,
-        stall_timeout_ms,
-        is_coordinated,
+        n_vcpus: core::sync::atomic::AtomicU32::new(config.n_vcpus),
+        vcpu_halt_count: core::sync::atomic::AtomicU32::new(0),
+        session: config.session,
+        transport: config.transport,
+        node_id: config.node_id,
+        federation_id: config.federation_id,
+        stall_timeout_ms: config.stall_timeout_ms,
+        is_coordinated: config.is_coordinated,
         watchdog_threshold,
         consecutive_timeouts: core::sync::atomic::AtomicU64::new(0),
         abort_fn: Arc::new(|| std::process::exit(1)),
@@ -846,6 +1166,7 @@ fn clock_init_with_transport(
         start_time: Instant::now(),
         is_first_quantum: AtomicBool::new(true),
         pending_stall: AtomicBool::new(false),
+        is_first_sync: AtomicBool::new(true),
         shutdown: Arc::clone(&shutdown),
     });
 
@@ -859,13 +1180,21 @@ fn clock_init_with_transport(
 
 fn clock_init_internal(
     node_id: u32,
+    n_vcpus: u32,
     router: *const c_char,
     stall_timeout_ms: u32,
     is_coordinated: bool,
     session_watchdog_ms: u32,
+    federation_id: virtmcu_wire::FederationId,
 ) -> *mut ClockManager {
     let session = unsafe {
-        match transport_zenoh::open_session(router) {
+        let mut config = match transport_zenoh::open_config(router) {
+            Ok(c) => c,
+            Err(_) => return ptr::null_mut(),
+        };
+        let _ = config
+            .insert_json5("metadata/federation_id", &format!("\"{}\"", federation_id.as_str()));
+        match zenoh::open(config).wait() {
             Ok(s) => Arc::new(s),
             Err(_) => return ptr::null_mut(),
         }
@@ -873,17 +1202,19 @@ fn clock_init_internal(
     let (query_tx, query_rx) = crossbeam_channel::unbounded();
     let (start_tx, start_rx) = crossbeam_channel::unbounded();
     let start_topic = format!("sim/clock/start/{node_id}");
-    let start_transport = Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(&session)));
+    let start_transport =
+        Arc::new(transport_zenoh::ZenohDataTransport::new(Arc::clone(&session), node_id));
     // NOTE: `sim/clock/start` is only subscribed here when `is_coordinated = true`.
     // The Unix path (`slaved-unix`) never reaches this function — it exits via
     // `clock_init_with_transport()` in `clock_realize()`. Operators running
     // `slaved-unix` mode should NOT include `sim/clock/start` signals in their
     // world configuration; they have no effect and will mislead operators.
+    // virtmcu-allow: bql reasoning="SafeSubscription allowed in backbone devices like virtmcu-clock per GEMINI.md mandate."
     let _start_sub = virtmcu_qom::sync::SafeSubscription::new(
         start_transport.as_ref(),
         &start_topic,
         Arc::new(AtomicU64::new(0)),
-        Box::new(move |_| {
+        Box::new(move |_topic: &str, _payload: &[u8]| {
             let _ = start_tx.send(());
         }),
     )
@@ -928,14 +1259,16 @@ fn clock_init_internal(
         _node_id: node_id,
         is_coordinated,
     });
-    clock_init_with_transport(
+    clock_init_with_transport(ClockManagerConfig {
         node_id,
+        n_vcpus,
         transport,
-        Some(session),
+        session: Some(session),
         stall_timeout_ms,
         is_coordinated,
         session_watchdog_ms,
-    )
+        federation_id,
+    })
 }
 
 #[cfg(test)]

@@ -13,4 +13,4 @@ workspace = true
 
 [dependencies]
 virtmcu-qom.workspace = true
-virtmcu-api.workspace = true
+virtmcu-wire.workspace = true

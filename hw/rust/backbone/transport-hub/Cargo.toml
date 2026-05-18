@@ -1,0 +1,16 @@
+[package]
+name = "transport-hub"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+virtmcu-qom.workspace = true
+virtmcu-wire.workspace = true
+transport-zenoh.workspace = true
+transport-uds.workspace = true
+zenoh.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]

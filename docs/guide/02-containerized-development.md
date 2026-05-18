@@ -12,7 +12,7 @@ To set up a local development environment with zero manual configuration:
 1.  **Clone**: `git clone https://github.com/RefractSystems/VirtMCU.git`
 2.  **Open**: Launch the folder in VS Code.
 3.  **Reopen**: Click **"Reopen in Container"** when prompted.
-4.  **Verify**: Run `make dev-check` in the integrated terminal.
+4.  **Verify**: Run `make test-check` in the integrated terminal.
 
 ---
 
@@ -35,10 +35,10 @@ To keep development fast and parallel-safe, we employ several automated mechanis
 The container automatically detects if you cloned via SSH and switches the remote to **HTTPS**. This leverages VS Code's robust Git Credential Helper, avoiding issues with broken SSH agent forwarding after host sleep cycles.
 
 ### Parallel-Safe Testing
-`pytest -n auto` assigns ephemeral ports for every Zenoh router and QMP instance. This prevents "Address already in use" errors during parallel test execution.
+`virtmcu-test-runner -n auto` assigns ephemeral ports for every Zenoh router and QMP instance. This prevents "Address already in use" errors during parallel test execution.
 
 ### Workspace-Scoped Cleanup
-`make clean-sim` (via `scripts/cleanup-sim.sh`) only kills orphaned processes that originated from your specific workspace directory. It is safe to run even if other developers are testing concurrently on the same host.
+`make clean-sim` (via `cargo run -p virtmcu-cli -- setup cleanup-sim`) only kills orphaned processes that originated from your specific workspace directory. It is safe to run even if other developers are testing concurrently on the same host.
 
 ### The FFI Gate
 To prevent segmentation faults across the C/Rust boundary, `make check-ffi` extracts exact byte offsets from the QEMU binary and validates them against Rust's memory layout assertions.

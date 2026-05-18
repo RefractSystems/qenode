@@ -5,7 +5,6 @@
 | Tool | Version | Notes |
 |------|---------|-------|
 | Git | Any | |
-| Python | ≥ 3.11 | For repl2qemu, testing |
 | GCC or Clang | Recent | C11 |
 | Ninja | ≥ 1.10 | QEMU build |
 | Meson | ≥ 1.0 | QEMU build |
@@ -28,9 +27,6 @@ Windows is not supported (QEMU module loading is unavailable on Windows).
 sudo apt install build-essential libglib2.0-dev ninja-build \
                  device-tree-compiler flex bison libpixman-1-dev pkg-config \
                  b4
-
-# Install uv for Python environment management
-curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ---
@@ -44,8 +40,7 @@ The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
 3. Runs `make bootstrap` — patches and builds QEMU (~10 min, runs once)
-4. Synchronizes the system-wide Python environment using `uv pip`
-5. Configures Git to use `gh auth git-credential` for push/pull.
+4. Configures Git to use `gh auth git-credential` for push/pull.
 
 **Authentication & Cloning (CRITICAL):**
 To avoid painful SSH socket forwarding issues inside the devcontainer, **you must use the GitHub CLI (`gh`) for authentication and clone via HTTPS.**
@@ -83,7 +78,7 @@ make setup
 ```
 
 After `make setup`, QEMU lives in `third_party/qemu/build-virtmcu/install/` (or `build-virtmcu-asan/install/` if `VIRTMCU_USE_ASAN=1` is used).
-`scripts/run.sh` is a wrapper that sets the module dir and launches
+`target/release/virtmcu-run` is a wrapper that sets the module dir and launches
 the right QEMU binary.
 
 ---
@@ -93,19 +88,19 @@ the right QEMU binary.
 ### Adding a New Peripheral
 
 **For Rust Models (Preferred):**
-1. Copy the `hw/rust/common/rust-dummy/` template to `hw/rust/<category>/<name>`.
+1. Copy the `hw/rust/common/reference-peripheral/` template to `hw/rust/<category>/<name>`.
 2. Edit `src/lib.rs` for your Rust implementation.
 3. Update `hw/meson.build` to compile and link your module.
 
 **For C Models (Legacy/Bridge only):**
-1. Copy `hw/rust/common/virtmcu-test-devices/dummy.c` (as a template) or use existing C models.
+1. Copy `hw/misc/educational-dummy.c` (as a template) or use existing C models.
 2. Add an entry to `hw/meson.build` following the existing pattern.
 
 **For all models:**
 4. Run `make build` — only changed files recompile.
 5. Test:
    ```bash
-   ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
+   ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb \
                     -device <your-device-name> -nographic
    ```
 6. Verify the type appears in `-device help` output.
@@ -139,25 +134,13 @@ To ensure a completely clean environment:
 make clean-sim
 ```
 
-This command runs `scripts/cleanup-sim.sh`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `deterministic_coordinator`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
-
-### Python Tools (`tools/`)
-
-```bash
-# In DevContainer (system-wide):
-python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
-pytest tests/ -v
-
-# Native Linux:
-uv run python3 -m tools.repl2qemu path/to/board.repl --out-dtb board.dtb --print-cmd
-uv run pytest tests/ -v
-```
+This command runs `cargo run -p virtmcu-cli -- setup cleanup-sim`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `virtmcu-coord`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
 
 ## CI and Pre-Push Validation
 
 Before opening a PR or pushing code to `main`, you should run our local CI validation suite to catch linting, versioning, and compilation errors. Our CI pipeline is highly optimized using GHCR caching.
 
-*   **Fast Pre-Push Check (~2 mins):** Run `make ci-local` to run all static analysis, version checks, and unit tests.
+*   **Fast Pre-Push Check (~2 mins):** Run `make ci-check` to run all static analysis, version checks, and unit tests.
 *   **Static Analyzers & Memory Sanitizers:** Run `make ci-miri` (for Rust Undefined Behavior) and `make ci-asan` (for Memory Sanitizers).
 *   **Full Pipeline Validation (~40 mins cold, fast if cached):** Run `make ci-full` to execute the complete matrix of smoke tests exactly as they run on GitHub Actions inside the isolated ci container. This also includes the Miri and ASan checks. Passing this guarantees GitHub CI will pass.
 
@@ -170,23 +153,23 @@ Before opening a PR or pushing code to `main`, you should run our local CI valid
 virtmcu relies on automated testing to ensure new features (like parsing or new peripherals) don't break earlier architectural work. All tests must be properly documented.
 
 **Parallel Execution Strict Rules:** Our test suites run in parallel by default (`-n auto`). When writing new tests, they **MUST** be designed "out of the box" for parallel execution isolation. Do not rely on fixed resources:
-1. **NO Hardcoded Ports:** Never use fixed ports like `tcp/127.0.0.1:7447`. Inject dynamic ports using the `zenoh_router` fixture (in Python) or `scripts/get-free-port.py` (in Bash).
-2. **NO Hardcoded Temporal Paths:** Never generate output files (`.dtb`, `.yaml`, `.cli`) directly in `workspace_root` or shared test directories. Always use `pytest`'s `tmp_path` fixture or `mktemp -d` in Bash.
+1. **NO Hardcoded Ports:** Never use fixed ports like `tcp/127.0.0.1:7447`. Inject dynamic ports using `virtmcu-test-runner native port generation` (in Bash/Rust).
+2. **NO Hardcoded Temporal Paths:** Never generate output files (`.dtb`, `.yaml`, `.cli`) directly in `workspace_root` or shared test directories. Always use `virtmcu-test-runner`'s `tmp_path` fixture or `mktemp -d` in Bash.
 3. **NO Zenoh Cross-Talk:** BANNED: Raw `zenoh.open()` in tests. REQUIRED: Use `make_client_config()` or the `zenoh_session` fixture to ensure client-mode isolation with scouting disabled.
 4. **Deterministic Synchronization:** The framework handles routing synchronization (`ensure_session_routing`) automatically via the `simulation` fixture or `coordinator_subprocess` context manager. Manual calls in tests are banned.
-5. **NO Random Value Collisions:** Do not use `random.randint()` for IDs or paths. Use deterministic uniqueness tied to the execution context (e.g., `os.getpid()` or `tmp_path`).
-6. **NO Manual Process Management:** Do not spawn background daemons (like `cargo run ... deterministic_coordinator`) manually inside tests. Use the provided reusable `pytest` fixtures for clean, isolated orchestration.
+5. **NO Random Value Collisions:** Do not use random IDs or paths. Use deterministic uniqueness tied to the execution context (e.g., `os.getpid()` or `tmp_path`).
+6. **NO Manual Process Management:** Do not spawn background daemons (like `cargo run ... virtmcu-coord`) manually inside tests. Use the provided reusable `virtmcu-test-runner` fixtures for clean, isolated orchestration.
 
 We split testing into two categories:
 
 ### 1. Emulator-Level Smoke Tests
-These are raw `bash` scripts combined with small Python scripts (using QMP) to verify the emulator works at a low level.
+These are raw `bash` scripts combined with small Rust utilities (using QMP) to verify the emulator works at a low level.
 They are located in `tests/fixtures/guest_apps/<domain>/smoke_test.sh`.
 
 **To run all integration smoke tests locally:**
-The Makefile automatically handles building required test artifacts (like ELFs) and setting up the Python environment before running the tests.
+The Makefile automatically handles building required test artifacts (like ELFs) before running the tests.
 ```bash
-make dev-integtation
+make test-integration
 ```
 
 **Running in a Mirrored CI Environment (Docker):**
@@ -196,10 +179,9 @@ If a test passes locally but fails on CI, you can run the test inside the exact 
 docker build -t virtmcu-ci -f docker/Dockerfile --target ci .
 
 # 2. Run a specific domain smoke test (e.g., boot_arm)
-docker run --rm \
+docker run --rm --net=host \
   -v "$(pwd):/workspace" \
   -w /workspace \
-  -e PYTHONPATH=/workspace:/workspace/generated \
   virtmcu-ci \
   bash -c "make -C tests/fixtures/guest_apps/boot_arm && bash tests/fixtures/guest_apps/boot_arm/smoke_test.sh"
 ```
@@ -208,41 +190,28 @@ docker run --rm \
 *   **Inspect the Logs:** Many tests capture QEMU output to a log file (e.g., `smoke_test_output.log` in the test directory). Always read this file if the test fails.
 *   **Run Interactively:** If a smoke test times out or fails, run the QEMU command interactively without the `-monitor none` or `-serial file:...` flags so you can see what QEMU prints to the terminal.
     ```bash
-    ./scripts/run.sh --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
+    ./target/release/virtmcu-run --dtb tests/fixtures/guest_apps/boot_arm/minimal.dtb --kernel tests/fixtures/guest_apps/boot_arm/hello.elf -nographic
     ```
     *(To exit an interactive QEMU session, press `Ctrl+A` followed by `X`)*
 *   **Add Debug Flags:** You can append `-d exec,cpu_reset` or `-trace "zenoh_*"` to the `run.sh` command to trace execution blocks and see exactly where the firmware or QEMU is hanging.
 
-### 2. Python Unit & Automation Tests (advanced tests)
-For testing the `repl2qemu` parser and the Robot Framework QMP automation bridge, we use `pytest`.
+## Testing Strategy
 
-**To run unit/automation tests:**
-```bash
-# Make sure your Python environment is synchronized!
-make dev-all
-```
-
-When implementing a feature for a new Domain, you **MUST** provide a corresponding `smoke_test.sh` (or `pytest` suite for later domains) before submitting your PR. This prevents regressions.
-
----
-
-## Testing Strategy (Bifurcated: Rust + Python)
-
-We adhere to a strict **Bifurcated Testing Strategy** to maximize performance, safety, and orchestration reliability.
+We adhere to a strict testing strategy to maximize performance, safety, and orchestration reliability.
 
 1.  **White-Box Internals (Rust `#[test]`)**
     *   **What goes here:** State machines, lock-free queue logic, protocol parsing, memory layout validation (via `bindgen`), and anything testing internal C/Rust FFI boundaries.
     *   **How:** Write native `#[test]` modules inside the `hw/rust/` crates. These tests should *not* boot QEMU. Mock the necessary FFI calls.
     *   **Why:** Rust's test runner is exceptionally fast, and it can catch concurrency or memory alignment issues at compile time.
 
-2.  **Black-Box Orchestration (Python `pytest`)**
-    *   **What goes here:** Multi-node integration tests, QMP interaction, UART verification, process management (QEMU + Zenoh + TimeAuthority), and end-to-end regression testing.
-    *   **How:** Write structured tests using `pytest` and `asyncio` using our existing fixtures in `tools/testing/virtmcu_test_suite/qmp_bridge.py` and `conftest.py`.
-    *   **Why:** Python handles complex multi-process orchestration, asynchronous teardowns, and string matching much better than Rust or Bash.
+2.  **Black-Box Orchestration (Rust `virtmcu-test-runner`)**
+    *   **What goes here:** Multi-node integration tests, QMP interaction, UART verification, process management (QEMU + Zenoh + Coordinator), and end-to-end regression testing.
+    *   **How:** Write structured tests using `virtmcu-test-runner` leveraging our existing monitors and environment abstractions.
+    *   **Why:** Consolidated Rust-based orchestration provides better performance and safety.
 
 3.  **Thin CI Wrappers (Bash)**
-    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make dev-integration` contract).
-    *   **Never** write complex background process setup/teardown loops in Bash. Just call `pytest` or `cargo test`.
+    *   **Rule:** Bash (`tests/fixtures/guest_apps/*/*.sh`) is for entry points *only* (to satisfy the `make test-integration` contract).
+    *   **Never** write complex background process setup/teardown loops in Bash. Just call `virtmcu-test-runner` or `cargo test`.
 
 ---
 
@@ -285,11 +254,6 @@ If you are using an AI agent (Claude Code, Gemini CLI), you can automate the pro
 - `qemu/osdep.h` must be the first include in every `.c` file.
 - Use `qemu_log_mask(LOG_UNIMP, ...)` for unimplemented register accesses.
 - Use `DEFINE_TYPES()` + `TypeInfo[]`, not the older `type_register_static()`.
-
-**Python**: PEP 8, `ruff` for linting.
-```bash
-ruff check tools/ tests/
-```
 
 ---
 

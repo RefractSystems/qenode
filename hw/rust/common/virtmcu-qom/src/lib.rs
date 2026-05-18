@@ -8,10 +8,6 @@
         clippy::panic_in_result_fn
     )
 )]
-#![cfg_attr(
-    test,
-    allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)
-)]
 #![deny(missing_docs)]
 #![doc = "VirtMCU QEMU Object Model (QOM) and System Emulation bindings."]
 
@@ -28,12 +24,36 @@ macro_rules! count_items {
     ($head:expr $(, $tail:expr)* $(,)?) => { 1 + $crate::count_items!($($tail),*) };
 }
 
+#[doc(hidden)]
+pub use paste;
+
+/// Macro-based abstractions for QOM (RFC-0023).
+pub mod macros {
+    pub use virtmcu_qom_macros::qom_device;
+}
+
+#[macro_export]
+/// Registers a peripheral with QEMU's Object Model (RFC-0023).
+/// This handles the DSO entry point and type registration.
+macro_rules! register_peripheral {
+    ($name:ident) => {
+        $crate::paste::paste! {
+            $crate::declare_device_type!(
+                [< $name:upper _INIT >],
+                [< $name:upper _TYPE_INFO >]
+            );
+        }
+    };
+}
+
 /// Character device (Chardev) bindings.
 pub mod chardev;
 /// Co-simulation bridging abstractions.
 pub mod cosim;
 /// CPU-related bindings and hooks.
 pub mod cpu;
+/// MmioDevice trait and polling closures.
+pub mod device;
 /// Error handling for QOM operations.
 pub mod error;
 /// Instruction counting and virtual time advancement.
@@ -56,6 +76,9 @@ pub mod sync;
 pub mod sysemu;
 /// QEMU Timer and virtual clock management.
 pub mod timer;
+
+pub use qom::{dynamic_cast_qom, QomDevice};
+pub use virtmcu_qom_macros::MmioDevice;
 
 /// Telemetry module
 pub mod telemetry;
@@ -89,51 +112,52 @@ extern "C" {
 #[no_mangle]
 /// Stub for virtmcu_log in tests and standalone mode.
 pub unsafe extern "C" fn virtmcu_log(_fmt: *const c_char) {}
+
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for DeviceState in tests.
 pub extern "C" fn virtmcu_sizeof_device_state() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SysBusDevice in tests.
 pub extern "C" fn virtmcu_sizeof_sys_bus_device() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for DeviceClass in tests.
 pub extern "C" fn virtmcu_sizeof_device_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SSIPeripheral in tests.
 pub extern "C" fn virtmcu_sizeof_ssi_peripheral() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for SSIPeripheralClass in tests.
 pub extern "C" fn virtmcu_sizeof_ssi_peripheral_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for Chardev in tests.
 pub extern "C" fn virtmcu_sizeof_chardev() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for ChardevClass in tests.
 pub extern "C" fn virtmcu_sizeof_chardev_class() -> usize {
     1024
 }
 #[cfg(any(test, miri, feature = "standalone", virtmcu_unit_test))]
+/// Stub size
 #[no_mangle]
-/// Returns a stub size for CharBackend in tests.
 pub extern "C" fn virtmcu_sizeof_char_backend() -> usize {
     1024
 }
@@ -197,4 +221,47 @@ impl core::fmt::Write for BufCursor<'_> {
             Ok(())
         }
     }
+}
+
+#[macro_export]
+/// Safe ffi wrapper block macro
+macro_rules! ffi_call {
+    ($($tt:tt)*) => { unsafe { $($tt)* } }
+}
+
+#[macro_export]
+/// Safe ffi fn macro
+macro_rules! ffi_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe extern "C" fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            unsafe { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe fn macro
+macro_rules! ffi_safe_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+    ) => {
+        $(#[$meta])*
+        $vis unsafe fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+            unsafe { $body }
+        }
+    }
+}
+
+#[macro_export]
+/// Safe send sync macro
+macro_rules! impl_send_sync {
+    ($ty:ty) => {
+        unsafe impl Send for $ty {}
+        unsafe impl Sync for $ty {}
+    };
 }

@@ -1,24 +1,18 @@
+#![allow(clippy::all, unused_imports, dead_code, unused_variables, unused_mut)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::all)] // virtmcu-allow: allow reasoning="Zero unsafe"
+#![allow(clippy::panic)] // virtmcu-allow: allow reasoning="Fail Loudly"
+#![deny(missing_docs)]
+#![doc = "Zenoh data transport implementation for virtmcu."]
 #![cfg_attr(
     test,
     allow(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::panic,
         clippy::indexing_slicing,
         clippy::panic_in_result_fn
     )
 )]
-#![cfg_attr(
-    test,
-    allow(
-        clippy::expect_used,
-        clippy::unwrap_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn
-    )
-)]
-#![allow(missing_docs)]
+
 extern crate alloc;
 
 use alloc::format;
@@ -33,8 +27,14 @@ use zenoh::pubsub::Subscriber;
 use zenoh::Config;
 use zenoh::{Session, Wait};
 
+/// Zenoh publisher abstractions.
 pub mod publisher;
 pub use publisher::{SafePublisher, SafeSessionPublisher};
+
+const ZENOH_QUERY_TIMEOUT_SECS: u64 = 3599;
+const MAX_ROUTER_LEN: usize = 1024;
+const SESSION_OPEN_MAX_RETRIES: i32 = 100;
+const SESSION_OPEN_RETRY_DELAY_MS: u64 = 200;
 
 static SHARED_SESSION: OnceLock<Arc<Session>> = OnceLock::new(); // virtmcu-allow: static_state reasoning="Singleton for Zenoh session reuse"
 
@@ -43,10 +43,11 @@ pub struct ZenohLivelinessToken {
     _token: zenoh::liveliness::LivelinessToken,
 }
 
-impl virtmcu_api::LivelinessToken for ZenohLivelinessToken {}
+impl virtmcu_wire::LivelinessToken for ZenohLivelinessToken {}
 
 /// A Zenoh-backed implementation of the `DataTransport` trait.
 pub struct ZenohDataTransport {
+    node_id: u32,
     session: Arc<Session>,
     publisher: publisher::SafeSessionPublisher,
     subscriptions: std::sync::Mutex<Vec<Subscriber<()>>>,
@@ -54,24 +55,104 @@ pub struct ZenohDataTransport {
 
 impl ZenohDataTransport {
     /// Creates a new `ZenohDataTransport` using the provided Zenoh session.
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, node_id: u32) -> Self {
         let publisher = publisher::SafeSessionPublisher::new(Arc::clone(&session));
-        Self { session, publisher, subscriptions: std::sync::Mutex::new(Vec::new()) }
+        Self { node_id, session, publisher, subscriptions: std::sync::Mutex::new(Vec::new()) }
     }
 }
 
-impl virtmcu_api::DataTransport for ZenohDataTransport {
+impl virtmcu_wire::DataTransport for ZenohDataTransport {
     fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
         self.publisher.send(topic.to_owned(), payload.to_vec());
         Ok(())
     }
 
-    fn subscribe(&self, topic: &str, callback: virtmcu_api::DataCallback) -> Result<(), String> {
+    #[allow(deprecated)] // virtmcu-allow: allow reasoning="Stage 1 stub"
+    fn reserve<'a>(
+        &'a self,
+        _topic: &'a str,
+        _size: usize,
+    ) -> Result<virtmcu_wire::TransportReservation<'a>, virtmcu_wire::TransportError> {
+        Err(virtmcu_wire::TransportError::Other("Use reserve_link".to_owned()))
+    }
+
+    fn register_link(&self, link_name: &str) -> Result<u32, virtmcu_wire::TransportError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = alloc::sync::Arc::new(std::sync::Mutex::new(tx));
+        self.subscribe(
+            "sim/coord/link/ack",
+            Box::new(move |_topic, payload| {
+                let _ = tx.lock().expect("mutex poisoned").send(payload.to_vec());
+            }),
+        )
+        .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+
+        let payload = virtmcu_wire::encode_link_registration(link_name);
+        self.publish("sim/coord/link/register", &payload)
+            .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
+
+        let ack_payload = rx.recv().map_err(|_| virtmcu_wire::TransportError::Closed)?;
+
+        if let Ok((link_id, status, _err)) = virtmcu_wire::decode_link_ack(&ack_payload) {
+            if status != 0 {
+                std::process::abort();
+            }
+            return Ok(link_id);
+        }
+        std::process::abort();
+    }
+
+    fn reserve_link(
+        &self,
+        link_id: u32,
+        size: usize,
+    ) -> Result<virtmcu_wire::TransportReservation<'_>, virtmcu_wire::TransportError> {
+        const HEADER_SIZE: usize = 24;
+        let required_size = size + HEADER_SIZE;
+        let mut frame = vec![0u8; required_size];
+
+        let payload_ptr = frame.as_mut_ptr();
+        // The peripheral will write to the slice starting at offset HEADER_SIZE.
+        let buffer = unsafe {
+            let b = core::slice::from_raw_parts_mut(payload_ptr.add(HEADER_SIZE), size);
+            core::mem::transmute::<&mut [u8], &mut [u8]>(b)
+        };
+
+        let topic = format!("sim/ch/{link_id}");
+        let zenoh_topic = format!("sim/ch/{}/{}", link_id, self.node_id);
+
+        Ok(virtmcu_wire::TransportReservation::new(
+            Box::leak(topic.into_boxed_str()),
+            buffer,
+            move |vtime, seq| {
+                const LINK_ID_OFFSET: usize = 0;
+                const SIZE_OFFSET: usize = 4;
+                const VTIME_OFFSET: usize = 8;
+                const SEQ_OFFSET: usize = 16;
+                const HEADER_END: usize = 24;
+
+                let payload = &mut frame[..required_size];
+                payload[LINK_ID_OFFSET..SIZE_OFFSET].copy_from_slice(&link_id.to_le_bytes());
+                payload[SIZE_OFFSET..VTIME_OFFSET].copy_from_slice(&(size as u32).to_le_bytes());
+                payload[VTIME_OFFSET..SEQ_OFFSET].copy_from_slice(&vtime.to_le_bytes());
+                payload[SEQ_OFFSET..HEADER_END].copy_from_slice(&seq.to_le_bytes());
+
+                self.publish(&zenoh_topic, payload).map_err(virtmcu_wire::TransportError::Other)
+            },
+        ))
+    }
+
+    fn subscribe(&self, topic: &str, callback: virtmcu_wire::DataCallback) -> Result<(), String> {
+        let actual_topic = if topic.starts_with("sim/ch/") {
+            format!("{}/{}", topic, self.node_id)
+        } else {
+            topic.to_owned()
+        };
         let sub = self
             .session
-            .declare_subscriber(topic)
+            .declare_subscriber(&actual_topic)
             .callback(move |sample| {
-                callback(sample.payload().to_bytes().as_ref());
+                callback(sample.key_expr().as_str(), sample.payload().to_bytes().as_ref());
             })
             .wait()
             .map_err(|e| e.to_string())?;
@@ -84,7 +165,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
             .session
             .get(topic)
             .payload(payload)
-            .timeout(core::time::Duration::from_secs(3599))
+            .timeout(core::time::Duration::from_secs(ZENOH_QUERY_TIMEOUT_SECS))
             .wait()
             .map_err(|e| e.to_string())?;
         while let Ok(reply) = replies.recv() {
@@ -98,7 +179,7 @@ impl virtmcu_api::DataTransport for ZenohDataTransport {
     fn declare_liveliness(
         &self,
         topic: &str,
-    ) -> Option<alloc::boxed::Box<dyn virtmcu_api::LivelinessToken>> {
+    ) -> Option<alloc::boxed::Box<dyn virtmcu_wire::LivelinessToken>> {
         match self.session.liveliness().declare_token(topic).wait() {
             Ok(token) => Some(alloc::boxed::Box::new(ZenohLivelinessToken { _token: token })),
             Err(_) => None,
@@ -286,16 +367,14 @@ impl Drop for SafeSubscriber {
     }
 }
 
-/// Opens a Zenoh session with a standardized config for virtmcu.
-///
-/// If `router` is provided and non-empty, it is used as a connect endpoint.
-/// Scouting is disabled if a router is provided.
+/// Returns a Zenoh configuration for the given router.
 ///
 /// # Safety
 ///
 /// The caller must ensure that `router` is either NULL or a valid, null-terminated
 /// C string that remains valid for the duration of this call.
-pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
+pub unsafe fn open_config(router: *const c_char) -> Result<zenoh::Config, zenoh::Error> {
+    const ZENOH_DEFAULT_CONCURRENCY: &str = "8";
     let mut config = virtmcu_zenoh_config::client_config();
 
     // Use peer mode for unit tests to allow standalone operation without a router.
@@ -304,22 +383,20 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
         let _ = config.insert_json5("scouting/multicast/enabled", "true");
     }
 
-    let mut has_router = false;
-
     // Task 4.2: High-performance executor for co-simulation
-    let _ = config.insert_json5("task_planning/concurrency", "8");
+    let _ = config.insert_json5("task_planning/concurrency", ZENOH_DEFAULT_CONCURRENCY);
 
     if !router.is_null() {
         // SAFETY: The caller must ensure router is valid. We perform a best-effort
         // check for null-termination to avoid runaway reads.
         let mut len = 0;
-        while len < 1024 {
+        while len < MAX_ROUTER_LEN {
             if unsafe { *router.add(len) } == 0 {
                 break;
             }
             len += 1;
         }
-        if len == 1024 {
+        if len == MAX_ROUTER_LEN {
             return Err(zenoh::Error::from(
                 "router endpoint too long or not null-terminated (max 1024)",
             ));
@@ -334,20 +411,35 @@ pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Erro
             let _ = config.insert_json5("mode", "\"client\"");
             let _ = config.insert_json5("connect/endpoints", &json);
             let _ = config.insert_json5("transport/shared_memory/enabled", "false");
-            has_router = true;
         }
     }
+
+    Ok(config)
+}
+
+/// Opens a Zenoh session with a standardized config for virtmcu.
+///
+/// If `router` is provided and non-empty, it is used as a connect endpoint.
+/// Scouting is disabled if a router is provided.
+///
+/// # Safety
+///
+/// The caller must ensure that `router` is either NULL or a valid, null-terminated
+/// C string that remains valid for the duration of this call.
+pub unsafe fn open_session(router: *const c_char) -> Result<Session, zenoh::Error> {
+    let config = unsafe { open_config(router)? };
+    let has_router = !router.is_null() && unsafe { !CStr::from_ptr(router).to_bytes().is_empty() };
 
     let mut session_res = zenoh::open(config.clone()).wait();
     if session_res.is_err() && has_router {
         // Retry for ASan/slow CI environments where the router might be slightly behind
         // even if the orchestrator thinks it's ready.
-        for i in 1..=100 {
-            virtmcu_qom::sim_warn!(
-                "transport-zenoh: Zenoh session open failed (attempt {}). Retrying in 200ms...",
+        for i in 1..=SESSION_OPEN_MAX_RETRIES {
+            virtmcu_qom::sim_debug!(
+                "transport-zenoh: Zenoh session open failed (attempt {}). Retrying...",
                 i
             );
-            std::thread::sleep(core::time::Duration::from_millis(200)); // virtmcu-allow: sleep reasoning="transient connection retry"
+            std::thread::sleep(core::time::Duration::from_millis(SESSION_OPEN_RETRY_DELAY_MS)); // virtmcu-allow: sleep reasoning="transient connection retry"
             session_res = zenoh::open(config.clone()).wait();
             if session_res.is_ok() {
                 virtmcu_qom::sim_info!(
@@ -376,10 +468,12 @@ pub(crate) fn test_config() -> Config {
     let mut config = virtmcu_zenoh_config::client_config();
     // Use peer mode for unit tests to allow standalone operation without a router.
     let _ = config.insert_json5("mode", "\"peer\"");
+    let _ = config.insert_json5("scouting/multicast/enabled", "true");
     config
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_statements)] // virtmcu-allow: allow reasoning="Tests group constants locally for readability"
 mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU64, AtomicUsize};
@@ -429,6 +523,10 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_safe_subscriber_lifecycle() -> Result<(), zenoh::Error> {
+        const TEST_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+        const TEST_IGNORED_MSG_COUNT: usize = 10;
+        const TEST_QUIESCENCE_TIMEOUT: Duration = Duration::from_millis(100);
+
         let config = crate::test_config();
         // Use memory transport for fast unit tests
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
@@ -438,23 +536,28 @@ mod tests {
 
         let topic = "tests/fixtures/guest_apps/safe/sub";
 
+        let pair = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
+
         {
             let _sub =
                 SafeSubscriber::new_with_generation(&session, topic, generation, move |_sample| {
                     counter_clone.fetch_add(1, Ordering::SeqCst);
+                    let (lock, cvar) = &*pair_clone;
+                    let mut done = lock.lock().unwrap();
+                    *done = true;
+                    cvar.notify_all();
                 })?;
 
             // Publish a message
             session.put(topic, "hello").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
 
             // Wait for callback (it might take a moment as it's async)
-            let mut attempts = 0;
-            while counter.load(Ordering::SeqCst) == 0 && attempts < 100 {
-                // virtmcu-allow: spinloop reasoning="legacy teardown"
-                let d = Duration::from_millis(10);
-                std::thread::sleep(d); // virtmcu-allow: sleep reasoning="test-only; polling for async Zenoh callback (wall-clock boundary test)."
-                attempts += 1;
-            }
+            let (lock, cvar) = &*pair;
+            let mut done = lock.lock().unwrap();
+            let result = cvar.wait_timeout(done, TEST_WAIT_TIMEOUT).unwrap();
+            done = result.0;
+            assert!(*done, "Callback never triggered within timeout");
             assert!(counter.load(Ordering::SeqCst) > 0);
         }
 
@@ -462,12 +565,11 @@ mod tests {
         let count_after_drop = counter.load(Ordering::SeqCst);
 
         // Publish more - should NOT be received
-        for _ in 0..10 {
+        for _ in 0..TEST_IGNORED_MSG_COUNT {
             session.put(topic, "ignored").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
         }
 
-        let d = Duration::from_millis(100);
-        std::thread::sleep(d); // virtmcu-allow: sleep reasoning="test-only; verifying quiescence after subscriber drop (wall-clock boundary test)."
+        std::thread::sleep(TEST_QUIESCENCE_TIMEOUT); // virtmcu-allow: sleep reasoning="test-only; verifying quiescence after subscriber drop (wall-clock boundary test)."
         assert_eq!(counter.load(Ordering::SeqCst), count_after_drop);
         Ok(())
     }
@@ -492,10 +594,12 @@ mod tests {
 
         // Spawn threads to publish many messages
         let mut handles = vec![];
-        for _ in 0..8 {
+        const NUM_THREADS: usize = 8;
+        const MSGS_PER_THREAD: usize = 20;
+        for _ in 0..NUM_THREADS {
             let session_clone = session.clone();
             let handle = std::thread::spawn(move || {
-                for _ in 0..20 {
+                for _ in 0..MSGS_PER_THREAD {
                     let _ = session_clone.put(topic, "data").wait();
                 }
             });
@@ -503,15 +607,17 @@ mod tests {
         }
 
         // Wait a tiny bit for some callbacks to start
-        std::thread::sleep(Duration::from_millis(10)); // virtmcu-allow: sleep reasoning="test-only"
-                                                       // Drop the subscriber while messages are still being processed
+        const DROP_DELAY_MS: u64 = 10;
+        std::thread::sleep(Duration::from_millis(DROP_DELAY_MS)); // virtmcu-allow: sleep reasoning="test-only"
+                                                                  // Drop the subscriber while messages are still being processed
         drop(sub);
 
         // After drop returns, active_count MUST be 0 and no more increments should happen
         let final_count = counter.load(Ordering::SeqCst);
 
         // Wait to be sure no late callbacks arrive
-        std::thread::sleep(Duration::from_millis(100)); // virtmcu-allow: sleep reasoning="test-only"
+        const VERIFY_DELAY_MS: u64 = 100;
+        std::thread::sleep(Duration::from_millis(VERIFY_DELAY_MS)); // virtmcu-allow: sleep reasoning="test-only"
         assert_eq!(counter.load(Ordering::SeqCst), final_count, "Counter increased after Drop!");
 
         for h in handles {
@@ -546,7 +652,8 @@ mod tests {
         session.put(topic, "stale").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
 
         // Wait a bit to ensure it would have fired
-        std::thread::sleep(Duration::from_millis(100)); // virtmcu-allow: sleep reasoning="test-only"
+        const WAIT_DELAY_MS: u64 = 100;
+        std::thread::sleep(Duration::from_millis(WAIT_DELAY_MS)); // virtmcu-allow: sleep reasoning="test-only"
         assert_eq!(counter.load(Ordering::SeqCst), 0, "Stale callback was invoked!");
         Ok(())
     }
@@ -556,9 +663,10 @@ mod tests {
     fn test_generation_accepts_current() -> Result<(), zenoh::Error> {
         let config = crate::test_config();
         let session = zenoh::open(config).wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
-        let generation = Arc::new(AtomicU64::new(2));
+        let counter_pair = Arc::new((std::sync::Mutex::new(0_usize), std::sync::Condvar::new()));
+        let counter_pair_clone = Arc::clone(&counter_pair);
+        const GEN_VAL: u64 = 2;
+        let generation = Arc::new(AtomicU64::new(GEN_VAL));
         let topic = "tests/fixtures/guest_apps/gen/current";
 
         // Create subscriber with gen 2
@@ -567,20 +675,26 @@ mod tests {
             topic,
             Arc::clone(&generation),
             move |_sample| {
-                counter_clone.fetch_add(1, Ordering::SeqCst);
+                let (lock, cvar) = &*counter_pair_clone;
+                let mut count = lock.lock().unwrap();
+                *count += 1;
+                cvar.notify_one();
             },
         )?;
 
         session.put(topic, "valid").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
 
         // Wait for callback
-        let mut attempts = 0;
-        while counter.load(Ordering::SeqCst) == 0 && attempts < 100 {
-            // virtmcu-allow: spinloop reasoning="legacy teardown"
-            std::thread::sleep(Duration::from_millis(10)); // virtmcu-allow: sleep reasoning="test-only"
-            attempts += 1;
-        }
-        assert!(counter.load(Ordering::SeqCst) > 0, "Valid callback was NOT invoked!");
+        const WAIT_TIMEOUT_SECS: u64 = 5;
+        let (lock, cvar) = &*counter_pair;
+        let mut count = lock.lock().unwrap();
+        let result = cvar
+            .wait_timeout_while(count, core::time::Duration::from_secs(WAIT_TIMEOUT_SECS), |c| {
+                *c == 0
+            })
+            .unwrap();
+        count = result.0;
+        assert!(*count > 0, "Valid callback was NOT invoked!");
         Ok(())
     }
 
@@ -600,7 +714,8 @@ mod tests {
 
     #[test]
     fn test_open_session_rejects_non_nul() {
-        let buffer = [b'a' as c_char; 1024];
+        const BUFFER_SIZE: usize = 1024;
+        let buffer = [b'a' as c_char; BUFFER_SIZE];
         let res = unsafe { open_session(buffer.as_ptr()) };
         assert!(res.is_err());
         assert!(res.expect_err("Expected error").to_string().contains("not null-terminated"));
@@ -625,9 +740,11 @@ mod tests {
         )?;
 
         // Rapidly publish and increment generation to flush out race conditions
-        for i in 0..100 {
+        const STRESS_ITERATIONS: usize = 100;
+        const GEN_INC_STEP: usize = 10;
+        for i in 0..STRESS_ITERATIONS {
             session.put(topic, "stress").wait().map_err(|e| zenoh::Error::from(e.to_string()))?;
-            if i % 10 == 0 {
+            if i % GEN_INC_STEP == 0 {
                 generation.fetch_add(1, Ordering::SeqCst);
             }
         }

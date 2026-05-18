@@ -10,14 +10,14 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ## 1. The Core Constants
 
-### Binary Fidelity (ADR-006)
+### Binary Fidelity (RFC-0006)
 **The same firmware ELF that runs on a real MCU must run unmodified in VirtMCU.**
 - No virtmcu-specific startup code or linker sections.
 - Peripherals mapped at **exact** datasheet base addresses.
 - Infrastructure (clocks, co-sim) must be **invisible** to the guest firmware.
 - Any feature requiring firmware modification is a VirtMCU bug.
 
-### Global Simulation Determinism (ADR-014)
+### Global Simulation Determinism (RFC-0001)
 **Same topology + same firmware + same `global_seed` → bit-identical output.**
 - **Topology declared, not discovered**: Runtime Zenoh "scouting" is BANNED.
 - **Canonical tie-breaking**: Messages delivered in order `(vtime, node_id, seq)`.
@@ -29,7 +29,7 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Environment Agnosticism
 - **No absolute paths**: All paths must be relative to the project root.
-- **Cross-platform path handling**: Use `os.path.join` (Python), `PathBuf` (Rust), or `std::filesystem` (C++).
+- **Cross-platform path handling**: Use `PathBuf` (Rust) or `std::filesystem` (C++).
 - **Devcontainer-first**: `localhost` is the container. Never assume host toolchain access.
 
 ### Explicit Constants
@@ -37,35 +37,39 @@ This chapter serves as the immutable law for all developers—human or agent—c
 
 ### Logging Strictness
 - **No `print()` / `println!`**: BANNED in production code. 
-- **Structured Logging**: Use `logger.debug/info` (Python) and `sim_info!/sim_err!` (Rust).
-- **CI Enforcement**: Ruff rule `T201` enforces this in Python.
+- **Structured Logging**: Use `sim_info!/sim_err!` (Rust) and `tracing::info/error` (Rust tools).
 
 ### Protocol Serialization
-- **No Manual Struct Packing**: BANNED: manual `struct.pack()` or `struct.unpack()`.
-- **Schema-First**: REQUIRED: Use `vproto.py` (FlatBuffers) for all core simulation protocols.
+- **No Manual Struct Packing**: BANNED: manual packing/unpacking of bytes.
+- **Schema-First**: REQUIRED: Use `virtmcu-wire` (FlatBuffers) for all core simulation protocols (see RFC-0012).
 
 ### No Polling / Sleep Avoidance
-- **BANNED**: `std::thread::sleep`, `time.sleep()`, or `asyncio.sleep()` in hot paths, MMIO, or tests.
+- **BANNED**: `std::thread::sleep`, `tokio::time::sleep`, or `time.sleep()` in hot paths, MMIO, or tests.
 - **Deterministic Sync**: Use `vta.step()`, QMP events, or Zenoh `recv_async()`. 
-- **Exception**: `# virtmcu-allow: sleep reasoning="<reason>` is required for the few unavoidable cases."
+- **Exception**: `// virtmcu-allow: sleep reasoning="..."` is required for the few unavoidable cases.
 ---
 
 ## 3. The "Beyoncé Rule" of Verification
 > "If you liked it, then you shoulda put a test on it."
 
 - **Empirical Reproduction**: You must write a failing test reproducing a bug **before** applying the fix.
-- **Coverage**: Every feature must be backed by unit (Rust) or integration (Python) tests.
-- **Stress Testing**: New features must survive 10,000+ iterations (`cargo test --release`) or 100+ integration runs.
+- **Coverage**: Every feature must be backed by unit or integration tests (Rust).
+- **Stress Testing**: New features must survive 10,000+ iterations (`cargo test --release`) or 100+ integration runs (see RFC-0040).
 
 ---
 
 ## 4. Concurrency & Safety Mandates
 
 ### Safe Big QEMU Lock (BQL) Usage
-- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer.
-- **MMIO vCPU threads**: Yield BQL via `Bql::temporary_unlock()` when blocking on external I/O.
+- **Async threads**: MUST NOT block waiting for BQL. Use `crossbeam_channel` to drain into a QEMU timer. `VtimeIngress` (RFC-0021) handles this pattern automatically for ingress.
+- **MMIO vCPU threads**: Yield BQL via `Bql::temporary_unlock()` when blocking on external I/O (see RFC-0018).
 - **Bql API**: Use the RAII `Bql::lock()` and `QemuCond::wait_yielding_bql`.
 - **Lock Order**: BQL → peripheral mutex → condvar wait.
+
+### Two-Stage Delivery Pipeline
+- **Never mutate guest-visible state or wake a suspended vCPU directly inside a transport callback.**
+- **Stage 1 (Host Ingress)**: Use `VtimeIngress` to queue payloads by `delivery_vtime_ns` in a virtual-time-sorted priority queue.
+- **Stage 2 (Virtual Time Delivery)**: The `VtimeIngress` schedules a `QomTimer` (bound to `QEMU_CLOCK_VIRTUAL`) that fires at `delivery_vtime_ns`. The delivery callback performs the register mutation or signals IRQs under the BQL.
 
 ### Safe Peripheral Teardown
 - **No Bounded Spinloops**: BANNED: `while attempts < N`. This leads to time-bomb Use-After-Free (UAF) bugs.
@@ -80,17 +84,12 @@ This chapter serves as the immutable law for all developers—human or agent—c
 - **Endianness**: Use `to_le_bytes()`. `to_ne_bytes()` is BANNED for wire data.
 - **Unsafe Scope**: One FFI call per `unsafe` block.
 
-### Python: The Orchestration SOTA
-- **Infrastructure Golden Template**: Use `ManagedSubprocess` + `asyncio.Queue` for spawning background tools.
-- **No Path Bootstrapping**: BANNED: `sys.path.insert()`. Rely on `uv run` and the `pyproject.toml` boundary.
-- **AST over Regex**: BANNED: using regex to parse `.dtb`, JSON, or YAML. Use native parsers.
-
 ---
 
 ## 6. Common Anti-Patterns (The "Wall of Shame")
 
-1.  **Hardcoded Ports**: Never use `7447` or `7450`. Use `get-free-port.py`.
-2.  **Hardcoded Paths**: Never use `/tmp/out.dtb`. Use `pytest` `tmp_path`.
-3.  **Manual Process Management**: Never spawn daemons in test bodies. Use `pytest` fixtures.
+1.  **Hardcoded Ports**: Never use `7447` or `7450`. Use dynamic port generation.
+2.  **Hardcoded Paths**: Never use `/tmp/out.dtb`. Use `virtmcu-test-runner` `tmp_path`.
+3.  **Manual Process Management**: Never spawn daemons in test bodies. Use `virtmcu-test-runner` fixtures.
 4.  **Stale Processes**: Always run `make clean-sim` if a test fails; orphaned QEMUs hold ports.
-5.  **DSO TLS Trap**: Never call QEMU TLS macros (like `bql_locked()`) from a plugin DSO. Use the `virtmcu_is_bql_locked()` export from the main binary.
+5.  **DSO TLS Trap**: Never call QEMU TLS macros (like `bql_locked()`) from a plugin DSO. Peripheral code never needs to query BQL status at all — the framework passes `&BqlContext` as compile-time proof. Only `virtmcu-qom` framework internals may use `Bql::is_held()` (which wraps `virtmcu_is_bql_locked()` from the main binary export). If you think you need to check BQL status in peripheral code, you are writing framework code and it belongs in `virtmcu-qom`.

@@ -1,0 +1,21 @@
+namespace virtmcu.rf802154;
+
+table Rf802154Frame {
+  delivery_vtime_ns: uint64 = 0;
+  sequence_number:   uint64 = 0;
+  rssi:              int8   = 0;
+  lqi:               uint8  = 255;
+
+  // Decoded MAC Header (MHR) fields for routing and filtering
+  fcf:               uint16 = 0;
+  mhr_seq_num:       uint8  = 0;
+  dest_pan:          uint16 = 0xffff;
+  dest_addr:         uint64 = 0xffffffffffffffff;
+  src_pan:           uint16 = 0xffff;
+  src_addr:          uint64 = 0xffffffffffffffff;
+
+  // The raw IEEE 802.15.4 frame as received from/sent to the MCU
+  data:              [uint8];
+}
+
+root_type Rf802154Frame;

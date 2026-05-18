@@ -1,274 +1,223 @@
 # virtmcu Active Implementation Plan
 
-**Goal**: Make QEMU behave like Renode — dynamic device loading, FDT-based ARM machine instantiation, and deterministic multi-node simulation. The software MUST be at the highest Enteprise Quality following the SOTA of software development.
-**Primary Focus**: Binary Fidelity — unmodified firmware ELFs must run in VirtMCU as they would on real hardware.
+**Goal**: VirtMCU turns QEMU into a Binary-Compatible Deterministic Simulation framework for
+Distributed Systems — unmodified firmware ELFs run identically on real hardware and in
+simulation.
 
-## 1. General Guidelines & Mandates
+**Guiding Principles**: KISS · YAGNI · Crash-Only Design (RFC-0022) · RAII + DI (RFC-0031) + DRY
 
-### Milestone Lifecycle
-Once a Milestone is completed and verified, it MUST be moved from `PLAN.md` to the `/docs/guide/05-project-history.md` file to maintain a clean roadmap and a clear historical record.
-
-### Educational Content (Tutorials)
-For every completed milestone, a corresponding tutorial lesson MUST be added in `/tutorial`.
-- **Target**: CS graduate students and engineers.
-- **Style**: Explain terminology, provide reproducible code, and teach practical debugging skills.
-
-### Regression Testing
-For every completed milestone, an automated integration test MUST be added to `tests/` or `tests/fixtures/guest_apps/`.
-- **Bifurcated Testing**:
-  - **White-Box (Rust)**: Use `cargo test` for internal state, memory layouts, and protocol parsing.
-  - **Black-Box (Python)**: Use `pytest` for multi-process orchestration (QEMU + Zenoh + TimeAuthority).
-  - **Thin CI Wrappers (Bash)**: Bash scripts should only be 2-3 lines calling `pytest` or `cargo test`.
-
-### Production Engineering Mandates
-- **Environment Agnosticism**: No hardcoded paths. Use `tmp_path` for artifacts.
-- **Explicit Constants**: No magic numbers. Use descriptive `const` variables.
-- **The Beyonce Rule**: Prove bugs with a failing test before fixing.
-- **Lint Gate**: `make dev-lint` must pass before every commit (ruff, version checks, cargo clippy -D warnings).
-
-## 2. Open Items — Ordered by Priority
-
-> **Last updated**: 2026-04-29 (audit of `close_P0s` branch, commit `f45f676`).
-> **Mandatory before every commit**: `make dev-check` must both pass.
-> Completed P0 history is in `docs/guide/05-project-history.md`.
+**Immediate North Star**: Reference peripheral is the single gold-standard peripheral.
+All three test tiers (unit → integration → e2e) must be fully green before any other
+peripheral work begins.
 
 ---
 
+## [x] [PRE-0] Restore Basic Compilation — BLOCKED: everything else depends on this
 
+> `cargo build --workspace` currently fails. Nothing can be tested until this is fixed.
 
-**Determinism migration (new — highest correctness priority):**
-1. **Phase X: Active Codebase Migration to TypeSpec Schema** (See details below)
-2. [x] **DET-9** — Wireshark extcap plugin (Completed).
+- [x] PRE-0.1: **Fix `virtmcu-coord` main.rs**
+  - Add `DummyVTimeProvider` struct + `VTimeProvider` impl (copy pattern from `virtmcu-cli`)
+  - Fix `wire_link.destinations` → `wire_link.nodes` (field was renamed in topology.rs)
+  - Fix `wire_link.link_id` → derive link_id from iterator index (WireLink has no link_id field)
+- [x] PRE-0.2: **Add `decode_frame` / `encode_frame` shims to `virtmcu-wire`**
+  - 8 peripheral crates call these; they were deleted in a prior session without porting callers
+  - Format: `[vtime_ns: u64 LE][seq_num: u64 LE][payload_len: u64 LE][payload: N bytes]`
+  - Mark both `#[deprecated]` — they exist only to keep the workspace compiling during migration
+- [x] PRE-0.3: **Fix `xtask build-rust-modules` package naming**
+  - Current `-p` loop applies `replace('-', "_")` which breaks `mmio-socket-bridge`
+  - Fix: use `--workspace --exclude` for each non-QEMU-plugin tool package instead
 
-**Hardware / infrastructure (existing, continue in parallel with DET work):**
-3. **Milestone 27** — FlexRay IRQs + Bosch E-Ray Message RAM.
-4. **Milestones 21 / 22** — WiFi / Thread Protocol expansion.
-5. **Milestone 30.9 + 30.9.1** — Rust systemc-adapter + stress-adapter.
-6. **Milestone 30.8 + 30.10** — Firmware coverage (drcov) + unified reporting.
-7. **P12** — Deterministic Deadlock Detection (virtual-time budgets).
-8. **Milestone 32** — Vendor Firmware Validation (Ethernet & CAN-FD Binary Fidelity).
-9. **Milestone 33** — Deprecation of `repl2qemu` and `.repl` format (Migration to YAML+SVD SSOT).
-
----
-
-### Phase X: Active Codebase Migration to TypeSpec Schema 🚧
-**Status**: 🟡 Open. *Depends on the successfully implemented and tested TypeSpec generation pipeline (Completed).*
-
-**Goal**: Now that the TypeSpec SSoT (Single Source of Truth) is generating 100% tested Pydantic and Serde models, the active codebase must be migrated to actually *use* these generated files, replacing all manually maintained schema definitions.
-
-**Tasks**:
-- [ ] **X.1** Migrate Python Tooling: Replace all manual Pydantic definitions in `tools/testing/virtmcu_test_suite/world_schema.py` with imports from the newly generated `tools/testing/virtmcu_test_suite/generated.py`. Update downstream consumers like `yaml2qemu.py` and `runner.py` to match the exact attribute shapes (e.g. unwrapping `.root` values on generated alias types like `Address` and `NodeID`).
-- [ ] **X.2** Migrate Rust Coordinator: Replace the manual `serde` definitions inside `tools/deterministic_coordinator/src/topology.rs` with the generated `deterministic_coordinator::generated::topology::WorldSchema`. Update the `TopologyGraph` construction logic to unwrap the generated `Result<Option<T>>` Typify types safely.
-- [ ] **X.3** Clean Up: Delete the obsolete, manually maintained `world_schema.py` file.
-
-**Testing Requirements**:
-- [ ] Ensure all existing Python unit and integration tests (especially `tests/unit/test_yaml2qemu.py` and `tests/integration/system/`) pass without modification using the new generated models.
-- [ ] Ensure `cargo test` passes cleanly inside the coordinator.
-- [ ] Run the full `make ci-local` pipeline to ensure no hidden dependencies or test fixtures relied on legacy schema quirks.
-
-**Exit Criteria**:
-- `tools/testing/virtmcu_test_suite/world_schema.py` is completely removed.
-- `tools/deterministic_coordinator/src/topology.rs` contains zero manual data structures, relying entirely on the `generated::topology` module.
-- `make ci-local` completes 100% successfully.
+**Gate**: `cargo build --workspace` exits 0. `make test-check` exits 0.
 
 ---
 
-### [Hardware] Milestone 24 — CAN-FD (Bosch M_CAN) 🚧
-*Depends on: Milestone 19 (Rust QOM) ✅*
-- [ ] **24.1** Implement missing Bosch M_CAN register logic.
-- [ ] **24.2** Enable and verify CAN-FD frame payload delivery over Zenoh.
-- [ ] **24.3** Pass Vendor SDK loopback/echo tests (Link to Milestone 32.1).
+## [PHASE 0] Coordinator Sans-I/O Refactoring
 
-### [Hardware] Milestone 27 — FlexRay (Automotive) 🚧
-*Depends on: Milestone 5 (Bridge) ✅, Milestone 19 (Rust QOM) ✅*
-- [ ] **27.1.1** Add FlexRay Interrupts (IRQ lines).
-- [ ] **27.1.2** Implement Bosch E-Ray Message RAM Partitioning.
-- [ ] **27.2.1** Fix SystemC build regression (CMake 4.3.1 compatibility).
+> Refactor the central simulation coordinator into an Enterprise SOTA "Sans-I/O" state machine to eliminate asynchronous deadlocks and enable purely synchronous, standalone unit testing. 
 
-### [Hardware] Milestone 21 — WiFi (802.11) 🚧
-*Depends on: Milestone 20.5 (SPI)*
-- [ ] **21.7.1** Harden `arm-generic-fdt` Bus Assignment (Child node auto-discovery).
-- [ ] **21.7.2** Formalize `wifi` Rust QOM Proxy.
-- [ ] **21.2** Implement SPI/UART WiFi Co-Processor (e.g., ATWINC1500).
+### 0.1 — RFC
+- [x] Write `docs/rfcs/0043-coordinator-sans-io-architecture.md`
 
-### [Hardware] Milestone 22 — Thread Protocol 🚧
-*Depends on: Milestone 20.5 (SPI), Milestone 21 (WiFi)*
-- [ ] **22.1** Deterministic Multi-Node UART Bus Bridge.
-- [ ] **22.2** SPI 802.15.4 Co-Processor (e.g., AT86RF233).
+### 0.2 — State Machine Core & Unit Tests (TDD)
+- [x] Define `CoordinatorEvent`, `CoordinatorAction`, `CoordinatorPhase`, and `CoordinatorConfig`.
+- [x] Write exhaustive synchronous unit tests for the handshake FIRST: NodeJoined x N -> LinkRegister x M -> QuantumDone x N -> assert BroadcastClockStart.
+- [x] Create `CoordinatorState::new(config)` and `CoordinatorState::apply(event) -> Vec<Action>` containing pure business logic.
+- [x] Extract `BarrierState` from `QuantumBarrier` into `CoordinatorState` as plain data; delete the Mutex/Condvar/wait_for_all/reset wrappers since `apply()` is single-threaded.
 
-### **[ARCH-21] CoSimBridge RAII IoC Refactor** — Architecture & Reliability
+### 0.2.5 — Pure-Rust Integration Test
+- [x] Write a single-threaded integration test in pure Rust that constructs a `CoordinatorState`, feeds it a complete two-node protocol exchange (join -> link register -> 3 quantum cycles) via in-process byte slices, and asserts on the exact `Vec<CoordinatorAction>` at each step. No QEMU, no sockets.
 
-**Status**: 🚧 Under Construction (Completed for `mmio-socket-bridge` and `remote-port`).
+### 0.3 — I/O Boundary Wiring
+- [x] Refactor `main.rs` to wrap `CoordinatorState` within the `tokio` I/O loop.
+- [x] Map Unix socket / Zenoh inputs to `CoordinatorEvent`s.
+- [x] Execute returned `CoordinatorAction`s via socket / Zenoh outputs.
+- [x] DRY: Extract `build_delivery_frame(msg: &PdesMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
 
-**Goal**: Eliminate the manual, error-prone BQL-yielding and teardown boilerplate currently duplicated in `netdev`, `chardev`, and `actuator`. Move from a "Developer-must-remember" safety model to a "Safety-by-Construction" framework.
+**Gate**: `cargo test -p virtmcu-coord` passes. `make test-reference-peripheral` completes in under 15 seconds.
 
-**Files to modify**:
-- `hw/rust/comms/netdev/src/lib.rs` — Refactor to use `CoSimBridge`.
-- `hw/rust/comms/chardev/src/lib.rs` — Refactor to use `CoSimBridge`.
-- `hw/rust/observability/actuator/src/lib.rs` — Refactor to use `CoSimBridge`.
-
-**Definition of Done**:
-- [ ] `CoSimBridge` handles vCPU registration, BQL-yielding wait, and teardown drain automatically across all bridges.
-- [ ] Manual `VcpuCountGuard` / `Bql::temporary_unlock` boilerplate deleted.
-- [ ] Shutdown stress tests pass under ASan without UAF or hangs.
+### 0.4 — Rename
+- [x] Rename `virtmcu-coord` crate and directories to `virtmcu-coord`.
+- [x] Update `Cargo.toml`, `xtask`, `virtmcu-test-runner`, and `Makefile` references to use `virtmcu-coord`.
 
 ---
 
-### **[Infrastructure] Milestone 30 — Deep Oxidization & Testing Overhaul** 🚧
-*Ongoing*
-- [ ] **30.8** Comprehensive Firmware Coverage (drcov integration).
-- [x] **30.9.1** Implement Rust `stress-adapter` tool.
-- [ ] **30.10** Unified Coverage Reporting (Host + Guest).
+## [PRE-1] Hard Prune: Legacy Code Elimination (KISS / YAGNI)
 
+> Remove dead code paths so future agents work on one coherent architecture.
+> Do NOT begin P0 peripheral work until this is done — legacy paths confuse agents and hide bugs.
 
-### [Hardware] Milestone 32 — Vendor Firmware Validation (Binary Fidelity) 🚧
-**Status**: 🟡 Open.
+### L1 — Coordinator legacy cleanup
+- [x] L1.1: Delete all legacy topic-string routing from coordinator
+  (`sim/chardev/*`, `sim/spi/*`, `sim/wifi/*` substring matching)
+- [x] L1.2: Simplify or delete `topics.rs` — only 4 RFC-0042 topics remain:
+  `sim/ch/**`, `sim/coord/*/done`, `sim/coord/link/register/*`, `sim/network/control`
+- [x] L1.3: Simplify `message_log.rs` — remove `Protocol`-based pcap dispatch;
+  log by `link_id` only (KISS: link_id is all the coordinator knows)
+- [x] L1.4: Audit `zenoh_coordinator` — if it duplicates `virtmcu-coord` logic,
+  consolidate or delete it
 
-**Goal**: To guarantee true binary fidelity, VirtMCU must be validated against official, unmodified vendor SDK binaries targeting specific, named hardware peripherals. "Generic" bare-metal tests are insufficient for complex IP blocks.
+### L2 — Port all `decode_frame` callers to RFC-0042 VtimeIngress
+- [ ] L2.1: `uart` → `VtimeIngress::new_for_link(link_id, …)`
+- [ ] L2.2: `ui` (observability) → `VtimeIngress::new_for_link`
+- [ ] L2.3: `sensor` → `VtimeIngress::new_for_link`
+- [ ] L2.4: `ieee802154` → `VtimeIngress::new_for_link`
+- [ ] L2.5: `canfd` → `VtimeIngress::new_for_link`
+- [ ] L2.6: `flexray` → `VtimeIngress::new_for_link`
+- [ ] L2.7: `ethernet` → `VtimeIngress::new_for_link`
+- [ ] L2.8: `s32k144-lpuart` → `VtimeIngress::new_for_link`
+- [ ] L2.9: After all 8 ported: **delete** the `decode_frame` / `encode_frame` shims from `virtmcu-wire`
 
-**Mandates for Reference Materials**:
-1. **Zero-Commit Policy for Imported Code**: Official vendor SDK examples, libraries, or firmware source code MUST NOT be committed to the repository. Store them in `third_party/golden_references/<mcu_name>/` (which is tracked via `.gitkeep` but contents are ignored).
-2. **Datasheet & Spec PDFs**: Official peripheral datasheets and board spec PDFs MUST be stored in the same `third_party/golden_references/<mcu_name>/` folder. These files reside in the local filesystem for developer reference but MUST NOT be checked into revision control.
-3. **Reference READMEs (Tracked)**: For every new real peripheral reference (SDK, code, or spec PDF) added to `third_party/golden_references/`, a `README.md` MUST be created in its respective MCU subfolder. This `README.md` MUST be committed to version control and contain: 
-   - The original download URL / source.
-   - The license under which it is distributed.
-   - The exact date of download.
-4. **Reproducible Provenance**: Every firmware in `tests/firmware/` must have a corresponding `PROVENANCE.md` providing a direct download link and clear instructions for re-acquiring the original vendor materials stored in `third_party/golden_references/`.
+### L3 — Wire-protocol dead code
+- [ ] L3.1: Suppress or fix the 25 `#[deprecated]` warnings from `VirtmcuHandshake` in
+  `core_generated.rs` — either regenerate the FlatBuffer or add a targeted `#[allow]`
+- [ ] L3.2: Remove `Protocol` enum from topology if the only remaining consumer is
+  `message_log.rs` after L1.3
 
-**Tasks**:
-- [ ] **32.1** **CAN-FD (Bosch M_CAN)**: 
-  - *Target*: Identify a specific vendor MCU with a Bosch M_CAN controller (e.g., STM32G4, NXP S32K3).
-  - *Action*: Download the official vendor SDK CAN-FD example (e.g., echo/loopback). Compile unmodified and implement the missing M_CAN register logic in VirtMCU (Milestone 24) to make the vendor firmware pass.
-- [ ] **32.2** **Ethernet (MAC)**:
-  - *Target*: Identify a specific vendor MCU/Board with an Ethernet MAC supported by QEMU (e.g., SMSC LAN9118 on Cortex-A15, or NXP ENET on i.MX).
-  - *Action*: Download the official vendor SDK lwIP/ping example. Compile unmodified and test against `virtmcu-netdev` to verify bidirectional packet flow.
-- [ ] **32.3** **Provenance Enforcement**: Update `tests/firmware/*/PROVENANCE.md` (and create for all new firmwares) to mandate that *all* test firmwares explicitly list the exact real-world MCU, the specific peripheral name (e.g., "NXP S32K144 LPUART0"), the vendor SDK version, and a reproducible download/build link.
+**Gate**: `grep -r "decode_frame\|encode_frame\|chardev_tx\|chardev_rx\|base_topic" hw/rust/` → 0 matches.
+`cargo build --workspace` produces 0 errors and 0 warnings on peripheral crates.
 
-### [Infrastructure] Milestone 33 — Deprecation of `repl2qemu` and `.repl` format 🚧
-**Status**: 🟡 Open.
+---
 
-**Goal**: Complete the transition to the bifurcated hardware description model (YAML for topology via OpenUSD + CMSIS-SVD for micro-architecture/registers). This eliminates the structural drift inherent in "all-in-one" `.repl` definitions.
+## [P0] Reference Peripheral: Gold Standard
 
-**Tasks**:
-- [ ] **33.1**: Migrate any remaining legacy `.repl` platforms in the `worlds/` directory to the new YAML format using the `repl2yaml.py` utility.
-- [ ] **33.2**: Refactor `yaml2qemu.py` to remove its dependency on `repl2qemu/fdt_emitter.py`. Integrate the required FDT emission logic directly into `yaml2qemu` or a new modern library.
-- [ ] **33.3**: Completely remove the `tools/repl2qemu` package and its associated CLI commands.
-- [ ] **33.4**: Update any documentation guides (e.g., in `docs/guide/`) still referencing `.repl` files to exclusively describe the YAML + SVD workflow as defined in Architecture Chapter 11.
-
-
-### [Infrastructure] INFRA-9 — Execution Pacing & Faster-Than-Real-Time (FTRT) Support
-**Status**: 🟡 Open.
-**Goal**: Formalize the separation between **Wall-Clock Timeouts** (fail-fast boundaries) and **Simulation Pacing** (controlling guest execution speed relative to reality). VirtMCU must run FTRT in CI, but support interactive real-time (1.0x) or slow-motion (e.g., 10.0x) for human-in-the-loop UI and GDB sessions.
-**What needs to be improved**: Tests and runtime environments currently assume "as fast as possible." When connecting a frontend UI or Wireshark, the simulation runs too fast for human observation. Conversely, we must mathematically prove that CI runs FTRT without artificial framework bottlenecks.
-**How it's tested**: 
-1. **Host Timeout Scale**: Implemented `TestParams` in `tools/testing/parameters.py` to transparently stretch/shrink wait boundaries based on ASan/CI runners.
-2. **Coordinator Pacing**: Add `--pacing <float>` to `deterministic_coordinator`. `0.0` = FTRT (default), `1.0` = Real-time, `10.0` = Slow motion.
-3. **Runtime UI Control**: Expose a QMP/Zenoh endpoint allowing a connected Frontend UI to dynamically adjust the pacing multiplier at runtime.
-4. **FTRT Proof Test**: Create a CI test that simulates 60 seconds of virtual stress-load, asserting that it completes in `< 5 seconds` of Wall-Clock time.
-
-### [Future] Real-Time Visualization & UI Framework
-
-**Goal**: Implement a visually rich, interactive dashboard to visualize the simulation topology, link states, and live packet movement.
-
-**Design Mandates**:
-1.  **Simulation Gateway Pattern**: Use a **FastAPI** backend as an "Intelligence Gateway" to aggregate raw simulation data and serve it to both humans (WebSockets) and AI Agents (REST).
-2.  **Transport Agnostic Observer**:
-    *   **Zenoh**: Passive subscriber to `sim/**` topics.
-    *   **Unix Sockets**: Implement an "Observer Port" in the `deterministic_coordinator` that "tees" all routed traffic to a local Unix stream.
-3.  **Frontend**: Use **React Flow** for the topology graph. Packets should be animated as glowing CSS markers traveling along SVG edge paths based on live `(src, dst, proto)` events.
-4.  **AI Integration (MCP)**: The Gateway must provide semantic aggregation (e.g., `/api/network/stats`) to prevent overwhelming AI agent context windows with raw packet data.
-
-### [Future] Connectivity Expansion
-- [ ] **Milestone 23**: Bluetooth (nRF52840 RADIO emulation).
-- [ ] **Milestone 26**: Automotive Ethernet (100BASE-T1).
-- [ ] **Milestone 28**: Full Digital Twin (Multi-Medium Coordination).
-- [x] **DET-9**: Wireshark extcap plugin (Completed).
-
-## 3. Architectural Hardening — Concurrency, Correctness & Scale
-
-> **Purpose**: Close known concurrency bugs, wire-protocol gaps, and design debt identified
-> in the April 2026 deep-architecture review. Tasks are ordered by severity. Each is
-> self-contained with exact file paths, step-by-step implementation, tests, and a binary
-> definition of done.
+> One peripheral, all three test tiers green. This is the proof-of-correctness for the
+> entire RFC-0041 + RFC-0042 stack before mass migration begins.
 >
-> **Audience**: AI coding agents and junior engineers. Follow steps exactly. Do not infer.
->
-> **Prerequisite**: `make dev-check` MUST pass before starting any task.
+> Reference: `hw/rust/examples/reference-peripheral/`
+
+### P0.1 — Unit Tests
+- [x] P0.1.1: `cargo test -p reference_peripheral` — all unit tests pass
+- [x] P0.1.2: `cargo test -p virtmcu-wire` — all wire protocol tests pass
+- [x] P0.1.3: `cargo test -p virtmcu-qom` — BqlContext, ClosureTimer, drain teardown tests pass
+
+**Gate**: `make test-unit` exits 0 for the three packages above.
+
+### P0.2 — Integration Test: Progressive Milestones
+- [ ] P0.2.1: **Milestone 1: 1 Node + Coordinator (Clock Only)**. Create a test to verify base coordinator clock sync without RFC-0042 data plane getting in the way.
+- [ ] P0.2.2: **Milestone 2: 1 Node + Coordinator + 1 Peripheral**. Create `reference_standalone.yml` to verify `register_link` works in isolation without inter-node deadlock.
+- [ ] P0.2.3: **Milestone 3: 2 Nodes + Coordinator (No Peripherals)**. Verify multi-node clock sync barrier logic.
+- [ ] P0.2.4: **Milestone 4: The Full 2-Node Ping-Pong** (`test_reference_ping_pong_unix` passes).
+- [ ] P0.2.5: `test_shutdown_safety` passes — teardown during blocked MMIO, no sanitizer errors
+
+**Gate**: `make test-reference-peripheral` exits 0 (unix transport path).
+
+### P0.3 — E2E Ping Pong: Full Transport Parity
+- [ ] P0.3.1: `test_reference_ping_pong_zenoh` passes (Zenoh transport coordinator)
+- [ ] P0.3.2: `test_reference_ping_pong_transport_parity` passes
+  (unix and zenoh produce bit-identical output)
+- [ ] P0.3.3: ASAN clean on reference peripheral teardown
+
+**Gate**: All three `reference_network` integration tests pass. `make ci-full` exits 0 for the
+reference peripheral scope.
 
 ---
 
-### **[ARCH-14] Document and Measure Simulation Frequency Ceiling** — Observability
+## [P1] Mass Peripheral Migration
 
-**Status**: 🟡 Open. Depends on: DET-4 (Unix socket transport).
+*Blocked on P0.3 (reference peripheral fully green) and PRE-1 L2 (all decode_frame callers ported).*
 
-**Goal**: Document the maximum sustainable quantum rate for each transport option.
-Add a benchmark script. Add the measured results as a table in ARCHITECTURE.md so
-engineers can choose the right transport for their scenario.
+Migrate each peripheral in this order — one at a time, gate passes before next:
 
-**Files to create**:
-- `tools/benchmarks/clock_rtt_bench.py` — measures median clock RTT across 10 000 quanta
+1. `uart` — highest test coverage, good canary
+2. `sensor` — already has smoke tests from P1 prep
+3. `canfd`, `flexray`, `ethernet`, `ieee802154` — buses (similar pattern)
+4. `ui` (observability), `s32k144-lpuart` — last because least critical to simulation correctness
 
-**Files to modify**:
-- `docs/architecture/01-system-overview.md` — add "Simulation Frequency Ceiling" table
+Per-peripheral checklist (RFC-0041 + RFC-0042):
+- `VtimeIngress::new_for_link(link_id, …)` for ingress (no topic strings)
+- `reserve_link(link_id, size)` for egress (no `reserve(topic, …)`)
+- `BqlContext` in read/write/realize signatures
+- `ClosureTimer` for all timers
+- `dynamic_cast_qom` for pointer casts
+- `drain: VcpuDrain` + `_guard = self.drain.acquire()` in every MMIO handler
+- Existing test passes before next peripheral starts
 
-**Definition of Done**:
-- [ ] Benchmark script exists and is runnable in CI.
-- [ ] Results table added to ARCHITECTURE.md §9.
-- [ ] `make dev-lint` (ruff) passes on the benchmark script.
-
----
-
-### **[ARCH-15] SMP Firmware Quantum Barrier** — Correctness for Dual-Core Firmware
-
-**Status**: 🟡 Open. No dependencies. Low priority unless dual-core firmware is needed.
-
-**Goal**: When QEMU is started with SMP (`-smp 2`), the TCG quantum hook fires
-independently on each vCPU thread. Both vCPUs must halt at the quantum boundary before any
-`ClockReadyResp` is sent. Implement a per-quantum vCPU barrier counter.
-
-**Files to modify**:
-- `hw/rust/backbone/clock/src/lib.rs` — add `n_vcpus: u32` QOM property (default 1);
-  add `vcpu_halt_count: AtomicU32`; in the quantum hook, increment the counter and wait
-  (using `Condvar`) until `vcpu_halt_count == n_vcpus` before sending `ClockReadyResp`;
-  reset counter at quantum start.
-
-**Definition of Done**:
-- [ ] `n-vcpus` property added to `clock` device.
-- [ ] With `n-vcpus=2` and `-smp 2`, both vCPUs halt before reply is sent.
-- [ ] Both unit tests pass.
-- [ ] `make dev-lint` passes.
+**Gate**: `grep -r "DrainToken\|deref_qom_ptr\|opaque_to_state\|decode_frame\|encode_frame" hw/rust/` → 0 matches.
 
 ---
 
-### **[ARCH-17] Replace `GLOBAL_CLOCK` Singleton to Support Multi-MCU QEMU** — Architecture
+## [P1.5] Firmware Studio Delivery — Robot Controller Peripherals
 
-**Status**: 🟡 Open. Low priority. Depends on: ARCH-1 and ARCH-3 complete.
+*Blocked on P0.3 (reference peripheral fully green). Must land before P2.*
 
-**Goal**: Replace process-wide `GLOBAL_CLOCK` with a per-device-instance registry keyed by
-node ID, allowing multiple independent clock devices per QEMU process.
+**Context**: Firmware Studio needs a stable VirtMCU build where a controller can drive
+target positions and sense robot state from the physics environment. The sensor and
+actuator peripherals are the critical path.
 
-**Files to modify**:
-- `hw/rust/backbone/clock/src/lib.rs` — replace `static GLOBAL_CLOCK` with `static CLOCK_REGISTRY: Mutex<HashMap<u32, Arc<ZenohClock>>>`.
+Priority order (highest to lowest):
 
-**Definition of Done**:
-- [ ] `GLOBAL_CLOCK: AtomicPtr` removed.
-- [ ] `CLOCK_REGISTRY: Mutex<HashMap<u32, Arc<ZenohClock>>>` introduced.
-- [ ] `test_two_clock_instances_independent` passes.
-- [ ] `make dev-lint` passes.
+1. **`sensor`** — physics → firmware (position / force / IMU sensing)
+   - Port to RFC-0041 + RFC-0042 (VtimeIngress::new_for_link)
+   - Existing smoke test must pass
+   - Integration test: sensor data from physics gateway reaches firmware register
+
+2. **`actuator`** — firmware → physics (motor drive commands)
+   - Port to RFC-0041 + RFC-0042
+   - Integration test: MMIO write drives coordinator delivery to physics gateway
+
+3. **`uart`** — firmware ↔ Firmware Studio debug channel (CoSimBridge path)
+   - Port to RFC-0041; verify CoSimBridge teardown is clean
+
+4. Remaining buses (`canfd`, `flexray`, `ethernet`, `ieee802154`, `ui`, `s32k144-lpuart`)
+   — after sensor + actuator + uart are green.
+
+**Gate**: `make test-sensor test-actuator test-uart` green. Firmware Studio can connect,
+send actuator commands, and receive sensor readings in a deterministic simulation run.
 
 ---
 
-## 4. Ongoing Risks (Watch List)
+## [P2] Hardware Expansion
 
-Items here have no immediate action — they are structural constraints or future triggers to monitor.
+*Blocked on P1.5 (sensor + actuator + uart green).*
 
-| ID | Risk | Status / Mitigation |
+| Task | Description |
+|---|---|
+| CAN-FD (Bosch M_CAN) | Missing register logic; frame delivery through coordinator |
+| FlexRay | IRQ lines; Bosch E-Ray Message RAM; SystemC build fix |
+| WiFi (802.11) | Physics gateway federate; SPI/UART co-processor |
+| Thread | Depends on WiFi; SPI 802.15.4 co-processor |
+| Bluetooth | nRF52840 RADIO emulation |
+| Automotive Ethernet | 100BASE-T1 |
+
+Each task: implement → write integration test → gate passes before next.
+
+---
+
+## [P3] Strategic Evolution (Parked)
+
+- [ ] Enterprise SSoT Generation (YAML → TypeSpec → OpenUSD)
+- [ ] Real-Time Visualization (Rust/Axum + React Flow)
+- [ ] Sensor Data Replay (MCAP + `virtmcu-replay`)
+- [ ] External Input Boundaries (interactive mode + replay)
+
+---
+
+## Ongoing Risks
+
+| ID | Risk | Mitigation |
 |---|---|---|
-| R1 | `arm-generic-fdt` patch drift | Ongoing. QEMU version is pinned; all patches go through `scripts/apply-qemu-patches.sh`. Track upstream `accel/tcg` changes on each QEMU bump. |
-| R7 | `icount` performance | Design guideline: use `slaved-icount` only when sub-quantum timing precision is required. `slaved-suspend` is the default. |
-| R11 | Zenoh session deadlocks in teardown | Mitigated: `SafeSubscriber` (Milestone 1) and BQL-yielding (Milestone 18.7). |
-| R18 | No firmware coverage gate | Binary fidelity is the #1 invariant but there is no `drcov`/coverage CI gate. Tracked as Milestone 30.8. |
-
-## 5. Permanently Rejected / Won't Do
-- Generic "virtmcu-only" hardware interfaces (Violates ADR-006 Binary Fidelity).
-- [x] Fixed Miri tests across the workspace
+| R1 | QEMU patch drift | Pinned; all changes via `virtmcu-cli setup patch-qemu` |
+| R2 | `decode_frame` shim format mismatch | Shim is documented as transitional; removed after L2 |
+| R4 | Stale `.so` plugin | Rebuild after any source change: `ninja -C .../build-virtmcu install` |
+| R5 | `icount` performance | `slaved-icount` only for sub-quantum precision; `slaved-suspend` is default |

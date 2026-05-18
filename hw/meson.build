@@ -15,18 +15,22 @@ hw_virtmcu_modules = {}
 hw_virtmcu_inc = include_directories('.', 'misc')
 
 rust_modules = [
-    {'pkg': 'rust-dummy', 'lib': 'librust_dummy.a', 'obj': 'rust-dummy'},
+    {
+        'pkg': 'reference-peripheral',
+        'lib': 'libreference_peripheral.a',
+        'obj': 'reference-peripheral',
+    },
     {
         'pkg': 'clock',
         'lib': 'libclock.a',
         'obj': 'virtmcu-clock',
         'extra_inc': '#include "virtmcu/hooks.h"',
     },
-    {'pkg': 'netdev', 'lib': 'libnetdev.a', 'obj': 'netdev'},
+    {'pkg': 'ethernet', 'lib': 'libethernet.a', 'obj': 'netdev'},
     {'pkg': 'canfd', 'lib': 'libcanfd.a', 'obj': 'can-host-virtmcu'},
     {
-        'pkg': 'chardev',
-        'lib': 'libchardev.a',
+        'pkg': 'uart',
+        'lib': 'libuart.a',
         'obj': 'chardev-virtmcu',
         'extra_c': 'int get_chardev_backend_kind_virtmcu(void); int get_chardev_backend_kind_virtmcu(void) { return CHARDEV_BACKEND_KIND_VIRTMCU; }',
         'extra_inc': '#include "qapi/qapi-types-char.h"',
@@ -38,6 +42,7 @@ rust_modules = [
         'extra_inc': '#include "virtmcu/hooks.h"',
     },
     {'pkg': 'actuator', 'lib': 'libactuator.a', 'obj': 'actuator'},
+    {'pkg': 'sensor', 'lib': 'libsensor.a', 'obj': 'sensor'},
     {'pkg': 'ieee802154', 'lib': 'libieee802154.a', 'obj': 'ieee802154'},
     {'pkg': 'ui', 'lib': 'libui.a', 'obj': 'ui'},
     {
@@ -51,7 +56,7 @@ rust_modules = [
         'obj': 'mmio-socket-bridge',
     },
     {
-        'pkg': 'transport_hub',
+        'pkg': 'transport-hub',
         'lib': 'libtransport_hub.a',
         'obj': 'virtmcu-transport-hub',
     },
@@ -77,16 +82,12 @@ foreach m : rust_modules
     rust_build_args += m['pkg'] + ':' + m['lib']
 endforeach
 
-# Get all Rust sources to ensure correct dependency tracking
+# Get all Cargo.toml files to trigger a re-configure if new crates are added
 rust_sources_res = run_command(
     'find',
     meson.current_source_dir() / 'rust',
-    '-path',
-    meson.current_source_dir() / 'rust/target',
-    '-prune',
-    '-o',
     '-name',
-    '*.rs',
+    'Cargo.toml',
     '-print',
     check: true,
 )
@@ -102,6 +103,29 @@ endif
 message(
     'Configuring Rust virtmcu modules with QEMU_SRC_DIR=' + meson.project_source_root(),
 )
+
+xtask_bin_res = run_command('sh', '-c', 'echo $XTASK_BIN', check: false)
+xtask_bin = xtask_bin_res.stdout().strip()
+if xtask_bin != ''
+    xtask_cmd = [xtask_bin]
+else
+    virtmcu_workspace = run_command(
+        'sh',
+        '-c',
+        'echo $VIRTMCU_WORKSPACE',
+        check: false,
+    ).stdout().strip()
+    if virtmcu_workspace == ''
+        virtmcu_workspace = meson.current_source_dir() / '..'
+    endif
+    xtask_cmd = [
+        'cargo',
+        'run',
+        '--manifest-path',
+        virtmcu_workspace / 'xtask/Cargo.toml',
+        '--',
+    ]
+endif
 
 rust_libs_env = {
     'QEMU_SRC_DIR': meson.project_source_root(),
@@ -125,8 +149,8 @@ rust_libs = custom_target(
     output: rust_libs_outputs,
     build_by_default: true,
     env: rust_libs_env,
-    command: [
-        meson.current_source_dir() / 'rust/build.sh',
+    command: xtask_cmd + [
+        'build-rust-modules',
         meson.current_source_dir() / 'rust',
         meson.current_build_dir() / 'target',
         meson.current_build_dir(),
@@ -144,14 +168,28 @@ foreach m : rust_modules
         m['pkg'] + '_trigger_c',
         output: m['pkg'] + '_trigger.c',
         depends: rust_libs,
-        command: [
-            meson.current_source_dir() / 'gen_trigger.sh',
-            '@OUTPUT@',
-            m.get('obj', ''),
-            m.get('extra_inc', ''),
-            m.get('extra_c', ''),
-            m.get('objs', []),
-        ],
+        command: xtask_cmd + ['gen-module-trigger', '@OUTPUT@'] + (m.get(
+            'obj',
+            '',
+        ) != '' ? [
+            '--obj',
+            m.get('obj'),
+        ] : []) + (m.get(
+            'extra_inc',
+            '',
+        ) != '' ? [
+            '--extra-inc',
+            m.get('extra_inc'),
+        ] : []) + (m.get(
+            'extra_c',
+            '',
+        ) != '' ? [
+            '--extra-c',
+            m.get('extra_c'),
+        ] : []) + m.get(
+            'objs',
+            [],
+        ),
     )
 
     ss_name = ss.source_set()

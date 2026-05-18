@@ -4,12 +4,39 @@ publish = false
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "virtmcu-physical-node"
+path = "src/bin/physical_node.rs"
+
+[[bin]]
+name = "virtmcu-physics-gateway"
+path = "src/bin/physics_gateway.rs"
+
+[[bin]]
+name = "virtmcu-resd-replay"
+path = "src/bin/resd_replay.rs"
+
+[[bin]]
+name = "gen-pendulum-resd"
+path = "src/bin/gen_pendulum_resd.rs"
+
+[[bin]]
+name = "pendulum-mock-physics"
+path = "src/bin/pendulum_mock_physics.rs"
+
 [dependencies]
 zenoh = "1.9.0"
 virtmcu-zenoh-config.workspace = true
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 byteorder = "1.5"
-virtmcu-api = { path = "../../hw/rust/common/virtmcu-api" }
+virtmcu-wire = { path = "../../hw/rust/common/virtmcu-wire" }
+anyhow = "1.0"
+memmap2 = "0.9"
+libc = "0.2"
+clap = { version = "4.4", features = ["derive", "env"] }
+tracing.workspace = true
+virtmcu-observability.workspace = true
+flatbuffers.workspace = true
 
 
 [lints.clippy]
