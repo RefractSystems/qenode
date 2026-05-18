@@ -270,9 +270,7 @@ impl TopologyBuilder {
                 .stderr(log_file)
                 .kill_on_drop(true);
 
-            let coord_proc = coord_cmd
-                .spawn()
-                .context("Failed to spawn virtmcu-coord")?;
+            let coord_proc = coord_cmd.spawn().context("Failed to spawn virtmcu-coord")?;
 
             // Give it time to bind the socket
             tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -372,8 +370,12 @@ impl TopologyBuilder {
 
                 std::env::set_var("VIRTMCU_WORKSPACE", &ctx.workspace_root);
                 std::env::set_var("VIRTMCU_TRANSPORT", transport);
-                let (platform, world) =
-                    yaml2qemu::parse_yaml(&yaml_content, Some(&endpoint), node.id, Some(transport))?;
+                let (platform, world) = yaml2qemu::parse_yaml(
+                    &yaml_content,
+                    Some(&endpoint),
+                    node.id,
+                    Some(transport),
+                )?;
 
                 yaml_cli_args.clear();
                 yaml_cli_args = platform.cli_args;
@@ -580,14 +582,9 @@ impl TopologyBuilder {
             });
 
             qemu_procs.push(qemu);
-            
+
             // Store variables needed for connection loop
-            spawn_infos.push((
-                node.id,
-                uart_sock_path,
-                qmp_sock_path,
-                recent_stderr,
-            ));
+            spawn_infos.push((node.id, uart_sock_path, qmp_sock_path, recent_stderr));
         }
 
         // Now connect to all UARTs first so all QEMUs can unblock from wait=on

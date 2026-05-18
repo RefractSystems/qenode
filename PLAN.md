@@ -52,7 +52,7 @@ peripheral work begins.
 - [x] Refactor `main.rs` to wrap `CoordinatorState` within the `tokio` I/O loop.
 - [x] Map Unix socket / Zenoh inputs to `CoordinatorEvent`s.
 - [x] Execute returned `CoordinatorAction`s via socket / Zenoh outputs.
-- [x] DRY: Extract `build_delivery_frame(msg: &CoordMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
+- [x] DRY: Extract `build_delivery_frame(msg: &PdesMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
 
 **Gate**: `cargo test -p virtmcu-coord` passes. `make test-reference-peripheral` completes in under 15 seconds.
 

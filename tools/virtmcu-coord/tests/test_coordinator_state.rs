@@ -1,7 +1,7 @@
+use std::collections::HashMap;
 use virtmcu_coord::coordinator::{
     CoordinatorAction, CoordinatorConfig, CoordinatorEvent, CoordinatorState, LinkConfig,
 };
-use std::collections::HashMap;
 
 fn create_config() -> CoordinatorConfig {
     let mut links = HashMap::new();
@@ -57,14 +57,14 @@ fn test_full_two_node_three_quantum_protocol() {
     ));
 
     for q in 0..3 {
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 0,
             link_id: 10,
             delivery_vtime_ns: (q + 1) * 1000 - 500,
             sequence_number: 1,
             payload: vec![q as u8],
         });
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 1,
             link_id: 11,
             delivery_vtime_ns: (q + 1) * 1000 - 500,
@@ -128,10 +128,9 @@ fn test_early_registrations_across_two_links() {
 
     let actions1 = state.apply(CoordinatorEvent::NodeJoined { node_id: 1 });
     assert_eq!(actions1.len(), 2);
-    assert!(actions1.iter().all(|a| matches!(
-        a,
-        CoordinatorAction::SendLinkAck { node_id: 0, .. }
-    )));
+    assert!(actions1
+        .iter()
+        .all(|a| matches!(a, CoordinatorAction::SendLinkAck { node_id: 0, .. })));
 
     state.apply(CoordinatorEvent::LinkRegister {
         node_id: 1,
@@ -166,7 +165,7 @@ fn test_deferred_message_crosses_quantum_boundary() {
         });
     }
 
-    state.apply(CoordinatorEvent::SimulationMessage {
+    state.apply(CoordinatorEvent::PdesMessage {
         src_node_id: 0,
         link_id: 10,
         delivery_vtime_ns: 15_000,

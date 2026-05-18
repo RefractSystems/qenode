@@ -30,7 +30,7 @@ pub enum CoordinatorEvent {
     NodeDisconnected { node_id: u32 },
     LinkRegister { node_id: u32, link_name: String },
     QuantumDone { node_id: u32, quantum: u64, vtime_ns: u64 },
-    SimulationMessage { 
+    PdesMessage { 
         src_node_id: u32, 
         link_id: u32, 
         delivery_vtime_ns: u64, 

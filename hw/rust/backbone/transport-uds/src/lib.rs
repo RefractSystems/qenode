@@ -186,7 +186,10 @@ impl DataTransport for UdsDataTransport {
         .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 
         let payload = virtmcu_wire::encode_link_registration(link_name);
-        virtmcu_qom::sim_info!("UdsDataTransport: Publishing sim/coord/link/register for link {}", link_name);
+        virtmcu_qom::sim_info!(
+            "UdsDataTransport: Publishing sim/coord/link/register for link {}",
+            link_name
+        );
         self.publish("sim/coord/link/register", &payload)
             .map_err(|e| virtmcu_wire::TransportError::Other(e))?;
 

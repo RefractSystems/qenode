@@ -1,4 +1,4 @@
-use crate::barrier::CoordMessage;
+use crate::barrier::PdesMessage;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
@@ -35,7 +35,7 @@ impl MessageLog {
     // Removed pcap_protocol_id
 
     /// Append one message to the log. `msg.payload` is the raw frame bytes.
-    pub fn write_message(&mut self, msg: &CoordMessage) -> Result<(), io::Error> {
+    pub fn write_message(&mut self, msg: &PdesMessage) -> Result<(), io::Error> {
         let ts_sec = (msg.delivery_vtime_ns / 1_000_000_000) as u32;
         let ts_usec = ((msg.delivery_vtime_ns % 1_000_000_000) / 1000) as u32;
         let incl_len = (msg.payload.len() + 10) as u32; // 4 (src) + 4 (link_id) + 2 (protocol dummy) + payload
@@ -154,21 +154,21 @@ mod tests {
         // 3 messages, in order, and check the PCAP file has them. Let's just write them directly
         // ascending and check.
         let (mut log, path) = setup_temp_log();
-        let msg1 = CoordMessage {
+        let msg1 = PdesMessage {
             src_node_id: 1,
             link_id: 0,
             delivery_vtime_ns: 10_000_000,
             sequence_number: 0,
             payload: vec![],
         };
-        let msg2 = CoordMessage {
+        let msg2 = PdesMessage {
             src_node_id: 1,
             link_id: 0,
             delivery_vtime_ns: 20_000_000,
             sequence_number: 1,
             payload: vec![],
         };
-        let msg3 = CoordMessage {
+        let msg3 = PdesMessage {
             src_node_id: 1,
             link_id: 0,
             delivery_vtime_ns: 30_000_000,

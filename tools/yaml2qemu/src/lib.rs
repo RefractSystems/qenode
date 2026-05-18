@@ -584,9 +584,7 @@ pub fn parse_yaml(
     }
 
     if has_native {
-        let transport_override = transport_env.unwrap_or_else(|| {
-            "zenoh"
-        }).to_string();
+        let transport_override = transport_env.unwrap_or_else(|| "zenoh").to_string();
         if transport_override == "zenoh" {
             eprintln!("DEPRECATION: Zenoh transport is deprecated for peripheral data plane. Use unix transport instead.");
         }
@@ -770,10 +768,8 @@ pub fn parse_yaml(
     }
 
     // Pass 2: Emit root peripherals
-    let transport_override = transport_env.unwrap_or_else(|| {
-        "zenoh"
-    }).to_string();
-        
+    let transport_override = transport_env.unwrap_or_else(|| "zenoh").to_string();
+
     for p in &augmented_peripherals {
         if p.parent.is_none() {
             emit_device(

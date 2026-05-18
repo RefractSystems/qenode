@@ -3,10 +3,12 @@
 use anyhow::{anyhow, bail, Result};
 use byteorder::{LittleEndian, WriteBytesExt};
 use clap::Parser;
-use virtmcu_coord::message_log::MessageLog;
 use std::sync::Arc;
+use virtmcu_coord::message_log::MessageLog;
 
-use virtmcu_coord::coordinator::{CoordinatorAction, CoordinatorConfig, CoordinatorEvent, CoordinatorState, LinkConfig};
+use virtmcu_coord::coordinator::{
+    CoordinatorAction, CoordinatorConfig, CoordinatorEvent, CoordinatorState, LinkConfig,
+};
 use virtmcu_coord::topology;
 
 #[derive(Debug)]
@@ -170,14 +172,15 @@ fn parse_uds_message(
                     if parsed_link_id != link_id {
                         std::process::abort();
                     }
-                    let payload_len = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
+                    let payload_len =
+                        u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
                     let vtime_ns = u64::from_le_bytes(payload[8..16].try_into().unwrap());
                     let seq_num = u64::from_le_bytes(payload[16..24].try_into().unwrap());
 
                     if payload.len() >= 24 + payload_len {
                         let raw_payload = payload[24..24 + payload_len].to_vec();
                         let delivery_vtime_ns = vtime_ns.saturating_add(delay_ns);
-                        return Some(CoordinatorEvent::SimulationMessage {
+                        return Some(CoordinatorEvent::PdesMessage {
                             src_node_id: node_id,
                             link_id,
                             delivery_vtime_ns,
@@ -209,7 +212,10 @@ fn parse_uds_message(
 
 async fn execute_uds_actions(
     actions: Vec<CoordinatorAction>,
-    sockets: &std::collections::HashMap<u32, Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>>,
+    sockets: &std::collections::HashMap<
+        u32,
+        Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>,
+    >,
     pcap_log: &mut Option<MessageLog>,
 ) {
     for action in actions {
@@ -233,8 +239,15 @@ async fn execute_uds_actions(
                     }
                 }
             }
-            CoordinatorAction::RouteMessage { target_nodes, link_id, delivery_vtime_ns, sequence_number, payload } => {
-                let frame = build_delivery_frame(link_id, 0, delivery_vtime_ns, sequence_number, &payload);
+            CoordinatorAction::RouteMessage {
+                target_nodes,
+                link_id,
+                delivery_vtime_ns,
+                sequence_number,
+                payload,
+            } => {
+                let frame =
+                    build_delivery_frame(link_id, 0, delivery_vtime_ns, sequence_number, &payload);
                 let topic = format!("sim/ch/{}", link_id);
                 for target_node in target_nodes {
                     if let Some(socks) = sockets.get(&target_node) {
@@ -244,7 +257,7 @@ async fn execute_uds_actions(
                     }
                 }
                 if let Some(log) = pcap_log {
-                    let msg = virtmcu_coord::barrier::CoordMessage {
+                    let msg = virtmcu_coord::barrier::PdesMessage {
                         src_node_id: 0,
                         link_id,
                         delivery_vtime_ns,
@@ -300,14 +313,25 @@ async fn run_unix_coordinator(
 
     let delay_ns = args.delay_ns;
     let topo_guard = topo.read().await;
-    let coord_config = build_coordinator_config(&topo_guard, args.nodes, args.delay_ns, topo_guard.max_messages_per_node_per_quantum);
+    let coord_config = build_coordinator_config(
+        &topo_guard,
+        args.nodes,
+        args.delay_ns,
+        topo_guard.max_messages_per_node_per_quantum,
+    );
     drop(topo_guard);
     let mut coord = CoordinatorState::new(coord_config);
-    let mut sockets: std::collections::HashMap<u32, Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>> = std::collections::HashMap::new();
+    let mut sockets: std::collections::HashMap<
+        u32,
+        Vec<Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>>,
+    > = std::collections::HashMap::new();
 
     enum WorkerEvent {
         Message(u32, String, Vec<u8>),
-        Register(u32, Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>),
+        Register(
+            u32,
+            Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>,
+        ),
         Disconnect(u32),
     }
 
@@ -397,7 +421,9 @@ async fn run_unix_coordinator(
                             ))
                             .await;
                     }
-                    let _ = worker_tx.send(WorkerEvent::Disconnect(current_node_id)).await;
+                    let _ = worker_tx
+                        .send(WorkerEvent::Disconnect(current_node_id))
+                        .await;
                 });
             }
         }
@@ -441,10 +467,15 @@ async fn run_unix_coordinator(
                 break;
             }
         }
-    }).await;
+    })
+    .await;
 
     if res.is_err() || !joined {
-        bail!("Federation {}: Not all nodes joined within {}ms", federation_id.as_str(), args.join_timeout_ms);
+        bail!(
+            "Federation {}: Not all nodes joined within {}ms",
+            federation_id.as_str(),
+            args.join_timeout_ms
+        );
     }
 
     tracing::info!(federation = %federation_id, "All {} nodes have joined.", expected_nodes);
@@ -489,18 +520,27 @@ async fn execute_zenoh_actions(
                 for i in 0..expected_nodes {
                     let topic = format!("sim/clock/start/{}", i);
                     let mut payload = Vec::new();
-                    payload.write_u64::<LittleEndian>(release_quantum).expect("Vec write failed");
+                    payload
+                        .write_u64::<LittleEndian>(release_quantum)
+                        .expect("Vec write failed");
                     let _ = session.put(&topic, payload).await;
                 }
             }
-            CoordinatorAction::RouteMessage { target_nodes, link_id, delivery_vtime_ns, sequence_number, payload } => {
-                let frame = build_delivery_frame(link_id, 0, delivery_vtime_ns, sequence_number, &payload);
+            CoordinatorAction::RouteMessage {
+                target_nodes,
+                link_id,
+                delivery_vtime_ns,
+                sequence_number,
+                payload,
+            } => {
+                let frame =
+                    build_delivery_frame(link_id, 0, delivery_vtime_ns, sequence_number, &payload);
                 for target_node in target_nodes {
                     let rx_topic = format!("sim/ch/{}/{}", link_id, target_node);
                     let _ = session.put(&rx_topic, frame.clone()).await;
                 }
                 if let Some(log) = pcap_log {
-                    let msg = virtmcu_coord::barrier::CoordMessage {
+                    let msg = virtmcu_coord::barrier::PdesMessage {
                         src_node_id: 0,
                         link_id,
                         delivery_vtime_ns,
@@ -630,7 +670,12 @@ async fn run_virtmcu_coord(
 
     let mut joined_nodes = std::collections::HashSet::new();
     let topo_guard = topo.read().await;
-    let coord_config = build_coordinator_config(&topo_guard, args.nodes, args.delay_ns, topo_guard.max_messages_per_node_per_quantum);
+    let coord_config = build_coordinator_config(
+        &topo_guard,
+        args.nodes,
+        args.delay_ns,
+        topo_guard.max_messages_per_node_per_quantum,
+    );
     drop(topo_guard);
     let mut coord = CoordinatorState::new(coord_config);
 
@@ -643,13 +688,21 @@ async fn run_virtmcu_coord(
                 let parts: Vec<&str> = topic.split('/').collect();
                 if parts.len() == 5 {
                     if let Ok(msg_node_id) = parts[4].parse::<u32>() {
-                        if let Ok(reg) = flatbuffers::root::<virtmcu_wire::LinkRegistration>(&payload) {
+                        if let Ok(reg) =
+                            flatbuffers::root::<virtmcu_wire::LinkRegistration>(&payload)
+                        {
                             let link_name = reg.link_name();
                             let actions = coord.apply(CoordinatorEvent::LinkRegister {
                                 node_id: msg_node_id,
                                 link_name: link_name.to_string(),
                             });
-                            execute_zenoh_actions(actions, &session, args.nodes as u32, &mut pcap_log).await;
+                            execute_zenoh_actions(
+                                actions,
+                                &session,
+                                args.nodes as u32,
+                                &mut pcap_log,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -667,8 +720,10 @@ async fn run_virtmcu_coord(
                     }
                     if count > 0 {
                         joined_nodes.insert(*node_id);
-                        let actions = coord.apply(CoordinatorEvent::NodeJoined { node_id: *node_id });
-                        execute_zenoh_actions(actions, &session, args.nodes as u32, &mut pcap_log).await;
+                        let actions =
+                            coord.apply(CoordinatorEvent::NodeJoined { node_id: *node_id });
+                        execute_zenoh_actions(actions, &session, args.nodes as u32, &mut pcap_log)
+                            .await;
                     } else {
                         all_joined = false;
                     }
@@ -739,7 +794,7 @@ async fn run_virtmcu_coord(
                                 if payload.len() >= 24 + payload_len {
                                     let raw_payload = payload[24..24 + payload_len].to_vec();
                                     let delivery_vtime_ns = vtime_ns.saturating_add(args.delay_ns);
-                                    let actions = coord.apply(CoordinatorEvent::SimulationMessage {
+                                    let actions = coord.apply(CoordinatorEvent::PdesMessage {
                                         src_node_id: msg_node_id,
                                         link_id,
                                         delivery_vtime_ns,

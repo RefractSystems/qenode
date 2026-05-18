@@ -33,7 +33,7 @@ pub enum CoordinatorEvent {
         quantum: u64,
         vtime_ns: u64,
     },
-    SimulationMessage {
+    PdesMessage {
         src_node_id: u32,
         link_id: u32,
         delivery_vtime_ns: u64,
@@ -271,8 +271,7 @@ impl CoordinatorState {
                         reason: "Node disconnected in AwaitingNodes".into(),
                     }]
                 }
-                CoordinatorEvent::QuantumDone { .. }
-                | CoordinatorEvent::SimulationMessage { .. } => {
+                CoordinatorEvent::QuantumDone { .. } | CoordinatorEvent::PdesMessage { .. } => {
                     vec![CoordinatorAction::AbortSimulation {
                         reason: "Protocol violation in AwaitingNodes".into(),
                     }]
@@ -318,8 +317,7 @@ impl CoordinatorState {
                 CoordinatorEvent::NodeJoined { .. } => {
                     vec![]
                 }
-                CoordinatorEvent::QuantumDone { .. }
-                | CoordinatorEvent::SimulationMessage { .. } => {
+                CoordinatorEvent::QuantumDone { .. } | CoordinatorEvent::PdesMessage { .. } => {
                     vec![CoordinatorAction::AbortSimulation {
                         reason: "Protocol violation in AwaitingLinks".into(),
                     }]
@@ -329,7 +327,7 @@ impl CoordinatorState {
                 node_batches,
                 barrier,
             } => match event {
-                CoordinatorEvent::SimulationMessage {
+                CoordinatorEvent::PdesMessage {
                     src_node_id,
                     link_id,
                     delivery_vtime_ns,
@@ -626,7 +624,7 @@ mod tests {
     fn test_message_buffered_then_routed_at_quantum_boundary() {
         let mut state = setup_simulation_phase();
 
-        let actions = state.apply(CoordinatorEvent::SimulationMessage {
+        let actions = state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 0,
             link_id: 10,
             delivery_vtime_ns: 500,
@@ -665,7 +663,7 @@ mod tests {
     fn test_future_message_held_across_quantum_boundary() {
         let mut state = setup_simulation_phase();
 
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 0,
             link_id: 10,
             delivery_vtime_ns: 2000,
@@ -731,7 +729,7 @@ mod tests {
         }
 
         // Node 1 seq 2
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 1,
             link_id: 10,
             delivery_vtime_ns: 1000,
@@ -739,7 +737,7 @@ mod tests {
             payload: vec![1],
         });
         // Node 0 seq 1
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 0,
             link_id: 10,
             delivery_vtime_ns: 1000,
@@ -747,7 +745,7 @@ mod tests {
             payload: vec![2],
         });
         // Node 1 seq 1
-        state.apply(CoordinatorEvent::SimulationMessage {
+        state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 1,
             link_id: 10,
             delivery_vtime_ns: 1000,
@@ -774,22 +772,19 @@ mod tests {
         assert_eq!(actions.len(), 4); // 3 routes + 1 broadcast
         match &actions[0] {
             CoordinatorAction::RouteMessage {
-                sequence_number,
-                ..
+                sequence_number, ..
             } => assert_eq!(*sequence_number, 1),
             _ => panic!("Expected route"),
         }
         match &actions[1] {
             CoordinatorAction::RouteMessage {
-                sequence_number,
-                ..
+                sequence_number, ..
             } => assert_eq!(*sequence_number, 1),
             _ => panic!("Expected route"),
         }
         match &actions[2] {
             CoordinatorAction::RouteMessage {
-                sequence_number,
-                ..
+                sequence_number, ..
             } => assert_eq!(*sequence_number, 2),
             _ => panic!("Expected route"),
         }
@@ -866,7 +861,7 @@ mod tests {
     #[test]
     fn test_simulation_message_outside_simulation_phase_aborts() {
         let mut state = CoordinatorState::new(create_config());
-        let actions = state.apply(CoordinatorEvent::SimulationMessage {
+        let actions = state.apply(CoordinatorEvent::PdesMessage {
             src_node_id: 0,
             link_id: 10,
             delivery_vtime_ns: 1000,

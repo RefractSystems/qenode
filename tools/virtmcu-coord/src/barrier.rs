@@ -5,7 +5,7 @@ use core::time::Duration;
 use std::sync::{Condvar, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoordMessage {
+pub struct PdesMessage {
     pub src_node_id: u32,
     pub link_id: u32,
     pub delivery_vtime_ns: u64,
@@ -13,13 +13,13 @@ pub struct CoordMessage {
     pub payload: Vec<u8>,
 }
 
-impl PartialOrd for CoordMessage {
+impl PartialOrd for PdesMessage {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for CoordMessage {
+impl Ord for PdesMessage {
     fn cmp(&self, other: &Self) -> Ordering {
         self.delivery_vtime_ns
             .cmp(&other.delivery_vtime_ns)
@@ -46,9 +46,9 @@ pub struct QuantumBarrier {
 
 struct BarrierState {
     done_count: usize,
-    message_buffer: Vec<CoordMessage>,
+    message_buffer: Vec<PdesMessage>,
     done_nodes: Vec<bool>,
-    next_quantum_buffer: Vec<CoordMessage>,
+    next_quantum_buffer: Vec<PdesMessage>,
     next_quantum_done_nodes: Vec<bool>,
 }
 
@@ -82,8 +82,8 @@ impl QuantumBarrier {
         node_id: u32,
         quantum: u64,
         expected_quantum: u64,
-        mut messages: Vec<CoordMessage>,
-    ) -> Result<Option<Vec<CoordMessage>>, BarrierError> {
+        mut messages: Vec<PdesMessage>,
+    ) -> Result<Option<Vec<PdesMessage>>, BarrierError> {
         let mut state = self.state.lock().expect("barrier mutex poisoned");
         let current = self.current_quantum.load(AtomicOrdering::SeqCst);
 
@@ -205,7 +205,7 @@ impl QuantumBarrier {
         }
     }
 
-    pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<CoordMessage>, BarrierError> {
+    pub fn wait_for_all(&self, timeout: Duration) -> Result<Vec<PdesMessage>, BarrierError> {
         let state = self.state.lock().expect("barrier mutex poisoned");
         if state.done_count == self.n_nodes {
             let mut msgs = state.message_buffer.clone();
@@ -231,8 +231,8 @@ impl QuantumBarrier {
 mod tests {
     use super::*;
 
-    fn dummy_msg(vtime: u64, seq: u64, src: u32) -> CoordMessage {
-        CoordMessage {
+    fn dummy_msg(vtime: u64, seq: u64, src: u32) -> PdesMessage {
+        PdesMessage {
             src_node_id: src,
             link_id: 0,
             delivery_vtime_ns: vtime,
@@ -472,7 +472,7 @@ pub mod extra_tests {
         for node_id in 0..n_nodes {
             let barrier_clone = barrier.clone();
             handles.push(thread::spawn(move || {
-                let msg = CoordMessage {
+                let msg = PdesMessage {
                     src_node_id: node_id as u32,
                     link_id: 0,
                     delivery_vtime_ns: 10,
