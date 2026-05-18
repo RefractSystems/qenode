@@ -25,7 +25,7 @@ pub async fn run_sync_versions() -> Result<()> {
 
     if let Some(zenoh_ver) = versions.get("ZENOH_VERSION") {
         let re = regex::Regex::new(r#"zenoh = "[^"]+""#).expect("valid regex");
-        for cargo_path in ["tools/deterministic_coordinator/Cargo.toml", "Cargo.toml"] {
+        for cargo_path in ["tools/virtmcu-coord/Cargo.toml", "Cargo.toml"] {
             if let Ok(content) = std::fs::read_to_string(cargo_path) {
                 let new_content = re.replace_all(&content, format!(r#"zenoh = "{}""#, zenoh_ver));
                 std::fs::write(cargo_path, new_content.to_string())?;
@@ -374,7 +374,7 @@ pub async fn run_cleanup_sim() -> Result<()> {
         "qemu-system-riscv32",
         "zenohd",
         "zenoh_router",
-        "deterministic_coordinator",
+        "virtmcu-coord",
         "mmio-socket-bridge",
     ];
 
@@ -419,7 +419,7 @@ pub async fn run_generate_schemas() -> Result<()> {
         .args([
             "--edition",
             "2021",
-            "tools/deterministic_coordinator/src/generated/topology.rs",
+            "tools/virtmcu-coord/src/generated/topology.rs",
         ])
         .status()?;
 
@@ -464,7 +464,7 @@ pub async fn run_check_schemas() -> Result<()> {
     let mut out_of_sync = false;
     for file in [
         "schema/world_schema.json",
-        "tools/deterministic_coordinator/src/generated/topology.rs",
+        "tools/virtmcu-coord/src/generated/topology.rs",
     ] {
         if status_out.contains(file) {
             error!(

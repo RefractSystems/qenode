@@ -26,7 +26,7 @@ members = [
     # "hw/rust/buses/spi",
     # "tools/cyber_bridge",
     # "tools/zenoh_coordinator",
-    "tools/deterministic_coordinator", # "tools/stress_adapter", 
+    "tools/virtmcu-coord", # "tools/stress_adapter", 
     "hw/rust/common/virtmcu-zenoh-config",
     "tools/virtmcu-test-runner",
     "tools/virtmcu-run",

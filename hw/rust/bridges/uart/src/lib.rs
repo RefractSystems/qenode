@@ -758,7 +758,7 @@ pub extern "C" fn virtmcu_chr_open(
             Some(OrderedPacket { vtime, sequence, data: payload.to_vec() })
         },
         move |packet| {
-            deliver_chardev(sync_state_ptr.get(), packet)
+            deliver_chardev(sync_state_ptr.get(), packet);
         },
     ) {
         Ok(receiver) => {

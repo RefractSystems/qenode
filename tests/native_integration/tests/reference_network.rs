@@ -25,7 +25,7 @@ async fn run_ping_pong_test(transport: &str) -> Result<Vec<String>> {
                 .add_qemu_arg("-icount")
                 .add_qemu_arg("shift=0,align=off,sleep=off"),
         )
-        .with_timeout(60)
+        .with_timeout(10)
         .run_test(move |env| {
             Box::pin(async move {
                 env.wait_for_output(0, "N0:start").await?;

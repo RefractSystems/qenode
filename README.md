@@ -117,7 +117,7 @@ virtmcu/
 ├── tools/                      # Assorted offline utilities and debugging helpers
 │   ├── cyber_bridge/           # C++ SAL/AAL telemetry and MuJoCo shm synchronization
 │   ├── virtmcu-cli/            # Native Rust CLI for platform generation and setup
-│   └── deterministic_coordinator/ # Rust daemon for strictly ordering multi-node frames
+│   └── virtmcu-coord/ # Rust daemon for strictly ordering multi-node frames
 │
 ├── tests/                      # Native Rust integration tests (tests/native_integration)
 │   └── fixtures/guest_apps/    # End-to-end integration and smoke tests per subsystem

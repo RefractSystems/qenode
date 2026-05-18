@@ -53,7 +53,7 @@ Every message — in both directions — is serialized as:
 
 **Implementation references:**
 - `hw/rust/backbone/transport-uds/src/lib.rs` — `write_framed()` (node side, sync)
-- `tools/deterministic_coordinator/src/main.rs` — `uds_write_framed()` (coordinator
+- `tools/virtmcu-coord/src/main.rs` — `uds_write_framed()` (coordinator
   side, async)
 
 ---
@@ -66,7 +66,7 @@ Every message — in both directions — is serialized as:
 
 - `run_dir` defaults to `/run/virtmcu`; overridden by `VIRTMCU_RUN_DIR` or
   `--run-dir`.
-- `federation_id` is the HLA federation name passed to `deterministic_coordinator`
+- `federation_id` is the HLA federation name passed to `virtmcu-coord`
   via `--federation-id`.
 - Each coordinator instance owns exactly one socket file. Concurrent simulations
   must use distinct `federation_id` values.

@@ -10,7 +10,7 @@ If your downstream project needs to keep QEMU virtual time locked to another sim
 
 *   `tools/virtmcu-test-runner`: 
     The single-entry-point simulation harness. It handles the strict lifecycle: spawning QEMU frozen, establishing Zenoh coordination, applying Device Trees, and executing safe teardowns. Downstream orchestrators can use its internal libraries (`virtmcu_test_runner::builder` and `virtmcu_test_runner::coordinator`) for native Rust integration.
-*   `tools/deterministic_coordinator`: 
+*   `tools/virtmcu-coord`: 
     The standalone Rust binary that enforces the per-quantum barrier synchronization. If you are orchestrating manually, launch this binary and provide it with the world topology YAML.
 *   `tools/virtmcu-cli`: 
     The unified developer utility. It provides `virtmcu-cli qmp` for asynchronous QEMU Machine Protocol (QMP) interactions (querying CPU state, injecting faults) and `virtmcu-cli telemetry` for live inspection.

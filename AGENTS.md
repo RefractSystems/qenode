@@ -11,7 +11,7 @@
 
 ## Required RFC Reading (before touching peripheral or transport code)
 
-If you are writing or modifying code in `hw/rust/`, `tools/deterministic_coordinator/`, or `virtmcu-qom`, you MUST have read:
+If you are writing or modifying code in `hw/rust/`, `tools/virtmcu-coord/`, or `virtmcu-qom`, you MUST have read:
 
 | RFC | Why it matters |
 |---|---|

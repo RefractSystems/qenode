@@ -757,32 +757,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deterministic_coordinator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "clap",
- "flatbuffers",
- "rand 0.8.6",
- "rand_chacha 0.3.1",
- "regress",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tokio",
- "tracing",
- "transport-uds",
- "typify",
- "virtmcu-observability",
- "virtmcu-wire",
- "virtmcu-zenoh-config",
- "zenoh",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4272,6 +4246,32 @@ dependencies = [
  "virtmcu-test-runner",
  "virtmcu-wire",
  "yaml2qemu",
+ "zenoh",
+]
+
+[[package]]
+name = "virtmcu-coord"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "clap",
+ "flatbuffers",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "regress",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "transport-uds",
+ "typify",
+ "virtmcu-observability",
+ "virtmcu-wire",
+ "virtmcu-zenoh-config",
  "zenoh",
 ]
 

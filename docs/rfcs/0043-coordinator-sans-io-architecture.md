@@ -9,7 +9,7 @@ Refactor the central simulation coordinator into an Enterprise SOTA "Sans-I/O" s
 
 ## 2. Motivation
 
-The previous iteration of the `deterministic_coordinator` relied on a massive, monolithic `tokio::select!` loop combining socket I/O, Zenoh operations, logging, and core protocol state management. This led to severe technical debt:
+The previous iteration of the `virtmcu-coord` relied on a massive, monolithic `tokio::select!` loop combining socket I/O, Zenoh operations, logging, and core protocol state management. This led to severe technical debt:
 
 *   **Deadlocks & Race Conditions:** Early network messages (e.g., link registrations arriving before all nodes successfully bound their UDS sockets) were dropped or mishandled.
 *   **Implicit Phases:** The coordinator implicitly transitioned through phases (join -> register -> simulation) via ad-hoc `while` loops, causing dropped messages if nodes arrived out of order.

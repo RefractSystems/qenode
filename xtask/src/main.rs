@@ -346,7 +346,7 @@ fn main() -> Result<()> {
             // build step (`make build-test-artifacts`) and must not be compiled here
             // because they reference types deleted from virtmcu-wire.
             const EXCLUDED_TOOLS: &[&str] = &[
-                "deterministic_coordinator",
+                "virtmcu-coord",
                 "cyber_bridge",
                 "virtmcu-physical-node",
                 "virtmcu-physics-gateway",
@@ -458,14 +458,14 @@ fn main() -> Result<()> {
                 cmd!(sh, "make -C {f} -j{jobs}").run()?;
             }
             if env::var("CI").unwrap_or_default() == "true"
-                && cmd!(sh, "command -v deterministic_coordinator")
+                && cmd!(sh, "command -v virtmcu-coord")
                     .quiet()
                     .run()
                     .is_ok()
             {
                 println!("==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)");
             } else {
-                println!("==> Building test tools (deterministic_coordinator, cyber_bridge, stress_adapter)...");
+                println!("==> Building test tools (virtmcu-coord, cyber_bridge, stress_adapter)...");
                 let mut rustflags = String::new();
                 let mut bootstrap = "0";
                 if use_asan {
@@ -488,7 +488,7 @@ fn main() -> Result<()> {
                 let _host_cxxflags = sh.push_env("HOST_CXXFLAGS", "");
                 let target_dir = format!("target{}", build_suffix);
                 let _cargo_target_dir = sh.push_env("CARGO_TARGET_DIR", &target_dir);
-                cmd!(sh, "cargo build --release -j{jobs} -p deterministic_coordinator -p cyber_bridge -p stress_adapter --target {triple}").run()?;
+                cmd!(sh, "cargo build --release -j{jobs} -p virtmcu-coord -p cyber_bridge -p stress_adapter --target {triple}").run()?;
             }
         }
 
@@ -857,7 +857,7 @@ fn main() -> Result<()> {
             cmd!(sh, "rm -f .coverage").run()?;
             cmd!(sh, "rm -rf .pytest_cache .ruff_cache .hypothesis test-results/ tests/fixtures/guest_apps/*/results/ install/").run()?;
             cmd!(sh, "rm -f *_output.txt log.html report.html output.xml").run()?;
-            cmd!(sh, "rm -rf tools/cyber_bridge/target tools/systemc_adapter/build tools/deterministic_coordinator/target hw/rust/target").run()?;
+            cmd!(sh, "rm -rf tools/cyber_bridge/target tools/systemc_adapter/build tools/virtmcu-coord/target hw/rust/target").run()?;
             cmd!(
                 sh,
                 "rm -rf {qemu_src}/build-virtmcu/install {qemu_src}/build-virtmcu-asan/install"

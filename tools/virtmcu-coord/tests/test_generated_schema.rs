@@ -5,7 +5,7 @@ use std::path::Path;
 // our test topologies exactly like the Pydantic tests do.
 
 // Load the generated topology struct
-use deterministic_coordinator::generated::topology::WorldSchema;
+use virtmcu_coord::generated::topology::WorldSchema;
 
 #[test]
 fn test_parse_test_board_yaml() {
@@ -49,7 +49,7 @@ fn test_parse_test_board_yaml() {
     // Check address and interrupts
     // Address is generated as an enum (Address::String or Address::Integer)
     match uart.address.clone().expect("test should succeed") {
-        deterministic_coordinator::generated::topology::Address::String(s) => {
+        virtmcu_coord::generated::topology::Address::String(s) => {
             assert_eq!(s.as_str(), "0x09000000");
         }
         _ => panic!("Expected Address::String for uart0"),

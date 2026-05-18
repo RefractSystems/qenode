@@ -159,9 +159,9 @@ impl TopologyBuilder {
         federation_id: &str,
         num_nodes: usize,
     ) -> Result<tokio::process::Child> {
-        let router_bin = ctx.find_binary("deterministic_coordinator")?;
+        let router_bin = ctx.find_binary("virtmcu-coord")?;
         info!(
-            "Spawning deterministic_coordinator as router from: {}",
+            "Spawning virtmcu-coord as router from: {}",
             router_bin.display()
         );
 
@@ -182,13 +182,13 @@ impl TopologyBuilder {
                 extra_hint = format!(
                     "\nNote: Binary exists at {} but spawn failed with 'Not Found'. \
                      This often means the binary was built for a different architecture (e.g. x86_64 vs aarch64) \
-                     or its dynamic linker is missing. Try running 'cargo build -p deterministic_coordinator' in this environment.",
+                     or its dynamic linker is missing. Try running 'cargo build -p virtmcu-coord' in this environment.",
                     router_bin.display()
                 );
             }
             anyhow!(
-                "Failed to spawn native deterministic_coordinator at {}: {}. {}. \n\
-                Hint: Ensure deterministic_coordinator is built for the current architecture and its dependencies are available.",
+                "Failed to spawn native virtmcu-coord at {}: {}. {}. \n\
+                Hint: Ensure virtmcu-coord is built for the current architecture and its dependencies are available.",
                 router_bin.display(),
                 e,
                 extra_hint
@@ -244,10 +244,10 @@ impl TopologyBuilder {
                 topo_path_str = topo_path.to_string_lossy().to_string();
             }
 
-            // Spawn deterministic_coordinator for UDS
-            let coordinator_bin = ctx.find_binary("deterministic_coordinator")?;
+            // Spawn virtmcu-coord for UDS
+            let coordinator_bin = ctx.find_binary("virtmcu-coord")?;
             info!(
-                "Spawning deterministic_coordinator (UDS) from: {}",
+                "Spawning virtmcu-coord (UDS) from: {}",
                 coordinator_bin.display()
             );
 
@@ -272,7 +272,7 @@ impl TopologyBuilder {
 
             let coord_proc = coord_cmd
                 .spawn()
-                .context("Failed to spawn deterministic_coordinator")?;
+                .context("Failed to spawn virtmcu-coord")?;
 
             // Give it time to bind the socket
             tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -591,7 +591,7 @@ impl TopologyBuilder {
         }
 
         // Now connect to all UARTs first so all QEMUs can unblock from wait=on
-        for (node_id_for_log, uart_sock_path, _, recent_stderr) in &spawn_infos {
+        for (_node_id_for_log, uart_sock_path, _, recent_stderr) in &spawn_infos {
             // Connect to UART
             let mut found = false;
             for _ in 0..50 {
@@ -623,7 +623,7 @@ impl TopologyBuilder {
         }
 
         // Then connect to all QMPs
-        for (node_id_for_log, _, qmp_sock_path, recent_stderr) in &spawn_infos {
+        for (_node_id_for_log, _, qmp_sock_path, recent_stderr) in &spawn_infos {
             // Connect to QMP
             let mut found = false;
             for _ in 0..50 {
@@ -643,7 +643,7 @@ impl TopologyBuilder {
                 ));
             }
 
-            let qmp_res = QmpClient::connect(&qmp_sock_path).await;
+            let qmp_res = QmpClient::connect(qmp_sock_path).await;
             let qmp = match qmp_res {
                 Ok(q) => q,
                 Err(e) => {

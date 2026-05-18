@@ -23,7 +23,7 @@ The codebase is divided into three primary build domains, each with its own tool
 *   **Mechanism**: The project's `hw/` directory is **symlinked** into QEMU's source tree (`third_party/qemu/hw/virtmcu`). Incremental builds delegate to QEMU's Meson system, which in turn invokes `cargo` to compile the Rust components.
 
 ### C. Host Orchestration Tools (Rust)
-*   **Components**: Rust test orchestration engine (`virtmcu-test-runner`), Rust coordinators (`deterministic_coordinator`), and native Rust CLI utilities (`virtmcu-cli`).
+*   **Components**: Rust test orchestration engine (`virtmcu-test-runner`), Rust coordinators (`virtmcu-coord`), and native Rust CLI utilities (`virtmcu-cli`).
 *   **Lifecycle**: Built on-demand when running integration tests or via standard `cargo build` in the workspace root.
 *   **Location**: Artifacts land in the standard workspace `target/` directory.
 

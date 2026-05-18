@@ -4,7 +4,7 @@
 Distributed Systems — unmodified firmware ELFs run identically on real hardware and in
 simulation.
 
-**Guiding Principles**: KISS · YAGNI · Crash-Only Design (RFC-0022) · RAII + DI (RFC-0031)
+**Guiding Principles**: KISS · YAGNI · Crash-Only Design (RFC-0022) · RAII + DI (RFC-0031) + DRY
 
 **Immediate North Star**: Reference peripheral is the single gold-standard peripheral.
 All three test tiers (unit → integration → e2e) must be fully green before any other
@@ -16,7 +16,7 @@ peripheral work begins.
 
 > `cargo build --workspace` currently fails. Nothing can be tested until this is fixed.
 
-- [x] PRE-0.1: **Fix `deterministic_coordinator` main.rs**
+- [x] PRE-0.1: **Fix `virtmcu-coord` main.rs**
   - Add `DummyVTimeProvider` struct + `VTimeProvider` impl (copy pattern from `virtmcu-cli`)
   - Fix `wire_link.destinations` → `wire_link.nodes` (field was renamed in topology.rs)
   - Fix `wire_link.link_id` → derive link_id from iterator index (WireLink has no link_id field)
@@ -40,25 +40,25 @@ peripheral work begins.
 - [x] Write `docs/rfcs/0043-coordinator-sans-io-architecture.md`
 
 ### 0.2 — State Machine Core & Unit Tests (TDD)
-- [ ] Define `CoordinatorEvent`, `CoordinatorAction`, `CoordinatorPhase`, and `CoordinatorConfig`.
-- [ ] Write exhaustive synchronous unit tests for the handshake FIRST: NodeJoined x N -> LinkRegister x M -> QuantumDone x N -> assert BroadcastClockStart.
-- [ ] Create `CoordinatorState::new(config)` and `CoordinatorState::apply(event) -> Vec<Action>` containing pure business logic.
-- [ ] Extract `BarrierState` from `QuantumBarrier` into `CoordinatorState` as plain data; delete the Mutex/Condvar/wait_for_all/reset wrappers since `apply()` is single-threaded.
+- [x] Define `CoordinatorEvent`, `CoordinatorAction`, `CoordinatorPhase`, and `CoordinatorConfig`.
+- [x] Write exhaustive synchronous unit tests for the handshake FIRST: NodeJoined x N -> LinkRegister x M -> QuantumDone x N -> assert BroadcastClockStart.
+- [x] Create `CoordinatorState::new(config)` and `CoordinatorState::apply(event) -> Vec<Action>` containing pure business logic.
+- [x] Extract `BarrierState` from `QuantumBarrier` into `CoordinatorState` as plain data; delete the Mutex/Condvar/wait_for_all/reset wrappers since `apply()` is single-threaded.
 
 ### 0.2.5 — Pure-Rust Integration Test
-- [ ] Write a single-threaded integration test in pure Rust that constructs a `CoordinatorState`, feeds it a complete two-node protocol exchange (join -> link register -> 3 quantum cycles) via in-process byte slices, and asserts on the exact `Vec<CoordinatorAction>` at each step. No QEMU, no sockets.
+- [x] Write a single-threaded integration test in pure Rust that constructs a `CoordinatorState`, feeds it a complete two-node protocol exchange (join -> link register -> 3 quantum cycles) via in-process byte slices, and asserts on the exact `Vec<CoordinatorAction>` at each step. No QEMU, no sockets.
 
 ### 0.3 — I/O Boundary Wiring
-- [ ] Refactor `main.rs` to wrap `CoordinatorState` within the `tokio` I/O loop.
-- [ ] Map Unix socket / Zenoh inputs to `CoordinatorEvent`s.
-- [ ] Execute returned `CoordinatorAction`s via socket / Zenoh outputs.
-- [ ] DRY: Extract `build_delivery_frame(msg: &CoordMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
+- [x] Refactor `main.rs` to wrap `CoordinatorState` within the `tokio` I/O loop.
+- [x] Map Unix socket / Zenoh inputs to `CoordinatorEvent`s.
+- [x] Execute returned `CoordinatorAction`s via socket / Zenoh outputs.
+- [x] DRY: Extract `build_delivery_frame(msg: &CoordMessage) -> Vec<u8>` shared by UDS and Zenoh adapters.
 
-**Gate**: `cargo test -p deterministic_coordinator` passes. `make test-reference-peripheral` completes in under 15 seconds.
+**Gate**: `cargo test -p virtmcu-coord` passes. `make test-reference-peripheral` completes in under 15 seconds.
 
 ### 0.4 — Rename
-- [ ] Rename `deterministic_coordinator` crate and directories to `virtmcu-coord`.
-- [ ] Update `Cargo.toml`, `xtask`, `virtmcu-test-runner`, and `Makefile` references to use `virtmcu-coord`.
+- [x] Rename `virtmcu-coord` crate and directories to `virtmcu-coord`.
+- [x] Update `Cargo.toml`, `xtask`, `virtmcu-test-runner`, and `Makefile` references to use `virtmcu-coord`.
 
 ---
 
@@ -74,7 +74,7 @@ peripheral work begins.
   `sim/ch/**`, `sim/coord/*/done`, `sim/coord/link/register/*`, `sim/network/control`
 - [x] L1.3: Simplify `message_log.rs` — remove `Protocol`-based pcap dispatch;
   log by `link_id` only (KISS: link_id is all the coordinator knows)
-- [x] L1.4: Audit `zenoh_coordinator` — if it duplicates `deterministic_coordinator` logic,
+- [x] L1.4: Audit `zenoh_coordinator` — if it duplicates `virtmcu-coord` logic,
   consolidate or delete it
 
 ### L2 — Port all `decode_frame` callers to RFC-0042 VtimeIngress

@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
                 .arg("-p")
                 .arg("virtmcu-test-runner")
                 .arg("-p")
-                .arg("deterministic_coordinator")
+                .arg("virtmcu-coord")
                 .arg("-p")
                 .arg("virtmcu-zenoh-config");
 

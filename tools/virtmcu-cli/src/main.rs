@@ -861,12 +861,12 @@ fn dump_tree<'a>(qmp: &'a mut QmpClient, path: String, depth: usize) -> BoxFutur
 }
 
 async fn run_schema_generate_topics() -> Result<()> {
-    let toml_path = PathBuf::from("tools/deterministic_coordinator/protocol/topics.toml");
+    let toml_path = PathBuf::from("tools/virtmcu-coord/protocol/topics.toml");
     let content = std::fs::read_to_string(&toml_path)?;
     let config: Value = toml::from_str(&content)?;
 
     let rs_content = generate_topics_rust(&config);
-    let rs_path = PathBuf::from("tools/deterministic_coordinator/src/topics.rs");
+    let rs_path = PathBuf::from("tools/virtmcu-coord/src/topics.rs");
     if let Some(parent) = rs_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

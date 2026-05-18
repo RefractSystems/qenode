@@ -95,7 +95,7 @@ fn main() {
 | Process | Service name |
 |---|---|
 | `virtmcu-physical-node` | `virtmcu-physical-node` |
-| `deterministic_coordinator` | `virtmcu-deterministic-coordinator` |
+| `virtmcu-coord` | `virtmcu-deterministic-coordinator` |
 | `virtmcu-test-runner` | `virtmcu-test-runner` |
 | `virtmcu-cli` | `virtmcu-cli` |
 | TCG tracer plugin | `virtmcu-qemu-plugin-{node_id}` |

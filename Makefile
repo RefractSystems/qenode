@@ -182,11 +182,11 @@ $(GUEST_APP_TARGETS):
 	@$(MAKE) -C $@ -j$(JOBS)
 
 build-test-artifacts: $(GUEST_APP_TARGETS)
-	@if [ "$$CI" = "true" ] && command -v deterministic_coordinator >/dev/null 2>&1; then \
+	@if [ "$$CI" = "true" ] && command -v virtmcu-coord >/dev/null 2>&1; then \
 		echo "==> CI detected: Skipping Rust tools build (using pre-compiled binary in PATH)"; \
 	else \
-		echo "==> Building test tools (deterministic_coordinator)..."; \
-		$(CARGO_CMD) build --release $(CARGO_OPTS) -p deterministic_coordinator; \
+		echo "==> Building test tools (virtmcu-coord)..."; \
+		$(CARGO_CMD) build --release $(CARGO_OPTS) -p virtmcu-coord; \
 	fi
 
 # Launch the emulator using the test DTB and default arguments.
@@ -473,7 +473,7 @@ clean:
 	rm -f log.html report.html output.xml
 	rm -rf tools/cyber_bridge/target
 	rm -rf tools/systemc_adapter/build
-	rm -rf tools/deterministic_coordinator/target
+	rm -rf tools/virtmcu-coord/target
 	rm -rf hw/rust/target
 	rm -rf $(QEMU_SRC)/build-virtmcu/install
 	rm -rf $(QEMU_SRC)/build-virtmcu-asan/install

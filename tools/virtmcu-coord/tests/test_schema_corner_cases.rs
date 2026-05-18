@@ -1,5 +1,5 @@
 // This file tests edge cases in deserialization using the generated Typify models.
-use deterministic_coordinator::generated::topology::WorldSchema;
+use virtmcu_coord::generated::topology::WorldSchema;
 
 #[test]
 fn test_reject_invalid_protocol() {
@@ -25,7 +25,7 @@ peripherals:
     let peripherals = world.peripherals;
     let addr = peripherals[0].address.clone().expect("test should succeed");
     match addr {
-        deterministic_coordinator::generated::topology::Address::String(s) => {
+        virtmcu_coord::generated::topology::Address::String(s) => {
             assert_eq!(s.as_str(), "0x1A2B3C");
         }
         _ => panic!("Expected Address::String"),
@@ -54,7 +54,7 @@ nodes:
     let nodes = world.nodes;
     assert_eq!(nodes.len(), 2);
     match &nodes[0].name {
-        deterministic_coordinator::generated::topology::NodeId::String(s) => {
+        virtmcu_coord::generated::topology::NodeId::String(s) => {
             assert_eq!(s.as_str(), "0")
         }
         _ => panic!("Expected NodeId::String"),

@@ -3,7 +3,7 @@
 #
 # Generated files:
 #   - tools/testing/virtmcu_test_suite/topics.py
-#   - tools/deterministic_coordinator/src/topics.rs
+#   - tools/virtmcu-coord/src/topics.rs
 # =============================================================================
 
 [singleton]

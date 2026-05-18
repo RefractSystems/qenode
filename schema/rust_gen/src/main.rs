@@ -13,6 +13,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         prettyplease::unparse(&syn::parse2::<syn::File>(type_space.to_stream())?)
     );
 
-    fs::write("../../tools/deterministic_coordinator/src/generated/topology.rs", code)?;
+    fs::write("../../tools/virtmcu-coord/src/generated/topology.rs", code)?;
     Ok(())
 }

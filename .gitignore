@@ -74,7 +74,7 @@ third_party/
 target/
 .ci-target/
 .cargo-cache/
-tools/deterministic_coordinator/target/
+tools/virtmcu-coord/target/
 hw/rust/common/reference-peripheral/target/
 hw/rust/common/reference-peripheral/Cargo.lock
 test-results/

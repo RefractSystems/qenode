@@ -71,7 +71,7 @@ services:
       VIRTMCU_FEDERATION_ID: "compose-run"
     volumes:
       - ../target:/app/target:ro
-    command: ["/app/target/release/deterministic_coordinator", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]
+    command: ["/app/target/release/virtmcu-coord", "--nodes", "1", "--connect", "tcp/zenoh-router:7447"]
     depends_on:
       zenoh-router:
         condition: service_healthy

@@ -1,5 +1,5 @@
 [package]
-name = "deterministic_coordinator"
+name = "virtmcu-coord"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 path = "src/lib.rs"
 
 [[bin]]
-name = "deterministic_coordinator"
+name = "virtmcu-coord"
 path = "src/main.rs"
 
 [dependencies]
