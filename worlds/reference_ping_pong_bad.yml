@@ -22,7 +22,6 @@ nodes:
         properties:
           size: '0x1000'
           node-id: '0'
-          topic: 'reference_bus'
 
   - machine:
       name: ponger

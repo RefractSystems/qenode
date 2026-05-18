@@ -23,7 +23,6 @@ nodes:
           svd: hw/defs/reference.svd
           size: 0x1000
           node-id: 0
-          topic: 'reference_bus'
           transport: "hub0"
 
   - machine:
@@ -49,7 +48,6 @@ nodes:
         properties:
           svd: hw/defs/reference.svd
           node-id: 1
-          topic: 'reference_bus'
           transport: "hub0"
 
 topology:
@@ -57,5 +55,6 @@ topology:
     - name: '0'
     - name: '1'
   links:
-    - type: reference-link
+    - name: reference_bus
+      type: reference-link
       nodes: ['0', '1']

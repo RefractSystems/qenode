@@ -1146,12 +1146,22 @@ impl<T: DeliveryPacket> VtimeIngress<T> {
         deliver_cb: FDeliver,
     ) -> Result<Self, alloc::string::String>
     where
-        FDecode: Fn(&str, &[u8]) -> Option<T> + Send + Sync + 'static,
+        FDecode: Fn(&str, u64, u64, &[u8]) -> Option<T> + Send + Sync + 'static,
         FDeliver: FnMut(T) + Send + Sync + 'static,
     {
         let topic = alloc::format!("sim/ch/{link_id}");
         #[allow(deprecated)] // virtmcu-allow: allow reasoning="Internal use of deprecated API"
-        Self::new_safe(transport, &topic, generation, decode_cb, deliver_cb)
+        Self::new_safe(transport, &topic, generation, move |t, p| {
+            if p.len() >= 32 {
+                let vtime = u64::from_le_bytes(p[8..16].try_into().unwrap());
+                let seq = u64::from_le_bytes(p[16..24].try_into().unwrap());
+                let len = u32::from_le_bytes(p[24..28].try_into().unwrap()) as usize;
+                if p.len() >= 32 + len {
+                    return decode_cb(t, vtime, seq, &p[32..32+len]);
+                }
+            }
+            None
+        }, deliver_cb)
     }
 
     /// Creates a new `VtimeIngress` (Legacy API).

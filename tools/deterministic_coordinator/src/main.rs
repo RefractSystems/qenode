@@ -362,6 +362,7 @@ async fn run_deterministic_coordinator(
         .await
         .map_err(|e| anyhow!("Failed to declare liveliness token: {}", e))?;
 
+    let mut rx_counters: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
     let mut current_quantum: u64 = 0;
@@ -874,7 +875,7 @@ async fn run_unix_coordinator(
         .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", sock_path, e))?;
 
     enum WorkerEvent {
-        Message(String, Vec<u8>),
+        Message(u32, String, Vec<u8>),
         Register(
             u32,
             Arc<tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>>,
@@ -917,6 +918,7 @@ async fn run_unix_coordinator(
                         return;
                     }
 
+                    let current_node_id: u32;
                     if topic == "sim/coord/register" {
                         let (node_id, reg_fed_id, proto_version) =
                             virtmcu_wire::decode_uds_registration(&payload).expect(
@@ -931,6 +933,7 @@ async fn run_unix_coordinator(
                         let _ = worker_tx
                             .send(WorkerEvent::Register(node_id, write_half))
                             .await;
+                        current_node_id = node_id;
                     } else {
                         return;
                     }
@@ -958,7 +961,7 @@ async fn run_unix_coordinator(
                         }
 
                         let _ = worker_tx
-                            .send(WorkerEvent::Message(topic.clone(), payload.clone()))
+                            .send(WorkerEvent::Message(current_node_id, topic.clone(), payload.clone()))
                             .await;
                     }
                 });
@@ -992,6 +995,70 @@ async fn run_unix_coordinator(
 
     tracing::info!(federation = %federation_id, "All {} nodes have joined.", expected_nodes);
 
+    let mut link_ids = std::collections::HashMap::new();
+    let mut default_rx_map = std::collections::HashMap::new();
+    let mut delay_map = std::collections::HashMap::new();
+    let mut expected_link_pairs = std::collections::HashSet::new();
+    
+    {
+        let t = topo.read().await;
+        for (i, link) in t.wire_links.iter().enumerate() {
+            let link_id = i as u32;
+            link_ids.insert(link.name.clone(), link_id);
+            default_rx_map.insert(link_id, link.nodes.clone());
+            delay_map.insert(link_id, args.delay_ns);
+            for &node_id in &link.nodes {
+                expected_link_pairs.insert((node_id, link.name.clone()));
+            }
+        }
+    }
+
+    let preflight_start = tokio::time::Instant::now();
+    let preflight_timeout = tokio::time::Duration::from_secs(30);
+    tracing::info!("Waiting for {} link registrations...", expected_link_pairs.len());
+    
+    while !expected_link_pairs.is_empty() {
+        tokio::select! {
+            _ = tokio::time::sleep(preflight_timeout.saturating_sub(preflight_start.elapsed())) => {
+                let missing: Vec<_> = expected_link_pairs.iter().map(|(n, l)| format!("(node {}, link '{}')", n, l)).collect();
+                tracing::error!("FATAL: link registration timeout. Missing pairs: {}", missing.join(", "));
+                std::process::abort();
+            }
+            evt = rx_chan.recv() => {
+                if let Some(WorkerEvent::Message(msg_node_id, topic, payload)) = evt {
+                    if topic == "sim/coord/link/register" {
+                        if let Ok(reg) = flatbuffers::root::<virtmcu_wire::LinkRegistration>(&payload) {
+                            let link_name = reg.link_name();
+                            if expected_link_pairs.remove(&(msg_node_id, link_name.to_string())) {
+                                if let Some(&link_id) = link_ids.get(link_name) {
+                                    let ack_payload = virtmcu_wire::encode_link_ack(link_id, 0, "");
+                                    if let Some(socks) = sockets.get(&msg_node_id) {
+                                        for sock in socks {
+                                            uds_write_framed(sock, "sim/coord/link/ack", &ack_payload).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(WorkerEvent::Register(node_id, write_half)) = evt {
+                    sockets.entry(node_id).or_default().push(write_half);
+                }
+            }
+        }
+    }
+    tracing::info!("All link registrations complete.");
+
+    // Issue initial start to unblock nodes.
+    for (&id, socks) in sockets.iter() {
+        let start_topic = deterministic_coordinator::topics::templates::clock_start(&id.to_string());
+        let start_payload = virtmcu_wire::encode_uds_quantum_start(0, u64::MAX);
+        for sock in socks {
+            uds_write_framed(sock, &start_topic, &start_payload).await;
+        }
+    }
+
+    let mut rx_counters: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let mut node_batches = std::collections::HashMap::new();
     let mut seen_nodes = std::collections::HashSet::new();
     let mut current_quantum: u64 = 0;
@@ -1014,11 +1081,67 @@ async fn run_unix_coordinator(
                     len
                 );
             }
-            WorkerEvent::Message(topic, payload) => {
+            WorkerEvent::Message(msg_node_id, topic, payload) => {
                 let is_tx = topic.ends_with("/tx");
                 let is_done = topic.starts_with("sim/coord/done/");
 
-                if is_tx {
+                if topic.starts_with("sim/ch/") && topic.split('/').count() == 3 {
+                    let parts: Vec<&str> = topic.split('/').collect();
+                    if let Ok(link_id) = parts[2].parse::<u32>() {
+                        if !default_rx_map.contains_key(&link_id) {
+                            std::process::abort();
+                        }
+                        if payload.len() >= 8 {
+                            let parsed_link_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                            if parsed_link_id != link_id {
+                                std::process::abort();
+                            }
+                            let payload_len = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
+                            if payload.len() >= 8 + payload_len {
+                                let raw_payload = &payload[8..8+payload_len];
+                                let seq = *rx_counters.entry(msg_node_id).or_insert(0);
+                                rx_counters.insert(msg_node_id, seq + 1);
+                                
+                                let delivery_vtime_ns = *delay_map.get(&link_id).unwrap_or(&1_000_000);
+
+                                let mut delivery_payload = Vec::with_capacity(32 + payload_len);
+                                delivery_payload.extend_from_slice(&link_id.to_le_bytes());
+                                delivery_payload.extend_from_slice(&msg_node_id.to_le_bytes());
+                                delivery_payload.extend_from_slice(&delivery_vtime_ns.to_le_bytes());
+                                delivery_payload.extend_from_slice(&seq.to_le_bytes());
+                                delivery_payload.extend_from_slice(&(payload_len as u32).to_le_bytes());
+                                delivery_payload.extend_from_slice(raw_payload);
+
+                                let msg = deterministic_coordinator::barrier::CoordMessage {
+                                    src_node_id: msg_node_id,
+                                    dst_node_id: u32::MAX,
+                                    delivery_vtime_ns,
+                                    sequence_number: seq,
+                                    protocol: deterministic_coordinator::topology::Protocol::ReferenceLink,
+                                    payload: delivery_payload,
+                                    base_topic: None,
+                                    link_id: Some(link_id),
+                                };
+
+                                if no_pdes {
+                                    uds_deliver_message(
+                                        &sockets,
+                                        &topo,
+                                        &mut pcap_log,
+                                        &mut msg.clone(),
+                                        Some(&default_rx_map),
+                                    )
+                                    .await;
+                                } else {
+                                    node_batches
+                                        .entry(msg_node_id)
+                                        .or_insert_with(Vec::new)
+                                        .push(msg);
+                                }
+                            }
+                        }
+                    }
+                } else if is_tx {
                     let parts: Vec<&str> = topic.split('/').collect();
                     if parts.len() >= 2 {
                         let node_id_str = parts[parts.len() - 2];
@@ -1218,7 +1341,7 @@ async fn run_unix_coordinator(
                                             &topo,
                                             &mut pcap_log,
                                             &mut msg,
-                                            None,
+                                            Some(&default_rx_map),
                                         )
                                         .await;
                                     }

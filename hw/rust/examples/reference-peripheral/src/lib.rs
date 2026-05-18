@@ -138,10 +138,7 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
         if let Some(t) = &self.transport {
             self.link_id = t
                 .register_link(
-                    self.node_id,
                     &self.link_name,
-                    virtmcu_wire::Protocol::ReferenceLink,
-                    virtmcu_wire::LinkRole::Peer,
                 )
                 .map_err(|e| format!("Failed to register link: {e:?}"))?;
 
@@ -154,18 +151,13 @@ impl virtmcu_qom::device::Peripheral for ReferencePeripheralState {
                 &**t,
                 self.link_id,
                 generation_clone,
-                |topic, payload| {
+                |topic, vtime, _seq, raw_payload| {
                     virtmcu_qom::sim_debug!(
                         "Reference: Rx callback on topic {} (len={})",
                         topic,
-                        payload.len()
+                        raw_payload.len()
                     );
-                    if let Some((vtime, _seq, data)) = virtmcu_wire::decode_frame(payload) {
-                        Some(ReferencePacket { vtime, data: data.to_vec() })
-                    } else {
-                        virtmcu_qom::sim_err!("Reference: failed to decode frame!");
-                        None
-                    }
+                    Some(ReferencePacket { vtime, data: raw_payload.to_vec() })
                 },
                 move |_packet| {
                     let val = if _packet.data.len() >= REFERENCE_RX_PAYLOAD_BYTES {

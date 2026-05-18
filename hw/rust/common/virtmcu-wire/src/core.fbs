@@ -106,12 +106,11 @@ enum LinkRole : uint8 {
 }
 
 table LinkRegistration {
-    node_id: uint32;
     link_name: string (required);
-    protocol: Protocol;
-    role: LinkRole;
 }
 
 table LinkAck {
     link_id: uint32;
+    status: uint8;
+    error_msg: string;
 }

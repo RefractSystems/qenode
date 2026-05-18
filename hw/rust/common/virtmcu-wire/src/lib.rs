@@ -318,6 +318,36 @@ pub fn encode_coord_message(
     builder.finished_data().to_vec()
 }
 
+/// Encode link registration
+pub fn encode_link_registration(link_name: &str) -> Vec<u8> {
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
+    let name_offset = builder.create_string(link_name);
+    let mut reg_builder = crate::core_generated::virtmcu::core::LinkRegistrationBuilder::new(&mut builder);
+    reg_builder.add_link_name(name_offset);
+    let reg = reg_builder.finish();
+    builder.finish(reg, None);
+    builder.finished_data().to_vec()
+}
+
+/// Encode link ack
+pub fn encode_link_ack(link_id: u32, status: u8, error_msg: &str) -> Vec<u8> {
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(1024);
+    let msg_offset = builder.create_string(error_msg);
+    let mut ack_builder = crate::core_generated::virtmcu::core::LinkAckBuilder::new(&mut builder);
+    ack_builder.add_link_id(link_id);
+    ack_builder.add_status(status);
+    ack_builder.add_error_msg(msg_offset);
+    let ack = ack_builder.finish();
+    builder.finish(ack, None);
+    builder.finished_data().to_vec()
+}
+
+/// Decode link ack
+pub fn decode_link_ack(buf: &[u8]) -> Result<(u32, u8, String), flatbuffers::InvalidFlatbuffer> {
+    let ack = flatbuffers::root::<crate::core_generated::virtmcu::core::LinkAck>(buf)?;
+    Ok((ack.link_id(), ack.status(), ack.error_msg().map(|s| s.to_string()).unwrap_or_default()))
+}
+
 /// Build a `CoordDoneReq` FlatBuffer payload.
 pub fn encode_coord_done_req(quantum: u64, vtime_limit: u64) -> Vec<u8> {
     let mut builder =
@@ -962,10 +992,7 @@ pub trait DataTransport: Send + Sync {
     /// Register a link and obtain its coordinator-assigned link_id.
     fn register_link(
         &self,
-        node_id: u32,
         link_name: &str,
-        protocol: crate::Protocol,
-        role: crate::LinkRole,
     ) -> Result<u32, TransportError>;
 
     /// Reserve a zero-copy buffer for a TX frame on this link.
